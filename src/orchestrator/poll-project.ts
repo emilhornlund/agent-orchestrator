@@ -3,6 +3,7 @@ import type { GitClient } from "../git/git-client.js";
 import { prepareWorktree } from "../git/prepare-worktree.js";
 import { buildTaskPrompt } from "../opencode/build-task-prompt.js";
 import type { OpenCodeClient } from "../opencode/opencode-client.js";
+import type { CommandRunner } from "../process/command-runner.js";
 import type { TrelloClient } from "../trello/trello-client.js";
 
 import { claimNextCard } from "./claim-next-card.js";
@@ -11,6 +12,7 @@ export async function pollProject(
   trello: TrelloClient,
   git: GitClient,
   opencode: OpenCodeClient,
+  commands: CommandRunner,
   project: ProjectConfig,
 ): Promise<void> {
   const card = await claimNextCard(trello, project);
@@ -40,4 +42,31 @@ export async function pollProject(
   }
 
   console.log(`[${project.id}] OpenCode completed`);
+
+  const status = await git.getStatus(worktree.path);
+
+  if (status.length === 0) {
+    throw new Error("OpenCode completed without repository changes");
+  }
+
+  console.log(`[${project.id}] Repository changes detected:`);
+
+  for (const line of status.split("\n")) {
+    console.log(`[${project.id}] ${line}`);
+  }
+
+  console.log(`[${project.id}] Running repository validation...`);
+
+  const validation = await commands.run({
+    cwd: worktree.path,
+    command: project.repository.validationCommand,
+  });
+
+  if (validation.exitCode !== 0) {
+    throw new Error(
+      `Repository validation exited with code ${validation.exitCode}`,
+    );
+  }
+
+  console.log(`[${project.id}] Repository validation passed`);
 }

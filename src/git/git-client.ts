@@ -39,6 +39,18 @@ export class GitClient {
     return output.length > 0;
   }
 
+  async getStatus(repositoryPath: string): Promise<string> {
+    return this.runGit(repositoryPath, [
+      "status",
+      "--porcelain=v1",
+      "--untracked-files=all",
+    ]);
+  }
+
+  async hasChanges(repositoryPath: string): Promise<boolean> {
+    return (await this.getStatus(repositoryPath)).length > 0;
+  }
+
   async addWorktree(
     repositoryPath: string,
     worktreePath: string,

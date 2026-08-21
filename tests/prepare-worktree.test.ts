@@ -28,6 +28,7 @@ function createProject(worktreeRoot: string): ProjectConfig {
       github: "example/test-project",
       defaultBranch: "main",
       worktreeRoot,
+      validationCommand: "yarn validate",
     },
     trello: {
       boardId: "board",

@@ -17,6 +17,7 @@ projects:
       github: "owner/repository"
       defaultBranch: "main"
       worktreeRoot: "/tmp/worktrees"
+      validationCommand: "yarn validate"
 
     opencode:
       model: "openai/model"
@@ -37,6 +38,7 @@ describe("parseConfig", () => {
     expect(project).toBeDefined();
     expect(project!.id).toBe("project-one");
     expect(project!.repository.github).toBe("owner/repository");
+    expect(project!.repository.validationCommand).toBe("yarn validate");
     expect(config.workflow.pollIntervalSeconds).toBe(15);
   });
 
@@ -58,6 +60,7 @@ describe("parseConfig", () => {
       github: "owner/repository-two"
       defaultBranch: "main"
       worktreeRoot: "/tmp/worktrees-two"
+      validationCommand: "yarn validate"
 
     opencode:
       model: "openai/model"
@@ -134,6 +137,7 @@ workflow:
       github: "owner/repository-two"
       defaultBranch: "main"
       worktreeRoot: "/tmp/worktrees-two"
+      validationCommand: "yarn validate"
 
     opencode:
       model: "openai/model"
@@ -163,6 +167,7 @@ workflow:`,
       github: "owner/repository"
       defaultBranch: "main"
       worktreeRoot: "/tmp/worktrees-two"
+      validationCommand: "yarn validate"
 
     opencode:
       model: "openai/model"
@@ -194,6 +199,7 @@ workflow:`,
       github: "owner/repository-two"
       defaultBranch: "main"
       worktreeRoot: "/tmp/worktrees-two"
+      validationCommand: "yarn validate"
 
     opencode:
       model: "openai/model"
@@ -209,6 +215,15 @@ workflow:`,
     const raw = validConfig.replace(
       "pollIntervalSeconds: 15",
       "pollIntervalSeconds: 0",
+    );
+
+    expect(() => parseConfig(raw)).toThrow();
+  });
+
+  it("rejects an empty validation command", () => {
+    const raw = validConfig.replace(
+      'validationCommand: "yarn validate"',
+      'validationCommand: ""',
     );
 
     expect(() => parseConfig(raw)).toThrow();

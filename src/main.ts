@@ -5,6 +5,7 @@ import { parseEnvironment } from "./config/environment.js";
 import { GitClient } from "./git/git-client.js";
 import { OpenCodeClient } from "./opencode/opencode-client.js";
 import { runOrchestrator } from "./orchestrator/run-orchestrator.js";
+import { CommandRunner } from "./process/command-runner.js";
 import { TrelloClient } from "./trello/trello-client.js";
 import { validateProjectTrello } from "./trello/validate-project-trello.js";
 
@@ -20,6 +21,8 @@ async function main(): Promise<void> {
   const git = new GitClient();
 
   const opencode = new OpenCodeClient();
+
+  const commands = new CommandRunner();
 
   console.log("Agent Orchestrator");
   console.log(`Projects: ${config.projects.length}`);
@@ -38,7 +41,7 @@ async function main(): Promise<void> {
     console.log("Trello configuration: OK");
   }
 
-  await runOrchestrator(trello, git, opencode, config);
+  await runOrchestrator(trello, git, opencode, commands, config);
 }
 
 main().catch((error: unknown) => {

@@ -64,4 +64,38 @@ describe("GitClient", () => {
       "origin/main",
     ]);
   });
+
+  it("gets repository status including untracked files", async () => {
+    const runGit = vi
+      .fn<RunGit>()
+      .mockResolvedValue(" M src/main.cpp\n?? new-file.txt");
+
+    const git = new GitClient(runGit);
+
+    const status = await git.getStatus("/worktree");
+
+    expect(runGit).toHaveBeenCalledWith("/worktree", [
+      "status",
+      "--porcelain=v1",
+      "--untracked-files=all",
+    ]);
+
+    expect(status).toBe(" M src/main.cpp\n?? new-file.txt");
+  });
+
+  it("detects repository changes", async () => {
+    const runGit = vi.fn<RunGit>().mockResolvedValue("?? agent-test.txt");
+
+    const git = new GitClient(runGit);
+
+    await expect(git.hasChanges("/worktree")).resolves.toBe(true);
+  });
+
+  it("detects a clean repository", async () => {
+    const runGit = vi.fn<RunGit>().mockResolvedValue("");
+
+    const git = new GitClient(runGit);
+
+    await expect(git.hasChanges("/worktree")).resolves.toBe(false);
+  });
 });
