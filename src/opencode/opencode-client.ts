@@ -9,6 +9,7 @@ export interface OpenCodeRunOptions {
 
 export interface OpenCodeRunResult {
   exitCode: number;
+  output: string;
 }
 
 export type RunOpenCode = (
@@ -27,9 +28,21 @@ const defaultRunOpenCode: RunOpenCode = async ({
       ["run", "--model", model, "--variant", variant, "--dir", cwd, prompt],
       {
         cwd,
-        stdio: "inherit",
+        stdio: ["inherit", "pipe", "pipe"],
       },
     );
+
+    let output = "";
+
+    child.stdout.on("data", (chunk: Buffer) => {
+      const text = chunk.toString();
+      output += text;
+      process.stdout.write(text);
+    });
+
+    child.stderr.on("data", (chunk: Buffer) => {
+      process.stderr.write(chunk);
+    });
 
     child.once("error", (error) => {
       reject(
@@ -42,6 +55,7 @@ const defaultRunOpenCode: RunOpenCode = async ({
     child.once("close", (code) => {
       resolve({
         exitCode: code ?? 1,
+        output,
       });
     });
   });

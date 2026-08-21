@@ -1,9 +1,10 @@
 import type { ProjectConfig } from "../config/config.js";
-import { buildCommitMessage } from "../git/build-commit-message.js";
 import type { GitClient } from "../git/git-client.js";
 import { prepareWorktree } from "../git/prepare-worktree.js";
+import { buildReviewPrompt } from "../opencode/build-review-prompt.js";
 import { buildTaskPrompt } from "../opencode/build-task-prompt.js";
 import type { OpenCodeClient } from "../opencode/opencode-client.js";
+import { parseReviewResult } from "../opencode/parse-review-result.js";
 import type { CommandRunner } from "../process/command-runner.js";
 import type { TrelloClient } from "../trello/trello-client.js";
 
@@ -29,20 +30,22 @@ export async function pollProject(
 
   console.log(`[${project.id}] Branch: ${worktree.branch}`);
   console.log(`[${project.id}] Worktree: ${worktree.path}`);
-  console.log(`[${project.id}] Starting OpenCode...`);
+  console.log(`[${project.id}] Starting OpenCode implementation...`);
 
-  const result = await opencode.run({
+  const implementation = await opencode.run({
     cwd: worktree.path,
     model: project.opencode.model,
     variant: project.opencode.variant,
     prompt: buildTaskPrompt(card),
   });
 
-  if (result.exitCode !== 0) {
-    throw new Error(`OpenCode exited with code ${result.exitCode}`);
+  if (implementation.exitCode !== 0) {
+    throw new Error(
+      `OpenCode implementation exited with code ${implementation.exitCode}`,
+    );
   }
 
-  console.log(`[${project.id}] OpenCode completed`);
+  console.log(`[${project.id}] OpenCode implementation completed`);
 
   const status = await git.getStatus(worktree.path);
 
@@ -73,29 +76,24 @@ export async function pollProject(
     console.log(`[${project.id}] Repository validation passed`);
   }
 
-  console.log(`[${project.id}] Staging repository changes...`);
+  console.log(`[${project.id}] Starting fresh OpenCode review...`);
 
-  await git.stageAll(worktree.path);
+  const review = await opencode.run({
+    cwd: worktree.path,
+    model: project.opencode.model,
+    variant: project.opencode.variant,
+    prompt: buildReviewPrompt(card),
+  });
 
-  const stagedFiles = await git.getStagedFiles(worktree.path);
-
-  if (stagedFiles.length === 0) {
-    throw new Error("Repository changes disappeared before commit");
+  if (review.exitCode !== 0) {
+    throw new Error(`OpenCode review exited with code ${review.exitCode}`);
   }
 
-  console.log(`[${project.id}] Staged files:`);
+  const reviewResult = parseReviewResult(review.output);
 
-  for (const file of stagedFiles) {
-    console.log(`[${project.id}] ${file}`);
+  if (reviewResult === "fail") {
+    throw new Error("OpenCode review failed");
   }
 
-  const commitMessage = buildCommitMessage(card);
-
-  console.log(`[${project.id}] Creating commit: ${commitMessage}`);
-
-  await git.commit(worktree.path, commitMessage);
-
-  const commitSha = await git.getHeadSha(worktree.path);
-
-  console.log(`[${project.id}] Commit created: ${commitSha}`);
+  console.log(`[${project.id}] OpenCode review passed`);
 }

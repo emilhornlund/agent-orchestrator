@@ -51,32 +51,6 @@ export class GitClient {
     return (await this.getStatus(repositoryPath)).length > 0;
   }
 
-  async stageAll(repositoryPath: string): Promise<void> {
-    await this.runGit(repositoryPath, ["add", "--all"]);
-  }
-
-  async getStagedFiles(repositoryPath: string): Promise<string[]> {
-    const output = await this.runGit(repositoryPath, [
-      "diff",
-      "--cached",
-      "--name-only",
-    ]);
-
-    if (output.length === 0) {
-      return [];
-    }
-
-    return output.split("\n");
-  }
-
-  async commit(repositoryPath: string, message: string): Promise<void> {
-    await this.runGit(repositoryPath, ["commit", "-m", message]);
-  }
-
-  async getHeadSha(repositoryPath: string): Promise<string> {
-    return this.runGit(repositoryPath, ["rev-parse", "HEAD"]);
-  }
-
   async addWorktree(
     repositoryPath: string,
     worktreePath: string,
