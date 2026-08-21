@@ -1,0 +1,19 @@
+trello:
+  boardId: "your-board-id"
+  readyListId: "ready-list-id"
+  workingListId: "working-list-id"
+  reviewListId: "review-list-id"
+  doneListId: "done-list-id"
+
+repository:
+  path: "/absolute/path/to/repository"
+  github: "owner/repository"
+  defaultBranch: "main"
+  worktreeRoot: "/absolute/path/to/worktrees"
+
+opencode:
+  model: "your-model"
+  variant: "xhigh"
+
+workflow:
+  pollIntervalSeconds: 15
