@@ -42,6 +42,19 @@ describe("parseConfig", () => {
     expect(config.workflow.pollIntervalSeconds).toBe(15);
   });
 
+  it("accepts configuration without a validation command", () => {
+    const raw = validConfig.replace(
+      '      validationCommand: "yarn validate"\n',
+      "",
+    );
+
+    const config = parseConfig(raw);
+    const project = config.projects[0];
+
+    expect(project).toBeDefined();
+    expect(project!.repository.validationCommand).toBeUndefined();
+  });
+
   it("accepts multiple projects", () => {
     const raw = validConfig.replace(
       "\nworkflow:",

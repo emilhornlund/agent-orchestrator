@@ -28,11 +28,15 @@ create isolated worktree
         ↓
 OpenCode implementation
         ↓
-validation
+optional orchestrator validation
         ↓
 fresh OpenCode review
         ↓
 optional single remediation pass
+        ↓
+OpenCode commit
+        ↓
+push task branch
         ↓
 create pull request
         ↓
@@ -42,6 +46,12 @@ human merges pull request
         ↓
 Trello: Done
 ```
+
+OpenCode is expected to run the repository's normal build, test, lint, and
+validation procedures as part of implementation and remediation.
+
+Projects may additionally configure `repository.validationCommand` when an
+independent orchestrator-side validation step is useful. This is optional.
 
 Only one task may be active at a time.
 
@@ -127,13 +137,23 @@ See:
 
 ## Project Status
 
-The project is currently in initial bootstrap development.
+The current implementation can:
 
-The first vertical slice will:
-
-1. read the next eligible Trello card;
-2. create an isolated Git worktree;
+1. read and claim the next eligible Trello card;
+2. create a dedicated Git branch and isolated worktree;
 3. run OpenCode in that worktree;
-4. stop for manual inspection.
+4. detect repository changes produced by OpenCode;
+5. optionally run a configured repository validation command;
+6. stage and create a local task commit.
 
-Commit, push, pull-request creation, automated review, persistence, and the monitoring UI will be added after that execution path is proven.
+The local commit implementation is temporary. The intended workflow will use
+a fresh OpenCode review session before any commit is created. A single
+remediation pass will be allowed when review finds problems, followed by
+revalidation and another fresh review.
+
+Commit creation will then be delegated to OpenCode so that the commit message
+can be based on the final staged changes and the repository's commit-message
+rules.
+
+Push, pull-request creation, Trello review transitions, merge observation, and
+worktree cleanup are not implemented yet.

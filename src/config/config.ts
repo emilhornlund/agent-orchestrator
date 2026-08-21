@@ -40,7 +40,7 @@ const repositorySchema = z.object({
   worktreeRoot: z.string().refine(path.isAbsolute, {
     message: "Must be an absolute path",
   }),
-  validationCommand: z.string().min(1),
+  validationCommand: z.string().min(1).optional(),
 });
 
 const openCodeSchema = z.object({

@@ -56,20 +56,22 @@ export async function pollProject(
     console.log(`[${project.id}] ${line}`);
   }
 
-  console.log(`[${project.id}] Running repository validation...`);
+  if (project.repository.validationCommand) {
+    console.log(`[${project.id}] Running repository validation...`);
 
-  const validation = await commands.run({
-    cwd: worktree.path,
-    command: project.repository.validationCommand,
-  });
+    const validation = await commands.run({
+      cwd: worktree.path,
+      command: project.repository.validationCommand,
+    });
 
-  if (validation.exitCode !== 0) {
-    throw new Error(
-      `Repository validation exited with code ${validation.exitCode}`,
-    );
+    if (validation.exitCode !== 0) {
+      throw new Error(
+        `Repository validation exited with code ${validation.exitCode}`,
+      );
+    }
+
+    console.log(`[${project.id}] Repository validation passed`);
   }
-
-  console.log(`[${project.id}] Repository validation passed`);
 
   console.log(`[${project.id}] Staging repository changes...`);
 
