@@ -1,6 +1,7 @@
 import type { ProjectConfig } from "../config/config.js";
 import type { GitClient } from "../git/git-client.js";
 import { prepareWorktree } from "../git/prepare-worktree.js";
+import { buildCommitPrompt } from "../opencode/build-commit-prompt.js";
 import { buildRemediationPrompt } from "../opencode/build-remediation-prompt.js";
 import { buildReviewPrompt } from "../opencode/build-review-prompt.js";
 import { buildTaskPrompt } from "../opencode/build-task-prompt.js";
@@ -94,75 +95,105 @@ export async function pollProject(
 
   if (reviewResult === "pass") {
     console.log(`[${project.id}] OpenCode review passed`);
-    return;
-  }
-
-  console.log(
-    `[${project.id}] OpenCode review failed; starting remediation...`,
-  );
-
-  const remediation = await opencode.run({
-    cwd: worktree.path,
-    model: project.opencode.model,
-    variant: project.opencode.variant,
-    prompt: buildRemediationPrompt(card, review.output),
-  });
-
-  if (remediation.exitCode !== 0) {
-    throw new Error(
-      `OpenCode remediation exited with code ${remediation.exitCode}`,
-    );
-  }
-
-  console.log(`[${project.id}] OpenCode remediation completed`);
-
-  const remediatedStatus = await git.getStatus(worktree.path);
-
-  if (remediatedStatus.length === 0) {
-    throw new Error("OpenCode remediation left no repository changes");
-  }
-
-  if (project.repository.validationCommand) {
+  } else {
     console.log(
-      `[${project.id}] Running repository validation after remediation...`,
+      `[${project.id}] OpenCode review failed; starting remediation...`,
     );
 
-    const validation = await commands.run({
+    const remediation = await opencode.run({
       cwd: worktree.path,
-      command: project.repository.validationCommand,
+      model: project.opencode.model,
+      variant: project.opencode.variant,
+      prompt: buildRemediationPrompt(card, review.output),
     });
 
-    if (validation.exitCode !== 0) {
+    if (remediation.exitCode !== 0) {
       throw new Error(
-        `Repository validation after remediation exited with code ${validation.exitCode}`,
+        `OpenCode remediation exited with code ${remediation.exitCode}`,
       );
     }
 
-    console.log(
-      `[${project.id}] Repository validation after remediation passed`,
-    );
+    console.log(`[${project.id}] OpenCode remediation completed`);
+
+    const remediatedStatus = await git.getStatus(worktree.path);
+
+    if (remediatedStatus.length === 0) {
+      throw new Error("OpenCode remediation left no repository changes");
+    }
+
+    if (project.repository.validationCommand) {
+      console.log(
+        `[${project.id}] Running repository validation after remediation...`,
+      );
+
+      const validation = await commands.run({
+        cwd: worktree.path,
+        command: project.repository.validationCommand,
+      });
+
+      if (validation.exitCode !== 0) {
+        throw new Error(
+          `Repository validation after remediation exited with code ${validation.exitCode}`,
+        );
+      }
+
+      console.log(
+        `[${project.id}] Repository validation after remediation passed`,
+      );
+    }
+
+    console.log(`[${project.id}] Starting second fresh OpenCode review...`);
+
+    const secondReview = await opencode.run({
+      cwd: worktree.path,
+      model: project.opencode.model,
+      variant: project.opencode.variant,
+      prompt: buildReviewPrompt(card),
+    });
+
+    if (secondReview.exitCode !== 0) {
+      throw new Error(
+        `Second OpenCode review exited with code ${secondReview.exitCode}`,
+      );
+    }
+
+    const secondReviewResult = parseReviewResult(secondReview.output);
+
+    if (secondReviewResult === "fail") {
+      throw new Error("OpenCode review failed after remediation");
+    }
+
+    console.log(`[${project.id}] OpenCode review passed after remediation`);
   }
 
-  console.log(`[${project.id}] Starting second fresh OpenCode review...`);
+  const headBeforeCommit = await git.getHeadSha(worktree.path);
 
-  const secondReview = await opencode.run({
+  console.log(`[${project.id}] Starting fresh OpenCode commit session...`);
+
+  const commit = await opencode.run({
     cwd: worktree.path,
     model: project.opencode.model,
     variant: project.opencode.variant,
-    prompt: buildReviewPrompt(card),
+    prompt: buildCommitPrompt(card),
   });
 
-  if (secondReview.exitCode !== 0) {
+  if (commit.exitCode !== 0) {
+    throw new Error(`OpenCode commit exited with code ${commit.exitCode}`);
+  }
+
+  const headAfterCommit = await git.getHeadSha(worktree.path);
+
+  if (headAfterCommit === headBeforeCommit) {
+    throw new Error("OpenCode commit session did not create a commit");
+  }
+
+  const statusAfterCommit = await git.getStatus(worktree.path);
+
+  if (statusAfterCommit.length > 0) {
     throw new Error(
-      `Second OpenCode review exited with code ${secondReview.exitCode}`,
+      `OpenCode commit left repository changes:\n${statusAfterCommit}`,
     );
   }
 
-  const secondReviewResult = parseReviewResult(secondReview.output);
-
-  if (secondReviewResult === "fail") {
-    throw new Error("OpenCode review failed after remediation");
-  }
-
-  console.log(`[${project.id}] OpenCode review passed after remediation`);
+  console.log(`[${project.id}] OpenCode commit created: ${headAfterCommit}`);
 }

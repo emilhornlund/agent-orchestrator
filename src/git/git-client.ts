@@ -51,6 +51,10 @@ export class GitClient {
     return (await this.getStatus(repositoryPath)).length > 0;
   }
 
+  async getHeadSha(repositoryPath: string): Promise<string> {
+    return this.runGit(repositoryPath, ["rev-parse", "HEAD"]);
+  }
+
   async addWorktree(
     repositoryPath: string,
     worktreePath: string,

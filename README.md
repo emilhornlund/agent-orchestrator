@@ -141,19 +141,15 @@ The current implementation can:
 
 1. read and claim the next eligible Trello card;
 2. create a dedicated Git branch and isolated worktree;
-3. run OpenCode in that worktree;
+3. run OpenCode implementation in that worktree;
 4. detect repository changes produced by OpenCode;
 5. optionally run a configured repository validation command;
-6. stage and create a local task commit.
+6. run a fresh OpenCode review;
+7. perform one remediation pass and a second fresh review when needed;
+8. delegate final commit creation to a fresh OpenCode session using centrally defined commit-message rules.
 
-The local commit implementation is temporary. The intended workflow will use
-a fresh OpenCode review session before any commit is created. A single
-remediation pass will be allowed when review finds problems, followed by
-revalidation and another fresh review.
-
-Commit creation will then be delegated to OpenCode so that the commit message
-can be based on the final staged changes and the repository's commit-message
-rules.
+The orchestrator verifies that commit creation advances `HEAD` and leaves the
+task worktree clean.
 
 Push, pull-request creation, Trello review transitions, merge observation, and
 worktree cleanup are not implemented yet.

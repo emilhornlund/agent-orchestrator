@@ -98,4 +98,14 @@ describe("GitClient", () => {
 
     await expect(git.hasChanges("/worktree")).resolves.toBe(false);
   });
+
+  it("gets the current HEAD commit SHA", async () => {
+    const runGit = vi.fn<RunGit>().mockResolvedValue("abc123def456");
+
+    const git = new GitClient(runGit);
+
+    await expect(git.getHeadSha("/worktree")).resolves.toBe("abc123def456");
+
+    expect(runGit).toHaveBeenCalledWith("/worktree", ["rev-parse", "HEAD"]);
+  });
 });
