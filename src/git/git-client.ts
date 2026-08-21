@@ -29,6 +29,19 @@ export class GitClient {
     await this.runGit(repositoryPath, ["fetch", remote, branch]);
   }
 
+  async push(
+    repositoryPath: string,
+    remote: string,
+    branch: string,
+  ): Promise<void> {
+    await this.runGit(repositoryPath, [
+      "push",
+      "--set-upstream",
+      remote,
+      branch,
+    ]);
+  }
+
   async branchExists(repositoryPath: string, branch: string): Promise<boolean> {
     const output = await this.runGit(repositoryPath, [
       "branch",

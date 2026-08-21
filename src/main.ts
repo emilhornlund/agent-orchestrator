@@ -3,6 +3,7 @@ import "dotenv/config";
 import { loadConfig } from "./config/config.js";
 import { parseEnvironment } from "./config/environment.js";
 import { GitClient } from "./git/git-client.js";
+import { GitHubClient } from "./github/github-client.js";
 import { OpenCodeClient } from "./opencode/opencode-client.js";
 import { runOrchestrator } from "./orchestrator/run-orchestrator.js";
 import { CommandRunner } from "./process/command-runner.js";
@@ -19,6 +20,8 @@ async function main(): Promise<void> {
   });
 
   const git = new GitClient();
+
+  const github = new GitHubClient();
 
   const opencode = new OpenCodeClient();
 
@@ -41,7 +44,7 @@ async function main(): Promise<void> {
     console.log("Trello configuration: OK");
   }
 
-  await runOrchestrator(trello, git, opencode, commands, config);
+  await runOrchestrator(trello, git, github, opencode, commands, config);
 }
 
 main().catch((error: unknown) => {

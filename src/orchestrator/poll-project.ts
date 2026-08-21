@@ -1,6 +1,7 @@
 import type { ProjectConfig } from "../config/config.js";
 import type { GitClient } from "../git/git-client.js";
 import { prepareWorktree } from "../git/prepare-worktree.js";
+import type { GitHubClient } from "../github/github-client.js";
 import { buildCommitPrompt } from "../opencode/build-commit-prompt.js";
 import { buildRemediationPrompt } from "../opencode/build-remediation-prompt.js";
 import { buildReviewPrompt } from "../opencode/build-review-prompt.js";
@@ -11,10 +12,12 @@ import type { CommandRunner } from "../process/command-runner.js";
 import type { TrelloClient } from "../trello/trello-client.js";
 
 import { claimNextCard } from "./claim-next-card.js";
+import { publishCard } from "./publish-card.js";
 
 export async function pollProject(
   trello: TrelloClient,
   git: GitClient,
+  github: GitHubClient,
   opencode: OpenCodeClient,
   commands: CommandRunner,
   project: ProjectConfig,
@@ -196,4 +199,14 @@ export async function pollProject(
   }
 
   console.log(`[${project.id}] OpenCode commit created: ${headAfterCommit}`);
+
+  await publishCard({
+    trello,
+    git,
+    github,
+    project,
+    card,
+    worktreePath: worktree.path,
+    branch: worktree.branch,
+  });
 }

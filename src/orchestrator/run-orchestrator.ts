@@ -1,5 +1,6 @@
 import type { Config } from "../config/config.js";
 import type { GitClient } from "../git/git-client.js";
+import type { GitHubClient } from "../github/github-client.js";
 import type { OpenCodeClient } from "../opencode/opencode-client.js";
 import type { CommandRunner } from "../process/command-runner.js";
 import type { TrelloClient } from "../trello/trello-client.js";
@@ -15,6 +16,7 @@ function sleep(milliseconds: number): Promise<void> {
 export async function runOrchestrator(
   trello: TrelloClient,
   git: GitClient,
+  github: GitHubClient,
   opencode: OpenCodeClient,
   commands: CommandRunner,
   config: Config,
@@ -29,7 +31,7 @@ export async function runOrchestrator(
   while (true) {
     for (const project of config.projects) {
       try {
-        await pollProject(trello, git, opencode, commands, project);
+        await pollProject(trello, git, github, opencode, commands, project);
       } catch (error) {
         console.error(
           `[${project.id}] ${

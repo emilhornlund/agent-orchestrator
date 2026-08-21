@@ -108,4 +108,18 @@ describe("GitClient", () => {
 
     expect(runGit).toHaveBeenCalledWith("/worktree", ["rev-parse", "HEAD"]);
   });
+
+  it("pushes a branch and configures its upstream", async () => {
+    const runGit = vi.fn().mockResolvedValue("");
+    const git = new GitClient(runGit);
+
+    await git.push("/tmp/repository", "origin", "agent/example");
+
+    expect(runGit).toHaveBeenCalledWith("/tmp/repository", [
+      "push",
+      "--set-upstream",
+      "origin",
+      "agent/example",
+    ]);
+  });
 });
