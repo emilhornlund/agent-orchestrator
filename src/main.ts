@@ -2,6 +2,7 @@ import "dotenv/config";
 
 import { loadConfig } from "./config/config.js";
 import { parseEnvironment } from "./config/environment.js";
+import { GitClient } from "./git/git-client.js";
 import { runOrchestrator } from "./orchestrator/run-orchestrator.js";
 import { TrelloClient } from "./trello/trello-client.js";
 import { validateProjectTrello } from "./trello/validate-project-trello.js";
@@ -14,6 +15,8 @@ async function main(): Promise<void> {
     apiKey: environment.TRELLO_API_KEY,
     token: environment.TRELLO_TOKEN,
   });
+
+  const git = new GitClient();
 
   console.log("Agent Orchestrator");
   console.log(`Projects: ${config.projects.length}`);
@@ -32,7 +35,7 @@ async function main(): Promise<void> {
     console.log("Trello configuration: OK");
   }
 
-  await runOrchestrator(trello, config);
+  await runOrchestrator(trello, git, config);
 }
 
 main().catch((error: unknown) => {
