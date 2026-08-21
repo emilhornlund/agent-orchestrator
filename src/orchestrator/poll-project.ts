@@ -1,4 +1,5 @@
 import type { ProjectConfig } from "../config/config.js";
+import { buildCommitMessage } from "../git/build-commit-message.js";
 import type { GitClient } from "../git/git-client.js";
 import { prepareWorktree } from "../git/prepare-worktree.js";
 import { buildTaskPrompt } from "../opencode/build-task-prompt.js";
@@ -69,4 +70,30 @@ export async function pollProject(
   }
 
   console.log(`[${project.id}] Repository validation passed`);
+
+  console.log(`[${project.id}] Staging repository changes...`);
+
+  await git.stageAll(worktree.path);
+
+  const stagedFiles = await git.getStagedFiles(worktree.path);
+
+  if (stagedFiles.length === 0) {
+    throw new Error("Repository changes disappeared before commit");
+  }
+
+  console.log(`[${project.id}] Staged files:`);
+
+  for (const file of stagedFiles) {
+    console.log(`[${project.id}] ${file}`);
+  }
+
+  const commitMessage = buildCommitMessage(card);
+
+  console.log(`[${project.id}] Creating commit: ${commitMessage}`);
+
+  await git.commit(worktree.path, commitMessage);
+
+  const commitSha = await git.getHeadSha(worktree.path);
+
+  console.log(`[${project.id}] Commit created: ${commitSha}`);
 }
