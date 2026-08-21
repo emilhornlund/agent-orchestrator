@@ -6,7 +6,10 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { ProjectConfig } from "../src/config/config.js";
 import { GitClient, type RunGit } from "../src/git/git-client.js";
-import { GitHubClient, type RunGitHub } from "../src/github/github-client.js";
+import {
+  GitHubClient,
+  type RunGitHubCommand,
+} from "../src/github/github-client.js";
 import {
   OpenCodeClient,
   type OpenCodeRunResult,
@@ -29,6 +32,7 @@ interface ScenarioOptions {
   pushError?: Error;
   pullRequestError?: Error;
   humanReviewError?: Error;
+  failureMoveError?: Error;
 }
 
 interface Scenario {
@@ -41,7 +45,7 @@ interface Scenario {
   project: ProjectConfig;
   runCommand: ReturnType<typeof vi.fn<RunCommand>>;
   runGit: ReturnType<typeof vi.fn<RunGit>>;
-  runGitHub: ReturnType<typeof vi.fn<RunGitHub>>;
+  runGitHub: ReturnType<typeof vi.fn<RunGitHubCommand>>;
   runOpenCode: ReturnType<typeof vi.fn<RunOpenCode>>;
   trello: TrelloClient;
   worktreePath: string;
@@ -71,6 +75,7 @@ function createScenario(options: ScenarioOptions = {}): Scenario {
       readyListId: "ready",
       workingListId: "working",
       reviewListId: "review",
+      failedListId: "failed",
       doneListId: "done",
     },
     repository: {
@@ -104,6 +109,13 @@ function createScenario(options: ScenarioOptions = {}): Scenario {
       throw options.humanReviewError;
     }
 
+    if (
+      listId === project.trello.failedListId &&
+      options.failureMoveError !== undefined
+    ) {
+      throw options.failureMoveError;
+    }
+
     return {
       ...card,
       id: cardId,
@@ -113,19 +125,31 @@ function createScenario(options: ScenarioOptions = {}): Scenario {
 
   const statusOutputs = options.statusOutputs ?? [" M src/example.ts", ""];
   let statusCall = 0;
+
   const headOutputs = options.headOutputs ?? ["before-commit", "after-commit"];
   let headCall = 0;
 
   const runGit = vi.fn<RunGit>(async (_cwd, args) => {
+    if (args[0] === "branch" && args[1] === "--show-current") {
+      return `agent/${card.id}`;
+    }
+
     if (args[0] === "status") {
-      const output = statusOutputs[statusCall];
+      if (statusCall === 0) {
+        statusCall += 1;
+        return "";
+      }
+
+      const output = statusOutputs[statusCall - 1];
       statusCall += 1;
+
       return output ?? "";
     }
 
     if (args[0] === "rev-parse") {
       const output = headOutputs[headCall];
       headCall += 1;
+
       return output ?? "";
     }
 
@@ -178,16 +202,18 @@ function createScenario(options: ScenarioOptions = {}): Scenario {
   });
 
   const commands = new CommandRunner(runCommand);
-  const runGitHub = vi.fn<RunGitHub>(async () => {
+  const runGitHub = vi.fn<RunGitHubCommand>(async (_cwd, args) => {
+    if (args[0] === "pr" && args[1] === "list") {
+      return "";
+    }
+
     events.push("pr");
 
     if (options.pullRequestError !== undefined) {
       throw options.pullRequestError;
     }
 
-    return {
-      url: "https://github.com/example/repository/pull/123",
-    };
+    return "https://github.com/example/repository/pull/123";
   });
   const github = new GitHubClient(runGitHub);
 
@@ -231,6 +257,7 @@ function expectNothingPublished(scenario: Scenario): void {
   expect(scenario.events).not.toContain("push");
   expect(scenario.events).not.toContain("pr");
   expect(scenario.events).not.toContain("move:review");
+  expect(scenario.events).toContain("move:failed");
 }
 
 describe("pollProject failure boundaries", () => {
@@ -606,6 +633,7 @@ describe("pollProject failure boundaries", () => {
         expect(scenario.events).toContain("push");
         expect(scenario.runGitHub).not.toHaveBeenCalled();
         expect(scenario.events).not.toContain("move:review");
+        expect(scenario.events).toContain("move:failed");
       },
     );
   });
@@ -628,8 +656,9 @@ describe("pollProject failure boundaries", () => {
         ).rejects.toThrow("PR creation failed");
 
         expect(scenario.events).toContain("push");
-        expect(scenario.runGitHub).toHaveBeenCalledOnce();
+        expect(scenario.runGitHub).toHaveBeenCalledTimes(2);
         expect(scenario.events).not.toContain("move:review");
+        expect(scenario.events).toContain("move:failed");
       },
     );
   });
@@ -659,6 +688,53 @@ describe("pollProject failure boundaries", () => {
           "push",
           "pr",
           "move:review",
+          "move:failed",
+        ]);
+      },
+    );
+  });
+
+  it("preserves the workflow and Failed-move errors", async () => {
+    const humanReviewError = new Error("Human Review move failed");
+    const failureMoveError = new Error("Failed move failed");
+
+    await withScenario(
+      {
+        humanReviewError,
+        failureMoveError,
+      },
+      async (scenario) => {
+        try {
+          await pollProject(
+            scenario.trello,
+            scenario.git,
+            scenario.github,
+            scenario.openCode,
+            scenario.commands,
+            scenario.project,
+          );
+
+          throw new Error("Expected pollProject to throw");
+        } catch (error) {
+          expect(error).toBeInstanceOf(AggregateError);
+
+          const aggregate = error as AggregateError;
+
+          expect(aggregate.errors).toEqual([
+            humanReviewError,
+            failureMoveError,
+          ]);
+        }
+
+        expect(scenario.events).toEqual([
+          "move:working",
+          "opencode:1",
+          "opencode:2",
+          "opencode:3",
+          "push",
+          "pr",
+          "move:review",
+          "move:failed",
         ]);
       },
     );

@@ -11,6 +11,7 @@ const trelloSchema = z
     readyListId: z.string().min(1),
     workingListId: z.string().min(1),
     reviewListId: z.string().min(1),
+    failedListId: z.string().min(1),
     doneListId: z.string().min(1),
   })
   .superRefine((trello, ctx) => {
@@ -18,6 +19,7 @@ const trelloSchema = z
       trello.readyListId,
       trello.workingListId,
       trello.reviewListId,
+      trello.failedListId,
       trello.doneListId,
     ];
 

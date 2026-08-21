@@ -3,6 +3,8 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
+const GIT_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+
 export type RunGit = (cwd: string, args: string[]) => Promise<string>;
 
 const defaultRunGit: RunGit = async (cwd, args) => {
@@ -10,6 +12,7 @@ const defaultRunGit: RunGit = async (cwd, args) => {
     const { stdout } = await execFileAsync("git", args, {
       cwd,
       encoding: "utf8",
+      timeout: GIT_TIMEOUT_MS,
     });
 
     return stdout.trim();
@@ -25,7 +28,11 @@ const defaultRunGit: RunGit = async (cwd, args) => {
 export class GitClient {
   constructor(private readonly runGit: RunGit = defaultRunGit) {}
 
-  async fetch(repositoryPath: string, remote: string, branch: string) {
+  async fetch(
+    repositoryPath: string,
+    remote: string,
+    branch: string,
+  ): Promise<void> {
     await this.runGit(repositoryPath, ["fetch", remote, branch]);
   }
 
@@ -66,6 +73,10 @@ export class GitClient {
 
   async getHeadSha(repositoryPath: string): Promise<string> {
     return this.runGit(repositoryPath, ["rev-parse", "HEAD"]);
+  }
+
+  async getCurrentBranch(repositoryPath: string): Promise<string> {
+    return this.runGit(repositoryPath, ["branch", "--show-current"]);
   }
 
   async addWorktree(

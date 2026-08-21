@@ -33,6 +33,7 @@ const defaultRunOpenCode: RunOpenCode = async ({
     );
 
     let output = "";
+    let settled = false;
 
     child.stdout.on("data", (chunk: Buffer) => {
       const text = chunk.toString();
@@ -45,6 +46,12 @@ const defaultRunOpenCode: RunOpenCode = async ({
     });
 
     child.once("error", (error) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+
       reject(
         new Error(`Failed to start OpenCode: ${error.message}`, {
           cause: error,
@@ -53,6 +60,12 @@ const defaultRunOpenCode: RunOpenCode = async ({
     });
 
     child.once("close", (code) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+
       resolve({
         exitCode: code ?? 1,
         output,

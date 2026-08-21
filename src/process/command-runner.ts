@@ -21,7 +21,15 @@ const defaultRunCommand: RunCommand = async ({ cwd, command }) =>
       stdio: "inherit",
     });
 
+    let settled = false;
+
     child.once("error", (error) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+
       reject(
         new Error(`Failed to start command: ${error.message}`, {
           cause: error,
@@ -30,6 +38,12 @@ const defaultRunCommand: RunCommand = async ({ cwd, command }) =>
     });
 
     child.once("close", (code) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+
       resolve({
         exitCode: code ?? 1,
       });

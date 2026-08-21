@@ -35,6 +35,7 @@ function createProject(worktreeRoot: string): ProjectConfig {
       readyListId: "ready",
       workingListId: "working",
       reviewListId: "review",
+      failedListId: "failed",
       doneListId: "done",
     },
     opencode: {
@@ -121,14 +122,26 @@ describe("prepareWorktree", () => {
     ]);
   });
 
-  it("reuses an existing worktree", async () => {
+  it("reuses an existing clean worktree on the expected branch", async () => {
     const worktreeRoot = createTemporaryDirectory();
     const worktreePath = path.join(worktreeRoot, "card-123");
 
     fs.mkdirSync(worktreePath);
 
     const project = createProject(worktreeRoot);
-    const runGit = vi.fn<RunGit>();
+
+    const runGit = vi.fn<RunGit>(async (_cwd, args) => {
+      if (args[0] === "branch" && args[1] === "--show-current") {
+        return "agent/card-123";
+      }
+
+      if (args[0] === "status") {
+        return "";
+      }
+
+      return "";
+    });
+
     const git = new GitClient(runGit);
 
     const result = await prepareWorktree(git, project, "card-123");
@@ -138,6 +151,86 @@ describe("prepareWorktree", () => {
       branch: "agent/card-123",
     });
 
-    expect(runGit).not.toHaveBeenCalled();
+    expect(runGit).toHaveBeenNthCalledWith(1, worktreePath, [
+      "branch",
+      "--show-current",
+    ]);
+
+    expect(runGit).toHaveBeenNthCalledWith(2, worktreePath, [
+      "status",
+      "--porcelain=v1",
+      "--untracked-files=all",
+    ]);
+  });
+
+  it("rejects an existing worktree on the wrong branch", async () => {
+    const worktreeRoot = createTemporaryDirectory();
+    const worktreePath = path.join(worktreeRoot, "card-123");
+
+    fs.mkdirSync(worktreePath);
+
+    const project = createProject(worktreeRoot);
+
+    const runGit = vi.fn<RunGit>(async (_cwd, args) => {
+      if (args[0] === "branch" && args[1] === "--show-current") {
+        return "main";
+      }
+
+      return "";
+    });
+
+    const git = new GitClient(runGit);
+
+    await expect(prepareWorktree(git, project, "card-123")).rejects.toThrow(
+      `Existing worktree ${worktreePath} is on branch "main", expected "agent/card-123"`,
+    );
+  });
+
+  it("rejects an existing worktree with uncommitted changes", async () => {
+    const worktreeRoot = createTemporaryDirectory();
+    const worktreePath = path.join(worktreeRoot, "card-123");
+
+    fs.mkdirSync(worktreePath);
+
+    const project = createProject(worktreeRoot);
+
+    const runGit = vi.fn<RunGit>(async (_cwd, args) => {
+      if (args[0] === "branch" && args[1] === "--show-current") {
+        return "agent/card-123";
+      }
+
+      if (args[0] === "status") {
+        return " M src/example.ts";
+      }
+
+      return "";
+    });
+
+    const git = new GitClient(runGit);
+
+    await expect(prepareWorktree(git, project, "card-123")).rejects.toThrow(
+      `Existing worktree ${worktreePath} has uncommitted changes`,
+    );
+  });
+
+  it("rejects an existing directory that is not a Git worktree", async () => {
+    const worktreeRoot = createTemporaryDirectory();
+    const worktreePath = path.join(worktreeRoot, "card-123");
+
+    fs.mkdirSync(worktreePath);
+
+    const project = createProject(worktreeRoot);
+    const gitError = new Error("fatal: not a git repository");
+    const runGit = vi.fn<RunGit>().mockRejectedValue(gitError);
+    const git = new GitClient(runGit);
+
+    await expect(prepareWorktree(git, project, "card-123")).rejects.toBe(
+      gitError,
+    );
+
+    expect(runGit).toHaveBeenCalledWith(worktreePath, [
+      "branch",
+      "--show-current",
+    ]);
   });
 });

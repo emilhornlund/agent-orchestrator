@@ -15,6 +15,7 @@ function createProject(): Project {
       readyListId: "ready-list",
       workingListId: "working-list",
       reviewListId: "review-list",
+      failedListId: "failed-list",
       doneListId: "done-list",
     },
 

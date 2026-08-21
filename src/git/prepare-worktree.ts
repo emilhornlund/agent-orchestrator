@@ -25,6 +25,22 @@ export async function prepareWorktree(
   fs.mkdirSync(worktreeRoot, { recursive: true });
 
   if (fs.existsSync(worktreePath)) {
+    const currentBranch = await git.getCurrentBranch(worktreePath);
+
+    if (currentBranch !== branch) {
+      throw new Error(
+        `Existing worktree ${worktreePath} is on branch "${currentBranch}", expected "${branch}"`,
+      );
+    }
+
+    const status = await git.getStatus(worktreePath);
+
+    if (status.length > 0) {
+      throw new Error(
+        `Existing worktree ${worktreePath} has uncommitted changes:\n${status}`,
+      );
+    }
+
     return {
       path: worktreePath,
       branch,

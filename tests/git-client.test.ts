@@ -109,6 +109,21 @@ describe("GitClient", () => {
     expect(runGit).toHaveBeenCalledWith("/worktree", ["rev-parse", "HEAD"]);
   });
 
+  it("gets the current branch", async () => {
+    const runGit = vi.fn<RunGit>().mockResolvedValue("agent/card-123");
+
+    const git = new GitClient(runGit);
+
+    await expect(git.getCurrentBranch("/worktree")).resolves.toBe(
+      "agent/card-123",
+    );
+
+    expect(runGit).toHaveBeenCalledWith("/worktree", [
+      "branch",
+      "--show-current",
+    ]);
+  });
+
   it("pushes a branch and configures its upstream", async () => {
     const runGit = vi.fn().mockResolvedValue("");
     const git = new GitClient(runGit);

@@ -16,6 +16,7 @@ export async function validateProjectTrello(
     ["readyListId", project.trello.readyListId],
     ["workingListId", project.trello.workingListId],
     ["reviewListId", project.trello.reviewListId],
+    ["failedListId", project.trello.failedListId],
     ["doneListId", project.trello.doneListId],
   ] as const;
 

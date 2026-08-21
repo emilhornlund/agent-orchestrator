@@ -27,23 +27,36 @@ export async function publishCard({
   await git.push(worktreePath, "origin", branch);
 
   console.log(`[${project.id}] Branch pushed`);
+  console.log(`[${project.id}] Checking for existing pull request...`);
 
-  console.log(`[${project.id}] Creating pull request...`);
-
-  const pullRequest = await github.createPullRequest({
+  let pullRequest = await github.findPullRequest({
     cwd: worktreePath,
     repository: project.repository.github,
-    baseBranch: project.repository.defaultBranch,
     headBranch: branch,
-    title: card.name,
-    body: [
-      `Trello: ${card.url}`,
-      "",
-      "Implemented automatically by Agent Orchestrator.",
-    ].join("\n"),
   });
 
-  console.log(`[${project.id}] Pull request created: ${pullRequest.url}`);
+  if (pullRequest) {
+    console.log(
+      `[${project.id}] Existing pull request found: ${pullRequest.url}`,
+    );
+  } else {
+    console.log(`[${project.id}] Creating pull request...`);
+
+    pullRequest = await github.createPullRequest({
+      cwd: worktreePath,
+      repository: project.repository.github,
+      baseBranch: project.repository.defaultBranch,
+      headBranch: branch,
+      title: card.name,
+      body: [
+        `Trello: ${card.url}`,
+        "",
+        "Implemented automatically by Agent Orchestrator.",
+      ].join("\n"),
+    });
+
+    console.log(`[${project.id}] Pull request created: ${pullRequest.url}`);
+  }
 
   console.log(`[${project.id}] Moving Trello card to Human Review...`);
 

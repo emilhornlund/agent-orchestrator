@@ -6,6 +6,7 @@ projects:
       readyListId: "ready-list-id"
       workingListId: "working-list-id"
       reviewListId: "review-list-id"
+      failedListId: "failed-list-id"
       doneListId: "done-list-id"
 
     repository:
@@ -26,6 +27,7 @@ projects:
       readyListId: "..."
       workingListId: "..."
       reviewListId: "..."
+      failedListId: "..."
       doneListId: "..."
 
     repository:

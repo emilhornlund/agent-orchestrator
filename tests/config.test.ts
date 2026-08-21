@@ -10,6 +10,7 @@ projects:
       readyListId: "ready"
       workingListId: "working"
       reviewListId: "review"
+      failedListId: "failed"
       doneListId: "done"
 
     repository:
@@ -66,6 +67,7 @@ describe("parseConfig", () => {
       readyListId: "ready-two"
       workingListId: "working-two"
       reviewListId: "review-two"
+      failedListId: "failed"
       doneListId: "done-two"
 
     repository:
@@ -143,6 +145,7 @@ workflow:
       readyListId: "ready-two"
       workingListId: "working-two"
       reviewListId: "review-two"
+      failedListId: "failed"
       doneListId: "done-two"
 
     repository:
@@ -173,6 +176,7 @@ workflow:`,
       readyListId: "ready-two"
       workingListId: "working-two"
       reviewListId: "review-two"
+      failedListId: "failed"
       doneListId: "done-two"
 
     repository:
@@ -205,6 +209,7 @@ workflow:`,
       readyListId: "ready-two"
       workingListId: "working-two"
       reviewListId: "review-two"
+      failedListId: "failed"
       doneListId: "done-two"
 
     repository:

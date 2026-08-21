@@ -35,6 +35,7 @@ describe("pollProject", () => {
         readyListId: "ready",
         workingListId: "working",
         reviewListId: "review",
+        failedListId: "failed",
         doneListId: "done",
       },
       repository: {
@@ -78,10 +79,22 @@ describe("pollProject", () => {
       let headCall = 0;
 
       const runGit = vi.fn(async (_cwd: string, args: string[]) => {
+        if (args[0] === "branch" && args[1] === "--show-current") {
+          return "agent/card-1";
+        }
+
         if (args[0] === "status") {
           statusCall += 1;
 
-          return statusCall === 1 ? " M src/example.ts" : "";
+          if (statusCall === 1) {
+            return "";
+          }
+
+          if (statusCall === 2) {
+            return " M src/example.ts";
+          }
+
+          return "";
         }
 
         if (args[0] === "rev-parse") {
@@ -131,12 +144,14 @@ describe("pollProject", () => {
         };
       });
 
-      const github = new GitHubClient(async () => {
+      const github = new GitHubClient(async (_cwd, args) => {
+        if (args[0] === "pr" && args[1] === "list") {
+          return "";
+        }
+
         events.push("pr");
 
-        return {
-          url: "https://github.com/example/repository/pull/123",
-        };
+        return "https://github.com/example/repository/pull/123";
       });
 
       const commands = new CommandRunner(async () => ({
@@ -153,6 +168,7 @@ describe("pollProject", () => {
         "pr",
         "human-review",
       ]);
+      expect(events).not.toContain("move:failed");
     } finally {
       fs.rmSync(worktreeRoot, {
         recursive: true,
@@ -183,6 +199,7 @@ describe("pollProject", () => {
         readyListId: "ready",
         workingListId: "working",
         reviewListId: "review",
+        failedListId: "failed",
         doneListId: "done",
       },
       repository: {
@@ -226,14 +243,22 @@ describe("pollProject", () => {
       let headCall = 0;
 
       const runGit = vi.fn(async (_cwd: string, args: string[]) => {
+        if (args[0] === "branch" && args[1] === "--show-current") {
+          return "agent/card-1";
+        }
+
         if (args[0] === "status") {
           statusCall += 1;
 
           if (statusCall === 1) {
-            return " M src/example.ts";
+            return "";
           }
 
           if (statusCall === 2) {
+            return " M src/example.ts";
+          }
+
+          if (statusCall === 3) {
             return " M src/example.ts";
           }
 
@@ -305,12 +330,14 @@ describe("pollProject", () => {
         };
       });
 
-      const github = new GitHubClient(async () => {
+      const github = new GitHubClient(async (_cwd, args) => {
+        if (args[0] === "pr" && args[1] === "list") {
+          return "";
+        }
+
         events.push("pr");
 
-        return {
-          url: "https://github.com/example/repository/pull/123",
-        };
+        return "https://github.com/example/repository/pull/123";
       });
 
       const commands = new CommandRunner(async () => ({
@@ -329,6 +356,7 @@ describe("pollProject", () => {
         "pr",
         "human-review",
       ]);
+      expect(events).not.toContain("move:failed");
     } finally {
       fs.rmSync(worktreeRoot, {
         recursive: true,

@@ -9,9 +9,10 @@ import { buildTaskPrompt } from "../opencode/build-task-prompt.js";
 import type { OpenCodeClient } from "../opencode/opencode-client.js";
 import { parseReviewResult } from "../opencode/parse-review-result.js";
 import type { CommandRunner } from "../process/command-runner.js";
-import type { TrelloClient } from "../trello/trello-client.js";
+import type { TrelloCard, TrelloClient } from "../trello/trello-client.js";
 
 import { claimNextCard } from "./claim-next-card.js";
+import { failCard } from "./fail-card.js";
 import { publishCard } from "./publish-card.js";
 
 export async function pollProject(
@@ -31,6 +32,32 @@ export async function pollProject(
 
   console.log(`[${project.id}] Claimed card: ${card.name}`);
 
+  try {
+    await processClaimedCard(
+      trello,
+      git,
+      github,
+      opencode,
+      commands,
+      project,
+      card,
+    );
+  } catch (error) {
+    console.error(`[${project.id}] Card workflow failed; moving to Failed...`);
+
+    await failCard(trello, project, card.id, error);
+  }
+}
+
+async function processClaimedCard(
+  trello: TrelloClient,
+  git: GitClient,
+  github: GitHubClient,
+  opencode: OpenCodeClient,
+  commands: CommandRunner,
+  project: ProjectConfig,
+  card: TrelloCard,
+): Promise<void> {
   const worktree = await prepareWorktree(git, project, card.id);
 
   console.log(`[${project.id}] Branch: ${worktree.branch}`);
