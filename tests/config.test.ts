@@ -2,22 +2,25 @@ import { describe, expect, it } from "vitest";
 import { parseConfig } from "../src/config/config.js";
 
 const validConfig = `
-trello:
-  boardId: "board"
-  readyListId: "ready"
-  workingListId: "working"
-  reviewListId: "review"
-  doneListId: "done"
+projects:
+  - id: "project-one"
 
-repository:
-  path: "/tmp/repository"
-  github: "owner/repository"
-  defaultBranch: "main"
-  worktreeRoot: "/tmp/worktrees"
+    trello:
+      boardId: "board-one"
+      readyListId: "ready"
+      workingListId: "working"
+      reviewListId: "review"
+      doneListId: "done"
 
-opencode:
-  model: "openai/model"
-  variant: "xhigh"
+    repository:
+      path: "/tmp/repository"
+      github: "owner/repository"
+      defaultBranch: "main"
+      worktreeRoot: "/tmp/worktrees"
+
+    opencode:
+      model: "openai/model"
+      variant: "xhigh"
 
 workflow:
   pollIntervalSeconds: 15
@@ -27,8 +30,61 @@ describe("parseConfig", () => {
   it("accepts valid configuration", () => {
     const config = parseConfig(validConfig);
 
-    expect(config.repository.github).toBe("owner/repository");
+    expect(config.projects).toHaveLength(1);
+
+    const project = config.projects[0];
+
+    expect(project).toBeDefined();
+    expect(project!.id).toBe("project-one");
+    expect(project!.repository.github).toBe("owner/repository");
     expect(config.workflow.pollIntervalSeconds).toBe(15);
+  });
+
+  it("accepts multiple projects", () => {
+    const raw = validConfig.replace(
+      "\nworkflow:",
+      `
+  - id: "project-two"
+
+    trello:
+      boardId: "board-two"
+      readyListId: "ready-two"
+      workingListId: "working-two"
+      reviewListId: "review-two"
+      doneListId: "done-two"
+
+    repository:
+      path: "/tmp/repository-two"
+      github: "owner/repository-two"
+      defaultBranch: "main"
+      worktreeRoot: "/tmp/worktrees-two"
+
+    opencode:
+      model: "openai/model"
+      variant: "xhigh"
+
+workflow:`,
+    );
+
+    const config = parseConfig(raw);
+
+    expect(config.projects).toHaveLength(2);
+
+    const secondProject = config.projects[1];
+
+    expect(secondProject).toBeDefined();
+    expect(secondProject!.id).toBe("project-two");
+  });
+
+  it("rejects an empty project list", () => {
+    const raw = `
+projects: []
+
+workflow:
+  pollIntervalSeconds: 15
+`;
+
+    expect(() => parseConfig(raw)).toThrow();
   });
 
   it("rejects relative repository paths", () => {
@@ -60,6 +116,95 @@ describe("parseConfig", () => {
     );
   });
 
+  it("rejects duplicate project IDs", () => {
+    const raw = validConfig.replace(
+      "\nworkflow:",
+      `
+  - id: "project-one"
+
+    trello:
+      boardId: "board-two"
+      readyListId: "ready-two"
+      workingListId: "working-two"
+      reviewListId: "review-two"
+      doneListId: "done-two"
+
+    repository:
+      path: "/tmp/repository-two"
+      github: "owner/repository-two"
+      defaultBranch: "main"
+      worktreeRoot: "/tmp/worktrees-two"
+
+    opencode:
+      model: "openai/model"
+      variant: "xhigh"
+
+workflow:`,
+    );
+
+    expect(() => parseConfig(raw)).toThrow("Project IDs must be unique");
+  });
+
+  it("rejects duplicate GitHub repositories", () => {
+    const raw = validConfig.replace(
+      "\nworkflow:",
+      `
+  - id: "project-two"
+
+    trello:
+      boardId: "board-two"
+      readyListId: "ready-two"
+      workingListId: "working-two"
+      reviewListId: "review-two"
+      doneListId: "done-two"
+
+    repository:
+      path: "/tmp/repository-two"
+      github: "owner/repository"
+      defaultBranch: "main"
+      worktreeRoot: "/tmp/worktrees-two"
+
+    opencode:
+      model: "openai/model"
+      variant: "xhigh"
+
+workflow:`,
+    );
+
+    expect(() => parseConfig(raw)).toThrow(
+      "GitHub repositories must be unique",
+    );
+  });
+
+  it("rejects duplicate Trello board IDs", () => {
+    const raw = validConfig.replace(
+      "\nworkflow:",
+      `
+  - id: "project-two"
+
+    trello:
+      boardId: "board-one"
+      readyListId: "ready-two"
+      workingListId: "working-two"
+      reviewListId: "review-two"
+      doneListId: "done-two"
+
+    repository:
+      path: "/tmp/repository-two"
+      github: "owner/repository-two"
+      defaultBranch: "main"
+      worktreeRoot: "/tmp/worktrees-two"
+
+    opencode:
+      model: "openai/model"
+      variant: "xhigh"
+
+workflow:`,
+    );
+
+    expect(() => parseConfig(raw)).toThrow("Trello board IDs must be unique");
+  });
+
   it("rejects non-positive poll intervals", () => {
     const raw = validConfig.replace(
       "pollIntervalSeconds: 15",
@@ -70,6 +215,6 @@ describe("parseConfig", () => {
   });
 
   it("rejects malformed YAML", () => {
-    expect(() => parseConfig("trello: [")).toThrow("Invalid YAML");
+    expect(() => parseConfig("projects: [")).toThrow("Invalid YAML");
   });
 });

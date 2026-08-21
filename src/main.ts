@@ -8,10 +8,17 @@ function main(): void {
   parseEnvironment(process.env);
 
   console.log("Agent Orchestrator");
-  console.log(`Repository: ${config.repository.github}`);
-  console.log(`Branch: ${config.repository.defaultBranch}`);
-  console.log(`Model: ${config.opencode.model}`);
-  console.log(`Variant: ${config.opencode.variant}`);
+  console.log(`Projects: ${config.projects.length}`);
+
+  for (const project of config.projects) {
+    console.log("");
+    console.log(`Project: ${project.id}`);
+    console.log(`Repository: ${project.repository.github}`);
+    console.log(`Branch: ${project.repository.defaultBranch}`);
+    console.log(`Trello board: ${project.trello.boardId}`);
+    console.log(`Model: ${project.opencode.model}`);
+    console.log(`Variant: ${project.opencode.variant}`);
+  }
 }
 
 try {

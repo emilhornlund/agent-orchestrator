@@ -1,19 +1,41 @@
-trello:
-  boardId: "your-board-id"
-  readyListId: "ready-list-id"
-  workingListId: "working-list-id"
-  reviewListId: "review-list-id"
-  doneListId: "done-list-id"
+projects:
+  - id: "project"
 
-repository:
-  path: "/absolute/path/to/repository"
-  github: "owner/repository"
-  defaultBranch: "main"
-  worktreeRoot: "/absolute/path/to/worktrees"
+    trello:
+      boardId: "board-id"
+      readyListId: "ready-list-id"
+      workingListId: "working-list-id"
+      reviewListId: "review-list-id"
+      doneListId: "done-list-id"
 
-opencode:
-  model: "your-model"
-  variant: "xhigh"
+    repository:
+      path: "/absolute/path/to/repository"
+      github: "owner/repository"
+      defaultBranch: "main"
+      worktreeRoot: "/absolute/path/to/worktrees/repository"
+
+    opencode:
+      model: "your-model"
+      variant: "xhigh"
+
+  - id: "another-project"
+
+    trello:
+      boardId: "another-board-id"
+      readyListId: "..."
+      workingListId: "..."
+      reviewListId: "..."
+      doneListId: "..."
+
+    repository:
+      path: "/absolute/path/to/another-repository"
+      github: "owner/another-repository"
+      defaultBranch: "main"
+      worktreeRoot: "/absolute/path/to/worktrees/another-repository"
+
+    opencode:
+      model: "your-model"
+      variant: "xhigh"
 
 workflow:
   pollIntervalSeconds: 15
