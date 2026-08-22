@@ -41,6 +41,65 @@ export async function reconcileReviewCards(
     }
 
     if (!pullRequest) {
+      let closedPullRequest;
+
+      try {
+        closedPullRequest = await github.findClosedPullRequest({
+          cwd: project.repository.path,
+          repository: project.repository.github,
+          headBranch: branch,
+        });
+      } catch (error) {
+        console.error(
+          `[${project.id}] Could not check closed pull request for "${card.name}": ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+
+        continue;
+      }
+
+      if (!closedPullRequest) {
+        continue;
+      }
+
+      console.log(
+        `[${project.id}] Human Review card has closed pull request: ${closedPullRequest.url}`,
+      );
+
+      try {
+        await trello.moveCard(card.id, project.trello.failedListId);
+
+        console.log(
+          `[${project.id}] Card with closed pull request moved to Failed`,
+        );
+      } catch (error) {
+        console.error(
+          `[${project.id}] Failed to move card "${card.name}" to Failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+
+        continue;
+      }
+
+      try {
+        await trello.addComment(
+          card.id,
+          [
+            "Pull request was closed without being merged.",
+            "",
+            `Pull request: ${closedPullRequest.url}`,
+          ].join("\n"),
+        );
+      } catch (error) {
+        console.error(
+          `[${project.id}] Failed to add closed pull request comment to "${card.name}": ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+
       continue;
     }
 

@@ -329,4 +329,52 @@ describe("GitHubClient", () => {
       }),
     ).resolves.toBeNull();
   });
+
+  it("finds a closed pull request by head branch", async () => {
+    const runGitHub = vi
+      .fn()
+      .mockResolvedValue("https://github.com/example/repository/pull/123");
+
+    const github = new GitHubClient(runGitHub);
+
+    const result = await github.findClosedPullRequest({
+      cwd: "/repo",
+      repository: "example/repository",
+      headBranch: "agent/card-1",
+    });
+
+    expect(result).toEqual({
+      url: "https://github.com/example/repository/pull/123",
+    });
+
+    expect(runGitHub).toHaveBeenCalledWith("/repo", [
+      "pr",
+      "list",
+      "--repo",
+      "example/repository",
+      "--head",
+      "agent/card-1",
+      "--state",
+      "closed",
+      "--json",
+      "url",
+      "--limit",
+      "1",
+      "--jq",
+      '.[0].url // ""',
+    ]);
+  });
+
+  it("returns null when no closed pull request exists", async () => {
+    const runGitHub = vi.fn().mockResolvedValue("");
+    const github = new GitHubClient(runGitHub);
+
+    await expect(
+      github.findClosedPullRequest({
+        cwd: "/repo",
+        repository: "example/repository",
+        headBranch: "agent/card-1",
+      }),
+    ).resolves.toBeNull();
+  });
 });

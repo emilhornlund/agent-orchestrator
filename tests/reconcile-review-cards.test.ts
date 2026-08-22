@@ -15,6 +15,7 @@ const project = {
   trello: {
     reviewListId: "review",
     doneListId: "done",
+    failedListId: "failed",
   },
 } as ProjectConfig;
 
@@ -45,7 +46,7 @@ describe("reconcileReviewCards", () => {
     expect(trello.moveCard).not.toHaveBeenCalled();
   });
 
-  it("leaves a Human Review card untouched when its PR is not merged", async () => {
+  it("leaves a Human Review card untouched when its PR is still open", async () => {
     const trello = {
       getCards: vi.fn().mockResolvedValue([card]),
       moveCard: vi.fn(),
@@ -55,11 +56,18 @@ describe("reconcileReviewCards", () => {
 
     const github = {
       findMergedPullRequest: vi.fn().mockResolvedValue(null),
+      findClosedPullRequest: vi.fn().mockResolvedValue(null),
     } as unknown as GitHubClient;
 
     await reconcileReviewCards(trello, git, github, project);
 
     expect(trello.moveCard).not.toHaveBeenCalled();
+
+    expect(github.findClosedPullRequest).toHaveBeenCalledWith({
+      cwd: "/repo",
+      repository: "owner/repo",
+      headBranch: "agent/card-1",
+    });
   });
 
   it("deletes the remote branch and moves a merged card to Done", async () => {
@@ -140,5 +148,70 @@ describe("reconcileReviewCards", () => {
     await reconcileReviewCards(trello, git, github, project);
 
     expect(trello.moveCard).not.toHaveBeenCalled();
+  });
+
+  it("moves a card to Failed when its pull request was closed without merge", async () => {
+    const trello = {
+      getCards: vi.fn().mockResolvedValue([card]),
+      moveCard: vi.fn().mockResolvedValue({
+        ...card,
+        idList: "failed",
+      }),
+      addComment: vi.fn().mockResolvedValue(undefined),
+    } as unknown as TrelloClient;
+
+    const git = {
+      remoteBranchExists: vi.fn(),
+      deleteRemoteBranch: vi.fn(),
+    } as unknown as GitClient;
+
+    const github = {
+      findMergedPullRequest: vi.fn().mockResolvedValue(null),
+      findClosedPullRequest: vi.fn().mockResolvedValue({
+        url: "https://github.com/owner/repo/pull/1",
+      }),
+    } as unknown as GitHubClient;
+
+    await reconcileReviewCards(trello, git, github, project);
+
+    expect(trello.moveCard).toHaveBeenCalledWith(
+      "card-1",
+      project.trello.failedListId,
+    );
+
+    expect(trello.addComment).toHaveBeenCalledWith(
+      "card-1",
+      [
+        "Pull request was closed without being merged.",
+        "",
+        "Pull request: https://github.com/owner/repo/pull/1",
+      ].join("\n"),
+    );
+
+    expect(git.remoteBranchExists).not.toHaveBeenCalled();
+    expect(git.deleteRemoteBranch).not.toHaveBeenCalled();
+  });
+
+  it("keeps processing safely when moving a closed pull request card to Failed fails", async () => {
+    const trello = {
+      getCards: vi.fn().mockResolvedValue([card]),
+      moveCard: vi.fn().mockRejectedValue(new Error("move failed")),
+      addComment: vi.fn(),
+    } as unknown as TrelloClient;
+
+    const git = {} as GitClient;
+
+    const github = {
+      findMergedPullRequest: vi.fn().mockResolvedValue(null),
+      findClosedPullRequest: vi.fn().mockResolvedValue({
+        url: "https://github.com/owner/repo/pull/1",
+      }),
+    } as unknown as GitHubClient;
+
+    await expect(
+      reconcileReviewCards(trello, git, github, project),
+    ).resolves.toBeUndefined();
+
+    expect(trello.addComment).not.toHaveBeenCalled();
   });
 });

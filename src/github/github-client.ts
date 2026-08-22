@@ -23,6 +23,12 @@ export interface FindMergedPullRequestOptions {
   headBranch: string;
 }
 
+export interface FindClosedPullRequestOptions {
+  cwd: string;
+  repository: string;
+  headBranch: string;
+}
+
 export interface PullRequest {
   url: string;
 }
@@ -149,6 +155,35 @@ export class GitHubClient {
       options.headBranch,
       "--state",
       "merged",
+      "--json",
+      "url",
+      "--limit",
+      "1",
+      "--jq",
+      '.[0].url // ""',
+    ]);
+
+    if (output.length === 0) {
+      return null;
+    }
+
+    return {
+      url: output,
+    };
+  }
+
+  async findClosedPullRequest(
+    options: FindClosedPullRequestOptions,
+  ): Promise<PullRequest | null> {
+    const output = await this.runGitHubCommand(options.cwd, [
+      "pr",
+      "list",
+      "--repo",
+      options.repository,
+      "--head",
+      options.headBranch,
+      "--state",
+      "closed",
       "--json",
       "url",
       "--limit",
