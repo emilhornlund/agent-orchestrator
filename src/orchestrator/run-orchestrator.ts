@@ -1,4 +1,4 @@
-import type { Config } from "../config/config.js";
+import type { Config, ProjectConfig } from "../config/config.js";
 import type { GitClient } from "../git/git-client.js";
 import type { GitHubClient } from "../github/github-client.js";
 import type { OpenCodeClient } from "../opencode/opencode-client.js";
@@ -28,6 +28,39 @@ function sleep(milliseconds: number, signal: AbortSignal): Promise<void> {
   });
 }
 
+async function runProjectWorker(
+  trello: TrelloClient,
+  git: GitClient,
+  github: GitHubClient,
+  opencode: OpenCodeClient,
+  commands: CommandRunner,
+  project: ProjectConfig,
+  pollIntervalMilliseconds: number,
+  signal: AbortSignal,
+): Promise<void> {
+  while (!signal.aborted) {
+    try {
+      await pollProject(
+        trello,
+        git,
+        github,
+        opencode,
+        commands,
+        project,
+        signal,
+      );
+    } catch (error) {
+      console.error(
+        `[${project.id}] ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+
+    await sleep(pollIntervalMilliseconds, signal);
+  }
+}
+
 export async function runOrchestrator(
   trello: TrelloClient,
   git: GitClient,
@@ -44,27 +77,18 @@ export async function runOrchestrator(
     `Polling every ${config.workflow.pollIntervalSeconds} seconds...`,
   );
 
-  while (!signal.aborted) {
-    for (const project of config.projects) {
-      try {
-        await pollProject(
-          trello,
-          git,
-          github,
-          opencode,
-          commands,
-          project,
-          signal,
-        );
-      } catch (error) {
-        console.error(
-          `[${project.id}] ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        );
-      }
-    }
-
-    await sleep(pollIntervalMilliseconds, signal);
-  }
+  await Promise.all(
+    config.projects.map((project) =>
+      runProjectWorker(
+        trello,
+        git,
+        github,
+        opencode,
+        commands,
+        project,
+        pollIntervalMilliseconds,
+        signal,
+      ),
+    ),
+  );
 }
