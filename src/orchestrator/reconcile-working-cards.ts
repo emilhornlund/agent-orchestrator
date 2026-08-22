@@ -100,8 +100,20 @@ export async function reconcileWorkingCards(
 
     if (!pullRequest) {
       console.warn(
-        `[${project.id}] Working card is stranded with no open pull request: ${card.name} (${card.id})`,
+        `[${project.id}] Working card has no open pull request; moving to Failed: ${card.name} (${card.id})`,
       );
+
+      try {
+        await trello.moveCard(card.id, project.trello.failedListId);
+
+        console.log(`[${project.id}] Stranded Working card moved to Failed`);
+      } catch (error) {
+        console.error(
+          `[${project.id}] Failed to move stranded Working card "${card.name}" to Failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
 
       continue;
     }

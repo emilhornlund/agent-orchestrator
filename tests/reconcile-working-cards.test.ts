@@ -19,6 +19,7 @@ const project = {
   trello: {
     workingListId: "working",
     reviewListId: "review",
+    failedListId: "failed",
   },
 } as ProjectConfig;
 
@@ -80,7 +81,7 @@ describe("reconcileWorkingCards", () => {
     expect(trello.moveCard).toHaveBeenCalledWith("card-1", "review");
   });
 
-  it("leaves a Working card untouched when no open PR exists", async () => {
+  it("moves a Working card to Failed when no open PR exists", async () => {
     const card = {
       id: "card-1",
       name: "Stranded task",
@@ -91,7 +92,10 @@ describe("reconcileWorkingCards", () => {
 
     const trello = {
       getCards: vi.fn().mockResolvedValue([card]),
-      moveCard: vi.fn(),
+      moveCard: vi.fn().mockResolvedValue({
+        ...card,
+        idList: "failed",
+      }),
     } as unknown as TrelloClient;
 
     const git = {} as GitClient;
@@ -102,7 +106,96 @@ describe("reconcileWorkingCards", () => {
 
     await reconcileWorkingCards(trello, git, github, project);
 
-    expect(trello.moveCard).not.toHaveBeenCalled();
+    expect(trello.moveCard).toHaveBeenCalledTimes(1);
+
+    expect(trello.moveCard).toHaveBeenCalledWith(
+      "card-1",
+      project.trello.failedListId,
+    );
+  });
+
+  it("preserves local task state when moving a stranded Working card to Failed", async () => {
+    const card = {
+      id: "card-1",
+      name: "Interrupted task",
+      desc: "",
+      idList: "working",
+      url: "https://trello.example/card-1",
+    };
+
+    const trello = {
+      getCards: vi.fn().mockResolvedValue([card]),
+      moveCard: vi.fn().mockResolvedValue({
+        ...card,
+        idList: "failed",
+      }),
+    } as unknown as TrelloClient;
+
+    const git = {
+      getStatus: vi.fn(),
+      removeWorktree: vi.fn(),
+      pruneWorktrees: vi.fn(),
+      branchExists: vi.fn(),
+      deleteBranch: vi.fn(),
+      resetHard: vi.fn(),
+      cleanUntracked: vi.fn(),
+    } as unknown as GitClient;
+
+    const github = {
+      findPullRequest: vi.fn().mockResolvedValue(null),
+    } as unknown as GitHubClient;
+
+    await reconcileWorkingCards(trello, git, github, project);
+
+    expect(git.getStatus).not.toHaveBeenCalled();
+    expect(git.removeWorktree).not.toHaveBeenCalled();
+    expect(git.pruneWorktrees).not.toHaveBeenCalled();
+    expect(git.deleteBranch).not.toHaveBeenCalled();
+    expect(git.resetHard).not.toHaveBeenCalled();
+    expect(git.cleanUntracked).not.toHaveBeenCalled();
+  });
+
+  it("continues reconciling other cards when moving a stranded card to Failed fails", async () => {
+    const firstCard = {
+      id: "card-1",
+      name: "Failed move",
+      desc: "",
+      idList: "working",
+      url: "https://trello.example/card-1",
+    };
+
+    const secondCard = {
+      id: "card-2",
+      name: "Another stranded task",
+      desc: "",
+      idList: "working",
+      url: "https://trello.example/card-2",
+    };
+
+    const trello = {
+      getCards: vi.fn().mockResolvedValue([firstCard, secondCard]),
+      moveCard: vi
+        .fn()
+        .mockRejectedValueOnce(new Error("Trello unavailable"))
+        .mockResolvedValueOnce({
+          ...secondCard,
+          idList: "failed",
+        }),
+    } as unknown as TrelloClient;
+
+    const git = {} as GitClient;
+
+    const github = {
+      findPullRequest: vi.fn().mockResolvedValue(null),
+    } as unknown as GitHubClient;
+
+    await reconcileWorkingCards(trello, git, github, project);
+
+    expect(trello.moveCard).toHaveBeenCalledTimes(2);
+
+    expect(trello.moveCard).toHaveBeenNthCalledWith(1, "card-1", "failed");
+
+    expect(trello.moveCard).toHaveBeenNthCalledWith(2, "card-2", "failed");
   });
 
   it("continues reconciling other cards when one PR lookup fails", async () => {
