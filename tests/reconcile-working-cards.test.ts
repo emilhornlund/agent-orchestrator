@@ -35,8 +35,9 @@ describe("reconcileWorkingCards", () => {
       findPullRequest: vi.fn(),
     } as unknown as GitHubClient;
 
-    await reconcileWorkingCards(trello, git, github, project);
+    const result = await reconcileWorkingCards(trello, git, github, project);
 
+    expect(result).toBeNull();
     expect(trello.getCards).toHaveBeenCalledWith("working");
     expect(github.findPullRequest).not.toHaveBeenCalled();
     expect(trello.moveCard).not.toHaveBeenCalled();
@@ -68,11 +69,20 @@ describe("reconcileWorkingCards", () => {
       findPullRequest: vi.fn().mockResolvedValue({
         url: "https://github.com/owner/repo/pull/1",
       }),
+      findChangesRequestedPullRequest: vi.fn().mockResolvedValue(null),
     } as unknown as GitHubClient;
 
-    await reconcileWorkingCards(trello, git, github, project);
+    const result = await reconcileWorkingCards(trello, git, github, project);
+
+    expect(result).toBeNull();
 
     expect(github.findPullRequest).toHaveBeenCalledWith({
+      cwd: "/repo",
+      repository: "owner/repo",
+      headBranch: "agent/card-1",
+    });
+
+    expect(github.findChangesRequestedPullRequest).toHaveBeenCalledWith({
       cwd: "/repo",
       repository: "owner/repo",
       headBranch: "agent/card-1",
@@ -232,12 +242,61 @@ describe("reconcileWorkingCards", () => {
         .mockResolvedValueOnce({
           url: "https://github.com/owner/repo/pull/2",
         }),
+      findChangesRequestedPullRequest: vi.fn().mockResolvedValue(null),
     } as unknown as GitHubClient;
 
     await reconcileWorkingCards(trello, git, github, project);
 
     expect(trello.moveCard).toHaveBeenCalledTimes(1);
     expect(trello.moveCard).toHaveBeenCalledWith("card-2", "review");
+  });
+
+  it("returns actionable requested changes for a Working card instead of moving it to Human Review", async () => {
+    const card = {
+      id: "card-1",
+      name: "Interrupted review iteration",
+      desc: "",
+      idList: "working",
+      url: "https://trello.example/card-1",
+    };
+
+    const trello = {
+      getCards: vi.fn().mockResolvedValue([card]),
+      moveCard: vi.fn(),
+    } as unknown as TrelloClient;
+
+    const git = {
+      getStatus: vi.fn(),
+      removeWorktree: vi.fn(),
+      pruneWorktrees: vi.fn(),
+      branchExists: vi.fn(),
+      deleteBranch: vi.fn(),
+    } as unknown as GitClient;
+
+    const github = {
+      findPullRequest: vi.fn().mockResolvedValue({
+        url: "https://github.com/owner/repo/pull/1",
+      }),
+      findChangesRequestedPullRequest: vi.fn().mockResolvedValue({
+        url: "https://github.com/owner/repo/pull/1",
+        feedback: "Please fix the regression.",
+      }),
+    } as unknown as GitHubClient;
+
+    const result = await reconcileWorkingCards(trello, git, github, project);
+
+    expect(result).toEqual({
+      card,
+      pullRequestUrl: "https://github.com/owner/repo/pull/1",
+      feedback: "Please fix the regression.",
+    });
+
+    expect(trello.moveCard).not.toHaveBeenCalled();
+
+    expect(git.getStatus).not.toHaveBeenCalled();
+    expect(git.removeWorktree).not.toHaveBeenCalled();
+    expect(git.pruneWorktrees).not.toHaveBeenCalled();
+    expect(git.deleteBranch).not.toHaveBeenCalled();
   });
 
   it("does not reconcile a claimed card when no open PR exists", async () => {

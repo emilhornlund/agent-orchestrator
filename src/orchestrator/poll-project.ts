@@ -17,7 +17,10 @@ import type { TrelloCard, TrelloClient } from "../trello/trello-client.js";
 import { claimNextCard } from "./claim-next-card.js";
 import { failCard } from "./fail-card.js";
 import { publishCard } from "./publish-card.js";
-import { reconcileReviewCards } from "./reconcile-review-cards.js";
+import {
+  reconcileReviewCards,
+  type ReviewChangeRequest,
+} from "./reconcile-review-cards.js";
 import {
   reconcileClaimedCard,
   reconcileWorkingCards,
@@ -40,68 +43,41 @@ export async function pollProject(
   );
 
   if (reviewChangeRequest) {
-    const card = reviewChangeRequest.card;
-
-    console.log(
-      `[${project.id}] Processing requested changes for: ${card.name}`,
+    await processReviewChangeRequest(
+      trello,
+      git,
+      github,
+      opencode,
+      commands,
+      project,
+      reviewChangeRequest,
+      signal,
     );
-
-    try {
-      const worktree = await processCardChanges(
-        trello,
-        git,
-        github,
-        opencode,
-        commands,
-        project,
-        card,
-        signal,
-        {
-          pullRequestUrl: reviewChangeRequest.pullRequestUrl,
-          feedback: reviewChangeRequest.feedback,
-        },
-      );
-
-      console.log(`[${project.id}] Cleaning up review feedback worktree...`);
-
-      try {
-        await cleanupWorktree({
-          git,
-          project,
-          worktreePath: worktree.path,
-          branch: worktree.branch,
-        });
-
-        console.log(`[${project.id}] Review feedback worktree cleaned up`);
-      } catch (cleanupError) {
-        console.error(
-          `[${project.id}] Review feedback published successfully, but local cleanup failed: ${
-            cleanupError instanceof Error
-              ? cleanupError.message
-              : String(cleanupError)
-          }`,
-        );
-      }
-    } catch (error) {
-      if (signal.aborted) {
-        console.log(
-          `[${project.id}] Review change workflow interrupted by orchestrator shutdown`,
-        );
-
-        return;
-      }
-
-      console.error(
-        `[${project.id}] Review change workflow failed; moving to Failed...`,
-      );
-
-      await failCard(trello, project, card.id, error);
-    }
 
     return;
   }
 
-  await reconcileWorkingCards(trello, git, github, project);
+  const workingChangeRequest = await reconcileWorkingCards(
+    trello,
+    git,
+    github,
+    project,
+  );
+
+  if (workingChangeRequest) {
+    await processReviewChangeRequest(
+      trello,
+      git,
+      github,
+      opencode,
+      commands,
+      project,
+      workingChangeRequest,
+      signal,
+    );
+
+    return;
+  }
 
   const card = await claimNextCard(trello, project);
 
@@ -165,6 +141,73 @@ export async function pollProject(
     }
 
     console.error(`[${project.id}] Card workflow failed; moving to Failed...`);
+
+    await failCard(trello, project, card.id, error);
+  }
+}
+
+async function processReviewChangeRequest(
+  trello: TrelloClient,
+  git: GitClient,
+  github: GitHubClient,
+  opencode: OpenCodeClient,
+  commands: CommandRunner,
+  project: ProjectConfig,
+  reviewChangeRequest: ReviewChangeRequest,
+  signal: AbortSignal,
+): Promise<void> {
+  const card = reviewChangeRequest.card;
+
+  console.log(`[${project.id}] Processing requested changes for: ${card.name}`);
+
+  try {
+    const worktree = await processCardChanges(
+      trello,
+      git,
+      github,
+      opencode,
+      commands,
+      project,
+      card,
+      signal,
+      {
+        pullRequestUrl: reviewChangeRequest.pullRequestUrl,
+        feedback: reviewChangeRequest.feedback,
+      },
+    );
+
+    console.log(`[${project.id}] Cleaning up review feedback worktree...`);
+
+    try {
+      await cleanupWorktree({
+        git,
+        project,
+        worktreePath: worktree.path,
+        branch: worktree.branch,
+      });
+
+      console.log(`[${project.id}] Review feedback worktree cleaned up`);
+    } catch (cleanupError) {
+      console.error(
+        `[${project.id}] Review feedback published successfully, but local cleanup failed: ${
+          cleanupError instanceof Error
+            ? cleanupError.message
+            : String(cleanupError)
+        }`,
+      );
+    }
+  } catch (error) {
+    if (signal.aborted) {
+      console.log(
+        `[${project.id}] Review change workflow interrupted by orchestrator shutdown`,
+      );
+
+      return;
+    }
+
+    console.error(
+      `[${project.id}] Review change workflow failed; moving to Failed...`,
+    );
 
     await failCard(trello, project, card.id, error);
   }

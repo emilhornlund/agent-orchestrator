@@ -6,6 +6,8 @@ import type { GitClient } from "../git/git-client.js";
 import type { GitHubClient } from "../github/github-client.js";
 import type { TrelloCard, TrelloClient } from "../trello/trello-client.js";
 
+import type { ReviewChangeRequest } from "./reconcile-review-cards.js";
+
 export async function reconcileClaimedCard(
   trello: TrelloClient,
   git: GitClient,
@@ -65,11 +67,11 @@ export async function reconcileWorkingCards(
   git: GitClient,
   github: GitHubClient,
   project: ProjectConfig,
-): Promise<void> {
+): Promise<ReviewChangeRequest | null> {
   const cards = await trello.getCards(project.trello.workingListId);
 
   if (cards.length === 0) {
-    return;
+    return null;
   }
 
   console.log(
@@ -121,6 +123,38 @@ export async function reconcileWorkingCards(
     console.log(
       `[${project.id}] Working card already has pull request: ${pullRequest.url}`,
     );
+
+    let changesRequestedPullRequest;
+
+    try {
+      changesRequestedPullRequest =
+        await github.findChangesRequestedPullRequest({
+          cwd: project.repository.path,
+          repository: project.repository.github,
+          headBranch: branch,
+        });
+    } catch (error) {
+      console.error(
+        `[${project.id}] Could not check requested changes while reconciling Working card "${card.name}": ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+
+      continue;
+    }
+
+    if (changesRequestedPullRequest) {
+      console.log(
+        `[${project.id}] Working card has actionable requested changes; resuming review iteration`,
+      );
+
+      return {
+        card,
+        pullRequestUrl: changesRequestedPullRequest.url,
+        feedback: changesRequestedPullRequest.feedback,
+      };
+    }
+
     console.log(`[${project.id}] Moving reconciled card to Human Review...`);
 
     try {
@@ -154,4 +188,6 @@ export async function reconcileWorkingCards(
       );
     }
   }
+
+  return null;
 }
