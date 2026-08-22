@@ -127,6 +127,10 @@ export class GitClient {
     await this.runGit(repositoryPath, ["reset", "--hard", "HEAD"]);
   }
 
+  async resetHardTo(repositoryPath: string, ref: string): Promise<void> {
+    await this.runGit(repositoryPath, ["reset", "--hard", ref]);
+  }
+
   async cleanUntracked(repositoryPath: string): Promise<void> {
     await this.runGit(repositoryPath, ["clean", "-fd"]);
   }

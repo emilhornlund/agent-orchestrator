@@ -1,10 +1,12 @@
 import type { ProjectConfig } from "../config/config.js";
 import { cleanupWorktree } from "../git/cleanup-worktree.js";
 import type { GitClient } from "../git/git-client.js";
+import { prepareReviewWorktree } from "../git/prepare-review-worktree.js";
 import { prepareWorktree } from "../git/prepare-worktree.js";
 import type { GitHubClient } from "../github/github-client.js";
 import { buildCommitPrompt } from "../opencode/build-commit-prompt.js";
 import { buildRemediationPrompt } from "../opencode/build-remediation-prompt.js";
+import { buildReviewFeedbackPrompt } from "../opencode/build-review-feedback-prompt.js";
 import { buildReviewPrompt } from "../opencode/build-review-prompt.js";
 import { buildTaskPrompt } from "../opencode/build-task-prompt.js";
 import type { OpenCodeClient } from "../opencode/opencode-client.js";
@@ -30,7 +32,75 @@ export async function pollProject(
   project: ProjectConfig,
   signal: AbortSignal,
 ): Promise<void> {
-  await reconcileReviewCards(trello, git, github, project);
+  const reviewChangeRequest = await reconcileReviewCards(
+    trello,
+    git,
+    github,
+    project,
+  );
+
+  if (reviewChangeRequest) {
+    const card = reviewChangeRequest.card;
+
+    console.log(
+      `[${project.id}] Processing requested changes for: ${card.name}`,
+    );
+
+    try {
+      const worktree = await processCardChanges(
+        trello,
+        git,
+        github,
+        opencode,
+        commands,
+        project,
+        card,
+        signal,
+        {
+          pullRequestUrl: reviewChangeRequest.pullRequestUrl,
+          feedback: reviewChangeRequest.feedback,
+        },
+      );
+
+      console.log(`[${project.id}] Cleaning up review feedback worktree...`);
+
+      try {
+        await cleanupWorktree({
+          git,
+          project,
+          worktreePath: worktree.path,
+          branch: worktree.branch,
+        });
+
+        console.log(`[${project.id}] Review feedback worktree cleaned up`);
+      } catch (cleanupError) {
+        console.error(
+          `[${project.id}] Review feedback published successfully, but local cleanup failed: ${
+            cleanupError instanceof Error
+              ? cleanupError.message
+              : String(cleanupError)
+          }`,
+        );
+      }
+    } catch (error) {
+      if (signal.aborted) {
+        console.log(
+          `[${project.id}] Review change workflow interrupted by orchestrator shutdown`,
+        );
+
+        return;
+      }
+
+      console.error(
+        `[${project.id}] Review change workflow failed; moving to Failed...`,
+      );
+
+      await failCard(trello, project, card.id, error);
+    }
+
+    return;
+  }
+
   await reconcileWorkingCards(trello, git, github, project);
 
   const card = await claimNextCard(trello, project);
@@ -55,7 +125,7 @@ export async function pollProject(
       return;
     }
 
-    const worktree = await processClaimedCard(
+    const worktree = await processCardChanges(
       trello,
       git,
       github,
@@ -100,7 +170,12 @@ export async function pollProject(
   }
 }
 
-async function processClaimedCard(
+interface ReviewIterationOptions {
+  pullRequestUrl: string;
+  feedback: string;
+}
+
+async function processCardChanges(
   trello: TrelloClient,
   git: GitClient,
   github: GitHubClient,
@@ -109,11 +184,14 @@ async function processClaimedCard(
   project: ProjectConfig,
   card: TrelloCard,
   signal: AbortSignal,
+  reviewIteration?: ReviewIterationOptions,
 ): Promise<{
   path: string;
   branch: string;
 }> {
-  const worktree = await prepareWorktree(git, project, card.id);
+  const worktree = reviewIteration
+    ? await prepareReviewWorktree(git, project, card.id)
+    : await prepareWorktree(git, project, card.id);
 
   let validationResult = "Not configured";
   let reviewResult: string;
@@ -121,24 +199,36 @@ async function processClaimedCard(
 
   console.log(`[${project.id}] Branch: ${worktree.branch}`);
   console.log(`[${project.id}] Worktree: ${worktree.path}`);
-  console.log(`[${project.id}] Starting OpenCode implementation...`);
+  const implementationLabel = reviewIteration
+    ? "review feedback implementation"
+    : "implementation";
+
+  const implementationPrompt = reviewIteration
+    ? buildReviewFeedbackPrompt(
+        card,
+        reviewIteration.pullRequestUrl,
+        reviewIteration.feedback,
+      )
+    : buildTaskPrompt(card);
+
+  console.log(`[${project.id}] Starting OpenCode ${implementationLabel}...`);
 
   const implementation = await opencode.run({
     cwd: worktree.path,
     model: project.opencode.model,
     variant: project.opencode.variant,
     timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
-    prompt: buildTaskPrompt(card),
+    prompt: implementationPrompt,
     signal,
   });
 
   if (implementation.exitCode !== 0) {
     throw new Error(
-      `OpenCode implementation exited with code ${implementation.exitCode}`,
+      `OpenCode ${implementationLabel} exited with code ${implementation.exitCode}`,
     );
   }
 
-  console.log(`[${project.id}] OpenCode implementation completed`);
+  console.log(`[${project.id}] OpenCode ${implementationLabel} completed`);
 
   const status = await git.getStatus(worktree.path);
 

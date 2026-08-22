@@ -377,4 +377,94 @@ describe("GitHubClient", () => {
       }),
     ).resolves.toBeNull();
   });
+
+  it("finds an open pull request with requested changes and collects review feedback", async () => {
+    const runGitHub = vi
+      .fn<RunGitHubCommand>()
+      .mockResolvedValueOnce(
+        JSON.stringify([
+          {
+            url: "https://github.com/example/repository/pull/123",
+            number: 123,
+            reviewDecision: "CHANGES_REQUESTED",
+            latestReviews: [
+              {
+                author: {
+                  login: "reviewer-one",
+                },
+                body: "Please handle the null case.",
+                state: "CHANGES_REQUESTED",
+              },
+            ],
+          },
+        ]),
+      )
+      .mockResolvedValueOnce("reviewer-one: Please add a regression test.");
+
+    const github = new GitHubClient(runGitHub);
+
+    const result = await github.findChangesRequestedPullRequest({
+      cwd: "/repo",
+      repository: "example/repository",
+      headBranch: "agent/card-1",
+    });
+
+    expect(result).toEqual({
+      url: "https://github.com/example/repository/pull/123",
+      feedback: [
+        "reviewer-one: Please handle the null case.",
+        "",
+        "Inline review comments:",
+        "reviewer-one: Please add a regression test.",
+      ].join("\n"),
+    });
+
+    expect(runGitHub).toHaveBeenNthCalledWith(1, "/repo", [
+      "pr",
+      "list",
+      "--repo",
+      "example/repository",
+      "--head",
+      "agent/card-1",
+      "--state",
+      "open",
+      "--json",
+      "url,number,reviewDecision,latestReviews",
+      "--limit",
+      "1",
+    ]);
+
+    expect(runGitHub).toHaveBeenNthCalledWith(2, "/repo", [
+      "api",
+      "repos/example/repository/pulls/123/comments",
+      "--paginate",
+      "--jq",
+      '.[] | select(.body != null and .body != "") | "\\(.user.login): \\(.body)"',
+    ]);
+  });
+
+  it("returns null when the open pull request does not have requested changes", async () => {
+    const runGitHub = vi.fn<RunGitHubCommand>().mockResolvedValue(
+      JSON.stringify([
+        {
+          url: "https://github.com/example/repository/pull/123",
+          number: 123,
+          reviewDecision: "REVIEW_REQUIRED",
+          latestReviews: [],
+        },
+      ]),
+    );
+
+    const github = new GitHubClient(runGitHub);
+
+    await expect(
+      github.findChangesRequestedPullRequest({
+        cwd: "/repo",
+        repository: "example/repository",
+        headBranch: "agent/card-1",
+      }),
+    ).resolves.toBeNull();
+
+    expect(runGitHub).toHaveBeenCalledTimes(1);
+  });
 });

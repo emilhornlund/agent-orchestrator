@@ -518,4 +518,189 @@ describe("pollProject", () => {
       project.trello.reviewListId,
     );
   });
+
+  it("applies requested PR changes and republishes the existing pull request", async () => {
+    const worktreeRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), "agent-orchestrator-review-"),
+    );
+
+    const card: TrelloCard = {
+      id: "card-1",
+      name: "Example task",
+      desc: "Implement the example task",
+      idList: "review",
+      url: "https://trello.com/c/card-1",
+    };
+
+    const project: ProjectConfig = {
+      id: "example",
+      trello: {
+        boardId: "board",
+        readyListId: "ready",
+        workingListId: "working",
+        reviewListId: "review",
+        failedListId: "failed",
+        doneListId: "done",
+      },
+      repository: {
+        path: "/tmp/example-repository",
+        github: "example/repository",
+        defaultBranch: "main",
+        worktreeRoot,
+      },
+      opencode: {
+        model: "test-model",
+        variant: "test-variant",
+        timeoutMinutes: 360,
+      },
+    };
+
+    const worktreePath = path.join(worktreeRoot, card.id);
+
+    fs.mkdirSync(worktreePath);
+
+    try {
+      const trello = {
+        getCards: vi.fn().mockImplementation(async (listId: string) => {
+          if (listId === project.trello.reviewListId) {
+            return [card];
+          }
+
+          return [];
+        }),
+        moveCard: vi
+          .fn()
+          .mockImplementation(async (_cardId: string, listId: string) => ({
+            ...card,
+            idList: listId,
+          })),
+        addComment: vi.fn().mockResolvedValue(undefined),
+      } as unknown as TrelloClient;
+
+      const getStatus = vi
+        .fn()
+        .mockResolvedValueOnce("")
+        .mockResolvedValueOnce(" M src/example.ts")
+        .mockResolvedValueOnce("")
+        .mockResolvedValueOnce("");
+
+      const getHeadSha = vi
+        .fn()
+        .mockResolvedValueOnce("before-review-commit")
+        .mockResolvedValueOnce("after-review-commit");
+
+      const git = {
+        fetch: vi.fn().mockResolvedValue(undefined),
+        getCurrentBranch: vi.fn().mockResolvedValue("agent/card-1"),
+        resetHardTo: vi.fn().mockResolvedValue(undefined),
+        cleanUntracked: vi.fn().mockResolvedValue(undefined),
+        getStatus,
+        getHeadSha,
+        push: vi.fn().mockResolvedValue(undefined),
+        removeWorktree: vi.fn().mockResolvedValue(undefined),
+        pruneWorktrees: vi.fn().mockResolvedValue(undefined),
+        branchExists: vi.fn().mockResolvedValue(true),
+        deleteBranch: vi.fn().mockResolvedValue(undefined),
+      } as unknown as GitClient;
+
+      const github = {
+        findMergedPullRequest: vi.fn().mockResolvedValue(null),
+        findClosedPullRequest: vi.fn().mockResolvedValue(null),
+        findChangesRequestedPullRequest: vi.fn().mockResolvedValue({
+          url: "https://github.com/example/repository/pull/123",
+          feedback: "Please add a regression test.",
+        }),
+        findPullRequest: vi.fn().mockResolvedValue({
+          url: "https://github.com/example/repository/pull/123",
+        }),
+        createPullRequest: vi.fn(),
+      } as unknown as GitHubClient;
+
+      const runOpenCode = vi
+        .fn()
+        .mockResolvedValueOnce({
+          exitCode: 0,
+          output: "",
+        })
+        .mockResolvedValueOnce({
+          exitCode: 0,
+          output: "REVIEW_PASS",
+        })
+        .mockResolvedValueOnce({
+          exitCode: 0,
+          output: "",
+        });
+
+      const opencode = new OpenCodeClient(runOpenCode);
+
+      const commands = new CommandRunner(async () => ({
+        exitCode: 0,
+      }));
+
+      const controller = new AbortController();
+
+      await pollProject(
+        trello,
+        git,
+        github,
+        opencode,
+        commands,
+        project,
+        controller.signal,
+      );
+
+      expect(trello.moveCard).toHaveBeenNthCalledWith(
+        1,
+        "card-1",
+        project.trello.workingListId,
+      );
+
+      expect(trello.moveCard).toHaveBeenNthCalledWith(
+        2,
+        "card-1",
+        project.trello.reviewListId,
+      );
+
+      expect(git.fetch).toHaveBeenCalledWith(
+        project.repository.path,
+        "origin",
+        "agent/card-1",
+      );
+
+      expect(git.resetHardTo).toHaveBeenCalledWith(
+        worktreePath,
+        "origin/agent/card-1",
+      );
+
+      expect(runOpenCode).toHaveBeenCalledTimes(3);
+
+      expect(runOpenCode.mock.calls[0]?.[0].prompt).toContain(
+        "Human review feedback:\nPlease add a regression test.",
+      );
+
+      expect(git.push).toHaveBeenCalledWith(
+        worktreePath,
+        "origin",
+        "agent/card-1",
+      );
+
+      expect(github.findPullRequest).toHaveBeenCalledWith({
+        cwd: worktreePath,
+        repository: "example/repository",
+        headBranch: "agent/card-1",
+      });
+
+      expect(github.createPullRequest).not.toHaveBeenCalled();
+
+      expect(git.removeWorktree).toHaveBeenCalledWith(
+        project.repository.path,
+        worktreePath,
+      );
+    } finally {
+      fs.rmSync(worktreeRoot, {
+        recursive: true,
+        force: true,
+      });
+    }
+  });
 });

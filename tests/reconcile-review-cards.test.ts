@@ -13,6 +13,7 @@ const project = {
     github: "owner/repo",
   },
   trello: {
+    workingListId: "working",
     reviewListId: "review",
     doneListId: "done",
     failedListId: "failed",
@@ -57,6 +58,7 @@ describe("reconcileReviewCards", () => {
     const github = {
       findMergedPullRequest: vi.fn().mockResolvedValue(null),
       findClosedPullRequest: vi.fn().mockResolvedValue(null),
+      findChangesRequestedPullRequest: vi.fn().mockResolvedValue(null),
     } as unknown as GitHubClient;
 
     await reconcileReviewCards(trello, git, github, project);
@@ -210,8 +212,42 @@ describe("reconcileReviewCards", () => {
 
     await expect(
       reconcileReviewCards(trello, git, github, project),
-    ).resolves.toBeUndefined();
+    ).resolves.toBeNull();
 
     expect(trello.addComment).not.toHaveBeenCalled();
+  });
+
+  it("moves a Human Review card to Working and returns requested review feedback", async () => {
+    const trello = {
+      getCards: vi.fn().mockResolvedValue([card]),
+      moveCard: vi.fn().mockResolvedValue({
+        ...card,
+        idList: "working",
+      }),
+    } as unknown as TrelloClient;
+
+    const git = {} as GitClient;
+
+    const github = {
+      findMergedPullRequest: vi.fn().mockResolvedValue(null),
+      findClosedPullRequest: vi.fn().mockResolvedValue(null),
+      findChangesRequestedPullRequest: vi.fn().mockResolvedValue({
+        url: "https://github.com/owner/repo/pull/1",
+        feedback: "Please add a regression test.",
+      }),
+    } as unknown as GitHubClient;
+
+    const result = await reconcileReviewCards(trello, git, github, project);
+
+    expect(trello.moveCard).toHaveBeenCalledWith(
+      "card-1",
+      project.trello.workingListId,
+    );
+
+    expect(result).toEqual({
+      card,
+      pullRequestUrl: "https://github.com/owner/repo/pull/1",
+      feedback: "Please add a regression test.",
+    });
   });
 });

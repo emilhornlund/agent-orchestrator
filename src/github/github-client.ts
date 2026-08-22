@@ -33,6 +33,25 @@ export interface PullRequest {
   url: string;
 }
 
+export interface ChangesRequestedPullRequest extends PullRequest {
+  feedback: string;
+}
+
+interface PullRequestReview {
+  author: {
+    login: string;
+  } | null;
+  body: string;
+  state: string;
+}
+
+interface PullRequestReviewListItem {
+  url: string;
+  number: number;
+  reviewDecision: string;
+  latestReviews: PullRequestReview[];
+}
+
 export type RunGitHubCommand = (cwd: string, args: string[]) => Promise<string>;
 
 const defaultRunGitHubCommand: RunGitHubCommand = async (cwd, args) =>
@@ -198,6 +217,71 @@ export class GitHubClient {
 
     return {
       url: output,
+    };
+  }
+
+  async findChangesRequestedPullRequest(
+    options: FindPullRequestOptions,
+  ): Promise<ChangesRequestedPullRequest | null> {
+    const output = await this.runGitHubCommand(options.cwd, [
+      "pr",
+      "list",
+      "--repo",
+      options.repository,
+      "--head",
+      options.headBranch,
+      "--state",
+      "open",
+      "--json",
+      "url,number,reviewDecision,latestReviews",
+      "--limit",
+      "1",
+    ]);
+
+    if (output.length === 0) {
+      return null;
+    }
+
+    const pullRequests = JSON.parse(output) as PullRequestReviewListItem[];
+    const pullRequest = pullRequests[0];
+
+    if (!pullRequest || pullRequest.reviewDecision !== "CHANGES_REQUESTED") {
+      return null;
+    }
+
+    const inlineComments = await this.runGitHubCommand(options.cwd, [
+      "api",
+      `repos/${options.repository}/pulls/${pullRequest.number}/comments`,
+      "--paginate",
+      "--jq",
+      '.[] | select(.body != null and .body != "") | "\\(.user.login): \\(.body)"',
+    ]);
+
+    const reviewFeedback = pullRequest.latestReviews
+      .filter(
+        (review) =>
+          review.state === "CHANGES_REQUESTED" && review.body.trim().length > 0,
+      )
+      .map((review) => {
+        const author = review.author?.login ?? "reviewer";
+
+        return `${author}: ${review.body.trim()}`;
+      });
+
+    const feedbackParts = [...reviewFeedback];
+
+    if (inlineComments.length > 0) {
+      feedbackParts.push(`Inline review comments:\n${inlineComments}`);
+    }
+
+    const feedback =
+      feedbackParts.length > 0
+        ? feedbackParts.join("\n\n")
+        : "Changes were requested on GitHub, but no written review feedback was returned.";
+
+    return {
+      url: pullRequest.url,
+      feedback,
     };
   }
 
