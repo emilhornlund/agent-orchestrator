@@ -4,6 +4,7 @@ import { loadConfig } from "./config/config.js";
 import { parseEnvironment } from "./config/environment.js";
 import { GitClient } from "./git/git-client.js";
 import { GitHubClient } from "./github/github-client.js";
+import { logger } from "./logging/logger.js";
 import { OpenCodeClient } from "./opencode/opencode-client.js";
 import { runOrchestrator } from "./orchestrator/run-orchestrator.js";
 import { CommandRunner } from "./process/command-runner.js";
@@ -21,7 +22,7 @@ async function main(): Promise<void> {
     }
 
     console.log("");
-    console.log(`Received ${signal}; shutting down...`);
+    logger.event(`Received ${signal}; shutting down...`);
 
     shutdownController.abort();
   }
@@ -42,21 +43,26 @@ async function main(): Promise<void> {
 
   const commands = new CommandRunner();
 
-  console.log("Agent Orchestrator");
-  console.log(`Projects: ${config.projects.length}`);
+  logger.event("Agent Orchestrator");
+  logger.event(`Projects: ${config.projects.length}`);
 
   for (const project of config.projects) {
     console.log("");
-    console.log(`Project: ${project.id}`);
-    console.log(`Repository: ${project.repository.github}`);
-    console.log(`Branch: ${project.repository.defaultBranch}`);
-    console.log(`Trello board ID: ${project.trello.boardId}`);
-    console.log(`Model: ${project.opencode.model}`);
-    console.log(`Variant: ${project.opencode.variant}`);
+
+    const projectLog = logger.child({
+      projectId: project.id,
+    });
+
+    projectLog.event(`Project: ${project.id}`);
+    projectLog.info(`Repository: ${project.repository.github}`);
+    projectLog.info(`Branch: ${project.repository.defaultBranch}`);
+    projectLog.info(`Trello board ID: ${project.trello.boardId}`);
+    projectLog.info(`Model: ${project.opencode.model}`);
+    projectLog.info(`Variant: ${project.opencode.variant}`);
 
     await validateProjectTrello(trello, project);
 
-    console.log("Trello configuration: OK");
+    projectLog.event("Trello configuration: OK");
   }
 
   await runOrchestrator(
@@ -69,10 +75,10 @@ async function main(): Promise<void> {
     shutdownController.signal,
   );
 
-  console.log("Agent Orchestrator stopped");
+  logger.event("Agent Orchestrator stopped");
 }
 
 main().catch((error: unknown) => {
-  console.error(error instanceof Error ? error.message : String(error));
+  logger.error(error instanceof Error ? error.message : String(error));
   process.exitCode = 1;
 });

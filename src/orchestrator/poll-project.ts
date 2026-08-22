@@ -4,6 +4,8 @@ import type { GitClient } from "../git/git-client.js";
 import { prepareReviewWorktree } from "../git/prepare-review-worktree.js";
 import { prepareWorktree } from "../git/prepare-worktree.js";
 import type { GitHubClient } from "../github/github-client.js";
+import { logger } from "../logging/logger.js";
+import { getSessionLogPath } from "../logging/session-log.js";
 import { buildCommitPrompt } from "../opencode/build-commit-prompt.js";
 import { buildRemediationPrompt } from "../opencode/build-remediation-prompt.js";
 import { buildReviewFeedbackPrompt } from "../opencode/build-review-feedback-prompt.js";
@@ -90,11 +92,16 @@ export async function pollProject(
   const card = await claimNextCard(trello, project);
 
   if (!card) {
-    console.log(`[${project.id}] No cards ready`);
+    logger.child({ projectId: project.id }).debug("No cards ready");
     return;
   }
 
-  console.log(`[${project.id}] Claimed card: ${card.name}`);
+  logger
+    .child({
+      projectId: project.id,
+      cardId: card.id,
+    })
+    .event(`Claimed card: ${card.name}`);
 
   try {
     const reconciled = await reconcileClaimedCard(
@@ -248,6 +255,8 @@ async function processCardChanges(
   let reviewResult: string;
   let remediationResult: string;
 
+  const sessionLogPath = getSessionLogPath(project.id, card.id);
+
   console.log(`[${project.id}] Branch: ${worktree.branch}`);
   console.log(`[${project.id}] Worktree: ${worktree.path}`);
   const implementationLabel = reviewIteration
@@ -271,6 +280,8 @@ async function processCardChanges(
     timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
     prompt: implementationPrompt,
     signal,
+    sessionLogPath,
+    sessionLabel: `OpenCode ${implementationLabel}`,
   });
 
   if (implementation.exitCode !== 0) {
@@ -303,6 +314,8 @@ async function processCardChanges(
     const validation = await commands.run({
       cwd: worktree.path,
       command: project.repository.validationCommand,
+      sessionLogPath,
+      sessionLabel: "Repository validation",
     });
 
     if (validation.exitCode !== 0) {
@@ -326,6 +339,8 @@ async function processCardChanges(
     timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
     prompt: buildReviewPrompt(card),
     signal,
+    sessionLogPath,
+    sessionLabel: "OpenCode review",
   });
 
   if (review.exitCode !== 0) {
@@ -356,6 +371,8 @@ async function processCardChanges(
       timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
       prompt: buildRemediationPrompt(card, review.output),
       signal,
+      sessionLogPath,
+      sessionLabel: "OpenCode remediation",
     });
 
     if (remediation.exitCode !== 0) {
@@ -384,6 +401,8 @@ async function processCardChanges(
       const validation = await commands.run({
         cwd: worktree.path,
         command: project.repository.validationCommand,
+        sessionLogPath,
+        sessionLabel: "Repository validation after remediation",
       });
 
       if (validation.exitCode !== 0) {
@@ -409,6 +428,8 @@ async function processCardChanges(
       timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
       prompt: buildReviewPrompt(card),
       signal,
+      sessionLogPath,
+      sessionLabel: "OpenCode second review",
     });
 
     if (secondReview.exitCode !== 0) {
@@ -443,6 +464,8 @@ async function processCardChanges(
     timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
     prompt: buildCommitPrompt(card),
     signal,
+    sessionLogPath,
+    sessionLabel: "OpenCode commit",
   });
 
   if (commit.exitCode !== 0) {

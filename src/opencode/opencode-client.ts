@@ -1,5 +1,10 @@
 import { spawn } from "node:child_process";
 
+import {
+  appendSessionLog,
+  appendSessionSection,
+} from "../logging/session-log.js";
+
 const shutdownGraceMilliseconds = 5_000;
 
 export interface OpenCodeRunOptions {
@@ -9,6 +14,8 @@ export interface OpenCodeRunOptions {
   timeoutMilliseconds: number;
   prompt: string;
   signal: AbortSignal;
+  sessionLogPath?: string;
+  sessionLabel?: string;
 }
 
 export interface OpenCodeRunResult {
@@ -67,11 +74,27 @@ const defaultRunOpenCode: RunOpenCode = async ({
   timeoutMilliseconds,
   prompt,
   signal,
+  sessionLogPath,
+  sessionLabel,
 }) =>
   new Promise((resolve, reject) => {
     if (signal.aborted) {
       reject(new OpenCodeRunAbortedError());
       return;
+    }
+
+    if (sessionLogPath) {
+      appendSessionSection(sessionLogPath, sessionLabel ?? "OpenCode session");
+
+      appendSessionLog(
+        sessionLogPath,
+        [
+          `Working directory: ${cwd}`,
+          `Model: ${model}`,
+          `Variant: ${variant}`,
+          "",
+        ].join("\n"),
+      );
     }
 
     const child = spawn(
@@ -97,9 +120,12 @@ const defaultRunOpenCode: RunOpenCode = async ({
 
       timedOut = true;
 
-      console.error(
-        `OpenCode exceeded safety timeout of ${timeoutMilliseconds}ms; terminating`,
-      );
+      if (sessionLogPath) {
+        appendSessionLog(
+          sessionLogPath,
+          `\nOpenCode exceeded safety timeout of ${timeoutMilliseconds}ms; terminating\n`,
+        );
+      }
 
       terminate();
     }, timeoutMilliseconds);
@@ -114,7 +140,12 @@ const defaultRunOpenCode: RunOpenCode = async ({
           return;
         }
 
-        console.error("OpenCode did not exit after SIGTERM; sending SIGKILL");
+        if (sessionLogPath) {
+          appendSessionLog(
+            sessionLogPath,
+            "\nOpenCode did not exit after SIGTERM; sending SIGKILL\n",
+          );
+        }
 
         signalProcessTree(child.pid, "SIGKILL", (signal) => child.kill(signal));
       }, shutdownGraceMilliseconds);
@@ -130,12 +161,24 @@ const defaultRunOpenCode: RunOpenCode = async ({
 
     child.stdout.on("data", (chunk: Buffer) => {
       const text = chunk.toString();
+
       output += text;
-      process.stdout.write(text);
+
+      if (sessionLogPath) {
+        appendSessionLog(sessionLogPath, text);
+      } else {
+        process.stdout.write(text);
+      }
     });
 
     child.stderr.on("data", (chunk: Buffer) => {
-      process.stderr.write(chunk);
+      const text = chunk.toString();
+
+      if (sessionLogPath) {
+        appendSessionLog(sessionLogPath, text);
+      } else {
+        process.stderr.write(text);
+      }
     });
 
     child.once("error", (error) => {

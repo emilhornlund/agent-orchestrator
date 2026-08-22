@@ -1,8 +1,15 @@
 import { spawn } from "node:child_process";
 
+import {
+  appendSessionLog,
+  appendSessionSection,
+} from "../logging/session-log.js";
+
 export interface CommandRunOptions {
   cwd: string;
   command: string;
+  sessionLogPath?: string;
+  sessionLabel?: string;
 }
 
 export interface CommandRunResult {
@@ -13,15 +20,49 @@ export type RunCommand = (
   options: CommandRunOptions,
 ) => Promise<CommandRunResult>;
 
-const defaultRunCommand: RunCommand = async ({ cwd, command }) =>
+const defaultRunCommand: RunCommand = async ({
+  cwd,
+  command,
+  sessionLogPath,
+  sessionLabel,
+}) =>
   new Promise((resolve, reject) => {
+    if (sessionLogPath) {
+      appendSessionSection(sessionLogPath, sessionLabel ?? "Command");
+
+      appendSessionLog(
+        sessionLogPath,
+        [`Working directory: ${cwd}`, `Command: ${command}`, ""].join("\n"),
+      );
+    }
+
     const child = spawn(command, {
       cwd,
       shell: true,
-      stdio: "inherit",
+      stdio: ["inherit", "pipe", "pipe"],
     });
 
     let settled = false;
+
+    child.stdout.on("data", (chunk: Buffer) => {
+      const text = chunk.toString();
+
+      if (sessionLogPath) {
+        appendSessionLog(sessionLogPath, text);
+      } else {
+        process.stdout.write(text);
+      }
+    });
+
+    child.stderr.on("data", (chunk: Buffer) => {
+      const text = chunk.toString();
+
+      if (sessionLogPath) {
+        appendSessionLog(sessionLogPath, text);
+      } else {
+        process.stderr.write(text);
+      }
+    });
 
     child.once("error", (error) => {
       if (settled) {

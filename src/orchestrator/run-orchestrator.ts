@@ -1,6 +1,7 @@
 import type { Config, ProjectConfig } from "../config/config.js";
 import type { GitClient } from "../git/git-client.js";
 import type { GitHubClient } from "../github/github-client.js";
+import { logger } from "../logging/logger.js";
 import type { OpenCodeClient } from "../opencode/opencode-client.js";
 import type { CommandRunner } from "../process/command-runner.js";
 import type { TrelloClient } from "../trello/trello-client.js";
@@ -50,11 +51,9 @@ async function runProjectWorker(
         signal,
       );
     } catch (error) {
-      console.error(
-        `[${project.id}] ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
+      logger
+        .child({ projectId: project.id })
+        .error(error instanceof Error ? error.message : String(error));
     }
 
     await sleep(pollIntervalMilliseconds, signal);
@@ -73,7 +72,8 @@ export async function runOrchestrator(
   const pollIntervalMilliseconds = config.workflow.pollIntervalSeconds * 1000;
 
   console.log("");
-  console.log(
+
+  logger.event(
     `Polling every ${config.workflow.pollIntervalSeconds} seconds...`,
   );
 

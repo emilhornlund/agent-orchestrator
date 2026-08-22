@@ -368,6 +368,10 @@ describe("pollProject failure boundaries", () => {
         expect(scenario.runCommand).toHaveBeenCalledWith({
           cwd: scenario.worktreePath,
           command: "yarn validate",
+          sessionLogPath: expect.stringMatching(
+            /logs\/sessions\/example\/card-1\.log$/,
+          ),
+          sessionLabel: "Repository validation",
         });
         expect(scenario.runOpenCode).toHaveBeenCalledTimes(1);
         expectNothingPublished(scenario);
