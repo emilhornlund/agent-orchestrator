@@ -125,7 +125,7 @@ describe("GitClient", () => {
   });
 
   it("pushes a branch and configures its upstream", async () => {
-    const runGit = vi.fn().mockResolvedValue("");
+    const runGit = vi.fn<RunGit>().mockResolvedValue("");
     const git = new GitClient(runGit);
 
     await git.push("/tmp/repository", "origin", "agent/example");
@@ -139,7 +139,7 @@ describe("GitClient", () => {
   });
 
   it("removes a worktree", async () => {
-    const runGit = vi.fn().mockResolvedValue("");
+    const runGit = vi.fn<RunGit>().mockResolvedValue("");
     const git = new GitClient(runGit);
 
     await git.removeWorktree("/repo", "/worktrees/card-1");
@@ -152,7 +152,7 @@ describe("GitClient", () => {
   });
 
   it("deletes a local branch", async () => {
-    const runGit = vi.fn().mockResolvedValue("");
+    const runGit = vi.fn<RunGit>().mockResolvedValue("");
     const git = new GitClient(runGit);
 
     await git.deleteBranch("/repo", "agent/card-1");
@@ -165,11 +165,33 @@ describe("GitClient", () => {
   });
 
   it("prunes stale worktree metadata", async () => {
-    const runGit = vi.fn().mockResolvedValue("");
+    const runGit = vi.fn<RunGit>().mockResolvedValue("");
     const git = new GitClient(runGit);
 
     await git.pruneWorktrees("/repo");
 
     expect(runGit).toHaveBeenCalledWith("/repo", ["worktree", "prune"]);
+  });
+
+  it("hard-resets a worktree to HEAD", async () => {
+    const runGit = vi.fn<RunGit>().mockResolvedValue("");
+    const git = new GitClient(runGit);
+
+    await git.resetHard("/worktree");
+
+    expect(runGit).toHaveBeenCalledWith("/worktree", [
+      "reset",
+      "--hard",
+      "HEAD",
+    ]);
+  });
+
+  it("removes untracked files from a worktree", async () => {
+    const runGit = vi.fn<RunGit>().mockResolvedValue("");
+    const git = new GitClient(runGit);
+
+    await git.cleanUntracked("/worktree");
+
+    expect(runGit).toHaveBeenCalledWith("/worktree", ["clean", "-fd"]);
   });
 });

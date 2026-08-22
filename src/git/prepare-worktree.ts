@@ -36,9 +36,20 @@ export async function prepareWorktree(
     const status = await git.getStatus(worktreePath);
 
     if (status.length > 0) {
-      throw new Error(
-        `Existing worktree ${worktreePath} has uncommitted changes:\n${status}`,
+      console.log(
+        `[${project.id}] Existing worktree has uncommitted changes; resetting for retry...`,
       );
+
+      await git.resetHard(worktreePath);
+      await git.cleanUntracked(worktreePath);
+
+      const statusAfterReset = await git.getStatus(worktreePath);
+
+      if (statusAfterReset.length > 0) {
+        throw new Error(
+          `Existing worktree ${worktreePath} is still dirty after retry reset:\n${statusAfterReset}`,
+        );
+      }
     }
 
     return {

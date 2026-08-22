@@ -122,4 +122,12 @@ export class GitClient {
   async pruneWorktrees(repositoryPath: string): Promise<void> {
     await this.runGit(repositoryPath, ["worktree", "prune"]);
   }
+
+  async resetHard(repositoryPath: string): Promise<void> {
+    await this.runGit(repositoryPath, ["reset", "--hard", "HEAD"]);
+  }
+
+  async cleanUntracked(repositoryPath: string): Promise<void> {
+    await this.runGit(repositoryPath, ["clean", "-fd"]);
+  }
 }
