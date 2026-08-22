@@ -115,6 +115,10 @@ async function processClaimedCard(
 }> {
   const worktree = await prepareWorktree(git, project, card.id);
 
+  let validationResult = "Not configured";
+  let reviewResult: string;
+  let remediationResult: string;
+
   console.log(`[${project.id}] Branch: ${worktree.branch}`);
   console.log(`[${project.id}] Worktree: ${worktree.path}`);
   console.log(`[${project.id}] Starting OpenCode implementation...`);
@@ -162,6 +166,8 @@ async function processClaimedCard(
       );
     }
 
+    validationResult = "Passed";
+
     console.log(`[${project.id}] Repository validation passed`);
   }
 
@@ -180,11 +186,16 @@ async function processClaimedCard(
     throw new Error(`OpenCode review exited with code ${review.exitCode}`);
   }
 
-  const reviewResult = parseReviewResult(review.output);
+  const parsedReviewResult = parseReviewResult(review.output);
 
-  if (reviewResult === "pass") {
+  if (parsedReviewResult === "pass") {
+    reviewResult = "Passed";
+    remediationResult = "Not required";
+
     console.log(`[${project.id}] OpenCode review passed`);
   } else {
+    remediationResult = "Applied after initial review failure";
+
     console.log(
       `[${project.id}] OpenCode review failed; starting remediation...`,
     );
@@ -228,6 +239,8 @@ async function processClaimedCard(
         );
       }
 
+      validationResult = "Passed after remediation";
+
       console.log(
         `[${project.id}] Repository validation after remediation passed`,
       );
@@ -255,6 +268,8 @@ async function processClaimedCard(
     if (secondReviewResult === "fail") {
       throw new Error("OpenCode review failed after remediation");
     }
+
+    reviewResult = "Passed after remediation";
 
     console.log(`[${project.id}] OpenCode review passed after remediation`);
   }
@@ -300,6 +315,10 @@ async function processClaimedCard(
     card,
     worktreePath: worktree.path,
     branch: worktree.branch,
+    commitSha: headAfterCommit,
+    validationResult,
+    reviewResult,
+    remediationResult,
   });
 
   return worktree;

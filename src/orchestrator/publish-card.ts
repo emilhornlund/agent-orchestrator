@@ -11,6 +11,10 @@ export interface PublishCardOptions {
   card: TrelloCard;
   worktreePath: string;
   branch: string;
+  commitSha: string;
+  validationResult: string;
+  reviewResult: string;
+  remediationResult: string;
 }
 
 export async function publishCard({
@@ -21,6 +25,10 @@ export async function publishCard({
   card,
   worktreePath,
   branch,
+  commitSha,
+  validationResult,
+  reviewResult,
+  remediationResult,
 }: PublishCardOptions): Promise<void> {
   console.log(`[${project.id}] Pushing branch ${branch}...`);
 
@@ -63,4 +71,26 @@ export async function publishCard({
   await trello.moveCard(card.id, project.trello.reviewListId);
 
   console.log(`[${project.id}] Trello card moved to Human Review`);
+
+  const comment = [
+    "Agent Orchestrator completed successfully.",
+    "",
+    `PR: ${pullRequest.url}`,
+    `Commit: ${commitSha}`,
+    `Validation: ${validationResult}`,
+    `Review: ${reviewResult}`,
+    `Remediation: ${remediationResult}`,
+  ].join("\n");
+
+  try {
+    await trello.addComment(card.id, comment);
+
+    console.log(`[${project.id}] Trello card updated with workflow summary`);
+  } catch (error) {
+    console.error(
+      `[${project.id}] Failed to add workflow summary to Trello card: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
 }

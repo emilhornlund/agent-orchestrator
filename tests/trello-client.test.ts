@@ -167,4 +167,53 @@ describe("TrelloClient", () => {
       method: "PUT",
     });
   });
+
+  it("adds a comment to a card", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: "action-1",
+          type: "commentCard",
+          date: "2026-08-22T09:00:00.000Z",
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      ),
+    );
+
+    const client = new TrelloClient({
+      apiKey: "test-key",
+      token: "test-token",
+    });
+
+    const action = await client.addComment(
+      "card-1",
+      "Pull request: https://github.com/example/repository/pull/123",
+    );
+
+    expect(action).toEqual({
+      id: "action-1",
+      type: "commentCard",
+      date: "2026-08-22T09:00:00.000Z",
+    });
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+
+    const [requestUrl, requestOptions] = fetchMock.mock.calls[0] ?? [];
+    const url = new URL(String(requestUrl));
+
+    expect(url.pathname).toBe("/1/cards/card-1/actions/comments");
+    expect(url.searchParams.get("key")).toBe("test-key");
+    expect(url.searchParams.get("token")).toBe("test-token");
+    expect(url.searchParams.get("text")).toBe(
+      "Pull request: https://github.com/example/repository/pull/123",
+    );
+    expect(requestOptions).toEqual({
+      method: "POST",
+    });
+  });
 });

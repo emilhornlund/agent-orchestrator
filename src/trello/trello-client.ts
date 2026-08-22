@@ -23,6 +23,12 @@ export interface TrelloCard {
   url: string;
 }
 
+export interface TrelloCommentAction {
+  id: string;
+  type: string;
+  date: string;
+}
+
 export class TrelloClient {
   private readonly baseUrl = "https://api.trello.com/1";
 
@@ -43,6 +49,12 @@ export class TrelloClient {
   moveCard(cardId: string, listId: string): Promise<TrelloCard> {
     return this.put<TrelloCard>(`/cards/${cardId}`, {
       idList: listId,
+    });
+  }
+
+  addComment(cardId: string, text: string): Promise<TrelloCommentAction> {
+    return this.post<TrelloCommentAction>(`/cards/${cardId}/actions/comments`, {
+      text,
     });
   }
 
@@ -78,6 +90,32 @@ export class TrelloClient {
 
     const response = await fetch(url, {
       method: "PUT",
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        `Trello request failed: ${response.status} ${response.statusText}`,
+      );
+    }
+
+    return (await response.json()) as T;
+  }
+
+  private async post<T>(
+    path: string,
+    parameters: Record<string, string>,
+  ): Promise<T> {
+    const url = new URL(`${this.baseUrl}${path}`);
+
+    url.searchParams.set("key", this.options.apiKey);
+    url.searchParams.set("token", this.options.token);
+
+    for (const [name, value] of Object.entries(parameters)) {
+      url.searchParams.set(name, value);
+    }
+
+    const response = await fetch(url, {
+      method: "POST",
     });
 
     if (!response.ok) {

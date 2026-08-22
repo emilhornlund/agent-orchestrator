@@ -41,6 +41,7 @@ function createProject(worktreeRoot: string): ProjectConfig {
     opencode: {
       model: "test-model",
       variant: "test-variant",
+      timeoutMinutes: 360,
     },
   };
 }

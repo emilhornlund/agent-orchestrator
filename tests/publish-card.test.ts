@@ -29,6 +29,7 @@ function createProject(): ProjectConfig {
     opencode: {
       model: "test-model",
       variant: "test-variant",
+      timeoutMinutes: 360,
     },
   };
 }
@@ -74,6 +75,17 @@ describe("publishCard", () => {
         return createCard();
       });
 
+    const addComment = vi
+      .spyOn(trello, "addComment")
+      .mockImplementation(async () => {
+        events.push("comment");
+        return {
+          id: "action-1",
+          type: "commentCard",
+          date: "2026-08-22T09:00:00.000Z",
+        };
+      });
+
     await publishCard({
       trello,
       git: new GitClient(runGit),
@@ -82,9 +94,13 @@ describe("publishCard", () => {
       card: createCard(),
       worktreePath: "/tmp/example-worktrees/card-1",
       branch: "agent/card-1",
+      commitSha: "abc123",
+      validationResult: "Passed",
+      reviewResult: "Passed",
+      remediationResult: "Not required",
     });
 
-    expect(events).toEqual(["push", "find-pr", "create-pr", "move"]);
+    expect(events).toEqual(["push", "find-pr", "create-pr", "move", "comment"]);
 
     expect(runGit).toHaveBeenCalledWith("/tmp/example-worktrees/card-1", [
       "push",
@@ -138,6 +154,19 @@ describe("publishCard", () => {
     );
 
     expect(moveCard).toHaveBeenCalledWith("card-1", "review");
+
+    expect(addComment).toHaveBeenCalledWith(
+      "card-1",
+      [
+        "Agent Orchestrator completed successfully.",
+        "",
+        "PR: https://github.com/example/repository/pull/123",
+        "Commit: abc123",
+        "Validation: Passed",
+        "Review: Passed",
+        "Remediation: Not required",
+      ].join("\n"),
+    );
   });
 
   it("reuses an existing pull request instead of creating another one", async () => {
@@ -167,6 +196,16 @@ describe("publishCard", () => {
       return createCard();
     });
 
+    vi.spyOn(trello, "addComment").mockImplementation(async () => {
+      events.push("comment");
+
+      return {
+        id: "action-1",
+        type: "commentCard",
+        date: "2026-08-22T09:00:00.000Z",
+      };
+    });
+
     await publishCard({
       trello,
       git: new GitClient(runGit),
@@ -175,9 +214,13 @@ describe("publishCard", () => {
       card: createCard(),
       worktreePath: "/tmp/example-worktrees/card-1",
       branch: "agent/card-1",
+      commitSha: "abc123",
+      validationResult: "Passed",
+      reviewResult: "Passed",
+      remediationResult: "Not required",
     });
 
-    expect(events).toEqual(["push", "find-pr", "move"]);
+    expect(events).toEqual(["push", "find-pr", "move", "comment"]);
 
     expect(runGitHubCommand).toHaveBeenCalledTimes(1);
   });
@@ -203,6 +246,10 @@ describe("publishCard", () => {
         card: createCard(),
         worktreePath: "/tmp/example-worktrees/card-1",
         branch: "agent/card-1",
+        commitSha: "abc123",
+        validationResult: "Passed",
+        reviewResult: "Passed",
+        remediationResult: "Not required",
       }),
     ).rejects.toThrow("push failed");
 
@@ -237,6 +284,10 @@ describe("publishCard", () => {
         card: createCard(),
         worktreePath: "/tmp/example-worktrees/card-1",
         branch: "agent/card-1",
+        commitSha: "abc123",
+        validationResult: "Passed",
+        reviewResult: "Passed",
+        remediationResult: "Not required",
       }),
     ).rejects.toThrow("PR creation failed");
 
@@ -266,11 +317,59 @@ describe("publishCard", () => {
         card: createCard(),
         worktreePath: "/tmp/example-worktrees/card-1",
         branch: "agent/card-1",
+        commitSha: "abc123",
+        validationResult: "Passed",
+        reviewResult: "Passed",
+        remediationResult: "Not required",
       }),
     ).rejects.toBe(lookupError);
 
     expect(runGitHubCommand).toHaveBeenCalledTimes(1);
     expect(moveCard).not.toHaveBeenCalled();
+  });
+
+  it("does not fail publishing when adding the workflow comment fails", async () => {
+    const runGit = vi.fn<RunGit>().mockResolvedValue("");
+
+    const runGitHubCommand = vi.fn<RunGitHubCommand>(async (_cwd, args) => {
+      if (args[0] === "pr" && args[1] === "list") {
+        return "https://github.com/example/repository/pull/123";
+      }
+
+      throw new Error("PR creation should not have been called");
+    });
+
+    const trello = new TrelloClient({
+      apiKey: "test-key",
+      token: "test-token",
+    });
+
+    const moveCard = vi.spyOn(trello, "moveCard").mockResolvedValue({
+      ...createCard(),
+      idList: "review",
+    });
+
+    vi.spyOn(trello, "addComment").mockRejectedValue(
+      new Error("comment failed"),
+    );
+
+    await expect(
+      publishCard({
+        trello,
+        git: new GitClient(runGit),
+        github: new GitHubClient(runGitHubCommand),
+        project: createProject(),
+        card: createCard(),
+        worktreePath: "/tmp/example-worktrees/card-1",
+        branch: "agent/card-1",
+        commitSha: "abc123",
+        validationResult: "Passed",
+        reviewResult: "Passed",
+        remediationResult: "Not required",
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(moveCard).toHaveBeenCalledWith("card-1", "review");
   });
 
   it("propagates a Human Review move failure after publishing", async () => {
@@ -301,6 +400,10 @@ describe("publishCard", () => {
         card: createCard(),
         worktreePath: "/tmp/example-worktrees/card-1",
         branch: "agent/card-1",
+        commitSha: "abc123",
+        validationResult: "Passed",
+        reviewResult: "Passed",
+        remediationResult: "Not required",
       }),
     ).rejects.toBe(reviewError);
 

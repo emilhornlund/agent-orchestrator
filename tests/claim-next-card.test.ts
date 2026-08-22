@@ -29,6 +29,7 @@ function createProject(): Project {
     opencode: {
       model: "gpt-5.6-luna",
       variant: "xhigh",
+      timeoutMinutes: 360,
     },
   };
 }

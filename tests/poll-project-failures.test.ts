@@ -92,6 +92,7 @@ function createScenario(options: ScenarioOptions = {}): Scenario {
     opencode: {
       model: "test-model",
       variant: "test-variant",
+      timeoutMinutes: 360,
     },
   };
 

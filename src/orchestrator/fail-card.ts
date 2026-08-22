@@ -29,5 +29,24 @@ export async function failCard(
     );
   }
 
+  try {
+    await trello.addComment(
+      cardId,
+      [
+        "Agent Orchestrator failed.",
+        "",
+        `Reason: ${originalError.message}`,
+      ].join("\n"),
+    );
+  } catch (commentError) {
+    console.error(
+      `[${project.id}] Failed to add failure reason to Trello card: ${
+        commentError instanceof Error
+          ? commentError.message
+          : String(commentError)
+      }`,
+    );
+  }
+
   throw originalError;
 }

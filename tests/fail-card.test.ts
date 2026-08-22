@@ -23,6 +23,7 @@ const project: ProjectConfig = {
   opencode: {
     model: "test-model",
     variant: "test-variant",
+    timeoutMinutes: 360,
   },
 };
 
@@ -41,6 +42,12 @@ describe("failCard", () => {
       url: "https://trello.com/c/card-1",
     });
 
+    const addComment = vi.spyOn(trello, "addComment").mockResolvedValue({
+      id: "action-1",
+      type: "commentCard",
+      date: "2026-08-22T09:00:00.000Z",
+    });
+
     const workflowError = new Error("implementation failed");
 
     await expect(
@@ -48,6 +55,38 @@ describe("failCard", () => {
     ).rejects.toBe(workflowError);
 
     expect(moveCard).toHaveBeenCalledWith("card-1", "failed");
+
+    expect(addComment).toHaveBeenCalledWith(
+      "card-1",
+      ["Agent Orchestrator failed.", "", "Reason: implementation failed"].join(
+        "\n",
+      ),
+    );
+  });
+
+  it("preserves the workflow error when adding the failure comment fails", async () => {
+    const trello = new TrelloClient({
+      apiKey: "key",
+      token: "token",
+    });
+
+    vi.spyOn(trello, "moveCard").mockResolvedValue({
+      id: "card-1",
+      name: "Card",
+      desc: "",
+      idList: "failed",
+      url: "https://trello.com/c/card-1",
+    });
+
+    vi.spyOn(trello, "addComment").mockRejectedValue(
+      new Error("comment failed"),
+    );
+
+    const workflowError = new Error("implementation failed");
+
+    await expect(
+      failCard(trello, project, "card-1", workflowError),
+    ).rejects.toBe(workflowError);
   });
 
   it("preserves both errors when moving to Failed also fails", async () => {

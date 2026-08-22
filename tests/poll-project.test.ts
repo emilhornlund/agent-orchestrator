@@ -47,6 +47,7 @@ describe("pollProject", () => {
       opencode: {
         model: "test-model",
         variant: "test-variant",
+        timeoutMinutes: 360,
       },
     };
 
@@ -170,7 +171,17 @@ describe("pollProject", () => {
         exitCode: 0,
       }));
 
-      await pollProject(trello, git, github, opencode, commands, project);
+      const controller = new AbortController();
+
+      await pollProject(
+        trello,
+        git,
+        github,
+        opencode,
+        commands,
+        project,
+        controller.signal,
+      );
 
       expect(events).toEqual([
         "get-working",
@@ -225,6 +236,7 @@ describe("pollProject", () => {
       opencode: {
         model: "test-model",
         variant: "test-variant",
+        timeoutMinutes: 360,
       },
     };
 
@@ -368,7 +380,17 @@ describe("pollProject", () => {
         exitCode: 0,
       }));
 
-      await pollProject(trello, git, github, opencode, commands, project);
+      const controller = new AbortController();
+
+      await pollProject(
+        trello,
+        git,
+        github,
+        opencode,
+        commands,
+        project,
+        controller.signal,
+      );
 
       expect(events).toEqual([
         "implementation",
@@ -417,6 +439,7 @@ describe("pollProject", () => {
       opencode: {
         model: "test-model",
         variant: "test-variant",
+        timeoutMinutes: 360,
       },
     };
 
@@ -471,7 +494,17 @@ describe("pollProject", () => {
       exitCode: 0,
     }));
 
-    await pollProject(trello, git, github, opencode, commands, project);
+    const controller = new AbortController();
+
+    await pollProject(
+      trello,
+      git,
+      github,
+      opencode,
+      commands,
+      project,
+      controller.signal,
+    );
 
     expect(runOpenCode).not.toHaveBeenCalled();
 
