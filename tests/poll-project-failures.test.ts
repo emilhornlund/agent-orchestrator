@@ -98,7 +98,17 @@ function createScenario(options: ScenarioOptions = {}): Scenario {
     token: "test-token",
   });
 
-  vi.spyOn(trello, "getCards").mockResolvedValue(options.cards ?? [card]);
+  vi.spyOn(trello, "getCards").mockImplementation(async (listId) => {
+    if (listId === project.trello.workingListId) {
+      return [];
+    }
+
+    if (listId === project.trello.readyListId) {
+      return options.cards ?? [card];
+    }
+
+    return [];
+  });
   vi.spyOn(trello, "moveCard").mockImplementation(async (cardId, listId) => {
     events.push(`move:${listId}`);
 

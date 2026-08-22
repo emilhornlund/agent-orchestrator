@@ -60,7 +60,19 @@ describe("pollProject", () => {
         token: "test-token",
       });
 
-      vi.spyOn(trello, "getCards").mockResolvedValue([card]);
+      vi.spyOn(trello, "getCards").mockImplementation(async (listId) => {
+        if (listId === project.trello.workingListId) {
+          events.push("get-working");
+          return [];
+        }
+
+        if (listId === project.trello.readyListId) {
+          events.push("get-ready");
+          return [card];
+        }
+
+        return [];
+      });
 
       vi.spyOn(trello, "moveCard").mockImplementation(
         async (_cardId, listId) => {
@@ -161,6 +173,8 @@ describe("pollProject", () => {
       await pollProject(trello, git, github, opencode, commands, project);
 
       expect(events).toEqual([
+        "get-working",
+        "get-ready",
         "implementation",
         "review",
         "commit",

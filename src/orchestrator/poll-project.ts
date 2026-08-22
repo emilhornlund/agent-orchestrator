@@ -15,6 +15,7 @@ import type { TrelloCard, TrelloClient } from "../trello/trello-client.js";
 import { claimNextCard } from "./claim-next-card.js";
 import { failCard } from "./fail-card.js";
 import { publishCard } from "./publish-card.js";
+import { reconcileWorkingCards } from "./reconcile-working-cards.js";
 
 export async function pollProject(
   trello: TrelloClient,
@@ -24,6 +25,8 @@ export async function pollProject(
   commands: CommandRunner,
   project: ProjectConfig,
 ): Promise<void> {
+  await reconcileWorkingCards(trello, git, github, project);
+
   const card = await claimNextCard(trello, project);
 
   if (!card) {
