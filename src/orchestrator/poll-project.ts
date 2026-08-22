@@ -9,7 +9,10 @@ import { buildRemediationPrompt } from "../opencode/build-remediation-prompt.js"
 import { buildReviewFeedbackPrompt } from "../opencode/build-review-feedback-prompt.js";
 import { buildReviewPrompt } from "../opencode/build-review-prompt.js";
 import { buildTaskPrompt } from "../opencode/build-task-prompt.js";
-import type { OpenCodeClient } from "../opencode/opencode-client.js";
+import {
+  OpenCodeRunAbortedError,
+  type OpenCodeClient,
+} from "../opencode/opencode-client.js";
 import { parseReviewResult } from "../opencode/parse-review-result.js";
 import type { CommandRunner } from "../process/command-runner.js";
 import type { TrelloCard, TrelloClient } from "../trello/trello-client.js";
@@ -25,6 +28,10 @@ import {
   reconcileClaimedCard,
   reconcileWorkingCards,
 } from "./reconcile-working-cards.js";
+
+function isWorkflowAbort(error: unknown, signal: AbortSignal): boolean {
+  return signal.aborted && error instanceof OpenCodeRunAbortedError;
+}
 
 export async function pollProject(
   trello: TrelloClient,
@@ -133,7 +140,7 @@ export async function pollProject(
       );
     }
   } catch (error) {
-    if (signal.aborted) {
+    if (isWorkflowAbort(error, signal)) {
       console.log(
         `[${project.id}] Card workflow interrupted by orchestrator shutdown`,
       );
@@ -197,7 +204,7 @@ async function processReviewChangeRequest(
       );
     }
   } catch (error) {
-    if (signal.aborted) {
+    if (isWorkflowAbort(error, signal)) {
       console.log(
         `[${project.id}] Review change workflow interrupted by orchestrator shutdown`,
       );

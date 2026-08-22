@@ -12,6 +12,7 @@ import {
 } from "../src/github/github-client.js";
 import {
   OpenCodeClient,
+  OpenCodeRunAbortedError,
   type OpenCodeRunResult,
   type RunOpenCode,
 } from "../src/opencode/opencode-client.js";
@@ -796,7 +797,7 @@ describe("pollProject failure boundaries", () => {
 
       scenario.runOpenCode.mockImplementationOnce(async () => {
         controller.abort();
-        throw new Error("OpenCode run aborted");
+        throw new OpenCodeRunAbortedError();
       });
 
       await pollProject(
@@ -810,6 +811,34 @@ describe("pollProject failure boundaries", () => {
       );
 
       expect(scenario.trello.moveCard).not.toHaveBeenCalledWith(
+        scenario.card.id,
+        scenario.project.trello.failedListId,
+      );
+    });
+  });
+
+  it("moves the card to Failed when a real workflow error happens while shutdown is also requested", async () => {
+    await withScenario({}, async (scenario) => {
+      const controller = new AbortController();
+
+      scenario.runOpenCode.mockImplementationOnce(async () => {
+        controller.abort();
+        throw new Error("real implementation failure");
+      });
+
+      await expect(
+        pollProject(
+          scenario.trello,
+          scenario.git,
+          scenario.github,
+          scenario.openCode,
+          scenario.commands,
+          scenario.project,
+          controller.signal,
+        ),
+      ).rejects.toThrow("real implementation failure");
+
+      expect(scenario.trello.moveCard).toHaveBeenCalledWith(
         scenario.card.id,
         scenario.project.trello.failedListId,
       );

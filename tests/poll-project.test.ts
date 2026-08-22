@@ -7,7 +7,10 @@ import { describe, expect, it, vi } from "vitest";
 import type { ProjectConfig } from "../src/config/config.js";
 import { GitClient } from "../src/git/git-client.js";
 import { GitHubClient } from "../src/github/github-client.js";
-import { OpenCodeClient } from "../src/opencode/opencode-client.js";
+import {
+  OpenCodeClient,
+  OpenCodeRunAbortedError,
+} from "../src/opencode/opencode-client.js";
 import { pollProject } from "../src/orchestrator/poll-project.js";
 import { CommandRunner } from "../src/process/command-runner.js";
 import { type TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
@@ -868,5 +871,200 @@ describe("pollProject", () => {
         force: true,
       });
     }
+  });
+
+  it("leaves an interrupted review iteration in Working for restart recovery", async () => {
+    const card: TrelloCard = {
+      id: "card-1",
+      name: "Interrupted review task",
+      desc: "",
+      idList: "working",
+      url: "https://trello.com/c/card-1",
+    };
+
+    const project: ProjectConfig = {
+      id: "example",
+      trello: {
+        boardId: "board",
+        readyListId: "ready",
+        workingListId: "working",
+        reviewListId: "review",
+        failedListId: "failed",
+        doneListId: "done",
+      },
+      repository: {
+        path: "/tmp/example-repository",
+        github: "example/repository",
+        defaultBranch: "main",
+        worktreeRoot: "/tmp/example-worktrees",
+      },
+      opencode: {
+        model: "test-model",
+        variant: "test-variant",
+        timeoutMinutes: 360,
+      },
+    };
+
+    const trello = {
+      getCards: vi.fn().mockImplementation(async (listId: string) => {
+        if (listId === project.trello.reviewListId) {
+          return [];
+        }
+
+        if (listId === project.trello.workingListId) {
+          return [card];
+        }
+
+        return [];
+      }),
+      moveCard: vi.fn(),
+    } as unknown as TrelloClient;
+
+    const git = {
+      fetch: vi.fn().mockResolvedValue(undefined),
+      pruneWorktrees: vi.fn().mockResolvedValue(undefined),
+      branchExists: vi.fn().mockResolvedValue(false),
+      addWorktreeWithNewBranch: vi.fn().mockResolvedValue(undefined),
+    } as unknown as GitClient;
+
+    const github = {
+      findPullRequest: vi.fn().mockResolvedValue({
+        url: "https://github.com/example/repository/pull/123",
+      }),
+      findChangesRequestedPullRequest: vi.fn().mockResolvedValue({
+        url: "https://github.com/example/repository/pull/123",
+        feedback: "Please fix the regression.",
+      }),
+    } as unknown as GitHubClient;
+
+    const controller = new AbortController();
+
+    const opencode = new OpenCodeClient(async () => {
+      controller.abort();
+      throw new OpenCodeRunAbortedError();
+    });
+
+    const commands = new CommandRunner(async () => ({
+      exitCode: 0,
+    }));
+
+    await pollProject(
+      trello,
+      git,
+      github,
+      opencode,
+      commands,
+      project,
+      controller.signal,
+    );
+
+    expect(trello.moveCard).not.toHaveBeenCalledWith(
+      card.id,
+      project.trello.failedListId,
+    );
+
+    expect(trello.moveCard).not.toHaveBeenCalledWith(
+      card.id,
+      project.trello.reviewListId,
+    );
+  });
+
+  it("moves a review iteration to Failed when a real error occurs during shutdown", async () => {
+    const card: TrelloCard = {
+      id: "card-1",
+      name: "Broken review task",
+      desc: "",
+      idList: "working",
+      url: "https://trello.com/c/card-1",
+    };
+
+    const project: ProjectConfig = {
+      id: "example",
+      trello: {
+        boardId: "board",
+        readyListId: "ready",
+        workingListId: "working",
+        reviewListId: "review",
+        failedListId: "failed",
+        doneListId: "done",
+      },
+      repository: {
+        path: "/tmp/example-repository",
+        github: "example/repository",
+        defaultBranch: "main",
+        worktreeRoot: "/tmp/example-worktrees",
+      },
+      opencode: {
+        model: "test-model",
+        variant: "test-variant",
+        timeoutMinutes: 360,
+      },
+    };
+
+    const trello = {
+      getCards: vi.fn().mockImplementation(async (listId: string) => {
+        if (listId === project.trello.reviewListId) {
+          return [];
+        }
+
+        if (listId === project.trello.workingListId) {
+          return [card];
+        }
+
+        return [];
+      }),
+      moveCard: vi
+        .fn()
+        .mockImplementation(async (_cardId: string, listId: string) => ({
+          ...card,
+          idList: listId,
+        })),
+      addComment: vi.fn().mockResolvedValue(undefined),
+    } as unknown as TrelloClient;
+
+    const git = {
+      fetch: vi.fn().mockResolvedValue(undefined),
+      pruneWorktrees: vi.fn().mockResolvedValue(undefined),
+      branchExists: vi.fn().mockResolvedValue(false),
+      addWorktreeWithNewBranch: vi.fn().mockResolvedValue(undefined),
+    } as unknown as GitClient;
+
+    const github = {
+      findPullRequest: vi.fn().mockResolvedValue({
+        url: "https://github.com/example/repository/pull/123",
+      }),
+      findChangesRequestedPullRequest: vi.fn().mockResolvedValue({
+        url: "https://github.com/example/repository/pull/123",
+        feedback: "Please fix the regression.",
+      }),
+    } as unknown as GitHubClient;
+
+    const controller = new AbortController();
+
+    const opencode = new OpenCodeClient(async () => {
+      controller.abort();
+      throw new Error("real review implementation failure");
+    });
+
+    const commands = new CommandRunner(async () => ({
+      exitCode: 0,
+    }));
+
+    await expect(
+      pollProject(
+        trello,
+        git,
+        github,
+        opencode,
+        commands,
+        project,
+        controller.signal,
+      ),
+    ).rejects.toThrow("real review implementation failure");
+
+    expect(trello.moveCard).toHaveBeenCalledWith(
+      card.id,
+      project.trello.failedListId,
+    );
   });
 });

@@ -16,6 +16,13 @@ export interface OpenCodeRunResult {
   output: string;
 }
 
+export class OpenCodeRunAbortedError extends Error {
+  constructor() {
+    super("OpenCode run aborted");
+    this.name = "OpenCodeRunAbortedError";
+  }
+}
+
 export type RunOpenCode = (
   options: OpenCodeRunOptions,
 ) => Promise<OpenCodeRunResult>;
@@ -56,7 +63,7 @@ const defaultRunOpenCode: RunOpenCode = async ({
 }) =>
   new Promise((resolve, reject) => {
     if (signal.aborted) {
-      reject(new Error("OpenCode run aborted"));
+      reject(new OpenCodeRunAbortedError());
       return;
     }
 
@@ -164,7 +171,7 @@ const defaultRunOpenCode: RunOpenCode = async ({
         return;
       }
       if (signal.aborted) {
-        reject(new Error("OpenCode run aborted"));
+        reject(new OpenCodeRunAbortedError());
         return;
       }
 

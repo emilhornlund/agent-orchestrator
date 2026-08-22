@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   OpenCodeClient,
+  OpenCodeRunAbortedError,
   signalProcessTree,
   type RunOpenCode,
 } from "../src/opencode/opencode-client.js";
@@ -87,5 +88,28 @@ describe("OpenCodeClient", () => {
     }).not.toThrow();
 
     kill.mockRestore();
+  });
+
+  it("rejects with OpenCodeRunAbortedError when the signal is already aborted", async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    const opencode = new OpenCodeClient();
+
+    try {
+      await opencode.run({
+        cwd: "/tmp/repository",
+        model: "test-model",
+        variant: "test-variant",
+        timeoutMilliseconds: 60_000,
+        prompt: "Test prompt",
+        signal: controller.signal,
+      });
+
+      throw new Error("Expected OpenCode run to abort");
+    } catch (error) {
+      expect(error).toBeInstanceOf(OpenCodeRunAbortedError);
+      expect((error as Error).message).toBe("OpenCode run aborted");
+    }
   });
 });
