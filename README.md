@@ -1,83 +1,95 @@
+[![CI](https://github.com/emilhornlund/agent-orchestrator/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/emilhornlund/agent-orchestrator/actions/workflows/ci.yml)
+
 # Agent Orchestrator
 
-Local orchestration service for dispatching software-engineering tasks from Trello to OpenCode in isolated Git worktrees.
+Agent Orchestrator is a local automation service that turns Trello cards into reviewed GitHub pull requests using OpenCode.
 
-## Purpose
+It coordinates Trello, Git worktrees, OpenCode, and GitHub into a controlled software-engineering workflow while keeping human approval at the merge boundary.
 
-The orchestrator coordinates workflow state and external tooling. It is intentionally deterministic.
+## How it works
 
-OpenCode is responsible for implementing and reviewing software-engineering tasks. The orchestrator is responsible for:
+Each configured project connects:
 
-- reading the Trello work queue;
-- creating isolated Git worktrees;
-- starting OpenCode sessions;
-- tracking execution state;
-- validating workflow transitions;
-- publishing branches and pull requests;
-- observing human review and merge state;
-- cleaning up completed worktrees.
+- a local Git repository;
+- a GitHub repository;
+- a Trello board;
+- an OpenCode model and runtime configuration.
 
-## Workflow
-
-The intended workflow is:
+The orchestrator continuously polls each project and drives cards through the workflow:
 
 ```text
-Trello: Ready for Agent
-        ↓
-create isolated worktree
-        ↓
-OpenCode implementation
-        ↓
-optional orchestrator validation
-        ↓
-fresh OpenCode review
-        ↓
-optional single remediation pass
-        ↓
-OpenCode commit
-        ↓
-push task branch
-        ↓
-create pull request
-        ↓
-Trello: Human Review
-        ↓
-human merges pull request
-        ↓
-Trello: Done
+Ready for Agent
+      │
+      ▼
+    Working
+      │
+      ├─ create isolated Git worktree
+      ├─ run OpenCode implementation
+      ├─ run optional repository validation
+      ├─ run independent OpenCode review
+      ├─ remediate review findings when necessary
+      └─ commit, push, and create pull request
+      │
+      ▼
+ Human Review
+      │
+      ├─ merged ───────────────► Done
+      │
+      ├─ changes requested ────► Working
+      │                          │
+      │                          └─ remediate, review, and update PR
+      │
+      └─ closed without merge ─► Failed
 ```
 
-OpenCode is expected to run the repository's normal build, test, lint, and
-validation procedures as part of implementation and remediation.
+Failures during automated processing move the card to `Failed` rather than silently advancing the workflow.
 
-Projects may additionally configure `repository.validationCommand` when an
-independent orchestrator-side validation step is useful. This is optional.
+## Key properties
 
-Only one task may be active at a time.
+### Isolated execution
 
-## Safety Invariants
+Agent work runs in dedicated Git worktrees and task branches. The configured source checkout is not used as the agent's working directory.
 
-The orchestrator must never:
+Branches follow the convention:
 
-- modify the configured source checkout;
-- start work for a card outside `Ready for Agent`;
-- run more than one task concurrently;
-- merge a pull request;
-- force-push;
-- delete an unknown worktree;
-- automatically discard agent changes after a failure;
-- advance workflow state after a failed external operation;
-- start another task while the current task is in an ambiguous state.
+```text
+agent/<trello-card-id>
+```
+
+### Human-controlled merges
+
+The orchestrator creates and updates pull requests, but it does not merge them.
+
+A card reaches `Done` only after the corresponding pull request has been merged on GitHub.
+
+### Independent implementation and review
+
+Implementation, review, remediation, and commit creation use separate OpenCode sessions.
+
+The review phase evaluates the completed change independently before the branch is published.
+
+### Pull request feedback loop
+
+When GitHub reports requested changes, the orchestrator moves the Trello card back to `Working`, creates a worktree from the existing task branch, supplies the review feedback to OpenCode, and republishes the updated branch.
+
+### Recovery and reconciliation
+
+The orchestrator reconciles Trello state with Git and GitHub on every polling cycle. This allows it to recover from interrupted runs and handle already-existing branches or pull requests without blindly recreating workflow state.
+
+### Multi-project operation
+
+Multiple projects can be configured in a single `config.yaml`. Each project is polled independently with its own repository, Trello board, worktree root, and OpenCode configuration.
 
 ## Requirements
 
-- Node.js
+- Node.js 24 or later
 - Yarn Classic 1.x
 - Git
-- OpenCode
 - GitHub CLI (`gh`)
+- OpenCode
+- Trello API credentials
 
-Additional external credentials are required for Trello.
+The GitHub CLI must already be authenticated for the repositories the orchestrator manages.
 
 ## Setup
 
@@ -87,69 +99,184 @@ Install dependencies:
 yarn install
 ```
 
-Copy the example configuration:
+Create the local configuration files:
 
 ```bash
 cp config.example.yaml config.yaml
 cp .env.example .env
 ```
 
-Fill in the local repository, Trello, and OpenCode configuration.
+Add your Trello credentials to `.env`:
 
-`config.yaml` and `.env` are intentionally ignored by Git.
+```dotenv
+TRELLO_API_KEY=
+TRELLO_TOKEN=
+```
 
-## Development
+Then configure one or more projects in `config.yaml`:
 
-Run the application:
+```yaml
+projects:
+  - id: "my-project"
+
+    trello:
+      boardId: "board-id"
+      readyListId: "ready-list-id"
+      workingListId: "working-list-id"
+      reviewListId: "review-list-id"
+      failedListId: "failed-list-id"
+      doneListId: "done-list-id"
+
+    repository:
+      path: "/absolute/path/to/repository"
+      github: "owner/repository"
+      defaultBranch: "main"
+      worktreeRoot: "/absolute/path/to/worktrees/repository"
+      validationCommand: "yarn validate"
+
+    opencode:
+      model: "your-model"
+      variant: "xhigh"
+      timeoutMinutes: 360
+
+workflow:
+  pollIntervalSeconds: 15
+```
+
+`validationCommand` is optional. OpenCode is still expected to follow the target repository's normal validation instructions during implementation.
+
+`config.yaml` and `.env` are local files and are intentionally excluded from version control.
+
+## Trello board
+
+Each project requires five configured lists:
+
+| List              | Purpose                                                       |
+| ----------------- | ------------------------------------------------------------- |
+| `Ready for Agent` | Tasks waiting to be claimed                                   |
+| `Working`         | Tasks currently under automated implementation or remediation |
+| `Human Review`    | Tasks with a published pull request awaiting human review     |
+| `Failed`          | Tasks that could not complete the automated workflow          |
+| `Done`            | Tasks whose pull requests have been merged                    |
+
+The configured list names themselves are not significant; the orchestrator uses their Trello list IDs.
+
+## Running
+
+Start the orchestrator:
 
 ```bash
 yarn dev
 ```
 
-Run validation:
+The process continues polling until it is stopped.
+
+## Development
+
+Run the complete validation suite:
 
 ```bash
 yarn validate
 ```
 
-Apply automatic lint and formatting fixes:
+Individual commands are also available:
+
+```bash
+yarn lint
+yarn typecheck
+yarn test
+yarn format:check
+```
+
+Apply automatic lint fixes:
 
 ```bash
 yarn lint:fix
 ```
 
-Run tests:
+Format the repository:
 
 ```bash
-yarn test
+yarn format
 ```
 
-## Configuration
+## Continuous integration
 
-Non-secret configuration lives in `config.yaml`.
+GitHub Actions validates every pull request targeting `main` and every push to `main`.
 
-Secrets are supplied through environment variables.
+CI verifies:
 
-See:
+- formatting;
+- linting;
+- TypeScript type checking;
+- tests;
+- production build.
 
-- `config.example.yaml`
-- `.env.example`
+Run the primary validation suite locally with:
 
-## Project Status
+```bash
+yarn validate
+yarn format:check
+yarn build
+```
 
-The current implementation can:
+## Configuration reference
 
-1. read and claim the next eligible Trello card;
-2. create a dedicated Git branch and isolated worktree;
-3. run OpenCode implementation in that worktree;
-4. detect repository changes produced by OpenCode;
-5. optionally run a configured repository validation command;
-6. run a fresh OpenCode review;
-7. perform one remediation pass and a second fresh review when needed;
-8. delegate final commit creation to a fresh OpenCode session using centrally defined commit-message rules.
+### `projects[].id`
 
-The orchestrator verifies that commit creation advances `HEAD` and leaves the
-task worktree clean.
+Unique identifier used to distinguish projects in configuration and logs.
 
-Push, pull-request creation, Trello review transitions, merge observation, and
-worktree cleanup are not implemented yet.
+### `projects[].trello`
+
+Trello board and workflow list IDs for the project.
+
+### `projects[].repository.path`
+
+Absolute path to the normal local checkout of the repository.
+
+### `projects[].repository.github`
+
+GitHub repository in `owner/repository` format.
+
+### `projects[].repository.defaultBranch`
+
+Base branch used for task branches and pull requests.
+
+### `projects[].repository.worktreeRoot`
+
+Directory under which isolated agent worktrees are created.
+
+### `projects[].repository.validationCommand`
+
+Optional command executed by the orchestrator after implementation.
+
+### `projects[].opencode.model`
+
+OpenCode model used for agent sessions.
+
+### `projects[].opencode.variant`
+
+Model variant supplied to OpenCode.
+
+### `projects[].opencode.timeoutMinutes`
+
+Maximum runtime for an individual OpenCode execution.
+
+### `workflow.pollIntervalSeconds`
+
+Interval between project polling cycles.
+
+## Safety boundaries
+
+Agent Orchestrator deliberately keeps several operations outside automated control.
+
+It does not:
+
+- merge pull requests;
+- force-push task branches;
+- run agent implementation directly in the source checkout;
+- treat failed external operations as successful workflow transitions;
+- silently discard failed agent work;
+- delete arbitrary or unrecognized worktrees.
+
+The orchestrator owns workflow coordination. OpenCode owns software-engineering execution. Humans retain final approval through GitHub review and merge.
