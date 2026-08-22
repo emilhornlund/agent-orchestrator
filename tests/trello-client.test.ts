@@ -163,6 +163,7 @@ describe("TrelloClient", () => {
 
     expect(String(requestUrl)).toContain("/cards/card-1");
     expect(String(requestUrl)).toContain("idList=working-list");
+    expect(String(requestUrl)).toContain("pos=top");
     expect(requestOptions).toEqual({
       method: "PUT",
     });
