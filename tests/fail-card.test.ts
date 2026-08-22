@@ -65,6 +65,8 @@ describe("failCard", () => {
         "",
         "Category: Workflow",
         "Reason: implementation failed",
+        "",
+        "To retry, move this card to Ready.",
       ].join("\n"),
     );
   });
@@ -157,6 +159,8 @@ describe("failCard", () => {
         "",
         "Category: OpenCode timeout",
         "Reason: OpenCode exceeded safety timeout of 21600000ms",
+        "",
+        "To retry, move this card to Ready.",
       ].join("\n"),
     );
   });
@@ -197,6 +201,8 @@ describe("failCard", () => {
         "",
         "Category: Validation",
         "Reason: Repository validation exited with code 1",
+        "",
+        "To retry, move this card to Ready.",
       ].join("\n"),
     );
   });
@@ -236,6 +242,8 @@ describe("failCard", () => {
         "",
         "Category: Workflow",
         "Reason: Repository validation push pull request GitHub failure",
+        "",
+        "To retry, move this card to Ready.",
       ].join("\n"),
     );
   });
@@ -276,6 +284,8 @@ describe("failCard", () => {
         "",
         "Category: OpenCode",
         "Reason: agent execution failed",
+        "",
+        "To retry, move this card to Ready.",
       ].join("\n"),
     );
   });
@@ -316,6 +326,8 @@ describe("failCard", () => {
         "",
         "Category: Git/GitHub",
         "Reason: remote operation failed",
+        "",
+        "To retry, move this card to Ready.",
       ].join("\n"),
     );
   });

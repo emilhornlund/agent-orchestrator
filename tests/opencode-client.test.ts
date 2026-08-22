@@ -13,6 +13,7 @@ describe("OpenCodeClient", () => {
     const runOpenCode = vi.fn<RunOpenCode>().mockResolvedValue({
       exitCode: 0,
       output: "Completed",
+      errorOutput: "",
     });
 
     const client = new OpenCodeClient(runOpenCode);
@@ -40,6 +41,7 @@ describe("OpenCodeClient", () => {
     expect(result).toEqual({
       exitCode: 0,
       output: "Completed",
+      errorOutput: "",
     });
   });
 

@@ -140,6 +140,7 @@ describe("pollProject", () => {
           return {
             exitCode: 0,
             output: "",
+            errorOutput: "",
           };
         }
 
@@ -149,6 +150,7 @@ describe("pollProject", () => {
           return {
             exitCode: 0,
             output: "REVIEW_PASS",
+            errorOutput: "",
           };
         }
 
@@ -157,6 +159,7 @@ describe("pollProject", () => {
         return {
           exitCode: 0,
           output: "",
+          errorOutput: "",
         };
       });
 
@@ -331,6 +334,7 @@ describe("pollProject", () => {
           return {
             exitCode: 0,
             output: "",
+            errorOutput: "",
           };
         }
 
@@ -340,6 +344,7 @@ describe("pollProject", () => {
           return {
             exitCode: 0,
             output: "REVIEW_FAIL",
+            errorOutput: "",
           };
         }
 
@@ -349,6 +354,7 @@ describe("pollProject", () => {
           return {
             exitCode: 0,
             output: "",
+            errorOutput: "",
           };
         }
 
@@ -358,6 +364,7 @@ describe("pollProject", () => {
           return {
             exitCode: 0,
             output: "REVIEW_PASS",
+            errorOutput: "",
           };
         }
 
@@ -366,6 +373,7 @@ describe("pollProject", () => {
         return {
           exitCode: 0,
           output: "",
+          errorOutput: "",
         };
       });
 

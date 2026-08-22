@@ -22,6 +22,7 @@ export interface OpenCodeRunOptions {
 export interface OpenCodeRunResult {
   exitCode: number;
   output: string;
+  errorOutput: string;
 }
 
 export class OpenCodeRunAbortedError extends Error {
@@ -100,7 +101,17 @@ const defaultRunOpenCode: RunOpenCode = async ({
 
     const child = spawn(
       "opencode",
-      ["run", "--model", model, "--variant", variant, "--dir", cwd, prompt],
+      [
+        "run",
+        "--auto",
+        "--model",
+        model,
+        "--variant",
+        variant,
+        "--dir",
+        cwd,
+        prompt,
+      ],
       {
         cwd,
         stdio: ["inherit", "pipe", "pipe"],
@@ -109,6 +120,7 @@ const defaultRunOpenCode: RunOpenCode = async ({
     );
 
     let output = "";
+    let errorOutput = "";
     let settled = false;
     let timedOut = false;
 
@@ -175,6 +187,8 @@ const defaultRunOpenCode: RunOpenCode = async ({
     child.stderr.on("data", (chunk: Buffer) => {
       const text = chunk.toString();
 
+      errorOutput += text;
+
       if (sessionLogPath) {
         appendSessionLog(sessionLogPath, text);
       } else {
@@ -226,6 +240,7 @@ const defaultRunOpenCode: RunOpenCode = async ({
       resolve({
         exitCode: code ?? 1,
         output,
+        errorOutput,
       });
     });
   });

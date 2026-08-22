@@ -14,6 +14,7 @@ import { buildTaskPrompt } from "../opencode/build-task-prompt.js";
 import {
   OpenCodeRunAbortedError,
   type OpenCodeClient,
+  type OpenCodeRunResult,
 } from "../opencode/opencode-client.js";
 import { parseReviewResult } from "../opencode/parse-review-result.js";
 import type { CommandRunner } from "../process/command-runner.js";
@@ -34,6 +35,16 @@ import { WorkflowError } from "./workflow-error.js";
 
 function isWorkflowAbort(error: unknown, signal: AbortSignal): boolean {
   return signal.aborted && error instanceof OpenCodeRunAbortedError;
+}
+
+function hasOpenCodePermissionDenial(result: OpenCodeRunResult): boolean {
+  const output = `${result.output}\n${result.errorOutput}`.toLowerCase();
+
+  return (
+    output.includes("auto-rejecting") ||
+    output.includes("rejected permission") ||
+    output.includes("permission denied")
+  );
 }
 
 export async function pollProject(
@@ -290,6 +301,13 @@ async function processCardChanges(
     sessionLogPath,
     sessionLabel: `OpenCode ${implementationLabel}`,
   });
+
+  if (hasOpenCodePermissionDenial(implementation)) {
+    throw new WorkflowError(
+      "OpenCode permissions",
+      `OpenCode was denied permission during ${implementationLabel}`,
+    );
+  }
 
   if (implementation.exitCode !== 0) {
     throw new WorkflowError(

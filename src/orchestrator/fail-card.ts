@@ -58,6 +58,8 @@ export async function failCard(
         "",
         `Category: ${describeFailureCategory(originalError)}`,
         `Reason: ${originalError.message}`,
+        "",
+        "To retry, move this card to Ready.",
       ].join("\n"),
     );
   } catch (commentError) {

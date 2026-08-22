@@ -30,12 +30,16 @@ interface ScenarioOptions {
   validationExitCodes?: number[];
   statusOutputs?: string[];
   headOutputs?: string[];
-  openCodeResults?: OpenCodeRunResult[];
+  openCodeResults?: TestOpenCodeRunResult[];
   pushError?: Error;
   pullRequestError?: Error;
   humanReviewError?: Error;
   failureMoveError?: Error;
 }
+
+type TestOpenCodeRunResult = Omit<OpenCodeRunResult, "errorOutput"> & {
+  errorOutput?: string;
+};
 
 interface Scenario {
   card: TrelloCard;
@@ -180,13 +184,16 @@ function createScenario(options: ScenarioOptions = {}): Scenario {
   });
 
   const git = new GitClient(runGit);
-  const openCodeResults = [
-    ...(options.openCodeResults ?? [
+  const openCodeResults: OpenCodeRunResult[] = (
+    options.openCodeResults ?? [
       { exitCode: 0, output: "" },
       { exitCode: 0, output: "REVIEW_PASS" },
       { exitCode: 0, output: "" },
-    ]),
-  ];
+    ]
+  ).map((result) => ({
+    ...result,
+    errorOutput: result.errorOutput ?? "",
+  }));
   let openCodeCall = 0;
 
   const runOpenCode = vi.fn<RunOpenCode>(async () => {
@@ -313,6 +320,40 @@ describe("pollProject failure boundaries", () => {
             scenario.signal,
           ),
         ).rejects.toThrow("OpenCode implementation exited with code 1");
+
+        expect(scenario.runOpenCode).toHaveBeenCalledTimes(1);
+        expectNothingPublished(scenario);
+      },
+    );
+  });
+
+  it("reports OpenCode permission denial during implementation", async () => {
+    await withScenario(
+      {
+        statusOutputs: [""],
+        openCodeResults: [
+          {
+            exitCode: 0,
+            output: "",
+            errorOutput:
+              "permission requested: external_directory (/tmp/worktree/*); auto-rejecting",
+          },
+        ],
+      },
+      async (scenario) => {
+        await expect(
+          pollProject(
+            scenario.trello,
+            scenario.git,
+            scenario.github,
+            scenario.openCode,
+            scenario.commands,
+            scenario.project,
+            scenario.signal,
+          ),
+        ).rejects.toThrow(
+          "OpenCode was denied permission during implementation",
+        );
 
         expect(scenario.runOpenCode).toHaveBeenCalledTimes(1);
         expectNothingPublished(scenario);
