@@ -1,6 +1,7 @@
 import type { ProjectConfig } from "../config/config.js";
 import type { GitClient } from "../git/git-client.js";
 import type { GitHubClient } from "../github/github-client.js";
+import { logger } from "../logging/logger.js";
 import type { TrelloCard, TrelloClient } from "../trello/trello-client.js";
 
 import { WorkflowError } from "./workflow-error.js";
@@ -32,15 +33,20 @@ export async function publishCard({
   reviewResult,
   remediationResult,
 }: PublishCardOptions): Promise<void> {
+  const cardLog = logger.child({
+    projectId: project.id,
+    cardId: card.id,
+  });
+
   let pullRequest;
 
   try {
-    console.log(`[${project.id}] Pushing branch ${branch}...`);
+    cardLog.event(`Pushing branch ${branch}...`);
 
     await git.push(worktreePath, "origin", branch);
 
-    console.log(`[${project.id}] Branch pushed`);
-    console.log(`[${project.id}] Checking for existing pull request...`);
+    cardLog.event("Branch pushed");
+    cardLog.info("Checking for existing pull request...");
 
     pullRequest = await github.findPullRequest({
       cwd: worktreePath,
@@ -49,11 +55,9 @@ export async function publishCard({
     });
 
     if (pullRequest) {
-      console.log(
-        `[${project.id}] Existing pull request found: ${pullRequest.url}`,
-      );
+      cardLog.event(`Existing pull request found: ${pullRequest.url}`);
     } else {
-      console.log(`[${project.id}] Creating pull request...`);
+      cardLog.event("Creating pull request...");
 
       pullRequest = await github.createPullRequest({
         cwd: worktreePath,
@@ -68,7 +72,7 @@ export async function publishCard({
         ].join("\n"),
       });
 
-      console.log(`[${project.id}] Pull request created: ${pullRequest.url}`);
+      cardLog.event(`Pull request created: ${pullRequest.url}`);
     }
   } catch (error) {
     if (error instanceof WorkflowError) {
@@ -83,11 +87,11 @@ export async function publishCard({
     });
   }
 
-  console.log(`[${project.id}] Moving Trello card to Human Review...`);
+  cardLog.event("Moving Trello card to Human Review...");
 
   await trello.moveCard(card.id, project.trello.reviewListId);
 
-  console.log(`[${project.id}] Trello card moved to Human Review`);
+  cardLog.event("Trello card moved to Human Review");
 
   const comment = [
     "Agent Orchestrator completed successfully.",
@@ -102,10 +106,10 @@ export async function publishCard({
   try {
     await trello.addComment(card.id, comment);
 
-    console.log(`[${project.id}] Trello card updated with workflow summary`);
+    cardLog.info("Trello card updated with workflow summary");
   } catch (error) {
-    console.error(
-      `[${project.id}] Failed to add workflow summary to Trello card: ${
+    cardLog.error(
+      `Failed to add workflow summary to Trello card: ${
         error instanceof Error ? error.message : String(error)
       }`,
     );

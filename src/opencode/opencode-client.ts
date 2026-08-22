@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 
+import { logger } from "../logging/logger.js";
 import {
   appendSessionLog,
   appendSessionSection,
@@ -58,7 +59,7 @@ export function signalProcessTree(
       error instanceof Error && "code" in error ? error.code : undefined;
 
     if (code !== "ESRCH") {
-      console.error(
+      logger.error(
         `Failed to signal OpenCode process group with ${signal}: ${
           error instanceof Error ? error.message : String(error)
         }`,

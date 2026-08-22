@@ -1,4 +1,5 @@
 import type { ProjectConfig } from "../config/config.js";
+import { logger } from "../logging/logger.js";
 import { OpenCodeTimeoutError } from "../opencode/opencode-client.js";
 import type { TrelloClient } from "../trello/trello-client.js";
 
@@ -22,6 +23,11 @@ export async function failCard(
   cardId: string,
   workflowError: unknown,
 ): Promise<never> {
+  const cardLog = logger.child({
+    projectId: project.id,
+    cardId,
+  });
+
   const originalError =
     workflowError instanceof Error
       ? workflowError
@@ -55,8 +61,8 @@ export async function failCard(
       ].join("\n"),
     );
   } catch (commentError) {
-    console.error(
-      `[${project.id}] Failed to add failure reason to Trello card: ${
+    cardLog.error(
+      `Failed to add failure reason to Trello card: ${
         commentError instanceof Error
           ? commentError.message
           : String(commentError)

@@ -96,12 +96,12 @@ export async function pollProject(
     return;
   }
 
-  logger
-    .child({
-      projectId: project.id,
-      cardId: card.id,
-    })
-    .event(`Claimed card: ${card.name}`);
+  const cardLog = logger.child({
+    projectId: project.id,
+    cardId: card.id,
+  });
+
+  cardLog.event(`Claimed card: ${card.name}`);
 
   try {
     const reconciled = await reconcileClaimedCard(
@@ -127,7 +127,7 @@ export async function pollProject(
       signal,
     );
 
-    console.log(`[${project.id}] Cleaning up published worktree...`);
+    cardLog.info("Cleaning up published worktree...");
 
     try {
       await cleanupWorktree({
@@ -137,10 +137,10 @@ export async function pollProject(
         branch: worktree.branch,
       });
 
-      console.log(`[${project.id}] Published worktree cleaned up`);
+      cardLog.info("Published worktree cleaned up");
     } catch (cleanupError) {
-      console.error(
-        `[${project.id}] Published successfully, but local cleanup failed: ${
+      cardLog.error(
+        `Published successfully, but local cleanup failed: ${
           cleanupError instanceof Error
             ? cleanupError.message
             : String(cleanupError)
@@ -149,13 +149,11 @@ export async function pollProject(
     }
   } catch (error) {
     if (isWorkflowAbort(error, signal)) {
-      console.log(
-        `[${project.id}] Card workflow interrupted by orchestrator shutdown`,
-      );
+      cardLog.event("Card workflow interrupted by orchestrator shutdown");
       return;
     }
 
-    console.error(`[${project.id}] Card workflow failed; moving to Failed...`);
+    cardLog.error("Card workflow failed; moving to Failed...");
 
     await failCard(trello, project, card.id, error);
   }
@@ -173,7 +171,12 @@ async function processReviewChangeRequest(
 ): Promise<void> {
   const card = reviewChangeRequest.card;
 
-  console.log(`[${project.id}] Processing requested changes for: ${card.name}`);
+  const cardLog = logger.child({
+    projectId: project.id,
+    cardId: card.id,
+  });
+
+  cardLog.event(`Processing requested changes for: ${card.name}`);
 
   try {
     const worktree = await processCardChanges(
@@ -191,7 +194,7 @@ async function processReviewChangeRequest(
       },
     );
 
-    console.log(`[${project.id}] Cleaning up review feedback worktree...`);
+    cardLog.info("Cleaning up review feedback worktree...");
 
     try {
       await cleanupWorktree({
@@ -201,10 +204,10 @@ async function processReviewChangeRequest(
         branch: worktree.branch,
       });
 
-      console.log(`[${project.id}] Review feedback worktree cleaned up`);
+      cardLog.info("Review feedback worktree cleaned up");
     } catch (cleanupError) {
-      console.error(
-        `[${project.id}] Review feedback published successfully, but local cleanup failed: ${
+      cardLog.error(
+        `Review feedback published successfully, but local cleanup failed: ${
           cleanupError instanceof Error
             ? cleanupError.message
             : String(cleanupError)
@@ -213,16 +216,14 @@ async function processReviewChangeRequest(
     }
   } catch (error) {
     if (isWorkflowAbort(error, signal)) {
-      console.log(
-        `[${project.id}] Review change workflow interrupted by orchestrator shutdown`,
+      cardLog.event(
+        "Review change workflow interrupted by orchestrator shutdown",
       );
 
       return;
     }
 
-    console.error(
-      `[${project.id}] Review change workflow failed; moving to Failed...`,
-    );
+    cardLog.error("Review change workflow failed; moving to Failed...");
 
     await failCard(trello, project, card.id, error);
   }
@@ -257,8 +258,14 @@ async function processCardChanges(
 
   const sessionLogPath = getSessionLogPath(project.id, card.id);
 
-  console.log(`[${project.id}] Branch: ${worktree.branch}`);
-  console.log(`[${project.id}] Worktree: ${worktree.path}`);
+  const cardLog = logger.child({
+    projectId: project.id,
+    cardId: card.id,
+  });
+
+  cardLog.info(`Branch: ${worktree.branch}`);
+  cardLog.info(`Worktree: ${worktree.path}`);
+
   const implementationLabel = reviewIteration
     ? "review feedback implementation"
     : "implementation";
@@ -271,7 +278,7 @@ async function processCardChanges(
       )
     : buildTaskPrompt(card);
 
-  console.log(`[${project.id}] Starting OpenCode ${implementationLabel}...`);
+  cardLog.event(`Starting OpenCode ${implementationLabel}...`);
 
   const implementation = await opencode.run({
     cwd: worktree.path,
@@ -291,7 +298,7 @@ async function processCardChanges(
     );
   }
 
-  console.log(`[${project.id}] OpenCode ${implementationLabel} completed`);
+  cardLog.event(`OpenCode ${implementationLabel} completed`);
 
   const status = await git.getStatus(worktree.path);
 
@@ -302,14 +309,14 @@ async function processCardChanges(
     );
   }
 
-  console.log(`[${project.id}] Repository changes detected:`);
+  cardLog.info("Repository changes detected:");
 
   for (const line of status.split("\n")) {
-    console.log(`[${project.id}] ${line}`);
+    cardLog.info(line);
   }
 
   if (project.repository.validationCommand) {
-    console.log(`[${project.id}] Running repository validation...`);
+    cardLog.event("Running repository validation...");
 
     const validation = await commands.run({
       cwd: worktree.path,
@@ -327,10 +334,10 @@ async function processCardChanges(
 
     validationResult = "Passed";
 
-    console.log(`[${project.id}] Repository validation passed`);
+    cardLog.event("Repository validation passed");
   }
 
-  console.log(`[${project.id}] Starting fresh OpenCode review...`);
+  cardLog.event("Starting fresh OpenCode review...");
 
   const review = await opencode.run({
     cwd: worktree.path,
@@ -356,13 +363,11 @@ async function processCardChanges(
     reviewResult = "Passed";
     remediationResult = "Not required";
 
-    console.log(`[${project.id}] OpenCode review passed`);
+    cardLog.event("OpenCode review passed");
   } else {
     remediationResult = "Applied after initial review failure";
 
-    console.log(
-      `[${project.id}] OpenCode review failed; starting remediation...`,
-    );
+    cardLog.event("OpenCode review failed; starting remediation...");
 
     const remediation = await opencode.run({
       cwd: worktree.path,
@@ -382,7 +387,7 @@ async function processCardChanges(
       );
     }
 
-    console.log(`[${project.id}] OpenCode remediation completed`);
+    cardLog.event("OpenCode remediation completed");
 
     const remediatedStatus = await git.getStatus(worktree.path);
 
@@ -394,9 +399,7 @@ async function processCardChanges(
     }
 
     if (project.repository.validationCommand) {
-      console.log(
-        `[${project.id}] Running repository validation after remediation...`,
-      );
+      cardLog.event("Running repository validation after remediation...");
 
       const validation = await commands.run({
         cwd: worktree.path,
@@ -414,12 +417,10 @@ async function processCardChanges(
 
       validationResult = "Passed after remediation";
 
-      console.log(
-        `[${project.id}] Repository validation after remediation passed`,
-      );
+      cardLog.event("Repository validation after remediation passed");
     }
 
-    console.log(`[${project.id}] Starting second fresh OpenCode review...`);
+    cardLog.event("Starting second fresh OpenCode review...");
 
     const secondReview = await opencode.run({
       cwd: worktree.path,
@@ -450,12 +451,12 @@ async function processCardChanges(
 
     reviewResult = "Passed after remediation";
 
-    console.log(`[${project.id}] OpenCode review passed after remediation`);
+    cardLog.event("OpenCode review passed after remediation");
   }
 
   const headBeforeCommit = await git.getHeadSha(worktree.path);
 
-  console.log(`[${project.id}] Starting fresh OpenCode commit session...`);
+  cardLog.event("Starting fresh OpenCode commit session...");
 
   const commit = await opencode.run({
     cwd: worktree.path,
@@ -493,7 +494,7 @@ async function processCardChanges(
     );
   }
 
-  console.log(`[${project.id}] OpenCode commit created: ${headAfterCommit}`);
+  cardLog.event(`OpenCode commit created: ${headAfterCommit}`);
 
   await publishCard({
     trello,

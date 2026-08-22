@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import type { ProjectConfig } from "../config/config.js";
+import { logger } from "../logging/logger.js";
 
 import { GitClient } from "./git-client.js";
 
@@ -36,9 +37,11 @@ export async function prepareWorktree(
     const status = await git.getStatus(worktreePath);
 
     if (status.length > 0) {
-      console.log(
-        `[${project.id}] Existing worktree has uncommitted changes; resetting for retry...`,
-      );
+      logger
+        .child({ projectId: project.id })
+        .info(
+          "Existing worktree has uncommitted changes; resetting for retry...",
+        );
 
       await git.resetHard(worktreePath);
       await git.cleanUntracked(worktreePath);

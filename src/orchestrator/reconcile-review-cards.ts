@@ -1,6 +1,7 @@
 import type { ProjectConfig } from "../config/config.js";
 import type { GitClient } from "../git/git-client.js";
 import type { GitHubClient } from "../github/github-client.js";
+import { logger } from "../logging/logger.js";
 import type { TrelloCard, TrelloClient } from "../trello/trello-client.js";
 
 export interface ReviewChangeRequest {
@@ -15,18 +16,25 @@ export async function reconcileReviewCards(
   github: GitHubClient,
   project: ProjectConfig,
 ): Promise<ReviewChangeRequest | null> {
+  const projectLog = logger.child({
+    projectId: project.id,
+  });
+
   const cards = await trello.getCards(project.trello.reviewListId);
 
   if (cards.length === 0) {
     return null;
   }
 
-  console.log(
-    `[${project.id}] Reconciling ${cards.length} card(s) in Human Review...`,
-  );
+  projectLog.info(`Reconciling ${cards.length} card(s) in Human Review...`);
 
   for (const card of cards) {
     const branch = `agent/${card.id}`;
+
+    const cardLog = logger.child({
+      projectId: project.id,
+      cardId: card.id,
+    });
 
     let mergedPullRequest;
 
@@ -37,8 +45,8 @@ export async function reconcileReviewCards(
         headBranch: branch,
       });
     } catch (error) {
-      console.error(
-        `[${project.id}] Could not check merged pull request for "${card.name}": ${
+      cardLog.error(
+        `Could not check merged pull request for "${card.name}": ${
           error instanceof Error ? error.message : String(error)
         }`,
       );
@@ -47,8 +55,8 @@ export async function reconcileReviewCards(
     }
 
     if (mergedPullRequest) {
-      console.log(
-        `[${project.id}] Human Review card has merged pull request: ${mergedPullRequest.url}`,
+      cardLog.event(
+        `Human Review card has merged pull request: ${mergedPullRequest.url}`,
       );
 
       try {
@@ -59,9 +67,7 @@ export async function reconcileReviewCards(
         );
 
         if (remoteBranchExists) {
-          console.log(
-            `[${project.id}] Deleting merged remote branch ${branch}...`,
-          );
+          cardLog.info(`Deleting merged remote branch ${branch}...`);
 
           await git.deleteRemoteBranch(
             project.repository.path,
@@ -69,11 +75,11 @@ export async function reconcileReviewCards(
             branch,
           );
 
-          console.log(`[${project.id}] Merged remote branch deleted`);
+          cardLog.info("Merged remote branch deleted");
         }
       } catch (error) {
-        console.error(
-          `[${project.id}] Failed to clean up merged remote branch ${branch}: ${
+        cardLog.error(
+          `Failed to clean up merged remote branch ${branch}: ${
             error instanceof Error ? error.message : String(error)
           }`,
         );
@@ -84,10 +90,10 @@ export async function reconcileReviewCards(
       try {
         await trello.moveCard(card.id, project.trello.doneListId);
 
-        console.log(`[${project.id}] Merged card moved to Done`);
+        cardLog.event("Merged card moved to Done");
       } catch (error) {
-        console.error(
-          `[${project.id}] Failed to move merged card "${card.name}" to Done: ${
+        cardLog.error(
+          `Failed to move merged card "${card.name}" to Done: ${
             error instanceof Error ? error.message : String(error)
           }`,
         );
@@ -105,8 +111,8 @@ export async function reconcileReviewCards(
         headBranch: branch,
       });
     } catch (error) {
-      console.error(
-        `[${project.id}] Could not check closed pull request for "${card.name}": ${
+      cardLog.error(
+        `Could not check closed pull request for "${card.name}": ${
           error instanceof Error ? error.message : String(error)
         }`,
       );
@@ -115,19 +121,17 @@ export async function reconcileReviewCards(
     }
 
     if (closedPullRequest) {
-      console.log(
-        `[${project.id}] Human Review card has closed pull request: ${closedPullRequest.url}`,
+      cardLog.event(
+        `Human Review card has closed pull request: ${closedPullRequest.url}`,
       );
 
       try {
         await trello.moveCard(card.id, project.trello.failedListId);
 
-        console.log(
-          `[${project.id}] Card with closed pull request moved to Failed`,
-        );
+        cardLog.event("Card with closed pull request moved to Failed");
       } catch (error) {
-        console.error(
-          `[${project.id}] Failed to move card "${card.name}" to Failed: ${
+        cardLog.error(
+          `Failed to move card "${card.name}" to Failed: ${
             error instanceof Error ? error.message : String(error)
           }`,
         );
@@ -145,8 +149,8 @@ export async function reconcileReviewCards(
           ].join("\n"),
         );
       } catch (error) {
-        console.error(
-          `[${project.id}] Failed to add closed pull request comment to "${card.name}": ${
+        cardLog.error(
+          `Failed to add closed pull request comment to "${card.name}": ${
             error instanceof Error ? error.message : String(error)
           }`,
         );
@@ -165,8 +169,8 @@ export async function reconcileReviewCards(
           headBranch: branch,
         });
     } catch (error) {
-      console.error(
-        `[${project.id}] Could not check requested changes for "${card.name}": ${
+      cardLog.error(
+        `Could not check requested changes for "${card.name}": ${
           error instanceof Error ? error.message : String(error)
         }`,
       );
@@ -178,15 +182,15 @@ export async function reconcileReviewCards(
       continue;
     }
 
-    console.log(
-      `[${project.id}] Human Review card has requested changes: ${changesRequestedPullRequest.url}`,
+    cardLog.event(
+      `Human Review card has requested changes: ${changesRequestedPullRequest.url}`,
     );
 
     try {
       await trello.moveCard(card.id, project.trello.workingListId);
     } catch (error) {
-      console.error(
-        `[${project.id}] Failed to move card "${card.name}" to Working for requested changes: ${
+      cardLog.error(
+        `Failed to move card "${card.name}" to Working for requested changes: ${
           error instanceof Error ? error.message : String(error)
         }`,
       );
@@ -194,7 +198,7 @@ export async function reconcileReviewCards(
       continue;
     }
 
-    console.log(`[${project.id}] Card with requested changes moved to Working`);
+    cardLog.event("Card with requested changes moved to Working");
 
     return {
       card,
