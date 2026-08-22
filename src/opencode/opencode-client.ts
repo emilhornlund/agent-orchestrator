@@ -116,6 +116,14 @@ const defaultRunOpenCode: RunOpenCode = async ({
         cwd,
         stdio: ["inherit", "pipe", "pipe"],
         detached: process.platform !== "win32",
+        env: {
+          ...process.env,
+          OPENCODE_CONFIG_CONTENT: JSON.stringify({
+            permission: {
+              question: "deny",
+            },
+          }),
+        },
       },
     );
 
