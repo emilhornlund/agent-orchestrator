@@ -107,4 +107,19 @@ export class GitClient {
       startPoint,
     ]);
   }
+
+  async removeWorktree(
+    repositoryPath: string,
+    worktreePath: string,
+  ): Promise<void> {
+    await this.runGit(repositoryPath, ["worktree", "remove", worktreePath]);
+  }
+
+  async deleteBranch(repositoryPath: string, branch: string): Promise<void> {
+    await this.runGit(repositoryPath, ["branch", "-D", branch]);
+  }
+
+  async pruneWorktrees(repositoryPath: string): Promise<void> {
+    await this.runGit(repositoryPath, ["worktree", "prune"]);
+  }
 }

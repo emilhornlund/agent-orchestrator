@@ -137,4 +137,39 @@ describe("GitClient", () => {
       "agent/example",
     ]);
   });
+
+  it("removes a worktree", async () => {
+    const runGit = vi.fn().mockResolvedValue("");
+    const git = new GitClient(runGit);
+
+    await git.removeWorktree("/repo", "/worktrees/card-1");
+
+    expect(runGit).toHaveBeenCalledWith("/repo", [
+      "worktree",
+      "remove",
+      "/worktrees/card-1",
+    ]);
+  });
+
+  it("deletes a local branch", async () => {
+    const runGit = vi.fn().mockResolvedValue("");
+    const git = new GitClient(runGit);
+
+    await git.deleteBranch("/repo", "agent/card-1");
+
+    expect(runGit).toHaveBeenCalledWith("/repo", [
+      "branch",
+      "-D",
+      "agent/card-1",
+    ]);
+  });
+
+  it("prunes stale worktree metadata", async () => {
+    const runGit = vi.fn().mockResolvedValue("");
+    const git = new GitClient(runGit);
+
+    await git.pruneWorktrees("/repo");
+
+    expect(runGit).toHaveBeenCalledWith("/repo", ["worktree", "prune"]);
+  });
 });

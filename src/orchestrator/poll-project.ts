@@ -1,4 +1,5 @@
 import type { ProjectConfig } from "../config/config.js";
+import { cleanupWorktree } from "../git/cleanup-worktree.js";
 import type { GitClient } from "../git/git-client.js";
 import { prepareWorktree } from "../git/prepare-worktree.js";
 import type { GitHubClient } from "../github/github-client.js";
@@ -33,7 +34,7 @@ export async function pollProject(
   console.log(`[${project.id}] Claimed card: ${card.name}`);
 
   try {
-    await processClaimedCard(
+    const worktree = await processClaimedCard(
       trello,
       git,
       github,
@@ -42,6 +43,27 @@ export async function pollProject(
       project,
       card,
     );
+
+    console.log(`[${project.id}] Cleaning up published worktree...`);
+
+    try {
+      await cleanupWorktree({
+        git,
+        project,
+        worktreePath: worktree.path,
+        branch: worktree.branch,
+      });
+
+      console.log(`[${project.id}] Published worktree cleaned up`);
+    } catch (cleanupError) {
+      console.error(
+        `[${project.id}] Published successfully, but local cleanup failed: ${
+          cleanupError instanceof Error
+            ? cleanupError.message
+            : String(cleanupError)
+        }`,
+      );
+    }
   } catch (error) {
     console.error(`[${project.id}] Card workflow failed; moving to Failed...`);
 
@@ -57,7 +79,10 @@ async function processClaimedCard(
   commands: CommandRunner,
   project: ProjectConfig,
   card: TrelloCard,
-): Promise<void> {
+): Promise<{
+  path: string;
+  branch: string;
+}> {
   const worktree = await prepareWorktree(git, project, card.id);
 
   console.log(`[${project.id}] Branch: ${worktree.branch}`);
@@ -236,4 +261,6 @@ async function processClaimedCard(
     worktreePath: worktree.path,
     branch: worktree.branch,
   });
+
+  return worktree;
 }
