@@ -13,6 +13,7 @@ import {
 import {
   OpenCodeClient,
   OpenCodeRunAbortedError,
+  OpenCodeTimeoutError,
   type OpenCodeRunResult,
   type RunOpenCode,
 } from "../src/opencode/opencode-client.js";
@@ -837,6 +838,34 @@ describe("pollProject failure boundaries", () => {
           controller.signal,
         ),
       ).rejects.toThrow("real implementation failure");
+
+      expect(scenario.trello.moveCard).toHaveBeenCalledWith(
+        scenario.card.id,
+        scenario.project.trello.failedListId,
+      );
+    });
+  });
+
+  it("moves the card to Failed when OpenCode times out even if shutdown is also requested", async () => {
+    await withScenario({}, async (scenario) => {
+      const controller = new AbortController();
+
+      scenario.runOpenCode.mockImplementationOnce(async () => {
+        controller.abort();
+        throw new OpenCodeTimeoutError(21_600_000);
+      });
+
+      await expect(
+        pollProject(
+          scenario.trello,
+          scenario.git,
+          scenario.github,
+          scenario.openCode,
+          scenario.commands,
+          scenario.project,
+          controller.signal,
+        ),
+      ).rejects.toBeInstanceOf(OpenCodeTimeoutError);
 
       expect(scenario.trello.moveCard).toHaveBeenCalledWith(
         scenario.card.id,

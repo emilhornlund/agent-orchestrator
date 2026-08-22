@@ -1,5 +1,30 @@
 import type { ProjectConfig } from "../config/config.js";
+import { OpenCodeTimeoutError } from "../opencode/opencode-client.js";
 import type { TrelloClient } from "../trello/trello-client.js";
+
+function describeFailureCategory(error: Error): string {
+  if (error instanceof OpenCodeTimeoutError) {
+    return "OpenCode timeout";
+  }
+
+  if (error.message.startsWith("OpenCode ")) {
+    return "OpenCode";
+  }
+
+  if (error.message.startsWith("Repository validation")) {
+    return "Validation";
+  }
+
+  if (
+    error.message.includes("GitHub") ||
+    error.message.includes("pull request") ||
+    error.message.includes("push")
+  ) {
+    return "Git/GitHub";
+  }
+
+  return "Workflow";
+}
 
 export async function failCard(
   trello: TrelloClient,
@@ -35,6 +60,7 @@ export async function failCard(
       [
         "Agent Orchestrator failed.",
         "",
+        `Category: ${describeFailureCategory(originalError)}`,
         `Reason: ${originalError.message}`,
       ].join("\n"),
     );

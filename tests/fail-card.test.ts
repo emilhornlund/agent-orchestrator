@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { ProjectConfig } from "../src/config/config.js";
+import { OpenCodeTimeoutError } from "../src/opencode/opencode-client.js";
 import { failCard } from "../src/orchestrator/fail-card.js";
 import { TrelloClient } from "../src/trello/trello-client.js";
 
@@ -58,9 +59,12 @@ describe("failCard", () => {
 
     expect(addComment).toHaveBeenCalledWith(
       "card-1",
-      ["Agent Orchestrator failed.", "", "Reason: implementation failed"].join(
-        "\n",
-      ),
+      [
+        "Agent Orchestrator failed.",
+        "",
+        "Category: Workflow",
+        "Reason: implementation failed",
+      ].join("\n"),
     );
   });
 
@@ -117,5 +121,81 @@ describe("failCard", () => {
       expect(aggregate.message).toContain("implementation failed");
       expect(aggregate.message).toContain("Trello unavailable");
     }
+  });
+
+  it("labels OpenCode timeout failures explicitly", async () => {
+    const trello = new TrelloClient({
+      apiKey: "key",
+      token: "token",
+    });
+
+    vi.spyOn(trello, "moveCard").mockResolvedValue({
+      id: "card-1",
+      name: "Card",
+      desc: "",
+      idList: "failed",
+      url: "https://trello.com/c/card-1",
+    });
+
+    const addComment = vi.spyOn(trello, "addComment").mockResolvedValue({
+      id: "action-1",
+      type: "commentCard",
+      date: "2026-08-22T09:00:00.000Z",
+    });
+
+    const timeoutError = new OpenCodeTimeoutError(21_600_000);
+
+    await expect(
+      failCard(trello, project, "card-1", timeoutError),
+    ).rejects.toBe(timeoutError);
+
+    expect(addComment).toHaveBeenCalledWith(
+      "card-1",
+      [
+        "Agent Orchestrator failed.",
+        "",
+        "Category: OpenCode timeout",
+        "Reason: OpenCode exceeded safety timeout of 21600000ms",
+      ].join("\n"),
+    );
+  });
+
+  it("labels repository validation failures explicitly", async () => {
+    const trello = new TrelloClient({
+      apiKey: "key",
+      token: "token",
+    });
+
+    vi.spyOn(trello, "moveCard").mockResolvedValue({
+      id: "card-1",
+      name: "Card",
+      desc: "",
+      idList: "failed",
+      url: "https://trello.com/c/card-1",
+    });
+
+    const addComment = vi.spyOn(trello, "addComment").mockResolvedValue({
+      id: "action-1",
+      type: "commentCard",
+      date: "2026-08-22T09:00:00.000Z",
+    });
+
+    const validationError = new Error(
+      "Repository validation exited with code 1",
+    );
+
+    await expect(
+      failCard(trello, project, "card-1", validationError),
+    ).rejects.toBe(validationError);
+
+    expect(addComment).toHaveBeenCalledWith(
+      "card-1",
+      [
+        "Agent Orchestrator failed.",
+        "",
+        "Category: Validation",
+        "Reason: Repository validation exited with code 1",
+      ].join("\n"),
+    );
   });
 });

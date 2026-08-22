@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   OpenCodeClient,
   OpenCodeRunAbortedError,
+  OpenCodeTimeoutError,
   signalProcessTree,
   type RunOpenCode,
 } from "../src/opencode/opencode-client.js";
@@ -111,5 +112,13 @@ describe("OpenCodeClient", () => {
       expect(error).toBeInstanceOf(OpenCodeRunAbortedError);
       expect((error as Error).message).toBe("OpenCode run aborted");
     }
+  });
+
+  it("uses OpenCodeTimeoutError for safety timeouts", () => {
+    const error = new OpenCodeTimeoutError(123_000);
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error.name).toBe("OpenCodeTimeoutError");
+    expect(error.message).toBe("OpenCode exceeded safety timeout of 123000ms");
   });
 });

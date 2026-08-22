@@ -23,6 +23,13 @@ export class OpenCodeRunAbortedError extends Error {
   }
 }
 
+export class OpenCodeTimeoutError extends Error {
+  constructor(timeoutMilliseconds: number) {
+    super(`OpenCode exceeded safety timeout of ${timeoutMilliseconds}ms`);
+    this.name = "OpenCodeTimeoutError";
+  }
+}
+
 export type RunOpenCode = (
   options: OpenCodeRunOptions,
 ) => Promise<OpenCodeRunResult>;
@@ -163,13 +170,10 @@ const defaultRunOpenCode: RunOpenCode = async ({
       signal.removeEventListener("abort", handleAbort);
 
       if (timedOut) {
-        reject(
-          new Error(
-            `OpenCode exceeded safety timeout of ${timeoutMilliseconds}ms`,
-          ),
-        );
+        reject(new OpenCodeTimeoutError(timeoutMilliseconds));
         return;
       }
+
       if (signal.aborted) {
         reject(new OpenCodeRunAbortedError());
         return;
