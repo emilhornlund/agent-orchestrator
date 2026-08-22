@@ -641,7 +641,26 @@ describe("pollProject failure boundaries", () => {
         ).rejects.toThrow("push failed");
 
         expect(scenario.events).toContain("push");
-        expect(scenario.runGitHub).not.toHaveBeenCalled();
+        expect(scenario.runGitHub).toHaveBeenCalledTimes(1);
+        expect(scenario.runGitHub).toHaveBeenCalledWith(
+          "/tmp/example-repository",
+          [
+            "pr",
+            "list",
+            "--repo",
+            "example/repository",
+            "--head",
+            "agent/card-1",
+            "--state",
+            "open",
+            "--json",
+            "url",
+            "--limit",
+            "1",
+            "--jq",
+            '.[0].url // ""',
+          ],
+        );
         expect(scenario.events).not.toContain("move:review");
         expect(scenario.events).toContain("move:failed");
       },
@@ -666,7 +685,7 @@ describe("pollProject failure boundaries", () => {
         ).rejects.toThrow("PR creation failed");
 
         expect(scenario.events).toContain("push");
-        expect(scenario.runGitHub).toHaveBeenCalledTimes(2);
+        expect(scenario.runGitHub).toHaveBeenCalledTimes(3);
         expect(scenario.events).not.toContain("move:review");
         expect(scenario.events).toContain("move:failed");
       },

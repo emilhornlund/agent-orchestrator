@@ -238,7 +238,17 @@ describe("pollProject", () => {
         token: "test-token",
       });
 
-      vi.spyOn(trello, "getCards").mockResolvedValue([card]);
+      vi.spyOn(trello, "getCards").mockImplementation(async (listId) => {
+        if (listId === project.trello.workingListId) {
+          return [];
+        }
+
+        if (listId === project.trello.readyListId) {
+          return [card];
+        }
+
+        return [];
+      });
 
       vi.spyOn(trello, "moveCard").mockImplementation(
         async (_cardId, listId) => {
@@ -377,5 +387,102 @@ describe("pollProject", () => {
         force: true,
       });
     }
+  });
+
+  it("does not run OpenCode when a claimed card already has an open PR", async () => {
+    const card: TrelloCard = {
+      id: "card-1",
+      name: "Already published task",
+      desc: "",
+      idList: "ready",
+      url: "https://trello.com/c/card-1",
+    };
+
+    const project: ProjectConfig = {
+      id: "example",
+      trello: {
+        boardId: "board",
+        readyListId: "ready",
+        workingListId: "working",
+        reviewListId: "review",
+        failedListId: "failed",
+        doneListId: "done",
+      },
+      repository: {
+        path: "/tmp/example-repository",
+        github: "example/repository",
+        defaultBranch: "main",
+        worktreeRoot: "/tmp/example-worktrees",
+      },
+      opencode: {
+        model: "test-model",
+        variant: "test-variant",
+      },
+    };
+
+    const trello = new TrelloClient({
+      apiKey: "test-key",
+      token: "test-token",
+    });
+
+    vi.spyOn(trello, "getCards").mockImplementation(async (listId) => {
+      if (listId === project.trello.workingListId) {
+        return [];
+      }
+
+      if (listId === project.trello.readyListId) {
+        return [card];
+      }
+
+      return [];
+    });
+
+    vi.spyOn(trello, "moveCard").mockImplementation(
+      async (_cardId, listId) => ({
+        ...card,
+        idList: listId,
+      }),
+    );
+
+    const git = new GitClient(async (_cwd, args) => {
+      if (args[0] === "branch" && args[1] === "--list") {
+        return "";
+      }
+
+      return "";
+    });
+
+    const github = new GitHubClient(async (_cwd, args) => {
+      if (args[0] === "pr" && args[1] === "list") {
+        return "https://github.com/example/repository/pull/123";
+      }
+
+      throw new Error("Unexpected GitHub command");
+    });
+
+    const runOpenCode = vi.fn().mockResolvedValue({
+      exitCode: 0,
+      output: "",
+    });
+
+    const opencode = new OpenCodeClient(runOpenCode);
+
+    const commands = new CommandRunner(async () => ({
+      exitCode: 0,
+    }));
+
+    await pollProject(trello, git, github, opencode, commands, project);
+
+    expect(runOpenCode).not.toHaveBeenCalled();
+
+    expect(trello.moveCard).toHaveBeenCalledWith(
+      "card-1",
+      project.trello.workingListId,
+    );
+
+    expect(trello.moveCard).toHaveBeenCalledWith(
+      "card-1",
+      project.trello.reviewListId,
+    );
   });
 });

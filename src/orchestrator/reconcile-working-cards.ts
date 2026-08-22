@@ -4,7 +4,61 @@ import type { ProjectConfig } from "../config/config.js";
 import { cleanupWorktree } from "../git/cleanup-worktree.js";
 import type { GitClient } from "../git/git-client.js";
 import type { GitHubClient } from "../github/github-client.js";
-import type { TrelloClient } from "../trello/trello-client.js";
+import type { TrelloCard, TrelloClient } from "../trello/trello-client.js";
+
+export async function reconcileClaimedCard(
+  trello: TrelloClient,
+  git: GitClient,
+  github: GitHubClient,
+  project: ProjectConfig,
+  card: TrelloCard,
+): Promise<boolean> {
+  const branch = `agent/${card.id}`;
+
+  const pullRequest = await github.findPullRequest({
+    cwd: project.repository.path,
+    repository: project.repository.github,
+    headBranch: branch,
+  });
+
+  if (!pullRequest) {
+    return false;
+  }
+
+  console.log(
+    `[${project.id}] Claimed card already has pull request: ${pullRequest.url}`,
+  );
+  console.log(
+    `[${project.id}] Moving claimed card directly to Human Review...`,
+  );
+
+  await trello.moveCard(card.id, project.trello.reviewListId);
+
+  console.log(`[${project.id}] Claimed card moved directly to Human Review`);
+
+  const worktreePath = path.join(project.repository.worktreeRoot, card.id);
+
+  try {
+    await cleanupWorktree({
+      git,
+      project,
+      worktreePath,
+      branch,
+    });
+
+    console.log(
+      `[${project.id}] Reconciled claimed card local worktree cleaned up`,
+    );
+  } catch (error) {
+    console.error(
+      `[${project.id}] Claimed card moved to Human Review, but local cleanup failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+
+  return true;
+}
 
 export async function reconcileWorkingCards(
   trello: TrelloClient,
