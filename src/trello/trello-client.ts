@@ -49,6 +49,7 @@ export class TrelloClient {
   moveCard(cardId: string, listId: string): Promise<TrelloCard> {
     return this.put<TrelloCard>(`/cards/${cardId}`, {
       idList: listId,
+      pos: "top",
     });
   }
 
