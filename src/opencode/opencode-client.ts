@@ -1,10 +1,14 @@
 import { spawn } from "node:child_process";
 
+const shutdownGraceMilliseconds = 5_000;
+
 export interface OpenCodeRunOptions {
   cwd: string;
   model: string;
   variant: string;
+  timeoutMilliseconds: number;
   prompt: string;
+  signal: AbortSignal;
 }
 
 export interface OpenCodeRunResult {
@@ -16,24 +20,99 @@ export type RunOpenCode = (
   options: OpenCodeRunOptions,
 ) => Promise<OpenCodeRunResult>;
 
+export function signalProcessTree(
+  childPid: number | undefined,
+  signal: NodeJS.Signals,
+  killChild: (signal: NodeJS.Signals) => boolean,
+): void {
+  if (childPid === undefined || process.platform === "win32") {
+    killChild(signal);
+    return;
+  }
+
+  try {
+    process.kill(-childPid, signal);
+  } catch (error) {
+    const code =
+      error instanceof Error && "code" in error ? error.code : undefined;
+
+    if (code !== "ESRCH") {
+      console.error(
+        `Failed to signal OpenCode process group with ${signal}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+}
+
 const defaultRunOpenCode: RunOpenCode = async ({
   cwd,
   model,
   variant,
+  timeoutMilliseconds,
   prompt,
+  signal,
 }) =>
   new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new Error("OpenCode run aborted"));
+      return;
+    }
+
     const child = spawn(
       "opencode",
       ["run", "--model", model, "--variant", variant, "--dir", cwd, prompt],
       {
         cwd,
         stdio: ["inherit", "pipe", "pipe"],
+        detached: process.platform !== "win32",
       },
     );
 
     let output = "";
     let settled = false;
+    let timedOut = false;
+
+    let forceKillTimeout: NodeJS.Timeout | undefined;
+
+    const safetyTimeout = setTimeout(() => {
+      if (settled) {
+        return;
+      }
+
+      timedOut = true;
+
+      console.error(
+        `OpenCode exceeded safety timeout of ${timeoutMilliseconds}ms; terminating`,
+      );
+
+      terminate();
+    }, timeoutMilliseconds);
+
+    safetyTimeout.unref();
+
+    function terminate(): void {
+      signalProcessTree(child.pid, "SIGTERM", (signal) => child.kill(signal));
+
+      forceKillTimeout = setTimeout(() => {
+        if (settled) {
+          return;
+        }
+
+        console.error("OpenCode did not exit after SIGTERM; sending SIGKILL");
+
+        signalProcessTree(child.pid, "SIGKILL", (signal) => child.kill(signal));
+      }, shutdownGraceMilliseconds);
+
+      forceKillTimeout.unref();
+    }
+
+    function handleAbort(): void {
+      terminate();
+    }
+
+    signal.addEventListener("abort", handleAbort, { once: true });
 
     child.stdout.on("data", (chunk: Buffer) => {
       const text = chunk.toString();
@@ -51,6 +130,11 @@ const defaultRunOpenCode: RunOpenCode = async ({
       }
 
       settled = true;
+      clearTimeout(safetyTimeout);
+      if (forceKillTimeout !== undefined) {
+        clearTimeout(forceKillTimeout);
+      }
+      signal.removeEventListener("abort", handleAbort);
 
       reject(
         new Error(`Failed to start OpenCode: ${error.message}`, {
@@ -65,6 +149,24 @@ const defaultRunOpenCode: RunOpenCode = async ({
       }
 
       settled = true;
+      clearTimeout(safetyTimeout);
+      if (forceKillTimeout !== undefined) {
+        clearTimeout(forceKillTimeout);
+      }
+      signal.removeEventListener("abort", handleAbort);
+
+      if (timedOut) {
+        reject(
+          new Error(
+            `OpenCode exceeded safety timeout of ${timeoutMilliseconds}ms`,
+          ),
+        );
+        return;
+      }
+      if (signal.aborted) {
+        reject(new Error("OpenCode run aborted"));
+        return;
+      }
 
       resolve({
         exitCode: code ?? 1,

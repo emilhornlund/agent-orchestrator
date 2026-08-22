@@ -19,6 +19,7 @@ projects:
     opencode:
       model: "your-model"
       variant: "xhigh"
+      timeoutMinutes: 360
 
   - id: "another-project"
 
@@ -40,6 +41,7 @@ projects:
     opencode:
       model: "your-model"
       variant: "xhigh"
+      timeoutMinutes: 360
 
 workflow:
   pollIntervalSeconds: 15

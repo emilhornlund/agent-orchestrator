@@ -7,9 +7,24 @@ import type { TrelloClient } from "../trello/trello-client.js";
 
 import { pollProject } from "./poll-project.js";
 
-function sleep(milliseconds: number): Promise<void> {
+function sleep(milliseconds: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
-    setTimeout(resolve, milliseconds);
+    if (signal.aborted) {
+      resolve();
+      return;
+    }
+
+    const timeout = setTimeout(() => {
+      signal.removeEventListener("abort", handleAbort);
+      resolve();
+    }, milliseconds);
+
+    function handleAbort(): void {
+      clearTimeout(timeout);
+      resolve();
+    }
+
+    signal.addEventListener("abort", handleAbort, { once: true });
   });
 }
 
@@ -20,6 +35,7 @@ export async function runOrchestrator(
   opencode: OpenCodeClient,
   commands: CommandRunner,
   config: Config,
+  signal: AbortSignal,
 ): Promise<void> {
   const pollIntervalMilliseconds = config.workflow.pollIntervalSeconds * 1000;
 
@@ -28,10 +44,18 @@ export async function runOrchestrator(
     `Polling every ${config.workflow.pollIntervalSeconds} seconds...`,
   );
 
-  while (true) {
+  while (!signal.aborted) {
     for (const project of config.projects) {
       try {
-        await pollProject(trello, git, github, opencode, commands, project);
+        await pollProject(
+          trello,
+          git,
+          github,
+          opencode,
+          commands,
+          project,
+          signal,
+        );
       } catch (error) {
         console.error(
           `[${project.id}] ${
@@ -41,6 +65,6 @@ export async function runOrchestrator(
       }
     }
 
-    await sleep(pollIntervalMilliseconds);
+    await sleep(pollIntervalMilliseconds, signal);
   }
 }

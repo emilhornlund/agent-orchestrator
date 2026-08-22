@@ -43,6 +43,7 @@ interface Scenario {
   github: GitHubClient;
   openCode: OpenCodeClient;
   project: ProjectConfig;
+  signal: AbortSignal;
   runCommand: ReturnType<typeof vi.fn<RunCommand>>;
   runGit: ReturnType<typeof vi.fn<RunGit>>;
   runGitHub: ReturnType<typeof vi.fn<RunGitHubCommand>>;
@@ -65,6 +66,7 @@ function createScenario(options: ScenarioOptions = {}): Scenario {
   };
   const worktreePath = path.join(worktreeRoot, card.id);
   const events: string[] = [];
+  const controller = new AbortController();
 
   fs.mkdirSync(worktreePath);
 
@@ -235,6 +237,7 @@ function createScenario(options: ScenarioOptions = {}): Scenario {
     github,
     openCode,
     project,
+    signal: controller.signal,
     runCommand,
     runGit,
     runGitHub,
@@ -280,6 +283,7 @@ describe("pollProject failure boundaries", () => {
         scenario.openCode,
         scenario.commands,
         scenario.project,
+        scenario.signal,
       );
 
       expect(scenario.runOpenCode).not.toHaveBeenCalled();
@@ -303,6 +307,7 @@ describe("pollProject failure boundaries", () => {
             scenario.openCode,
             scenario.commands,
             scenario.project,
+            scenario.signal,
           ),
         ).rejects.toThrow("OpenCode implementation exited with code 1");
 
@@ -327,6 +332,7 @@ describe("pollProject failure boundaries", () => {
             scenario.openCode,
             scenario.commands,
             scenario.project,
+            scenario.signal,
           ),
         ).rejects.toThrow("OpenCode completed without repository changes");
 
@@ -352,6 +358,7 @@ describe("pollProject failure boundaries", () => {
             scenario.openCode,
             scenario.commands,
             scenario.project,
+            scenario.signal,
           ),
         ).rejects.toThrow("Repository validation exited with code 1");
 
@@ -382,6 +389,7 @@ describe("pollProject failure boundaries", () => {
             scenario.openCode,
             scenario.commands,
             scenario.project,
+            scenario.signal,
           ),
         ).rejects.toThrow("OpenCode review exited with code 2");
 
@@ -409,6 +417,7 @@ describe("pollProject failure boundaries", () => {
             scenario.openCode,
             scenario.commands,
             scenario.project,
+            scenario.signal,
           ),
         ).rejects.toThrow("OpenCode remediation exited with code 1");
 
@@ -437,6 +446,7 @@ describe("pollProject failure boundaries", () => {
             scenario.openCode,
             scenario.commands,
             scenario.project,
+            scenario.signal,
           ),
         ).rejects.toThrow("OpenCode remediation left no repository changes");
 
@@ -467,6 +477,7 @@ describe("pollProject failure boundaries", () => {
             scenario.openCode,
             scenario.commands,
             scenario.project,
+            scenario.signal,
           ),
         ).rejects.toThrow(
           "Repository validation after remediation exited with code 1",
@@ -499,6 +510,7 @@ describe("pollProject failure boundaries", () => {
             scenario.openCode,
             scenario.commands,
             scenario.project,
+            scenario.signal,
           ),
         ).rejects.toThrow("Second OpenCode review exited with code 2");
 
@@ -528,6 +540,7 @@ describe("pollProject failure boundaries", () => {
             scenario.openCode,
             scenario.commands,
             scenario.project,
+            scenario.signal,
           ),
         ).rejects.toThrow("OpenCode review failed after remediation");
 
@@ -556,6 +569,7 @@ describe("pollProject failure boundaries", () => {
             scenario.openCode,
             scenario.commands,
             scenario.project,
+            scenario.signal,
           ),
         ).rejects.toThrow("OpenCode commit exited with code 1");
 
@@ -585,6 +599,7 @@ describe("pollProject failure boundaries", () => {
             scenario.openCode,
             scenario.commands,
             scenario.project,
+            scenario.signal,
           ),
         ).rejects.toThrow("OpenCode commit session did not create a commit");
 
@@ -614,6 +629,7 @@ describe("pollProject failure boundaries", () => {
             scenario.openCode,
             scenario.commands,
             scenario.project,
+            scenario.signal,
           ),
         ).rejects.toThrow("OpenCode commit left repository changes");
 
@@ -637,6 +653,7 @@ describe("pollProject failure boundaries", () => {
             scenario.openCode,
             scenario.commands,
             scenario.project,
+            scenario.signal,
           ),
         ).rejects.toThrow("push failed");
 
@@ -681,6 +698,7 @@ describe("pollProject failure boundaries", () => {
             scenario.openCode,
             scenario.commands,
             scenario.project,
+            scenario.signal,
           ),
         ).rejects.toThrow("PR creation failed");
 
@@ -706,6 +724,7 @@ describe("pollProject failure boundaries", () => {
             scenario.openCode,
             scenario.commands,
             scenario.project,
+            scenario.signal,
           ),
         ).rejects.toThrow("Human Review move failed");
 
@@ -741,6 +760,7 @@ describe("pollProject failure boundaries", () => {
             scenario.openCode,
             scenario.commands,
             scenario.project,
+            scenario.signal,
           );
 
           throw new Error("Expected pollProject to throw");
@@ -767,5 +787,31 @@ describe("pollProject failure boundaries", () => {
         ]);
       },
     );
+  });
+
+  it("leaves the card in Working when the workflow is aborted", async () => {
+    await withScenario({}, async (scenario) => {
+      const controller = new AbortController();
+
+      scenario.runOpenCode.mockImplementationOnce(async () => {
+        controller.abort();
+        throw new Error("OpenCode run aborted");
+      });
+
+      await pollProject(
+        scenario.trello,
+        scenario.git,
+        scenario.github,
+        scenario.openCode,
+        scenario.commands,
+        scenario.project,
+        controller.signal,
+      );
+
+      expect(scenario.trello.moveCard).not.toHaveBeenCalledWith(
+        scenario.card.id,
+        scenario.project.trello.failedListId,
+      );
+    });
   });
 });

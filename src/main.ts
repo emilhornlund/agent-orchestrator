@@ -13,6 +13,21 @@ import { validateProjectTrello } from "./trello/validate-project-trello.js";
 async function main(): Promise<void> {
   const config = loadConfig();
   const environment = parseEnvironment(process.env);
+  const shutdownController = new AbortController();
+
+  function handleShutdown(signal: NodeJS.Signals): void {
+    if (shutdownController.signal.aborted) {
+      return;
+    }
+
+    console.log("");
+    console.log(`Received ${signal}; shutting down...`);
+
+    shutdownController.abort();
+  }
+
+  process.once("SIGINT", handleShutdown);
+  process.once("SIGTERM", handleShutdown);
 
   const trello = new TrelloClient({
     apiKey: environment.TRELLO_API_KEY,
@@ -44,7 +59,17 @@ async function main(): Promise<void> {
     console.log("Trello configuration: OK");
   }
 
-  await runOrchestrator(trello, git, github, opencode, commands, config);
+  await runOrchestrator(
+    trello,
+    git,
+    github,
+    opencode,
+    commands,
+    config,
+    shutdownController.signal,
+  );
+
+  console.log("Agent Orchestrator stopped");
 }
 
 main().catch((error: unknown) => {

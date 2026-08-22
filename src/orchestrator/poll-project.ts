@@ -28,6 +28,7 @@ export async function pollProject(
   opencode: OpenCodeClient,
   commands: CommandRunner,
   project: ProjectConfig,
+  signal: AbortSignal,
 ): Promise<void> {
   await reconcileReviewCards(trello, git, github, project);
   await reconcileWorkingCards(trello, git, github, project);
@@ -62,6 +63,7 @@ export async function pollProject(
       commands,
       project,
       card,
+      signal,
     );
 
     console.log(`[${project.id}] Cleaning up published worktree...`);
@@ -85,6 +87,13 @@ export async function pollProject(
       );
     }
   } catch (error) {
+    if (signal.aborted) {
+      console.log(
+        `[${project.id}] Card workflow interrupted by orchestrator shutdown`,
+      );
+      return;
+    }
+
     console.error(`[${project.id}] Card workflow failed; moving to Failed...`);
 
     await failCard(trello, project, card.id, error);
@@ -99,6 +108,7 @@ async function processClaimedCard(
   commands: CommandRunner,
   project: ProjectConfig,
   card: TrelloCard,
+  signal: AbortSignal,
 ): Promise<{
   path: string;
   branch: string;
@@ -113,7 +123,9 @@ async function processClaimedCard(
     cwd: worktree.path,
     model: project.opencode.model,
     variant: project.opencode.variant,
+    timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
     prompt: buildTaskPrompt(card),
+    signal,
   });
 
   if (implementation.exitCode !== 0) {
@@ -159,7 +171,9 @@ async function processClaimedCard(
     cwd: worktree.path,
     model: project.opencode.model,
     variant: project.opencode.variant,
+    timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
     prompt: buildReviewPrompt(card),
+    signal,
   });
 
   if (review.exitCode !== 0) {
@@ -179,7 +193,9 @@ async function processClaimedCard(
       cwd: worktree.path,
       model: project.opencode.model,
       variant: project.opencode.variant,
+      timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
       prompt: buildRemediationPrompt(card, review.output),
+      signal,
     });
 
     if (remediation.exitCode !== 0) {
@@ -223,7 +239,9 @@ async function processClaimedCard(
       cwd: worktree.path,
       model: project.opencode.model,
       variant: project.opencode.variant,
+      timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
       prompt: buildReviewPrompt(card),
+      signal,
     });
 
     if (secondReview.exitCode !== 0) {
@@ -249,7 +267,9 @@ async function processClaimedCard(
     cwd: worktree.path,
     model: project.opencode.model,
     variant: project.opencode.variant,
+    timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
     prompt: buildCommitPrompt(card),
+    signal,
   });
 
   if (commit.exitCode !== 0) {

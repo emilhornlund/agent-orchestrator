@@ -48,6 +48,7 @@ const repositorySchema = z.object({
 const openCodeSchema = z.object({
   model: z.string().min(1),
   variant: z.string().min(1),
+  timeoutMinutes: z.number().positive().default(360),
 });
 
 const projectSchema = z.object({
