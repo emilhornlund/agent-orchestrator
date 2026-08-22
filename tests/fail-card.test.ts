@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { ProjectConfig } from "../src/config/config.js";
 import { OpenCodeTimeoutError } from "../src/opencode/opencode-client.js";
 import { failCard } from "../src/orchestrator/fail-card.js";
+import { WorkflowError } from "../src/orchestrator/workflow-error.js";
 import { TrelloClient } from "../src/trello/trello-client.js";
 
 const project: ProjectConfig = {
@@ -180,7 +181,8 @@ describe("failCard", () => {
       date: "2026-08-22T09:00:00.000Z",
     });
 
-    const validationError = new Error(
+    const validationError = new WorkflowError(
+      "Validation",
       "Repository validation exited with code 1",
     );
 
@@ -195,6 +197,125 @@ describe("failCard", () => {
         "",
         "Category: Validation",
         "Reason: Repository validation exited with code 1",
+      ].join("\n"),
+    );
+  });
+
+  it("does not infer failure categories from arbitrary error messages", async () => {
+    const trello = new TrelloClient({
+      apiKey: "key",
+      token: "token",
+    });
+
+    vi.spyOn(trello, "moveCard").mockResolvedValue({
+      id: "card-1",
+      name: "Card",
+      desc: "",
+      idList: "failed",
+      url: "https://trello.com/c/card-1",
+    });
+
+    const addComment = vi.spyOn(trello, "addComment").mockResolvedValue({
+      id: "action-1",
+      type: "commentCard",
+      date: "2026-08-22T09:00:00.000Z",
+    });
+
+    const workflowError = new Error(
+      "Repository validation push pull request GitHub failure",
+    );
+
+    await expect(
+      failCard(trello, project, "card-1", workflowError),
+    ).rejects.toBe(workflowError);
+
+    expect(addComment).toHaveBeenCalledWith(
+      "card-1",
+      [
+        "Agent Orchestrator failed.",
+        "",
+        "Category: Workflow",
+        "Reason: Repository validation push pull request GitHub failure",
+      ].join("\n"),
+    );
+  });
+
+  it("uses the category carried by WorkflowError", async () => {
+    const trello = new TrelloClient({
+      apiKey: "key",
+      token: "token",
+    });
+
+    vi.spyOn(trello, "moveCard").mockResolvedValue({
+      id: "card-1",
+      name: "Card",
+      desc: "",
+      idList: "failed",
+      url: "https://trello.com/c/card-1",
+    });
+
+    const addComment = vi.spyOn(trello, "addComment").mockResolvedValue({
+      id: "action-1",
+      type: "commentCard",
+      date: "2026-08-22T09:00:00.000Z",
+    });
+
+    const workflowError = new WorkflowError(
+      "OpenCode",
+      "agent execution failed",
+    );
+
+    await expect(
+      failCard(trello, project, "card-1", workflowError),
+    ).rejects.toBe(workflowError);
+
+    expect(addComment).toHaveBeenCalledWith(
+      "card-1",
+      [
+        "Agent Orchestrator failed.",
+        "",
+        "Category: OpenCode",
+        "Reason: agent execution failed",
+      ].join("\n"),
+    );
+  });
+
+  it("uses the Git/GitHub workflow category explicitly", async () => {
+    const trello = new TrelloClient({
+      apiKey: "key",
+      token: "token",
+    });
+
+    vi.spyOn(trello, "moveCard").mockResolvedValue({
+      id: "card-1",
+      name: "Card",
+      desc: "",
+      idList: "failed",
+      url: "https://trello.com/c/card-1",
+    });
+
+    const addComment = vi.spyOn(trello, "addComment").mockResolvedValue({
+      id: "action-1",
+      type: "commentCard",
+      date: "2026-08-22T09:00:00.000Z",
+    });
+
+    const workflowError = new WorkflowError(
+      "Git/GitHub",
+      "remote operation failed",
+    );
+
+    await expect(
+      failCard(trello, project, "card-1", workflowError),
+    ).rejects.toBe(workflowError);
+
+    expect(addComment).toHaveBeenCalledWith(
+      "card-1",
+      [
+        "Agent Orchestrator failed.",
+        "",
+        "Category: Git/GitHub",
+        "Reason: remote operation failed",
       ].join("\n"),
     );
   });

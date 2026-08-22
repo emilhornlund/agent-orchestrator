@@ -3,6 +3,8 @@ import type { GitClient } from "../git/git-client.js";
 import type { GitHubClient } from "../github/github-client.js";
 import type { TrelloCard, TrelloClient } from "../trello/trello-client.js";
 
+import { WorkflowError } from "./workflow-error.js";
+
 export interface PublishCardOptions {
   trello: TrelloClient;
   git: GitClient;
@@ -30,40 +32,55 @@ export async function publishCard({
   reviewResult,
   remediationResult,
 }: PublishCardOptions): Promise<void> {
-  console.log(`[${project.id}] Pushing branch ${branch}...`);
+  let pullRequest;
 
-  await git.push(worktreePath, "origin", branch);
+  try {
+    console.log(`[${project.id}] Pushing branch ${branch}...`);
 
-  console.log(`[${project.id}] Branch pushed`);
-  console.log(`[${project.id}] Checking for existing pull request...`);
+    await git.push(worktreePath, "origin", branch);
 
-  let pullRequest = await github.findPullRequest({
-    cwd: worktreePath,
-    repository: project.repository.github,
-    headBranch: branch,
-  });
+    console.log(`[${project.id}] Branch pushed`);
+    console.log(`[${project.id}] Checking for existing pull request...`);
 
-  if (pullRequest) {
-    console.log(
-      `[${project.id}] Existing pull request found: ${pullRequest.url}`,
-    );
-  } else {
-    console.log(`[${project.id}] Creating pull request...`);
-
-    pullRequest = await github.createPullRequest({
+    pullRequest = await github.findPullRequest({
       cwd: worktreePath,
       repository: project.repository.github,
-      baseBranch: project.repository.defaultBranch,
       headBranch: branch,
-      title: card.name,
-      body: [
-        `Trello: ${card.url}`,
-        "",
-        "Implemented automatically by Agent Orchestrator.",
-      ].join("\n"),
     });
 
-    console.log(`[${project.id}] Pull request created: ${pullRequest.url}`);
+    if (pullRequest) {
+      console.log(
+        `[${project.id}] Existing pull request found: ${pullRequest.url}`,
+      );
+    } else {
+      console.log(`[${project.id}] Creating pull request...`);
+
+      pullRequest = await github.createPullRequest({
+        cwd: worktreePath,
+        repository: project.repository.github,
+        baseBranch: project.repository.defaultBranch,
+        headBranch: branch,
+        title: card.name,
+        body: [
+          `Trello: ${card.url}`,
+          "",
+          "Implemented automatically by Agent Orchestrator.",
+        ].join("\n"),
+      });
+
+      console.log(`[${project.id}] Pull request created: ${pullRequest.url}`);
+    }
+  } catch (error) {
+    if (error instanceof WorkflowError) {
+      throw error;
+    }
+
+    const publicationError =
+      error instanceof Error ? error : new Error(String(error));
+
+    throw new WorkflowError("Git/GitHub", publicationError.message, {
+      cause: publicationError,
+    });
   }
 
   console.log(`[${project.id}] Moving Trello card to Human Review...`);

@@ -28,6 +28,7 @@ import {
   reconcileClaimedCard,
   reconcileWorkingCards,
 } from "./reconcile-working-cards.js";
+import { WorkflowError } from "./workflow-error.js";
 
 function isWorkflowAbort(error: unknown, signal: AbortSignal): boolean {
   return signal.aborted && error instanceof OpenCodeRunAbortedError;
@@ -273,7 +274,8 @@ async function processCardChanges(
   });
 
   if (implementation.exitCode !== 0) {
-    throw new Error(
+    throw new WorkflowError(
+      "OpenCode",
       `OpenCode ${implementationLabel} exited with code ${implementation.exitCode}`,
     );
   }
@@ -283,7 +285,10 @@ async function processCardChanges(
   const status = await git.getStatus(worktree.path);
 
   if (status.length === 0) {
-    throw new Error("OpenCode completed without repository changes");
+    throw new WorkflowError(
+      "OpenCode",
+      "OpenCode completed without repository changes",
+    );
   }
 
   console.log(`[${project.id}] Repository changes detected:`);
@@ -301,7 +306,8 @@ async function processCardChanges(
     });
 
     if (validation.exitCode !== 0) {
-      throw new Error(
+      throw new WorkflowError(
+        "Validation",
         `Repository validation exited with code ${validation.exitCode}`,
       );
     }
@@ -323,7 +329,10 @@ async function processCardChanges(
   });
 
   if (review.exitCode !== 0) {
-    throw new Error(`OpenCode review exited with code ${review.exitCode}`);
+    throw new WorkflowError(
+      "OpenCode",
+      `OpenCode review exited with code ${review.exitCode}`,
+    );
   }
 
   const parsedReviewResult = parseReviewResult(review.output);
@@ -350,7 +359,8 @@ async function processCardChanges(
     });
 
     if (remediation.exitCode !== 0) {
-      throw new Error(
+      throw new WorkflowError(
+        "OpenCode",
         `OpenCode remediation exited with code ${remediation.exitCode}`,
       );
     }
@@ -360,7 +370,10 @@ async function processCardChanges(
     const remediatedStatus = await git.getStatus(worktree.path);
 
     if (remediatedStatus.length === 0) {
-      throw new Error("OpenCode remediation left no repository changes");
+      throw new WorkflowError(
+        "OpenCode",
+        "OpenCode remediation left no repository changes",
+      );
     }
 
     if (project.repository.validationCommand) {
@@ -374,7 +387,8 @@ async function processCardChanges(
       });
 
       if (validation.exitCode !== 0) {
-        throw new Error(
+        throw new WorkflowError(
+          "Validation",
           `Repository validation after remediation exited with code ${validation.exitCode}`,
         );
       }
@@ -398,7 +412,8 @@ async function processCardChanges(
     });
 
     if (secondReview.exitCode !== 0) {
-      throw new Error(
+      throw new WorkflowError(
+        "OpenCode",
         `Second OpenCode review exited with code ${secondReview.exitCode}`,
       );
     }
@@ -406,7 +421,10 @@ async function processCardChanges(
     const secondReviewResult = parseReviewResult(secondReview.output);
 
     if (secondReviewResult === "fail") {
-      throw new Error("OpenCode review failed after remediation");
+      throw new WorkflowError(
+        "OpenCode",
+        "OpenCode review failed after remediation",
+      );
     }
 
     reviewResult = "Passed after remediation";
@@ -428,19 +446,26 @@ async function processCardChanges(
   });
 
   if (commit.exitCode !== 0) {
-    throw new Error(`OpenCode commit exited with code ${commit.exitCode}`);
+    throw new WorkflowError(
+      "OpenCode",
+      `OpenCode commit exited with code ${commit.exitCode}`,
+    );
   }
 
   const headAfterCommit = await git.getHeadSha(worktree.path);
 
   if (headAfterCommit === headBeforeCommit) {
-    throw new Error("OpenCode commit session did not create a commit");
+    throw new WorkflowError(
+      "OpenCode",
+      "OpenCode commit session did not create a commit",
+    );
   }
 
   const statusAfterCommit = await git.getStatus(worktree.path);
 
   if (statusAfterCommit.length > 0) {
-    throw new Error(
+    throw new WorkflowError(
+      "OpenCode",
       `OpenCode commit left repository changes:\n${statusAfterCommit}`,
     );
   }

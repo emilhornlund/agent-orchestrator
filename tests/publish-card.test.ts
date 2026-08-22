@@ -7,6 +7,7 @@ import {
   type RunGitHubCommand,
 } from "../src/github/github-client.js";
 import { publishCard } from "../src/orchestrator/publish-card.js";
+import { WorkflowError } from "../src/orchestrator/workflow-error.js";
 import { type TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
 
 function createProject(): ProjectConfig {
@@ -257,6 +258,50 @@ describe("publishCard", () => {
     expect(moveCard).not.toHaveBeenCalled();
   });
 
+  it("classifies push failures as Git/GitHub workflow errors", async () => {
+    const pushError = new Error("push failed");
+
+    const trello = {
+      moveCard: vi.fn(),
+      addComment: vi.fn(),
+    } as unknown as TrelloClient;
+
+    const git = {
+      push: vi.fn().mockRejectedValue(pushError),
+    } as unknown as GitClient;
+
+    const github = {
+      findPullRequest: vi.fn(),
+      createPullRequest: vi.fn(),
+    } as unknown as GitHubClient;
+
+    try {
+      await publishCard({
+        trello,
+        git,
+        github,
+        project: createProject(),
+        card: createCard(),
+        worktreePath: "/worktree",
+        branch: "agent/card-1",
+        commitSha: "commit-sha",
+        validationResult: "Passed",
+        reviewResult: "Passed",
+        remediationResult: "Not required",
+      });
+
+      throw new Error("Expected publishCard to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(WorkflowError);
+
+      const workflowError = error as WorkflowError;
+
+      expect(workflowError.category).toBe("Git/GitHub");
+      expect(workflowError.message).toBe("push failed");
+      expect(workflowError.cause).toBe(pushError);
+    }
+  });
+
   it("stops before moving the card when PR creation fails", async () => {
     const runGit = vi.fn<RunGit>().mockResolvedValue("");
 
@@ -308,8 +353,8 @@ describe("publishCard", () => {
     });
     const moveCard = vi.spyOn(trello, "moveCard");
 
-    await expect(
-      publishCard({
+    try {
+      await publishCard({
         trello,
         git: new GitClient(runGit),
         github: new GitHubClient(runGitHubCommand),
@@ -321,8 +366,18 @@ describe("publishCard", () => {
         validationResult: "Passed",
         reviewResult: "Passed",
         remediationResult: "Not required",
-      }),
-    ).rejects.toBe(lookupError);
+      });
+
+      throw new Error("Expected publishCard to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(WorkflowError);
+
+      const workflowError = error as WorkflowError;
+
+      expect(workflowError.category).toBe("Git/GitHub");
+      expect(workflowError.message).toBe("PR lookup failed");
+      expect(workflowError.cause).toBe(lookupError);
+    }
 
     expect(runGitHubCommand).toHaveBeenCalledTimes(1);
     expect(moveCard).not.toHaveBeenCalled();
