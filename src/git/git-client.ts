@@ -130,4 +130,27 @@ export class GitClient {
   async cleanUntracked(repositoryPath: string): Promise<void> {
     await this.runGit(repositoryPath, ["clean", "-fd"]);
   }
+
+  async remoteBranchExists(
+    repositoryPath: string,
+    remote: string,
+    branch: string,
+  ): Promise<boolean> {
+    const output = await this.runGit(repositoryPath, [
+      "ls-remote",
+      "--heads",
+      remote,
+      `refs/heads/${branch}`,
+    ]);
+
+    return output.length > 0;
+  }
+
+  async deleteRemoteBranch(
+    repositoryPath: string,
+    remote: string,
+    branch: string,
+  ): Promise<void> {
+    await this.runGit(repositoryPath, ["push", remote, "--delete", branch]);
+  }
 }

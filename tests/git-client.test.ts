@@ -194,4 +194,44 @@ describe("GitClient", () => {
 
     expect(runGit).toHaveBeenCalledWith("/worktree", ["clean", "-fd"]);
   });
+
+  it("detects an existing remote branch", async () => {
+    const runGit = vi.fn().mockResolvedValue("abc123\trefs/heads/agent/card-1");
+
+    const git = new GitClient(runGit);
+
+    await expect(
+      git.remoteBranchExists("/repo", "origin", "agent/card-1"),
+    ).resolves.toBe(true);
+
+    expect(runGit).toHaveBeenCalledWith("/repo", [
+      "ls-remote",
+      "--heads",
+      "origin",
+      "refs/heads/agent/card-1",
+    ]);
+  });
+
+  it("detects a missing remote branch", async () => {
+    const runGit = vi.fn().mockResolvedValue("");
+    const git = new GitClient(runGit);
+
+    await expect(
+      git.remoteBranchExists("/repo", "origin", "agent/card-1"),
+    ).resolves.toBe(false);
+  });
+
+  it("deletes a remote branch", async () => {
+    const runGit = vi.fn().mockResolvedValue("");
+    const git = new GitClient(runGit);
+
+    await git.deleteRemoteBranch("/repo", "origin", "agent/card-1");
+
+    expect(runGit).toHaveBeenCalledWith("/repo", [
+      "push",
+      "origin",
+      "--delete",
+      "agent/card-1",
+    ]);
+  });
 });
