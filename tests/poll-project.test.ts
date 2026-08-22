@@ -139,7 +139,8 @@ describe("pollProject", () => {
 
           return {
             exitCode: 0,
-            output: "",
+            output:
+              "Tests completed successfully\npermission denied\n157 passed",
             errorOutput: "",
           };
         }

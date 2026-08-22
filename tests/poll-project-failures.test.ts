@@ -333,7 +333,7 @@ describe("pollProject failure boundaries", () => {
         statusOutputs: [""],
         openCodeResults: [
           {
-            exitCode: 0,
+            exitCode: 1,
             output: "",
             errorOutput:
               "permission requested: external_directory (/tmp/worktree/*); auto-rejecting",

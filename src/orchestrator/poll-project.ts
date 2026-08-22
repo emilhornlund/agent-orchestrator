@@ -302,14 +302,14 @@ async function processCardChanges(
     sessionLabel: `OpenCode ${implementationLabel}`,
   });
 
-  if (hasOpenCodePermissionDenial(implementation)) {
-    throw new WorkflowError(
-      "OpenCode permissions",
-      `OpenCode was denied permission during ${implementationLabel}`,
-    );
-  }
-
   if (implementation.exitCode !== 0) {
+    if (hasOpenCodePermissionDenial(implementation)) {
+      throw new WorkflowError(
+        "OpenCode permissions",
+        `OpenCode was denied permission during ${implementationLabel}`,
+      );
+    }
+
     throw new WorkflowError(
       "OpenCode",
       `OpenCode ${implementationLabel} exited with code ${implementation.exitCode}`,
