@@ -37,19 +37,18 @@ export interface ChangesRequestedPullRequest extends PullRequest {
   feedback: string;
 }
 
-interface PullRequestReview {
-  author: {
-    login: string;
-  } | null;
-  body: string;
-  state: string;
-}
-
 interface PullRequestReviewListItem {
   url: string;
   number: number;
   reviewDecision: string;
-  latestReviews: PullRequestReview[];
+  headRefOid: string;
+}
+
+interface RequestedChangesReview {
+  id: number;
+  body: string | null;
+  commitId: string;
+  author: string | null;
 }
 
 export type RunGitHubCommand = (cwd: string, args: string[]) => Promise<string>;
@@ -233,7 +232,7 @@ export class GitHubClient {
       "--state",
       "open",
       "--json",
-      "url,number,reviewDecision,latestReviews",
+      "url,number,reviewDecision,headRefOid",
       "--limit",
       "1",
     ]);
@@ -249,26 +248,41 @@ export class GitHubClient {
       return null;
     }
 
+    const reviewOutput = await this.runGitHubCommand(options.cwd, [
+      "api",
+      `repos/${options.repository}/pulls/${pullRequest.number}/reviews`,
+      "--paginate",
+      "--slurp",
+      "--jq",
+      'flatten | map(select(.state == "CHANGES_REQUESTED")) | sort_by(.submitted_at) | last | {id, body, commitId: .commit_id, author: .user.login}',
+    ]);
+
+    if (reviewOutput.length === 0 || reviewOutput === "null") {
+      return null;
+    }
+
+    const review = JSON.parse(reviewOutput) as RequestedChangesReview;
+
+    if (review.commitId !== pullRequest.headRefOid) {
+      return null;
+    }
+
     const inlineComments = await this.runGitHubCommand(options.cwd, [
       "api",
       `repos/${options.repository}/pulls/${pullRequest.number}/comments`,
       "--paginate",
+      "--slurp",
       "--jq",
-      '.[] | select(.body != null and .body != "") | "\\(.user.login): \\(.body)"',
+      `flatten | map(select(.pull_request_review_id == ${review.id} and .body != null and .body != "")) | .[] | "\\(.user.login): \\(.body)"`,
     ]);
 
-    const reviewFeedback = pullRequest.latestReviews
-      .filter(
-        (review) =>
-          review.state === "CHANGES_REQUESTED" && review.body.trim().length > 0,
-      )
-      .map((review) => {
-        const author = review.author?.login ?? "reviewer";
+    const feedbackParts: string[] = [];
 
-        return `${author}: ${review.body.trim()}`;
-      });
+    if (review.body?.trim()) {
+      const author = review.author ?? "reviewer";
 
-    const feedbackParts = [...reviewFeedback];
+      feedbackParts.push(`${author}: ${review.body.trim()}`);
+    }
 
     if (inlineComments.length > 0) {
       feedbackParts.push(`Inline review comments:\n${inlineComments}`);

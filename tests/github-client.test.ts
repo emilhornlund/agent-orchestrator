@@ -378,7 +378,7 @@ describe("GitHubClient", () => {
     ).resolves.toBeNull();
   });
 
-  it("finds an open pull request with requested changes and collects review feedback", async () => {
+  it("finds requested changes when the review targets the current PR head", async () => {
     const runGitHub = vi
       .fn<RunGitHubCommand>()
       .mockResolvedValueOnce(
@@ -387,17 +387,17 @@ describe("GitHubClient", () => {
             url: "https://github.com/example/repository/pull/123",
             number: 123,
             reviewDecision: "CHANGES_REQUESTED",
-            latestReviews: [
-              {
-                author: {
-                  login: "reviewer-one",
-                },
-                body: "Please handle the null case.",
-                state: "CHANGES_REQUESTED",
-              },
-            ],
+            headRefOid: "current-head-sha",
           },
         ]),
+      )
+      .mockResolvedValueOnce(
+        JSON.stringify({
+          id: 456,
+          body: "Please handle the null case.",
+          commitId: "current-head-sha",
+          author: "reviewer-one",
+        }),
       )
       .mockResolvedValueOnce("reviewer-one: Please add a regression test.");
 
@@ -429,17 +429,27 @@ describe("GitHubClient", () => {
       "--state",
       "open",
       "--json",
-      "url,number,reviewDecision,latestReviews",
+      "url,number,reviewDecision,headRefOid",
       "--limit",
       "1",
     ]);
 
     expect(runGitHub).toHaveBeenNthCalledWith(2, "/repo", [
       "api",
+      "repos/example/repository/pulls/123/reviews",
+      "--paginate",
+      "--slurp",
+      "--jq",
+      'flatten | map(select(.state == "CHANGES_REQUESTED")) | sort_by(.submitted_at) | last | {id, body, commitId: .commit_id, author: .user.login}',
+    ]);
+
+    expect(runGitHub).toHaveBeenNthCalledWith(3, "/repo", [
+      "api",
       "repos/example/repository/pulls/123/comments",
       "--paginate",
+      "--slurp",
       "--jq",
-      '.[] | select(.body != null and .body != "") | "\\(.user.login): \\(.body)"',
+      'flatten | map(select(.pull_request_review_id == 456 and .body != null and .body != "")) | .[] | "\\(.user.login): \\(.body)"',
     ]);
   });
 
@@ -450,7 +460,7 @@ describe("GitHubClient", () => {
           url: "https://github.com/example/repository/pull/123",
           number: 123,
           reviewDecision: "REVIEW_REQUIRED",
-          latestReviews: [],
+          headRefOid: "current-head-sha",
         },
       ]),
     );
@@ -466,5 +476,112 @@ describe("GitHubClient", () => {
     ).resolves.toBeNull();
 
     expect(runGitHub).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores requested changes that target an older PR head", async () => {
+    const runGitHub = vi
+      .fn<RunGitHubCommand>()
+      .mockResolvedValueOnce(
+        JSON.stringify([
+          {
+            url: "https://github.com/example/repository/pull/123",
+            number: 123,
+            reviewDecision: "CHANGES_REQUESTED",
+            headRefOid: "new-agent-head-sha",
+          },
+        ]),
+      )
+      .mockResolvedValueOnce(
+        JSON.stringify({
+          id: 456,
+          body: "Please handle the null case.",
+          commitId: "old-reviewed-head-sha",
+          author: "reviewer-one",
+        }),
+      );
+
+    const github = new GitHubClient(runGitHub);
+
+    await expect(
+      github.findChangesRequestedPullRequest({
+        cwd: "/repo",
+        repository: "example/repository",
+        headBranch: "agent/card-1",
+      }),
+    ).resolves.toBeNull();
+
+    expect(runGitHub).toHaveBeenCalledTimes(2);
+
+    expect(runGitHub).not.toHaveBeenCalledWith(
+      "/repo",
+      expect.arrayContaining(["repos/example/repository/pulls/123/comments"]),
+    );
+  });
+
+  it("processes a new requested-changes review after the PR head changes", async () => {
+    const runGitHub = vi
+      .fn<RunGitHubCommand>()
+      .mockResolvedValueOnce(
+        JSON.stringify([
+          {
+            url: "https://github.com/example/repository/pull/123",
+            number: 123,
+            reviewDecision: "CHANGES_REQUESTED",
+            headRefOid: "second-review-head-sha",
+          },
+        ]),
+      )
+      .mockResolvedValueOnce(
+        JSON.stringify({
+          id: 789,
+          body: "One more change is required.",
+          commitId: "second-review-head-sha",
+          author: "reviewer-two",
+        }),
+      )
+      .mockResolvedValueOnce("");
+
+    const github = new GitHubClient(runGitHub);
+
+    await expect(
+      github.findChangesRequestedPullRequest({
+        cwd: "/repo",
+        repository: "example/repository",
+        headBranch: "agent/card-1",
+      }),
+    ).resolves.toEqual({
+      url: "https://github.com/example/repository/pull/123",
+      feedback: "reviewer-two: One more change is required.",
+    });
+
+    expect(runGitHub).toHaveBeenCalledTimes(3);
+  });
+
+  it("returns null when GitHub reports changes requested but no submitted change review exists", async () => {
+    const runGitHub = vi
+      .fn<RunGitHubCommand>()
+      .mockResolvedValueOnce(
+        JSON.stringify([
+          {
+            url: "https://github.com/example/repository/pull/123",
+            number: 123,
+            reviewDecision: "CHANGES_REQUESTED",
+            headRefOid: "current-head-sha",
+          },
+        ]),
+      )
+      .mockResolvedValueOnce("null");
+
+    const github = new GitHubClient(runGitHub);
+
+    await expect(
+      github.findChangesRequestedPullRequest({
+        cwd: "/repo",
+        repository: "example/repository",
+        headBranch: "agent/card-1",
+      }),
+    ).resolves.toBeNull();
+
+    expect(runGitHub).toHaveBeenCalledTimes(2);
   });
 });
