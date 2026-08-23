@@ -439,7 +439,7 @@ describe("pollProject failure boundaries", () => {
             scenario.project,
             scenario.signal,
           ),
-        ).rejects.toThrow("OpenCode review exited with code 2");
+        ).rejects.toThrow("OpenCode review #1 exited with code 2");
 
         expect(scenario.runOpenCode).toHaveBeenCalledTimes(2);
         expectNothingPublished(scenario);
@@ -467,7 +467,7 @@ describe("pollProject failure boundaries", () => {
             scenario.project,
             scenario.signal,
           ),
-        ).rejects.toThrow("OpenCode remediation exited with code 1");
+        ).rejects.toThrow("OpenCode remediation #1 exited with code 1");
 
         expect(scenario.runOpenCode).toHaveBeenCalledTimes(3);
         expectNothingPublished(scenario);
@@ -496,7 +496,7 @@ describe("pollProject failure boundaries", () => {
             scenario.project,
             scenario.signal,
           ),
-        ).rejects.toThrow("OpenCode remediation left no repository changes");
+        ).rejects.toThrow("OpenCode remediation #1 left no repository changes");
 
         expect(scenario.runOpenCode).toHaveBeenCalledTimes(3);
         expectNothingPublished(scenario);
@@ -528,7 +528,7 @@ describe("pollProject failure boundaries", () => {
             scenario.signal,
           ),
         ).rejects.toThrow(
-          "Repository validation after remediation exited with code 1",
+          "Repository validation after remediation #1 exited with code 1",
         );
 
         expect(scenario.runCommand).toHaveBeenCalledTimes(2);
@@ -560,7 +560,7 @@ describe("pollProject failure boundaries", () => {
             scenario.project,
             scenario.signal,
           ),
-        ).rejects.toThrow("Second OpenCode review exited with code 2");
+        ).rejects.toThrow("OpenCode review #2 exited with code 2");
 
         expect(scenario.runOpenCode).toHaveBeenCalledTimes(4);
         expectNothingPublished(scenario);
@@ -568,15 +568,30 @@ describe("pollProject failure boundaries", () => {
     );
   });
 
-  it("does not commit or publish after a second review failure result", async () => {
+  it("does not commit or publish after the final allowed review failure", async () => {
     await withScenario(
       {
-        statusOutputs: [" M src/example.ts", " M src/example.ts"],
+        statusOutputs: [
+          " M src/example.ts",
+          " M src/example.ts",
+          " M src/example.ts",
+        ],
         openCodeResults: [
           { exitCode: 0, output: "" },
-          { exitCode: 0, output: "REVIEW_FAIL" },
+          {
+            exitCode: 0,
+            output: "First review finding\nREVIEW_FAIL",
+          },
           { exitCode: 0, output: "" },
-          { exitCode: 0, output: "REVIEW_FAIL" },
+          {
+            exitCode: 0,
+            output: "Second review finding\nREVIEW_FAIL",
+          },
+          { exitCode: 0, output: "" },
+          {
+            exitCode: 0,
+            output: "Final review finding\nREVIEW_FAIL",
+          },
         ],
       },
       async (scenario) => {
@@ -590,10 +605,170 @@ describe("pollProject failure boundaries", () => {
             scenario.project,
             scenario.signal,
           ),
-        ).rejects.toThrow("OpenCode review failed after remediation");
+        ).rejects.toThrow("OpenCode review failed after 2 remediation passes");
 
-        expect(scenario.runOpenCode).toHaveBeenCalledTimes(4);
+        expect(scenario.runOpenCode).toHaveBeenCalledTimes(6);
         expectNothingPublished(scenario);
+      },
+    );
+  });
+
+  it("does not continue when the second remediation fails", async () => {
+    await withScenario(
+      {
+        statusOutputs: [" M src/example.ts", " M src/example.ts"],
+        openCodeResults: [
+          { exitCode: 0, output: "" },
+          {
+            exitCode: 0,
+            output: "First review finding\nREVIEW_FAIL",
+          },
+          { exitCode: 0, output: "" },
+          {
+            exitCode: 0,
+            output: "Second review finding\nREVIEW_FAIL",
+          },
+          {
+            exitCode: 1,
+            output: "second remediation failed",
+          },
+        ],
+      },
+      async (scenario) => {
+        await expect(
+          pollProject(
+            scenario.trello,
+            scenario.git,
+            scenario.github,
+            scenario.openCode,
+            scenario.commands,
+            scenario.project,
+            scenario.signal,
+          ),
+        ).rejects.toThrow("OpenCode remediation #2 exited with code 1");
+
+        expect(scenario.runOpenCode).toHaveBeenCalledTimes(5);
+        expectNothingPublished(scenario);
+      },
+    );
+  });
+
+  it("does not third-review when validation after the second remediation fails", async () => {
+    await withScenario(
+      {
+        validationCommand: "yarn validate",
+        validationExitCodes: [0, 0, 1],
+        statusOutputs: [
+          " M src/example.ts",
+          " M src/example.ts",
+          " M src/example.ts",
+        ],
+        openCodeResults: [
+          { exitCode: 0, output: "" },
+          {
+            exitCode: 0,
+            output: "First review finding\nREVIEW_FAIL",
+          },
+          { exitCode: 0, output: "" },
+          {
+            exitCode: 0,
+            output: "Second review finding\nREVIEW_FAIL",
+          },
+          { exitCode: 0, output: "" },
+        ],
+      },
+      async (scenario) => {
+        await expect(
+          pollProject(
+            scenario.trello,
+            scenario.git,
+            scenario.github,
+            scenario.openCode,
+            scenario.commands,
+            scenario.project,
+            scenario.signal,
+          ),
+        ).rejects.toThrow(
+          "Repository validation after remediation #2 exited with code 1",
+        );
+
+        expect(scenario.runCommand).toHaveBeenCalledTimes(3);
+        expect(scenario.runOpenCode).toHaveBeenCalledTimes(5);
+        expectNothingPublished(scenario);
+      },
+    );
+  });
+
+  it("publishes after two successful remediation passes", async () => {
+    await withScenario(
+      {
+        statusOutputs: [
+          " M src/example.ts",
+          " M src/example.ts",
+          " M src/example.ts",
+          "",
+        ],
+        headOutputs: ["before-commit", "after-commit"],
+        openCodeResults: [
+          { exitCode: 0, output: "" },
+          {
+            exitCode: 0,
+            output: "First review finding\nREVIEW_FAIL",
+          },
+          { exitCode: 0, output: "" },
+          {
+            exitCode: 0,
+            output: "Second review finding\nREVIEW_FAIL",
+          },
+          { exitCode: 0, output: "" },
+          { exitCode: 0, output: "REVIEW_PASS" },
+          { exitCode: 0, output: "" },
+        ],
+      },
+      async (scenario) => {
+        await pollProject(
+          scenario.trello,
+          scenario.git,
+          scenario.github,
+          scenario.openCode,
+          scenario.commands,
+          scenario.project,
+          scenario.signal,
+        );
+
+        expect(scenario.runOpenCode).toHaveBeenCalledTimes(7);
+
+        const firstReviewPrompt =
+          scenario.runOpenCode.mock.calls[1]?.[0].prompt ?? "";
+        const firstRemediationPrompt =
+          scenario.runOpenCode.mock.calls[2]?.[0].prompt ?? "";
+        const secondReviewPrompt =
+          scenario.runOpenCode.mock.calls[3]?.[0].prompt ?? "";
+        const secondRemediationPrompt =
+          scenario.runOpenCode.mock.calls[4]?.[0].prompt ?? "";
+        const thirdReviewPrompt =
+          scenario.runOpenCode.mock.calls[5]?.[0].prompt ?? "";
+
+        expect(firstReviewPrompt).not.toContain(
+          "A previous review reported the following blocking findings:",
+        );
+
+        expect(firstRemediationPrompt).toContain("First review finding");
+
+        expect(secondReviewPrompt).toContain(
+          "A previous review reported the following blocking findings:",
+        );
+        expect(secondReviewPrompt).toContain("First review finding");
+
+        expect(secondRemediationPrompt).toContain("Second review finding");
+
+        expect(thirdReviewPrompt).toContain("Second review finding");
+        expect(thirdReviewPrompt).not.toContain("First review finding");
+
+        expect(scenario.events).toContain("push");
+        expect(scenario.events).toContain("pr");
+        expect(scenario.events).toContain("move:review");
+        expect(scenario.events).not.toContain("move:failed");
       },
     );
   });

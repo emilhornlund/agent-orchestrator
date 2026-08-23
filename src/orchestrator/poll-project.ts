@@ -245,6 +245,8 @@ interface ReviewIterationOptions {
   feedback: string;
 }
 
+const MAX_REMEDIATION_PASSES = 2;
+
 async function processCardChanges(
   trello: TrelloClient,
   git: GitClient,
@@ -264,8 +266,8 @@ async function processCardChanges(
     : await prepareWorktree(git, project, card.id);
 
   let validationResult = "Not configured";
-  let reviewResult: string;
-  let remediationResult: string;
+  let remediationPasses = 0;
+  let previousFindings: string | undefined;
 
   const sessionLogPath = getSessionLogPath(project.id, card.id);
 
@@ -355,37 +357,54 @@ async function processCardChanges(
     cardLog.event("Repository validation passed");
   }
 
-  cardLog.event("Starting fresh OpenCode review...");
+  while (true) {
+    const reviewNumber = remediationPasses + 1;
 
-  const review = await opencode.run({
-    cwd: worktree.path,
-    model: project.opencode.model,
-    variant: project.opencode.variant,
-    timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
-    prompt: buildReviewPrompt(card),
-    signal,
-    sessionLogPath,
-    sessionLabel: "OpenCode review",
-  });
+    cardLog.event(`Starting fresh OpenCode review #${reviewNumber}...`);
 
-  if (review.exitCode !== 0) {
-    throw new WorkflowError(
-      "OpenCode",
-      `OpenCode review exited with code ${review.exitCode}`,
+    const review = await opencode.run({
+      cwd: worktree.path,
+      model: project.opencode.model,
+      variant: project.opencode.variant,
+      timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
+      prompt: buildReviewPrompt(card, previousFindings),
+      signal,
+      sessionLogPath,
+      sessionLabel: `OpenCode review #${reviewNumber}`,
+    });
+
+    if (review.exitCode !== 0) {
+      throw new WorkflowError(
+        "OpenCode",
+        `OpenCode review #${reviewNumber} exited with code ${review.exitCode}`,
+      );
+    }
+
+    const parsedReviewResult = parseReviewResult(review.output);
+
+    if (parsedReviewResult === "pass") {
+      cardLog.event(`OpenCode review #${reviewNumber} passed`);
+      break;
+    }
+
+    if (remediationPasses >= MAX_REMEDIATION_PASSES) {
+      cardLog.event(
+        `OpenCode review #${reviewNumber} failed; remediation limit reached`,
+      );
+
+      throw new WorkflowError(
+        "OpenCode",
+        `OpenCode review failed after ${remediationPasses} remediation passes`,
+      );
+    }
+
+    const remediationNumber = remediationPasses + 1;
+
+    previousFindings = review.output;
+
+    cardLog.event(
+      `OpenCode review #${reviewNumber} failed; starting remediation #${remediationNumber}...`,
     );
-  }
-
-  const parsedReviewResult = parseReviewResult(review.output);
-
-  if (parsedReviewResult === "pass") {
-    reviewResult = "Passed";
-    remediationResult = "Not required";
-
-    cardLog.event("OpenCode review passed");
-  } else {
-    remediationResult = "Applied after initial review failure";
-
-    cardLog.event("OpenCode review failed; starting remediation...");
 
     const remediation = await opencode.run({
       cwd: worktree.path,
@@ -395,82 +414,68 @@ async function processCardChanges(
       prompt: buildRemediationPrompt(card, review.output),
       signal,
       sessionLogPath,
-      sessionLabel: "OpenCode remediation",
+      sessionLabel: `OpenCode remediation #${remediationNumber}`,
     });
 
     if (remediation.exitCode !== 0) {
       throw new WorkflowError(
         "OpenCode",
-        `OpenCode remediation exited with code ${remediation.exitCode}`,
+        `OpenCode remediation #${remediationNumber} exited with code ${remediation.exitCode}`,
       );
     }
 
-    cardLog.event("OpenCode remediation completed");
+    cardLog.event(`OpenCode remediation #${remediationNumber} completed`);
 
     const remediatedStatus = await git.getStatus(worktree.path);
 
     if (remediatedStatus.length === 0) {
       throw new WorkflowError(
         "OpenCode",
-        "OpenCode remediation left no repository changes",
+        `OpenCode remediation #${remediationNumber} left no repository changes`,
       );
     }
 
     if (project.repository.validationCommand) {
-      cardLog.event("Running repository validation after remediation...");
+      cardLog.event(
+        `Running repository validation after remediation #${remediationNumber}...`,
+      );
 
       const validation = await commands.run({
         cwd: worktree.path,
         command: project.repository.validationCommand,
         sessionLogPath,
-        sessionLabel: "Repository validation after remediation",
+        sessionLabel: `Repository validation after remediation #${remediationNumber}`,
       });
 
       if (validation.exitCode !== 0) {
         throw new WorkflowError(
           "Validation",
-          `Repository validation after remediation exited with code ${validation.exitCode}`,
+          `Repository validation after remediation #${remediationNumber} exited with code ${validation.exitCode}`,
         );
       }
 
-      validationResult = "Passed after remediation";
+      validationResult = `Passed after remediation #${remediationNumber}`;
 
-      cardLog.event("Repository validation after remediation passed");
-    }
-
-    cardLog.event("Starting second fresh OpenCode review...");
-
-    const secondReview = await opencode.run({
-      cwd: worktree.path,
-      model: project.opencode.model,
-      variant: project.opencode.variant,
-      timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
-      prompt: buildReviewPrompt(card),
-      signal,
-      sessionLogPath,
-      sessionLabel: "OpenCode second review",
-    });
-
-    if (secondReview.exitCode !== 0) {
-      throw new WorkflowError(
-        "OpenCode",
-        `Second OpenCode review exited with code ${secondReview.exitCode}`,
+      cardLog.event(
+        `Repository validation after remediation #${remediationNumber} passed`,
       );
     }
 
-    const secondReviewResult = parseReviewResult(secondReview.output);
-
-    if (secondReviewResult === "fail") {
-      throw new WorkflowError(
-        "OpenCode",
-        "OpenCode review failed after remediation",
-      );
-    }
-
-    reviewResult = "Passed after remediation";
-
-    cardLog.event("OpenCode review passed after remediation");
+    remediationPasses += 1;
   }
+
+  const remediationPassLabel =
+    remediationPasses === 1 ? "remediation pass" : "remediation passes";
+
+  const reviewResult =
+    remediationPasses === 0
+      ? "Passed"
+      : `Passed after ${remediationPasses} ${remediationPassLabel}`;
+
+  const remediationResult =
+    remediationPasses === 0
+      ? "Not required"
+      : `${remediationPasses} ${remediationPassLabel} applied`;
 
   const headBeforeCommit = await git.getHeadSha(worktree.path);
 

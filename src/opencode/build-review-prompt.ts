@@ -1,7 +1,25 @@
 import type { TrelloCard } from "../trello/trello-client.js";
 
-export function buildReviewPrompt(card: TrelloCard): string {
+export function buildReviewPrompt(
+  card: TrelloCard,
+  previousFindings?: string,
+): string {
   const description = card.desc.trim();
+
+  const previousFindingsSection =
+    previousFindings === undefined
+      ? []
+      : [
+          "",
+          "A previous review reported the following blocking findings:",
+          "",
+          previousFindings.trim(),
+          "",
+          "First verify whether each previous finding has been resolved.",
+          "If any previous finding remains unresolved, return REVIEW_FAIL.",
+          "Then perform a fresh independent review of the complete current changes.",
+          "You may report new blocking findings that were not identified previously.",
+        ];
 
   return [
     "Review the uncommitted changes in this repository for the following task.",
@@ -16,6 +34,7 @@ export function buildReviewPrompt(card: TrelloCard): string {
     "Review correctness, completeness, regressions, tests, validation, and adherence to repository conventions.",
     "Do not modify any files.",
     "Do not create commits.",
+    ...previousFindingsSection,
     "",
     "Your final line must be exactly one of:",
     "REVIEW_PASS",
