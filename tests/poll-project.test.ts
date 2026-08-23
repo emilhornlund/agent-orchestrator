@@ -48,8 +48,22 @@ describe("pollProject", () => {
         worktreeRoot,
       },
       opencode: {
-        model: "test-model",
-        variant: "test-variant",
+        implementation: {
+          model: "implementation-model",
+          variant: "implementation-variant",
+        },
+        review: {
+          model: "review-model",
+          variant: "review-variant",
+        },
+        remediation: {
+          model: "remediation-model",
+          variant: "remediation-variant",
+        },
+        commit: {
+          model: "commit-model",
+          variant: "commit-variant",
+        },
         timeoutMinutes: 360,
       },
     };
@@ -241,8 +255,22 @@ describe("pollProject", () => {
         worktreeRoot,
       },
       opencode: {
-        model: "test-model",
-        variant: "test-variant",
+        implementation: {
+          model: "implementation-model",
+          variant: "implementation-variant",
+        },
+        review: {
+          model: "review-model",
+          variant: "review-variant",
+        },
+        remediation: {
+          model: "remediation-model",
+          variant: "remediation-variant",
+        },
+        commit: {
+          model: "commit-model",
+          variant: "commit-variant",
+        },
         timeoutMinutes: 360,
       },
     };
@@ -449,8 +477,22 @@ describe("pollProject", () => {
         worktreeRoot: "/tmp/example-worktrees",
       },
       opencode: {
-        model: "test-model",
-        variant: "test-variant",
+        implementation: {
+          model: "implementation-model",
+          variant: "implementation-variant",
+        },
+        review: {
+          model: "review-model",
+          variant: "review-variant",
+        },
+        remediation: {
+          model: "remediation-model",
+          variant: "remediation-variant",
+        },
+        commit: {
+          model: "commit-model",
+          variant: "commit-variant",
+        },
         timeoutMinutes: 360,
       },
     };
@@ -561,8 +603,22 @@ describe("pollProject", () => {
         worktreeRoot,
       },
       opencode: {
-        model: "test-model",
-        variant: "test-variant",
+        implementation: {
+          model: "implementation-model",
+          variant: "implementation-variant",
+        },
+        review: {
+          model: "review-model",
+          variant: "review-variant",
+        },
+        remediation: {
+          model: "remediation-model",
+          variant: "remediation-variant",
+        },
+        commit: {
+          model: "commit-model",
+          variant: "commit-variant",
+        },
         timeoutMinutes: 360,
       },
     };
@@ -690,6 +746,11 @@ describe("pollProject", () => {
         "Human review feedback:\nPlease add a regression test.",
       );
 
+      expect(runOpenCode.mock.calls[0]?.[0]).toMatchObject({
+        model: "implementation-model",
+        variant: "implementation-variant",
+      });
+
       expect(git.push).toHaveBeenCalledWith(
         worktreePath,
         "origin",
@@ -746,8 +807,22 @@ describe("pollProject", () => {
         worktreeRoot,
       },
       opencode: {
-        model: "test-model",
-        variant: "test-variant",
+        implementation: {
+          model: "implementation-model",
+          variant: "implementation-variant",
+        },
+        review: {
+          model: "review-model",
+          variant: "review-variant",
+        },
+        remediation: {
+          model: "remediation-model",
+          variant: "remediation-variant",
+        },
+        commit: {
+          model: "commit-model",
+          variant: "commit-variant",
+        },
         timeoutMinutes: 360,
       },
     };
@@ -908,8 +983,22 @@ describe("pollProject", () => {
         worktreeRoot: "/tmp/example-worktrees",
       },
       opencode: {
-        model: "test-model",
-        variant: "test-variant",
+        implementation: {
+          model: "implementation-model",
+          variant: "implementation-variant",
+        },
+        review: {
+          model: "review-model",
+          variant: "review-variant",
+        },
+        remediation: {
+          model: "remediation-model",
+          variant: "remediation-variant",
+        },
+        commit: {
+          model: "commit-model",
+          variant: "commit-variant",
+        },
         timeoutMinutes: 360,
       },
     };
@@ -1004,8 +1093,22 @@ describe("pollProject", () => {
         worktreeRoot: "/tmp/example-worktrees",
       },
       opencode: {
-        model: "test-model",
-        variant: "test-variant",
+        implementation: {
+          model: "implementation-model",
+          variant: "implementation-variant",
+        },
+        review: {
+          model: "review-model",
+          variant: "review-variant",
+        },
+        remediation: {
+          model: "remediation-model",
+          variant: "remediation-variant",
+        },
+        commit: {
+          model: "commit-model",
+          variant: "commit-variant",
+        },
         timeoutMinutes: 360,
       },
     };

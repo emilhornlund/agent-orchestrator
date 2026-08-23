@@ -135,9 +135,19 @@ projects:
       validationCommand: "yarn validate"
 
     opencode:
-      model: "your-model"
-      variant: "xhigh"
       timeoutMinutes: 360
+      implementation:
+        model: "openai/implementation-model"
+        variant: "xhigh"
+      review:
+        model: "openai/review-model"
+        variant: "high"
+      remediation:
+        model: "openai/remediation-model"
+        variant: "xhigh"
+      commit:
+        model: "openai/commit-model"
+        variant: "low"
 
 workflow:
   pollIntervalSeconds: 15
@@ -152,7 +162,7 @@ workflow:
 Each project requires five configured lists:
 
 | List              | Purpose                                                       |
-| ----------------- | ------------------------------------------------------------- |
+|-------------------|---------------------------------------------------------------|
 | `Ready for Agent` | Tasks waiting to be claimed                                   |
 | `Working`         | Tasks currently under automated implementation or remediation |
 | `Human Review`    | Tasks with a published pull request awaiting human review     |
@@ -250,17 +260,25 @@ Directory under which isolated agent worktrees are created.
 
 Optional command executed by the orchestrator after implementation.
 
-### `projects[].opencode.model`
+### `projects[].opencode.implementation`
 
-OpenCode model used for agent sessions.
+Model and variant used for task implementation and human review feedback implementation.
 
-### `projects[].opencode.variant`
+### `projects[].opencode.review`
 
-Model variant supplied to OpenCode.
+Model and variant used for fresh code review passes.
+
+### `projects[].opencode.remediation`
+
+Model and variant used to address failed review findings.
+
+### `projects[].opencode.commit`
+
+Model and variant used for the final commit session.
 
 ### `projects[].opencode.timeoutMinutes`
 
-Maximum runtime for an individual OpenCode execution.
+Maximum runtime for an individual OpenCode execution across all workflow stages.
 
 ### `workflow.pollIntervalSeconds`
 

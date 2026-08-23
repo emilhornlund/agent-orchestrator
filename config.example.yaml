@@ -17,9 +17,19 @@ projects:
       validationCommand: "yarn test"
 
     opencode:
-      model: "your-model"
-      variant: "xhigh"
       timeoutMinutes: 360
+      implementation:
+        model: "your-implementation-model"
+        variant: "xhigh"
+      review:
+        model: "your-review-model"
+        variant: "high"
+      remediation:
+        model: "your-remediation-model"
+        variant: "xhigh"
+      commit:
+        model: "your-commit-model"
+        variant: "low"
 
   - id: "another-project"
 
@@ -39,9 +49,19 @@ projects:
       validationCommand: "yarn test"
 
     opencode:
-      model: "your-model"
-      variant: "xhigh"
       timeoutMinutes: 360
+      implementation:
+        model: "your-implementation-model"
+        variant: "xhigh"
+      review:
+        model: "your-review-model"
+        variant: "high"
+      remediation:
+        model: "your-remediation-model"
+        variant: "xhigh"
+      commit:
+        model: "your-commit-model"
+        variant: "low"
 
 workflow:
   pollIntervalSeconds: 15

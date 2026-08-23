@@ -295,8 +295,8 @@ async function processCardChanges(
 
   const implementation = await opencode.run({
     cwd: worktree.path,
-    model: project.opencode.model,
-    variant: project.opencode.variant,
+    model: project.opencode.implementation.model,
+    variant: project.opencode.implementation.variant,
     timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
     prompt: implementationPrompt,
     signal,
@@ -364,8 +364,8 @@ async function processCardChanges(
 
     const review = await opencode.run({
       cwd: worktree.path,
-      model: project.opencode.model,
-      variant: project.opencode.variant,
+      model: project.opencode.review.model,
+      variant: project.opencode.review.variant,
       timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
       prompt: buildReviewPrompt(card, previousFindings),
       signal,
@@ -408,8 +408,8 @@ async function processCardChanges(
 
     const remediation = await opencode.run({
       cwd: worktree.path,
-      model: project.opencode.model,
-      variant: project.opencode.variant,
+      model: project.opencode.remediation.model,
+      variant: project.opencode.remediation.variant,
       timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
       prompt: buildRemediationPrompt(card, review.output),
       signal,
@@ -483,8 +483,8 @@ async function processCardChanges(
 
   const commit = await opencode.run({
     cwd: worktree.path,
-    model: project.opencode.model,
-    variant: project.opencode.variant,
+    model: project.opencode.commit.model,
+    variant: project.opencode.commit.variant,
     timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
     prompt: buildCommitPrompt(card),
     signal,

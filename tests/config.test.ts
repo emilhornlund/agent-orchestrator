@@ -21,8 +21,19 @@ projects:
       validationCommand: "yarn validate"
 
     opencode:
-      model: "openai/model"
-      variant: "xhigh"
+      timeoutMinutes: 360
+      implementation:
+        model: "openai/implementation-model"
+        variant: "xhigh"
+      review:
+        model: "openai/review-model"
+        variant: "high"
+      remediation:
+        model: "openai/remediation-model"
+        variant: "xhigh"
+      commit:
+        model: "openai/commit-model"
+        variant: "low"
 
 workflow:
   pollIntervalSeconds: 15
@@ -40,7 +51,51 @@ describe("parseConfig", () => {
     expect(project!.id).toBe("project-one");
     expect(project!.repository.github).toBe("owner/repository");
     expect(project!.repository.validationCommand).toBe("yarn validate");
+    expect(project!.opencode.implementation).toEqual({
+      model: "openai/implementation-model",
+      variant: "xhigh",
+    });
+    expect(project!.opencode.review).toEqual({
+      model: "openai/review-model",
+      variant: "high",
+    });
+    expect(project!.opencode.remediation).toEqual({
+      model: "openai/remediation-model",
+      variant: "xhigh",
+    });
+    expect(project!.opencode.commit).toEqual({
+      model: "openai/commit-model",
+      variant: "low",
+    });
+    expect(project!.opencode.timeoutMinutes).toBe(360);
     expect(config.workflow.pollIntervalSeconds).toBe(15);
+  });
+
+  it("rejects a missing OpenCode review stage", () => {
+    const raw = validConfig.replace(
+      `      review:
+        model: "openai/review-model"
+        variant: "high"
+`,
+      "",
+    );
+
+    expect(() => parseConfig(raw)).toThrow();
+  });
+
+  it("rejects an empty OpenCode stage model", () => {
+    const raw = validConfig.replace(
+      'model: "openai/implementation-model"',
+      'model: ""',
+    );
+
+    expect(() => parseConfig(raw)).toThrow();
+  });
+
+  it("rejects an empty OpenCode stage variant", () => {
+    const raw = validConfig.replace('variant: "high"', 'variant: ""');
+
+    expect(() => parseConfig(raw)).toThrow();
   });
 
   it("accepts configuration without a validation command", () => {
@@ -78,8 +133,19 @@ describe("parseConfig", () => {
       validationCommand: "yarn validate"
 
     opencode:
-      model: "openai/model"
-      variant: "xhigh"
+      timeoutMinutes: 360
+      implementation:
+        model: "openai/implementation-model"
+        variant: "xhigh"
+      review:
+        model: "openai/review-model"
+        variant: "high"
+      remediation:
+        model: "openai/remediation-model"
+        variant: "xhigh"
+      commit:
+        model: "openai/commit-model"
+        variant: "low"
 
 workflow:`,
     );
@@ -156,8 +222,19 @@ workflow:
       validationCommand: "yarn validate"
 
     opencode:
-      model: "openai/model"
-      variant: "xhigh"
+      timeoutMinutes: 360
+      implementation:
+        model: "openai/implementation-model"
+        variant: "xhigh"
+      review:
+        model: "openai/review-model"
+        variant: "high"
+      remediation:
+        model: "openai/remediation-model"
+        variant: "xhigh"
+      commit:
+        model: "openai/commit-model"
+        variant: "low"
 
 workflow:`,
     );
@@ -187,8 +264,19 @@ workflow:`,
       validationCommand: "yarn validate"
 
     opencode:
-      model: "openai/model"
-      variant: "xhigh"
+      timeoutMinutes: 360
+      implementation:
+        model: "openai/implementation-model"
+        variant: "xhigh"
+      review:
+        model: "openai/review-model"
+        variant: "high"
+      remediation:
+        model: "openai/remediation-model"
+        variant: "xhigh"
+      commit:
+        model: "openai/commit-model"
+        variant: "low"
 
 workflow:`,
     );
@@ -220,8 +308,19 @@ workflow:`,
       validationCommand: "yarn validate"
 
     opencode:
-      model: "openai/model"
-      variant: "xhigh"
+      timeoutMinutes: 360
+      implementation:
+        model: "openai/implementation-model"
+        variant: "xhigh"
+      review:
+        model: "openai/review-model"
+        variant: "high"
+      remediation:
+        model: "openai/remediation-model"
+        variant: "xhigh"
+      commit:
+        model: "openai/commit-model"
+        variant: "low"
 
 workflow:`,
     );

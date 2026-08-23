@@ -96,8 +96,22 @@ function createScenario(options: ScenarioOptions = {}): Scenario {
         : { validationCommand: options.validationCommand }),
     },
     opencode: {
-      model: "test-model",
-      variant: "test-variant",
+      implementation: {
+        model: "implementation-model",
+        variant: "implementation-variant",
+      },
+      review: {
+        model: "review-model",
+        variant: "review-variant",
+      },
+      remediation: {
+        model: "remediation-model",
+        variant: "remediation-variant",
+      },
+      commit: {
+        model: "commit-model",
+        variant: "commit-variant",
+      },
       timeoutMinutes: 360,
     },
   };
@@ -737,6 +751,41 @@ describe("pollProject failure boundaries", () => {
         );
 
         expect(scenario.runOpenCode).toHaveBeenCalledTimes(7);
+
+        expect(scenario.runOpenCode.mock.calls[0]?.[0]).toMatchObject({
+          model: "implementation-model",
+          variant: "implementation-variant",
+        });
+
+        expect(scenario.runOpenCode.mock.calls[1]?.[0]).toMatchObject({
+          model: "review-model",
+          variant: "review-variant",
+        });
+
+        expect(scenario.runOpenCode.mock.calls[2]?.[0]).toMatchObject({
+          model: "remediation-model",
+          variant: "remediation-variant",
+        });
+
+        expect(scenario.runOpenCode.mock.calls[3]?.[0]).toMatchObject({
+          model: "review-model",
+          variant: "review-variant",
+        });
+
+        expect(scenario.runOpenCode.mock.calls[4]?.[0]).toMatchObject({
+          model: "remediation-model",
+          variant: "remediation-variant",
+        });
+
+        expect(scenario.runOpenCode.mock.calls[5]?.[0]).toMatchObject({
+          model: "review-model",
+          variant: "review-variant",
+        });
+
+        expect(scenario.runOpenCode.mock.calls[6]?.[0]).toMatchObject({
+          model: "commit-model",
+          variant: "commit-variant",
+        });
 
         const firstReviewPrompt =
           scenario.runOpenCode.mock.calls[1]?.[0].prompt ?? "";

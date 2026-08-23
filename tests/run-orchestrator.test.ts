@@ -34,8 +34,22 @@ function createProject(id: string): ProjectConfig {
       worktreeRoot: `/worktrees/${id}`,
     },
     opencode: {
-      model: "test-model",
-      variant: "test-variant",
+      implementation: {
+        model: "implementation-model",
+        variant: "implementation-variant",
+      },
+      review: {
+        model: "review-model",
+        variant: "review-variant",
+      },
+      remediation: {
+        model: "remediation-model",
+        variant: "remediation-variant",
+      },
+      commit: {
+        model: "commit-model",
+        variant: "commit-variant",
+      },
       timeoutMinutes: 360,
     },
   };

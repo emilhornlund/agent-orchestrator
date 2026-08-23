@@ -45,9 +45,16 @@ const repositorySchema = z.object({
   validationCommand: z.string().min(1).optional(),
 });
 
-const openCodeSchema = z.object({
+const openCodeStageSchema = z.object({
   model: z.string().min(1),
   variant: z.string().min(1),
+});
+
+const openCodeSchema = z.object({
+  implementation: openCodeStageSchema,
+  review: openCodeStageSchema,
+  remediation: openCodeStageSchema,
+  commit: openCodeStageSchema,
   timeoutMinutes: z.number().positive().default(360),
 });
 

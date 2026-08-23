@@ -57,8 +57,21 @@ async function main(): Promise<void> {
     projectLog.info(`Repository: ${project.repository.github}`);
     projectLog.info(`Branch: ${project.repository.defaultBranch}`);
     projectLog.info(`Trello board ID: ${project.trello.boardId}`);
-    projectLog.info(`Model: ${project.opencode.model}`);
-    projectLog.info(`Variant: ${project.opencode.variant}`);
+    projectLog.info(
+      `Implementation: ${project.opencode.implementation.model} (${project.opencode.implementation.variant})`,
+    );
+    projectLog.info(
+      `Review: ${project.opencode.review.model} (${project.opencode.review.variant})`,
+    );
+    projectLog.info(
+      `Remediation: ${project.opencode.remediation.model} (${project.opencode.remediation.variant})`,
+    );
+    projectLog.info(
+      `Commit: ${project.opencode.commit.model} (${project.opencode.commit.variant})`,
+    );
+    projectLog.info(
+      `OpenCode timeout: ${project.opencode.timeoutMinutes} minutes`,
+    );
 
     await validateProjectTrello(trello, project);
 
