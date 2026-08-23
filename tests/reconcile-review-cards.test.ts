@@ -119,7 +119,9 @@ describe("reconcileReviewCards", () => {
       "agent/card-1",
     );
 
-    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "done");
+    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "done", {
+      dueComplete: true,
+    });
 
     expect(existsSync(sessionLogPath)).toBe(false);
   });
@@ -149,7 +151,9 @@ describe("reconcileReviewCards", () => {
 
     await reconcileReviewCards(trello, git, github, project);
 
-    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "done");
+    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "done", {
+      dueComplete: true,
+    });
 
     expect(existsSync(sessionLogPath)).toBe(true);
   });
@@ -178,7 +182,9 @@ describe("reconcileReviewCards", () => {
 
     expect(git.deleteRemoteBranch).not.toHaveBeenCalled();
 
-    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "done");
+    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "done", {
+      dueComplete: true,
+    });
   });
 
   it("keeps a merged card in Human Review when remote branch cleanup fails", async () => {

@@ -89,7 +89,9 @@ export async function reconcileReviewCards(
       }
 
       try {
-        await trello.moveCard(card.id, project.trello.doneListId);
+        await trello.moveCard(card.id, project.trello.doneListId, {
+          dueComplete: true,
+        });
 
         cardLog.event("Merged card moved to Done");
 

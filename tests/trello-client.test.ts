@@ -169,6 +169,49 @@ describe("TrelloClient", () => {
     });
   });
 
+  it("moves a card and marks it complete", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: "card-1",
+          name: "Implement inventory",
+          desc: "Add inventory support",
+          idList: "done-list",
+          url: "https://trello.com/c/example",
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      ),
+    );
+
+    const client = new TrelloClient({
+      apiKey: "test-key",
+      token: "test-token",
+    });
+
+    await client.moveCard("card-1", "done-list", {
+      dueComplete: true,
+    });
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+
+    const [requestUrl, requestOptions] = fetchMock.mock.calls[0] ?? [];
+    const url = new URL(String(requestUrl));
+
+    expect(url.pathname).toBe("/1/cards/card-1");
+    expect(url.searchParams.get("idList")).toBe("done-list");
+    expect(url.searchParams.get("pos")).toBe("top");
+    expect(url.searchParams.get("dueComplete")).toBe("true");
+
+    expect(requestOptions).toEqual({
+      method: "PUT",
+    });
+  });
+
   it("adds a comment to a card", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(

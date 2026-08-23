@@ -46,11 +46,23 @@ export class TrelloClient {
     return this.get<TrelloCard[]>(`/lists/${listId}/cards`);
   }
 
-  moveCard(cardId: string, listId: string): Promise<TrelloCard> {
-    return this.put<TrelloCard>(`/cards/${cardId}`, {
+  moveCard(
+    cardId: string,
+    listId: string,
+    options: {
+      dueComplete?: boolean;
+    } = {},
+  ): Promise<TrelloCard> {
+    const parameters: Record<string, string> = {
       idList: listId,
       pos: "top",
-    });
+    };
+
+    if (options.dueComplete !== undefined) {
+      parameters.dueComplete = String(options.dueComplete);
+    }
+
+    return this.put<TrelloCard>(`/cards/${cardId}`, parameters);
   }
 
   addComment(cardId: string, text: string): Promise<TrelloCommentAction> {
