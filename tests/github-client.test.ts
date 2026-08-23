@@ -36,6 +36,7 @@ describe("GitHubClient", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
   });
 
   it("creates a pull request through the injected command runner", async () => {
@@ -670,5 +671,46 @@ describe("GitHubClient", () => {
     ).resolves.toBeNull();
 
     expect(runGitHub).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not write GitHub CLI output directly to the console", async () => {
+    const child = createFakeChild();
+    const stdoutWrite = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+    const stderrWrite = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+
+    spawnMock.mockImplementationOnce(() => {
+      queueMicrotask(() => {
+        child.stdout.emit(
+          "data",
+          Buffer.from("https://github.com/example/repository/pull/123\n"),
+        );
+        child.stderr.emit("data", Buffer.from("warning from gh\n"));
+        child.emit("close", 0);
+      });
+
+      return child;
+    });
+
+    const github = new GitHubClient();
+
+    await expect(
+      github.createPullRequest({
+        cwd: "/tmp/repository",
+        repository: "example/repository",
+        baseBranch: "main",
+        headBranch: "agent/example",
+        title: "Example task",
+        body: "Example body",
+      }),
+    ).resolves.toEqual({
+      url: "https://github.com/example/repository/pull/123",
+    });
+
+    expect(stdoutWrite).not.toHaveBeenCalled();
+    expect(stderrWrite).not.toHaveBeenCalled();
   });
 });

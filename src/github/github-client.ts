@@ -175,15 +175,11 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (cwd, args) =>
     }, GITHUB_TIMEOUT_MS);
 
     child.stdout.on("data", (chunk: Buffer) => {
-      const text = chunk.toString();
-      output += text;
-      process.stdout.write(text);
+      output += chunk.toString();
     });
 
     child.stderr.on("data", (chunk: Buffer) => {
-      const text = chunk.toString();
-      errorOutput += text;
-      process.stderr.write(text);
+      errorOutput += chunk.toString();
     });
 
     child.once("error", (error) => {
