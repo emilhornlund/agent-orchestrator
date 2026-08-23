@@ -22,8 +22,9 @@ function formatContext(context: LogContext): string {
 
 function getLogFilePath(): string {
   const date = new Date().toISOString().slice(0, 10);
+  const prefix = process.env.VITEST === "true" ? "test-" : "";
 
-  return path.join(process.cwd(), "logs", `orchestrator-${date}.log`);
+  return path.join(process.cwd(), "logs", `${prefix}orchestrator-${date}.log`);
 }
 
 function writeToFile(

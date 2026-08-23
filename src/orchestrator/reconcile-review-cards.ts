@@ -2,6 +2,7 @@ import type { ProjectConfig } from "../config/config.js";
 import type { GitClient } from "../git/git-client.js";
 import type { GitHubClient } from "../github/github-client.js";
 import { logger } from "../logging/logger.js";
+import { removeSessionLog } from "../logging/session-log.js";
 import type { TrelloCard, TrelloClient } from "../trello/trello-client.js";
 
 export interface ReviewChangeRequest {
@@ -91,6 +92,17 @@ export async function reconcileReviewCards(
         await trello.moveCard(card.id, project.trello.doneListId);
 
         cardLog.event("Merged card moved to Done");
+
+        try {
+          removeSessionLog(project.id, card.id);
+          cardLog.info("OpenCode session log removed");
+        } catch (error) {
+          cardLog.warn(
+            `Failed to remove OpenCode session log: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        }
       } catch (error) {
         cardLog.error(
           `Failed to move merged card "${card.name}" to Done: ${

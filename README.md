@@ -162,7 +162,7 @@ workflow:
 Each project requires five configured lists:
 
 | List              | Purpose                                                       |
-|-------------------|---------------------------------------------------------------|
+| ----------------- | ------------------------------------------------------------- |
 | `Ready for Agent` | Tasks waiting to be claimed                                   |
 | `Working`         | Tasks currently under automated implementation or remediation |
 | `Human Review`    | Tasks with a published pull request awaiting human review     |

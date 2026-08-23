@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
 
 function sanitizePathPart(value: string): string {
@@ -13,6 +13,12 @@ export function getSessionLogPath(projectId: string, cardId: string): string {
     sanitizePathPart(projectId),
     `${sanitizePathPart(cardId)}.log`,
   );
+}
+
+export function removeSessionLog(projectId: string, cardId: string): void {
+  rmSync(getSessionLogPath(projectId, cardId), {
+    force: true,
+  });
 }
 
 export function appendSessionLog(filePath: string, content: string): void {

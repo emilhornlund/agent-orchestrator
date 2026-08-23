@@ -1,8 +1,11 @@
-import { describe, expect, it, vi } from "vitest";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ProjectConfig } from "../src/config/config.js";
 import type { GitClient } from "../src/git/git-client.js";
 import type { GitHubClient } from "../src/github/github-client.js";
+import { getSessionLogPath } from "../src/logging/session-log.js";
 import { reconcileReviewCards } from "../src/orchestrator/reconcile-review-cards.js";
 import type { TrelloClient } from "../src/trello/trello-client.js";
 
@@ -29,6 +32,14 @@ const card = {
 };
 
 describe("reconcileReviewCards", () => {
+  const sessionLogPath = getSessionLogPath(project.id, card.id);
+
+  afterEach(() => {
+    rmSync(sessionLogPath, {
+      force: true,
+    });
+  });
+
   it("does nothing when there are no Human Review cards", async () => {
     const trello = {
       getCards: vi.fn().mockResolvedValue([]),
@@ -73,6 +84,14 @@ describe("reconcileReviewCards", () => {
   });
 
   it("deletes the remote branch and moves a merged card to Done", async () => {
+    mkdirSync(path.dirname(sessionLogPath), {
+      recursive: true,
+    });
+
+    writeFileSync(sessionLogPath, "OpenCode output", "utf8");
+
+    expect(existsSync(sessionLogPath)).toBe(true);
+
     const trello = {
       getCards: vi.fn().mockResolvedValue([card]),
       moveCard: vi.fn().mockResolvedValue({
@@ -101,6 +120,38 @@ describe("reconcileReviewCards", () => {
     );
 
     expect(trello.moveCard).toHaveBeenCalledWith("card-1", "done");
+
+    expect(existsSync(sessionLogPath)).toBe(false);
+  });
+
+  it("keeps the session log when moving a merged card to Done fails", async () => {
+    mkdirSync(path.dirname(sessionLogPath), {
+      recursive: true,
+    });
+
+    writeFileSync(sessionLogPath, "OpenCode output", "utf8");
+
+    const trello = {
+      getCards: vi.fn().mockResolvedValue([card]),
+      moveCard: vi.fn().mockRejectedValue(new Error("move failed")),
+    } as unknown as TrelloClient;
+
+    const git = {
+      remoteBranchExists: vi.fn().mockResolvedValue(false),
+      deleteRemoteBranch: vi.fn(),
+    } as unknown as GitClient;
+
+    const github = {
+      findMergedPullRequest: vi.fn().mockResolvedValue({
+        url: "https://github.com/owner/repo/pull/1",
+      }),
+    } as unknown as GitHubClient;
+
+    await reconcileReviewCards(trello, git, github, project);
+
+    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "done");
+
+    expect(existsSync(sessionLogPath)).toBe(true);
   });
 
   it("moves a merged card to Done when the remote branch is already gone", async () => {
