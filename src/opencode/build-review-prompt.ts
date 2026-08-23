@@ -1,25 +1,7 @@
 import type { TrelloCard } from "../trello/trello-client.js";
 
-export function buildReviewPrompt(
-  card: TrelloCard,
-  previousFindings?: string,
-): string {
+export function buildReviewPrompt(card: TrelloCard): string {
   const description = card.desc.trim();
-
-  const previousFindingsSection =
-    previousFindings === undefined
-      ? []
-      : [
-          "",
-          "A previous review reported the following blocking findings:",
-          "",
-          previousFindings.trim(),
-          "",
-          "First verify whether each previous finding has been resolved.",
-          "If any previous finding remains unresolved, return REVIEW_FAIL.",
-          "Then perform a fresh independent review of the complete current changes.",
-          "You may report new blocking findings that were not identified previously.",
-        ];
 
   return [
     "Review the uncommitted changes in this repository for the following task.",
@@ -30,18 +12,46 @@ export function buildReviewPrompt(
       ? `Description:\n${description}`
       : "No additional task description was provided.",
     "",
-    "Inspect the repository instructions and the complete Git diff/status.",
-    "Review correctness, completeness, regressions, tests, validation, and adherence to repository conventions.",
+    "Inspect the repository instructions, complete Git diff/status, relevant implementation, and relevant tests.",
+    "",
+    "This is a focused blocking review, not a general code review.",
+    "Your purpose is to identify only critical or high-severity defects that should be corrected before the changes are handed to a human reviewer.",
+    "",
+    "Return REVIEW_FAIL only when you find at least one concrete critical or high-severity issue.",
+    "",
+    "A critical or high-severity issue is a concrete defect that is likely to cause one or more of the following:",
+    "- incorrect behavior for a core requirement of the task;",
+    "- data loss, corruption, security exposure, or unsafe behavior;",
+    "- a significant regression in existing supported behavior;",
+    "- a build, test, validation, or runtime failure caused by the changes;",
+    "- an implementation that materially fails to satisfy the requested task;",
+    "- a clear compatibility or correctness defect that would make the change unsafe to merge.",
+    "",
+    "Do NOT return REVIEW_FAIL for minor or moderate concerns.",
+    "Do NOT fail the review for style preferences, naming, formatting, refactoring opportunities, code duplication, optional cleanup, documentation polish, speculative edge cases, theoretical future risks, or nice-to-have tests.",
+    "Do NOT fail solely because additional tests could be added when the existing implementation and validation provide reasonable coverage.",
+    "Do NOT invent requirements that are not present in the task or repository contracts.",
+    "Do NOT require perfection.",
+    "",
+    "If you notice non-blocking findings, you may mention them briefly as notes, but they must not affect the verdict.",
+    "When uncertain whether an issue is truly critical/high severity, treat it as non-blocking and return REVIEW_PASS.",
+    "",
+    "Before returning REVIEW_FAIL, verify that each blocking finding is:",
+    "- directly supported by the current code or diff;",
+    "- reproducible or clearly reasoned from an actual execution path;",
+    "- materially relevant to the requested task or an existing repository contract;",
+    "- severe enough that publishing the pull request without automated remediation would be unreasonable.",
+    "",
     "Do not modify any files.",
     "Do not create commits.",
-    ...previousFindingsSection,
     "",
     "Your final line must be exactly one of:",
     "REVIEW_PASS",
     "REVIEW_FAIL",
     "",
-    "Use REVIEW_PASS only if the changes are ready to proceed.",
-    "Use REVIEW_FAIL if anything must be corrected.",
-    "You may explain findings before the final line.",
+    "Use REVIEW_PASS when there are no verified critical or high-severity defects.",
+    "Use REVIEW_PASS even if there are minor, moderate, advisory, stylistic, or optional findings.",
+    "Use REVIEW_FAIL only when at least one verified critical or high-severity defect absolutely should be fixed before human review.",
+    "You may explain blocking findings or non-blocking notes before the final line.",
   ].join("\n");
 }

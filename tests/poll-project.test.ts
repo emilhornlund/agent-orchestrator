@@ -223,7 +223,7 @@ describe("pollProject", () => {
     }
   });
 
-  it("remediates and re-reviews before committing and publishing", async () => {
+  it("remediates before committing and publishing without re-reviewing", async () => {
     const events: string[] = [];
 
     const worktreeRoot = fs.mkdtempSync(
@@ -388,22 +388,16 @@ describe("pollProject", () => {
         }
 
         if (openCodeCall === 4) {
-          events.push("second-review");
+          events.push("commit");
 
           return {
             exitCode: 0,
-            output: "REVIEW_PASS",
+            output: "",
             errorOutput: "",
           };
         }
 
-        events.push("commit");
-
-        return {
-          exitCode: 0,
-          output: "",
-          errorOutput: "",
-        };
+        throw new Error(`Unexpected OpenCode call ${openCodeCall}`);
       });
 
       const github = new GitHubClient(async (_cwd, args) => {
@@ -436,7 +430,6 @@ describe("pollProject", () => {
         "implementation",
         "review-fail",
         "remediation",
-        "second-review",
         "commit",
         "push",
         "pr",
