@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 
 const GITHUB_TIMEOUT_MS = 2 * 60 * 1000;
+const GITHUB_TERMINATION_GRACE_MS = 5_000;
 
 export interface CreatePullRequestOptions {
   cwd: string;
@@ -51,7 +52,95 @@ interface RequestedChangesReview {
   author: string | null;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function validatePullRequestList(value: unknown): PullRequestReviewListItem[] {
+  if (!Array.isArray(value)) {
+    throw new Error("GitHub CLI returned an invalid pull request list");
+  }
+
+  return value.map((item) => {
+    if (
+      typeof item !== "object" ||
+      item === null ||
+      typeof item.url !== "string" ||
+      !Number.isSafeInteger(item.number) ||
+      item.number <= 0 ||
+      typeof item.reviewDecision !== "string" ||
+      typeof item.headRefOid !== "string" ||
+      item.headRefOid.length === 0
+    ) {
+      throw new Error("GitHub CLI returned an invalid pull request list item");
+    }
+
+    parsePullRequestUrl(item.url);
+
+    return {
+      url: item.url,
+      number: item.number,
+      reviewDecision: item.reviewDecision,
+      headRefOid: item.headRefOid,
+    };
+  });
+}
+
+function validateRequestedChangesReview(
+  value: unknown,
+): RequestedChangesReview {
+  if (!isRecord(value)) {
+    throw new Error("GitHub CLI returned an invalid requested changes review");
+  }
+
+  const id = value.id;
+  const body = value.body;
+  const commitId = value.commitId;
+  const author = value.author;
+
+  if (
+    typeof id !== "number" ||
+    !Number.isSafeInteger(id) ||
+    id <= 0 ||
+    (typeof body !== "string" && body !== null) ||
+    typeof commitId !== "string" ||
+    commitId.length === 0 ||
+    (typeof author !== "string" && author !== null)
+  ) {
+    throw new Error("GitHub CLI returned an invalid requested changes review");
+  }
+
+  return {
+    id,
+    body,
+    commitId,
+    author,
+  };
+}
+
 export type RunGitHubCommand = (cwd: string, args: string[]) => Promise<string>;
+
+function parsePullRequestUrl(value: string): string {
+  const url = value.trim();
+
+  try {
+    const parsed = new URL(url);
+
+    if (
+      parsed.protocol !== "https:" ||
+      parsed.hostname !== "github.com" ||
+      !/^\/[^/]+\/[^/]+\/pull\/\d+\/?$/.test(parsed.pathname)
+    ) {
+      throw new Error("not a GitHub pull request URL");
+    }
+  } catch (error) {
+    throw new Error(`GitHub CLI returned an invalid pull request URL: ${url}`, {
+      cause: error,
+    });
+  }
+
+  return url;
+}
 
 const defaultRunGitHubCommand: RunGitHubCommand = async (cwd, args) =>
   new Promise((resolve, reject) => {
@@ -64,6 +153,7 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (cwd, args) =>
     let errorOutput = "";
     let settled = false;
     let timedOut = false;
+    let forceKillTimeout: NodeJS.Timeout | undefined;
 
     const timeout = setTimeout(() => {
       if (settled) {
@@ -72,6 +162,16 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (cwd, args) =>
 
       timedOut = true;
       child.kill("SIGTERM");
+
+      forceKillTimeout = setTimeout(() => {
+        if (settled) {
+          return;
+        }
+
+        child.kill("SIGKILL");
+        settled = true;
+        reject(new Error(`GitHub CLI timed out after ${GITHUB_TIMEOUT_MS}ms`));
+      }, GITHUB_TERMINATION_GRACE_MS);
     }, GITHUB_TIMEOUT_MS);
 
     child.stdout.on("data", (chunk: Buffer) => {
@@ -93,6 +193,9 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (cwd, args) =>
 
       settled = true;
       clearTimeout(timeout);
+      if (forceKillTimeout !== undefined) {
+        clearTimeout(forceKillTimeout);
+      }
 
       reject(
         new Error(`Failed to start GitHub CLI: ${error.message}`, {
@@ -108,6 +211,9 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (cwd, args) =>
 
       settled = true;
       clearTimeout(timeout);
+      if (forceKillTimeout !== undefined) {
+        clearTimeout(forceKillTimeout);
+      }
 
       if (timedOut) {
         reject(new Error(`GitHub CLI timed out after ${GITHUB_TIMEOUT_MS}ms`));
@@ -152,12 +258,12 @@ export class GitHubClient {
       '.[0].url // ""',
     ]);
 
-    if (output.length === 0) {
+    if (output.trim().length === 0) {
       return null;
     }
 
     return {
-      url: output,
+      url: parsePullRequestUrl(output),
     };
   }
 
@@ -181,12 +287,12 @@ export class GitHubClient {
       '.[0].url // ""',
     ]);
 
-    if (output.length === 0) {
+    if (output.trim().length === 0) {
       return null;
     }
 
     return {
-      url: output,
+      url: parsePullRequestUrl(output),
     };
   }
 
@@ -210,12 +316,12 @@ export class GitHubClient {
       '.[0].url // ""',
     ]);
 
-    if (output.length === 0) {
+    if (output.trim().length === 0) {
       return null;
     }
 
     return {
-      url: output,
+      url: parsePullRequestUrl(output),
     };
   }
 
@@ -237,11 +343,14 @@ export class GitHubClient {
       "1",
     ]);
 
-    if (output.length === 0) {
+    const pullRequestOutput = output.trim();
+
+    if (pullRequestOutput.length === 0) {
       return null;
     }
 
-    const pullRequests = JSON.parse(output) as PullRequestReviewListItem[];
+    const parsedPullRequests: unknown = JSON.parse(pullRequestOutput);
+    const pullRequests = validatePullRequestList(parsedPullRequests);
     const pullRequest = pullRequests[0];
 
     if (!pullRequest || pullRequest.reviewDecision !== "CHANGES_REQUESTED") {
@@ -257,11 +366,18 @@ export class GitHubClient {
       'flatten | map(select(.state == "CHANGES_REQUESTED")) | sort_by(.submitted_at) | last | {id, body, commitId: .commit_id, author: .user.login}',
     ]);
 
-    if (reviewOutput.length === 0 || reviewOutput === "null") {
+    const requestedChangesOutput = reviewOutput.trim();
+
+    if (
+      requestedChangesOutput.length === 0 ||
+      requestedChangesOutput === "null"
+    ) {
       return null;
     }
 
-    const review = JSON.parse(reviewOutput) as RequestedChangesReview;
+    const review = validateRequestedChangesReview(
+      JSON.parse(requestedChangesOutput),
+    );
 
     if (review.commitId !== pullRequest.headRefOid) {
       return null;
@@ -294,7 +410,7 @@ export class GitHubClient {
         : "Changes were requested on GitHub, but no written review feedback was returned.";
 
     return {
-      url: pullRequest.url,
+      url: parsePullRequestUrl(pullRequest.url),
       feedback,
     };
   }
@@ -317,12 +433,12 @@ export class GitHubClient {
       options.body,
     ]);
 
-    if (output.length === 0) {
+    if (output.trim().length === 0) {
       throw new Error("GitHub CLI did not return a pull request URL");
     }
 
     return {
-      url: output,
+      url: parsePullRequestUrl(output),
     };
   }
 }

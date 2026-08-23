@@ -54,4 +54,11 @@ describe("session log", () => {
       removeSessionLog("project-1", "missing-card");
     }).not.toThrow();
   });
+
+  it("keeps distinct project identifiers in distinct log paths", () => {
+    const first = getSessionLogPath("project/a", "card-1");
+    const second = getSessionLogPath("project_a", "card-1");
+
+    expect(first).not.toBe(second);
+  });
 });

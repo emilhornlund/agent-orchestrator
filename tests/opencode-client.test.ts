@@ -93,6 +93,26 @@ describe("OpenCodeClient", () => {
     kill.mockRestore();
   });
 
+  it("falls back to the child handle when process-group signaling fails", () => {
+    if (process.platform === "win32") {
+      return;
+    }
+
+    const error = Object.assign(new Error("Operation not permitted"), {
+      code: "EPERM",
+    });
+    const kill = vi.spyOn(process, "kill").mockImplementation(() => {
+      throw error;
+    });
+    const killChild = vi.fn(() => true);
+
+    signalProcessTree(1234, "SIGTERM", killChild);
+
+    expect(killChild).toHaveBeenCalledWith("SIGTERM");
+
+    kill.mockRestore();
+  });
+
   it("rejects with OpenCodeRunAbortedError when the signal is already aborted", async () => {
     const controller = new AbortController();
     controller.abort();

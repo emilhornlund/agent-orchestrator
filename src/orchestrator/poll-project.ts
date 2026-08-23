@@ -17,12 +17,21 @@ import {
   type OpenCodeRunResult,
 } from "../opencode/opencode-client.js";
 import { parseReviewResult } from "../opencode/parse-review-result.js";
-import type { CommandRunner } from "../process/command-runner.js";
-import type { TrelloCard, TrelloClient } from "../trello/trello-client.js";
+import {
+  CommandRunAbortedError,
+  type CommandRunner,
+  type CommandRunResult,
+} from "../process/command-runner.js";
+import {
+  TrelloRequestAbortedError,
+  type TrelloCard,
+  type TrelloClient,
+} from "../trello/trello-client.js";
 
 import { claimNextCard } from "./claim-next-card.js";
 import { failCard } from "./fail-card.js";
 import { publishCard } from "./publish-card.js";
+import { PublishedCardStateError } from "./published-card-state-error.js";
 import {
   reconcileReviewCards,
   type ReviewChangeRequest,
@@ -34,7 +43,12 @@ import {
 import { WorkflowError } from "./workflow-error.js";
 
 function isWorkflowAbort(error: unknown, signal: AbortSignal): boolean {
-  return signal.aborted && error instanceof OpenCodeRunAbortedError;
+  return (
+    signal.aborted &&
+    (error instanceof OpenCodeRunAbortedError ||
+      error instanceof CommandRunAbortedError ||
+      error instanceof TrelloRequestAbortedError)
+  );
 }
 
 function hasOpenCodePermissionDenial(result: OpenCodeRunResult): boolean {
@@ -47,6 +61,37 @@ function hasOpenCodePermissionDenial(result: OpenCodeRunResult): boolean {
   );
 }
 
+async function runValidation(
+  commands: CommandRunner,
+  cwd: string,
+  command: string,
+  timeoutMilliseconds: number,
+  signal: AbortSignal,
+  sessionLogPath: string,
+  sessionLabel: string,
+): Promise<CommandRunResult> {
+  try {
+    return await commands.run({
+      cwd,
+      command,
+      timeoutMilliseconds,
+      signal,
+      sessionLogPath,
+      sessionLabel,
+    });
+  } catch (error) {
+    if (error instanceof CommandRunAbortedError) {
+      throw error;
+    }
+
+    throw new WorkflowError(
+      "Validation",
+      error instanceof Error ? error.message : String(error),
+      { cause: error },
+    );
+  }
+}
+
 export async function pollProject(
   trello: TrelloClient,
   git: GitClient,
@@ -56,12 +101,20 @@ export async function pollProject(
   project: ProjectConfig,
   signal: AbortSignal,
 ): Promise<void> {
+  if (signal.aborted) {
+    return;
+  }
+
   const reviewChangeRequest = await reconcileReviewCards(
     trello,
     git,
     github,
     project,
   );
+
+  if (signal.aborted) {
+    return;
+  }
 
   if (reviewChangeRequest) {
     await processReviewChangeRequest(
@@ -84,6 +137,10 @@ export async function pollProject(
     github,
     project,
   );
+
+  if (signal.aborted) {
+    return;
+  }
 
   if (workingChangeRequest) {
     await processReviewChangeRequest(
@@ -161,6 +218,13 @@ export async function pollProject(
   } catch (error) {
     if (isWorkflowAbort(error, signal)) {
       cardLog.event("Card workflow interrupted by orchestrator shutdown");
+      return;
+    }
+
+    if (error instanceof PublishedCardStateError) {
+      cardLog.error(
+        `${error.message}; leaving card in Working for reconciliation`,
+      );
       return;
     }
 
@@ -338,12 +402,15 @@ async function processCardChanges(
   if (project.repository.validationCommand) {
     cardLog.event("Running repository validation...");
 
-    const validation = await commands.run({
-      cwd: worktree.path,
-      command: project.repository.validationCommand,
+    const validation = await runValidation(
+      commands,
+      worktree.path,
+      project.repository.validationCommand,
+      project.opencode.timeoutMinutes * 60_000,
+      signal,
       sessionLogPath,
-      sessionLabel: "Repository validation",
-    });
+      "Repository validation",
+    );
 
     if (validation.exitCode !== 0) {
       throw new WorkflowError(
@@ -440,12 +507,15 @@ async function processCardChanges(
         `Running repository validation after remediation #${remediationNumber}...`,
       );
 
-      const validation = await commands.run({
-        cwd: worktree.path,
-        command: project.repository.validationCommand,
+      const validation = await runValidation(
+        commands,
+        worktree.path,
+        project.repository.validationCommand,
+        project.opencode.timeoutMinutes * 60_000,
+        signal,
         sessionLogPath,
-        sessionLabel: `Repository validation after remediation #${remediationNumber}`,
-      });
+        `Repository validation after remediation #${remediationNumber}`,
+      );
 
       if (validation.exitCode !== 0) {
         throw new WorkflowError(
@@ -518,6 +588,31 @@ async function processCardChanges(
   }
 
   cardLog.event(`OpenCode commit created: ${headAfterCommit}`);
+
+  if (project.repository.validationCommand) {
+    cardLog.event("Running final repository validation after commit...");
+
+    const validation = await runValidation(
+      commands,
+      worktree.path,
+      project.repository.validationCommand,
+      project.opencode.timeoutMinutes * 60_000,
+      signal,
+      sessionLogPath,
+      "Final repository validation",
+    );
+
+    if (validation.exitCode !== 0) {
+      throw new WorkflowError(
+        "Validation",
+        `Final repository validation exited with code ${validation.exitCode}`,
+      );
+    }
+
+    validationResult = "Passed after final commit";
+
+    cardLog.event("Final repository validation passed");
+  }
 
   await publishCard({
     trello,

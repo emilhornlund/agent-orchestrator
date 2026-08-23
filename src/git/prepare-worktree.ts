@@ -22,6 +22,15 @@ export async function prepareWorktree(
 
   const branch = `agent/${cardId}`;
   const worktreePath = path.join(worktreeRoot, cardId);
+  const resolvedWorktreeRoot = path.resolve(worktreeRoot);
+  const resolvedWorktreePath = path.resolve(worktreePath);
+
+  if (
+    resolvedWorktreePath === resolvedWorktreeRoot ||
+    !resolvedWorktreePath.startsWith(`${resolvedWorktreeRoot}${path.sep}`)
+  ) {
+    throw new Error(`Card ID would escape configured worktree root: ${cardId}`);
+  }
 
   fs.mkdirSync(worktreeRoot, { recursive: true });
 
@@ -40,19 +49,8 @@ export async function prepareWorktree(
       logger
         .child({ projectId: project.id })
         .info(
-          "Existing worktree has uncommitted changes; resetting for retry...",
+          "Existing worktree has uncommitted changes; preserving them for retry...",
         );
-
-      await git.resetHard(worktreePath);
-      await git.cleanUntracked(worktreePath);
-
-      const statusAfterReset = await git.getStatus(worktreePath);
-
-      if (statusAfterReset.length > 0) {
-        throw new Error(
-          `Existing worktree ${worktreePath} is still dirty after retry reset:\n${statusAfterReset}`,
-        );
-      }
     }
 
     return {

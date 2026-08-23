@@ -65,6 +65,8 @@ export function signalProcessTree(
           error instanceof Error ? error.message : String(error)
         }`,
       );
+
+      killChild(signal);
     }
   }
 }

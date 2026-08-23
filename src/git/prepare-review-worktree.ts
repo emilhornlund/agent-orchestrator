@@ -17,6 +17,15 @@ export async function prepareReviewWorktree(
   const branch = `agent/${cardId}`;
   const remoteBranch = `origin/${branch}`;
   const worktreePath = path.join(worktreeRoot, cardId);
+  const resolvedWorktreeRoot = path.resolve(worktreeRoot);
+  const resolvedWorktreePath = path.resolve(worktreePath);
+
+  if (
+    resolvedWorktreePath === resolvedWorktreeRoot ||
+    !resolvedWorktreePath.startsWith(`${resolvedWorktreeRoot}${path.sep}`)
+  ) {
+    throw new Error(`Card ID would escape configured worktree root: ${cardId}`);
+  }
 
   fs.mkdirSync(worktreeRoot, { recursive: true });
 
@@ -31,14 +40,23 @@ export async function prepareReviewWorktree(
       );
     }
 
-    await git.resetHardTo(worktreePath, remoteBranch);
-    await git.cleanUntracked(worktreePath);
-
     const status = await git.getStatus(worktreePath);
 
     if (status.length > 0) {
+      return {
+        path: worktreePath,
+        branch,
+      };
+    }
+
+    await git.resetHardTo(worktreePath, remoteBranch);
+    await git.cleanUntracked(worktreePath);
+
+    const statusAfterReset = await git.getStatus(worktreePath);
+
+    if (statusAfterReset.length > 0) {
       throw new Error(
-        `Existing review worktree ${worktreePath} is still dirty after reset:\n${status}`,
+        `Existing review worktree ${worktreePath} is still dirty after reset:\n${statusAfterReset}`,
       );
     }
 

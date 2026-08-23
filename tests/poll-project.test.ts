@@ -648,6 +648,7 @@ describe("pollProject", () => {
       const getStatus = vi
         .fn()
         .mockResolvedValueOnce("")
+        .mockResolvedValueOnce("")
         .mockResolvedValueOnce(" M src/example.ts")
         .mockResolvedValueOnce("")
         .mockResolvedValueOnce("");
@@ -855,6 +856,7 @@ describe("pollProject", () => {
 
       const getStatus = vi
         .fn()
+        .mockResolvedValueOnce("")
         .mockResolvedValueOnce("")
         .mockResolvedValueOnce(" M src/example.ts")
         .mockResolvedValueOnce("")

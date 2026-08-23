@@ -21,9 +21,11 @@ export async function validateProjectTrello(
   ] as const;
 
   for (const [name, listId] of requiredLists) {
-    if (!listIds.has(listId)) {
+    const list = lists.find((candidate) => candidate.id === listId);
+
+    if (!listIds.has(listId) || list?.closed) {
       throw new Error(
-        `Project "${project.id}" has invalid Trello ${name}: ${listId} does not exist on board "${board.name}"`,
+        `Project "${project.id}" has invalid Trello ${name}: ${listId} does not exist or is closed on board "${board.name}"`,
       );
     }
   }

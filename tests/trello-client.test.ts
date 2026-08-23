@@ -112,6 +112,42 @@ describe("TrelloClient", () => {
     expect(requestUrl).toContain("token=test-token");
   });
 
+  it("rejects a malformed card response instead of returning unchecked data", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify([{ id: "card-1", name: "Incomplete" }]), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+        },
+      }),
+    );
+
+    const client = new TrelloClient({
+      apiKey: "test-key",
+      token: "test-token",
+    });
+
+    await expect(client.getCards("ready-list")).rejects.toThrow();
+  });
+
+  it("rejects a non-array list response", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ id: "list-1" }), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+        },
+      }),
+    );
+
+    const client = new TrelloClient({
+      apiKey: "test-key",
+      token: "test-token",
+    });
+
+    await expect(client.getLists("board-1")).rejects.toThrow();
+  });
+
   it("throws when Trello returns an error", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(null, {
@@ -128,6 +164,53 @@ describe("TrelloClient", () => {
     await expect(client.getCards("ready-list")).rejects.toThrow(
       "Trello request failed: 401 Unauthorized",
     );
+  });
+
+  it("does not start a request when shutdown has already been requested", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+
+    const client = new TrelloClient({
+      apiKey: "test-key",
+      token: "test-token",
+      signal: controller.signal,
+      timeoutMilliseconds: 30_000,
+    });
+
+    await expect(client.getBoard("board-1")).rejects.toThrow(
+      "Trello request aborted",
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("converts an in-flight shutdown abort into a typed request error", async () => {
+    const controller = new AbortController();
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async (_input, init) => {
+        await new Promise<never>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("Aborted", "AbortError")),
+            { once: true },
+          );
+        });
+
+        throw new Error("unreachable");
+      });
+
+    const client = new TrelloClient({
+      apiKey: "test-key",
+      token: "test-token",
+      signal: controller.signal,
+    });
+    const request = client.getBoard("board-1");
+
+    controller.abort();
+
+    await expect(request).rejects.toThrow("Trello request aborted");
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 
   it("moves a card to another list", async () => {

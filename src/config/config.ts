@@ -4,15 +4,23 @@ import { z } from "zod";
 import YAML from "yaml";
 
 const githubRepositoryPattern = /^[^/]+\/[^/]+$/;
+const nonBlankString = z.string().refine((value) => value.trim().length > 0, {
+  message: "Must not be blank",
+});
+const absolutePath = nonBlankString
+  .refine(path.isAbsolute, {
+    message: "Must be an absolute path",
+  })
+  .transform((value) => path.resolve(value));
 
 const trelloSchema = z
-  .object({
-    boardId: z.string().min(1),
-    readyListId: z.string().min(1),
-    workingListId: z.string().min(1),
-    reviewListId: z.string().min(1),
-    failedListId: z.string().min(1),
-    doneListId: z.string().min(1),
+  .strictObject({
+    boardId: nonBlankString,
+    readyListId: nonBlankString,
+    workingListId: nonBlankString,
+    reviewListId: nonBlankString,
+    failedListId: nonBlankString,
+    doneListId: nonBlankString,
   })
   .superRefine((trello, ctx) => {
     const listIds = [
@@ -31,26 +39,22 @@ const trelloSchema = z
     }
   });
 
-const repositorySchema = z.object({
-  path: z.string().refine(path.isAbsolute, {
-    message: "Must be an absolute path",
-  }),
-  github: z.string().regex(githubRepositoryPattern, {
+const repositorySchema = z.strictObject({
+  path: absolutePath,
+  github: nonBlankString.regex(githubRepositoryPattern, {
     message: "Must use owner/repository format",
   }),
-  defaultBranch: z.string().min(1),
-  worktreeRoot: z.string().refine(path.isAbsolute, {
-    message: "Must be an absolute path",
-  }),
-  validationCommand: z.string().min(1).optional(),
+  defaultBranch: nonBlankString,
+  worktreeRoot: absolutePath,
+  validationCommand: nonBlankString.optional(),
 });
 
-const openCodeStageSchema = z.object({
-  model: z.string().min(1),
-  variant: z.string().min(1),
+const openCodeStageSchema = z.strictObject({
+  model: nonBlankString,
+  variant: nonBlankString,
 });
 
-const openCodeSchema = z.object({
+const openCodeSchema = z.strictObject({
   implementation: openCodeStageSchema,
   review: openCodeStageSchema,
   remediation: openCodeStageSchema,
@@ -58,18 +62,18 @@ const openCodeSchema = z.object({
   timeoutMinutes: z.number().positive().default(360),
 });
 
-const projectSchema = z.object({
-  id: z.string().min(1),
+const projectSchema = z.strictObject({
+  id: nonBlankString,
   trello: trelloSchema,
   repository: repositorySchema,
   opencode: openCodeSchema,
 });
 
 const configSchema = z
-  .object({
+  .strictObject({
     projects: z.array(projectSchema).min(1),
 
-    workflow: z.object({
+    workflow: z.strictObject({
       pollIntervalSeconds: z.number().int().positive(),
     }),
   })

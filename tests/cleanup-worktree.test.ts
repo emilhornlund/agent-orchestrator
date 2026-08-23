@@ -12,6 +12,7 @@ const project = {
   id: "test-project",
   repository: {
     path: "/repo",
+    worktreeRoot: "/worktrees",
   },
 } as ProjectConfig;
 
@@ -22,8 +23,12 @@ describe("cleanupWorktree", () => {
 
   it("removes the worktree and local branch", async () => {
     vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.lstatSync).mockReturnValue({
+      isSymbolicLink: () => false,
+    } as fs.Stats);
 
     const git = {
+      getCurrentBranch: vi.fn().mockResolvedValue("agent/card-1"),
       getStatus: vi.fn().mockResolvedValue(""),
       removeWorktree: vi.fn().mockResolvedValue(undefined),
       pruneWorktrees: vi.fn().mockResolvedValue(undefined),
@@ -48,8 +53,12 @@ describe("cleanupWorktree", () => {
 
   it("refuses to remove a dirty worktree", async () => {
     vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.lstatSync).mockReturnValue({
+      isSymbolicLink: () => false,
+    } as fs.Stats);
 
     const git = {
+      getCurrentBranch: vi.fn().mockResolvedValue("agent/card-1"),
       getStatus: vi.fn().mockResolvedValue(" M src/example.ts"),
       removeWorktree: vi.fn(),
       pruneWorktrees: vi.fn(),
@@ -74,6 +83,7 @@ describe("cleanupWorktree", () => {
     vi.mocked(fs.existsSync).mockReturnValue(false);
 
     const git = {
+      getCurrentBranch: vi.fn(),
       getStatus: vi.fn(),
       removeWorktree: vi.fn(),
       pruneWorktrees: vi.fn().mockResolvedValue(undefined),
@@ -92,5 +102,107 @@ describe("cleanupWorktree", () => {
     expect(git.removeWorktree).not.toHaveBeenCalled();
     expect(git.pruneWorktrees).toHaveBeenCalledWith("/repo");
     expect(git.deleteBranch).toHaveBeenCalledWith("/repo", "agent/card-1");
+  });
+
+  it("refuses to clean a worktree on the wrong branch", async () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.lstatSync).mockReturnValue({
+      isSymbolicLink: () => false,
+    } as fs.Stats);
+
+    const git = {
+      getCurrentBranch: vi.fn().mockResolvedValue("agent/other-card"),
+      getStatus: vi.fn(),
+      removeWorktree: vi.fn(),
+      pruneWorktrees: vi.fn(),
+      branchExists: vi.fn(),
+      deleteBranch: vi.fn(),
+    } as unknown as GitClient;
+
+    await expect(
+      cleanupWorktree({
+        git,
+        project,
+        worktreePath: "/worktrees/card-1",
+        branch: "agent/card-1",
+      }),
+    ).rejects.toThrow('on branch "agent/other-card"');
+
+    expect(git.getStatus).not.toHaveBeenCalled();
+    expect(git.removeWorktree).not.toHaveBeenCalled();
+    expect(git.deleteBranch).not.toHaveBeenCalled();
+  });
+
+  it("refuses to clean a path outside the configured worktree root", async () => {
+    const git = {
+      getCurrentBranch: vi.fn(),
+      getStatus: vi.fn(),
+      removeWorktree: vi.fn(),
+      pruneWorktrees: vi.fn(),
+      branchExists: vi.fn(),
+      deleteBranch: vi.fn(),
+    } as unknown as GitClient;
+
+    await expect(
+      cleanupWorktree({
+        git,
+        project,
+        worktreePath: "/worktrees/../sensitive",
+        branch: "agent/card-1",
+      }),
+    ).rejects.toThrow("outside configured root");
+
+    expect(git.getCurrentBranch).not.toHaveBeenCalled();
+    expect(git.pruneWorktrees).not.toHaveBeenCalled();
+  });
+
+  it("refuses to clean a symbolic-link path", async () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.lstatSync).mockReturnValue({
+      isSymbolicLink: () => true,
+    } as fs.Stats);
+
+    const git = {
+      getCurrentBranch: vi.fn(),
+      getStatus: vi.fn(),
+      removeWorktree: vi.fn(),
+      pruneWorktrees: vi.fn(),
+      branchExists: vi.fn(),
+      deleteBranch: vi.fn(),
+    } as unknown as GitClient;
+
+    await expect(
+      cleanupWorktree({
+        git,
+        project,
+        worktreePath: "/worktrees/card-1",
+        branch: "agent/card-1",
+      }),
+    ).rejects.toThrow("symbolic-link");
+
+    expect(git.getCurrentBranch).not.toHaveBeenCalled();
+    expect(git.pruneWorktrees).not.toHaveBeenCalled();
+  });
+
+  it("refuses to delete a branch unrelated to the worktree path", async () => {
+    const git = {
+      getCurrentBranch: vi.fn(),
+      getStatus: vi.fn(),
+      removeWorktree: vi.fn(),
+      pruneWorktrees: vi.fn(),
+      branchExists: vi.fn(),
+      deleteBranch: vi.fn(),
+    } as unknown as GitClient;
+
+    await expect(
+      cleanupWorktree({
+        git,
+        project,
+        worktreePath: "/worktrees/card-1",
+        branch: "agent/other-card",
+      }),
+    ).rejects.toThrow("unexpected branch");
+
+    expect(git.pruneWorktrees).not.toHaveBeenCalled();
   });
 });

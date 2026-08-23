@@ -5,9 +5,35 @@ import {
   appendSessionSection,
 } from "../logging/session-log.js";
 
+const commandTerminationGraceMilliseconds = 5_000;
+
+function signalProcessTree(
+  childPid: number | undefined,
+  signal: NodeJS.Signals,
+  killChild: (signal: NodeJS.Signals) => boolean,
+): void {
+  if (childPid === undefined || process.platform === "win32") {
+    killChild(signal);
+    return;
+  }
+
+  try {
+    process.kill(-childPid, signal);
+  } catch (error) {
+    const code =
+      error instanceof Error && "code" in error ? error.code : undefined;
+
+    if (code !== "ESRCH") {
+      killChild(signal);
+    }
+  }
+}
+
 export interface CommandRunOptions {
   cwd: string;
   command: string;
+  signal?: AbortSignal;
+  timeoutMilliseconds?: number;
   sessionLogPath?: string;
   sessionLabel?: string;
 }
@@ -20,13 +46,34 @@ export type RunCommand = (
   options: CommandRunOptions,
 ) => Promise<CommandRunResult>;
 
+export class CommandRunAbortedError extends Error {
+  constructor() {
+    super("Command run aborted");
+    this.name = "CommandRunAbortedError";
+  }
+}
+
+export class CommandTimeoutError extends Error {
+  constructor(timeoutMilliseconds: number) {
+    super(`Command exceeded safety timeout of ${timeoutMilliseconds}ms`);
+    this.name = "CommandTimeoutError";
+  }
+}
+
 const defaultRunCommand: RunCommand = async ({
   cwd,
   command,
+  signal,
+  timeoutMilliseconds,
   sessionLogPath,
   sessionLabel,
 }) =>
   new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new CommandRunAbortedError());
+      return;
+    }
+
     if (sessionLogPath) {
       appendSessionSection(sessionLogPath, sessionLabel ?? "Command");
 
@@ -40,9 +87,69 @@ const defaultRunCommand: RunCommand = async ({
       cwd,
       shell: true,
       stdio: ["inherit", "pipe", "pipe"],
+      detached: process.platform !== "win32",
     });
 
     let settled = false;
+    let timedOut = false;
+    let timeout: NodeJS.Timeout | undefined;
+    let forceKillTimeout: NodeJS.Timeout | undefined;
+
+    function settle(): void {
+      settled = true;
+
+      if (timeout !== undefined) {
+        clearTimeout(timeout);
+      }
+
+      if (forceKillTimeout !== undefined) {
+        clearTimeout(forceKillTimeout);
+      }
+
+      signal?.removeEventListener("abort", handleAbort);
+    }
+
+    function terminate(): void {
+      if (settled) {
+        return;
+      }
+
+      signalProcessTree(child.pid, "SIGTERM", (signal) => child.kill(signal));
+
+      forceKillTimeout = setTimeout(() => {
+        if (settled) {
+          return;
+        }
+
+        signalProcessTree(child.pid, "SIGKILL", (signal) => child.kill(signal));
+        settle();
+
+        reject(
+          timedOut
+            ? new CommandTimeoutError(timeoutMilliseconds!)
+            : new CommandRunAbortedError(),
+        );
+      }, commandTerminationGraceMilliseconds);
+    }
+
+    function handleAbort(): void {
+      terminate();
+    }
+
+    if (signal) {
+      signal.addEventListener("abort", handleAbort, { once: true });
+    }
+
+    if (timeoutMilliseconds !== undefined) {
+      timeout = setTimeout(() => {
+        if (settled) {
+          return;
+        }
+
+        timedOut = true;
+        terminate();
+      }, timeoutMilliseconds);
+    }
 
     child.stdout.on("data", (chunk: Buffer) => {
       const text = chunk.toString();
@@ -69,7 +176,7 @@ const defaultRunCommand: RunCommand = async ({
         return;
       }
 
-      settled = true;
+      settle();
 
       reject(
         new Error(`Failed to start command: ${error.message}`, {
@@ -83,7 +190,17 @@ const defaultRunCommand: RunCommand = async ({
         return;
       }
 
-      settled = true;
+      settle();
+
+      if (timedOut) {
+        reject(new CommandTimeoutError(timeoutMilliseconds!));
+        return;
+      }
+
+      if (signal?.aborted) {
+        reject(new CommandRunAbortedError());
+        return;
+      }
 
       resolve({
         exitCode: code ?? 1,

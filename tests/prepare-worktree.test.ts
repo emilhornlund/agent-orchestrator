@@ -201,7 +201,7 @@ describe("prepareWorktree", () => {
     );
   });
 
-  it("resets an existing dirty worktree before retrying", async () => {
+  it("preserves an existing dirty worktree when retrying", async () => {
     const worktreeRoot = createTemporaryDirectory();
     const worktreePath = path.join(worktreeRoot, "card-123");
 
@@ -209,17 +209,13 @@ describe("prepareWorktree", () => {
 
     const project = createProject(worktreeRoot);
 
-    let statusCall = 0;
-
     const runGit = vi.fn<RunGit>(async (_cwd, args) => {
       if (args[0] === "branch" && args[1] === "--show-current") {
         return "agent/card-123";
       }
 
       if (args[0] === "status") {
-        statusCall += 1;
-
-        return statusCall === 1 ? " M src/example.ts\n?? src/new-file.ts" : "";
+        return " M src/example.ts\n?? src/new-file.ts";
       }
 
       return "";
@@ -245,46 +241,13 @@ describe("prepareWorktree", () => {
       "--untracked-files=all",
     ]);
 
-    expect(runGit).toHaveBeenNthCalledWith(3, worktreePath, [
+    expect(runGit).not.toHaveBeenCalledWith(worktreePath, [
       "reset",
       "--hard",
       "HEAD",
     ]);
 
-    expect(runGit).toHaveBeenNthCalledWith(4, worktreePath, ["clean", "-fd"]);
-
-    expect(runGit).toHaveBeenNthCalledWith(5, worktreePath, [
-      "status",
-      "--porcelain=v1",
-      "--untracked-files=all",
-    ]);
-  });
-
-  it("rejects a retry when the worktree remains dirty after reset", async () => {
-    const worktreeRoot = createTemporaryDirectory();
-    const worktreePath = path.join(worktreeRoot, "card-123");
-
-    fs.mkdirSync(worktreePath);
-
-    const project = createProject(worktreeRoot);
-
-    const runGit = vi.fn<RunGit>(async (_cwd, args) => {
-      if (args[0] === "branch" && args[1] === "--show-current") {
-        return "agent/card-123";
-      }
-
-      if (args[0] === "status") {
-        return " M src/example.ts";
-      }
-
-      return "";
-    });
-
-    const git = new GitClient(runGit);
-
-    await expect(prepareWorktree(git, project, "card-123")).rejects.toThrow(
-      `Existing worktree ${worktreePath} is still dirty after retry reset`,
-    );
+    expect(runGit).not.toHaveBeenCalledWith(worktreePath, ["clean", "-fd"]);
   });
 
   it("rejects an existing directory that is not a Git worktree", async () => {
@@ -306,5 +269,18 @@ describe("prepareWorktree", () => {
       "branch",
       "--show-current",
     ]);
+  });
+
+  it("rejects a card ID that escapes the worktree root", async () => {
+    const worktreeRoot = createTemporaryDirectory();
+    const project = createProject(worktreeRoot);
+    const runGit = vi.fn<RunGit>();
+    const git = new GitClient(runGit);
+
+    await expect(prepareWorktree(git, project, "../outside")).rejects.toThrow(
+      "would escape configured worktree root",
+    );
+
+    expect(runGit).not.toHaveBeenCalled();
   });
 });

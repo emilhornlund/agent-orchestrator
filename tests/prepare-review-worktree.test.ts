@@ -154,17 +154,60 @@ describe("prepareReviewWorktree", () => {
     ]);
 
     expect(runGit).toHaveBeenNthCalledWith(3, worktreePath, [
+      "status",
+      "--porcelain=v1",
+      "--untracked-files=all",
+    ]);
+
+    expect(runGit).toHaveBeenNthCalledWith(4, worktreePath, [
       "reset",
       "--hard",
       "origin/agent/card-123",
     ]);
 
-    expect(runGit).toHaveBeenNthCalledWith(4, worktreePath, ["clean", "-fd"]);
+    expect(runGit).toHaveBeenNthCalledWith(5, worktreePath, ["clean", "-fd"]);
 
-    expect(runGit).toHaveBeenNthCalledWith(5, worktreePath, [
+    expect(runGit).toHaveBeenNthCalledWith(6, worktreePath, [
       "status",
       "--porcelain=v1",
       "--untracked-files=all",
     ]);
+  });
+
+  it("preserves an existing dirty review worktree", async () => {
+    const worktreeRoot = createTemporaryDirectory();
+    const worktreePath = path.join(worktreeRoot, "card-123");
+
+    fs.mkdirSync(worktreePath);
+
+    const project = createProject(worktreeRoot);
+
+    const runGit = vi.fn<RunGit>(async (_cwd, args) => {
+      if (args[0] === "branch" && args[1] === "--show-current") {
+        return "agent/card-123";
+      }
+
+      if (args[0] === "status") {
+        return " M src/example.ts";
+      }
+
+      return "";
+    });
+
+    const git = new GitClient(runGit);
+
+    await expect(
+      prepareReviewWorktree(git, project, "card-123"),
+    ).resolves.toEqual({
+      path: worktreePath,
+      branch: "agent/card-123",
+    });
+
+    expect(runGit).not.toHaveBeenCalledWith(worktreePath, [
+      "reset",
+      "--hard",
+      "origin/agent/card-123",
+    ]);
+    expect(runGit).not.toHaveBeenCalledWith(worktreePath, ["clean", "-fd"]);
   });
 });

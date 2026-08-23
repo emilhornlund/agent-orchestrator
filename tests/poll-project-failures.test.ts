@@ -298,6 +298,51 @@ function expectNothingPublished(scenario: Scenario): void {
 }
 
 describe("pollProject failure boundaries", () => {
+  it("does not query or claim cards when already aborted", async () => {
+    await withScenario({}, async (scenario) => {
+      const controller = new AbortController();
+      controller.abort();
+
+      await pollProject(
+        scenario.trello,
+        scenario.git,
+        scenario.github,
+        scenario.openCode,
+        scenario.commands,
+        scenario.project,
+        controller.signal,
+      );
+
+      expect(scenario.trello.getCards).not.toHaveBeenCalled();
+      expect(scenario.trello.moveCard).not.toHaveBeenCalled();
+    });
+  });
+
+  it("does not claim a Ready card when shutdown occurs during reconciliation", async () => {
+    await withScenario({}, async (scenario) => {
+      const controller = new AbortController();
+
+      vi.mocked(scenario.trello.getCards).mockImplementationOnce(async () => {
+        controller.abort();
+        return [];
+      });
+
+      await pollProject(
+        scenario.trello,
+        scenario.git,
+        scenario.github,
+        scenario.openCode,
+        scenario.commands,
+        scenario.project,
+        controller.signal,
+      );
+
+      expect(scenario.trello.getCards).toHaveBeenCalledTimes(1);
+      expect(scenario.trello.moveCard).not.toHaveBeenCalled();
+      expect(scenario.runOpenCode).not.toHaveBeenCalled();
+    });
+  });
+
   it("does nothing when no card is ready", async () => {
     await withScenario({ cards: [] }, async (scenario) => {
       await pollProject(
@@ -423,6 +468,8 @@ describe("pollProject failure boundaries", () => {
         expect(scenario.runCommand).toHaveBeenCalledWith({
           cwd: scenario.worktreePath,
           command: "yarn validate",
+          timeoutMilliseconds: 360 * 60_000,
+          signal: scenario.signal,
           sessionLogPath: expect.stringMatching(
             /logs\/sessions\/example\/card-1\.log$/,
           ),
@@ -911,6 +958,44 @@ describe("pollProject failure boundaries", () => {
     );
   });
 
+  it("does not publish when final validation after commit fails", async () => {
+    await withScenario(
+      {
+        validationCommand: "yarn validate",
+        validationExitCodes: [0, 1],
+      },
+      async (scenario) => {
+        await expect(
+          pollProject(
+            scenario.trello,
+            scenario.git,
+            scenario.github,
+            scenario.openCode,
+            scenario.commands,
+            scenario.project,
+            scenario.signal,
+          ),
+        ).rejects.toThrow("Final repository validation exited with code 1");
+
+        expect(scenario.runCommand).toHaveBeenCalledTimes(2);
+
+        expect(scenario.events).toEqual([
+          "move:working",
+          "opencode:1",
+          "validation",
+          "opencode:2",
+          "opencode:3",
+          "validation",
+          "move:failed",
+        ]);
+
+        expect(scenario.events).not.toContain("push");
+        expect(scenario.events).not.toContain("pr");
+        expect(scenario.events).not.toContain("move:review");
+      },
+    );
+  });
+
   it("does not create a PR or move the card when push fails", async () => {
     await withScenario(
       {
@@ -982,7 +1067,7 @@ describe("pollProject failure boundaries", () => {
     );
   });
 
-  it("propagates a failed Human Review move", async () => {
+  it("leaves a published card in Working when moving to Human Review fails", async () => {
     await withScenario(
       {
         humanReviewError: new Error("Human Review move failed"),
@@ -998,7 +1083,7 @@ describe("pollProject failure boundaries", () => {
             scenario.project,
             scenario.signal,
           ),
-        ).rejects.toThrow("Human Review move failed");
+        ).resolves.toBeUndefined();
 
         expect(scenario.events).toEqual([
           "move:working",
@@ -1008,24 +1093,25 @@ describe("pollProject failure boundaries", () => {
           "push",
           "pr",
           "move:review",
-          "move:failed",
         ]);
+
+        expect(scenario.trello.moveCard).not.toHaveBeenCalledWith(
+          scenario.card.id,
+          scenario.project.trello.failedListId,
+        );
       },
     );
   });
 
-  it("preserves the workflow and Failed-move errors", async () => {
-    const humanReviewError = new Error("Human Review move failed");
-    const failureMoveError = new Error("Failed move failed");
-
+  it("does not attempt a Failed transition after publication succeeds", async () => {
     await withScenario(
       {
-        humanReviewError,
-        failureMoveError,
+        humanReviewError: new Error("Human Review move failed"),
+        failureMoveError: new Error("Failed move should not be attempted"),
       },
       async (scenario) => {
-        try {
-          await pollProject(
+        await expect(
+          pollProject(
             scenario.trello,
             scenario.git,
             scenario.github,
@@ -1033,19 +1119,8 @@ describe("pollProject failure boundaries", () => {
             scenario.commands,
             scenario.project,
             scenario.signal,
-          );
-
-          throw new Error("Expected pollProject to throw");
-        } catch (error) {
-          expect(error).toBeInstanceOf(AggregateError);
-
-          const aggregate = error as AggregateError;
-
-          expect(aggregate.errors).toEqual([
-            humanReviewError,
-            failureMoveError,
-          ]);
-        }
+          ),
+        ).resolves.toBeUndefined();
 
         expect(scenario.events).toEqual([
           "move:working",
@@ -1055,8 +1130,12 @@ describe("pollProject failure boundaries", () => {
           "push",
           "pr",
           "move:review",
-          "move:failed",
         ]);
+
+        expect(scenario.trello.moveCard).not.toHaveBeenCalledWith(
+          scenario.card.id,
+          scenario.project.trello.failedListId,
+        );
       },
     );
   });

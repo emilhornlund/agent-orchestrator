@@ -41,14 +41,15 @@ unless multiple real implementations require them.
 
 The following are architectural invariants:
 
-- Only one task may be active.
+- Only one task may be active per project.
+- Independent projects may process tasks concurrently.
 - Never modify the configured source checkout.
 - Never start a task unless its Trello card is in `Ready for Agent`.
 - Never merge a pull request.
 - Never force-push.
 - Never delete an unknown worktree.
 - Never automatically discard agent changes after failure.
-- Never start the next task while the current task has ambiguous state.
+- Never start another task for a project while that project's current task has ambiguous state.
 - A failed external operation must not silently advance workflow state.
 
 Changes that weaken these invariants require explicit justification.

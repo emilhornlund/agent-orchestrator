@@ -123,6 +123,20 @@ describe("GitHubClient", () => {
     ).resolves.toBeNull();
   });
 
+  it("rejects a non-GitHub pull request URL from gh", async () => {
+    const github = new GitHubClient(
+      vi.fn<RunGitHubCommand>().mockResolvedValue("https://example.com/pr/1"),
+    );
+
+    await expect(
+      github.findPullRequest({
+        cwd: "/tmp/repository",
+        repository: "example/repository",
+        headBranch: "agent/example",
+      }),
+    ).rejects.toThrow("invalid pull request URL");
+  });
+
   it("parses and trims the URL returned by gh", async () => {
     const child = createFakeChild();
 
@@ -280,6 +294,32 @@ describe("GitHubClient", () => {
     await expect(request).rejects.toThrow(
       "GitHub CLI timed out after 120000ms",
     );
+  });
+
+  it("force-kills gh when it ignores the termination signal", async () => {
+    vi.useFakeTimers();
+
+    const child = createFakeChild();
+    spawnMock.mockReturnValueOnce(child);
+
+    const github = new GitHubClient();
+    const request = github.createPullRequest({
+      cwd: "/tmp/repository",
+      repository: "example/repository",
+      baseBranch: "main",
+      headBranch: "agent/example",
+      title: "Example task",
+      body: "Example body",
+    });
+    const rejection = expect(request).rejects.toThrow(
+      "GitHub CLI timed out after 120000ms",
+    );
+
+    await vi.advanceTimersByTimeAsync(2 * 60 * 1000 + 5_000);
+
+    expect(child.kill).toHaveBeenNthCalledWith(1, "SIGTERM");
+    expect(child.kill).toHaveBeenNthCalledWith(2, "SIGKILL");
+    await rejection;
   });
 
   it("finds a merged pull request by head branch", async () => {
@@ -476,6 +516,53 @@ describe("GitHubClient", () => {
     ).resolves.toBeNull();
 
     expect(runGitHub).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a malformed pull request list response", async () => {
+    const github = new GitHubClient(
+      vi.fn<RunGitHubCommand>().mockResolvedValue(JSON.stringify({})),
+    );
+
+    await expect(
+      github.findChangesRequestedPullRequest({
+        cwd: "/repo",
+        repository: "example/repository",
+        headBranch: "agent/card-1",
+      }),
+    ).rejects.toThrow("invalid pull request list");
+  });
+
+  it("rejects a malformed requested-changes review response", async () => {
+    const runGitHub = vi
+      .fn<RunGitHubCommand>()
+      .mockResolvedValueOnce(
+        JSON.stringify([
+          {
+            url: "https://github.com/example/repository/pull/123",
+            number: 123,
+            reviewDecision: "CHANGES_REQUESTED",
+            headRefOid: "current-head-sha",
+          },
+        ]),
+      )
+      .mockResolvedValueOnce(
+        JSON.stringify({
+          id: 456,
+          body: 123,
+          commitId: "current-head-sha",
+          author: "reviewer-one",
+        }),
+      );
+
+    const github = new GitHubClient(runGitHub);
+
+    await expect(
+      github.findChangesRequestedPullRequest({
+        cwd: "/repo",
+        repository: "example/repository",
+        headBranch: "agent/card-1",
+      }),
+    ).rejects.toThrow("invalid requested changes review");
   });
 
   it("ignores requested changes that target an older PR head", async () => {

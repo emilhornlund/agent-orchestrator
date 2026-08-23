@@ -4,6 +4,7 @@ import type { GitHubClient } from "../github/github-client.js";
 import { logger } from "../logging/logger.js";
 import type { TrelloCard, TrelloClient } from "../trello/trello-client.js";
 
+import { PublishedCardStateError } from "./published-card-state-error.js";
 import { WorkflowError } from "./workflow-error.js";
 
 export interface PublishCardOptions {
@@ -89,7 +90,16 @@ export async function publishCard({
 
   cardLog.event("Moving Trello card to Human Review...");
 
-  await trello.moveCard(card.id, project.trello.reviewListId);
+  try {
+    await trello.moveCard(card.id, project.trello.reviewListId);
+  } catch (error) {
+    throw new PublishedCardStateError(
+      `Pull request ${pullRequest.url} was published, but the Trello card could not be moved to Human Review`,
+      {
+        cause: error,
+      },
+    );
+  }
 
   cardLog.event("Trello card moved to Human Review");
 

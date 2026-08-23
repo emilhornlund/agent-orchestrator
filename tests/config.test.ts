@@ -346,6 +346,62 @@ workflow:`,
     expect(() => parseConfig(raw)).toThrow();
   });
 
+  it("rejects whitespace-only identifiers", () => {
+    const raw = validConfig.replace('boardId: "board-one"', 'boardId: " "');
+
+    expect(() => parseConfig(raw)).toThrow("Must not be blank");
+  });
+
+  it("rejects unknown configuration keys instead of silently ignoring typos", () => {
+    const raw = validConfig.replace(
+      'validationCommand: "yarn validate"',
+      'validationComand: "yarn validate"\n      validationCommand: "yarn validate"',
+    );
+
+    expect(() => parseConfig(raw)).toThrow("Unrecognized key");
+  });
+
+  it("normalizes equivalent repository paths before checking uniqueness", () => {
+    const raw = validConfig.replace(
+      "\nworkflow:",
+      `
+  - id: "project-two"
+
+    trello:
+      boardId: "board-two"
+      readyListId: "ready-two"
+      workingListId: "working-two"
+      reviewListId: "review-two"
+      failedListId: "failed-two"
+      doneListId: "done-two"
+
+    repository:
+      path: "/tmp/repository/."
+      github: "owner/repository-two"
+      defaultBranch: "main"
+      worktreeRoot: "/tmp/worktrees-two"
+
+    opencode:
+      timeoutMinutes: 360
+      implementation:
+        model: "openai/implementation-model"
+        variant: "xhigh"
+      review:
+        model: "openai/review-model"
+        variant: "high"
+      remediation:
+        model: "openai/remediation-model"
+        variant: "xhigh"
+      commit:
+        model: "openai/commit-model"
+        variant: "low"
+
+workflow:`,
+    );
+
+    expect(() => parseConfig(raw)).toThrow("Repository paths must be unique");
+  });
+
   it("rejects malformed YAML", () => {
     expect(() => parseConfig("projects: [")).toThrow("Invalid YAML");
   });

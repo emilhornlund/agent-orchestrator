@@ -2,7 +2,9 @@ import { appendFileSync, mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
 
 function sanitizePathPart(value: string): string {
-  return value.replace(/[^a-zA-Z0-9._-]/g, "_");
+  return value.replace(/[^a-zA-Z0-9._-]/g, (character) => {
+    return `_${character.codePointAt(0)!.toString(16)}_`;
+  });
 }
 
 export function getSessionLogPath(projectId: string, cardId: string): string {

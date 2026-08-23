@@ -33,6 +33,8 @@ async function main(): Promise<void> {
   const trello = new TrelloClient({
     apiKey: environment.TRELLO_API_KEY,
     token: environment.TRELLO_TOKEN,
+    signal: shutdownController.signal,
+    timeoutMilliseconds: 30_000,
   });
 
   const git = new GitClient();

@@ -441,7 +441,7 @@ describe("publishCard", () => {
     expect(moveCard).toHaveBeenCalledWith("card-1", "review");
   });
 
-  it("propagates a Human Review move failure after publishing", async () => {
+  it("classifies a Human Review move failure as a published-state error", async () => {
     const runGit = vi.fn<RunGit>().mockResolvedValue("");
     const runGitHubCommand = vi.fn<RunGitHubCommand>(async (_cwd, args) => {
       if (args[0] === "pr" && args[1] === "list") {
@@ -474,7 +474,9 @@ describe("publishCard", () => {
         reviewResult: "Passed",
         remediationResult: "Not required",
       }),
-    ).rejects.toBe(reviewError);
+    ).rejects.toThrow(
+      "was published, but the Trello card could not be moved to Human Review",
+    );
 
     expect(runGitHubCommand).toHaveBeenCalledTimes(1);
     expect(moveCard).toHaveBeenCalledWith("card-1", "review");
