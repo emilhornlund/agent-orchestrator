@@ -92,6 +92,37 @@ async function runValidation(
   }
 }
 
+async function runSetup(
+  commands: CommandRunner,
+  cwd: string,
+  command: string,
+  timeoutMilliseconds: number,
+  signal: AbortSignal,
+  sessionLogPath: string,
+  sessionLabel: string,
+): Promise<CommandRunResult> {
+  try {
+    return await commands.run({
+      cwd,
+      command,
+      timeoutMilliseconds,
+      signal,
+      sessionLogPath,
+      sessionLabel,
+    });
+  } catch (error) {
+    if (error instanceof CommandRunAbortedError) {
+      throw error;
+    }
+
+    throw new WorkflowError(
+      "Setup",
+      error instanceof Error ? error.message : String(error),
+      { cause: error },
+    );
+  }
+}
+
 export async function pollProject(
   trello: TrelloClient,
   git: GitClient,
@@ -340,6 +371,29 @@ async function processCardChanges(
 
   cardLog.info(`Branch: ${worktree.branch}`);
   cardLog.info(`Worktree: ${worktree.path}`);
+
+  if (project.repository.setupCommand) {
+    cardLog.event("Running repository setup...");
+
+    const setup = await runSetup(
+      commands,
+      worktree.path,
+      project.repository.setupCommand,
+      project.opencode.timeoutMinutes * 60_000,
+      signal,
+      sessionLogPath,
+      "Repository setup",
+    );
+
+    if (setup.exitCode !== 0) {
+      throw new WorkflowError(
+        "Setup",
+        `Repository setup exited with code ${setup.exitCode}`,
+      );
+    }
+
+    cardLog.event("Repository setup passed");
+  }
 
   const implementationLabel = reviewIteration
     ? "review feedback implementation"

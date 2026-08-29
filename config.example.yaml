@@ -14,6 +14,7 @@ projects:
       github: "owner/repository"
       defaultBranch: "main"
       worktreeRoot: "/absolute/path/to/worktrees/repository"
+      setupCommand: "yarn install"
       validationCommand: "yarn test"
 
     opencode:
@@ -46,6 +47,7 @@ projects:
       github: "owner/another-repository"
       defaultBranch: "main"
       worktreeRoot: "/absolute/path/to/worktrees/another-repository"
+      setupCommand: "yarn install"
       validationCommand: "yarn test"
 
     opencode:

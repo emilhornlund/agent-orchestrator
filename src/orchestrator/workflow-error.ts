@@ -1,6 +1,7 @@
 export type WorkflowFailureCategory =
   | "OpenCode"
   | "OpenCode permissions"
+  | "Setup"
   | "Validation"
   | "Git/GitHub"
   | "Workflow";

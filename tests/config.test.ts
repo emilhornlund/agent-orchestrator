@@ -50,6 +50,7 @@ describe("parseConfig", () => {
     expect(project).toBeDefined();
     expect(project!.id).toBe("project-one");
     expect(project!.repository.github).toBe("owner/repository");
+    expect(project!.repository.setupCommand).toBeUndefined();
     expect(project!.repository.validationCommand).toBe("yarn validate");
     expect(project!.opencode.implementation).toEqual({
       model: "openai/implementation-model",
@@ -69,6 +70,17 @@ describe("parseConfig", () => {
     });
     expect(project!.opencode.timeoutMinutes).toBe(360);
     expect(config.workflow.pollIntervalSeconds).toBe(15);
+  });
+
+  it("accepts a repository setup command", () => {
+    const raw = validConfig.replace(
+      '      validationCommand: "yarn validate"',
+      '      setupCommand: "yarn install"\n      validationCommand: "yarn validate"',
+    );
+
+    const config = parseConfig(raw);
+
+    expect(config.projects[0]?.repository.setupCommand).toBe("yarn install");
   });
 
   it("rejects a missing OpenCode review stage", () => {

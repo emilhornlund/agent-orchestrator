@@ -46,6 +46,7 @@ const repositorySchema = z.strictObject({
   }),
   defaultBranch: nonBlankString,
   worktreeRoot: absolutePath,
+  setupCommand: nonBlankString.optional(),
   validationCommand: nonBlankString.optional(),
 });
 

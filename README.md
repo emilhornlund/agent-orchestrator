@@ -24,6 +24,7 @@ Ready for Agent
     Working
       │
       ├─ create isolated Git worktree
+      ├─ run optional repository setup
       ├─ run OpenCode implementation
       ├─ run optional repository validation
       ├─ run independent OpenCode review
@@ -132,6 +133,7 @@ projects:
       github: "owner/repository"
       defaultBranch: "main"
       worktreeRoot: "/absolute/path/to/worktrees/repository"
+      setupCommand: "yarn install"
       validationCommand: "yarn validate"
 
     opencode:
@@ -153,7 +155,7 @@ workflow:
   pollIntervalSeconds: 15
 ```
 
-`validationCommand` is optional. OpenCode is still expected to follow the target repository's normal validation instructions during implementation.
+`setupCommand` and `validationCommand` are optional. When configured, `setupCommand` runs in the card worktree before the OpenCode implementation session. `validationCommand` runs after implementation. OpenCode is still expected to follow the target repository's normal validation instructions during implementation.
 
 `config.yaml` and `.env` are local files and are intentionally excluded from version control.
 
@@ -255,6 +257,10 @@ Base branch used for task branches and pull requests.
 ### `projects[].repository.worktreeRoot`
 
 Directory under which isolated agent worktrees are created.
+
+### `projects[].repository.setupCommand`
+
+Optional command executed in the card worktree before the OpenCode implementation session.
 
 ### `projects[].repository.validationCommand`
 

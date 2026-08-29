@@ -26,6 +26,8 @@ import { type TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
 
 interface ScenarioOptions {
   cards?: TrelloCard[];
+  setupCommand?: string;
+  setupExitCodes?: number[];
   validationCommand?: string;
   validationExitCodes?: number[];
   statusOutputs?: string[];
@@ -91,6 +93,9 @@ function createScenario(options: ScenarioOptions = {}): Scenario {
       github: "example/repository",
       defaultBranch: "main",
       worktreeRoot,
+      ...(options.setupCommand === undefined
+        ? {}
+        : { setupCommand: options.setupCommand }),
       ...(options.validationCommand === undefined
         ? {}
         : { validationCommand: options.validationCommand }),
@@ -224,10 +229,25 @@ function createScenario(options: ScenarioOptions = {}): Scenario {
   });
 
   const openCode = new OpenCodeClient(runOpenCode);
+  const setupExitCodes = options.setupExitCodes ?? [0];
+  let setupCall = 0;
   const validationExitCodes = options.validationExitCodes ?? [0, 0];
   let validationCall = 0;
 
-  const runCommand = vi.fn<RunCommand>(async () => {
+  const runCommand = vi.fn<RunCommand>(async ({ command }) => {
+    if (
+      project.repository.setupCommand !== undefined &&
+      command === project.repository.setupCommand
+    ) {
+      events.push("setup");
+      const exitCode = setupExitCodes[setupCall];
+      setupCall += 1;
+
+      return {
+        exitCode: exitCode ?? 0,
+      };
+    }
+
     events.push("validation");
     const exitCode = validationExitCodes[validationCall];
     validationCall += 1;
@@ -360,6 +380,108 @@ describe("pollProject failure boundaries", () => {
       expect(scenario.runGitHub).not.toHaveBeenCalled();
       expect(scenario.trello.moveCard).not.toHaveBeenCalled();
     });
+  });
+
+  it("does not run setup when setupCommand is omitted", async () => {
+    await withScenario(
+      { validationCommand: "yarn validate" },
+      async (scenario) => {
+        await pollProject(
+          scenario.trello,
+          scenario.git,
+          scenario.github,
+          scenario.openCode,
+          scenario.commands,
+          scenario.project,
+          scenario.signal,
+        );
+
+        expect(scenario.runCommand).toHaveBeenCalledTimes(2);
+        expect(scenario.events).toEqual([
+          "move:working",
+          "opencode:1",
+          "validation",
+          "opencode:2",
+          "opencode:3",
+          "validation",
+          "push",
+          "pr",
+          "move:review",
+        ]);
+      },
+    );
+  });
+
+  it("runs setup in the card worktree before implementation", async () => {
+    await withScenario(
+      {
+        setupCommand: "yarn install",
+        validationCommand: "yarn validate",
+      },
+      async (scenario) => {
+        await pollProject(
+          scenario.trello,
+          scenario.git,
+          scenario.github,
+          scenario.openCode,
+          scenario.commands,
+          scenario.project,
+          scenario.signal,
+        );
+
+        expect(scenario.runCommand).toHaveBeenNthCalledWith(1, {
+          cwd: scenario.worktreePath,
+          command: "yarn install",
+          timeoutMilliseconds: 360 * 60_000,
+          signal: scenario.signal,
+          sessionLogPath: expect.stringMatching(
+            /logs\/sessions\/example\/card-1\.log$/,
+          ),
+          sessionLabel: "Repository setup",
+        });
+        expect(scenario.events.indexOf("setup")).toBeLessThan(
+          scenario.events.indexOf("opencode:1"),
+        );
+        expect(scenario.events).toEqual([
+          "move:working",
+          "setup",
+          "opencode:1",
+          "validation",
+          "opencode:2",
+          "opencode:3",
+          "validation",
+          "push",
+          "pr",
+          "move:review",
+        ]);
+      },
+    );
+  });
+
+  it("moves the card to Failed and skips implementation when setup fails", async () => {
+    await withScenario(
+      {
+        setupCommand: "yarn install",
+        setupExitCodes: [1],
+      },
+      async (scenario) => {
+        await expect(
+          pollProject(
+            scenario.trello,
+            scenario.git,
+            scenario.github,
+            scenario.openCode,
+            scenario.commands,
+            scenario.project,
+            scenario.signal,
+          ),
+        ).rejects.toThrow("Repository setup exited with code 1");
+
+        expect(scenario.runCommand).toHaveBeenCalledTimes(1);
+        expect(scenario.runOpenCode).not.toHaveBeenCalled();
+        expectNothingPublished(scenario);
+      },
+    );
   });
 
   it("stops after an implementation failure", async () => {
