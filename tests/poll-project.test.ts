@@ -50,6 +50,7 @@ describe("pollProject", () => {
         gitIdentity: {
           name: "Agent Orchestrator",
           email: "agent-orchestrator@users.noreply.github.com",
+          signingKey: "/secrets/agent-orchestrator-signing-key",
         },
       },
       opencode: {
@@ -232,6 +233,13 @@ describe("pollProject", () => {
         GIT_AUTHOR_EMAIL: "agent-orchestrator@users.noreply.github.com",
         GIT_COMMITTER_NAME: "Agent Orchestrator",
         GIT_COMMITTER_EMAIL: "agent-orchestrator@users.noreply.github.com",
+        GIT_CONFIG_COUNT: "3",
+        GIT_CONFIG_KEY_0: "gpg.format",
+        GIT_CONFIG_VALUE_0: "ssh",
+        GIT_CONFIG_KEY_1: "user.signingKey",
+        GIT_CONFIG_VALUE_1: "/secrets/agent-orchestrator-signing-key",
+        GIT_CONFIG_KEY_2: "commit.gpgSign",
+        GIT_CONFIG_VALUE_2: "true",
       });
 
       expect(events).not.toContain("move:failed");

@@ -42,6 +42,7 @@ const trelloSchema = z
 const gitIdentitySchema = z.strictObject({
   name: nonBlankString,
   email: nonBlankString.email(),
+  signingKey: absolutePath.optional(),
 });
 
 const repositorySchema = z.strictObject({

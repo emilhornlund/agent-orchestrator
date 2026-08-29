@@ -577,6 +577,17 @@ async function processCardChanges(
       GIT_AUTHOR_EMAIL: project.repository.gitIdentity.email,
       GIT_COMMITTER_NAME: project.repository.gitIdentity.name,
       GIT_COMMITTER_EMAIL: project.repository.gitIdentity.email,
+      ...(project.repository.gitIdentity.signingKey === undefined
+        ? {}
+        : {
+            GIT_CONFIG_COUNT: "3",
+            GIT_CONFIG_KEY_0: "gpg.format",
+            GIT_CONFIG_VALUE_0: "ssh",
+            GIT_CONFIG_KEY_1: "user.signingKey",
+            GIT_CONFIG_VALUE_1: project.repository.gitIdentity.signingKey,
+            GIT_CONFIG_KEY_2: "commit.gpgSign",
+            GIT_CONFIG_VALUE_2: "true",
+          }),
     },
     sessionLogPath,
     sessionLabel: "OpenCode commit",

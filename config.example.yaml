@@ -19,6 +19,7 @@ projects:
       gitIdentity:
         name: "Agent Orchestrator"
         email: "agent-orchestrator@users.noreply.github.com"
+        signingKey: "/absolute/path/to/agent-orchestrator-signing-key"
 
     opencode:
       timeoutMinutes: 360
@@ -55,6 +56,7 @@ projects:
       gitIdentity:
         name: "Agent Orchestrator"
         email: "agent-orchestrator@users.noreply.github.com"
+        signingKey: "/absolute/path/to/agent-orchestrator-signing-key"
 
     opencode:
       timeoutMinutes: 360
