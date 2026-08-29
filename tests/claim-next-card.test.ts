@@ -24,6 +24,10 @@ function createProject(): Project {
       github: "emilhornlund/rpg-sdl",
       defaultBranch: "main",
       worktreeRoot: "/projects/.agent-worktrees/rpg-sdl",
+      gitIdentity: {
+        name: "Agent Orchestrator",
+        email: "agent-orchestrator@users.noreply.github.com",
+      },
     },
 
     opencode: {

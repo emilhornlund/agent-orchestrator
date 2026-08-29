@@ -32,6 +32,10 @@ function createProject(repositoryPath: string): ProjectConfig {
       github: "owner/repository",
       defaultBranch: "main",
       worktreeRoot: path.join(path.dirname(repositoryPath), "worktrees"),
+      gitIdentity: {
+        name: "Agent Orchestrator",
+        email: "agent-orchestrator@users.noreply.github.com",
+      },
     },
     trello: {
       boardId: "board",

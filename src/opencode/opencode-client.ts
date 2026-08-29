@@ -15,6 +15,7 @@ export interface OpenCodeRunOptions {
   timeoutMilliseconds: number;
   prompt: string;
   signal: AbortSignal;
+  environment?: Record<string, string>;
   sessionLogPath?: string;
   sessionLabel?: string;
 }
@@ -78,6 +79,7 @@ const defaultRunOpenCode: RunOpenCode = async ({
   timeoutMilliseconds,
   prompt,
   signal,
+  environment,
   sessionLogPath,
   sessionLabel,
 }) =>
@@ -120,6 +122,7 @@ const defaultRunOpenCode: RunOpenCode = async ({
         detached: process.platform !== "win32",
         env: {
           ...process.env,
+          ...environment,
           OPENCODE_CONFIG_CONTENT: JSON.stringify({
             permission: {
               question: "deny",

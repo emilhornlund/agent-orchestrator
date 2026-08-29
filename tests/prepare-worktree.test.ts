@@ -29,6 +29,10 @@ function createProject(worktreeRoot: string): ProjectConfig {
       defaultBranch: "main",
       worktreeRoot,
       validationCommand: "yarn validate",
+      gitIdentity: {
+        name: "Agent Orchestrator",
+        email: "agent-orchestrator@users.noreply.github.com",
+      },
     },
     trello: {
       boardId: "board",

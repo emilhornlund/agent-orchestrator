@@ -39,6 +39,11 @@ const trelloSchema = z
     }
   });
 
+const gitIdentitySchema = z.strictObject({
+  name: nonBlankString,
+  email: nonBlankString.email(),
+});
+
 const repositorySchema = z.strictObject({
   path: absolutePath,
   github: nonBlankString.regex(githubRepositoryPattern, {
@@ -48,6 +53,7 @@ const repositorySchema = z.strictObject({
   worktreeRoot: absolutePath,
   setupCommand: nonBlankString.optional(),
   validationCommand: nonBlankString.optional(),
+  gitIdentity: gitIdentitySchema,
 });
 
 const openCodeStageSchema = z.strictObject({

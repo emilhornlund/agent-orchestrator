@@ -19,6 +19,9 @@ projects:
       defaultBranch: "main"
       worktreeRoot: "/tmp/worktrees"
       validationCommand: "yarn validate"
+      gitIdentity:
+        name: "Agent Orchestrator"
+        email: "agent-orchestrator@users.noreply.github.com"
 
     opencode:
       timeoutMinutes: 360
@@ -143,6 +146,9 @@ describe("parseConfig", () => {
       defaultBranch: "main"
       worktreeRoot: "/tmp/worktrees-two"
       validationCommand: "yarn validate"
+      gitIdentity:
+        name: "Agent Orchestrator"
+        email: "agent-orchestrator@users.noreply.github.com"
 
     opencode:
       timeoutMinutes: 360
@@ -232,6 +238,9 @@ workflow:
       defaultBranch: "main"
       worktreeRoot: "/tmp/worktrees-two"
       validationCommand: "yarn validate"
+      gitIdentity:
+        name: "Agent Orchestrator"
+        email: "agent-orchestrator@users.noreply.github.com"
 
     opencode:
       timeoutMinutes: 360
@@ -274,6 +283,9 @@ workflow:`,
       defaultBranch: "main"
       worktreeRoot: "/tmp/worktrees-two"
       validationCommand: "yarn validate"
+      gitIdentity:
+        name: "Agent Orchestrator"
+        email: "agent-orchestrator@users.noreply.github.com"
 
     opencode:
       timeoutMinutes: 360
@@ -318,6 +330,9 @@ workflow:`,
       defaultBranch: "main"
       worktreeRoot: "/tmp/worktrees-two"
       validationCommand: "yarn validate"
+      gitIdentity:
+        name: "Agent Orchestrator"
+        email: "agent-orchestrator@users.noreply.github.com"
 
     opencode:
       timeoutMinutes: 360
@@ -392,6 +407,9 @@ workflow:`,
       github: "owner/repository-two"
       defaultBranch: "main"
       worktreeRoot: "/tmp/worktrees-two"
+      gitIdentity:
+        name: "Agent Orchestrator"
+        email: "agent-orchestrator@users.noreply.github.com"
 
     opencode:
       timeoutMinutes: 360

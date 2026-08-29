@@ -572,6 +572,12 @@ async function processCardChanges(
     timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
     prompt: buildCommitPrompt(card),
     signal,
+    environment: {
+      GIT_AUTHOR_NAME: project.repository.gitIdentity.name,
+      GIT_AUTHOR_EMAIL: project.repository.gitIdentity.email,
+      GIT_COMMITTER_NAME: project.repository.gitIdentity.name,
+      GIT_COMMITTER_EMAIL: project.repository.gitIdentity.email,
+    },
     sessionLogPath,
     sessionLabel: "OpenCode commit",
   });

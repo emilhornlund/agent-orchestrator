@@ -26,6 +26,10 @@ function createProject(): ProjectConfig {
       github: "example/repository",
       defaultBranch: "main",
       worktreeRoot: "/tmp/example-worktrees",
+      gitIdentity: {
+        name: "Agent Orchestrator",
+        email: "agent-orchestrator@users.noreply.github.com",
+      },
     },
     opencode: {
       implementation: {

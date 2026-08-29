@@ -32,6 +32,10 @@ function createProject(id: string): ProjectConfig {
       github: `example/${id}`,
       defaultBranch: "main",
       worktreeRoot: `/worktrees/${id}`,
+      gitIdentity: {
+        name: "Agent Orchestrator",
+        email: "agent-orchestrator@users.noreply.github.com",
+      },
     },
     opencode: {
       implementation: {

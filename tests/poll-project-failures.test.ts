@@ -99,6 +99,10 @@ function createScenario(options: ScenarioOptions = {}): Scenario {
       ...(options.validationCommand === undefined
         ? {}
         : { validationCommand: options.validationCommand }),
+      gitIdentity: {
+        name: "Agent Orchestrator",
+        email: "agent-orchestrator@users.noreply.github.com",
+      },
     },
     opencode: {
       implementation: {

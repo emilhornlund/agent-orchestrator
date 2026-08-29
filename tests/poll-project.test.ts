@@ -10,6 +10,7 @@ import { GitHubClient } from "../src/github/github-client.js";
 import {
   OpenCodeClient,
   OpenCodeRunAbortedError,
+  type OpenCodeRunOptions,
 } from "../src/opencode/opencode-client.js";
 import { pollProject } from "../src/orchestrator/poll-project.js";
 import { CommandRunner } from "../src/process/command-runner.js";
@@ -46,6 +47,10 @@ describe("pollProject", () => {
         github: "example/repository",
         defaultBranch: "main",
         worktreeRoot,
+        gitIdentity: {
+          name: "Agent Orchestrator",
+          email: "agent-orchestrator@users.noreply.github.com",
+        },
       },
       opencode: {
         implementation: {
@@ -144,9 +149,11 @@ describe("pollProject", () => {
       const git = new GitClient(runGit);
 
       let openCodeCall = 0;
+      const openCodeRuns: OpenCodeRunOptions[] = [];
 
-      const opencode = new OpenCodeClient(async () => {
+      const opencode = new OpenCodeClient(async (options) => {
         openCodeCall += 1;
+        openCodeRuns.push(options);
 
         if (openCodeCall === 1) {
           events.push("implementation");
@@ -214,6 +221,19 @@ describe("pollProject", () => {
         "pr",
         "human-review",
       ]);
+
+      expect(openCodeRuns).toHaveLength(3);
+
+      expect(openCodeRuns[0]?.environment).toBeUndefined();
+      expect(openCodeRuns[1]?.environment).toBeUndefined();
+
+      expect(openCodeRuns[2]?.environment).toEqual({
+        GIT_AUTHOR_NAME: "Agent Orchestrator",
+        GIT_AUTHOR_EMAIL: "agent-orchestrator@users.noreply.github.com",
+        GIT_COMMITTER_NAME: "Agent Orchestrator",
+        GIT_COMMITTER_EMAIL: "agent-orchestrator@users.noreply.github.com",
+      });
+
       expect(events).not.toContain("move:failed");
     } finally {
       fs.rmSync(worktreeRoot, {
@@ -253,6 +273,10 @@ describe("pollProject", () => {
         github: "example/repository",
         defaultBranch: "main",
         worktreeRoot,
+        gitIdentity: {
+          name: "Agent Orchestrator",
+          email: "agent-orchestrator@users.noreply.github.com",
+        },
       },
       opencode: {
         implementation: {
@@ -468,6 +492,10 @@ describe("pollProject", () => {
         github: "example/repository",
         defaultBranch: "main",
         worktreeRoot: "/tmp/example-worktrees",
+        gitIdentity: {
+          name: "Agent Orchestrator",
+          email: "agent-orchestrator@users.noreply.github.com",
+        },
       },
       opencode: {
         implementation: {
@@ -594,6 +622,10 @@ describe("pollProject", () => {
         github: "example/repository",
         defaultBranch: "main",
         worktreeRoot,
+        gitIdentity: {
+          name: "Agent Orchestrator",
+          email: "agent-orchestrator@users.noreply.github.com",
+        },
       },
       opencode: {
         implementation: {
@@ -799,6 +831,10 @@ describe("pollProject", () => {
         github: "example/repository",
         defaultBranch: "main",
         worktreeRoot,
+        gitIdentity: {
+          name: "Agent Orchestrator",
+          email: "agent-orchestrator@users.noreply.github.com",
+        },
       },
       opencode: {
         implementation: {
@@ -976,6 +1012,10 @@ describe("pollProject", () => {
         github: "example/repository",
         defaultBranch: "main",
         worktreeRoot: "/tmp/example-worktrees",
+        gitIdentity: {
+          name: "Agent Orchestrator",
+          email: "agent-orchestrator@users.noreply.github.com",
+        },
       },
       opencode: {
         implementation: {
@@ -1086,6 +1126,10 @@ describe("pollProject", () => {
         github: "example/repository",
         defaultBranch: "main",
         worktreeRoot: "/tmp/example-worktrees",
+        gitIdentity: {
+          name: "Agent Orchestrator",
+          email: "agent-orchestrator@users.noreply.github.com",
+        },
       },
       opencode: {
         implementation: {

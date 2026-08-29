@@ -16,6 +16,9 @@ projects:
       worktreeRoot: "/absolute/path/to/worktrees/repository"
       setupCommand: "yarn install"
       validationCommand: "yarn test"
+      gitIdentity:
+        name: "Agent Orchestrator"
+        email: "agent-orchestrator@users.noreply.github.com"
 
     opencode:
       timeoutMinutes: 360
@@ -49,6 +52,9 @@ projects:
       worktreeRoot: "/absolute/path/to/worktrees/another-repository"
       setupCommand: "yarn install"
       validationCommand: "yarn test"
+      gitIdentity:
+        name: "Agent Orchestrator"
+        email: "agent-orchestrator@users.noreply.github.com"
 
     opencode:
       timeoutMinutes: 360
