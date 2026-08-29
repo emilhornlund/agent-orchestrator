@@ -26,7 +26,7 @@ Ready for Agent
       ├─ create isolated Git worktree
       ├─ run optional repository setup
       ├─ run OpenCode implementation
-      ├─ run optional repository validation
+      ├─ agents run optional repository validation
       ├─ run independent OpenCode review
       ├─ remediate review findings when necessary
       └─ commit, push, and create pull request
@@ -155,7 +155,7 @@ workflow:
   pollIntervalSeconds: 15
 ```
 
-`setupCommand` and `validationCommand` are optional. When configured, `setupCommand` runs in the card worktree before the OpenCode implementation session. `validationCommand` runs after implementation. OpenCode is still expected to follow the target repository's normal validation instructions during implementation.
+`setupCommand` and `validationCommand` are optional. When configured, `setupCommand` runs in the card worktree before the OpenCode implementation session. `validationCommand` is passed to OpenCode sessions that modify implementation files, and those agents run it before finishing and fix failures caused by their changes. The orchestrator does not execute the validation command itself.
 
 `config.yaml` and `.env` are local files and are intentionally excluded from version control.
 

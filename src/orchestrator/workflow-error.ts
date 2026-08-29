@@ -1,10 +1,5 @@
 export type WorkflowFailureCategory =
-  | "OpenCode"
-  | "OpenCode permissions"
-  | "Setup"
-  | "Validation"
-  | "Git/GitHub"
-  | "Workflow";
+  "OpenCode" | "OpenCode permissions" | "Setup" | "Git/GitHub" | "Workflow";
 
 export class WorkflowError extends Error {
   readonly category: WorkflowFailureCategory;

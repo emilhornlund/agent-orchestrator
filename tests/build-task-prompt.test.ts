@@ -13,10 +13,16 @@ describe("buildTaskPrompt", () => {
       url: "https://trello.example/card-123",
     };
 
-    const prompt = buildTaskPrompt(card);
+    const prompt = buildTaskPrompt(card, "yarn validate");
 
     expect(prompt).toContain("Task: Add player inventory");
     expect(prompt).toContain("Create an inventory component for the player.");
+    expect(prompt).toContain(
+      "Run the configured repository validation command: `yarn validate` before finishing.",
+    );
+    expect(prompt).toContain(
+      "Leave the repository validation passing before finishing.",
+    );
     expect(prompt).toContain(
       "Do not create commits, push branches, or open pull requests.",
     );
@@ -34,5 +40,11 @@ describe("buildTaskPrompt", () => {
     const prompt = buildTaskPrompt(card);
 
     expect(prompt).toContain("No additional task description was provided.");
+    expect(prompt).toContain(
+      "Run the repository's appropriate validation checks.",
+    );
+    expect(prompt).toContain(
+      "Leave the repository validation passing before finishing.",
+    );
   });
 });

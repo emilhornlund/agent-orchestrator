@@ -29,7 +29,6 @@ interface ScenarioOptions {
   setupCommand?: string;
   setupExitCodes?: number[];
   validationCommand?: string;
-  validationExitCodes?: number[];
   statusOutputs?: string[];
   headOutputs?: string[];
   openCodeResults?: TestOpenCodeRunResult[];
@@ -235,8 +234,6 @@ function createScenario(options: ScenarioOptions = {}): Scenario {
   const openCode = new OpenCodeClient(runOpenCode);
   const setupExitCodes = options.setupExitCodes ?? [0];
   let setupCall = 0;
-  const validationExitCodes = options.validationExitCodes ?? [0, 0];
-  let validationCall = 0;
 
   const runCommand = vi.fn<RunCommand>(async ({ command }) => {
     if (
@@ -252,12 +249,8 @@ function createScenario(options: ScenarioOptions = {}): Scenario {
       };
     }
 
-    events.push("validation");
-    const exitCode = validationExitCodes[validationCall];
-    validationCall += 1;
-
     return {
-      exitCode: exitCode ?? 0,
+      exitCode: 0,
     };
   });
 
@@ -386,7 +379,7 @@ describe("pollProject failure boundaries", () => {
     });
   });
 
-  it("does not run setup when setupCommand is omitted", async () => {
+  it("does not run repository validation through CommandRunner", async () => {
     await withScenario(
       { validationCommand: "yarn validate" },
       async (scenario) => {
@@ -400,14 +393,12 @@ describe("pollProject failure boundaries", () => {
           scenario.signal,
         );
 
-        expect(scenario.runCommand).toHaveBeenCalledTimes(2);
+        expect(scenario.runCommand).not.toHaveBeenCalled();
         expect(scenario.events).toEqual([
           "move:working",
           "opencode:1",
-          "validation",
           "opencode:2",
           "opencode:3",
-          "validation",
           "push",
           "pr",
           "move:review",
@@ -420,7 +411,6 @@ describe("pollProject failure boundaries", () => {
     await withScenario(
       {
         setupCommand: "yarn install",
-        validationCommand: "yarn validate",
       },
       async (scenario) => {
         await pollProject(
@@ -450,10 +440,8 @@ describe("pollProject failure boundaries", () => {
           "move:working",
           "setup",
           "opencode:1",
-          "validation",
           "opencode:2",
           "opencode:3",
-          "validation",
           "push",
           "pr",
           "move:review",
@@ -571,42 +559,6 @@ describe("pollProject failure boundaries", () => {
     );
   });
 
-  it("does not review or publish when repository validation fails", async () => {
-    await withScenario(
-      {
-        validationCommand: "yarn validate",
-        validationExitCodes: [1],
-        openCodeResults: [{ exitCode: 0, output: "" }],
-      },
-      async (scenario) => {
-        await expect(
-          pollProject(
-            scenario.trello,
-            scenario.git,
-            scenario.github,
-            scenario.openCode,
-            scenario.commands,
-            scenario.project,
-            scenario.signal,
-          ),
-        ).rejects.toThrow("Repository validation exited with code 1");
-
-        expect(scenario.runCommand).toHaveBeenCalledWith({
-          cwd: scenario.worktreePath,
-          command: "yarn validate",
-          timeoutMilliseconds: 360 * 60_000,
-          signal: scenario.signal,
-          sessionLogPath: expect.stringMatching(
-            /logs\/sessions\/example\/card-1\.log$/,
-          ),
-          sessionLabel: "Repository validation",
-        });
-        expect(scenario.runOpenCode).toHaveBeenCalledTimes(1);
-        expectNothingPublished(scenario);
-      },
-    );
-  });
-
   it("does not remediate or publish when the first review process fails", async () => {
     await withScenario(
       {
@@ -685,40 +637,6 @@ describe("pollProject failure boundaries", () => {
           ),
         ).rejects.toThrow("OpenCode remediation left no repository changes");
 
-        expect(scenario.runOpenCode).toHaveBeenCalledTimes(3);
-        expectNothingPublished(scenario);
-      },
-    );
-  });
-
-  it("does not commit or publish when validation after remediation fails", async () => {
-    await withScenario(
-      {
-        validationCommand: "yarn validate",
-        validationExitCodes: [0, 1],
-        statusOutputs: [" M src/example.ts", " M src/example.ts"],
-        openCodeResults: [
-          { exitCode: 0, output: "" },
-          { exitCode: 0, output: "REVIEW_FAIL" },
-          { exitCode: 0, output: "" },
-        ],
-      },
-      async (scenario) => {
-        await expect(
-          pollProject(
-            scenario.trello,
-            scenario.git,
-            scenario.github,
-            scenario.openCode,
-            scenario.commands,
-            scenario.project,
-            scenario.signal,
-          ),
-        ).rejects.toThrow(
-          "Repository validation after remediation exited with code 1",
-        );
-
-        expect(scenario.runCommand).toHaveBeenCalledTimes(2);
         expect(scenario.runOpenCode).toHaveBeenCalledTimes(3);
         expectNothingPublished(scenario);
       },
@@ -916,44 +834,6 @@ describe("pollProject failure boundaries", () => {
 
         expect(scenario.runOpenCode).toHaveBeenCalledTimes(3);
         expectNothingPublished(scenario);
-      },
-    );
-  });
-
-  it("does not publish when final validation after commit fails", async () => {
-    await withScenario(
-      {
-        validationCommand: "yarn validate",
-        validationExitCodes: [0, 1],
-      },
-      async (scenario) => {
-        await expect(
-          pollProject(
-            scenario.trello,
-            scenario.git,
-            scenario.github,
-            scenario.openCode,
-            scenario.commands,
-            scenario.project,
-            scenario.signal,
-          ),
-        ).rejects.toThrow("Final repository validation exited with code 1");
-
-        expect(scenario.runCommand).toHaveBeenCalledTimes(2);
-
-        expect(scenario.events).toEqual([
-          "move:working",
-          "opencode:1",
-          "validation",
-          "opencode:2",
-          "opencode:3",
-          "validation",
-          "move:failed",
-        ]);
-
-        expect(scenario.events).not.toContain("push");
-        expect(scenario.events).not.toContain("pr");
-        expect(scenario.events).not.toContain("move:review");
       },
     );
   });

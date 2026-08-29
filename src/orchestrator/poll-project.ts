@@ -61,37 +61,6 @@ function hasOpenCodePermissionDenial(result: OpenCodeRunResult): boolean {
   );
 }
 
-async function runValidation(
-  commands: CommandRunner,
-  cwd: string,
-  command: string,
-  timeoutMilliseconds: number,
-  signal: AbortSignal,
-  sessionLogPath: string,
-  sessionLabel: string,
-): Promise<CommandRunResult> {
-  try {
-    return await commands.run({
-      cwd,
-      command,
-      timeoutMilliseconds,
-      signal,
-      sessionLogPath,
-      sessionLabel,
-    });
-  } catch (error) {
-    if (error instanceof CommandRunAbortedError) {
-      throw error;
-    }
-
-    throw new WorkflowError(
-      "Validation",
-      error instanceof Error ? error.message : String(error),
-      { cause: error },
-    );
-  }
-}
-
 async function runSetup(
   commands: CommandRunner,
   cwd: string,
@@ -358,7 +327,6 @@ async function processCardChanges(
     ? await prepareReviewWorktree(git, project, card.id)
     : await prepareWorktree(git, project, card.id);
 
-  let validationResult = "Not configured";
   let reviewResult = "Passed";
   let remediationResult = "Not required";
 
@@ -404,8 +372,9 @@ async function processCardChanges(
         card,
         reviewIteration.pullRequestUrl,
         reviewIteration.feedback,
+        project.repository.validationCommand,
       )
-    : buildTaskPrompt(card);
+    : buildTaskPrompt(card, project.repository.validationCommand);
 
   cardLog.event(`Starting OpenCode ${implementationLabel}...`);
 
@@ -451,31 +420,6 @@ async function processCardChanges(
     cardLog.info(line);
   }
 
-  if (project.repository.validationCommand) {
-    cardLog.event("Running repository validation...");
-
-    const validation = await runValidation(
-      commands,
-      worktree.path,
-      project.repository.validationCommand,
-      project.opencode.timeoutMinutes * 60_000,
-      signal,
-      sessionLogPath,
-      "Repository validation",
-    );
-
-    if (validation.exitCode !== 0) {
-      throw new WorkflowError(
-        "Validation",
-        `Repository validation exited with code ${validation.exitCode}`,
-      );
-    }
-
-    validationResult = "Passed";
-
-    cardLog.event("Repository validation passed");
-  }
-
   cardLog.event("Starting OpenCode review...");
 
   const review = await opencode.run({
@@ -511,7 +455,11 @@ async function processCardChanges(
       model: project.opencode.remediation.model,
       variant: project.opencode.remediation.variant,
       timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
-      prompt: buildRemediationPrompt(card, review.output),
+      prompt: buildRemediationPrompt(
+        card,
+        review.output,
+        project.repository.validationCommand,
+      ),
       signal,
       sessionLogPath,
       sessionLabel: "OpenCode remediation",
@@ -533,31 +481,6 @@ async function processCardChanges(
         "OpenCode",
         "OpenCode remediation left no repository changes",
       );
-    }
-
-    if (project.repository.validationCommand) {
-      cardLog.event("Running repository validation after remediation...");
-
-      const validation = await runValidation(
-        commands,
-        worktree.path,
-        project.repository.validationCommand,
-        project.opencode.timeoutMinutes * 60_000,
-        signal,
-        sessionLogPath,
-        "Repository validation after remediation",
-      );
-
-      if (validation.exitCode !== 0) {
-        throw new WorkflowError(
-          "Validation",
-          `Repository validation after remediation exited with code ${validation.exitCode}`,
-        );
-      }
-
-      validationResult = "Passed after remediation";
-
-      cardLog.event("Repository validation after remediation passed");
     }
   }
 
@@ -620,31 +543,6 @@ async function processCardChanges(
 
   cardLog.event(`OpenCode commit created: ${headAfterCommit}`);
 
-  if (project.repository.validationCommand) {
-    cardLog.event("Running final repository validation after commit...");
-
-    const validation = await runValidation(
-      commands,
-      worktree.path,
-      project.repository.validationCommand,
-      project.opencode.timeoutMinutes * 60_000,
-      signal,
-      sessionLogPath,
-      "Final repository validation",
-    );
-
-    if (validation.exitCode !== 0) {
-      throw new WorkflowError(
-        "Validation",
-        `Final repository validation exited with code ${validation.exitCode}`,
-      );
-    }
-
-    validationResult = "Passed after final commit";
-
-    cardLog.event("Final repository validation passed");
-  }
-
   await publishCard({
     trello,
     git,
@@ -654,7 +552,6 @@ async function processCardChanges(
     worktreePath: worktree.path,
     branch: worktree.branch,
     commitSha: headAfterCommit,
-    validationResult,
     reviewResult,
     remediationResult,
   });

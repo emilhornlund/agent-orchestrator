@@ -183,48 +183,6 @@ describe("failCard", () => {
     );
   });
 
-  it("labels repository validation failures explicitly", async () => {
-    const trello = new TrelloClient({
-      apiKey: "key",
-      token: "token",
-    });
-
-    vi.spyOn(trello, "moveCard").mockResolvedValue({
-      id: "card-1",
-      name: "Card",
-      desc: "",
-      idList: "failed",
-      url: "https://trello.com/c/card-1",
-    });
-
-    const addComment = vi.spyOn(trello, "addComment").mockResolvedValue({
-      id: "action-1",
-      type: "commentCard",
-      date: "2026-08-22T09:00:00.000Z",
-    });
-
-    const validationError = new WorkflowError(
-      "Validation",
-      "Repository validation exited with code 1",
-    );
-
-    await expect(
-      failCard(trello, project, "card-1", validationError),
-    ).rejects.toBe(validationError);
-
-    expect(addComment).toHaveBeenCalledWith(
-      "card-1",
-      [
-        "Agent Orchestrator failed.",
-        "",
-        "Category: Validation",
-        "Reason: Repository validation exited with code 1",
-        "",
-        "To retry, move this card to Ready.",
-      ].join("\n"),
-    );
-  });
-
   it("does not infer failure categories from arbitrary error messages", async () => {
     const trello = new TrelloClient({
       apiKey: "key",
@@ -245,9 +203,7 @@ describe("failCard", () => {
       date: "2026-08-22T09:00:00.000Z",
     });
 
-    const workflowError = new Error(
-      "Repository validation push pull request GitHub failure",
-    );
+    const workflowError = new Error("Push pull request GitHub failure");
 
     await expect(
       failCard(trello, project, "card-1", workflowError),
@@ -259,7 +215,7 @@ describe("failCard", () => {
         "Agent Orchestrator failed.",
         "",
         "Category: Workflow",
-        "Reason: Repository validation push pull request GitHub failure",
+        "Reason: Push pull request GitHub failure",
         "",
         "To retry, move this card to Ready.",
       ].join("\n"),

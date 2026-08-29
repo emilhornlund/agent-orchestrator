@@ -16,7 +16,6 @@ export interface PublishCardOptions {
   worktreePath: string;
   branch: string;
   commitSha: string;
-  validationResult: string;
   reviewResult: string;
   remediationResult: string;
 }
@@ -30,7 +29,6 @@ export async function publishCard({
   worktreePath,
   branch,
   commitSha,
-  validationResult,
   reviewResult,
   remediationResult,
 }: PublishCardOptions): Promise<void> {
@@ -108,7 +106,6 @@ export async function publishCard({
     "",
     `PR: ${pullRequest.url}`,
     `Commit: ${commitSha}`,
-    `Validation: ${validationResult}`,
     `Review: ${reviewResult}`,
     `Remediation: ${remediationResult}`,
   ].join("\n");

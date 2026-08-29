@@ -5,14 +5,14 @@ import { WorkflowError } from "../src/orchestrator/workflow-error.js";
 describe("WorkflowError", () => {
   it("preserves its failure category and message", () => {
     const error = new WorkflowError(
-      "Validation",
-      "Repository validation exited with code 1",
+      "OpenCode",
+      "OpenCode implementation exited with code 1",
     );
 
     expect(error).toBeInstanceOf(Error);
     expect(error.name).toBe("WorkflowError");
-    expect(error.category).toBe("Validation");
-    expect(error.message).toBe("Repository validation exited with code 1");
+    expect(error.category).toBe("OpenCode");
+    expect(error.message).toBe("OpenCode implementation exited with code 1");
   });
 
   it("preserves an underlying cause", () => {
