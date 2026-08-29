@@ -28,6 +28,21 @@ const defaultRunGit: RunGit = async (cwd, args) => {
 export class GitClient {
   constructor(private readonly runGit: RunGit = defaultRunGit) {}
 
+  async isValidRepository(repositoryPath: string): Promise<boolean> {
+    try {
+      return (
+        (
+          await this.runGit(repositoryPath, [
+            "rev-parse",
+            "--is-inside-work-tree",
+          ])
+        ).trim() === "true"
+      );
+    } catch {
+      return false;
+    }
+  }
+
   async fetch(
     repositoryPath: string,
     remote: string,

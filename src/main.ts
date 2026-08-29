@@ -6,10 +6,9 @@ import { GitClient } from "./git/git-client.js";
 import { GitHubClient } from "./github/github-client.js";
 import { logger } from "./logging/logger.js";
 import { OpenCodeClient } from "./opencode/opencode-client.js";
-import { runOrchestrator } from "./orchestrator/run-orchestrator.js";
 import { CommandRunner } from "./process/command-runner.js";
+import { runStartup } from "./startup/run-startup.js";
 import { TrelloClient } from "./trello/trello-client.js";
-import { validateProjectTrello } from "./trello/validate-project-trello.js";
 
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -74,19 +73,17 @@ async function main(): Promise<void> {
     projectLog.info(
       `OpenCode timeout: ${project.opencode.timeoutMinutes} minutes`,
     );
-
-    await validateProjectTrello(trello, project);
-
-    projectLog.event("Trello configuration: OK");
   }
 
-  await runOrchestrator(
-    trello,
-    git,
-    github,
-    opencode,
-    commands,
+  await runStartup(
     config,
+    {
+      trello,
+      git,
+      github,
+      opencode,
+      commands,
+    },
     shutdownController.signal,
   );
 
