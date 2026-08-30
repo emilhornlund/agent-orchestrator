@@ -18,7 +18,7 @@ import { getRefinementResultPath } from "../src/refinement/refinement-result.js"
 import { type TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
 
 describe("pollProject", () => {
-  it("does not claim another card while an owned review card is active", async () => {
+  it("does not claim another card while an active Human Review card is present", async () => {
     const project = {
       id: "project-1",
       repository: {
@@ -79,7 +79,7 @@ describe("pollProject", () => {
     expect(getCards).toHaveBeenCalledWith("review");
   });
 
-  it("blocks requested-change processing when an owned review card is already active", async () => {
+  it("blocks requested-change processing when an active Human Review card is already present", async () => {
     const project = {
       id: "project-1",
       repository: {
