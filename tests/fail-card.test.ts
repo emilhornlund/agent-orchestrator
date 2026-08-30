@@ -1,9 +1,14 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ProjectConfig } from "../src/config/config.js";
+import {
+  appendSessionLog,
+  getSessionLogPath,
+  removeSessionLog,
+} from "../src/logging/session-log.js";
 import { OpenCodeTimeoutError } from "../src/opencode/opencode-client.js";
 import { failCard } from "../src/orchestrator/fail-card.js";
 import { WorkflowError } from "../src/orchestrator/workflow-error.js";
@@ -24,6 +29,18 @@ function card(id = "card-1") {
     url: `https://trello.example/${id}`,
   };
 }
+
+function getDailyLogPath(): string {
+  const date = new Date().toISOString().slice(0, 10);
+
+  return path.join(process.cwd(), "logs", `test-orchestrator-${date}.log`);
+}
+
+afterEach(() => {
+  for (const cardId of ["card-1", "card-non-error", "card-session-log"]) {
+    removeSessionLog(project.id, cardId);
+  }
+});
 
 describe("failCard", () => {
   it("moves the card to Failed, comments, and rethrows the workflow error", async () => {
@@ -52,17 +69,29 @@ describe("failCard", () => {
   it("preserves both errors when moving to Failed fails", async () => {
     const trello = new TrelloClient({ apiKey: "key", token: "token" });
     const moveError = new Error("Trello unavailable");
-    vi.spyOn(trello, "moveCard").mockRejectedValue(moveError);
-    const error = new Error("implementation failed");
+    const moveCard = vi.spyOn(trello, "moveCard").mockRejectedValue(moveError);
+    const addComment = vi.spyOn(trello, "addComment");
+    const workflowError = new Error("implementation failed");
 
-    await expect(
-      failCard(trello, project, "card-1", error),
-    ).rejects.toMatchObject({
-      message: expect.stringContaining(
-        "additionally failed to move card to Failed",
-      ),
-      cause: moveError,
-    });
+    try {
+      await failCard(trello, project, "card-1", workflowError);
+      throw new Error("Expected failCard to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(AggregateError);
+
+      const aggregate = error as AggregateError;
+
+      expect(aggregate.errors).toEqual([workflowError, moveError]);
+      expect(aggregate.cause).toBe(moveError);
+      expect(aggregate.message).toContain("implementation failed");
+      expect(aggregate.message).toContain("Trello unavailable");
+    }
+
+    expect(moveCard).toHaveBeenCalledWith("card-1", "failed");
+    expect(addComment).not.toHaveBeenCalled();
+    expect(fs.readFileSync(getDailyLogPath(), "utf8")).toContain(
+      "Failure handling failed: could not move card to Failed: Trello unavailable; preserving the primary failure and skipping the failure comment",
+    );
   });
 
   it("keeps the primary failure when adding the comment fails", async () => {
@@ -79,9 +108,78 @@ describe("failCard", () => {
     await expect(failCard(trello, project, "card-1", error)).rejects.toBe(
       error,
     );
+
+    expect(fs.readFileSync(getDailyLogPath(), "utf8")).toContain(
+      "Failure handling incomplete: card moved to Failed, but adding the failure comment failed: comment failed; preserving the primary failure",
+    );
   });
 
-  it("uses explicit failure categories and timeout descriptions", async () => {
+  it("logs the category, reason, and retained session log for a failed card", async () => {
+    const trello = new TrelloClient({ apiKey: "key", token: "token" });
+    vi.spyOn(trello, "moveCard").mockResolvedValue({
+      ...card("card-session-log"),
+      idList: "failed",
+    });
+    vi.spyOn(trello, "addComment").mockResolvedValue({
+      id: "action-1",
+      type: "commentCard",
+      date: "2026-08-30T09:00:00.000Z",
+    });
+
+    const sessionLogPath = getSessionLogPath(project.id, "card-session-log");
+    appendSessionLog(sessionLogPath, "OpenCode output remains here");
+
+    const workflowError = new WorkflowError(
+      "Setup",
+      "Repository setup exited with code 1",
+    );
+
+    await expect(
+      failCard(trello, project, "card-session-log", workflowError),
+    ).rejects.toBe(workflowError);
+
+    const dailyLog = fs.readFileSync(getDailyLogPath(), "utf8");
+
+    expect(dailyLog).toContain(
+      `[project] [card:card-session-log] Task failed. Category: Setup; Reason: Repository setup exited with code 1; Session log: ${sessionLogPath}; attempting to move card to Failed`,
+    );
+    expect(dailyLog).toContain(
+      "Failure handling: card moved to Failed; adding failure comment",
+    );
+    expect(dailyLog).not.toContain("OpenCode output remains here");
+    expect(fs.existsSync(sessionLogPath)).toBe(true);
+    expect(fs.readFileSync(sessionLogPath, "utf8")).toBe(
+      "OpenCode output remains here",
+    );
+  });
+
+  it("uses a readable reason for a structured non-Error failure", async () => {
+    const trello = new TrelloClient({ apiKey: "key", token: "token" });
+    vi.spyOn(trello, "moveCard").mockResolvedValue({
+      ...card("card-non-error"),
+      idList: "failed",
+    });
+    const addComment = vi.spyOn(trello, "addComment").mockResolvedValue({
+      id: "action-1",
+      type: "commentCard",
+      date: "2026-08-30T09:00:00.000Z",
+    });
+
+    await expect(
+      failCard(trello, project, "card-non-error", {
+        reason: "the setup tool returned an invalid result",
+      }),
+    ).rejects.toThrow('{"reason":"the setup tool returned an invalid result"}');
+
+    expect(addComment).toHaveBeenCalledWith(
+      "card-non-error",
+      expect.stringContaining(
+        'Reason: {"reason":"the setup tool returned an invalid result"}',
+      ),
+    );
+  });
+
+  it("labels OpenCode timeout failures explicitly", async () => {
     const trello = new TrelloClient({ apiKey: "key", token: "token" });
     vi.spyOn(trello, "moveCard").mockResolvedValue({
       ...card(),
@@ -93,23 +191,121 @@ describe("failCard", () => {
       date: "2026-08-30T09:00:00.000Z",
     });
 
+    const timeoutError = new OpenCodeTimeoutError(21_600_000);
+
     await expect(
-      failCard(
-        trello,
-        project,
-        "card-1",
-        new WorkflowError("OpenCode", "agent failed"),
-      ),
-    ).rejects.toThrow("agent failed");
+      failCard(trello, project, "card-1", timeoutError),
+    ).rejects.toBe(timeoutError);
+
     expect(addComment).toHaveBeenCalledWith(
       "card-1",
-      expect.stringContaining("Category: OpenCode"),
+      [
+        "Agent Orchestrator failed.",
+        "",
+        "Category: OpenCode timeout",
+        "Reason: OpenCode exceeded safety timeout of 21600000ms",
+        "",
+        "To retry deliberately, move this card to Ready for Agent.",
+      ].join("\n"),
+    );
+  });
+
+  it("does not infer a category from an ordinary error message", async () => {
+    const trello = new TrelloClient({ apiKey: "key", token: "token" });
+    vi.spyOn(trello, "moveCard").mockResolvedValue({
+      ...card(),
+      idList: "failed",
+    });
+    const addComment = vi.spyOn(trello, "addComment").mockResolvedValue({
+      id: "action-1",
+      type: "commentCard",
+      date: "2026-08-30T09:00:00.000Z",
+    });
+
+    const workflowError = new Error("Push pull request GitHub failure");
+
+    await expect(
+      failCard(trello, project, "card-1", workflowError),
+    ).rejects.toBe(workflowError);
+
+    expect(addComment).toHaveBeenCalledWith(
+      "card-1",
+      [
+        "Agent Orchestrator failed.",
+        "",
+        "Category: Workflow",
+        "Reason: Push pull request GitHub failure",
+        "",
+        "To retry deliberately, move this card to Ready for Agent.",
+      ].join("\n"),
+    );
+  });
+
+  it("uses the category carried by WorkflowError", async () => {
+    const trello = new TrelloClient({ apiKey: "key", token: "token" });
+    vi.spyOn(trello, "moveCard").mockResolvedValue({
+      ...card(),
+      idList: "failed",
+    });
+    const addComment = vi.spyOn(trello, "addComment").mockResolvedValue({
+      id: "action-1",
+      type: "commentCard",
+      date: "2026-08-30T09:00:00.000Z",
+    });
+
+    const workflowError = new WorkflowError(
+      "OpenCode",
+      "agent execution failed",
     );
 
-    const timeout = new OpenCodeTimeoutError(1000);
-    await expect(failCard(trello, project, "card-1", timeout)).rejects.toBe(
-      timeout,
+    await expect(
+      failCard(trello, project, "card-1", workflowError),
+    ).rejects.toBe(workflowError);
+
+    expect(addComment).toHaveBeenCalledWith(
+      "card-1",
+      [
+        "Agent Orchestrator failed.",
+        "",
+        "Category: OpenCode",
+        "Reason: agent execution failed",
+        "",
+        "To retry deliberately, move this card to Ready for Agent.",
+      ].join("\n"),
     );
-    expect(fs.existsSync(path.join(process.cwd(), "logs"))).toBe(true);
+  });
+
+  it("uses an explicit Git/GitHub WorkflowError category", async () => {
+    const trello = new TrelloClient({ apiKey: "key", token: "token" });
+    vi.spyOn(trello, "moveCard").mockResolvedValue({
+      ...card(),
+      idList: "failed",
+    });
+    const addComment = vi.spyOn(trello, "addComment").mockResolvedValue({
+      id: "action-1",
+      type: "commentCard",
+      date: "2026-08-30T09:00:00.000Z",
+    });
+
+    const workflowError = new WorkflowError(
+      "Git/GitHub",
+      "remote operation failed",
+    );
+
+    await expect(
+      failCard(trello, project, "card-1", workflowError),
+    ).rejects.toBe(workflowError);
+
+    expect(addComment).toHaveBeenCalledWith(
+      "card-1",
+      [
+        "Agent Orchestrator failed.",
+        "",
+        "Category: Git/GitHub",
+        "Reason: remote operation failed",
+        "",
+        "To retry deliberately, move this card to Ready for Agent.",
+      ].join("\n"),
+    );
   });
 });
