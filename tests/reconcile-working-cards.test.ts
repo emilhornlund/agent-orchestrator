@@ -17,11 +17,23 @@ const project = {
     worktreeRoot: "/worktrees",
   },
   trello: {
+    ownershipCustomFieldId: "ownership-field",
+    backlogListId: "backlog",
     workingListId: "working",
     reviewListId: "review",
     failedListId: "failed",
   },
 } as ProjectConfig;
+
+function ownership(cardId: string, workflow = "implementation"): string {
+  return JSON.stringify({
+    version: 1,
+    owner: "agent-orchestrator",
+    projectId: "test-project",
+    cardId,
+    workflow,
+  });
+}
 
 describe("reconcileWorkingCards", () => {
   it("does nothing when there are no Working cards", async () => {
@@ -38,7 +50,43 @@ describe("reconcileWorkingCards", () => {
     const result = await reconcileWorkingCards(trello, git, github, project);
 
     expect(result).toBeNull();
-    expect(trello.getCards).toHaveBeenCalledWith("working");
+    expect(trello.getCards).toHaveBeenCalledWith("working", {
+      workflowOwnershipCustomFieldId: "ownership-field",
+    });
+    expect(github.findPullRequest).not.toHaveBeenCalled();
+    expect(trello.moveCard).not.toHaveBeenCalled();
+  });
+
+  it("blocks the project when multiple owned cards are in Working", async () => {
+    const firstCard = {
+      id: "card-1",
+      name: "First task",
+      desc: "",
+      idList: "working",
+      idLabels: [],
+      url: "https://trello.example/card-1",
+      workflowOwnership: ownership("card-1"),
+    };
+    const secondCard = {
+      ...firstCard,
+      id: "card-2",
+      name: "Second task",
+      url: "https://trello.example/card-2",
+      workflowOwnership: ownership("card-2"),
+    };
+    const trello = {
+      getCards: vi.fn().mockResolvedValue([firstCard, secondCard]),
+      moveCard: vi.fn(),
+      addComment: vi.fn(),
+    } as unknown as TrelloClient;
+    const github = {
+      findPullRequest: vi.fn(),
+    } as unknown as GitHubClient;
+
+    await expect(
+      reconcileWorkingCards(trello, {} as GitClient, github, project),
+    ).rejects.toThrow("Multiple owned cards are active in Working");
+
     expect(github.findPullRequest).not.toHaveBeenCalled();
     expect(trello.moveCard).not.toHaveBeenCalled();
   });
@@ -50,6 +98,7 @@ describe("reconcileWorkingCards", () => {
       desc: "",
       idList: "working",
       url: "https://trello.example/card-1",
+      workflowOwnership: ownership("card-1"),
     };
 
     const trello = {
@@ -91,21 +140,19 @@ describe("reconcileWorkingCards", () => {
     expect(trello.moveCard).toHaveBeenCalledWith("card-1", "review");
   });
 
-  it("moves a Working card to Failed when no open PR exists", async () => {
+  it("returns an owned Working card for normal recovery when no PR exists", async () => {
     const card = {
       id: "card-1",
       name: "Stranded task",
       desc: "",
       idList: "working",
       url: "https://trello.example/card-1",
+      workflowOwnership: ownership("card-1"),
     };
 
     const trello = {
       getCards: vi.fn().mockResolvedValue([card]),
-      moveCard: vi.fn().mockResolvedValue({
-        ...card,
-        idList: "failed",
-      }),
+      moveCard: vi.fn(),
     } as unknown as TrelloClient;
 
     const git = {} as GitClient;
@@ -114,31 +161,62 @@ describe("reconcileWorkingCards", () => {
       findPullRequest: vi.fn().mockResolvedValue(null),
     } as unknown as GitHubClient;
 
-    await reconcileWorkingCards(trello, git, github, project);
+    await expect(
+      reconcileWorkingCards(trello, git, github, project),
+    ).resolves.toEqual({
+      card,
+      workflow: "implementation",
+    });
 
-    expect(trello.moveCard).toHaveBeenCalledTimes(1);
-
-    expect(trello.moveCard).toHaveBeenCalledWith(
-      "card-1",
-      project.trello.failedListId,
-    );
+    expect(trello.moveCard).not.toHaveBeenCalled();
   });
 
-  it("preserves local task state when moving a stranded Working card to Failed", async () => {
+  it("corrects an unowned Working card without inspecting GitHub", async () => {
+    const card = {
+      id: "card-1",
+      name: "Unowned task",
+      desc: "",
+      idList: "working",
+      idLabels: [],
+      url: "https://trello.example/card-1",
+    };
+    const moveCard = vi.fn().mockResolvedValue({ ...card, idList: "backlog" });
+    const addComment = vi.fn().mockResolvedValue(undefined);
+    const trello = {
+      getCards: vi.fn().mockResolvedValue([card]),
+      moveCard,
+      addComment,
+      clearWorkflowOwnership: vi.fn(),
+    } as unknown as TrelloClient;
+    const github = {
+      findPullRequest: vi.fn(),
+    } as unknown as GitHubClient;
+
+    await expect(
+      reconcileWorkingCards(trello, {} as GitClient, github, project),
+    ).resolves.toBeNull();
+
+    expect(moveCard).toHaveBeenCalledWith("card-1", "backlog");
+    expect(addComment).toHaveBeenCalledWith(
+      "card-1",
+      expect.stringContaining("not validly owned"),
+    );
+    expect(github.findPullRequest).not.toHaveBeenCalled();
+  });
+
+  it("preserves local task state when recovering an owned Working card without a PR", async () => {
     const card = {
       id: "card-1",
       name: "Interrupted task",
       desc: "",
       idList: "working",
       url: "https://trello.example/card-1",
+      workflowOwnership: ownership("card-1"),
     };
 
     const trello = {
       getCards: vi.fn().mockResolvedValue([card]),
-      moveCard: vi.fn().mockResolvedValue({
-        ...card,
-        idList: "failed",
-      }),
+      moveCard: vi.fn(),
     } as unknown as TrelloClient;
 
     const git = {
@@ -155,7 +233,12 @@ describe("reconcileWorkingCards", () => {
       findPullRequest: vi.fn().mockResolvedValue(null),
     } as unknown as GitHubClient;
 
-    await reconcileWorkingCards(trello, git, github, project);
+    await expect(
+      reconcileWorkingCards(trello, git, github, project),
+    ).resolves.toEqual({
+      card,
+      workflow: "implementation",
+    });
 
     expect(git.getStatus).not.toHaveBeenCalled();
     expect(git.removeWorktree).not.toHaveBeenCalled();
@@ -180,6 +263,7 @@ describe("reconcileWorkingCards", () => {
       desc: "",
       idList: "working",
       url: "https://trello.example/card-2",
+      workflowOwnership: ownership("card-2"),
     };
 
     const trello = {
@@ -199,35 +283,28 @@ describe("reconcileWorkingCards", () => {
       findPullRequest: vi.fn().mockResolvedValue(null),
     } as unknown as GitHubClient;
 
-    await reconcileWorkingCards(trello, git, github, project);
+    await expect(
+      reconcileWorkingCards(trello, git, github, project),
+    ).rejects.toThrow("Could not move card to Backlog");
 
-    expect(trello.moveCard).toHaveBeenCalledTimes(2);
+    expect(trello.moveCard).toHaveBeenCalledTimes(1);
 
-    expect(trello.moveCard).toHaveBeenNthCalledWith(1, "card-1", "failed");
-
-    expect(trello.moveCard).toHaveBeenNthCalledWith(2, "card-2", "failed");
+    expect(trello.moveCard).toHaveBeenNthCalledWith(1, "card-1", "backlog");
   });
 
-  it("continues reconciling other cards when one PR lookup fails", async () => {
+  it("blocks the project when an owned Working PR lookup fails", async () => {
     const firstCard = {
       id: "card-1",
       name: "Broken lookup",
       desc: "",
       idList: "working",
       url: "https://trello.example/card-1",
-    };
-
-    const secondCard = {
-      id: "card-2",
-      name: "Recoverable task",
-      desc: "",
-      idList: "working",
-      url: "https://trello.example/card-2",
+      workflowOwnership: ownership("card-1"),
     };
 
     const trello = {
-      getCards: vi.fn().mockResolvedValue([firstCard, secondCard]),
-      moveCard: vi.fn().mockResolvedValue(secondCard),
+      getCards: vi.fn().mockResolvedValue([firstCard]),
+      moveCard: vi.fn(),
     } as unknown as TrelloClient;
 
     const git = {
@@ -238,17 +315,15 @@ describe("reconcileWorkingCards", () => {
     const github = {
       findPullRequest: vi
         .fn()
-        .mockRejectedValueOnce(new Error("GitHub unavailable"))
-        .mockResolvedValueOnce({
-          url: "https://github.com/owner/repo/pull/2",
-        }),
+        .mockRejectedValueOnce(new Error("GitHub unavailable")),
       findChangesRequestedPullRequest: vi.fn().mockResolvedValue(null),
     } as unknown as GitHubClient;
 
-    await reconcileWorkingCards(trello, git, github, project);
+    await expect(
+      reconcileWorkingCards(trello, git, github, project),
+    ).rejects.toThrow("Could not reconcile owned Working card");
 
-    expect(trello.moveCard).toHaveBeenCalledTimes(1);
-    expect(trello.moveCard).toHaveBeenCalledWith("card-2", "review");
+    expect(trello.moveCard).not.toHaveBeenCalled();
   });
 
   it("returns actionable requested changes for a Working card instead of moving it to Human Review", async () => {
@@ -258,6 +333,7 @@ describe("reconcileWorkingCards", () => {
       desc: "",
       idList: "working",
       url: "https://trello.example/card-1",
+      workflowOwnership: ownership("card-1"),
     };
 
     const trello = {
@@ -307,6 +383,7 @@ describe("reconcileWorkingCards", () => {
       idList: "working",
       idLabels: [],
       url: "https://trello.example/card-1",
+      workflowOwnership: ownership("card-1"),
     };
 
     const trello = {
@@ -346,6 +423,7 @@ describe("reconcileWorkingCards", () => {
       idList: "working",
       idLabels: [],
       url: "https://trello.example/card-1",
+      workflowOwnership: ownership("card-1"),
     };
 
     const trello = {
@@ -387,6 +465,7 @@ describe("reconcileWorkingCards", () => {
       idList: "working",
       idLabels: [],
       url: "https://trello.example/card-1",
+      workflowOwnership: ownership("card-1"),
     };
 
     const trello = {

@@ -48,4 +48,18 @@ export async function validateProjectTrello(
       );
     }
   }
+
+  const customFields = await trello.getCustomFields(project.trello.boardId);
+  const ownershipCustomField = customFields.find(
+    (field) => field.id === project.trello.ownershipCustomFieldId,
+  );
+
+  if (
+    ownershipCustomField === undefined ||
+    ownershipCustomField.type !== "text"
+  ) {
+    throw new Error(
+      `Project "${project.id}" has invalid Trello ownershipCustomFieldId: ${project.trello.ownershipCustomFieldId} does not exist as a text custom field on board "${board.name}"`,
+    );
+  }
 }

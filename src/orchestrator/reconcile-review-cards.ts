@@ -4,6 +4,10 @@ import type { GitHubClient } from "../github/github-client.js";
 import { logger } from "../logging/logger.js";
 import { removeSessionLog } from "../logging/session-log.js";
 import type { TrelloCard, TrelloClient } from "../trello/trello-client.js";
+import { validateWorkflowOwnership } from "../trello/workflow-ownership.js";
+
+import { correctCardToBacklog } from "./correct-card-state.js";
+import { WorkflowError } from "./workflow-error.js";
 
 export interface ReviewChangeRequest {
   card: TrelloCard;
@@ -11,17 +15,58 @@ export interface ReviewChangeRequest {
   feedback: string;
 }
 
+export interface OwnedReviewCard {
+  card: TrelloCard;
+  active: true;
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function clearOwnershipAfterTransition(
+  trello: TrelloClient,
+  project: ProjectConfig,
+  card: TrelloCard,
+  destination: string,
+): Promise<void> {
+  const cardLog = logger.child({
+    projectId: project.id,
+    cardId: card.id,
+  });
+
+  try {
+    await trello.clearWorkflowOwnership(
+      card.id,
+      project.trello.ownershipCustomFieldId,
+    );
+  } catch (error) {
+    const message = getErrorMessage(error);
+
+    cardLog.error(
+      `Could not clear ownership after moving card to ${destination}: ${message}`,
+    );
+
+    throw new Error(
+      `Could not clear ownership after moving card to ${destination}: ${message}`,
+      { cause: error },
+    );
+  }
+}
+
 export async function reconcileReviewCards(
   trello: TrelloClient,
   git: GitClient,
   github: GitHubClient,
   project: ProjectConfig,
-): Promise<ReviewChangeRequest | null> {
+): Promise<ReviewChangeRequest | OwnedReviewCard | null> {
   const projectLog = logger.child({
     projectId: project.id,
   });
 
-  const cards = await trello.getCards(project.trello.reviewListId);
+  const cards = await trello.getCards(project.trello.reviewListId, {
+    workflowOwnershipCustomFieldId: project.trello.ownershipCustomFieldId,
+  });
 
   if (cards.length === 0) {
     return null;
@@ -29,9 +74,44 @@ export async function reconcileReviewCards(
 
   projectLog.info(`Reconciling ${cards.length} card(s) in Human Review...`);
 
-  for (const card of cards) {
-    const branch = `agent/${card.id}`;
+  const ownedCards: TrelloCard[] = [];
 
+  for (const card of cards) {
+    const ownership = validateWorkflowOwnership(
+      card,
+      project,
+      "implementation",
+    );
+
+    if (ownership.status !== "owned") {
+      await correctCardToBacklog(
+        trello,
+        project,
+        card,
+        `Human Review card is not validly owned: ${ownership.reason}`,
+      );
+
+      continue;
+    }
+
+    ownedCards.push(card);
+  }
+
+  if (ownedCards.length > 1) {
+    const cardIds = ownedCards.map((card) => card.id).join(", ");
+
+    projectLog.error(
+      `Found multiple owned cards in Human Review: ${cardIds}; blocking the project until the ambiguous state is resolved`,
+    );
+
+    throw new WorkflowError(
+      "Workflow",
+      `Multiple owned cards are active in Human Review: ${cardIds}`,
+    );
+  }
+
+  for (const card of ownedCards) {
+    const branch = `agent/${card.id}`;
     const cardLog = logger.child({
       projectId: project.id,
       cardId: card.id,
@@ -46,13 +126,17 @@ export async function reconcileReviewCards(
         headBranch: branch,
       });
     } catch (error) {
+      const message = getErrorMessage(error);
+
       cardLog.error(
-        `Could not check merged pull request for "${card.name}": ${
-          error instanceof Error ? error.message : String(error)
-        }`,
+        `Could not check merged pull request for "${card.name}": ${message}`,
       );
 
-      continue;
+      throw new WorkflowError(
+        "Git/GitHub",
+        `Could not reconcile Human Review card: ${message}`,
+        { cause: error },
+      );
     }
 
     if (mergedPullRequest) {
@@ -79,13 +163,17 @@ export async function reconcileReviewCards(
           cardLog.info("Merged remote branch deleted");
         }
       } catch (error) {
+        const message = getErrorMessage(error);
+
         cardLog.error(
-          `Failed to clean up merged remote branch ${branch}: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
+          `Failed to clean up merged remote branch ${branch}: ${message}`,
         );
 
-        continue;
+        throw new WorkflowError(
+          "Git/GitHub",
+          `Could not clean up merged pull request branch: ${message}`,
+          { cause: error },
+        );
       }
 
       try {
@@ -95,21 +183,27 @@ export async function reconcileReviewCards(
 
         cardLog.event("Merged card moved to Done");
 
+        await clearOwnershipAfterTransition(trello, project, card, "Done");
+
         try {
           removeSessionLog(project.id, card.id);
           cardLog.info("OpenCode session log removed");
         } catch (error) {
           cardLog.warn(
-            `Failed to remove OpenCode session log: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
+            `Failed to remove OpenCode session log: ${getErrorMessage(error)}`,
           );
         }
       } catch (error) {
+        const message = getErrorMessage(error);
+
         cardLog.error(
-          `Failed to move merged card "${card.name}" to Done: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
+          `Failed to move merged card "${card.name}" to Done: ${message}`,
+        );
+
+        throw new WorkflowError(
+          "Workflow",
+          `Could not complete merged Human Review card: ${message}`,
+          { cause: error },
         );
       }
 
@@ -125,13 +219,17 @@ export async function reconcileReviewCards(
         headBranch: branch,
       });
     } catch (error) {
+      const message = getErrorMessage(error);
+
       cardLog.error(
-        `Could not check closed pull request for "${card.name}": ${
-          error instanceof Error ? error.message : String(error)
-        }`,
+        `Could not check closed pull request for "${card.name}": ${message}`,
       );
 
-      continue;
+      throw new WorkflowError(
+        "Git/GitHub",
+        `Could not reconcile Human Review card: ${message}`,
+        { cause: error },
+      );
     }
 
     if (closedPullRequest) {
@@ -143,14 +241,19 @@ export async function reconcileReviewCards(
         await trello.moveCard(card.id, project.trello.failedListId);
 
         cardLog.event("Card with closed pull request moved to Failed");
+        await clearOwnershipAfterTransition(trello, project, card, "Failed");
       } catch (error) {
+        const message = getErrorMessage(error);
+
         cardLog.error(
-          `Failed to move card "${card.name}" to Failed: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
+          `Failed to move card "${card.name}" to Failed: ${message}`,
         );
 
-        continue;
+        throw new WorkflowError(
+          "Workflow",
+          `Could not move closed Human Review card to Failed: ${message}`,
+          { cause: error },
+        );
       }
 
       try {
@@ -164,11 +267,42 @@ export async function reconcileReviewCards(
         );
       } catch (error) {
         cardLog.error(
-          `Failed to add closed pull request comment to "${card.name}": ${
-            error instanceof Error ? error.message : String(error)
-          }`,
+          `Failed to add closed pull request comment to "${card.name}": ${getErrorMessage(error)}`,
         );
       }
+
+      continue;
+    }
+
+    let openPullRequest;
+
+    try {
+      openPullRequest = await github.findPullRequest({
+        cwd: project.repository.path,
+        repository: project.repository.github,
+        headBranch: branch,
+      });
+    } catch (error) {
+      const message = getErrorMessage(error);
+
+      cardLog.error(
+        `Could not check expected open pull request for "${card.name}": ${message}`,
+      );
+
+      throw new WorkflowError(
+        "Git/GitHub",
+        `Could not verify expected Human Review pull request: ${message}`,
+        { cause: error },
+      );
+    }
+
+    if (!openPullRequest) {
+      await correctCardToBacklog(
+        trello,
+        project,
+        card,
+        `Human Review card has no expected open pull request for ${branch}`,
+      );
 
       continue;
     }
@@ -183,17 +317,26 @@ export async function reconcileReviewCards(
           headBranch: branch,
         });
     } catch (error) {
+      const message = getErrorMessage(error);
+
       cardLog.error(
-        `Could not check requested changes for "${card.name}": ${
-          error instanceof Error ? error.message : String(error)
-        }`,
+        `Could not check requested changes for "${card.name}": ${message}`,
       );
 
-      continue;
+      throw new WorkflowError(
+        "Git/GitHub",
+        `Could not check Human Review requested changes: ${message}`,
+        { cause: error },
+      );
     }
 
     if (!changesRequestedPullRequest) {
-      continue;
+      cardLog.event("Owned Human Review card remains active");
+
+      return {
+        card,
+        active: true,
+      };
     }
 
     cardLog.event(
@@ -203,13 +346,17 @@ export async function reconcileReviewCards(
     try {
       await trello.moveCard(card.id, project.trello.workingListId);
     } catch (error) {
+      const message = getErrorMessage(error);
+
       cardLog.error(
-        `Failed to move card "${card.name}" to Working for requested changes: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
+        `Failed to move card "${card.name}" to Working for requested changes: ${message}`,
       );
 
-      continue;
+      throw new WorkflowError(
+        "Workflow",
+        `Could not move Human Review card to Working for requested changes: ${message}`,
+        { cause: error },
+      );
     }
 
     cardLog.event("Card with requested changes moved to Working");

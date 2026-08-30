@@ -35,6 +35,7 @@ function createProject(): ProjectConfig {
     id: "project",
     trello: {
       boardId: "board",
+      ownershipCustomFieldId: "ownership-field",
       backlogListId: "backlog",
       readyListId: "ready",
       workingListId: "working",

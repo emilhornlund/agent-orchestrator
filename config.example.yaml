@@ -3,6 +3,7 @@ projects:
 
     trello:
       boardId: "board-id"
+      ownershipCustomFieldId: "agent-orchestrator-ownership-custom-field-id"
       backlogListId: "backlog-list-id"
       readyListId: "ready-list-id"
       workingListId: "working-list-id"
@@ -48,6 +49,7 @@ projects:
 
     trello:
       boardId: "another-board-id"
+      ownershipCustomFieldId: "agent-orchestrator-ownership-custom-field-id"
       backlogListId: "..."
       readyListId: "..."
       workingListId: "..."

@@ -48,4 +48,9 @@ export async function finalizeRefinement(
   await trello.removeLabel(card.id, project.trello.refinementLabelId);
 
   await trello.moveCard(card.id, project.trello.backlogListId);
+
+  await trello.clearWorkflowOwnership(
+    card.id,
+    project.trello.ownershipCustomFieldId,
+  );
 }

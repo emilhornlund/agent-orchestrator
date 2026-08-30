@@ -1,6 +1,7 @@
 import type { ProjectConfig } from "../config/config.js";
 import { logger } from "../logging/logger.js";
-import type { TrelloClient } from "../trello/trello-client.js";
+import type { TrelloCard, TrelloClient } from "../trello/trello-client.js";
+import { hasWorkflowOwnershipMarker } from "../trello/workflow-ownership.js";
 
 import {
   annotateFailure,
@@ -16,6 +17,7 @@ export async function failCard(
   project: ProjectConfig,
   cardId: string,
   workflowError: unknown,
+  card?: TrelloCard,
 ): Promise<never> {
   const cardLog = logger.child({
     projectId: project.id,
@@ -68,6 +70,40 @@ export async function failCard(
     throw aggregateError;
   }
 
+  if (card !== undefined && hasWorkflowOwnershipMarker(card)) {
+    try {
+      await trello.clearWorkflowOwnership(
+        cardId,
+        project.trello.ownershipCustomFieldId,
+      );
+    } catch (ownershipError) {
+      const clearError = toFailureError(ownershipError);
+      const aggregateError = new AggregateError(
+        [originalError, clearError],
+        `Workflow failed: ${originalError.message}; additionally failed to clear Trello ownership after moving card to Failed: ${clearError.message}`,
+        { cause: ownershipError },
+      );
+
+      annotateFailure(
+        aggregateError,
+        {
+          ...failureContext,
+          handlingOutcome: `card moved to Failed, but could not clear ownership: ${clearError.message}`,
+        },
+        {
+          category: failureDescription.category,
+          reason: aggregateError.message,
+        },
+      );
+
+      cardLog.error(
+        `Failure handling incomplete: card moved to Failed, but could not clear Trello ownership: ${clearError.message}; preserving the primary failure`,
+      );
+
+      throw aggregateError;
+    }
+  }
+
   annotateFailure(originalError, {
     ...failureContext,
     handlingOutcome: "card moved to Failed",
@@ -85,7 +121,7 @@ export async function failCard(
         `Category: ${failureDescription.category}`,
         `Reason: ${failureDescription.reason}`,
         "",
-        "To retry, move this card to Ready.",
+        "To retry deliberately, move this card to Ready for Agent.",
       ].join("\n"),
     );
 

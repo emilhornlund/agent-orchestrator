@@ -10,6 +10,7 @@ function createProject(): ProjectConfig {
     id: "project",
     trello: {
       boardId: "board",
+      ownershipCustomFieldId: "ownership-field",
       backlogListId: "backlog",
       readyListId: "ready",
       workingListId: "working",
@@ -82,6 +83,7 @@ function createTrelloMock() {
     updateCardContent: vi.fn(async () => undefined),
     addLabel: vi.fn(async () => undefined),
     removeLabel: vi.fn(async () => undefined),
+    clearWorkflowOwnership: vi.fn(async () => undefined),
     moveCard: vi.fn(async () => undefined),
   };
 }
@@ -175,11 +177,14 @@ describe("finalizeRefinement", () => {
     const updateOrder = trello.updateCardContent.mock.invocationCallOrder[0]!;
     const addLabelOrder = trello.addLabel.mock.invocationCallOrder[0]!;
     const removeLabelOrder = trello.removeLabel.mock.invocationCallOrder[0]!;
+    const clearOwnershipOrder =
+      trello.clearWorkflowOwnership.mock.invocationCallOrder[0]!;
     const moveOrder = trello.moveCard.mock.invocationCallOrder[0]!;
 
     expect(updateOrder).toBeLessThan(addLabelOrder);
     expect(addLabelOrder).toBeLessThan(removeLabelOrder);
     expect(removeLabelOrder).toBeLessThan(moveOrder);
+    expect(moveOrder).toBeLessThan(clearOwnershipOrder);
   });
 
   it("removes the refinement label", async () => {
