@@ -456,7 +456,8 @@ It does not:
     - merge pull requests;
     - force-push task branches;
     - run agent implementation directly in the source checkout;
-    - start or resume work for an unowned `Working` or `Human Review` card;
+    - resume a `Working` card unless its latest recorded transition and expected worktree, branch, or pull-request evidence make it recoverable;
+    - process an active `Human Review` card without actionable requested changes on its expected pull request;
     - treat failed external operations as successful workflow transitions;
 
 - silently discard failed agent work;
