@@ -806,10 +806,10 @@ glob-parent@^6.0.2:
   dependencies:
     is-glob "^4.0.3"
 
-globals@^16.0.0:
-  version "16.5.0"
-  resolved "https://registry.yarnpkg.com/globals/-/globals-16.5.0.tgz#ccf1594a437b97653b2be13ed4d8f5c9f850cac1"
-  integrity sha512-c/c15i26VrJ4IRt5Z89DnIzCGDn9EcebibhAOjw5ibqEHsE1wLUgkPn9RDmNcUKyU87GeaL633nyJ+pplFR2ZQ==
+globals@^17.11.0:
+  version "17.11.0"
+  resolved "https://registry.yarnpkg.com/globals/-/globals-17.11.0.tgz#d643485bb30220d7751e511cf4f68c73d3870d87"
+  integrity sha512-Z2I8hM+PbJDXQDq3Icgpzv+mPdwr68iZUU9d5WW4FuXfDUQfkZaZuvjMv42/5crNyw154+9+VWXbYrUgDXbxNw==
 
 ignore@^5.2.0:
   version "5.3.2"
