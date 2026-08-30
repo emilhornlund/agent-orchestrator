@@ -1,4 +1,6 @@
 [![CI](https://github.com/emilhornlund/agent-orchestrator/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/emilhornlund/agent-orchestrator/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Node.js 24+](https://img.shields.io/badge/Node.js-24%2B-339933?logo=node.js&logoColor=white)](CONTRIBUTING.md#development-setup)
 
 # Agent Orchestrator
 
@@ -423,3 +425,17 @@ It does not:
 
 The orchestrator owns workflow coordination. OpenCode owns software-engineering execution. Humans retain final approval
 through GitHub review and merge.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, validation,
+testing, commit, and pull request guidance.
+
+## Security
+
+Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md),
+not through public issues.
+
+## License
+
+Agent Orchestrator is available under the [MIT License](LICENSE).

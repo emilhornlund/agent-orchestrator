@@ -1,0 +1,32 @@
+name: Feature request
+description: Suggest an improvement to Agent Orchestrator
+title: "[Feature]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting an improvement. Do not include credentials, tokens, secrets, or other sensitive data in this request.
+
+  - type: textarea
+    id: problem-or-use-case
+    attributes:
+      label: Problem or use case
+      description: What problem would this feature solve, and who would benefit from it?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed-outcome
+    attributes:
+      label: Proposed outcome
+      description: Describe the behavior or outcome you would like to see.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives-and-context
+    attributes:
+      label: Alternatives and context
+      description: Describe alternatives you considered and any relevant constraints or context.
+    validations:
+      required: true
