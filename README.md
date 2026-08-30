@@ -310,6 +310,16 @@ yarn format:check
 yarn build
 ```
 
+## Dependabot updates
+
+Dependabot checks the npm and GitHub Actions ecosystems weekly from the repository root, with up to five open update
+pull requests per ecosystem. Both update entries use an explicit `cooldown.default-days: 7` policy: routine version
+updates wait seven days after release before Dependabot can propose them during a later scheduled check. This observation
+window reduces supply-chain risk from newly published releases that may be compromised or otherwise unsafe.
+
+The cooldown applies only to routine version updates. Dependabot security updates are not delayed by this setting and can
+be proposed promptly when a vulnerability is identified.
+
 ## Configuration reference
 
 ### `projects[].id`
