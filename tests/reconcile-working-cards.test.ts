@@ -76,6 +76,56 @@ afterEach(() => {
 });
 
 describe("reconcileWorkingCards", () => {
+  it("leaves a Working card unchanged when transition history lookup fails", async () => {
+    const historyError = new Error("Trello unavailable");
+    const trello = {
+      getCards: vi.fn().mockResolvedValue([card()]),
+      getLatestListTransition: vi.fn().mockRejectedValue(historyError),
+      moveCard: vi.fn(),
+    } as unknown as TrelloClient;
+
+    await expect(
+      reconcileWorkingCards(
+        trello,
+        {} as GitClient,
+        {} as GitHubClient,
+        project,
+      ),
+    ).rejects.toBe(historyError);
+
+    expect(trello.moveCard).not.toHaveBeenCalled();
+  });
+
+  it("corrects a Working card with no transition evidence without inspecting GitHub", async () => {
+    const moveCard = vi
+      .fn()
+      .mockResolvedValue({ ...card(), idList: "backlog" });
+    const trello = {
+      getCards: vi.fn().mockResolvedValue([card()]),
+      getLatestListTransition: vi.fn().mockResolvedValue(null),
+      moveCard,
+      addComment: vi.fn().mockResolvedValue(undefined),
+    } as unknown as TrelloClient;
+    const git = {
+      getCurrentBranch: vi.fn(),
+    } as unknown as GitClient;
+    const github = {
+      findPullRequest: vi.fn(),
+    } as unknown as GitHubClient;
+
+    await expect(
+      reconcileWorkingCards(trello, git, github, project),
+    ).resolves.toBeNull();
+
+    expect(moveCard).toHaveBeenCalledWith("card-1", "backlog");
+    expect(trello.addComment).toHaveBeenCalledWith(
+      "card-1",
+      expect.stringContaining("no recorded transition"),
+    );
+    expect(git.getCurrentBranch).not.toHaveBeenCalled();
+    expect(github.findPullRequest).not.toHaveBeenCalled();
+  });
+
   it("recovers a Ready for Agent transition only with an existing expected worktree", async () => {
     const worktreeRoot = createWorktreeRoot();
     const worktreePath = path.join(worktreeRoot, "card-1");
@@ -111,6 +161,39 @@ describe("reconcileWorkingCards", () => {
     );
     expect(git.getCurrentBranch).toHaveBeenCalledWith(worktreePath);
     expect(trello.moveCard).not.toHaveBeenCalled();
+  });
+
+  it("corrects a Ready transition with a worktree on the wrong branch", async () => {
+    const worktreeRoot = createWorktreeRoot();
+    fs.mkdirSync(path.join(worktreeRoot, "card-1"));
+    const configuredProject = {
+      ...project,
+      repository: { ...project.repository, worktreeRoot },
+    } as ProjectConfig;
+    const moveCard = vi
+      .fn()
+      .mockResolvedValue({ ...card(), idList: "backlog" });
+    const trello = {
+      getCards: vi.fn().mockResolvedValue([card()]),
+      getLatestListTransition: vi
+        .fn()
+        .mockResolvedValue(transition(configuredProject.trello.readyListId)),
+      moveCard,
+      addComment: vi.fn().mockResolvedValue(undefined),
+    } as unknown as TrelloClient;
+    const git = {
+      getCurrentBranch: vi.fn().mockResolvedValue("main"),
+    } as unknown as GitClient;
+    const github = {
+      findPullRequest: vi.fn(),
+    } as unknown as GitHubClient;
+
+    await expect(
+      reconcileWorkingCards(trello, git, github, configuredProject),
+    ).resolves.toBeNull();
+
+    expect(moveCard).toHaveBeenCalledWith("card-1", "backlog");
+    expect(github.findPullRequest).not.toHaveBeenCalled();
   });
 
   it("corrects a manual move from Backlog even when stale artifacts exist", async () => {
@@ -264,6 +347,46 @@ describe("reconcileWorkingCards", () => {
 });
 
 describe("reconcileClaimedCard", () => {
+  it("keeps a claimed card in Working when its pull-request lookup fails", async () => {
+    const lookupError = new Error("GitHub unavailable");
+    const trello = {
+      moveCard: vi.fn(),
+    } as unknown as TrelloClient;
+    const github = {
+      findPullRequest: vi.fn().mockRejectedValue(lookupError),
+    } as unknown as GitHubClient;
+
+    await expect(
+      reconcileClaimedCard(trello, {} as GitClient, github, project, card()),
+    ).rejects.toMatchObject({
+      category: "Git/GitHub",
+      cause: lookupError,
+    });
+
+    expect(trello.moveCard).not.toHaveBeenCalled();
+  });
+
+  it("keeps a Human Review move-back card unchanged when its pull-request lookup fails", async () => {
+    const lookupError = new Error("GitHub unavailable");
+    const trello = {
+      getCards: vi.fn().mockResolvedValue([card()]),
+      getLatestListTransition: vi.fn().mockResolvedValue(transition("review")),
+      moveCard: vi.fn(),
+    } as unknown as TrelloClient;
+    const github = {
+      findPullRequest: vi.fn().mockRejectedValue(lookupError),
+    } as unknown as GitHubClient;
+
+    await expect(
+      reconcileWorkingCards(trello, {} as GitClient, github, project),
+    ).rejects.toMatchObject({
+      category: "Git/GitHub",
+      cause: lookupError,
+    });
+
+    expect(trello.moveCard).not.toHaveBeenCalled();
+  });
+
   it("moves an initially claimed card with an existing PR to Human Review", async () => {
     const cardValue = card();
     const trello = {

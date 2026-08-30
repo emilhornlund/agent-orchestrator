@@ -229,6 +229,23 @@ describe("reconcileReviewCards", () => {
     expect(existsSync(sessionLogPath)).toBe(true);
   });
 
+  it("keeps a Human Review card unchanged when GitHub reconciliation fails", async () => {
+    const lookupError = new Error("GitHub unavailable");
+    const trello = trelloFor(card());
+    const github = {
+      findMergedPullRequest: vi.fn().mockRejectedValue(lookupError),
+    } as unknown as GitHubClient;
+
+    await expect(
+      reconcileReviewCards(trello, {} as GitClient, github, project),
+    ).rejects.toMatchObject({
+      category: "Git/GitHub",
+      cause: lookupError,
+    });
+
+    expect(trello.moveCard).not.toHaveBeenCalled();
+  });
+
   it("keeps the session log when moving a merged card to Done fails", async () => {
     const sessionLogPath = getSessionLogPath(project.id, "card-1");
     appendSessionLog(sessionLogPath, "OpenCode output");
@@ -332,5 +349,45 @@ describe("reconcileReviewCards", () => {
       reconcileReviewCards(trello, {} as GitClient, github, project),
     ).rejects.toThrow("Multiple active cards are in Human Review");
     expect(trello.moveCard).not.toHaveBeenCalled();
+  });
+
+  it("reconciles terminal cards without counting them as active", async () => {
+    const mergedCard = card("card-1");
+    const activeCard = card("card-2");
+    const trello = {
+      getCards: vi.fn().mockResolvedValue([mergedCard, activeCard]),
+      moveCard: vi.fn().mockResolvedValue(undefined),
+      addComment: vi.fn().mockResolvedValue(undefined),
+    } as unknown as TrelloClient;
+    const git = {
+      remoteBranchExists: vi.fn().mockResolvedValue(false),
+    } as unknown as GitClient;
+    const github = {
+      findMergedPullRequest: vi
+        .fn()
+        .mockImplementation(async ({ headBranch }: { headBranch: string }) =>
+          headBranch === "agent/card-1"
+            ? { url: "https://github.com/owner/repo/pull/1" }
+            : null,
+        ),
+      findClosedPullRequest: vi.fn().mockResolvedValue(null),
+      findPullRequest: vi
+        .fn()
+        .mockImplementation(async ({ headBranch }: { headBranch: string }) =>
+          headBranch === "agent/card-2"
+            ? { url: "https://github.com/owner/repo/pull/2" }
+            : null,
+        ),
+      findChangesRequestedPullRequest: vi.fn().mockResolvedValue(null),
+    } as unknown as GitHubClient;
+
+    await expect(
+      reconcileReviewCards(trello, git, github, project),
+    ).resolves.toEqual({ card: activeCard, active: true });
+
+    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "done", {
+      dueComplete: true,
+    });
+    expect(trello.moveCard).not.toHaveBeenCalledWith("card-2", "working");
   });
 });
