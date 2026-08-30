@@ -1,0 +1,70 @@
+name: Bug report
+description: Report a reproducible problem with Agent Orchestrator
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a problem. Do not include credentials, tokens, secrets, or other sensitive data. Sanitize logs and diagnostics before submitting.
+
+  - type: textarea
+    id: reproduction-steps
+    attributes:
+      label: Reproduction steps
+      description: Provide the smallest set of steps and configuration needed to reproduce the problem.
+      placeholder: |
+        1. Configure ...
+        2. Run ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected behavior
+      description: What did you expect the orchestrator to do?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual-behavior
+    attributes:
+      label: Actual behavior
+      description: What happened instead? Include the exact error message when possible.
+    validations:
+      required: true
+
+  - type: input
+    id: node-version
+    attributes:
+      label: Node.js version
+      description: Paste the output of `node --version`.
+      placeholder: v24.0.0
+    validations:
+      required: true
+
+  - type: input
+    id: yarn-version
+    attributes:
+      label: Yarn version
+      description: Paste the output of `yarn --version`.
+      placeholder: 1.22.22
+    validations:
+      required: true
+
+  - type: input
+    id: operating-system
+    attributes:
+      label: Operating system
+      description: Include the operating system and version.
+      placeholder: Ubuntu 24.04
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Sanitized diagnostics
+      description: Share relevant sanitized logs, stack traces, or configuration details. Remove credentials, tokens, and other sensitive data.
+      render: shell
