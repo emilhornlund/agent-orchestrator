@@ -124,6 +124,21 @@ describe("GitClient", () => {
     ]);
   });
 
+  it("gets files changed from a base ref", async () => {
+    const runGit = vi.fn<RunGit>().mockResolvedValue("src/main.cpp");
+    const git = new GitClient(runGit);
+
+    await expect(git.getChangedFiles("/worktree", "origin/main")).resolves.toBe(
+      "src/main.cpp",
+    );
+
+    expect(runGit).toHaveBeenCalledWith("/worktree", [
+      "diff",
+      "--name-only",
+      "origin/main...HEAD",
+    ]);
+  });
+
   it("pushes a branch and configures its upstream", async () => {
     const runGit = vi.fn<RunGit>().mockResolvedValue("");
     const git = new GitClient(runGit);
@@ -210,6 +225,35 @@ describe("GitClient", () => {
       "origin",
       "refs/heads/agent/card-1",
     ]);
+  });
+
+  it("gets the SHA of an existing remote branch", async () => {
+    const runGit = vi
+      .fn<RunGit>()
+      .mockResolvedValue("abc123\trefs/heads/agent/card-1");
+    const git = new GitClient(runGit);
+
+    await expect(
+      git.getRemoteBranchSha("/repo", "origin", "agent/card-1"),
+    ).resolves.toBe("abc123");
+  });
+
+  it("returns no SHA when a remote branch is missing", async () => {
+    const runGit = vi.fn<RunGit>().mockResolvedValue("");
+    const git = new GitClient(runGit);
+
+    await expect(
+      git.getRemoteBranchSha("/repo", "origin", "agent/card-1"),
+    ).resolves.toBeNull();
+  });
+
+  it("rejects malformed remote branch output", async () => {
+    const runGit = vi.fn<RunGit>().mockResolvedValue("not-a-remote-ref");
+    const git = new GitClient(runGit);
+
+    await expect(
+      git.getRemoteBranchSha("/repo", "origin", "agent/card-1"),
+    ).rejects.toThrow("invalid remote branch result");
   });
 
   it("detects a missing remote branch", async () => {

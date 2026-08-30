@@ -11,11 +11,16 @@ export interface PreparedWorktree {
   branch: string;
 }
 
+export interface PreparedImplementationWorktree extends PreparedWorktree {
+  reused: boolean;
+  initialStatus?: string;
+}
+
 export async function prepareWorktree(
   git: GitClient,
   project: ProjectConfig,
   cardId: string,
-): Promise<PreparedWorktree> {
+): Promise<PreparedImplementationWorktree> {
   const repositoryPath = project.repository.path;
   const worktreeRoot = project.repository.worktreeRoot;
   const defaultBranch = project.repository.defaultBranch;
@@ -35,6 +40,10 @@ export async function prepareWorktree(
   fs.mkdirSync(worktreeRoot, { recursive: true });
 
   if (fs.existsSync(worktreePath)) {
+    if (fs.lstatSync(worktreePath).isSymbolicLink()) {
+      throw new Error(`Refusing to use symbolic-link worktree ${worktreePath}`);
+    }
+
     const currentBranch = await git.getCurrentBranch(worktreePath);
 
     if (currentBranch !== branch) {
@@ -45,7 +54,7 @@ export async function prepareWorktree(
 
     const status = await git.getStatus(worktreePath);
 
-    if (status.length > 0) {
+    if (status.trim().length > 0) {
       logger
         .child({ projectId: project.id })
         .info(
@@ -56,6 +65,8 @@ export async function prepareWorktree(
     return {
       path: worktreePath,
       branch,
+      reused: true,
+      initialStatus: status,
     };
   }
 
@@ -77,5 +88,6 @@ export async function prepareWorktree(
   return {
     path: worktreePath,
     branch,
+    reused: branchExists,
   };
 }

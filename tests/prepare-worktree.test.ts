@@ -102,6 +102,7 @@ describe("prepareWorktree", () => {
     expect(result).toEqual({
       path: path.join(worktreeRoot, "card-123"),
       branch: "agent/card-123",
+      reused: false,
     });
 
     expect(runGit).toHaveBeenNthCalledWith(1, "/repositories/test-project", [
@@ -177,6 +178,8 @@ describe("prepareWorktree", () => {
     expect(result).toEqual({
       path: worktreePath,
       branch: "agent/card-123",
+      reused: true,
+      initialStatus: "",
     });
 
     expect(runGit).toHaveBeenNthCalledWith(1, worktreePath, [
@@ -241,6 +244,8 @@ describe("prepareWorktree", () => {
     expect(result).toEqual({
       path: worktreePath,
       branch: "agent/card-123",
+      reused: true,
+      initialStatus: " M src/example.ts\n?? src/new-file.ts",
     });
 
     expect(runGit).toHaveBeenNthCalledWith(1, worktreePath, [

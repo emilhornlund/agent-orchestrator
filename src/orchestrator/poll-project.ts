@@ -1,8 +1,12 @@
 import type { ProjectConfig } from "../config/config.js";
+import { hasCommittedImplementation } from "../git/detect-committed-implementation.js";
 import { cleanupWorktree } from "../git/cleanup-worktree.js";
 import type { GitClient } from "../git/git-client.js";
 import { prepareReviewWorktree } from "../git/prepare-review-worktree.js";
-import { prepareWorktree } from "../git/prepare-worktree.js";
+import {
+  prepareWorktree,
+  type PreparedImplementationWorktree,
+} from "../git/prepare-worktree.js";
 import type { GitHubClient } from "../github/github-client.js";
 import { logger } from "../logging/logger.js";
 import { getSessionLogPath } from "../logging/session-log.js";
@@ -96,6 +100,30 @@ async function runSetup(
     const setupError = toFailureError(error);
 
     throw new WorkflowError("Setup", setupError.message, { cause: error });
+  }
+}
+
+async function detectReusableImplementation(
+  git: GitClient,
+  project: ProjectConfig,
+  worktreePath: string,
+  initialStatus?: string,
+): Promise<boolean> {
+  try {
+    return await hasCommittedImplementation(
+      git,
+      worktreePath,
+      `origin/${project.repository.defaultBranch}`,
+      initialStatus,
+    );
+  } catch (error) {
+    const stateError = toFailureError(error);
+
+    throw new WorkflowError(
+      "Git/GitHub",
+      `Could not safely inspect existing task branch: ${stateError.message}`,
+      { cause: error },
+    );
   }
 }
 
@@ -451,6 +479,41 @@ async function processCardChanges(
 
   cardLog.info(`Branch: ${worktree.branch}`);
   cardLog.info(`Worktree: ${worktree.path}`);
+
+  const implementationWorktree = reviewIteration
+    ? undefined
+    : (worktree as PreparedImplementationWorktree);
+
+  if (
+    implementationWorktree?.reused &&
+    (await detectReusableImplementation(
+      git,
+      project,
+      worktree.path,
+      implementationWorktree.initialStatus,
+    ))
+  ) {
+    const commitSha = await git.getHeadSha(worktree.path);
+
+    cardLog.event(
+      `Reusing committed implementation ${commitSha}; skipping implementation stages`,
+    );
+
+    await publishCard({
+      trello,
+      git,
+      github,
+      project,
+      card,
+      worktreePath: worktree.path,
+      branch: worktree.branch,
+      commitSha,
+      reviewResult,
+      remediationResult,
+    });
+
+    return worktree;
+  }
 
   if (project.repository.setupCommand) {
     cardLog.event("Running repository setup...");
