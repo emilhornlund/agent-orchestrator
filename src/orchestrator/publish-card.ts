@@ -4,6 +4,7 @@ import type { GitHubClient } from "../github/github-client.js";
 import { logger } from "../logging/logger.js";
 import type { TrelloCard, TrelloClient } from "../trello/trello-client.js";
 
+import { toFailureError } from "./failure-diagnostic.js";
 import { PublishedCardStateError } from "./published-card-state-error.js";
 import { WorkflowError } from "./workflow-error.js";
 
@@ -78,11 +79,10 @@ export async function publishCard({
       throw error;
     }
 
-    const publicationError =
-      error instanceof Error ? error : new Error(String(error));
+    const publicationError = toFailureError(error);
 
     throw new WorkflowError("Git/GitHub", publicationError.message, {
-      cause: publicationError,
+      cause: error,
     });
   }
 

@@ -1,21 +1,15 @@
 import type { ProjectConfig } from "../config/config.js";
 import { logger } from "../logging/logger.js";
-import { OpenCodeTimeoutError } from "../opencode/opencode-client.js";
 import type { TrelloClient } from "../trello/trello-client.js";
 
-import { WorkflowError } from "./workflow-error.js";
-
-function describeFailureCategory(error: Error): string {
-  if (error instanceof OpenCodeTimeoutError) {
-    return "OpenCode timeout";
-  }
-
-  if (error instanceof WorkflowError) {
-    return error.category;
-  }
-
-  return "Workflow";
-}
+import {
+  annotateFailure,
+  describeFailure,
+  formatFailureDiagnostic,
+  getExistingSessionLogPath,
+  toFailureError,
+  type FailureContext,
+} from "./failure-diagnostic.js";
 
 export async function failCard(
   trello: TrelloClient,
@@ -28,27 +22,59 @@ export async function failCard(
     cardId,
   });
 
-  const originalError =
-    workflowError instanceof Error
-      ? workflowError
-      : new Error(String(workflowError));
+  const originalError = toFailureError(workflowError);
+  const failureDescription = describeFailure(originalError);
+  const sessionLogPath = getExistingSessionLogPath(project.id, cardId);
+  const failureContext: FailureContext = {
+    projectId: project.id,
+    cardId,
+    ...(sessionLogPath === undefined ? {} : { sessionLogPath }),
+  };
+
+  annotateFailure(originalError, failureContext, failureDescription);
+
+  cardLog.error(
+    `${formatFailureDiagnostic(originalError, failureContext)}; attempting to move card to Failed`,
+  );
 
   try {
     await trello.moveCard(cardId, project.trello.failedListId);
   } catch (failureMoveError) {
-    const moveError =
-      failureMoveError instanceof Error
-        ? failureMoveError
-        : new Error(String(failureMoveError));
-
-    throw new AggregateError(
+    const moveError = toFailureError(failureMoveError);
+    const aggregateError = new AggregateError(
       [originalError, moveError],
       `Workflow failed: ${originalError.message}; additionally failed to move card to Failed: ${moveError.message}`,
       {
         cause: failureMoveError,
       },
     );
+
+    annotateFailure(
+      aggregateError,
+      {
+        ...failureContext,
+        handlingOutcome: `could not move card to Failed: ${moveError.message}`,
+      },
+      {
+        category: failureDescription.category,
+        reason: aggregateError.message,
+      },
+    );
+
+    cardLog.error(
+      `Failure handling failed: could not move card to Failed: ${moveError.message}; preserving the primary failure and skipping the failure comment`,
+    );
+
+    throw aggregateError;
   }
+
+  annotateFailure(originalError, {
+    ...failureContext,
+    handlingOutcome: "card moved to Failed",
+  });
+  cardLog.event(
+    "Failure handling: card moved to Failed; adding failure comment",
+  );
 
   try {
     await trello.addComment(
@@ -56,19 +82,27 @@ export async function failCard(
       [
         "Agent Orchestrator failed.",
         "",
-        `Category: ${describeFailureCategory(originalError)}`,
-        `Reason: ${originalError.message}`,
+        `Category: ${failureDescription.category}`,
+        `Reason: ${failureDescription.reason}`,
         "",
         "To retry, move this card to Ready.",
       ].join("\n"),
     );
+
+    annotateFailure(originalError, {
+      ...failureContext,
+      handlingOutcome: "card moved to Failed and failure comment added",
+    });
+    cardLog.event("Failure handling: failure comment added to Trello card");
   } catch (commentError) {
+    const commentFailure = toFailureError(commentError);
+
+    annotateFailure(originalError, {
+      ...failureContext,
+      handlingOutcome: `card moved to Failed, but adding the failure comment failed: ${commentFailure.message}`,
+    });
     cardLog.error(
-      `Failed to add failure reason to Trello card: ${
-        commentError instanceof Error
-          ? commentError.message
-          : String(commentError)
-      }`,
+      `Failure handling incomplete: card moved to Failed, but adding the failure comment failed: ${commentFailure.message}; preserving the primary failure`,
     );
   }
 

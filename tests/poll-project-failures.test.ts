@@ -37,8 +37,8 @@ interface ScenarioOptions {
   refinementResult?: unknown;
   pushError?: Error;
   pullRequestError?: Error;
-  humanReviewError?: Error;
-  failureMoveError?: Error;
+  humanReviewError?: unknown;
+  failureMoveError?: unknown;
 }
 
 type TestOpenCodeRunResult = Omit<OpenCodeRunResult, "errorOutput"> & {
@@ -513,6 +513,39 @@ describe("pollProject failure boundaries", () => {
         expectNothingPublished(scenario);
       },
     );
+  });
+
+  it("preserves structured setup failures in the failure comment", async () => {
+    await withScenario({ setupCommand: "yarn install" }, async (scenario) => {
+      const setupFailure = {
+        code: "SETUP_FAILED",
+        reason: "dependency installation failed",
+      };
+
+      scenario.runCommand.mockRejectedValueOnce(setupFailure);
+      vi.spyOn(scenario.trello, "addComment").mockResolvedValue({
+        id: "action-1",
+        type: "commentCard",
+        date: "2026-08-22T09:00:00.000Z",
+      });
+
+      await expect(
+        pollProject(
+          scenario.trello,
+          scenario.git,
+          scenario.github,
+          scenario.openCode,
+          scenario.commands,
+          scenario.project,
+          scenario.signal,
+        ),
+      ).rejects.toThrow(JSON.stringify(setupFailure));
+
+      expect(scenario.trello.addComment).toHaveBeenCalledWith(
+        scenario.card.id,
+        expect.stringContaining(`Reason: ${JSON.stringify(setupFailure)}`),
+      );
+    });
   });
 
   it("stops after an implementation failure", async () => {
@@ -1270,6 +1303,41 @@ describe("pollProject failure boundaries", () => {
         expect(scenario.trello.moveCard).not.toHaveBeenCalledWith(
           scenario.card.id,
           scenario.project.trello.failedListId,
+        );
+      },
+    );
+  });
+
+  it("logs the cause when a published card cannot move to Human Review", async () => {
+    await withScenario(
+      {
+        humanReviewError: {
+          code: "TRELLO_UNAUTHORIZED",
+          reason: "token expired",
+        },
+      },
+      async (scenario) => {
+        await expect(
+          pollProject(
+            scenario.trello,
+            scenario.git,
+            scenario.github,
+            scenario.openCode,
+            scenario.commands,
+            scenario.project,
+            scenario.signal,
+          ),
+        ).resolves.toBeUndefined();
+
+        const date = new Date().toISOString().slice(0, 10);
+        const logPath = path.join(
+          process.cwd(),
+          "logs",
+          `test-orchestrator-${date}.log`,
+        );
+
+        expect(fs.readFileSync(logPath, "utf8")).toContain(
+          `[example] [card:card-1] Task failed. Category: Workflow; Reason: Pull request https://github.com/example/repository/pull/123 was published, but the Trello card could not be moved to Human Review; Cause: {"code":"TRELLO_UNAUTHORIZED","reason":"token expired"}; Failure handling: card left in Working for reconciliation`,
         );
       },
     );

@@ -6,6 +6,10 @@ import type { OpenCodeClient } from "../opencode/opencode-client.js";
 import type { CommandRunner } from "../process/command-runner.js";
 import type { TrelloClient } from "../trello/trello-client.js";
 
+import {
+  formatFailureDiagnostic,
+  getFailureContext,
+} from "./failure-diagnostic.js";
 import { pollProject } from "./poll-project.js";
 
 function sleep(milliseconds: number, signal: AbortSignal): Promise<void> {
@@ -51,9 +55,30 @@ async function runProjectWorker(
         signal,
       );
     } catch (error) {
+      const failureContext = getFailureContext(error);
+
       logger
-        .child({ projectId: project.id })
-        .error(error instanceof Error ? error.message : String(error));
+        .child({
+          projectId: project.id,
+          ...(failureContext?.cardId === undefined
+            ? {}
+            : { cardId: failureContext.cardId }),
+        })
+        .error(
+          formatFailureDiagnostic(
+            error,
+            failureContext === undefined
+              ? {}
+              : {
+                  ...(failureContext.sessionLogPath === undefined
+                    ? {}
+                    : { sessionLogPath: failureContext.sessionLogPath }),
+                  ...(failureContext.handlingOutcome === undefined
+                    ? {}
+                    : { handlingOutcome: failureContext.handlingOutcome }),
+                },
+          ),
+        );
     }
 
     await sleep(pollIntervalMilliseconds, signal);

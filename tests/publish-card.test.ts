@@ -325,6 +325,48 @@ describe("publishCard", () => {
     }
   });
 
+  it("preserves structured publication failures in the workflow error", async () => {
+    const publicationFailure = {
+      code: "GIT_AUTH_FAILED",
+      reason: "remote rejected credentials",
+    };
+    const trello = {
+      moveCard: vi.fn(),
+      addComment: vi.fn(),
+    } as unknown as TrelloClient;
+    const git = {
+      push: vi.fn().mockRejectedValue(publicationFailure),
+    } as unknown as GitClient;
+    const github = {
+      findPullRequest: vi.fn(),
+      createPullRequest: vi.fn(),
+    } as unknown as GitHubClient;
+
+    try {
+      await publishCard({
+        trello,
+        git,
+        github,
+        project: createProject(),
+        card: createCard(),
+        worktreePath: "/worktree",
+        branch: "agent/card-1",
+        commitSha: "commit-sha",
+        reviewResult: "Passed",
+        remediationResult: "Not required",
+      });
+
+      throw new Error("Expected publishCard to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(WorkflowError);
+
+      const workflowError = error as WorkflowError;
+
+      expect(workflowError.message).toBe(JSON.stringify(publicationFailure));
+      expect(workflowError.cause).toBe(publicationFailure);
+    }
+  });
+
   it("stops before moving the card when PR creation fails", async () => {
     const runGit = vi.fn<RunGit>().mockResolvedValue("");
 

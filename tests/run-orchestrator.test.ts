@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import path from "node:path";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Config, ProjectConfig } from "../src/config/config.js";
@@ -6,6 +9,11 @@ import type { GitHubClient } from "../src/github/github-client.js";
 import type { OpenCodeClient } from "../src/opencode/opencode-client.js";
 import type { CommandRunner } from "../src/process/command-runner.js";
 import type { TrelloClient } from "../src/trello/trello-client.js";
+import {
+  annotateFailure,
+  getFailureContext,
+} from "../src/orchestrator/failure-diagnostic.js";
+import { WorkflowError } from "../src/orchestrator/workflow-error.js";
 
 const pollProject = vi.fn();
 
@@ -216,6 +224,53 @@ describe("runOrchestrator", () => {
 
     expect(projectACalls).toHaveLength(1);
     expect(projectBCalls).toHaveLength(1);
+  });
+
+  it("logs a failed card with its category, card context, and handling outcome", async () => {
+    const controller = new AbortController();
+    const failure = new WorkflowError(
+      "Git/GitHub",
+      "push failed while publishing the task",
+    );
+
+    annotateFailure(failure, {
+      projectId: "project-a",
+      cardId: "card-123",
+      handlingOutcome: "card moved to Failed and failure comment added",
+    });
+
+    expect(getFailureContext(failure)?.cardId).toBe("card-123");
+
+    pollProject.mockImplementation(
+      async (_trello, _git, _github, _opencode, _commands, project) => {
+        if (project.id === "project-a") {
+          throw failure;
+        }
+
+        controller.abort();
+      },
+    );
+
+    await runOrchestrator(
+      {} as TrelloClient,
+      {} as GitClient,
+      {} as GitHubClient,
+      {} as OpenCodeClient,
+      {} as CommandRunner,
+      createConfig([createProject("project-a"), createProject("project-b")]),
+      controller.signal,
+    );
+
+    const date = new Date().toISOString().slice(0, 10);
+    const logPath = path.join(
+      process.cwd(),
+      "logs",
+      `test-orchestrator-${date}.log`,
+    );
+
+    expect(fs.readFileSync(logPath, "utf8")).toContain(
+      "[project-a] [card:card-123] Task failed. Category: Git/GitHub; Reason: push failed while publishing the task; Failure handling: card moved to Failed and failure comment added",
+    );
   });
 
   it("stops sleeping project workers when the orchestrator is aborted", async () => {
