@@ -484,43 +484,137 @@ describe("failCard", () => {
     expect(moveCard).toHaveBeenCalledWith("card-1", "failed-list");
   });
 
-  it("surfaces ownership clearing failures after moving an owned card to Failed", async () => {
+  it("restores an owned card to its original list when ownership clearing fails", async () => {
     const trello = new TrelloClient({
       apiKey: "key",
       token: "token",
     });
-    const moveCard = vi.spyOn(trello, "moveCard").mockResolvedValue({
-      id: "card-1",
-      name: "Card",
-      desc: "",
-      idList: "failed",
-      idLabels: [],
-      url: "https://trello.com/c/card-1",
-    });
 
-    vi.spyOn(trello, "clearWorkflowOwnership").mockRejectedValue(
-      new Error("Trello unavailable"),
-    );
-
-    await expect(
-      failCard(trello, project, "card-1", new Error("implementation failed"), {
+    const moveCard = vi
+      .spyOn(trello, "moveCard")
+      .mockResolvedValueOnce({
+        id: "card-1",
+        name: "Card",
+        desc: "",
+        idList: "failed-list",
+        idLabels: [],
+        url: "https://trello.com/c/card-1",
+      })
+      .mockResolvedValueOnce({
         id: "card-1",
         name: "Card",
         desc: "",
         idList: "working-list",
         idLabels: [],
         url: "https://trello.com/c/card-1",
-        workflowOwnership: JSON.stringify({
-          version: 1,
-          owner: "agent-orchestrator",
-          projectId: "example",
-          cardId: "card-1",
-          workflow: "implementation",
-        }),
+      });
+
+    const clearWorkflowOwnership = vi
+      .spyOn(trello, "clearWorkflowOwnership")
+      .mockRejectedValue(new Error("Trello unavailable"));
+
+    const ownedCard = {
+      id: "card-1",
+      name: "Card",
+      desc: "",
+      idList: "working-list",
+      idLabels: [],
+      url: "https://trello.com/c/card-1",
+      workflowOwnership: JSON.stringify({
+        version: 1,
+        owner: "agent-orchestrator",
+        projectId: "example",
+        cardId: "card-1",
+        workflow: "implementation",
       }),
+    };
+
+    await expect(
+      failCard(
+        trello,
+        project,
+        "card-1",
+        new Error("implementation failed"),
+        ownedCard,
+      ),
     ).rejects.toThrow("failed to clear Trello ownership");
 
-    expect(moveCard).toHaveBeenCalledWith("card-1", "failed-list");
+    expect(moveCard).toHaveBeenNthCalledWith(
+      1,
+      "card-1",
+      project.trello.failedListId,
+    );
+
+    expect(clearWorkflowOwnership).toHaveBeenCalledWith(
+      "card-1",
+      "ownership-field",
+    );
+
+    expect(moveCard).toHaveBeenNthCalledWith(2, "card-1", "working-list");
+  });
+
+  it("reports ownership clearing and rollback failures for an owned card", async () => {
+    const trello = new TrelloClient({
+      apiKey: "key",
+      token: "token",
+    });
+
+    const moveCard = vi
+      .spyOn(trello, "moveCard")
+      .mockResolvedValueOnce({
+        id: "card-1",
+        name: "Card",
+        desc: "",
+        idList: "failed-list",
+        idLabels: [],
+        url: "https://trello.com/c/card-1",
+      })
+      .mockRejectedValueOnce(new Error("rollback failed"));
+
+    const clearWorkflowOwnership = vi
+      .spyOn(trello, "clearWorkflowOwnership")
+      .mockRejectedValue(new Error("ownership clear failed"));
+
+    const ownedCard = {
+      id: "card-1",
+      name: "Card",
+      desc: "",
+      idList: "working-list",
+      idLabels: [],
+      url: "https://trello.com/c/card-1",
+      workflowOwnership: JSON.stringify({
+        version: 1,
+        owner: "agent-orchestrator",
+        projectId: "example",
+        cardId: "card-1",
+        workflow: "implementation",
+      }),
+    };
+
+    await expect(
+      failCard(
+        trello,
+        project,
+        "card-1",
+        new Error("implementation failed"),
+        ownedCard,
+      ),
+    ).rejects.toThrow(
+      "additionally failed to restore card to its original list: rollback failed",
+    );
+
+    expect(moveCard).toHaveBeenNthCalledWith(
+      1,
+      "card-1",
+      project.trello.failedListId,
+    );
+
+    expect(clearWorkflowOwnership).toHaveBeenCalledWith(
+      "card-1",
+      "ownership-field",
+    );
+
+    expect(moveCard).toHaveBeenNthCalledWith(2, "card-1", "working-list");
   });
 
   it("keeps ownership when moving an owned card to Failed fails", async () => {

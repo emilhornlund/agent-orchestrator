@@ -78,6 +78,37 @@ export async function failCard(
       );
     } catch (ownershipError) {
       const clearError = toFailureError(ownershipError);
+
+      try {
+        await trello.moveCard(cardId, card.idList);
+      } catch (rollbackError) {
+        const restoreError = toFailureError(rollbackError);
+
+        const aggregateError = new AggregateError(
+          [originalError, clearError, restoreError],
+          `Workflow failed: ${originalError.message}; additionally failed to clear Trello ownership after moving card to Failed: ${clearError.message}; additionally failed to restore card to its original list: ${restoreError.message}`,
+          { cause: rollbackError },
+        );
+
+        annotateFailure(
+          aggregateError,
+          {
+            ...failureContext,
+            handlingOutcome: `card moved to Failed, ownership could not be cleared, and card could not be restored to its original list: ${restoreError.message}`,
+          },
+          {
+            category: failureDescription.category,
+            reason: aggregateError.message,
+          },
+        );
+
+        cardLog.error(
+          `Failure handling incomplete: card moved to Failed, ownership could not be cleared, and card could not be restored to its original list: ${restoreError.message}; preserving the primary failure`,
+        );
+
+        throw aggregateError;
+      }
+
       const aggregateError = new AggregateError(
         [originalError, clearError],
         `Workflow failed: ${originalError.message}; additionally failed to clear Trello ownership after moving card to Failed: ${clearError.message}`,
@@ -88,7 +119,7 @@ export async function failCard(
         aggregateError,
         {
           ...failureContext,
-          handlingOutcome: `card moved to Failed, but could not clear ownership: ${clearError.message}`,
+          handlingOutcome: `card restored to ${card.idList} after ownership clearing failed: ${clearError.message}`,
         },
         {
           category: failureDescription.category,
@@ -97,7 +128,7 @@ export async function failCard(
       );
 
       cardLog.error(
-        `Failure handling incomplete: card moved to Failed, but could not clear Trello ownership: ${clearError.message}; preserving the primary failure`,
+        `Failure handling incomplete: ownership could not be cleared after moving card to Failed; restored card to ${card.idList}; preserving the primary failure`,
       );
 
       throw aggregateError;

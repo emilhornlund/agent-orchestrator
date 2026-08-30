@@ -80,11 +80,18 @@ describe("correctCardToBacklog", () => {
     );
   });
 
-  it("surfaces marker clearing failures after moving the card", async () => {
-    const moveCard = vi.fn().mockResolvedValue({
-      ...card,
-      idList: "backlog-list",
-    });
+  it("restores the card to its original list when marker clearing fails", async () => {
+    const moveCard = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ...card,
+        idList: "backlog-list",
+      })
+      .mockResolvedValueOnce({
+        ...card,
+        idList: "working-list",
+      });
+
     const trello = {
       clearWorkflowOwnership: vi
         .fn()
@@ -102,7 +109,52 @@ describe("correctCardToBacklog", () => {
       ),
     ).rejects.toThrow("Could not clear the ownership marker");
 
-    expect(moveCard).toHaveBeenCalledWith("card-1", "backlog-list");
+    expect(moveCard).toHaveBeenNthCalledWith(1, "card-1", "backlog-list");
+
+    expect(trello.clearWorkflowOwnership).toHaveBeenCalledWith(
+      "card-1",
+      "ownership-field",
+    );
+
+    expect(moveCard).toHaveBeenNthCalledWith(2, "card-1", "working-list");
+  });
+
+  it("reports both marker clearing and rollback failures", async () => {
+    const moveCard = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ...card,
+        idList: "backlog-list",
+      })
+      .mockRejectedValueOnce(new Error("rollback failed"));
+
+    const trello = {
+      clearWorkflowOwnership: vi
+        .fn()
+        .mockRejectedValue(new Error("Trello unavailable")),
+      moveCard,
+      addComment: vi.fn(),
+    } as unknown as TrelloClient;
+
+    await expect(
+      correctCardToBacklog(
+        trello,
+        project,
+        { ...card, workflowOwnership: marker },
+        "unexpected state",
+      ),
+    ).rejects.toThrow(
+      "additionally could not restore card to its original list: rollback failed",
+    );
+
+    expect(moveCard).toHaveBeenNthCalledWith(1, "card-1", "backlog-list");
+
+    expect(trello.clearWorkflowOwnership).toHaveBeenCalledWith(
+      "card-1",
+      "ownership-field",
+    );
+
+    expect(moveCard).toHaveBeenNthCalledWith(2, "card-1", "working-list");
   });
 
   it("keeps an invalid marker when moving the card to Backlog fails", async () => {

@@ -213,6 +213,68 @@ describe("finalizeRefinement", () => {
     expect(trello.moveCard).toHaveBeenCalledWith("card-123", "backlog");
   });
 
+  it("restores the refined card to Working when ownership cleanup fails", async () => {
+    const trello = createTrelloMock();
+
+    trello.clearWorkflowOwnership.mockRejectedValueOnce(
+      new Error("ownership clear failed"),
+    );
+
+    trello.moveCard
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined);
+
+    await expect(
+      finalizeRefinement(
+        trello as unknown as TrelloClient,
+        createProject(),
+        createCard(),
+        createResult("feature"),
+      ),
+    ).rejects.toThrow("ownership clear failed");
+
+    expect(trello.moveCard).toHaveBeenNthCalledWith(1, "card-123", "backlog");
+
+    expect(trello.clearWorkflowOwnership).toHaveBeenCalledWith(
+      "card-123",
+      "ownership-field",
+    );
+
+    expect(trello.moveCard).toHaveBeenNthCalledWith(2, "card-123", "working");
+  });
+
+  it("reports both ownership cleanup and rollback failures for refinement", async () => {
+    const trello = createTrelloMock();
+
+    trello.clearWorkflowOwnership.mockRejectedValueOnce(
+      new Error("ownership clear failed"),
+    );
+
+    trello.moveCard
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("rollback failed"));
+
+    await expect(
+      finalizeRefinement(
+        trello as unknown as TrelloClient,
+        createProject(),
+        createCard(),
+        createResult("feature"),
+      ),
+    ).rejects.toThrow(
+      "additionally could not restore card to its original list",
+    );
+
+    expect(trello.moveCard).toHaveBeenNthCalledWith(1, "card-123", "backlog");
+
+    expect(trello.clearWorkflowOwnership).toHaveBeenCalledWith(
+      "card-123",
+      "ownership-field",
+    );
+
+    expect(trello.moveCard).toHaveBeenNthCalledWith(2, "card-123", "working");
+  });
+
   it("stops immediately when updating card content fails", async () => {
     const trello = createTrelloMock();
 

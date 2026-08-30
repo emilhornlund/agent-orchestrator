@@ -47,6 +47,26 @@ async function clearOwnershipAfterTransition(
       `Could not clear ownership after moving card to ${destination}: ${message}`,
     );
 
+    try {
+      await trello.moveCard(card.id, project.trello.reviewListId);
+
+      cardLog.error(
+        `Restored card to Human Review after ownership cleanup failed`,
+      );
+    } catch (rollbackError) {
+      const rollbackMessage = getErrorMessage(rollbackError);
+
+      cardLog.error(
+        `Could not restore card to Human Review after ownership cleanup failed: ${rollbackMessage}`,
+      );
+
+      throw new AggregateError(
+        [error, rollbackError],
+        `Could not clear ownership after moving card to ${destination}: ${message}; additionally could not restore card to Human Review: ${rollbackMessage}`,
+        { cause: rollbackError },
+      );
+    }
+
     throw new Error(
       `Could not clear ownership after moving card to ${destination}: ${message}`,
       { cause: error },

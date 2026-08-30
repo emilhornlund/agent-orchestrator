@@ -254,6 +254,107 @@ describe("reconcileReviewCards", () => {
     expect(existsSync(sessionLogPath)).toBe(true);
   });
 
+  it("restores a merged card to Human Review when ownership cleanup after Done fails", async () => {
+    const moveCard = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ...card,
+        idList: "done",
+      })
+      .mockResolvedValueOnce({
+        ...card,
+        idList: "review",
+      });
+
+    const trello = {
+      getCards: vi.fn().mockResolvedValue([card]),
+      clearWorkflowOwnership: vi
+        .fn()
+        .mockRejectedValue(new Error("ownership clear failed")),
+      moveCard,
+    } as unknown as TrelloClient;
+
+    const git = {
+      remoteBranchExists: vi.fn().mockResolvedValue(false),
+      deleteRemoteBranch: vi.fn(),
+    } as unknown as GitClient;
+
+    const github = {
+      findMergedPullRequest: vi.fn().mockResolvedValue({
+        url: "https://github.com/owner/repo/pull/1",
+      }),
+    } as unknown as GitHubClient;
+
+    await expect(
+      reconcileReviewCards(trello, git, github, project),
+    ).rejects.toThrow("Could not complete merged Human Review card");
+
+    expect(moveCard).toHaveBeenNthCalledWith(1, "card-1", "done", {
+      dueComplete: true,
+    });
+
+    expect(trello.clearWorkflowOwnership).toHaveBeenCalledWith(
+      "card-1",
+      "ownership-field",
+    );
+
+    expect(moveCard).toHaveBeenNthCalledWith(
+      2,
+      "card-1",
+      project.trello.reviewListId,
+    );
+  });
+
+  it("reports both ownership cleanup and rollback failures after Done", async () => {
+    const moveCard = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ...card,
+        idList: "done",
+      })
+      .mockRejectedValueOnce(new Error("rollback failed"));
+
+    const trello = {
+      getCards: vi.fn().mockResolvedValue([card]),
+      clearWorkflowOwnership: vi
+        .fn()
+        .mockRejectedValue(new Error("ownership clear failed")),
+      moveCard,
+    } as unknown as TrelloClient;
+
+    const git = {
+      remoteBranchExists: vi.fn().mockResolvedValue(false),
+      deleteRemoteBranch: vi.fn(),
+    } as unknown as GitClient;
+
+    const github = {
+      findMergedPullRequest: vi.fn().mockResolvedValue({
+        url: "https://github.com/owner/repo/pull/1",
+      }),
+    } as unknown as GitHubClient;
+
+    await expect(
+      reconcileReviewCards(trello, git, github, project),
+    ).rejects.toThrow(
+      "additionally could not restore card to Human Review: rollback failed",
+    );
+
+    expect(moveCard).toHaveBeenNthCalledWith(1, "card-1", "done", {
+      dueComplete: true,
+    });
+
+    expect(moveCard).toHaveBeenNthCalledWith(
+      2,
+      "card-1",
+      project.trello.reviewListId,
+    );
+
+    expect(trello.clearWorkflowOwnership).toHaveBeenCalledWith(
+      "card-1",
+      "ownership-field",
+    );
+  });
+
   it("moves a merged card to Done when the remote branch is already gone", async () => {
     const trello = {
       getCards: vi.fn().mockResolvedValue([card]),

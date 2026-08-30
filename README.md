@@ -144,11 +144,15 @@ card, and workflow is considered owned in `Working` or `Human Review`. Cards in 
 corrected to `Backlog`, without inspecting or changing Git, GitHub, or pull requests, and receive a Trello explanation.
 Malformed, conflicting, stale, or mismatched markers are never used to start work.
 
-The marker is written before a claimed card moves to `Working`. For terminal transitions, the card moves to `Backlog`,
-`Failed`, or `Done` before the marker is cleared, so a failed list move leaves an active card owned and recoverable. A
-marker write, clear, or list transition failure does not count as a successful workflow transition. If a card is left in
-`Working` after a failure, inspect its existing worktree, branch, and session log before retrying. To retry deliberately,
-move the card to `Ready for Agent`; cards in `Backlog` are not polled automatically.
+The marker is written before a claimed card moves to `Working`. For terminal or corrective transitions, the card moves to
+`Backlog`, `Failed`, or `Done` before the marker is cleared, so a failed destination move leaves the active card owned and
+recoverable. If the destination move succeeds but clearing the ownership marker fails, the orchestrator attempts to restore
+the card to its previous active or reconcilable list rather than leaving a valid ownership marker in a terminal or neutral
+state. If that rollback also fails, both failures are reported and the ambiguous Trello state requires manual inspection.
+A marker write, clear, or list transition failure does not count as a successful workflow transition. If a card is left in
+`Working` or `Human Review` after such a failure, inspect its existing worktree, branch, pull request, and session log before
+retrying. To retry deliberately, move the card to `Ready for Agent`; cards in `Backlog`, `Failed`, and `Done` are not
+automatically processed.
 
 ### Multi-project operation
 

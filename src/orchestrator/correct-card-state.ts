@@ -45,6 +45,29 @@ export async function correctCardToBacklog(
         `Card moved to Backlog, but could not clear the ownership marker: ${message}`,
       );
 
+      try {
+        await trello.moveCard(card.id, card.idList);
+
+        cardLog.error(
+          `Restored card to its original list after ownership cleanup failed`,
+        );
+      } catch (rollbackError) {
+        const rollbackMessage =
+          rollbackError instanceof Error
+            ? rollbackError.message
+            : String(rollbackError);
+
+        cardLog.error(
+          `Could not restore card to its original list after ownership cleanup failed: ${rollbackMessage}`,
+        );
+
+        throw new AggregateError(
+          [error, rollbackError],
+          `Could not clear the ownership marker after moving card to Backlog: ${message}; additionally could not restore card to its original list: ${rollbackMessage}`,
+          { cause: rollbackError },
+        );
+      }
+
       throw new WorkflowError(
         "Workflow",
         `Could not clear the ownership marker after moving card to Backlog: ${message}`,
