@@ -33,6 +33,11 @@ import {
 
 import { claimNextCard } from "./claim-next-card.js";
 import { claimNextRefinementCard } from "./claim-next-refinement-card.js";
+import {
+  formatFailureDiagnostic,
+  getExistingSessionLogPath,
+  toFailureError,
+} from "./failure-diagnostic.js";
 import { failCard } from "./fail-card.js";
 import { publishCard } from "./publish-card.js";
 import { PublishedCardStateError } from "./published-card-state-error.js";
@@ -88,11 +93,9 @@ async function runSetup(
       throw error;
     }
 
-    throw new WorkflowError(
-      "Setup",
-      error instanceof Error ? error.message : String(error),
-      { cause: error },
-    );
+    const setupError = toFailureError(error);
+
+    throw new WorkflowError("Setup", setupError.message, { cause: error });
   }
 }
 
@@ -241,13 +244,16 @@ export async function pollProject(
     }
 
     if (error instanceof PublishedCardStateError) {
+      const sessionLogPath = getExistingSessionLogPath(project.id, card.id);
+
       cardLog.error(
-        `${error.message}; leaving card in Working for reconciliation`,
+        formatFailureDiagnostic(error, {
+          ...(sessionLogPath === undefined ? {} : { sessionLogPath }),
+          handlingOutcome: "card left in Working for reconciliation",
+        }),
       );
       return;
     }
-
-    cardLog.error("Card workflow failed; moving to Failed...");
 
     await failCard(trello, project, card.id, error);
   }
@@ -338,8 +344,6 @@ async function processRefinementCard(
       }
     }
 
-    cardLog.error("Refinement workflow failed; moving to Failed...");
-
     await failCard(trello, project, card.id, error);
   }
 }
@@ -407,8 +411,6 @@ async function processReviewChangeRequest(
 
       return;
     }
-
-    cardLog.error("Review change workflow failed; moving to Failed...");
 
     await failCard(trello, project, card.id, error);
   }
