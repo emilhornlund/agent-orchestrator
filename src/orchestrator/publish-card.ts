@@ -41,11 +41,21 @@ export async function publishCard({
   let pullRequest;
 
   try {
-    cardLog.event(`Pushing branch ${branch}...`);
+    const remoteCommitSha =
+      typeof git.getRemoteBranchSha === "function"
+        ? await git.getRemoteBranchSha(worktreePath, "origin", branch)
+        : null;
 
-    await git.push(worktreePath, "origin", branch);
+    if (remoteCommitSha === commitSha) {
+      cardLog.event(`Branch ${branch} is already pushed at ${commitSha}`);
+    } else {
+      cardLog.event(`Pushing branch ${branch}...`);
 
-    cardLog.event("Branch pushed");
+      await git.push(worktreePath, "origin", branch);
+
+      cardLog.event("Branch pushed");
+    }
+
     cardLog.info("Checking for existing pull request...");
 
     pullRequest = await github.findPullRequest({

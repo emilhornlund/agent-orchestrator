@@ -94,6 +94,17 @@ export class GitClient {
     return this.runGit(repositoryPath, ["branch", "--show-current"]);
   }
 
+  async getChangedFiles(
+    repositoryPath: string,
+    baseRef: string,
+  ): Promise<string> {
+    return this.runGit(repositoryPath, [
+      "diff",
+      "--name-only",
+      `${baseRef}...HEAD`,
+    ]);
+  }
+
   async addWorktree(
     repositoryPath: string,
     worktreePath: string,
@@ -155,6 +166,16 @@ export class GitClient {
     remote: string,
     branch: string,
   ): Promise<boolean> {
+    return (
+      (await this.getRemoteBranchSha(repositoryPath, remote, branch)) !== null
+    );
+  }
+
+  async getRemoteBranchSha(
+    repositoryPath: string,
+    remote: string,
+    branch: string,
+  ): Promise<string | null> {
     const output = await this.runGit(repositoryPath, [
       "ls-remote",
       "--heads",
@@ -162,7 +183,41 @@ export class GitClient {
       `refs/heads/${branch}`,
     ]);
 
-    return output.length > 0;
+    const remoteOutput = output.trim();
+
+    if (remoteOutput.length === 0) {
+      return null;
+    }
+
+    const lines = remoteOutput.split(/\r?\n/);
+
+    if (lines.length !== 1) {
+      throw new Error(
+        `Git returned an invalid remote branch result for ${branch}`,
+      );
+    }
+
+    const fields = lines[0]?.split(/\s+/);
+
+    if (fields === undefined || fields.length !== 2) {
+      throw new Error(
+        `Git returned an invalid remote branch result for ${branch}`,
+      );
+    }
+
+    const [sha, ref] = fields;
+
+    if (
+      sha === undefined ||
+      sha.length === 0 ||
+      ref !== `refs/heads/${branch}`
+    ) {
+      throw new Error(
+        `Git returned an invalid remote branch result for ${branch}`,
+      );
+    }
+
+    return sha;
   }
 
   async deleteRemoteBranch(

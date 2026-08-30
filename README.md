@@ -114,6 +114,18 @@ the existing task branch, supplies the review feedback to OpenCode, and republis
 The orchestrator reconciles Trello state with Git and GitHub on every polling cycle. This allows it to recover from
 interrupted runs and handle already-existing branches or pull requests without blindly recreating workflow state.
 
+When a card is moved from `Failed` back to `Ready for Agent`, the orchestrator reuses the card's existing worktree and
+`agent/<trello-card-id>` branch when both are still valid. A clean branch with tracked changes relative to
+`origin/<defaultBranch>` is treated as committed implementation work. The retry skips setup, implementation, review,
+remediation, and commit, then resumes publication. It uses a normal non-force push when the remote branch is missing or
+does not yet point at that commit, checks for an existing open pull request, and creates one only when needed.
+
+An existing worktree or branch alone is not proof that implementation is complete. A branch at its base, a branch with no
+tracked committed changes, or a dirty worktree follows the normal implementation path; uncommitted work is preserved for
+OpenCode to inspect. If an open pull request already exists, the card is reconciled directly to `Human Review` without
+rerunning implementation or creating a duplicate pull request. Publication or Trello failures leave the card in its
+failure/reconciliation state instead of advancing it silently.
+
 ### Multi-project operation
 
 Multiple projects can be configured in a single `config.yaml`. Each project is polled independently with its own

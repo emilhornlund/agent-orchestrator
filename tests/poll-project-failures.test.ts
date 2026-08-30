@@ -32,11 +32,15 @@ interface ScenarioOptions {
   validationCommand?: string;
   statusOutputs?: string[];
   headOutputs?: string[];
+  changedFilesOutputs?: string[];
+  remoteBranchShaOutputs?: string[];
   openCodeResults?: TestOpenCodeRunResult[];
   writeRefinementResult?: boolean;
   refinementResult?: unknown;
   pushError?: Error;
+  pushErrors?: Array<Error | undefined>;
   pullRequestError?: Error;
+  pullRequestErrors?: Array<Error | undefined>;
   humanReviewError?: unknown;
   failureMoveError?: unknown;
 }
@@ -182,6 +186,8 @@ function createScenario(options: ScenarioOptions = {}): Scenario {
 
   const headOutputs = options.headOutputs ?? ["before-commit", "after-commit"];
   let headCall = 0;
+  const changedFilesOutputs = options.changedFilesOutputs ?? [];
+  const remoteBranchShaOutputs = options.remoteBranchShaOutputs ?? [];
 
   const runGit = vi.fn<RunGit>(async (_cwd, args) => {
     if (args[0] === "branch" && args[1] === "--show-current") {
@@ -207,10 +213,24 @@ function createScenario(options: ScenarioOptions = {}): Scenario {
       return output ?? "";
     }
 
+    if (args[0] === "diff") {
+      return changedFilesOutputs.shift() ?? "";
+    }
+
+    if (args[0] === "ls-remote") {
+      return remoteBranchShaOutputs.shift() ?? "";
+    }
+
     if (args[0] === "push") {
       events.push("push");
 
-      if (options.pushError !== undefined) {
+      if (options.pushErrors !== undefined) {
+        const pushError = options.pushErrors.shift();
+
+        if (pushError !== undefined) {
+          throw pushError;
+        }
+      } else if (options.pushError !== undefined) {
         throw options.pushError;
       }
     }
@@ -294,7 +314,13 @@ function createScenario(options: ScenarioOptions = {}): Scenario {
 
     events.push("pr");
 
-    if (options.pullRequestError !== undefined) {
+    if (options.pullRequestErrors !== undefined) {
+      const pullRequestError = options.pullRequestErrors.shift();
+
+      if (pullRequestError !== undefined) {
+        throw pullRequestError;
+      }
+    } else if (options.pullRequestError !== undefined) {
       throw options.pullRequestError;
     }
 
@@ -1246,6 +1272,58 @@ describe("pollProject failure boundaries", () => {
     );
   });
 
+  it("reuses a committed implementation after a push failure", async () => {
+    await withScenario(
+      {
+        changedFilesOutputs: ["", "src/example.ts"],
+        headOutputs: ["before-commit", "after-commit", "after-commit"],
+        remoteBranchShaOutputs: ["", ""],
+        pushErrors: [new Error("push failed"), undefined],
+      },
+      async (scenario) => {
+        await expect(
+          pollProject(
+            scenario.trello,
+            scenario.git,
+            scenario.github,
+            scenario.openCode,
+            scenario.commands,
+            scenario.project,
+            scenario.signal,
+          ),
+        ).rejects.toThrow("push failed");
+
+        await pollProject(
+          scenario.trello,
+          scenario.git,
+          scenario.github,
+          scenario.openCode,
+          scenario.commands,
+          scenario.project,
+          scenario.signal,
+        );
+
+        expect(scenario.runOpenCode).toHaveBeenCalledTimes(3);
+        expect(scenario.events).toEqual([
+          "move:working-list",
+          "opencode:1",
+          "opencode:2",
+          "opencode:3",
+          "push",
+          "move:failed-list",
+          "move:working-list",
+          "push",
+          "pr",
+          "move:review-list",
+        ]);
+        expect(scenario.trello.moveCard).toHaveBeenCalledWith(
+          scenario.card.id,
+          scenario.project.trello.reviewListId,
+        );
+      },
+    );
+  });
+
   it("does not move the card when PR creation fails", async () => {
     await withScenario(
       {
@@ -1268,6 +1346,106 @@ describe("pollProject failure boundaries", () => {
         expect(scenario.runGitHub).toHaveBeenCalledTimes(3);
         expect(scenario.events).not.toContain("move:review-list");
         expect(scenario.events).toContain("move:failed-list");
+      },
+    );
+  });
+
+  it("retries PR creation after a successful push without duplicating implementation", async () => {
+    await withScenario(
+      {
+        changedFilesOutputs: ["", "src/example.ts"],
+        headOutputs: ["before-commit", "after-commit", "after-commit"],
+        remoteBranchShaOutputs: ["", "after-commit\trefs/heads/agent/card-1"],
+        pullRequestErrors: [new Error("PR creation failed"), undefined],
+      },
+      async (scenario) => {
+        await expect(
+          pollProject(
+            scenario.trello,
+            scenario.git,
+            scenario.github,
+            scenario.openCode,
+            scenario.commands,
+            scenario.project,
+            scenario.signal,
+          ),
+        ).rejects.toThrow("PR creation failed");
+
+        await pollProject(
+          scenario.trello,
+          scenario.git,
+          scenario.github,
+          scenario.openCode,
+          scenario.commands,
+          scenario.project,
+          scenario.signal,
+        );
+
+        expect(scenario.runOpenCode).toHaveBeenCalledTimes(3);
+        expect(scenario.events).toEqual([
+          "move:working-list",
+          "opencode:1",
+          "opencode:2",
+          "opencode:3",
+          "push",
+          "pr",
+          "move:failed-list",
+          "move:working-list",
+          "pr",
+          "move:review-list",
+        ]);
+        expect(scenario.trello.moveCard).toHaveBeenCalledWith(
+          scenario.card.id,
+          scenario.project.trello.reviewListId,
+        );
+      },
+    );
+  });
+
+  it("restarts implementation for an incomplete dirty retry state", async () => {
+    await withScenario(
+      {
+        changedFilesOutputs: ["", ""],
+        headOutputs: ["before-commit", "after-commit"],
+        openCodeResults: [
+          { exitCode: 1, output: "implementation interrupted" },
+          { exitCode: 0, output: "" },
+          { exitCode: 0, output: "REVIEW_PASS" },
+          { exitCode: 0, output: "" },
+        ],
+        statusOutputs: [" M src/example.ts", " M src/example.ts", ""],
+      },
+      async (scenario) => {
+        await expect(
+          pollProject(
+            scenario.trello,
+            scenario.git,
+            scenario.github,
+            scenario.openCode,
+            scenario.commands,
+            scenario.project,
+            scenario.signal,
+          ),
+        ).rejects.toThrow("OpenCode implementation exited with code 1");
+
+        await pollProject(
+          scenario.trello,
+          scenario.git,
+          scenario.github,
+          scenario.openCode,
+          scenario.commands,
+          scenario.project,
+          scenario.signal,
+        );
+
+        expect(scenario.runOpenCode).toHaveBeenCalledTimes(4);
+        expect(scenario.runOpenCode.mock.calls[1]?.[0].model).toBe(
+          "implementation-model",
+        );
+        expect(scenario.trello.moveCard).toHaveBeenCalledWith(
+          scenario.card.id,
+          scenario.project.trello.reviewListId,
+        );
       },
     );
   });

@@ -77,8 +77,11 @@ describe("publishCard", () => {
   it("pushes, creates the PR, and moves the card in order", async () => {
     const events: string[] = [];
 
-    const runGit = vi.fn<RunGit>(async () => {
-      events.push("push");
+    const runGit = vi.fn<RunGit>(async (_cwd, args) => {
+      if (args[0] === "push") {
+        events.push("push");
+      }
+
       return "";
     });
 
@@ -199,8 +202,11 @@ describe("publishCard", () => {
   it("reuses an existing pull request instead of creating another one", async () => {
     const events: string[] = [];
 
-    const runGit = vi.fn<RunGit>(async () => {
-      events.push("push");
+    const runGit = vi.fn<RunGit>(async (_cwd, args) => {
+      if (args[0] === "push") {
+        events.push("push");
+      }
+
       return "";
     });
 
@@ -249,6 +255,61 @@ describe("publishCard", () => {
     expect(events).toEqual(["push", "find-pr", "move", "comment"]);
 
     expect(runGitHubCommand).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not push again when the remote branch already has the commit", async () => {
+    const runGit = vi.fn<RunGit>(async (_cwd, args) => {
+      if (args[0] === "ls-remote") {
+        return "abc123\trefs/heads/agent/card-1";
+      }
+
+      throw new Error("The already-published branch should not be pushed");
+    });
+
+    const runGitHubCommand = vi.fn<RunGitHubCommand>(async (_cwd, args) => {
+      if (args[0] === "pr" && args[1] === "list") {
+        return "";
+      }
+
+      return "https://github.com/example/repository/pull/123";
+    });
+
+    const trello = new TrelloClient({
+      apiKey: "test-key",
+      token: "test-token",
+    });
+
+    const moveCard = vi.spyOn(trello, "moveCard").mockResolvedValue({
+      ...createCard(),
+      idList: "review-list",
+    });
+
+    vi.spyOn(trello, "addComment").mockResolvedValue({
+      id: "action-1",
+      type: "commentCard",
+      date: "2026-08-22T09:00:00.000Z",
+    });
+
+    await publishCard({
+      trello,
+      git: new GitClient(runGit),
+      github: new GitHubClient(runGitHubCommand),
+      project: createProject(),
+      card: createCard(),
+      worktreePath: "/tmp/example-worktrees/card-1",
+      branch: "agent/card-1",
+      commitSha: "abc123",
+      reviewResult: "Passed",
+      remediationResult: "Not required",
+    });
+
+    expect(runGit).not.toHaveBeenCalledWith("/tmp/example-worktrees/card-1", [
+      "push",
+      "--set-upstream",
+      "origin",
+      "agent/card-1",
+    ]);
+    expect(moveCard).toHaveBeenCalledWith("card-1", "review-list");
   });
 
   it("stops before PR lookup when pushing fails", async () => {
@@ -323,6 +384,51 @@ describe("publishCard", () => {
       expect(workflowError.message).toBe("push failed");
       expect(workflowError.cause).toBe(pushError);
     }
+  });
+
+  it("classifies remote branch inspection failures as Git/GitHub errors", async () => {
+    const remoteInspectionError = new Error("remote inspection failed");
+    const trello = {
+      moveCard: vi.fn(),
+      addComment: vi.fn(),
+    } as unknown as TrelloClient;
+    const git = {
+      getRemoteBranchSha: vi.fn().mockRejectedValue(remoteInspectionError),
+      push: vi.fn(),
+    } as unknown as GitClient;
+    const github = {
+      findPullRequest: vi.fn(),
+      createPullRequest: vi.fn(),
+    } as unknown as GitHubClient;
+
+    try {
+      await publishCard({
+        trello,
+        git,
+        github,
+        project: createProject(),
+        card: createCard(),
+        worktreePath: "/worktree",
+        branch: "agent/card-1",
+        commitSha: "commit-sha",
+        reviewResult: "Passed",
+        remediationResult: "Not required",
+      });
+
+      throw new Error("Expected publishCard to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(WorkflowError);
+
+      const workflowError = error as WorkflowError;
+
+      expect(workflowError.category).toBe("Git/GitHub");
+      expect(workflowError.message).toBe("remote inspection failed");
+      expect(workflowError.cause).toBe(remoteInspectionError);
+    }
+
+    expect(git.push).not.toHaveBeenCalled();
+    expect(github.findPullRequest).not.toHaveBeenCalled();
+    expect(trello.moveCard).not.toHaveBeenCalled();
   });
 
   it("preserves structured publication failures in the workflow error", async () => {
