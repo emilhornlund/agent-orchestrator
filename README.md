@@ -2,9 +2,11 @@
 
 # Agent Orchestrator
 
-Agent Orchestrator is a local automation service that turns Trello cards into reviewed GitHub pull requests using OpenCode.
+Agent Orchestrator is a local automation service that turns Trello cards into reviewed GitHub pull requests using
+OpenCode.
 
-It coordinates Trello, Git worktrees, OpenCode, and GitHub into a controlled software-engineering workflow while keeping human approval at the merge boundary.
+It coordinates Trello, Git worktrees, OpenCode, and GitHub into a controlled software-engineering workflow while keeping
+human approval at the merge boundary.
 
 ## How it works
 
@@ -15,7 +17,9 @@ Each configured project connects:
 - a Trello board;
 - an OpenCode model and runtime configuration.
 
-The orchestrator continuously polls each project and drives cards through the workflow:
+The orchestrator continuously polls each project and drives eligible implementation cards through the workflow. Cards in
+`Ready for Agent` are eligible only when they have the configured `Feature`, `Improvement`, or `Bug` label and do not
+have the configured `Refinement` label:
 
 ```text
 Ready for Agent
@@ -49,7 +53,8 @@ Failures during automated processing move the card to `Failed` rather than silen
 
 ### Isolated execution
 
-Agent work runs in dedicated Git worktrees and task branches. The configured source checkout is not used as the agent's working directory.
+Agent work runs in dedicated Git worktrees and task branches. The configured source checkout is not used as the agent's
+working directory.
 
 Branches follow the convention:
 
@@ -71,15 +76,18 @@ The review phase evaluates the completed change independently before the branch 
 
 ### Pull request feedback loop
 
-When GitHub reports requested changes, the orchestrator moves the Trello card back to `Working`, creates a worktree from the existing task branch, supplies the review feedback to OpenCode, and republishes the updated branch.
+When GitHub reports requested changes, the orchestrator moves the Trello card back to `Working`, creates a worktree from
+the existing task branch, supplies the review feedback to OpenCode, and republishes the updated branch.
 
 ### Recovery and reconciliation
 
-The orchestrator reconciles Trello state with Git and GitHub on every polling cycle. This allows it to recover from interrupted runs and handle already-existing branches or pull requests without blindly recreating workflow state.
+The orchestrator reconciles Trello state with Git and GitHub on every polling cycle. This allows it to recover from
+interrupted runs and handle already-existing branches or pull requests without blindly recreating workflow state.
 
 ### Multi-project operation
 
-Multiple projects can be configured in a single `config.yaml`. Each project is polled independently with its own repository, Trello board, worktree root, and OpenCode configuration.
+Multiple projects can be configured in a single `config.yaml`. Each project is polled independently with its own
+repository, Trello board, worktree root, and OpenCode configuration.
 
 ## Requirements
 
@@ -122,11 +130,16 @@ projects:
 
     trello:
       boardId: "board-id"
+      backlogListId: "backlog-list-id"
       readyListId: "ready-list-id"
       workingListId: "working-list-id"
       reviewListId: "review-list-id"
       failedListId: "failed-list-id"
       doneListId: "done-list-id"
+      refinementLabelId: "refinement-label-id"
+      featureLabelId: "feature-label-id"
+      improvementLabelId: "improvement-label-id"
+      bugLabelId: "bug-label-id"
 
     repository:
       path: "/absolute/path/to/repository"
@@ -135,6 +148,10 @@ projects:
       worktreeRoot: "/absolute/path/to/worktrees/repository"
       setupCommand: "yarn install"
       validationCommand: "yarn validate"
+      gitIdentity:
+        name: "Agent Orchestrator"
+        email: "agent-orchestrator@users.noreply.github.com"
+        signingKey: "/absolute/path/to/signing-key"
 
     opencode:
       timeoutMinutes: 360
@@ -155,23 +172,44 @@ workflow:
   pollIntervalSeconds: 15
 ```
 
-`setupCommand` and `validationCommand` are optional. When configured, `setupCommand` runs in the card worktree before the OpenCode implementation session. `validationCommand` is passed to OpenCode sessions that modify implementation files, and those agents run it before finishing and fix failures caused by their changes. The orchestrator does not execute the validation command itself.
+`setupCommand` and `validationCommand` are optional. When configured, `setupCommand` runs in the card worktree before
+the OpenCode implementation session. `validationCommand` is passed to OpenCode sessions that modify implementation
+files, and those agents run it before finishing and fix failures caused by their changes. The orchestrator does not
+execute the validation command itself.
 
 `config.yaml` and `.env` are local files and are intentionally excluded from version control.
 
 ## Trello board
 
-Each project requires five configured lists:
+Each project requires six configured workflow lists:
 
 | List              | Purpose                                                       |
 | ----------------- | ------------------------------------------------------------- |
+| `Backlog`         | Tasks that are not currently queued for automated processing  |
 | `Ready for Agent` | Tasks waiting to be claimed                                   |
 | `Working`         | Tasks currently under automated implementation or remediation |
 | `Human Review`    | Tasks with a published pull request awaiting human review     |
 | `Failed`          | Tasks that could not complete the automated workflow          |
 | `Done`            | Tasks whose pull requests have been merged                    |
 
-The configured list names themselves are not significant; the orchestrator uses their Trello list IDs.
+Each project also requires four configured workflow labels:
+
+| Label         | Purpose                                                |
+| ------------- | ------------------------------------------------------ |
+| `Refinement`  | Marks a task for refinement rather than implementation |
+| `Feature`     | Classifies the card as feature implementation work     |
+| `Improvement` | Classifies the card as improvement implementation work |
+| `Bug`         | Classifies the card as bug-fix implementation work     |
+
+The configured list and label names themselves are not significant; the orchestrator uses their Trello IDs.
+
+For normal implementation, a card in `Ready for Agent` must have at least one of the configured `Feature`,
+`Improvement`, or `Bug` labels. Unlabelled cards are ignored.
+
+The configured `Refinement` label takes precedence over implementation labels. A card carrying `Refinement` is not
+claimed by the normal implementation workflow, even if it also carries `Feature`, `Improvement`, or `Bug`.
+
+Refinement processing itself is not currently part of the automated workflow.
 
 ## Running
 
@@ -236,19 +274,42 @@ yarn build
 
 ### `projects[].id`
 
-Unique identifier used to distinguish projects in configuration and logs.
+Non-empty identifier used to distinguish projects in configuration and logs. Project IDs must be unique.
 
 ### `projects[].trello`
 
-Trello board and workflow list IDs for the project.
+Trello board, workflow list, and workflow label IDs for the project.
+
+The configured fields are:
+
+- `boardId` — Trello board containing the workflow.
+- `backlogListId` — Backlog list.
+- `readyListId` — list from which eligible implementation cards are claimed.
+- `workingListId` — list used while automated work is in progress.
+- `reviewListId` — list used while a published pull request awaits human review.
+- `failedListId` — list used for failed automated work.
+- `doneListId` — list used after the associated pull request is merged.
+- `refinementLabelId` — label that excludes a card from normal implementation and identifies it for future refinement
+  processing.
+- `featureLabelId` — Feature implementation classification.
+- `improvementLabelId` — Improvement implementation classification.
+- `bugLabelId` — Bug implementation classification.
+
+All configured workflow list IDs must be unique. All configured workflow label IDs must also be unique.
+
+At startup, the orchestrator verifies that every configured workflow list exists and is open on the configured board,
+and that every configured workflow label exists on that board.
+
+Each configured project must use a different Trello board.
 
 ### `projects[].repository.path`
 
-Absolute path to the normal local checkout of the repository.
+Absolute path to the normal local checkout of the repository. Repository paths must be unique across configured
+projects.
 
 ### `projects[].repository.github`
 
-GitHub repository in `owner/repository` format.
+GitHub repository in `owner/repository` format. GitHub repositories must be unique across configured projects.
 
 ### `projects[].repository.defaultBranch`
 
@@ -256,7 +317,8 @@ Base branch used for task branches and pull requests.
 
 ### `projects[].repository.worktreeRoot`
 
-Directory under which isolated agent worktrees are created.
+Absolute directory under which isolated agent worktrees are created. Worktree roots must be unique across configured
+projects.
 
 ### `projects[].repository.setupCommand`
 
@@ -264,7 +326,21 @@ Optional command executed in the card worktree before the OpenCode implementatio
 
 ### `projects[].repository.validationCommand`
 
-Optional command executed by the orchestrator after implementation.
+Optional repository validation command supplied to OpenCode sessions that modify implementation files. Those agents run
+the command before finishing and address failures caused by their changes. The orchestrator does not execute the command
+itself.
+
+### `projects[].repository.gitIdentity`
+
+Git identity used when the orchestrator creates commits for the project.
+
+`gitIdentity` is required and contains:
+
+- `name` — non-empty Git commit author and committer name.
+- `email` — valid Git commit author and committer email address.
+- `signingKey` — optional absolute path to the SSH signing key used for signed commits.
+
+When `signingKey` is configured, the key must be available at that path in the environment where the orchestrator runs.
 
 ### `projects[].opencode.implementation`
 
@@ -284,11 +360,12 @@ Model and variant used for the final commit session.
 
 ### `projects[].opencode.timeoutMinutes`
 
-Maximum runtime for an individual OpenCode execution across all workflow stages.
+Maximum runtime in minutes for an individual OpenCode execution across all workflow stages. Must be positive and
+defaults to `360` when omitted.
 
 ### `workflow.pollIntervalSeconds`
 
-Interval between project polling cycles.
+Interval in seconds between project polling cycles. Must be a positive integer.
 
 ## Safety boundaries
 
@@ -303,4 +380,5 @@ It does not:
 - silently discard failed agent work;
 - delete arbitrary or unrecognized worktrees.
 
-The orchestrator owns workflow coordination. OpenCode owns software-engineering execution. Humans retain final approval through GitHub review and merge.
+The orchestrator owns workflow coordination. OpenCode owns software-engineering execution. Humans retain final approval
+through GitHub review and merge.
