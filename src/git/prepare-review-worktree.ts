@@ -29,9 +29,25 @@ export async function prepareReviewWorktree(
 
   fs.mkdirSync(worktreeRoot, { recursive: true });
 
+  const worktreeStat = fs.lstatSync(worktreePath, { throwIfNoEntry: false });
+
+  if (worktreeStat !== undefined) {
+    if (worktreeStat.isSymbolicLink()) {
+      throw new Error(`Refusing to use symbolic-link worktree ${worktreePath}`);
+    }
+
+    if (!worktreeStat.isDirectory()) {
+      throw new Error(`Refusing to use non-directory worktree ${worktreePath}`);
+    }
+  }
+
   await git.fetch(repositoryPath, "origin", branch);
 
-  if (fs.existsSync(worktreePath)) {
+  const existingWorktreeStat = fs.lstatSync(worktreePath, {
+    throwIfNoEntry: false,
+  });
+
+  if (existingWorktreeStat !== undefined) {
     const currentBranch = await git.getCurrentBranch(worktreePath);
 
     if (currentBranch !== branch) {

@@ -180,12 +180,17 @@ export class TrelloClient {
     destinationListId: string,
   ): Promise<TrelloListTransition | null> {
     const actions = await this.getCardActions(cardId);
+    let hasIncompleteListTransition = false;
     const transitions = actions
       .flatMap((action) => {
         const listBefore = action.data?.listBefore;
         const listAfter = action.data?.listAfter;
 
         if (listBefore === undefined || listAfter === undefined) {
+          if (listBefore !== undefined || listAfter !== undefined) {
+            hasIncompleteListTransition = true;
+          }
+
           return [];
         }
 
@@ -199,6 +204,10 @@ export class TrelloClient {
         ];
       })
       .sort((left, right) => Date.parse(right.date) - Date.parse(left.date));
+
+    if (hasIncompleteListTransition) {
+      return null;
+    }
 
     return (
       transitions.find(

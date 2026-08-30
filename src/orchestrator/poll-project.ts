@@ -157,6 +157,7 @@ export async function pollProject(
     git,
     github,
     project,
+    { moveRequestedChanges: workingChangeRequest === null },
   );
 
   if (signal.aborted) {

@@ -183,6 +183,107 @@ describe("pollProject", () => {
     });
   });
 
+  it("does not move a requested-change review card when a Working card is recoverable", async () => {
+    const worktreeRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), "agent-orchestrator-concurrency-"),
+    );
+    const worktreePath = path.join(worktreeRoot, "working-card");
+    fs.mkdirSync(worktreePath);
+
+    const project = {
+      id: "project-1",
+      repository: {
+        path: "/repo",
+        github: "owner/repo",
+        worktreeRoot,
+      },
+      trello: {
+        readyListId: "ready",
+        workingListId: "working",
+        reviewListId: "review",
+        backlogListId: "backlog",
+        failedListId: "failed",
+        doneListId: "done",
+        refinementLabelId: "refinement",
+        featureLabelId: "feature",
+        improvementLabelId: "improvement",
+        bugLabelId: "bug",
+      },
+    } as ProjectConfig;
+    const workingCard: TrelloCard = {
+      id: "working-card",
+      name: "Recoverable implementation",
+      desc: "",
+      idList: "working",
+      idLabels: ["feature"],
+      url: "https://trello.com/c/working-card",
+    };
+    const reviewCard: TrelloCard = {
+      id: "review-card",
+      name: "Requested changes",
+      desc: "",
+      idList: "review",
+      idLabels: ["feature"],
+      url: "https://trello.com/c/review-card",
+    };
+    const trello = {
+      getCards: vi
+        .fn()
+        .mockImplementation(async (listId: string) =>
+          listId === "working" ? [workingCard] : [reviewCard],
+        ),
+      getLatestListTransition: vi.fn().mockResolvedValue({
+        id: "action-1",
+        date: "2026-08-30T10:00:00.000Z",
+        listBeforeId: "ready",
+        listAfterId: "working",
+      }),
+      moveCard: vi.fn(),
+    } as unknown as TrelloClient;
+    const git = {
+      getCurrentBranch: vi.fn().mockResolvedValue("agent/working-card"),
+    } as unknown as GitClient;
+    const github = {
+      findMergedPullRequest: vi.fn().mockResolvedValue(null),
+      findClosedPullRequest: vi.fn().mockResolvedValue(null),
+      findPullRequest: vi
+        .fn()
+        .mockImplementation(async ({ headBranch }: { headBranch: string }) =>
+          headBranch === "agent/review-card"
+            ? { url: "https://github.com/owner/repo/pull/2" }
+            : null,
+        ),
+      findChangesRequestedPullRequest: vi
+        .fn()
+        .mockImplementation(async ({ headBranch }: { headBranch: string }) =>
+          headBranch === "agent/review-card"
+            ? {
+                url: "https://github.com/owner/repo/pull/2",
+                feedback: "Fix this.",
+              }
+            : null,
+        ),
+    } as unknown as GitHubClient;
+
+    try {
+      await expect(
+        pollProject(
+          trello,
+          git,
+          github,
+          {} as OpenCodeClient,
+          {} as CommandRunner,
+          project,
+          new AbortController().signal,
+        ),
+      ).rejects.toThrow("Cannot process workflow cards in both Human Review");
+
+      expect(trello.moveCard).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(worktreeRoot, { recursive: true, force: true });
+    }
+  });
+
   it("routes refinement cards through refinement and returns them to Backlog", async () => {
     const events: string[] = [];
 

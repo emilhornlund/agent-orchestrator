@@ -27,6 +27,10 @@ interface ReviewCardState {
   changesRequested?: ReviewChangeRequest;
 }
 
+interface ReconcileReviewCardsOptions {
+  moveRequestedChanges?: boolean;
+}
+
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -36,6 +40,7 @@ export async function reconcileReviewCards(
   git: GitClient,
   github: GitHubClient,
   project: ProjectConfig,
+  options: ReconcileReviewCardsOptions = {},
 ): Promise<ReviewChangeRequest | ActiveReviewCard | null> {
   const projectLog = logger.child({
     projectId: project.id,
@@ -68,8 +73,10 @@ export async function reconcileReviewCards(
     states.push(state);
   }
 
-  if (states.length > 1) {
-    const cardIds = states.map((state) => state.card.id).join(", ");
+  const activeStates = states.filter((state) => !isTerminalReviewState(state));
+
+  if (activeStates.length > 1) {
+    const cardIds = activeStates.map((state) => state.card.id).join(", ");
 
     projectLog.error(
       `Found multiple active cards in Human Review: ${cardIds}; blocking the project until the ambiguous state is resolved`,
@@ -81,7 +88,36 @@ export async function reconcileReviewCards(
     );
   }
 
-  const state = states[0];
+  for (const state of states) {
+    if (isTerminalReviewState(state)) {
+      const cardLog = logger.child({
+        projectId: project.id,
+        cardId: state.card.id,
+      });
+
+      if (state.mergedPullRequest !== undefined) {
+        await completeMergedReviewCard(
+          trello,
+          git,
+          project,
+          state.card,
+          state.branch,
+          state.mergedPullRequest,
+          cardLog,
+        );
+      } else if (state.closedPullRequest !== undefined) {
+        await failClosedReviewCard(
+          trello,
+          project,
+          state.card,
+          state.closedPullRequest,
+          cardLog,
+        );
+      }
+    }
+  }
+
+  const state = activeStates[0];
 
   if (state === undefined) {
     return null;
@@ -92,50 +128,30 @@ export async function reconcileReviewCards(
     cardId: state.card.id,
   });
 
-  if (state.mergedPullRequest !== undefined) {
-    await completeMergedReviewCard(
-      trello,
-      git,
-      project,
-      state.card,
-      state.branch,
-      state.mergedPullRequest,
-      cardLog,
-    );
-
-    return null;
-  }
-
-  if (state.closedPullRequest !== undefined) {
-    await failClosedReviewCard(
-      trello,
-      project,
-      state.card,
-      state.closedPullRequest,
-      cardLog,
-    );
-
-    return null;
-  }
-
   if (state.changesRequested !== undefined) {
-    try {
-      await trello.moveCard(state.card.id, project.trello.workingListId);
-    } catch (error) {
-      const message = getErrorMessage(error);
+    if (options.moveRequestedChanges !== false) {
+      try {
+        await trello.moveCard(state.card.id, project.trello.workingListId);
+      } catch (error) {
+        const message = getErrorMessage(error);
 
-      cardLog.error(
-        `Failed to move card "${state.card.name}" to Working for requested changes: ${message}`,
-      );
+        cardLog.error(
+          `Failed to move card "${state.card.name}" to Working for requested changes: ${message}`,
+        );
 
-      throw new WorkflowError(
-        "Workflow",
-        `Could not move Human Review card to Working for requested changes: ${message}`,
-        { cause: error },
+        throw new WorkflowError(
+          "Workflow",
+          `Could not move Human Review card to Working for requested changes: ${message}`,
+          { cause: error },
+        );
+      }
+
+      cardLog.event("Card with requested changes moved to Working");
+    } else {
+      cardLog.event(
+        "Card with requested changes remains in Human Review while another workflow card is active",
       );
     }
-
-    cardLog.event("Card with requested changes moved to Working");
 
     return state.changesRequested;
   }
@@ -146,6 +162,13 @@ export async function reconcileReviewCards(
     card: state.card,
     active: true,
   };
+}
+
+function isTerminalReviewState(state: ReviewCardState): boolean {
+  return (
+    state.mergedPullRequest !== undefined ||
+    state.closedPullRequest !== undefined
+  );
 }
 
 async function inspectReviewCard(

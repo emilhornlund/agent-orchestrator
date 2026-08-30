@@ -236,6 +236,41 @@ describe("TrelloClient", () => {
     ).resolves.toBeNull();
   });
 
+  it("does not use an incomplete list transition as older evidence", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify([
+          {
+            id: "action-old",
+            type: "updateCard",
+            date: "2026-08-30T09:00:00.000Z",
+            data: {
+              listBefore: { id: "ready-list" },
+              listAfter: { id: "working-list" },
+            },
+          },
+          {
+            id: "action-new",
+            type: "updateCard",
+            date: "2026-08-30T10:00:00.000Z",
+            data: {
+              listAfter: { id: "working-list" },
+            },
+          },
+        ]),
+        { status: 200 },
+      ),
+    );
+    const client = new TrelloClient({
+      apiKey: "test-key",
+      token: "test-token",
+    });
+
+    await expect(
+      client.getLatestListTransition("card-1", "working-list"),
+    ).resolves.toBeNull();
+  });
+
   it("rejects a malformed card response instead of returning unchecked data", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify([{ id: "card-1", name: "Incomplete" }]), {

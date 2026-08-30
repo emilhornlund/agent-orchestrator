@@ -83,6 +83,41 @@ afterEach(() => {
 });
 
 describe("prepareReviewWorktree", () => {
+  it("rejects a symbolic-link worktree before using it", async () => {
+    const worktreeRoot = createTemporaryDirectory();
+    const worktreePath = path.join(worktreeRoot, "card-123");
+    const sourcePath = path.join(worktreeRoot, "source");
+
+    fs.mkdirSync(sourcePath);
+    fs.symlinkSync(sourcePath, worktreePath, "dir");
+
+    const project = createProject(worktreeRoot);
+    const runGit = vi.fn<RunGit>();
+    const git = new GitClient(runGit);
+
+    await expect(
+      prepareReviewWorktree(git, project, "card-123"),
+    ).rejects.toThrow(`Refusing to use symbolic-link worktree ${worktreePath}`);
+    expect(runGit).not.toHaveBeenCalled();
+  });
+
+  it("rejects a dangling symbolic-link worktree before deleting its branch", async () => {
+    const worktreeRoot = createTemporaryDirectory();
+    const worktreePath = path.join(worktreeRoot, "card-123");
+    const missingTargetPath = path.join(worktreeRoot, "missing-target");
+
+    fs.symlinkSync(missingTargetPath, worktreePath, "dir");
+
+    const project = createProject(worktreeRoot);
+    const runGit = vi.fn<RunGit>();
+    const git = new GitClient(runGit);
+
+    await expect(
+      prepareReviewWorktree(git, project, "card-123"),
+    ).rejects.toThrow(`Refusing to use symbolic-link worktree ${worktreePath}`);
+    expect(runGit).not.toHaveBeenCalled();
+  });
+
   it("creates the worktree from the existing remote PR branch", async () => {
     const worktreeRoot = createTemporaryDirectory();
     const project = createProject(worktreeRoot);

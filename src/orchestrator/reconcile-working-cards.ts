@@ -43,11 +43,23 @@ export async function reconcileClaimedCard(
     cardId: card.id,
   });
 
-  const pullRequest = await github.findPullRequest({
-    cwd: project.repository.path,
-    repository: project.repository.github,
-    headBranch: branch,
-  });
+  let pullRequest;
+
+  try {
+    pullRequest = await github.findPullRequest({
+      cwd: project.repository.path,
+      repository: project.repository.github,
+      headBranch: branch,
+    });
+  } catch (error) {
+    const message = getErrorMessage(error);
+
+    throw new WorkflowError(
+      "Git/GitHub",
+      `Could not reconcile claimed Working card: ${message}`,
+      { cause: error },
+    );
+  }
 
   if (!pullRequest) {
     return false;
@@ -327,11 +339,23 @@ async function reconcileReviewToWorkingCard(
     cardId: card.id,
   });
 
-  const pullRequest = await github.findPullRequest({
-    cwd: project.repository.path,
-    repository: project.repository.github,
-    headBranch: branch,
-  });
+  let pullRequest;
+
+  try {
+    pullRequest = await github.findPullRequest({
+      cwd: project.repository.path,
+      repository: project.repository.github,
+      headBranch: branch,
+    });
+  } catch (error) {
+    const message = getErrorMessage(error);
+
+    throw new WorkflowError(
+      "Git/GitHub",
+      `Could not reconcile Working card moved from Human Review: ${message}`,
+      { cause: error },
+    );
+  }
 
   if (!pullRequest) {
     await correctCardToBacklog(
@@ -344,12 +368,23 @@ async function reconcileReviewToWorkingCard(
     return null;
   }
 
-  const changesRequestedPullRequest =
-    await github.findChangesRequestedPullRequest({
+  let changesRequestedPullRequest;
+
+  try {
+    changesRequestedPullRequest = await github.findChangesRequestedPullRequest({
       cwd: project.repository.path,
       repository: project.repository.github,
       headBranch: branch,
     });
+  } catch (error) {
+    const message = getErrorMessage(error);
+
+    throw new WorkflowError(
+      "Git/GitHub",
+      `Could not check requested changes for Working card moved from Human Review: ${message}`,
+      { cause: error },
+    );
+  }
 
   if (!changesRequestedPullRequest) {
     await correctCardToBacklog(
