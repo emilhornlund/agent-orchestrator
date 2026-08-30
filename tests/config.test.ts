@@ -7,6 +7,7 @@ projects:
 
     trello:
       boardId: "board-one"
+      ownershipCustomFieldId: "ownership"
       backlogListId: "backlog"
       readyListId: "ready"
       workingListId: "working"
@@ -62,6 +63,7 @@ describe("parseConfig", () => {
     expect(project!.id).toBe("project-one");
     expect(project!.trello).toEqual({
       boardId: "board-one",
+      ownershipCustomFieldId: "ownership",
       backlogListId: "backlog",
       readyListId: "ready",
       workingListId: "working",
@@ -171,6 +173,7 @@ describe("parseConfig", () => {
 
     trello:
       boardId: "board-two"
+      ownershipCustomFieldId: "ownership-two"
       backlogListId: "backlog-two"
       readyListId: "ready-two"
       workingListId: "working-two"
@@ -293,6 +296,7 @@ workflow:
 
     trello:
       boardId: "board-two"
+      ownershipCustomFieldId: "ownership-two"
       backlogListId: "backlog-two"
       readyListId: "ready-two"
       workingListId: "working-two"
@@ -346,6 +350,7 @@ workflow:`,
 
     trello:
       boardId: "board-two"
+      ownershipCustomFieldId: "ownership-two"
       backlogListId: "backlog-two"
       readyListId: "ready-two"
       workingListId: "working-two"
@@ -401,6 +406,7 @@ workflow:`,
 
     trello:
       boardId: "board-one"
+      ownershipCustomFieldId: "ownership-two"
       backlogListId: "backlog-two"
       readyListId: "ready-two"
       workingListId: "working-two"
@@ -487,6 +493,7 @@ workflow:`,
 
     trello:
       boardId: "board-two"
+      ownershipCustomFieldId: "ownership-two"
       backlogListId: "backlog-two"
       readyListId: "ready-two"
       workingListId: "working-two"

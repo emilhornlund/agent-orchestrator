@@ -89,6 +89,7 @@ function createScenario(options: ScenarioOptions = {}): Scenario {
     id: "example",
     trello: {
       boardId: "board",
+      ownershipCustomFieldId: "ownership-field",
       backlogListId: "backlog-list",
       readyListId: "ready-list",
       workingListId: "working-list",
@@ -145,6 +146,9 @@ function createScenario(options: ScenarioOptions = {}): Scenario {
     apiKey: "test-key",
     token: "test-token",
   });
+
+  vi.spyOn(trello, "setWorkflowOwnership").mockResolvedValue(undefined);
+  vi.spyOn(trello, "clearWorkflowOwnership").mockResolvedValue(undefined);
 
   vi.spyOn(trello, "getCards").mockImplementation(async (listId) => {
     if (listId === project.trello.workingListId) {

@@ -126,6 +126,34 @@ OpenCode to inspect. If an open pull request already exists, the card is reconci
 rerunning implementation or creating a duplicate pull request. Publication or Trello failures leave the card in its
 failure/reconciliation state instead of advancing it silently.
 
+Each project also uses a Trello text custom field as its workflow ownership marker. Create the field on the project board,
+then set its ID as `ownershipCustomFieldId`. The orchestrator writes this exact JSON shape when it claims a card:
+
+```json
+{
+  "version": 1,
+  "owner": "agent-orchestrator",
+  "projectId": "my-project",
+  "cardId": "trello-card-id",
+  "workflow": "implementation"
+}
+```
+
+The `workflow` value is either `implementation` or `refinement`. Only a card with a valid marker for the current project,
+card, and workflow is considered owned in `Working` or `Human Review`. Cards in those lists without a valid marker are
+corrected to `Backlog`, without inspecting or changing Git, GitHub, or pull requests, and receive a Trello explanation.
+Malformed, conflicting, stale, or mismatched markers are never used to start work.
+
+The marker is written before a claimed card moves to `Working`. For terminal or corrective transitions, the card moves to
+`Backlog`, `Failed`, or `Done` before the marker is cleared, so a failed destination move leaves the active card owned and
+recoverable. If the destination move succeeds but clearing the ownership marker fails, the orchestrator attempts to restore
+the card to its previous active or reconcilable list rather than leaving a valid ownership marker in a terminal or neutral
+state. If that rollback also fails, both failures are reported and the ambiguous Trello state requires manual inspection.
+A marker write, clear, or list transition failure does not count as a successful workflow transition. If a card is left in
+`Working` or `Human Review` after such a failure, inspect its existing worktree, branch, pull request, and session log before
+retrying. To retry deliberately, move the card to `Ready for Agent`; cards in `Backlog`, `Failed`, and `Done` are not
+automatically processed.
+
 ### Multi-project operation
 
 Multiple projects can be configured in a single `config.yaml`. Each project is polled independently with its own
@@ -172,6 +200,7 @@ projects:
 
     trello:
       boardId: "board-id"
+      ownershipCustomFieldId: "agent-orchestrator-ownership-custom-field-id"
       backlogListId: "backlog-list-id"
       readyListId: "ready-list-id"
       workingListId: "working-list-id"
@@ -345,6 +374,7 @@ Trello board, workflow list, and workflow label IDs for the project.
 The configured fields are:
 
 - `boardId` — Trello board containing the workflow.
+- `ownershipCustomFieldId` — text custom field used to identify orchestrator-owned workflow cards.
 - `backlogListId` — Backlog list.
 - `readyListId` — list from which eligible implementation cards are claimed.
 - `workingListId` — list used while automated work is in progress.
@@ -359,7 +389,7 @@ The configured fields are:
 All configured workflow list IDs must be unique. All configured workflow label IDs must also be unique.
 
 At startup, the orchestrator verifies that every configured workflow list exists and is open on the configured board,
-and that every configured workflow label exists on that board.
+that every configured workflow label exists on that board, and that `ownershipCustomFieldId` exists as a text custom field.
 
 Each configured project must use a different Trello board.
 
@@ -438,10 +468,12 @@ Agent Orchestrator deliberately keeps several operations outside automated contr
 
 It does not:
 
-- merge pull requests;
-- force-push task branches;
-- run agent implementation directly in the source checkout;
-- treat failed external operations as successful workflow transitions;
+    - merge pull requests;
+    - force-push task branches;
+    - run agent implementation directly in the source checkout;
+    - start or resume work for an unowned `Working` or `Human Review` card;
+    - treat failed external operations as successful workflow transitions;
+
 - silently discard failed agent work;
 - delete arbitrary or unrecognized worktrees.
 

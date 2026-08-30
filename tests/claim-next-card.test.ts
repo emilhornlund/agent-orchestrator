@@ -12,6 +12,7 @@ function createProject(): Project {
 
     trello: {
       boardId: "board-1",
+      ownershipCustomFieldId: "ownership-field",
       backlogListId: "backlog-list",
       readyListId: "ready-list",
       workingListId: "working-list",
@@ -77,6 +78,7 @@ describe("claimNextCard", () => {
   it("returns null when no cards are ready", async () => {
     const trello = {
       getCards: vi.fn().mockResolvedValue([]),
+      setWorkflowOwnership: vi.fn(),
       moveCard: vi.fn(),
     } as unknown as TrelloClient;
 
@@ -85,7 +87,9 @@ describe("claimNextCard", () => {
     const card = await claimNextCard(trello, project);
 
     expect(card).toBeNull();
-    expect(trello.getCards).toHaveBeenCalledWith("ready-list");
+    expect(trello.getCards).toHaveBeenCalledWith("ready-list", {
+      workflowOwnershipCustomFieldId: "ownership-field",
+    });
     expect(trello.moveCard).not.toHaveBeenCalled();
   });
 
@@ -94,10 +98,12 @@ describe("claimNextCard", () => {
 
     const claimedCard = createCard({
       idList: "working-list",
+      workflowOwnership: expect.any(String) as unknown as string,
     });
 
     const trello = {
       getCards: vi.fn().mockResolvedValue([readyCard]),
+      setWorkflowOwnership: vi.fn(),
       moveCard: vi.fn().mockResolvedValue(claimedCard),
     } as unknown as TrelloClient;
 
@@ -105,7 +111,9 @@ describe("claimNextCard", () => {
 
     const card = await claimNextCard(trello, project);
 
-    expect(trello.getCards).toHaveBeenCalledWith("ready-list");
+    expect(trello.getCards).toHaveBeenCalledWith("ready-list", {
+      workflowOwnershipCustomFieldId: "ownership-field",
+    });
     expect(trello.moveCard).toHaveBeenCalledWith("card-1", "working-list");
     expect(card).toEqual(claimedCard);
   });
@@ -128,10 +136,12 @@ describe("claimNextCard", () => {
       name: "First card",
       idList: "working-list",
       idLabels: ["improvement-label"],
+      workflowOwnership: expect.any(String) as unknown as string,
     });
 
     const trello = {
       getCards: vi.fn().mockResolvedValue([firstCard, secondCard]),
+      setWorkflowOwnership: vi.fn(),
       moveCard: vi.fn().mockResolvedValue(claimedCard),
     } as unknown as TrelloClient;
 
@@ -161,10 +171,12 @@ describe("claimNextCard", () => {
       name: "Implement inventory",
       idList: "working-list",
       idLabels: ["feature-label"],
+      workflowOwnership: expect.any(String) as unknown as string,
     });
 
     const trello = {
       getCards: vi.fn().mockResolvedValue([refinementCard, featureCard]),
+      setWorkflowOwnership: vi.fn(),
       moveCard: vi.fn().mockResolvedValue(claimedCard),
     } as unknown as TrelloClient;
 
@@ -195,12 +207,14 @@ describe("claimNextCard", () => {
       name: "Improve inventory",
       idList: "working-list",
       idLabels: ["improvement-label"],
+      workflowOwnership: expect.any(String) as unknown as string,
     });
 
     const trello = {
       getCards: vi
         .fn()
         .mockResolvedValue([refinementFeatureCard, improvementCard]),
+      setWorkflowOwnership: vi.fn(),
       moveCard: vi.fn().mockResolvedValue(claimedCard),
     } as unknown as TrelloClient;
 
@@ -220,6 +234,7 @@ describe("claimNextCard", () => {
 
     const trello = {
       getCards: vi.fn().mockResolvedValue([card]),
+      setWorkflowOwnership: vi.fn(),
       moveCard: vi.fn(),
     } as unknown as TrelloClient;
 
@@ -249,10 +264,12 @@ describe("claimNextCard", () => {
       name: "Fix inventory crash",
       idList: "working-list",
       idLabels: ["bug-label"],
+      workflowOwnership: expect.any(String) as unknown as string,
     });
 
     const trello = {
       getCards: vi.fn().mockResolvedValue([unlabeledCard, bugCard]),
+      setWorkflowOwnership: vi.fn(),
       moveCard: vi.fn().mockResolvedValue(claimedCard),
     } as unknown as TrelloClient;
 
@@ -279,6 +296,7 @@ describe("claimNextCard", () => {
 
     const trello = {
       getCards: vi.fn().mockResolvedValue(cards),
+      setWorkflowOwnership: vi.fn(),
       moveCard: vi.fn(),
     } as unknown as TrelloClient;
 
@@ -288,6 +306,60 @@ describe("claimNextCard", () => {
 
     expect(card).toBeNull();
     expect(trello.moveCard).not.toHaveBeenCalled();
+  });
+
+  it("skips invalidly owned cards and claims the next eligible card", async () => {
+    const invalidCard = createCard({
+      id: "card-1",
+      workflowOwnership: "not-json",
+    });
+    const eligibleCard = createCard({ id: "card-2" });
+    const setWorkflowOwnership = vi.fn().mockResolvedValue(undefined);
+    const moveCard = vi
+      .fn()
+      .mockResolvedValue(createCard({ id: "card-2", idList: "working-list" }));
+
+    const trello = {
+      getCards: vi.fn().mockResolvedValue([invalidCard, eligibleCard]),
+      setWorkflowOwnership,
+      moveCard,
+    } as unknown as TrelloClient;
+
+    const card = await claimNextCard(trello, createProject());
+
+    expect(setWorkflowOwnership).toHaveBeenCalledWith(
+      "card-2",
+      "ownership-field",
+      expect.objectContaining({
+        projectId: "rpg-sdl",
+        cardId: "card-2",
+        workflow: "implementation",
+      }),
+    );
+    expect(moveCard).toHaveBeenCalledWith("card-2", "working-list");
+    expect(card?.id).toBe("card-2");
+  });
+
+  it("writes ownership before moving a card to Working", async () => {
+    const events: string[] = [];
+    const readyCard = createCard();
+    const setWorkflowOwnership = vi.fn(async () => {
+      events.push("set-ownership");
+    });
+    const moveCard = vi.fn(async () => {
+      events.push("move-card");
+      return createCard({ idList: "working-list" });
+    });
+
+    const trello = {
+      getCards: vi.fn().mockResolvedValue([readyCard]),
+      setWorkflowOwnership,
+      moveCard,
+    } as unknown as TrelloClient;
+
+    await claimNextCard(trello, createProject());
+
+    expect(events).toEqual(["set-ownership", "move-card"]);
   });
 
   it.each(["featureLabelId", "improvementLabelId", "bugLabelId"] as const)(
@@ -303,10 +375,12 @@ describe("claimNextCard", () => {
       const claimedCard = createCard({
         idList: "working-list",
         idLabels: [labelId],
+        workflowOwnership: expect.any(String) as unknown as string,
       });
 
       const trello = {
         getCards: vi.fn().mockResolvedValue([readyCard]),
+        setWorkflowOwnership: vi.fn(),
         moveCard: vi.fn().mockResolvedValue(claimedCard),
       } as unknown as TrelloClient;
 

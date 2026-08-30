@@ -48,4 +48,23 @@ export async function finalizeRefinement(
   await trello.removeLabel(card.id, project.trello.refinementLabelId);
 
   await trello.moveCard(card.id, project.trello.backlogListId);
+
+  try {
+    await trello.clearWorkflowOwnership(
+      card.id,
+      project.trello.ownershipCustomFieldId,
+    );
+  } catch (error) {
+    try {
+      await trello.moveCard(card.id, card.idList);
+    } catch (rollbackError) {
+      throw new AggregateError(
+        [error, rollbackError],
+        `Could not clear refinement ownership after moving card to Backlog; additionally could not restore card to its original list`,
+        { cause: rollbackError },
+      );
+    }
+
+    throw error;
+  }
 }

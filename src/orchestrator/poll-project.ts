@@ -51,6 +51,7 @@ import {
 } from "./reconcile-review-cards.js";
 import {
   reconcileClaimedCard,
+  isOwnedWorkingCard,
   reconcileWorkingCards,
 } from "./reconcile-working-cards.js";
 import { WorkflowError } from "./workflow-error.js";
@@ -140,6 +141,17 @@ export async function pollProject(
     return;
   }
 
+  const workingChangeRequest = await reconcileWorkingCards(
+    trello,
+    git,
+    github,
+    project,
+  );
+
+  if (signal.aborted) {
+    return;
+  }
+
   const reviewChangeRequest = await reconcileReviewCards(
     trello,
     git,
@@ -148,6 +160,17 @@ export async function pollProject(
   );
 
   if (signal.aborted) {
+    return;
+  }
+
+  if (reviewChangeRequest && workingChangeRequest) {
+    throw new WorkflowError(
+      "Workflow",
+      `Cannot process owned workflow cards in both Human Review (${reviewChangeRequest.card.id}) and Working (${workingChangeRequest.card.id})`,
+    );
+  }
+
+  if (reviewChangeRequest && "active" in reviewChangeRequest) {
     return;
   }
 
@@ -166,18 +189,33 @@ export async function pollProject(
     return;
   }
 
-  const workingChangeRequest = await reconcileWorkingCards(
-    trello,
-    git,
-    github,
-    project,
-  );
-
-  if (signal.aborted) {
-    return;
-  }
-
   if (workingChangeRequest) {
+    if (isOwnedWorkingCard(workingChangeRequest)) {
+      if (workingChangeRequest.workflow === "refinement") {
+        await processRefinementCard(
+          trello,
+          git,
+          opencode,
+          project,
+          workingChangeRequest.card,
+          signal,
+        );
+      } else {
+        await processImplementationCard(
+          trello,
+          git,
+          github,
+          opencode,
+          commands,
+          project,
+          workingChangeRequest.card,
+          signal,
+        );
+      }
+
+      return;
+    }
+
     await processReviewChangeRequest(
       trello,
       git,
@@ -221,70 +259,28 @@ export async function pollProject(
 
   cardLog.event(`Claimed card: ${card.name}`);
 
-  try {
-    const reconciled = await reconcileClaimedCard(
-      trello,
-      git,
-      github,
-      project,
-      card,
-    );
+  const reconciled = await reconcileClaimedCard(
+    trello,
+    git,
+    github,
+    project,
+    card,
+  );
 
-    if (reconciled) {
-      return;
-    }
-
-    const worktree = await processCardChanges(
-      trello,
-      git,
-      github,
-      opencode,
-      commands,
-      project,
-      card,
-      signal,
-    );
-
-    cardLog.info("Cleaning up published worktree...");
-
-    try {
-      await cleanupWorktree({
-        git,
-        project,
-        worktreePath: worktree.path,
-        branch: worktree.branch,
-      });
-
-      cardLog.info("Published worktree cleaned up");
-    } catch (cleanupError) {
-      cardLog.error(
-        `Published successfully, but local cleanup failed: ${
-          cleanupError instanceof Error
-            ? cleanupError.message
-            : String(cleanupError)
-        }`,
-      );
-    }
-  } catch (error) {
-    if (isWorkflowAbort(error, signal)) {
-      cardLog.event("Card workflow interrupted by orchestrator shutdown");
-      return;
-    }
-
-    if (error instanceof PublishedCardStateError) {
-      const sessionLogPath = getExistingSessionLogPath(project.id, card.id);
-
-      cardLog.error(
-        formatFailureDiagnostic(error, {
-          ...(sessionLogPath === undefined ? {} : { sessionLogPath }),
-          handlingOutcome: "card left in Working for reconciliation",
-        }),
-      );
-      return;
-    }
-
-    await failCard(trello, project, card.id, error);
+  if (reconciled) {
+    return;
   }
+
+  await processImplementationCard(
+    trello,
+    git,
+    github,
+    opencode,
+    commands,
+    project,
+    card,
+    signal,
+  );
 }
 
 async function processRefinementCard(
@@ -372,7 +368,7 @@ async function processRefinementCard(
       }
     }
 
-    await failCard(trello, project, card.id, error);
+    await failCard(trello, project, card.id, error, card);
   }
 }
 
@@ -440,7 +436,76 @@ async function processReviewChangeRequest(
       return;
     }
 
-    await failCard(trello, project, card.id, error);
+    await failCard(trello, project, card.id, error, card);
+  }
+}
+
+async function processImplementationCard(
+  trello: TrelloClient,
+  git: GitClient,
+  github: GitHubClient,
+  opencode: OpenCodeClient,
+  commands: CommandRunner,
+  project: ProjectConfig,
+  card: TrelloCard,
+  signal: AbortSignal,
+): Promise<void> {
+  const cardLog = logger.child({
+    projectId: project.id,
+    cardId: card.id,
+  });
+
+  try {
+    const worktree = await processCardChanges(
+      trello,
+      git,
+      github,
+      opencode,
+      commands,
+      project,
+      card,
+      signal,
+    );
+
+    cardLog.info("Cleaning up published worktree...");
+
+    try {
+      await cleanupWorktree({
+        git,
+        project,
+        worktreePath: worktree.path,
+        branch: worktree.branch,
+      });
+
+      cardLog.info("Published worktree cleaned up");
+    } catch (cleanupError) {
+      cardLog.error(
+        `Published successfully, but local cleanup failed: ${
+          cleanupError instanceof Error
+            ? cleanupError.message
+            : String(cleanupError)
+        }`,
+      );
+    }
+  } catch (error) {
+    if (isWorkflowAbort(error, signal)) {
+      cardLog.event("Card workflow interrupted by orchestrator shutdown");
+      return;
+    }
+
+    if (error instanceof PublishedCardStateError) {
+      const sessionLogPath = getExistingSessionLogPath(project.id, card.id);
+
+      cardLog.error(
+        formatFailureDiagnostic(error, {
+          ...(sessionLogPath === undefined ? {} : { sessionLogPath }),
+          handlingOutcome: "card left in Working for reconciliation",
+        }),
+      );
+      return;
+    }
+
+    await failCard(trello, project, card.id, error, card);
   }
 }
 

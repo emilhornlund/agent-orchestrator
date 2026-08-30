@@ -167,6 +167,160 @@ describe("TrelloClient", () => {
     expect(requestUrl).toContain("token=test-token");
   });
 
+  it("extracts the configured ownership custom field from cards", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify([
+          {
+            id: "card-1",
+            name: "Implement inventory",
+            desc: "Add inventory support",
+            idList: "working-list",
+            idLabels: [],
+            url: "https://trello.com/c/example",
+            customFieldItems: [
+              {
+                idCustomField: "other-field",
+                value: { text: "ignore this" },
+              },
+              {
+                idCustomField: "ownership-field",
+                value: { text: "ownership-marker" },
+              },
+            ],
+          },
+        ]),
+        { status: 200 },
+      ),
+    );
+
+    const client = new TrelloClient({
+      apiKey: "test-key",
+      token: "test-token",
+    });
+
+    await expect(
+      client.getCards("working-list", {
+        workflowOwnershipCustomFieldId: "ownership-field",
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        id: "card-1",
+        workflowOwnership: "ownership-marker",
+      }),
+    ]);
+
+    const url = new URL(String(fetchMock.mock.calls[0]?.[0]));
+    expect(url.searchParams.get("customFieldItems")).toBe("true");
+  });
+
+  it("returns multiple ownership values so callers can reject conflicts", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify([
+          {
+            id: "card-1",
+            name: "Implement inventory",
+            desc: "",
+            idList: "working-list",
+            idLabels: [],
+            url: "https://trello.com/c/example",
+            customFieldItems: [
+              { idCustomField: "ownership-field", value: { text: "one" } },
+              { idCustomField: "ownership-field", value: { text: "two" } },
+            ],
+          },
+        ]),
+        { status: 200 },
+      ),
+    );
+
+    const client = new TrelloClient({
+      apiKey: "test-key",
+      token: "test-token",
+    });
+
+    await expect(
+      client.getCards("working-list", {
+        workflowOwnershipCustomFieldId: "ownership-field",
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        workflowOwnershipValues: ["one", "two"],
+      }),
+    ]);
+  });
+
+  it("reads custom fields from a board", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify([
+          {
+            id: "ownership-field",
+            name: "Agent Orchestrator Ownership",
+            type: "text",
+          },
+        ]),
+        { status: 200 },
+      ),
+    );
+
+    const client = new TrelloClient({
+      apiKey: "test-key",
+      token: "test-token",
+    });
+
+    await expect(client.getCustomFields("board-1")).resolves.toEqual([
+      {
+        id: "ownership-field",
+        name: "Agent Orchestrator Ownership",
+        type: "text",
+      },
+    ]);
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+      "/boards/board-1/customFields",
+    );
+  });
+
+  it("writes and clears workflow ownership", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(null, { status: 200 }))
+      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+
+    const client = new TrelloClient({
+      apiKey: "test-key",
+      token: "test-token",
+    });
+
+    const ownership = {
+      version: 1 as const,
+      owner: "agent-orchestrator" as const,
+      projectId: "project-1",
+      cardId: "card-1",
+      workflow: "implementation" as const,
+    };
+
+    await client.setWorkflowOwnership("card-1", "ownership-field", ownership);
+    await client.clearWorkflowOwnership("card-1", "ownership-field");
+
+    const [setUrl, setOptions] = fetchMock.mock.calls[0] ?? [];
+    const [clearUrl, clearOptions] = fetchMock.mock.calls[1] ?? [];
+
+    expect(new URL(String(setUrl)).pathname).toBe(
+      "/1/cards/card-1/customField/ownership-field/item",
+    );
+    expect(new URL(String(setUrl)).searchParams.get("value[text]")).toBe(
+      JSON.stringify(ownership),
+    );
+    expect(setOptions).toEqual({ method: "PUT" });
+    expect(new URL(String(clearUrl)).pathname).toBe(
+      "/1/cards/card-1/customField/ownership-field/item",
+    );
+    expect(clearOptions).toEqual({ method: "DELETE" });
+  });
+
   it("rejects a malformed card response instead of returning unchecked data", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify([{ id: "card-1", name: "Incomplete" }]), {
