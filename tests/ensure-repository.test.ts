@@ -51,6 +51,10 @@ function createProject(repositoryPath: string): ProjectConfig {
       bugLabelId: "bug-label",
     },
     opencode: {
+      refinement: {
+        model: "openai/refinement-model",
+        variant: "xhigh",
+      },
       implementation: {
         model: "implementation-model",
         variant: "implementation-variant",

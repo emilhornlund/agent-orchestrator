@@ -22,6 +22,7 @@ import {
   CommandRunner,
   type RunCommand,
 } from "../src/process/command-runner.js";
+import { getRefinementResultPath } from "../src/refinement/refinement-result.js";
 import { type TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
 
 interface ScenarioOptions {
@@ -32,6 +33,8 @@ interface ScenarioOptions {
   statusOutputs?: string[];
   headOutputs?: string[];
   openCodeResults?: TestOpenCodeRunResult[];
+  writeRefinementResult?: boolean;
+  refinementResult?: unknown;
   pushError?: Error;
   pullRequestError?: Error;
   humanReviewError?: Error;
@@ -110,6 +113,10 @@ function createScenario(options: ScenarioOptions = {}): Scenario {
       },
     },
     opencode: {
+      refinement: {
+        model: "openai/refinement-model",
+        variant: "xhigh",
+      },
       implementation: {
         model: "implementation-model",
         variant: "implementation-variant",
@@ -224,9 +231,28 @@ function createScenario(options: ScenarioOptions = {}): Scenario {
   }));
   let openCodeCall = 0;
 
-  const runOpenCode = vi.fn<RunOpenCode>(async () => {
+  const runOpenCode = vi.fn<RunOpenCode>(async (runOptions) => {
     openCodeCall += 1;
     events.push(`opencode:${openCodeCall}`);
+
+    if (options.writeRefinementResult === true) {
+      const resultPath = getRefinementResultPath(runOptions.cwd);
+
+      fs.mkdirSync(path.dirname(resultPath), {
+        recursive: true,
+      });
+
+      fs.writeFileSync(
+        resultPath,
+        JSON.stringify(
+          options.refinementResult ?? {
+            title: "Refined task",
+            type: "feature",
+            description: "# Refined task\n\n## Description\n\nRefined.",
+          },
+        ),
+      );
+    }
 
     const result = openCodeResults.shift();
 
@@ -318,6 +344,13 @@ function expectNothingPublished(scenario: Scenario): void {
   expect(scenario.events).not.toContain("pr");
   expect(scenario.events).not.toContain("move:review-list");
   expect(scenario.events).toContain("move:failed-list");
+}
+
+function createRefinementCard(scenario: Scenario): TrelloCard {
+  return {
+    ...scenario.card,
+    idLabels: ["refinement-label"],
+  };
 }
 
 describe("pollProject failure boundaries", () => {
@@ -502,6 +535,297 @@ describe("pollProject failure boundaries", () => {
 
         expect(scenario.runOpenCode).toHaveBeenCalledTimes(1);
         expectNothingPublished(scenario);
+      },
+    );
+  });
+
+  it("moves a refinement card to Failed when OpenCode refinement fails", async () => {
+    await withScenario(
+      {
+        openCodeResults: [
+          {
+            exitCode: 1,
+            output: "refinement failed",
+          },
+        ],
+      },
+      async (scenario) => {
+        vi.mocked(scenario.trello.getCards).mockImplementation(
+          async (listId) => {
+            if (listId === scenario.project.trello.workingListId) {
+              return [];
+            }
+
+            if (listId === scenario.project.trello.readyListId) {
+              return [createRefinementCard(scenario)];
+            }
+
+            return [];
+          },
+        );
+
+        const updateCardContent = vi.spyOn(
+          scenario.trello,
+          "updateCardContent",
+        );
+        const addLabel = vi.spyOn(scenario.trello, "addLabel");
+        const removeLabel = vi.spyOn(scenario.trello, "removeLabel");
+
+        await expect(
+          pollProject(
+            scenario.trello,
+            scenario.git,
+            scenario.github,
+            scenario.openCode,
+            scenario.commands,
+            scenario.project,
+            scenario.signal,
+          ),
+        ).rejects.toThrow("OpenCode refinement exited with code 1");
+
+        expect(scenario.runOpenCode).toHaveBeenCalledTimes(1);
+
+        expect(updateCardContent).not.toHaveBeenCalled();
+        expect(addLabel).not.toHaveBeenCalled();
+        expect(removeLabel).not.toHaveBeenCalled();
+
+        expect(scenario.events).toContain("move:working-list");
+        expect(scenario.events).toContain("move:failed-list");
+        expect(scenario.events).not.toContain("move:backlog-list");
+
+        expectNothingPublished(scenario);
+      },
+    );
+  });
+
+  it("moves a refinement card to Failed when the result artifact is missing", async () => {
+    await withScenario(
+      {
+        openCodeResults: [
+          {
+            exitCode: 0,
+            output: "refinement complete",
+          },
+        ],
+        statusOutputs: [""],
+      },
+      async (scenario) => {
+        vi.mocked(scenario.trello.getCards).mockImplementation(
+          async (listId) => {
+            if (listId === scenario.project.trello.workingListId) {
+              return [];
+            }
+
+            if (listId === scenario.project.trello.readyListId) {
+              return [createRefinementCard(scenario)];
+            }
+
+            return [];
+          },
+        );
+
+        const updateCardContent = vi.spyOn(
+          scenario.trello,
+          "updateCardContent",
+        );
+
+        await expect(
+          pollProject(
+            scenario.trello,
+            scenario.git,
+            scenario.github,
+            scenario.openCode,
+            scenario.commands,
+            scenario.project,
+            scenario.signal,
+          ),
+        ).rejects.toThrow("Refinement result file not found");
+
+        expect(updateCardContent).not.toHaveBeenCalled();
+
+        expect(scenario.events).toContain("move:failed-list");
+        expect(scenario.events).not.toContain("move:backlog-list");
+
+        expectNothingPublished(scenario);
+      },
+    );
+  });
+
+  it("moves a refinement card to Failed when the result artifact is invalid", async () => {
+    await withScenario(
+      {
+        writeRefinementResult: true,
+        refinementResult: {
+          title: "Refined task",
+          type: "unsupported",
+          description: "Description",
+        },
+        openCodeResults: [
+          {
+            exitCode: 0,
+            output: "refinement complete",
+          },
+        ],
+        statusOutputs: ["?? .agent-orchestrator/refinement-result.json"],
+      },
+      async (scenario) => {
+        vi.mocked(scenario.trello.getCards).mockImplementation(
+          async (listId) => {
+            if (listId === scenario.project.trello.workingListId) {
+              return [];
+            }
+
+            if (listId === scenario.project.trello.readyListId) {
+              return [createRefinementCard(scenario)];
+            }
+
+            return [];
+          },
+        );
+
+        const updateCardContent = vi.spyOn(
+          scenario.trello,
+          "updateCardContent",
+        );
+
+        await expect(
+          pollProject(
+            scenario.trello,
+            scenario.git,
+            scenario.github,
+            scenario.openCode,
+            scenario.commands,
+            scenario.project,
+            scenario.signal,
+          ),
+        ).rejects.toThrow("Invalid refinement result");
+
+        expect(updateCardContent).not.toHaveBeenCalled();
+
+        expect(scenario.events).toContain("move:failed-list");
+        expect(scenario.events).not.toContain("move:backlog-list");
+
+        expectNothingPublished(scenario);
+      },
+    );
+  });
+
+  it("moves a refinement card to Failed when refinement modifies repository files", async () => {
+    await withScenario(
+      {
+        writeRefinementResult: true,
+        openCodeResults: [
+          {
+            exitCode: 0,
+            output: "refinement complete",
+          },
+        ],
+        statusOutputs: [
+          [
+            "?? .agent-orchestrator/refinement-result.json",
+            " M src/example.ts",
+          ].join("\n"),
+        ],
+      },
+      async (scenario) => {
+        vi.mocked(scenario.trello.getCards).mockImplementation(
+          async (listId) => {
+            if (listId === scenario.project.trello.workingListId) {
+              return [];
+            }
+
+            if (listId === scenario.project.trello.readyListId) {
+              return [createRefinementCard(scenario)];
+            }
+
+            return [];
+          },
+        );
+
+        const updateCardContent = vi.spyOn(
+          scenario.trello,
+          "updateCardContent",
+        );
+
+        await expect(
+          pollProject(
+            scenario.trello,
+            scenario.git,
+            scenario.github,
+            scenario.openCode,
+            scenario.commands,
+            scenario.project,
+            scenario.signal,
+          ),
+        ).rejects.toThrow("OpenCode refinement modified repository files");
+
+        expect(updateCardContent).not.toHaveBeenCalled();
+
+        expect(scenario.events).toContain("move:failed-list");
+        expect(scenario.events).not.toContain("move:backlog-list");
+
+        expectNothingPublished(scenario);
+      },
+    );
+  });
+
+  it("resets forbidden refinement changes before moving the card to Failed", async () => {
+    await withScenario(
+      {
+        writeRefinementResult: true,
+        openCodeResults: [
+          {
+            exitCode: 0,
+            output: "refinement complete",
+          },
+        ],
+        statusOutputs: [
+          [
+            "?? .agent-orchestrator/refinement-result.json",
+            " M src/example.ts",
+          ].join("\n"),
+        ],
+      },
+      async (scenario) => {
+        vi.mocked(scenario.trello.getCards).mockImplementation(
+          async (listId) => {
+            if (listId === scenario.project.trello.workingListId) {
+              return [];
+            }
+
+            if (listId === scenario.project.trello.readyListId) {
+              return [createRefinementCard(scenario)];
+            }
+
+            return [];
+          },
+        );
+
+        await expect(
+          pollProject(
+            scenario.trello,
+            scenario.git,
+            scenario.github,
+            scenario.openCode,
+            scenario.commands,
+            scenario.project,
+            scenario.signal,
+          ),
+        ).rejects.toThrow("OpenCode refinement modified repository files");
+
+        expect(scenario.runGit).toHaveBeenCalledWith(scenario.worktreePath, [
+          "reset",
+          "--hard",
+          "HEAD",
+        ]);
+
+        expect(scenario.runGit).toHaveBeenCalledWith(scenario.worktreePath, [
+          "clean",
+          "-fd",
+        ]);
+
+        expect(scenario.events).toContain("move:failed-list");
+        expect(scenario.events).not.toContain("move:backlog-list");
       },
     );
   });

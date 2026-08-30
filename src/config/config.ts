@@ -83,6 +83,7 @@ const openCodeStageSchema = z.strictObject({
 });
 
 const openCodeSchema = z.strictObject({
+  refinement: openCodeStageSchema,
   implementation: openCodeStageSchema,
   review: openCodeStageSchema,
   remediation: openCodeStageSchema,

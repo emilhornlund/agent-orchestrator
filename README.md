@@ -17,9 +17,37 @@ Each configured project connects:
 - a Trello board;
 - an OpenCode model and runtime configuration.
 
-The orchestrator continuously polls each project and drives eligible implementation cards through the workflow. Cards in
-`Ready for Agent` are eligible only when they have the configured `Feature`, `Improvement`, or `Bug` label and do not
-have the configured `Refinement` label:
+The orchestrator continuously polls each project and routes cards in `Ready for Agent` according to their configured
+workflow labels.
+
+Cards carrying the configured `Refinement` label enter the refinement workflow. Refinement takes precedence even when
+the card also carries a `Feature`, `Improvement`, or `Bug` label.
+
+Cards without `Refinement` enter the implementation workflow when they carry at least one configured `Feature`,
+`Improvement`, or `Bug` label:
+
+```text
+Ready for Agent + Refinement
+      │
+      ▼
+    Working
+      │
+      ├─ create isolated Git worktree
+      ├─ run OpenCode refinement
+      ├─ validate the structured refinement result
+      ├─ reject unauthorized repository changes
+      ├─ update the Trello card title and description
+      ├─ replace Refinement with exactly one of Feature / Improvement / Bug
+      ├─ clean up the refinement worktree
+      │
+      ▼
+    Backlog
+```
+
+Successful refinement returns the card to the top of `Backlog`. It must be explicitly moved back to `Ready for Agent`
+before implementation begins.
+
+The normal implementation workflow is:
 
 ```text
 Ready for Agent
@@ -155,6 +183,9 @@ projects:
 
     opencode:
       timeoutMinutes: 360
+      refinement:
+        model: "your-refinement-model"
+        variant: "xhigh"
       implementation:
         model: "openai/implementation-model"
         variant: "xhigh"
@@ -206,10 +237,17 @@ The configured list and label names themselves are not significant; the orchestr
 For normal implementation, a card in `Ready for Agent` must have at least one of the configured `Feature`,
 `Improvement`, or `Bug` labels. Unlabelled cards are ignored.
 
-The configured `Refinement` label takes precedence over implementation labels. A card carrying `Refinement` is not
-claimed by the normal implementation workflow, even if it also carries `Feature`, `Improvement`, or `Bug`.
+The configured `Refinement` label takes precedence over implementation labels. A card carrying `Refinement` is routed
+through the refinement workflow even if it also carries `Feature`, `Improvement`, or `Bug`.
 
-Refinement processing itself is not currently part of the automated workflow.
+During refinement, OpenCode may inspect repository code, tests, documentation, and architecture, but it must not modify
+repository implementation files. Its only permitted write is the dedicated structured refinement result artifact.
+
+The orchestrator validates that result, updates the Trello card title and description, removes conflicting semantic
+classification labels, applies exactly one of `Feature`, `Improvement`, or `Bug`, removes `Refinement`, and moves the
+card to the top of `Backlog`.
+
+If refinement fails, produces an invalid result, or modifies unauthorized repository files, the card moves to `Failed`.
 
 ## Running
 
@@ -289,8 +327,7 @@ The configured fields are:
 - `reviewListId` — list used while a published pull request awaits human review.
 - `failedListId` — list used for failed automated work.
 - `doneListId` — list used after the associated pull request is merged.
-- `refinementLabelId` — label that excludes a card from normal implementation and identifies it for future refinement
-  processing.
+- `refinementLabelId` — label that routes a Ready card through automated refinement instead of normal implementation.
 - `featureLabelId` — Feature implementation classification.
 - `improvementLabelId` — Improvement implementation classification.
 - `bugLabelId` — Bug implementation classification.
@@ -341,6 +378,10 @@ Git identity used when the orchestrator creates commits for the project.
 - `signingKey` — optional absolute path to the SSH signing key used for signed commits.
 
 When `signingKey` is configured, the key must be available at that path in the environment where the orchestrator runs.
+
+### `projects[].opencode.refinement`
+
+Model and variant used for task refinement sessions.
 
 ### `projects[].opencode.implementation`
 

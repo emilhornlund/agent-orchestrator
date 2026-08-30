@@ -32,6 +32,10 @@ const project: ProjectConfig = {
     },
   },
   opencode: {
+    refinement: {
+      model: "openai/refinement-model",
+      variant: "xhigh",
+    },
     implementation: {
       model: "implementation-model",
       variant: "implementation-variant",

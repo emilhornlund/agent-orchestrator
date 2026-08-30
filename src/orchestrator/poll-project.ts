@@ -22,6 +22,9 @@ import {
   type CommandRunner,
   type CommandRunResult,
 } from "../process/command-runner.js";
+import { clearRefinementResult } from "../refinement/refinement-result.js";
+import { finalizeRefinement } from "../refinement/finalize-refinement.js";
+import { runRefinement } from "../refinement/run-refinement.js";
 import {
   TrelloRequestAbortedError,
   type TrelloCard,
@@ -29,6 +32,7 @@ import {
 } from "../trello/trello-client.js";
 
 import { claimNextCard } from "./claim-next-card.js";
+import { claimNextRefinementCard } from "./claim-next-refinement-card.js";
 import { failCard } from "./fail-card.js";
 import { publishCard } from "./publish-card.js";
 import { PublishedCardStateError } from "./published-card-state-error.js";
@@ -157,6 +161,21 @@ export async function pollProject(
     return;
   }
 
+  const refinementCard = await claimNextRefinementCard(trello, project);
+
+  if (refinementCard) {
+    await processRefinementCard(
+      trello,
+      git,
+      opencode,
+      project,
+      refinementCard,
+      signal,
+    );
+
+    return;
+  }
+
   const card = await claimNextCard(trello, project);
 
   if (!card) {
@@ -229,6 +248,97 @@ export async function pollProject(
     }
 
     cardLog.error("Card workflow failed; moving to Failed...");
+
+    await failCard(trello, project, card.id, error);
+  }
+}
+
+async function processRefinementCard(
+  trello: TrelloClient,
+  git: GitClient,
+  opencode: OpenCodeClient,
+  project: ProjectConfig,
+  card: TrelloCard,
+  signal: AbortSignal,
+): Promise<void> {
+  const cardLog = logger.child({
+    projectId: project.id,
+    cardId: card.id,
+  });
+
+  cardLog.event(`Claimed refinement card: ${card.name}`);
+
+  let worktree:
+    | {
+        path: string;
+        branch: string;
+      }
+    | undefined;
+
+  try {
+    worktree = await prepareWorktree(git, project, card.id);
+
+    cardLog.info(`Branch: ${worktree.branch}`);
+    cardLog.info(`Worktree: ${worktree.path}`);
+
+    cardLog.event("Starting OpenCode refinement...");
+
+    const result = await runRefinement(
+      git,
+      opencode,
+      project,
+      card,
+      worktree.path,
+      signal,
+    );
+
+    cardLog.event(
+      `OpenCode refinement completed with classification: ${result.type}`,
+    );
+
+    await finalizeRefinement(trello, project, card, result);
+
+    cardLog.event("Refined card returned to Backlog");
+
+    clearRefinementResult(worktree.path);
+
+    cardLog.info("Cleaning up refinement worktree...");
+
+    await cleanupWorktree({
+      git,
+      project,
+      worktreePath: worktree.path,
+      branch: worktree.branch,
+    });
+
+    cardLog.info("Refinement worktree cleaned up");
+  } catch (error) {
+    if (isWorkflowAbort(error, signal)) {
+      cardLog.event("Refinement workflow interrupted by orchestrator shutdown");
+      return;
+    }
+
+    if (worktree) {
+      cardLog.info("Resetting failed refinement worktree...");
+
+      try {
+        clearRefinementResult(worktree.path);
+        await git.resetHard(worktree.path);
+        await git.cleanUntracked(worktree.path);
+
+        cardLog.info("Failed refinement worktree reset");
+      } catch (cleanupError) {
+        cardLog.error(
+          `Failed to reset refinement worktree: ${
+            cleanupError instanceof Error
+              ? cleanupError.message
+              : String(cleanupError)
+          }`,
+        );
+      }
+    }
+
+    cardLog.error("Refinement workflow failed; moving to Failed...");
 
     await failCard(trello, project, card.id, error);
   }

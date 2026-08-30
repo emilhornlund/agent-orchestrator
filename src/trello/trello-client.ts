@@ -159,6 +159,21 @@ export class TrelloClient {
     return this.put(`/cards/${cardId}`, parameters, trelloCardSchema);
   }
 
+  updateCardContent(
+    cardId: string,
+    title: string,
+    description: string,
+  ): Promise<TrelloCard> {
+    return this.put(
+      `/cards/${cardId}`,
+      {
+        name: title,
+        desc: description,
+      },
+      trelloCardSchema,
+    );
+  }
+
   async addLabel(cardId: string, labelId: string): Promise<void> {
     await this.postWithoutResponse(`/cards/${cardId}/idLabels`, {
       value: labelId,

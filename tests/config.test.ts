@@ -30,6 +30,9 @@ projects:
 
     opencode:
       timeoutMinutes: 360
+      refinement:
+        model: "openai/refinement-model"
+        variant: "xhigh"
       implementation:
         model: "openai/implementation-model"
         variant: "xhigh"
@@ -73,6 +76,10 @@ describe("parseConfig", () => {
     expect(project!.repository.github).toBe("owner/repository");
     expect(project!.repository.setupCommand).toBeUndefined();
     expect(project!.repository.validationCommand).toBe("yarn validate");
+    expect(project!.opencode.refinement).toEqual({
+      model: "openai/refinement-model",
+      variant: "xhigh",
+    });
     expect(project!.opencode.implementation).toEqual({
       model: "openai/implementation-model",
       variant: "xhigh",
@@ -102,6 +109,18 @@ describe("parseConfig", () => {
     const config = parseConfig(raw);
 
     expect(config.projects[0]?.repository.setupCommand).toBe("yarn install");
+  });
+
+  it("rejects a missing OpenCode refinement stage", () => {
+    const raw = validConfig.replace(
+      `      refinement:
+        model: "openai/refinement-model"
+        variant: "xhigh"
+`,
+      "",
+    );
+
+    expect(() => parseConfig(raw)).toThrow();
   });
 
   it("rejects a missing OpenCode review stage", () => {
@@ -175,6 +194,9 @@ describe("parseConfig", () => {
 
     opencode:
       timeoutMinutes: 360
+      refinement:
+        model: "openai/refinement-model"
+        variant: "xhigh"
       implementation:
         model: "openai/implementation-model"
         variant: "xhigh"
@@ -294,6 +316,9 @@ workflow:
 
     opencode:
       timeoutMinutes: 360
+      refinement:
+        model: "openai/refinement-model"
+        variant: "xhigh"
       implementation:
         model: "openai/implementation-model"
         variant: "xhigh"
@@ -344,6 +369,9 @@ workflow:`,
 
     opencode:
       timeoutMinutes: 360
+      refinement:
+        model: "openai/refinement-model"
+        variant: "xhigh"
       implementation:
         model: "openai/implementation-model"
         variant: "xhigh"
@@ -396,6 +424,9 @@ workflow:`,
 
     opencode:
       timeoutMinutes: 360
+      refinement:
+        model: "openai/refinement-model"
+        variant: "xhigh"
       implementation:
         model: "openai/implementation-model"
         variant: "xhigh"
@@ -478,6 +509,9 @@ workflow:`,
 
     opencode:
       timeoutMinutes: 360
+      refinement:
+        model: "openai/refinement-model"
+        variant: "xhigh"
       implementation:
         model: "openai/implementation-model"
         variant: "xhigh"

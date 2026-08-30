@@ -28,6 +28,9 @@ projects:
 
     opencode:
       timeoutMinutes: 360
+      refinement:
+        model: "your-refinement-model"
+        variant: "xhigh"
       implementation:
         model: "your-implementation-model"
         variant: "xhigh"
@@ -70,6 +73,9 @@ projects:
 
     opencode:
       timeoutMinutes: 360
+      refinement:
+        model: "your-refinement-model"
+        variant: "xhigh"
       implementation:
         model: "your-implementation-model"
         variant: "xhigh"

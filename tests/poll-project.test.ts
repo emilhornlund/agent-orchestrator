@@ -14,9 +14,273 @@ import {
 } from "../src/opencode/opencode-client.js";
 import { pollProject } from "../src/orchestrator/poll-project.js";
 import { CommandRunner } from "../src/process/command-runner.js";
+import { getRefinementResultPath } from "../src/refinement/refinement-result.js";
 import { type TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
 
 describe("pollProject", () => {
+  it("routes refinement cards through refinement and returns them to Backlog", async () => {
+    const events: string[] = [];
+
+    const worktreeRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), "agent-orchestrator-refinement-"),
+    );
+
+    const card: TrelloCard = {
+      id: "card-1",
+      name: "Inventory thing",
+      desc: "Players need inventory support.",
+      idList: "ready-list",
+      idLabels: ["refinement-label"],
+      url: "https://trello.com/c/card-1",
+    };
+
+    const project: ProjectConfig = {
+      id: "example",
+      trello: {
+        boardId: "board",
+        backlogListId: "backlog-list",
+        readyListId: "ready-list",
+        workingListId: "working-list",
+        reviewListId: "review-list",
+        failedListId: "failed-list",
+        doneListId: "done-list",
+        refinementLabelId: "refinement-label",
+        featureLabelId: "feature-label",
+        improvementLabelId: "improvement-label",
+        bugLabelId: "bug-label",
+      },
+      repository: {
+        path: "/tmp/example-repository",
+        github: "example/repository",
+        defaultBranch: "main",
+        worktreeRoot,
+        gitIdentity: {
+          name: "Agent Orchestrator",
+          email: "agent-orchestrator@users.noreply.github.com",
+        },
+      },
+      opencode: {
+        refinement: {
+          model: "refinement-model",
+          variant: "refinement-variant",
+        },
+        implementation: {
+          model: "implementation-model",
+          variant: "implementation-variant",
+        },
+        review: {
+          model: "review-model",
+          variant: "review-variant",
+        },
+        remediation: {
+          model: "remediation-model",
+          variant: "remediation-variant",
+        },
+        commit: {
+          model: "commit-model",
+          variant: "commit-variant",
+        },
+        timeoutMinutes: 360,
+      },
+    };
+
+    const worktreePath = path.join(worktreeRoot, card.id);
+
+    fs.mkdirSync(worktreePath);
+
+    try {
+      const trello = new TrelloClient({
+        apiKey: "test-key",
+        token: "test-token",
+      });
+
+      vi.spyOn(trello, "getCards").mockImplementation(async (listId) => {
+        if (listId === project.trello.reviewListId) {
+          return [];
+        }
+
+        if (listId === project.trello.workingListId) {
+          return [];
+        }
+
+        if (listId === project.trello.readyListId) {
+          return [card];
+        }
+
+        return [];
+      });
+
+      vi.spyOn(trello, "moveCard").mockImplementation(
+        async (_cardId, listId) => {
+          if (listId === project.trello.workingListId) {
+            events.push("claim-refinement");
+          }
+
+          if (listId === project.trello.backlogListId) {
+            events.push("move-backlog");
+          }
+
+          return {
+            ...card,
+            idList: listId,
+          };
+        },
+      );
+
+      vi.spyOn(trello, "updateCardContent").mockImplementation(
+        async (_cardId, title, description) => {
+          events.push("update-card");
+
+          return {
+            ...card,
+            name: title,
+            desc: description,
+          };
+        },
+      );
+
+      vi.spyOn(trello, "addLabel").mockImplementation(
+        async (_cardId, labelId) => {
+          events.push(`add-label:${labelId}`);
+        },
+      );
+
+      vi.spyOn(trello, "removeLabel").mockImplementation(
+        async (_cardId, labelId) => {
+          events.push(`remove-label:${labelId}`);
+        },
+      );
+
+      let statusCall = 0;
+
+      const runGit = vi.fn(async (_cwd: string, args: string[]) => {
+        if (args[0] === "branch" && args[1] === "--show-current") {
+          return "agent/card-1";
+        }
+
+        if (args[0] === "status") {
+          statusCall += 1;
+
+          if (statusCall === 1) {
+            return "";
+          }
+
+          if (statusCall === 2) {
+            return "?? .agent-orchestrator/refinement-result.json";
+          }
+
+          return "";
+        }
+
+        if (args[0] === "worktree" && args[1] === "remove") {
+          events.push("cleanup-worktree");
+          return "";
+        }
+
+        if (args[0] === "worktree" && args[1] === "prune") {
+          return "";
+        }
+
+        if (args[0] === "branch" && args[1] === "--list") {
+          return "";
+        }
+
+        throw new Error(`Unexpected git command: ${args.join(" ")}`);
+      });
+
+      const git = new GitClient(runGit);
+
+      const openCodeRuns: OpenCodeRunOptions[] = [];
+
+      const opencode = new OpenCodeClient(async (options) => {
+        openCodeRuns.push(options);
+        events.push("refinement");
+
+        const resultPath = getRefinementResultPath(options.cwd);
+
+        fs.mkdirSync(path.dirname(resultPath), {
+          recursive: true,
+        });
+
+        fs.writeFileSync(
+          resultPath,
+          JSON.stringify({
+            title: "Add inventory support",
+            type: "feature",
+            description:
+              "# Add inventory support\n\n## Description\n\nAdd inventory support.",
+          }),
+        );
+
+        return {
+          exitCode: 0,
+          output: "Refinement complete",
+          errorOutput: "",
+        };
+      });
+
+      const github = new GitHubClient(async () => {
+        throw new Error("GitHub should not be called for refinement");
+      });
+
+      const commands = new CommandRunner(async () => {
+        throw new Error("Commands should not be run for refinement");
+      });
+
+      await pollProject(
+        trello,
+        git,
+        github,
+        opencode,
+        commands,
+        project,
+        new AbortController().signal,
+      );
+
+      expect(openCodeRuns).toHaveLength(1);
+      expect(openCodeRuns[0]).toEqual(
+        expect.objectContaining({
+          cwd: worktreePath,
+          model: "refinement-model",
+          variant: "refinement-variant",
+          sessionLabel: "OpenCode refinement",
+        }),
+      );
+
+      expect(trello.updateCardContent).toHaveBeenCalledWith(
+        "card-1",
+        "Add inventory support",
+        "# Add inventory support\n\n## Description\n\nAdd inventory support.",
+      );
+
+      expect(trello.addLabel).toHaveBeenCalledWith("card-1", "feature-label");
+
+      expect(trello.removeLabel).toHaveBeenCalledWith(
+        "card-1",
+        "refinement-label",
+      );
+
+      expect(trello.moveCard).toHaveBeenCalledWith("card-1", "backlog-list");
+
+      expect(events).toEqual([
+        "claim-refinement",
+        "refinement",
+        "update-card",
+        "add-label:feature-label",
+        "remove-label:refinement-label",
+        "move-backlog",
+        "cleanup-worktree",
+      ]);
+
+      expect(fs.existsSync(getRefinementResultPath(worktreePath))).toBe(false);
+    } finally {
+      fs.rmSync(worktreeRoot, {
+        recursive: true,
+        force: true,
+      });
+    }
+  });
+
   it("commits before pushing, creating the PR, and moving to Human Review", async () => {
     const events: string[] = [];
 
@@ -60,6 +324,10 @@ describe("pollProject", () => {
         },
       },
       opencode: {
+        refinement: {
+          model: "openai/refinement-model",
+          variant: "xhigh",
+        },
         implementation: {
           model: "implementation-model",
           variant: "implementation-variant",
@@ -221,6 +489,7 @@ describe("pollProject", () => {
       expect(events).toEqual([
         "get-working",
         "get-ready",
+        "get-ready",
         "implementation",
         "review",
         "commit",
@@ -299,6 +568,10 @@ describe("pollProject", () => {
         },
       },
       opencode: {
+        refinement: {
+          model: "openai/refinement-model",
+          variant: "xhigh",
+        },
         implementation: {
           model: "implementation-model",
           variant: "implementation-variant",
@@ -524,6 +797,10 @@ describe("pollProject", () => {
         },
       },
       opencode: {
+        refinement: {
+          model: "openai/refinement-model",
+          variant: "xhigh",
+        },
         implementation: {
           model: "implementation-model",
           variant: "implementation-variant",
@@ -660,6 +937,10 @@ describe("pollProject", () => {
         },
       },
       opencode: {
+        refinement: {
+          model: "openai/refinement-model",
+          variant: "xhigh",
+        },
         implementation: {
           model: "implementation-model",
           variant: "implementation-variant",
@@ -875,6 +1156,10 @@ describe("pollProject", () => {
         },
       },
       opencode: {
+        refinement: {
+          model: "openai/refinement-model",
+          variant: "xhigh",
+        },
         implementation: {
           model: "implementation-model",
           variant: "implementation-variant",
@@ -1062,6 +1347,10 @@ describe("pollProject", () => {
         },
       },
       opencode: {
+        refinement: {
+          model: "openai/refinement-model",
+          variant: "xhigh",
+        },
         implementation: {
           model: "implementation-model",
           variant: "implementation-variant",
@@ -1182,6 +1471,10 @@ describe("pollProject", () => {
         },
       },
       opencode: {
+        refinement: {
+          model: "openai/refinement-model",
+          variant: "xhigh",
+        },
         implementation: {
           model: "implementation-model",
           variant: "implementation-variant",

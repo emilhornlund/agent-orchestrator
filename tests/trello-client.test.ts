@@ -352,6 +352,58 @@ describe("TrelloClient", () => {
     });
   });
 
+  it("updates a card title and description", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: "card-1",
+          name: "Add inventory support",
+          desc: "# Add inventory support\n\n## Description\n\nAdd inventory support.",
+          idList: "working-list",
+          idLabels: ["refinement-label"],
+          url: "https://trello.com/c/example",
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      ),
+    );
+
+    const client = new TrelloClient({
+      apiKey: "test-key",
+      token: "test-token",
+    });
+
+    const card = await client.updateCardContent(
+      "card-1",
+      "Add inventory support",
+      "# Add inventory support\n\n## Description\n\nAdd inventory support.",
+    );
+
+    expect(card.name).toBe("Add inventory support");
+    expect(card.desc).toBe(
+      "# Add inventory support\n\n## Description\n\nAdd inventory support.",
+    );
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+
+    const [requestUrl, requestOptions] = fetchMock.mock.calls[0] ?? [];
+    const url = new URL(String(requestUrl));
+
+    expect(url.pathname).toBe("/1/cards/card-1");
+    expect(url.searchParams.get("name")).toBe("Add inventory support");
+    expect(url.searchParams.get("desc")).toBe(
+      "# Add inventory support\n\n## Description\n\nAdd inventory support.",
+    );
+
+    expect(requestOptions).toEqual({
+      method: "PUT",
+    });
+  });
+
   it("adds an existing label to a card", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(null, {
