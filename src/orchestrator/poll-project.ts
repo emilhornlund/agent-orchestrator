@@ -51,7 +51,7 @@ import {
 } from "./reconcile-review-cards.js";
 import {
   reconcileClaimedCard,
-  isOwnedWorkingCard,
+  isImplementationWorkingCard,
   reconcileWorkingCards,
 } from "./reconcile-working-cards.js";
 import { WorkflowError } from "./workflow-error.js";
@@ -166,7 +166,7 @@ export async function pollProject(
   if (reviewChangeRequest && workingChangeRequest) {
     throw new WorkflowError(
       "Workflow",
-      `Cannot process owned workflow cards in both Human Review (${reviewChangeRequest.card.id}) and Working (${workingChangeRequest.card.id})`,
+      `Cannot process workflow cards in both Human Review (${reviewChangeRequest.card.id}) and Working (${workingChangeRequest.card.id})`,
     );
   }
 
@@ -190,7 +190,7 @@ export async function pollProject(
   }
 
   if (workingChangeRequest) {
-    if (isOwnedWorkingCard(workingChangeRequest)) {
+    if (isImplementationWorkingCard(workingChangeRequest)) {
       if (workingChangeRequest.workflow === "refinement") {
         await processRefinementCard(
           trello,
@@ -230,28 +230,30 @@ export async function pollProject(
     return;
   }
 
-  const refinementCard = await claimNextRefinementCard(trello, project);
+  const refinementClaim = await claimNextRefinementCard(trello, git, project);
 
-  if (refinementCard) {
+  if (refinementClaim) {
     await processRefinementCard(
       trello,
       git,
       opencode,
       project,
-      refinementCard,
+      refinementClaim.card,
       signal,
+      refinementClaim.worktree,
     );
 
     return;
   }
 
-  const card = await claimNextCard(trello, project);
+  const implementationClaim = await claimNextCard(trello, git, project);
 
-  if (!card) {
+  if (!implementationClaim) {
     logger.child({ projectId: project.id }).debug("No cards ready");
     return;
   }
 
+  const card = implementationClaim.card;
   const cardLog = logger.child({
     projectId: project.id,
     cardId: card.id,
@@ -280,6 +282,7 @@ export async function pollProject(
     project,
     card,
     signal,
+    implementationClaim.worktree,
   );
 }
 
@@ -290,6 +293,10 @@ async function processRefinementCard(
   project: ProjectConfig,
   card: TrelloCard,
   signal: AbortSignal,
+  preparedWorktree?: {
+    path: string;
+    branch: string;
+  },
 ): Promise<void> {
   const cardLog = logger.child({
     projectId: project.id,
@@ -306,7 +313,8 @@ async function processRefinementCard(
     | undefined;
 
   try {
-    worktree = await prepareWorktree(git, project, card.id);
+    worktree =
+      preparedWorktree ?? (await prepareWorktree(git, project, card.id));
 
     cardLog.info(`Branch: ${worktree.branch}`);
     cardLog.info(`Worktree: ${worktree.path}`);
@@ -368,7 +376,7 @@ async function processRefinementCard(
       }
     }
 
-    await failCard(trello, project, card.id, error, card);
+    await failCard(trello, project, card.id, error);
   }
 }
 
@@ -436,7 +444,7 @@ async function processReviewChangeRequest(
       return;
     }
 
-    await failCard(trello, project, card.id, error, card);
+    await failCard(trello, project, card.id, error);
   }
 }
 
@@ -449,6 +457,7 @@ async function processImplementationCard(
   project: ProjectConfig,
   card: TrelloCard,
   signal: AbortSignal,
+  preparedWorktree?: PreparedImplementationWorktree,
 ): Promise<void> {
   const cardLog = logger.child({
     projectId: project.id,
@@ -465,6 +474,8 @@ async function processImplementationCard(
       project,
       card,
       signal,
+      undefined,
+      preparedWorktree,
     );
 
     cardLog.info("Cleaning up published worktree...");
@@ -505,7 +516,7 @@ async function processImplementationCard(
       return;
     }
 
-    await failCard(trello, project, card.id, error, card);
+    await failCard(trello, project, card.id, error);
   }
 }
 
@@ -524,13 +535,14 @@ async function processCardChanges(
   card: TrelloCard,
   signal: AbortSignal,
   reviewIteration?: ReviewIterationOptions,
+  preparedWorktree?: PreparedImplementationWorktree,
 ): Promise<{
   path: string;
   branch: string;
 }> {
   const worktree = reviewIteration
     ? await prepareReviewWorktree(git, project, card.id)
-    : await prepareWorktree(git, project, card.id);
+    : (preparedWorktree ?? (await prepareWorktree(git, project, card.id)));
 
   let reviewResult = "Passed";
   let remediationResult = "Not required";

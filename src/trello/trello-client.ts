@@ -1,10 +1,5 @@
 import { z } from "zod";
 
-import {
-  serializeWorkflowOwnership,
-  type WorkflowOwnership,
-} from "./workflow-ownership.js";
-
 export interface TrelloClientOptions {
   apiKey: string;
   token: string;
@@ -30,12 +25,6 @@ export interface TrelloLabel {
   color: string | null;
 }
 
-export interface TrelloCustomField {
-  id: string;
-  name: string;
-  type: string;
-}
-
 export interface TrelloCard {
   id: string;
   name: string;
@@ -43,8 +32,25 @@ export interface TrelloCard {
   idList: string;
   idLabels: string[];
   url: string;
-  workflowOwnership?: string;
-  workflowOwnershipValues?: string[];
+}
+
+export interface TrelloCardAction {
+  id: string;
+  type: string;
+  date: string;
+  data?:
+    | {
+        listBefore?: { id: string } | undefined;
+        listAfter?: { id: string } | undefined;
+      }
+    | undefined;
+}
+
+export interface TrelloListTransition {
+  id: string;
+  date: string;
+  listBeforeId: string;
+  listAfterId: string;
 }
 
 export interface TrelloCommentAction {
@@ -71,17 +77,6 @@ const trelloLabelSchema = z.object({
   color: z.string().nullable(),
 });
 
-const trelloCustomFieldSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  type: z.string(),
-});
-
-const trelloCustomFieldItemSchema = z.object({
-  idCustomField: z.string(),
-  value: z.unknown().optional(),
-});
-
 const trelloCardResponseSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -89,20 +84,23 @@ const trelloCardResponseSchema = z.object({
   idList: z.string(),
   idLabels: z.array(z.string()),
   url: z.string(),
-  customFieldItems: z.array(trelloCustomFieldItemSchema).optional(),
 });
 
-type TrelloCardResponse = z.infer<typeof trelloCardResponseSchema>;
+const trelloCardSchema = trelloCardResponseSchema;
 
-function removeCustomFieldItems(card: TrelloCardResponse): TrelloCardResponse {
-  const cardWithoutCustomFieldItems = { ...card };
-  delete cardWithoutCustomFieldItems.customFieldItems;
-  return cardWithoutCustomFieldItems;
-}
-
-const trelloCardSchema = trelloCardResponseSchema.transform(
-  removeCustomFieldItems,
-);
+const trelloCardActionSchema = z.object({
+  id: z.string(),
+  type: z.string(),
+  date: z.string().refine((value) => !Number.isNaN(Date.parse(value)), {
+    message: "Must be a valid date",
+  }),
+  data: z
+    .object({
+      listBefore: z.object({ id: z.string() }).optional(),
+      listAfter: z.object({ id: z.string() }).optional(),
+    })
+    .optional(),
+});
 
 const trelloCommentActionSchema = z.object({
   id: z.string(),
@@ -173,63 +171,47 @@ export class TrelloClient {
     return this.get(`/boards/${boardId}/labels`, z.array(trelloLabelSchema));
   }
 
-  async getCards(
-    listId: string,
-    options: { workflowOwnershipCustomFieldId?: string } = {},
-  ): Promise<TrelloCard[]> {
-    const cards = await this.get(
-      `/lists/${listId}/cards`,
-      z.array(trelloCardResponseSchema),
-      { customFieldItems: "true" },
-    );
-
-    if (options.workflowOwnershipCustomFieldId === undefined) {
-      return cards.map(removeCustomFieldItems);
-    }
-
-    return cards.map((card) => {
-      const cardWithoutCustomFieldItems = removeCustomFieldItems(card);
-      const customFieldItems = card.customFieldItems;
-      const values = (customFieldItems ?? [])
-        .filter(
-          (item) =>
-            item.idCustomField === options.workflowOwnershipCustomFieldId,
-        )
-        .map((item) => {
-          if (
-            typeof item.value === "object" &&
-            item.value !== null &&
-            "text" in item.value &&
-            typeof item.value.text === "string"
-          ) {
-            return item.value.text;
-          }
-
-          return "";
-        });
-
-      if (values.length === 0) {
-        return cardWithoutCustomFieldItems;
-      }
-
-      if (values.length === 1) {
-        return {
-          ...cardWithoutCustomFieldItems,
-          workflowOwnership: values[0]!,
-        };
-      }
-
-      return {
-        ...cardWithoutCustomFieldItems,
-        workflowOwnershipValues: values,
-      };
-    });
+  getCards(listId: string): Promise<TrelloCard[]> {
+    return this.get(`/lists/${listId}/cards`, z.array(trelloCardSchema));
   }
 
-  getCustomFields(boardId: string): Promise<TrelloCustomField[]> {
+  async getLatestListTransition(
+    cardId: string,
+    destinationListId: string,
+  ): Promise<TrelloListTransition | null> {
+    const actions = await this.getCardActions(cardId);
+    const transitions = actions
+      .flatMap((action) => {
+        const listBefore = action.data?.listBefore;
+        const listAfter = action.data?.listAfter;
+
+        if (listBefore === undefined || listAfter === undefined) {
+          return [];
+        }
+
+        return [
+          {
+            id: action.id,
+            date: action.date,
+            listBeforeId: listBefore.id,
+            listAfterId: listAfter.id,
+          },
+        ];
+      })
+      .sort((left, right) => Date.parse(right.date) - Date.parse(left.date));
+
+    return (
+      transitions.find(
+        (transition) => transition.listAfterId === destinationListId,
+      ) ?? null
+    );
+  }
+
+  getCardActions(cardId: string): Promise<TrelloCardAction[]> {
     return this.get(
-      `/boards/${boardId}/customFields`,
-      z.array(trelloCustomFieldSchema),
+      `/cards/${cardId}/actions`,
+      z.array(trelloCardActionSchema),
+      { filter: "updateCard", limit: "1000" },
     );
   }
 
@@ -275,23 +257,6 @@ export class TrelloClient {
 
   async removeLabel(cardId: string, labelId: string): Promise<void> {
     await this.delete(`/cards/${cardId}/idLabels/${labelId}`);
-  }
-
-  async setWorkflowOwnership(
-    cardId: string,
-    customFieldId: string,
-    ownership: WorkflowOwnership,
-  ): Promise<void> {
-    await this.putWithoutResponse(
-      `/cards/${cardId}/customField/${customFieldId}/item`,
-      {
-        "value[text]": serializeWorkflowOwnership(ownership),
-      },
-    );
-  }
-
-  clearWorkflowOwnership(cardId: string, customFieldId: string): Promise<void> {
-    return this.delete(`/cards/${cardId}/customField/${customFieldId}/item`);
   }
 
   addComment(cardId: string, text: string): Promise<TrelloCommentAction> {
@@ -359,34 +324,6 @@ export class TrelloClient {
     }
 
     return schema.parse(await response.json());
-  }
-
-  private async putWithoutResponse(
-    path: string,
-    parameters: Record<string, string>,
-  ): Promise<void> {
-    this.throwIfAborted();
-
-    const url = new URL(`${this.baseUrl}${path}`);
-
-    url.searchParams.set("key", this.options.apiKey);
-    url.searchParams.set("token", this.options.token);
-
-    for (const [name, value] of Object.entries(parameters)) {
-      url.searchParams.set(name, value);
-    }
-
-    const signal = this.getRequestSignal();
-    const response = await this.request(url, {
-      method: "PUT",
-      ...(signal === undefined ? {} : { signal }),
-    });
-
-    if (!response.ok) {
-      throw new Error(
-        `Trello request failed: ${response.status} ${response.statusText}`,
-      );
-    }
   }
 
   private async postWithoutResponse(

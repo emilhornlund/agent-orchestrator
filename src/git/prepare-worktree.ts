@@ -16,6 +16,51 @@ export interface PreparedImplementationWorktree extends PreparedWorktree {
   initialStatus?: string;
 }
 
+function getWorktreePath(project: ProjectConfig, cardId: string): string {
+  const worktreePath = path.join(project.repository.worktreeRoot, cardId);
+  const resolvedWorktreeRoot = path.resolve(project.repository.worktreeRoot);
+  const resolvedWorktreePath = path.resolve(worktreePath);
+
+  if (
+    resolvedWorktreePath === resolvedWorktreeRoot ||
+    !resolvedWorktreePath.startsWith(`${resolvedWorktreeRoot}${path.sep}`)
+  ) {
+    throw new Error(`Card ID would escape configured worktree root: ${cardId}`);
+  }
+
+  return worktreePath;
+}
+
+export async function getExistingWorktree(
+  git: GitClient,
+  project: ProjectConfig,
+  cardId: string,
+): Promise<PreparedWorktree | null> {
+  const worktreePath = getWorktreePath(project, cardId);
+  const branch = `agent/${cardId}`;
+
+  if (!fs.existsSync(worktreePath)) {
+    return null;
+  }
+
+  const worktreeStat = fs.lstatSync(worktreePath);
+
+  if (worktreeStat.isSymbolicLink() || !worktreeStat.isDirectory()) {
+    return null;
+  }
+
+  const currentBranch = await git.getCurrentBranch(worktreePath);
+
+  if (currentBranch !== branch) {
+    return null;
+  }
+
+  return {
+    path: worktreePath,
+    branch,
+  };
+}
+
 export async function prepareWorktree(
   git: GitClient,
   project: ProjectConfig,
@@ -26,16 +71,7 @@ export async function prepareWorktree(
   const defaultBranch = project.repository.defaultBranch;
 
   const branch = `agent/${cardId}`;
-  const worktreePath = path.join(worktreeRoot, cardId);
-  const resolvedWorktreeRoot = path.resolve(worktreeRoot);
-  const resolvedWorktreePath = path.resolve(worktreePath);
-
-  if (
-    resolvedWorktreePath === resolvedWorktreeRoot ||
-    !resolvedWorktreePath.startsWith(`${resolvedWorktreeRoot}${path.sep}`)
-  ) {
-    throw new Error(`Card ID would escape configured worktree root: ${cardId}`);
-  }
+  const worktreePath = getWorktreePath(project, cardId);
 
   fs.mkdirSync(worktreeRoot, { recursive: true });
 

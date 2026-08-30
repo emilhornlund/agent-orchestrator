@@ -1,393 +1,162 @@
-import { describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Config } from "../src/config/config.js";
+import type { GitClient } from "../src/git/git-client.js";
 import { claimNextCard } from "../src/orchestrator/claim-next-card.js";
 import type { TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
 
 type Project = Config["projects"][number];
+const temporaryDirectories: string[] = [];
 
-function createProject(): Project {
+function createProject(worktreeRoot: string): Project {
   return {
-    id: "rpg-sdl",
-
+    id: "project",
     trello: {
-      boardId: "board-1",
-      ownershipCustomFieldId: "ownership-field",
-      backlogListId: "backlog-list",
-      readyListId: "ready-list",
-      workingListId: "working-list",
-      reviewListId: "review-list",
-      failedListId: "failed-list",
-      doneListId: "done-list",
-      refinementLabelId: "refinement-label",
-      featureLabelId: "feature-label",
-      improvementLabelId: "improvement-label",
-      bugLabelId: "bug-label",
+      boardId: "board",
+      backlogListId: "backlog",
+      readyListId: "ready",
+      workingListId: "working",
+      reviewListId: "review",
+      failedListId: "failed",
+      doneListId: "done",
+      refinementLabelId: "refinement",
+      featureLabelId: "feature",
+      improvementLabelId: "improvement",
+      bugLabelId: "bug",
     },
-
     repository: {
-      path: "/projects/rpg-sdl",
-      github: "emilhornlund/rpg-sdl",
+      path: "/repo",
+      github: "owner/repo",
       defaultBranch: "main",
-      worktreeRoot: "/projects/.agent-worktrees/rpg-sdl",
+      worktreeRoot,
       gitIdentity: {
         name: "Agent Orchestrator",
         email: "agent-orchestrator@users.noreply.github.com",
       },
     },
-
     opencode: {
-      refinement: {
-        model: "openai/refinement-model",
-        variant: "xhigh",
-      },
-      implementation: {
-        model: "implementation-model",
-        variant: "implementation-variant",
-      },
-      review: {
-        model: "review-model",
-        variant: "review-variant",
-      },
-      remediation: {
-        model: "remediation-model",
-        variant: "remediation-variant",
-      },
-      commit: {
-        model: "commit-model",
-        variant: "commit-variant",
-      },
+      refinement: { model: "refinement", variant: "xhigh" },
+      implementation: { model: "implementation", variant: "xhigh" },
+      review: { model: "review", variant: "high" },
+      remediation: { model: "remediation", variant: "xhigh" },
+      commit: { model: "commit", variant: "low" },
       timeoutMinutes: 360,
     },
   };
 }
 
-function createCard(overrides: Partial<TrelloCard> = {}): TrelloCard {
+function createCard(id: string, idLabels: string[] = ["feature"]): TrelloCard {
   return {
-    id: "card-1",
-    name: "Implement inventory",
-    desc: "Add inventory support",
-    idList: "ready-list",
-    idLabels: ["feature-label"],
-    url: "https://trello.com/c/example",
-    ...overrides,
+    id,
+    name: id,
+    desc: "",
+    idList: "ready",
+    idLabels,
+    url: `https://trello.com/c/${id}`,
   };
 }
 
+afterEach(() => {
+  for (const directory of temporaryDirectories.splice(0)) {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 describe("claimNextCard", () => {
-  it("returns null when no cards are ready", async () => {
-    const trello = {
-      getCards: vi.fn().mockResolvedValue([]),
-      setWorkflowOwnership: vi.fn(),
-      moveCard: vi.fn(),
-    } as unknown as TrelloClient;
-
-    const project = createProject();
-
-    const card = await claimNextCard(trello, project);
-
-    expect(card).toBeNull();
-    expect(trello.getCards).toHaveBeenCalledWith("ready-list", {
-      workflowOwnershipCustomFieldId: "ownership-field",
+  it("prepares the first eligible worktree before moving the card to Working", async () => {
+    const worktreeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "claim-card-"));
+    temporaryDirectories.push(worktreeRoot);
+    const project = createProject(worktreeRoot);
+    const events: string[] = [];
+    const moveCard = vi.fn(async () => {
+      events.push("move");
+      return { ...createCard("card-2"), idList: "working" };
     });
-    expect(trello.moveCard).not.toHaveBeenCalled();
-  });
-
-  it("moves the first implementation card to the working list", async () => {
-    const readyCard = createCard();
-
-    const claimedCard = createCard({
-      idList: "working-list",
-      workflowOwnership: expect.any(String) as unknown as string,
-    });
-
-    const trello = {
-      getCards: vi.fn().mockResolvedValue([readyCard]),
-      setWorkflowOwnership: vi.fn(),
-      moveCard: vi.fn().mockResolvedValue(claimedCard),
-    } as unknown as TrelloClient;
-
-    const project = createProject();
-
-    const card = await claimNextCard(trello, project);
-
-    expect(trello.getCards).toHaveBeenCalledWith("ready-list", {
-      workflowOwnershipCustomFieldId: "ownership-field",
-    });
-    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "working-list");
-    expect(card).toEqual(claimedCard);
-  });
-
-  it("claims the first implementation card", async () => {
-    const firstCard = createCard({
-      id: "card-1",
-      name: "First card",
-      idLabels: ["improvement-label"],
-    });
-
-    const secondCard = createCard({
-      id: "card-2",
-      name: "Second card",
-      idLabels: ["bug-label"],
-    });
-
-    const claimedCard = createCard({
-      id: "card-1",
-      name: "First card",
-      idList: "working-list",
-      idLabels: ["improvement-label"],
-      workflowOwnership: expect.any(String) as unknown as string,
-    });
-
-    const trello = {
-      getCards: vi.fn().mockResolvedValue([firstCard, secondCard]),
-      setWorkflowOwnership: vi.fn(),
-      moveCard: vi.fn().mockResolvedValue(claimedCard),
-    } as unknown as TrelloClient;
-
-    const project = createProject();
-
-    await claimNextCard(trello, project);
-
-    expect(trello.moveCard).toHaveBeenCalledOnce();
-    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "working-list");
-  });
-
-  it("skips refinement cards when claiming implementation work", async () => {
-    const refinementCard = createCard({
-      id: "card-1",
-      name: "Refine inventory task",
-      idLabels: ["refinement-label"],
-    });
-
-    const featureCard = createCard({
-      id: "card-2",
-      name: "Implement inventory",
-      idLabels: ["feature-label"],
-    });
-
-    const claimedCard = createCard({
-      id: "card-2",
-      name: "Implement inventory",
-      idList: "working-list",
-      idLabels: ["feature-label"],
-      workflowOwnership: expect.any(String) as unknown as string,
-    });
-
-    const trello = {
-      getCards: vi.fn().mockResolvedValue([refinementCard, featureCard]),
-      setWorkflowOwnership: vi.fn(),
-      moveCard: vi.fn().mockResolvedValue(claimedCard),
-    } as unknown as TrelloClient;
-
-    const project = createProject();
-
-    const card = await claimNextCard(trello, project);
-
-    expect(trello.moveCard).toHaveBeenCalledOnce();
-    expect(trello.moveCard).toHaveBeenCalledWith("card-2", "working-list");
-    expect(card).toEqual(claimedCard);
-  });
-
-  it("skips cards that have both refinement and implementation labels", async () => {
-    const refinementFeatureCard = createCard({
-      id: "card-1",
-      name: "Refine inventory task",
-      idLabels: ["refinement-label", "feature-label"],
-    });
-
-    const improvementCard = createCard({
-      id: "card-2",
-      name: "Improve inventory",
-      idLabels: ["improvement-label"],
-    });
-
-    const claimedCard = createCard({
-      id: "card-2",
-      name: "Improve inventory",
-      idList: "working-list",
-      idLabels: ["improvement-label"],
-      workflowOwnership: expect.any(String) as unknown as string,
-    });
-
+    const git = {
+      fetch: vi.fn(async () => events.push("fetch")),
+      branchExists: vi.fn(async () => false),
+      addWorktreeWithNewBranch: vi.fn(async () => {
+        events.push("prepare");
+        fs.mkdirSync(path.join(worktreeRoot, "card-2"));
+      }),
+    } as unknown as GitClient;
     const trello = {
       getCards: vi
         .fn()
-        .mockResolvedValue([refinementFeatureCard, improvementCard]),
-      setWorkflowOwnership: vi.fn(),
-      moveCard: vi.fn().mockResolvedValue(claimedCard),
+        .mockResolvedValue([
+          createCard("card-1", ["refinement"]),
+          createCard("card-2"),
+        ]),
+      moveCard,
     } as unknown as TrelloClient;
 
-    const project = createProject();
+    const result = await claimNextCard(trello, git, project);
 
-    const card = await claimNextCard(trello, project);
-
-    expect(trello.moveCard).toHaveBeenCalledOnce();
-    expect(trello.moveCard).toHaveBeenCalledWith("card-2", "working-list");
-    expect(card).toEqual(claimedCard);
+    expect(result?.card.id).toBe("card-2");
+    expect(result?.worktree).toEqual({
+      path: path.join(worktreeRoot, "card-2"),
+      branch: "agent/card-2",
+      reused: false,
+    });
+    expect(events).toEqual(["fetch", "prepare", "move"]);
   });
 
-  it("returns null when only a refinement card with an implementation label is ready", async () => {
-    const card = createCard({
-      idLabels: ["refinement-label", "bug-label"],
-    });
-
-    const trello = {
-      getCards: vi.fn().mockResolvedValue([card]),
-      setWorkflowOwnership: vi.fn(),
-      moveCard: vi.fn(),
-    } as unknown as TrelloClient;
-
-    const project = createProject();
-
-    const claimedCard = await claimNextCard(trello, project);
-
-    expect(claimedCard).toBeNull();
-    expect(trello.moveCard).not.toHaveBeenCalled();
-  });
-
-  it("skips unlabeled cards when claiming implementation work", async () => {
-    const unlabeledCard = createCard({
-      id: "card-1",
-      name: "Unclassified task",
-      idLabels: [],
-    });
-
-    const bugCard = createCard({
-      id: "card-2",
-      name: "Fix inventory crash",
-      idLabels: ["bug-label"],
-    });
-
-    const claimedCard = createCard({
-      id: "card-2",
-      name: "Fix inventory crash",
-      idList: "working-list",
-      idLabels: ["bug-label"],
-      workflowOwnership: expect.any(String) as unknown as string,
-    });
-
-    const trello = {
-      getCards: vi.fn().mockResolvedValue([unlabeledCard, bugCard]),
-      setWorkflowOwnership: vi.fn(),
-      moveCard: vi.fn().mockResolvedValue(claimedCard),
-    } as unknown as TrelloClient;
-
-    const project = createProject();
-
-    const card = await claimNextCard(trello, project);
-
-    expect(trello.moveCard).toHaveBeenCalledOnce();
-    expect(trello.moveCard).toHaveBeenCalledWith("card-2", "working-list");
-    expect(card).toEqual(claimedCard);
-  });
-
-  it("returns null when no implementation cards are ready", async () => {
-    const cards = [
-      createCard({
-        id: "card-1",
-        idLabels: [],
+  it("leaves a prepared worktree intact when moving to Working fails", async () => {
+    const worktreeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "claim-card-"));
+    temporaryDirectories.push(worktreeRoot);
+    const project = createProject(worktreeRoot);
+    const worktreePath = path.join(worktreeRoot, "card-1");
+    let existing = false;
+    const git = {
+      fetch: vi.fn(async () => undefined),
+      branchExists: vi.fn(async () => false),
+      addWorktreeWithNewBranch: vi.fn(async () => {
+        existing = true;
+        fs.mkdirSync(worktreePath);
       }),
-      createCard({
-        id: "card-2",
-        idLabels: ["refinement-label"],
-      }),
-    ];
-
-    const trello = {
-      getCards: vi.fn().mockResolvedValue(cards),
-      setWorkflowOwnership: vi.fn(),
-      moveCard: vi.fn(),
-    } as unknown as TrelloClient;
-
-    const project = createProject();
-
-    const card = await claimNextCard(trello, project);
-
-    expect(card).toBeNull();
-    expect(trello.moveCard).not.toHaveBeenCalled();
-  });
-
-  it("skips invalidly owned cards and claims the next eligible card", async () => {
-    const invalidCard = createCard({
-      id: "card-1",
-      workflowOwnership: "not-json",
-    });
-    const eligibleCard = createCard({ id: "card-2" });
-    const setWorkflowOwnership = vi.fn().mockResolvedValue(undefined);
+      getCurrentBranch: vi.fn(async () => "agent/card-1"),
+      getStatus: vi.fn(async () => ""),
+    } as unknown as GitClient;
     const moveCard = vi
       .fn()
-      .mockResolvedValue(createCard({ id: "card-2", idList: "working-list" }));
-
+      .mockRejectedValueOnce(new Error("Trello unavailable"))
+      .mockResolvedValueOnce({ ...createCard("card-1"), idList: "working" });
     const trello = {
-      getCards: vi.fn().mockResolvedValue([invalidCard, eligibleCard]),
-      setWorkflowOwnership,
+      getCards: vi.fn().mockResolvedValue([createCard("card-1")]),
       moveCard,
     } as unknown as TrelloClient;
 
-    const card = await claimNextCard(trello, createProject());
-
-    expect(setWorkflowOwnership).toHaveBeenCalledWith(
-      "card-2",
-      "ownership-field",
-      expect.objectContaining({
-        projectId: "rpg-sdl",
-        cardId: "card-2",
-        workflow: "implementation",
-      }),
+    await expect(claimNextCard(trello, git, project)).rejects.toThrow(
+      "Trello unavailable",
     );
-    expect(moveCard).toHaveBeenCalledWith("card-2", "working-list");
-    expect(card?.id).toBe("card-2");
+    expect(existing).toBe(true);
+    expect(fs.existsSync(worktreePath)).toBe(true);
+
+    const retry = await claimNextCard(trello, git, project);
+
+    expect(retry?.worktree.reused).toBe(true);
+    expect(moveCard).toHaveBeenCalledTimes(2);
   });
 
-  it("writes ownership before moving a card to Working", async () => {
-    const events: string[] = [];
-    const readyCard = createCard();
-    const setWorkflowOwnership = vi.fn(async () => {
-      events.push("set-ownership");
-    });
-    const moveCard = vi.fn(async () => {
-      events.push("move-card");
-      return createCard({ idList: "working-list" });
-    });
-
+  it("returns null when no implementation label is ready", async () => {
+    const project = createProject("/worktrees");
     const trello = {
-      getCards: vi.fn().mockResolvedValue([readyCard]),
-      setWorkflowOwnership,
-      moveCard,
+      getCards: vi
+        .fn()
+        .mockResolvedValue([
+          createCard("card-1", []),
+          createCard("card-2", ["refinement"]),
+        ]),
+      moveCard: vi.fn(),
     } as unknown as TrelloClient;
 
-    await claimNextCard(trello, createProject());
-
-    expect(events).toEqual(["set-ownership", "move-card"]);
+    await expect(
+      claimNextCard(trello, {} as GitClient, project),
+    ).resolves.toBeNull();
+    expect(trello.moveCard).not.toHaveBeenCalled();
   });
-
-  it.each(["featureLabelId", "improvementLabelId", "bugLabelId"] as const)(
-    "accepts cards with the configured %s",
-    async (labelKey) => {
-      const project = createProject();
-      const labelId = project.trello[labelKey];
-
-      const readyCard = createCard({
-        idLabels: [labelId],
-      });
-
-      const claimedCard = createCard({
-        idList: "working-list",
-        idLabels: [labelId],
-        workflowOwnership: expect.any(String) as unknown as string,
-      });
-
-      const trello = {
-        getCards: vi.fn().mockResolvedValue([readyCard]),
-        setWorkflowOwnership: vi.fn(),
-        moveCard: vi.fn().mockResolvedValue(claimedCard),
-      } as unknown as TrelloClient;
-
-      const card = await claimNextCard(trello, project);
-
-      expect(trello.moveCard).toHaveBeenCalledWith("card-1", "working-list");
-      expect(card).toEqual(claimedCard);
-    },
-  );
 });

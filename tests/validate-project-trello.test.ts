@@ -8,7 +8,6 @@ const project = {
   id: "example",
   trello: {
     boardId: "board-1",
-    ownershipCustomFieldId: "ownership-field",
     backlogListId: "backlog",
     readyListId: "ready",
     workingListId: "working",
@@ -38,10 +37,6 @@ const labels = [
   { id: "bug-label", name: "Bug", color: "red" },
 ];
 
-const customFields = [
-  { id: "ownership-field", name: "Agent Orchestrator Ownership", type: "text" },
-];
-
 describe("validateProjectTrello", () => {
   it("accepts all required lists and labels on the configured board", async () => {
     const trello = {
@@ -52,7 +47,6 @@ describe("validateProjectTrello", () => {
       }),
       getLists: vi.fn().mockResolvedValue(lists),
       getLabels: vi.fn().mockResolvedValue(labels),
-      getCustomFields: vi.fn().mockResolvedValue(customFields),
     } as unknown as TrelloClient;
 
     await expect(
@@ -75,7 +69,6 @@ describe("validateProjectTrello", () => {
           ),
         ),
       getLabels: vi.fn().mockResolvedValue(labels),
-      getCustomFields: vi.fn().mockResolvedValue(customFields),
     } as unknown as TrelloClient;
 
     await expect(validateProjectTrello(trello, project)).rejects.toThrow(
@@ -94,7 +87,6 @@ describe("validateProjectTrello", () => {
         .fn()
         .mockResolvedValue(lists.filter((list) => list.id !== "done")),
       getLabels: vi.fn().mockResolvedValue(labels),
-      getCustomFields: vi.fn().mockResolvedValue(customFields),
     } as unknown as TrelloClient;
 
     await expect(validateProjectTrello(trello, project)).rejects.toThrow(
@@ -113,7 +105,6 @@ describe("validateProjectTrello", () => {
         .fn()
         .mockResolvedValue(lists.filter((list) => list.id !== "backlog")),
       getLabels: vi.fn().mockResolvedValue(labels),
-      getCustomFields: vi.fn().mockResolvedValue(customFields),
     } as unknown as TrelloClient;
 
     await expect(validateProjectTrello(trello, project)).rejects.toThrow(
@@ -134,39 +125,10 @@ describe("validateProjectTrello", () => {
         .mockResolvedValue(
           labels.filter((label) => label.id !== "improvement-label"),
         ),
-      getCustomFields: vi.fn().mockResolvedValue(customFields),
     } as unknown as TrelloClient;
 
     await expect(validateProjectTrello(trello, project)).rejects.toThrow(
       "improvementLabelId",
     );
   });
-
-  it.each([
-    ["missing", []],
-    [
-      "non-text",
-      [{ id: "ownership-field", name: "Ownership", type: "number" }],
-    ],
-  ])(
-    "rejects an ownership custom field that is %s",
-    async (caseName, fields) => {
-      expect(caseName).toBeTruthy();
-
-      const trello = {
-        getBoard: vi.fn().mockResolvedValue({
-          id: "board-1",
-          name: "Workflow",
-          url: "https://trello.com/b/board-1/workflow",
-        }),
-        getLists: vi.fn().mockResolvedValue(lists),
-        getLabels: vi.fn().mockResolvedValue(labels),
-        getCustomFields: vi.fn().mockResolvedValue(fields),
-      } as unknown as TrelloClient;
-
-      await expect(validateProjectTrello(trello, project)).rejects.toThrow(
-        "ownershipCustomFieldId",
-      );
-    },
-  );
 });

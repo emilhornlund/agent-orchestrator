@@ -1,7 +1,6 @@
 import type { ProjectConfig } from "../config/config.js";
 import { logger } from "../logging/logger.js";
-import type { TrelloCard, TrelloClient } from "../trello/trello-client.js";
-import { hasWorkflowOwnershipMarker } from "../trello/workflow-ownership.js";
+import type { TrelloClient } from "../trello/trello-client.js";
 
 import {
   annotateFailure,
@@ -17,7 +16,6 @@ export async function failCard(
   project: ProjectConfig,
   cardId: string,
   workflowError: unknown,
-  card?: TrelloCard,
 ): Promise<never> {
   const cardLog = logger.child({
     projectId: project.id,
@@ -68,71 +66,6 @@ export async function failCard(
     );
 
     throw aggregateError;
-  }
-
-  if (card !== undefined && hasWorkflowOwnershipMarker(card)) {
-    try {
-      await trello.clearWorkflowOwnership(
-        cardId,
-        project.trello.ownershipCustomFieldId,
-      );
-    } catch (ownershipError) {
-      const clearError = toFailureError(ownershipError);
-
-      try {
-        await trello.moveCard(cardId, card.idList);
-      } catch (rollbackError) {
-        const restoreError = toFailureError(rollbackError);
-
-        const aggregateError = new AggregateError(
-          [originalError, clearError, restoreError],
-          `Workflow failed: ${originalError.message}; additionally failed to clear Trello ownership after moving card to Failed: ${clearError.message}; additionally failed to restore card to its original list: ${restoreError.message}`,
-          { cause: rollbackError },
-        );
-
-        annotateFailure(
-          aggregateError,
-          {
-            ...failureContext,
-            handlingOutcome: `card moved to Failed, ownership could not be cleared, and card could not be restored to its original list: ${restoreError.message}`,
-          },
-          {
-            category: failureDescription.category,
-            reason: aggregateError.message,
-          },
-        );
-
-        cardLog.error(
-          `Failure handling incomplete: card moved to Failed, ownership could not be cleared, and card could not be restored to its original list: ${restoreError.message}; preserving the primary failure`,
-        );
-
-        throw aggregateError;
-      }
-
-      const aggregateError = new AggregateError(
-        [originalError, clearError],
-        `Workflow failed: ${originalError.message}; additionally failed to clear Trello ownership after moving card to Failed: ${clearError.message}`,
-        { cause: ownershipError },
-      );
-
-      annotateFailure(
-        aggregateError,
-        {
-          ...failureContext,
-          handlingOutcome: `card restored to ${card.idList} after ownership clearing failed: ${clearError.message}`,
-        },
-        {
-          category: failureDescription.category,
-          reason: aggregateError.message,
-        },
-      );
-
-      cardLog.error(
-        `Failure handling incomplete: ownership could not be cleared after moving card to Failed; restored card to ${card.idList}; preserving the primary failure`,
-      );
-
-      throw aggregateError;
-    }
   }
 
   annotateFailure(originalError, {

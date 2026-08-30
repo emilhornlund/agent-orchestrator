@@ -1,156 +1,175 @@
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { ProjectConfig } from "../src/config/config.js";
 import type { GitClient } from "../src/git/git-client.js";
 import type { GitHubClient } from "../src/github/github-client.js";
-import { getSessionLogPath } from "../src/logging/session-log.js";
 import { reconcileReviewCards } from "../src/orchestrator/reconcile-review-cards.js";
-import type { TrelloClient } from "../src/trello/trello-client.js";
+import type { TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
 
 const project = {
-  id: "test-project",
+  id: "project",
   repository: {
     path: "/repo",
     github: "owner/repo",
   },
   trello: {
-    ownershipCustomFieldId: "ownership-field",
+    boardId: "board",
     backlogListId: "backlog",
+    readyListId: "ready",
     workingListId: "working",
     reviewListId: "review",
-    doneListId: "done",
     failedListId: "failed",
+    doneListId: "done",
   },
 } as ProjectConfig;
 
-const card = {
-  id: "card-1",
-  name: "Reviewed task",
-  desc: "",
-  idList: "review",
-  url: "https://trello.example/card-1",
-  workflowOwnership: JSON.stringify({
-    version: 1,
-    owner: "agent-orchestrator",
-    projectId: "test-project",
-    cardId: "card-1",
-    workflow: "implementation",
-  }),
-};
+function card(id = "card-1"): TrelloCard {
+  return {
+    id,
+    name: id,
+    desc: "",
+    idList: "review",
+    idLabels: [],
+    url: `https://trello.example/${id}`,
+  };
+}
+
+function githubFor(
+  cardId: string,
+  state: "none" | "open" | "requested" | "closed" | "merged",
+): GitHubClient {
+  const pullRequest = {
+    url: `https://github.com/owner/repo/pull/${cardId === "card-1" ? 1 : 2}`,
+  };
+
+  return {
+    findMergedPullRequest: vi
+      .fn()
+      .mockResolvedValue(state === "merged" ? pullRequest : null),
+    findClosedPullRequest: vi
+      .fn()
+      .mockResolvedValue(state === "closed" ? pullRequest : null),
+    findPullRequest: vi
+      .fn()
+      .mockResolvedValue(
+        state === "open" || state === "requested" ? pullRequest : null,
+      ),
+    findChangesRequestedPullRequest: vi
+      .fn()
+      .mockResolvedValue(
+        state === "requested"
+          ? { ...pullRequest, feedback: "Fix this." }
+          : null,
+      ),
+  } as unknown as GitHubClient;
+}
+
+function trelloFor(cardValue: TrelloCard): TrelloClient {
+  return {
+    getCards: vi.fn().mockResolvedValue([cardValue]),
+    moveCard: vi
+      .fn()
+      .mockImplementation(async (_cardId: string, listId: string) => ({
+        ...cardValue,
+        idList: listId,
+      })),
+    addComment: vi.fn().mockResolvedValue(undefined),
+  } as unknown as TrelloClient;
+}
 
 describe("reconcileReviewCards", () => {
-  const sessionLogPath = getSessionLogPath(project.id, card.id);
-
-  afterEach(() => {
-    rmSync(sessionLogPath, {
-      force: true,
-    });
-  });
-
-  it("does nothing when there are no Human Review cards", async () => {
-    const trello = {
-      getCards: vi.fn().mockResolvedValue([]),
-      clearWorkflowOwnership: vi.fn().mockResolvedValue(undefined),
-      moveCard: vi.fn(),
-    } as unknown as TrelloClient;
-
-    const git = {} as GitClient;
-    const github = {
-      findMergedPullRequest: vi.fn(),
-    } as unknown as GitHubClient;
+  it("returns requested changes without an ownership marker", async () => {
+    const trello = trelloFor(card());
+    const github = githubFor("card-1", "requested");
 
     await expect(
-      reconcileReviewCards(trello, git, github, project),
-    ).resolves.toBeNull();
-
-    expect(trello.getCards).toHaveBeenCalledWith("review", {
-      workflowOwnershipCustomFieldId: "ownership-field",
+      reconcileReviewCards(trello, {} as GitClient, github, project),
+    ).resolves.toEqual({
+      card: card(),
+      pullRequestUrl: "https://github.com/owner/repo/pull/1",
+      feedback: "Fix this.",
     });
-    expect(github.findMergedPullRequest).not.toHaveBeenCalled();
+
+    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "working");
+  });
+
+  it("leaves an open PR without requested changes in Human Review", async () => {
+    const trello = trelloFor(card());
+    const github = githubFor("card-1", "open");
+
+    await expect(
+      reconcileReviewCards(trello, {} as GitClient, github, project),
+    ).resolves.toEqual({ card: card(), active: true });
+
     expect(trello.moveCard).not.toHaveBeenCalled();
   });
 
-  it("corrects an unowned Human Review card without inspecting GitHub", async () => {
-    const moveCard = vi.fn().mockResolvedValue({
-      ...card,
-      idList: "backlog",
-    });
-    const clearWorkflowOwnership = vi.fn().mockResolvedValue(undefined);
-    const addComment = vi.fn().mockResolvedValue(undefined);
+  it("moves a card with no expected PR to Backlog", async () => {
     const trello = {
-      getCards: vi
-        .fn()
-        .mockResolvedValue([{ ...card, workflowOwnership: "not-json" }]),
-      clearWorkflowOwnership,
-      moveCard,
-      addComment,
+      ...trelloFor(card()),
+      moveCard: vi.fn().mockResolvedValue({ ...card(), idList: "backlog" }),
     } as unknown as TrelloClient;
-    const github = {
-      findMergedPullRequest: vi.fn(),
-      findClosedPullRequest: vi.fn(),
-      findPullRequest: vi.fn(),
-    } as unknown as GitHubClient;
+    const github = githubFor("card-1", "none");
 
     await expect(
       reconcileReviewCards(trello, {} as GitClient, github, project),
     ).resolves.toBeNull();
 
-    expect(clearWorkflowOwnership).toHaveBeenCalledWith(
+    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "backlog");
+    expect(trello.addComment).toHaveBeenCalledWith(
       "card-1",
-      "ownership-field",
+      expect.stringContaining("no expected pull request"),
     );
-    expect(moveCard).toHaveBeenCalledWith("card-1", "backlog");
-    expect(addComment).toHaveBeenCalledWith(
-      "card-1",
-      expect.stringContaining("not validly owned"),
-    );
-    expect(github.findMergedPullRequest).not.toHaveBeenCalled();
-    expect(github.findPullRequest).not.toHaveBeenCalled();
   });
 
-  it("blocks the project when multiple owned cards are in Human Review", async () => {
-    const secondCard = {
-      ...card,
-      id: "card-2",
-      name: "Another reviewed task",
-      url: "https://trello.example/card-2",
-      workflowOwnership: JSON.stringify({
-        version: 1,
-        owner: "agent-orchestrator",
-        projectId: "test-project",
-        cardId: "card-2",
-        workflow: "implementation",
-      }),
-    };
+  it("moves a merged expected PR to Done and removes its remote branch", async () => {
+    const trello = trelloFor(card());
+    const git = {
+      remoteBranchExists: vi.fn().mockResolvedValue(true),
+      deleteRemoteBranch: vi.fn().mockResolvedValue(undefined),
+    } as unknown as GitClient;
+
+    await reconcileReviewCards(
+      trello,
+      git,
+      githubFor("card-1", "merged"),
+      project,
+    );
+
+    expect(git.deleteRemoteBranch).toHaveBeenCalledWith(
+      "/repo",
+      "origin",
+      "agent/card-1",
+    );
+    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "done", {
+      dueComplete: true,
+    });
+  });
+
+  it("moves a closed unmerged expected PR to Failed and comments", async () => {
+    const trello = trelloFor(card());
+
+    await reconcileReviewCards(
+      trello,
+      {} as GitClient,
+      githubFor("card-1", "closed"),
+      project,
+    );
+
+    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "failed");
+    expect(trello.addComment).toHaveBeenCalledWith(
+      "card-1",
+      expect.stringContaining("closed without being merged"),
+    );
+  });
+
+  it("blocks the project when multiple expected PRs are active", async () => {
+    const second = card("card-2");
     const trello = {
-      getCards: vi.fn().mockResolvedValue([card, secondCard]),
+      getCards: vi.fn().mockResolvedValue([card(), second]),
       moveCard: vi.fn(),
-      clearWorkflowOwnership: vi.fn(),
       addComment: vi.fn(),
     } as unknown as TrelloClient;
-    const github = {
-      findMergedPullRequest: vi.fn(),
-    } as unknown as GitHubClient;
-
-    await expect(
-      reconcileReviewCards(trello, {} as GitClient, github, project),
-    ).rejects.toThrow("Multiple owned cards are active in Human Review");
-
-    expect(github.findMergedPullRequest).not.toHaveBeenCalled();
-    expect(trello.moveCard).not.toHaveBeenCalled();
-  });
-
-  it("leaves a Human Review card untouched when its PR is still open", async () => {
-    const trello = {
-      getCards: vi.fn().mockResolvedValue([card]),
-      clearWorkflowOwnership: vi.fn().mockResolvedValue(undefined),
-      moveCard: vi.fn(),
-    } as unknown as TrelloClient;
-
-    const git = {} as GitClient;
-
     const github = {
       findMergedPullRequest: vi.fn().mockResolvedValue(null),
       findClosedPullRequest: vi.fn().mockResolvedValue(null),
@@ -161,357 +180,8 @@ describe("reconcileReviewCards", () => {
     } as unknown as GitHubClient;
 
     await expect(
-      reconcileReviewCards(trello, git, github, project),
-    ).resolves.toEqual({ card, active: true });
-
+      reconcileReviewCards(trello, {} as GitClient, github, project),
+    ).rejects.toThrow("Multiple active cards are in Human Review");
     expect(trello.moveCard).not.toHaveBeenCalled();
-
-    expect(github.findClosedPullRequest).toHaveBeenCalledWith({
-      cwd: "/repo",
-      repository: "owner/repo",
-      headBranch: "agent/card-1",
-    });
-  });
-
-  it("deletes the remote branch and moves a merged card to Done", async () => {
-    mkdirSync(path.dirname(sessionLogPath), {
-      recursive: true,
-    });
-
-    writeFileSync(sessionLogPath, "OpenCode output", "utf8");
-
-    expect(existsSync(sessionLogPath)).toBe(true);
-
-    const trello = {
-      getCards: vi.fn().mockResolvedValue([card]),
-      clearWorkflowOwnership: vi.fn().mockResolvedValue(undefined),
-      moveCard: vi.fn().mockResolvedValue({
-        ...card,
-        idList: "done",
-      }),
-    } as unknown as TrelloClient;
-
-    const git = {
-      remoteBranchExists: vi.fn().mockResolvedValue(true),
-      deleteRemoteBranch: vi.fn().mockResolvedValue(undefined),
-    } as unknown as GitClient;
-
-    const github = {
-      findMergedPullRequest: vi.fn().mockResolvedValue({
-        url: "https://github.com/owner/repo/pull/1",
-      }),
-    } as unknown as GitHubClient;
-
-    await reconcileReviewCards(trello, git, github, project);
-
-    expect(git.deleteRemoteBranch).toHaveBeenCalledWith(
-      "/repo",
-      "origin",
-      "agent/card-1",
-    );
-
-    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "done", {
-      dueComplete: true,
-    });
-
-    expect(existsSync(sessionLogPath)).toBe(false);
-  });
-
-  it("keeps the session log when moving a merged card to Done fails", async () => {
-    mkdirSync(path.dirname(sessionLogPath), {
-      recursive: true,
-    });
-
-    writeFileSync(sessionLogPath, "OpenCode output", "utf8");
-
-    const trello = {
-      getCards: vi.fn().mockResolvedValue([card]),
-      clearWorkflowOwnership: vi.fn().mockResolvedValue(undefined),
-      moveCard: vi.fn().mockRejectedValue(new Error("move failed")),
-    } as unknown as TrelloClient;
-
-    const git = {
-      remoteBranchExists: vi.fn().mockResolvedValue(false),
-      deleteRemoteBranch: vi.fn(),
-    } as unknown as GitClient;
-
-    const github = {
-      findMergedPullRequest: vi.fn().mockResolvedValue({
-        url: "https://github.com/owner/repo/pull/1",
-      }),
-    } as unknown as GitHubClient;
-
-    await expect(
-      reconcileReviewCards(trello, git, github, project),
-    ).rejects.toThrow("Could not complete merged Human Review card");
-
-    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "done", {
-      dueComplete: true,
-    });
-
-    expect(trello.clearWorkflowOwnership).not.toHaveBeenCalled();
-
-    expect(existsSync(sessionLogPath)).toBe(true);
-  });
-
-  it("restores a merged card to Human Review when ownership cleanup after Done fails", async () => {
-    const moveCard = vi
-      .fn()
-      .mockResolvedValueOnce({
-        ...card,
-        idList: "done",
-      })
-      .mockResolvedValueOnce({
-        ...card,
-        idList: "review",
-      });
-
-    const trello = {
-      getCards: vi.fn().mockResolvedValue([card]),
-      clearWorkflowOwnership: vi
-        .fn()
-        .mockRejectedValue(new Error("ownership clear failed")),
-      moveCard,
-    } as unknown as TrelloClient;
-
-    const git = {
-      remoteBranchExists: vi.fn().mockResolvedValue(false),
-      deleteRemoteBranch: vi.fn(),
-    } as unknown as GitClient;
-
-    const github = {
-      findMergedPullRequest: vi.fn().mockResolvedValue({
-        url: "https://github.com/owner/repo/pull/1",
-      }),
-    } as unknown as GitHubClient;
-
-    await expect(
-      reconcileReviewCards(trello, git, github, project),
-    ).rejects.toThrow("Could not complete merged Human Review card");
-
-    expect(moveCard).toHaveBeenNthCalledWith(1, "card-1", "done", {
-      dueComplete: true,
-    });
-
-    expect(trello.clearWorkflowOwnership).toHaveBeenCalledWith(
-      "card-1",
-      "ownership-field",
-    );
-
-    expect(moveCard).toHaveBeenNthCalledWith(
-      2,
-      "card-1",
-      project.trello.reviewListId,
-    );
-  });
-
-  it("reports both ownership cleanup and rollback failures after Done", async () => {
-    const moveCard = vi
-      .fn()
-      .mockResolvedValueOnce({
-        ...card,
-        idList: "done",
-      })
-      .mockRejectedValueOnce(new Error("rollback failed"));
-
-    const trello = {
-      getCards: vi.fn().mockResolvedValue([card]),
-      clearWorkflowOwnership: vi
-        .fn()
-        .mockRejectedValue(new Error("ownership clear failed")),
-      moveCard,
-    } as unknown as TrelloClient;
-
-    const git = {
-      remoteBranchExists: vi.fn().mockResolvedValue(false),
-      deleteRemoteBranch: vi.fn(),
-    } as unknown as GitClient;
-
-    const github = {
-      findMergedPullRequest: vi.fn().mockResolvedValue({
-        url: "https://github.com/owner/repo/pull/1",
-      }),
-    } as unknown as GitHubClient;
-
-    await expect(
-      reconcileReviewCards(trello, git, github, project),
-    ).rejects.toThrow(
-      "additionally could not restore card to Human Review: rollback failed",
-    );
-
-    expect(moveCard).toHaveBeenNthCalledWith(1, "card-1", "done", {
-      dueComplete: true,
-    });
-
-    expect(moveCard).toHaveBeenNthCalledWith(
-      2,
-      "card-1",
-      project.trello.reviewListId,
-    );
-
-    expect(trello.clearWorkflowOwnership).toHaveBeenCalledWith(
-      "card-1",
-      "ownership-field",
-    );
-  });
-
-  it("moves a merged card to Done when the remote branch is already gone", async () => {
-    const trello = {
-      getCards: vi.fn().mockResolvedValue([card]),
-      clearWorkflowOwnership: vi.fn().mockResolvedValue(undefined),
-      moveCard: vi.fn().mockResolvedValue({
-        ...card,
-        idList: "done",
-      }),
-    } as unknown as TrelloClient;
-
-    const git = {
-      remoteBranchExists: vi.fn().mockResolvedValue(false),
-      deleteRemoteBranch: vi.fn(),
-    } as unknown as GitClient;
-
-    const github = {
-      findMergedPullRequest: vi.fn().mockResolvedValue({
-        url: "https://github.com/owner/repo/pull/1",
-      }),
-    } as unknown as GitHubClient;
-
-    await reconcileReviewCards(trello, git, github, project);
-
-    expect(git.deleteRemoteBranch).not.toHaveBeenCalled();
-
-    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "done", {
-      dueComplete: true,
-    });
-  });
-
-  it("keeps a merged card in Human Review when remote branch cleanup fails", async () => {
-    const trello = {
-      getCards: vi.fn().mockResolvedValue([card]),
-      clearWorkflowOwnership: vi.fn().mockResolvedValue(undefined),
-      moveCard: vi.fn(),
-    } as unknown as TrelloClient;
-
-    const git = {
-      remoteBranchExists: vi.fn().mockResolvedValue(true),
-      deleteRemoteBranch: vi.fn().mockRejectedValue(new Error("delete failed")),
-    } as unknown as GitClient;
-
-    const github = {
-      findMergedPullRequest: vi.fn().mockResolvedValue({
-        url: "https://github.com/owner/repo/pull/1",
-      }),
-    } as unknown as GitHubClient;
-
-    await expect(
-      reconcileReviewCards(trello, git, github, project),
-    ).rejects.toThrow("Could not clean up merged pull request branch");
-
-    expect(trello.moveCard).not.toHaveBeenCalled();
-  });
-
-  it("moves a card to Failed when its pull request was closed without merge", async () => {
-    const trello = {
-      getCards: vi.fn().mockResolvedValue([card]),
-      clearWorkflowOwnership: vi.fn().mockResolvedValue(undefined),
-      moveCard: vi.fn().mockResolvedValue({
-        ...card,
-        idList: "failed",
-      }),
-      addComment: vi.fn().mockResolvedValue(undefined),
-    } as unknown as TrelloClient;
-
-    const git = {
-      remoteBranchExists: vi.fn(),
-      deleteRemoteBranch: vi.fn(),
-    } as unknown as GitClient;
-
-    const github = {
-      findMergedPullRequest: vi.fn().mockResolvedValue(null),
-      findClosedPullRequest: vi.fn().mockResolvedValue({
-        url: "https://github.com/owner/repo/pull/1",
-      }),
-    } as unknown as GitHubClient;
-
-    await reconcileReviewCards(trello, git, github, project);
-
-    expect(trello.moveCard).toHaveBeenCalledWith(
-      "card-1",
-      project.trello.failedListId,
-    );
-
-    expect(trello.addComment).toHaveBeenCalledWith(
-      "card-1",
-      [
-        "Pull request was closed without being merged.",
-        "",
-        "Pull request: https://github.com/owner/repo/pull/1",
-      ].join("\n"),
-    );
-
-    expect(git.remoteBranchExists).not.toHaveBeenCalled();
-    expect(git.deleteRemoteBranch).not.toHaveBeenCalled();
-  });
-
-  it("keeps processing safely when moving a closed pull request card to Failed fails", async () => {
-    const trello = {
-      getCards: vi.fn().mockResolvedValue([card]),
-      clearWorkflowOwnership: vi.fn().mockResolvedValue(undefined),
-      moveCard: vi.fn().mockRejectedValue(new Error("move failed")),
-      addComment: vi.fn(),
-    } as unknown as TrelloClient;
-
-    const git = {} as GitClient;
-
-    const github = {
-      findMergedPullRequest: vi.fn().mockResolvedValue(null),
-      findClosedPullRequest: vi.fn().mockResolvedValue({
-        url: "https://github.com/owner/repo/pull/1",
-      }),
-    } as unknown as GitHubClient;
-
-    await expect(
-      reconcileReviewCards(trello, git, github, project),
-    ).rejects.toThrow("Could not move closed Human Review card to Failed");
-
-    expect(trello.addComment).not.toHaveBeenCalled();
-  });
-
-  it("moves a Human Review card to Working and returns requested review feedback", async () => {
-    const trello = {
-      getCards: vi.fn().mockResolvedValue([card]),
-      clearWorkflowOwnership: vi.fn().mockResolvedValue(undefined),
-      moveCard: vi.fn().mockResolvedValue({
-        ...card,
-        idList: "working",
-      }),
-    } as unknown as TrelloClient;
-
-    const git = {} as GitClient;
-
-    const github = {
-      findMergedPullRequest: vi.fn().mockResolvedValue(null),
-      findClosedPullRequest: vi.fn().mockResolvedValue(null),
-      findPullRequest: vi.fn().mockResolvedValue({
-        url: "https://github.com/owner/repo/pull/1",
-      }),
-      findChangesRequestedPullRequest: vi.fn().mockResolvedValue({
-        url: "https://github.com/owner/repo/pull/1",
-        feedback: "Please add a regression test.",
-      }),
-    } as unknown as GitHubClient;
-
-    const result = await reconcileReviewCards(trello, git, github, project);
-
-    expect(trello.moveCard).toHaveBeenCalledWith(
-      "card-1",
-      project.trello.workingListId,
-    );
-
-    expect(result).toEqual({
-      card,
-      pullRequestUrl: "https://github.com/owner/repo/pull/1",
-      feedback: "Please add a regression test.",
-    });
   });
 });

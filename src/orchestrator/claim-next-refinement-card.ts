@@ -1,56 +1,42 @@
 import type { Config } from "../config/config.js";
+import type { GitClient } from "../git/git-client.js";
+import { prepareWorktree } from "../git/prepare-worktree.js";
 import { logger } from "../logging/logger.js";
-import {
-  createWorkflowOwnership,
-  serializeWorkflowOwnership,
-  validateWorkflowOwnership,
-} from "../trello/workflow-ownership.js";
 import { type TrelloCard, type TrelloClient } from "../trello/trello-client.js";
 
 type Project = Config["projects"][number];
 
+export interface ClaimedRefinementCard {
+  card: TrelloCard;
+  worktree: Awaited<ReturnType<typeof prepareWorktree>>;
+}
+
 export async function claimNextRefinementCard(
   trello: TrelloClient,
+  git: GitClient,
   project: Project,
-): Promise<TrelloCard | null> {
-  const cards = await trello.getCards(project.trello.readyListId, {
-    workflowOwnershipCustomFieldId: project.trello.ownershipCustomFieldId,
-  });
+): Promise<ClaimedRefinementCard | null> {
+  const cards = await trello.getCards(project.trello.readyListId);
 
   for (const candidate of cards) {
     if (!candidate.idLabels.includes(project.trello.refinementLabelId)) {
       continue;
     }
 
-    const ownership = validateWorkflowOwnership(
-      candidate,
-      project,
-      "refinement",
+    const worktree = await prepareWorktree(git, project, candidate.id);
+    const claimedCard = await trello.moveCard(
+      candidate.id,
+      project.trello.workingListId,
     );
-
-    if (ownership.status === "missing" || ownership.status === "owned") {
-      const marker = createWorkflowOwnership(project, candidate, "refinement");
-
-      await trello.setWorkflowOwnership(
-        candidate.id,
-        project.trello.ownershipCustomFieldId,
-        marker,
-      );
-
-      const claimedCard = await trello.moveCard(
-        candidate.id,
-        project.trello.workingListId,
-      );
-
-      return {
-        ...claimedCard,
-        workflowOwnership: serializeWorkflowOwnership(marker),
-      };
-    }
 
     logger
       .child({ projectId: project.id, cardId: candidate.id })
-      .warn(`Skipping Ready for Agent card: ${ownership.reason}`);
+      .debug("Prepared worktree before moving card to Working");
+
+    return {
+      card: claimedCard,
+      worktree,
+    };
   }
 
   return null;

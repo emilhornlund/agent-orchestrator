@@ -1,69 +1,44 @@
 import type { Config } from "../config/config.js";
+import { prepareWorktree } from "../git/prepare-worktree.js";
 import { logger } from "../logging/logger.js";
-import {
-  createWorkflowOwnership,
-  serializeWorkflowOwnership,
-  validateWorkflowOwnership,
-} from "../trello/workflow-ownership.js";
+import type { GitClient } from "../git/git-client.js";
 import { type TrelloCard, type TrelloClient } from "../trello/trello-client.js";
+
+import { getWorkflowKind } from "./workflow-kind.js";
 
 type Project = Config["projects"][number];
 
+export interface ClaimedImplementationCard {
+  card: TrelloCard;
+  worktree: Awaited<ReturnType<typeof prepareWorktree>>;
+}
+
 export async function claimNextCard(
   trello: TrelloClient,
+  git: GitClient,
   project: Project,
-): Promise<TrelloCard | null> {
-  const cards = await trello.getCards(project.trello.readyListId, {
-    workflowOwnershipCustomFieldId: project.trello.ownershipCustomFieldId,
-  });
-
-  const implementationLabelIds = new Set([
-    project.trello.featureLabelId,
-    project.trello.improvementLabelId,
-    project.trello.bugLabelId,
-  ]);
+): Promise<ClaimedImplementationCard | null> {
+  const cards = await trello.getCards(project.trello.readyListId);
 
   for (const candidate of cards) {
-    if (
-      candidate.idLabels.includes(project.trello.refinementLabelId) ||
-      !candidate.idLabels.some((labelId) => implementationLabelIds.has(labelId))
-    ) {
+    if (getWorkflowKind(candidate, project) !== "implementation") {
       continue;
     }
 
-    const ownership = validateWorkflowOwnership(
-      candidate,
-      project,
-      "implementation",
+    const worktree = await prepareWorktree(git, project, candidate.id);
+    const claimedCard = await trello.moveCard(
+      candidate.id,
+      project.trello.workingListId,
     );
-
-    if (ownership.status === "missing" || ownership.status === "owned") {
-      const marker = createWorkflowOwnership(
-        project,
-        candidate,
-        "implementation",
-      );
-
-      await trello.setWorkflowOwnership(
-        candidate.id,
-        project.trello.ownershipCustomFieldId,
-        marker,
-      );
-
-      const claimedCard = await trello.moveCard(
-        candidate.id,
-        project.trello.workingListId,
-      );
-
-      return {
-        ...claimedCard,
-        workflowOwnership: serializeWorkflowOwnership(marker),
-      };
-    }
 
     logger
       .child({ projectId: project.id, cardId: candidate.id })
-      .warn(`Skipping Ready for Agent card: ${ownership.reason}`);
+      .debug("Prepared worktree before moving card to Working");
+
+    return {
+      card: claimedCard,
+      worktree,
+    };
   }
 
   return null;

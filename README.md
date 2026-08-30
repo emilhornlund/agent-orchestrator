@@ -126,33 +126,20 @@ OpenCode to inspect. If an open pull request already exists, the card is reconci
 rerunning implementation or creating a duplicate pull request. Publication or Trello failures leave the card in its
 failure/reconciliation state instead of advancing it silently.
 
-Each project also uses a Trello text custom field as its workflow ownership marker. Create the field on the project board,
-then set its ID as `ownershipCustomFieldId`. The orchestrator writes this exact JSON shape when it claims a card:
+Workflow recovery uses only deterministic workflow artifacts. Before a newly claimed card is moved to `Working`, its
+`<worktreeRoot>/<trello-card-id>` worktree is prepared on `agent/<trello-card-id>`. If the move fails, that worktree remains
+available for the next attempt.
 
-```json
-{
-  "version": 1,
-  "owner": "agent-orchestrator",
-  "projectId": "my-project",
-  "cardId": "trello-card-id",
-  "workflow": "implementation"
-}
-```
+A `Working` card is recoverable only when Trello action history shows its latest transition into `Working` came from `Ready for
+Agent` and the expected worktree exists on the expected branch, or when the transition came from `Human Review` and the
+expected open pull request has actionable requested changes. Other manual moves into `Working` are corrected to `Backlog`,
+including when stale branches or worktrees exist. Working reconciliation never creates worktrees.
 
-The `workflow` value is either `implementation` or `refinement`. Only a card with a valid marker for the current project,
-card, and workflow is considered owned in `Working` or `Human Review`. Cards in those lists without a valid marker are
-corrected to `Backlog`, without inspecting or changing Git, GitHub, or pull requests, and receive a Trello explanation.
-Malformed, conflicting, stale, or mismatched markers are never used to start work.
-
-The marker is written before a claimed card moves to `Working`. For terminal or corrective transitions, the card moves to
-`Backlog`, `Failed`, or `Done` before the marker is cleared, so a failed destination move leaves the active card owned and
-recoverable. If the destination move succeeds but clearing the ownership marker fails, the orchestrator attempts to restore
-the card to its previous active or reconcilable list rather than leaving a valid ownership marker in a terminal or neutral
-state. If that rollback also fails, both failures are reported and the ambiguous Trello state requires manual inspection.
-A marker write, clear, or list transition failure does not count as a successful workflow transition. If a card is left in
-`Working` or `Human Review` after such a failure, inspect its existing worktree, branch, pull request, and session log before
-retrying. To retry deliberately, move the card to `Ready for Agent`; cards in `Backlog`, `Failed`, and `Done` are not
-automatically processed.
+`Human Review` cards are reconciled from the expected `agent/<trello-card-id>` pull request. Merged pull requests move cards to
+`Done`, closed unmerged pull requests move them to `Failed`, open pull requests with requested changes return to `Working`,
+open pull requests without requested changes remain in `Human Review`, and cards without an expected pull request return to
+`Backlog`. To retry deliberately, move a card to `Ready for Agent`; `Backlog`, `Failed`, and `Done` are not automatically
+processed.
 
 ### Multi-project operation
 
@@ -200,7 +187,6 @@ projects:
 
     trello:
       boardId: "board-id"
-      ownershipCustomFieldId: "agent-orchestrator-ownership-custom-field-id"
       backlogListId: "backlog-list-id"
       readyListId: "ready-list-id"
       workingListId: "working-list-id"
@@ -374,7 +360,6 @@ Trello board, workflow list, and workflow label IDs for the project.
 The configured fields are:
 
 - `boardId` — Trello board containing the workflow.
-- `ownershipCustomFieldId` — text custom field used to identify orchestrator-owned workflow cards.
 - `backlogListId` — Backlog list.
 - `readyListId` — list from which eligible implementation cards are claimed.
 - `workingListId` — list used while automated work is in progress.
@@ -388,8 +373,8 @@ The configured fields are:
 
 All configured workflow list IDs must be unique. All configured workflow label IDs must also be unique.
 
-At startup, the orchestrator verifies that every configured workflow list exists and is open on the configured board,
-that every configured workflow label exists on that board, and that `ownershipCustomFieldId` exists as a text custom field.
+At startup, the orchestrator verifies that every configured workflow list exists and is open on the configured board and that
+every configured workflow label exists on that board.
 
 Each configured project must use a different Trello board.
 

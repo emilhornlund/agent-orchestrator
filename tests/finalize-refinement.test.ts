@@ -10,7 +10,6 @@ function createProject(): ProjectConfig {
     id: "project",
     trello: {
       boardId: "board",
-      ownershipCustomFieldId: "ownership-field",
       backlogListId: "backlog",
       readyListId: "ready",
       workingListId: "working",
@@ -83,7 +82,6 @@ function createTrelloMock() {
     updateCardContent: vi.fn(async () => undefined),
     addLabel: vi.fn(async () => undefined),
     removeLabel: vi.fn(async () => undefined),
-    clearWorkflowOwnership: vi.fn(async () => undefined),
     moveCard: vi.fn(async () => undefined),
   };
 }
@@ -177,14 +175,11 @@ describe("finalizeRefinement", () => {
     const updateOrder = trello.updateCardContent.mock.invocationCallOrder[0]!;
     const addLabelOrder = trello.addLabel.mock.invocationCallOrder[0]!;
     const removeLabelOrder = trello.removeLabel.mock.invocationCallOrder[0]!;
-    const clearOwnershipOrder =
-      trello.clearWorkflowOwnership.mock.invocationCallOrder[0]!;
     const moveOrder = trello.moveCard.mock.invocationCallOrder[0]!;
 
     expect(updateOrder).toBeLessThan(addLabelOrder);
     expect(addLabelOrder).toBeLessThan(removeLabelOrder);
     expect(removeLabelOrder).toBeLessThan(moveOrder);
-    expect(moveOrder).toBeLessThan(clearOwnershipOrder);
   });
 
   it("removes the refinement label", async () => {
@@ -211,68 +206,6 @@ describe("finalizeRefinement", () => {
     );
 
     expect(trello.moveCard).toHaveBeenCalledWith("card-123", "backlog");
-  });
-
-  it("restores the refined card to Working when ownership cleanup fails", async () => {
-    const trello = createTrelloMock();
-
-    trello.clearWorkflowOwnership.mockRejectedValueOnce(
-      new Error("ownership clear failed"),
-    );
-
-    trello.moveCard
-      .mockResolvedValueOnce(undefined)
-      .mockResolvedValueOnce(undefined);
-
-    await expect(
-      finalizeRefinement(
-        trello as unknown as TrelloClient,
-        createProject(),
-        createCard(),
-        createResult("feature"),
-      ),
-    ).rejects.toThrow("ownership clear failed");
-
-    expect(trello.moveCard).toHaveBeenNthCalledWith(1, "card-123", "backlog");
-
-    expect(trello.clearWorkflowOwnership).toHaveBeenCalledWith(
-      "card-123",
-      "ownership-field",
-    );
-
-    expect(trello.moveCard).toHaveBeenNthCalledWith(2, "card-123", "working");
-  });
-
-  it("reports both ownership cleanup and rollback failures for refinement", async () => {
-    const trello = createTrelloMock();
-
-    trello.clearWorkflowOwnership.mockRejectedValueOnce(
-      new Error("ownership clear failed"),
-    );
-
-    trello.moveCard
-      .mockResolvedValueOnce(undefined)
-      .mockRejectedValueOnce(new Error("rollback failed"));
-
-    await expect(
-      finalizeRefinement(
-        trello as unknown as TrelloClient,
-        createProject(),
-        createCard(),
-        createResult("feature"),
-      ),
-    ).rejects.toThrow(
-      "additionally could not restore card to its original list",
-    );
-
-    expect(trello.moveCard).toHaveBeenNthCalledWith(1, "card-123", "backlog");
-
-    expect(trello.clearWorkflowOwnership).toHaveBeenCalledWith(
-      "card-123",
-      "ownership-field",
-    );
-
-    expect(trello.moveCard).toHaveBeenNthCalledWith(2, "card-123", "working");
   });
 
   it("stops immediately when updating card content fails", async () => {

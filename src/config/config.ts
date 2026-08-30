@@ -16,7 +16,6 @@ const absolutePath = nonBlankString
 const trelloSchema = z
   .strictObject({
     boardId: nonBlankString,
-    ownershipCustomFieldId: nonBlankString,
     backlogListId: nonBlankString,
     readyListId: nonBlankString,
     workingListId: nonBlankString,

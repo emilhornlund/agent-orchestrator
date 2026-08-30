@@ -27,7 +27,6 @@ describe("pollProject", () => {
         worktreeRoot: "/worktrees",
       },
       trello: {
-        ownershipCustomFieldId: "ownership-field",
         readyListId: "ready",
         workingListId: "working",
         reviewListId: "review",
@@ -47,13 +46,6 @@ describe("pollProject", () => {
       idList: "review",
       idLabels: ["feature"],
       url: "https://trello.com/c/card-1",
-      workflowOwnership: JSON.stringify({
-        version: 1,
-        owner: "agent-orchestrator",
-        projectId: "project-1",
-        cardId: "card-1",
-        workflow: "implementation",
-      }),
     };
     const trello = new TrelloClient({ apiKey: "key", token: "token" });
     const getCards = vi
@@ -62,6 +54,7 @@ describe("pollProject", () => {
         listId === "review" ? [card] : [],
       );
     vi.spyOn(trello, "moveCard");
+    vi.spyOn(trello, "getLatestListTransition");
     const github = {
       findMergedPullRequest: vi.fn().mockResolvedValue(null),
       findClosedPullRequest: vi.fn().mockResolvedValue(null),
@@ -82,12 +75,8 @@ describe("pollProject", () => {
     );
 
     expect(getCards).toHaveBeenCalledTimes(2);
-    expect(getCards).toHaveBeenCalledWith("working", {
-      workflowOwnershipCustomFieldId: "ownership-field",
-    });
-    expect(getCards).toHaveBeenCalledWith("review", {
-      workflowOwnershipCustomFieldId: "ownership-field",
-    });
+    expect(getCards).toHaveBeenCalledWith("working");
+    expect(getCards).toHaveBeenCalledWith("review");
   });
 
   it("blocks requested-change processing when an owned review card is already active", async () => {
@@ -99,7 +88,6 @@ describe("pollProject", () => {
         worktreeRoot: "/worktrees",
       },
       trello: {
-        ownershipCustomFieldId: "ownership-field",
         readyListId: "ready",
         workingListId: "working",
         reviewListId: "review",
@@ -119,13 +107,6 @@ describe("pollProject", () => {
       idList: "review",
       idLabels: ["feature"],
       url: "https://trello.com/c/review-card",
-      workflowOwnership: JSON.stringify({
-        version: 1,
-        owner: "agent-orchestrator",
-        projectId: "project-1",
-        cardId: "review-card",
-        workflow: "implementation",
-      }),
     };
     const workingCard: TrelloCard = {
       id: "working-card",
@@ -134,13 +115,6 @@ describe("pollProject", () => {
       idList: "working",
       idLabels: ["feature"],
       url: "https://trello.com/c/working-card",
-      workflowOwnership: JSON.stringify({
-        version: 1,
-        owner: "agent-orchestrator",
-        projectId: "project-1",
-        cardId: "working-card",
-        workflow: "implementation",
-      }),
     };
     const trello = new TrelloClient({ apiKey: "key", token: "token" });
     const getCards = vi
@@ -157,6 +131,12 @@ describe("pollProject", () => {
         return [];
       });
     const moveCard = vi.spyOn(trello, "moveCard");
+    vi.spyOn(trello, "getLatestListTransition").mockResolvedValue({
+      id: "action-1",
+      date: "2026-08-30T10:00:00.000Z",
+      listBeforeId: "review",
+      listAfterId: "working",
+    });
     const runOpenCode = vi.fn();
     const github = {
       findMergedPullRequest: vi.fn().mockResolvedValue(null),
@@ -190,16 +170,10 @@ describe("pollProject", () => {
         project,
         new AbortController().signal,
       ),
-    ).rejects.toThrow(
-      "Cannot process owned workflow cards in both Human Review",
-    );
+    ).rejects.toThrow("Cannot process workflow cards in both Human Review");
 
-    expect(getCards).toHaveBeenNthCalledWith(1, "working", {
-      workflowOwnershipCustomFieldId: "ownership-field",
-    });
-    expect(getCards).toHaveBeenNthCalledWith(2, "review", {
-      workflowOwnershipCustomFieldId: "ownership-field",
-    });
+    expect(getCards).toHaveBeenNthCalledWith(1, "working");
+    expect(getCards).toHaveBeenNthCalledWith(2, "review");
     expect(moveCard).not.toHaveBeenCalled();
     expect(runOpenCode).not.toHaveBeenCalled();
     expect(github.findChangesRequestedPullRequest).toHaveBeenCalledWith({
@@ -229,7 +203,6 @@ describe("pollProject", () => {
       id: "example",
       trello: {
         boardId: "board",
-        ownershipCustomFieldId: "ownership-field",
         backlogListId: "backlog-list",
         readyListId: "ready-list",
         workingListId: "working-list",
@@ -285,9 +258,6 @@ describe("pollProject", () => {
         apiKey: "test-key",
         token: "test-token",
       });
-
-      vi.spyOn(trello, "setWorkflowOwnership").mockResolvedValue(undefined);
-      vi.spyOn(trello, "clearWorkflowOwnership").mockResolvedValue(undefined);
 
       vi.spyOn(trello, "getCards").mockImplementation(async (listId) => {
         if (listId === project.trello.reviewListId) {
@@ -496,7 +466,6 @@ describe("pollProject", () => {
       id: "example",
       trello: {
         boardId: "board",
-        ownershipCustomFieldId: "ownership-field",
         backlogListId: "backlog-list",
         readyListId: "ready-list",
         workingListId: "working-list",
@@ -553,9 +522,6 @@ describe("pollProject", () => {
         apiKey: "test-key",
         token: "test-token",
       });
-
-      vi.spyOn(trello, "setWorkflowOwnership").mockResolvedValue(undefined);
-      vi.spyOn(trello, "clearWorkflowOwnership").mockResolvedValue(undefined);
 
       vi.spyOn(trello, "getCards").mockImplementation(async (listId) => {
         if (listId === project.trello.workingListId) {
@@ -745,7 +711,6 @@ describe("pollProject", () => {
       id: "example",
       trello: {
         boardId: "board",
-        ownershipCustomFieldId: "ownership-field",
         backlogListId: "backlog-list",
         readyListId: "ready-list",
         workingListId: "working-list",
@@ -801,9 +766,6 @@ describe("pollProject", () => {
         apiKey: "test-key",
         token: "test-token",
       });
-
-      vi.spyOn(trello, "setWorkflowOwnership").mockResolvedValue(undefined);
-      vi.spyOn(trello, "clearWorkflowOwnership").mockResolvedValue(undefined);
 
       vi.spyOn(trello, "getCards").mockImplementation(async (listId) => {
         if (listId === project.trello.workingListId) {
@@ -978,7 +940,6 @@ describe("pollProject", () => {
       id: "example",
       trello: {
         boardId: "board",
-        ownershipCustomFieldId: "ownership-field",
         backlogListId: "backlog-list",
         readyListId: "ready-list",
         workingListId: "working-list",
@@ -1029,9 +990,6 @@ describe("pollProject", () => {
       apiKey: "test-key",
       token: "test-token",
     });
-
-    vi.spyOn(trello, "setWorkflowOwnership").mockResolvedValue(undefined);
-    vi.spyOn(trello, "clearWorkflowOwnership").mockResolvedValue(undefined);
 
     vi.spyOn(trello, "getCards").mockImplementation(async (listId) => {
       if (listId === project.trello.workingListId) {
@@ -1116,20 +1074,12 @@ describe("pollProject", () => {
       idList: "review",
       idLabels: [],
       url: "https://trello.com/c/card-1",
-      workflowOwnership: JSON.stringify({
-        version: 1,
-        owner: "agent-orchestrator",
-        projectId: "example",
-        cardId: "card-1",
-        workflow: "implementation",
-      }),
     };
 
     const project: ProjectConfig = {
       id: "example",
       trello: {
         boardId: "board",
-        ownershipCustomFieldId: "ownership-field",
         backlogListId: "backlog-list",
         readyListId: "ready-list",
         workingListId: "working-list",
@@ -1188,6 +1138,12 @@ describe("pollProject", () => {
           }
 
           return [];
+        }),
+        getLatestListTransition: vi.fn().mockResolvedValue({
+          id: "action-1",
+          date: "2026-08-30T10:00:00.000Z",
+          listBeforeId: project.trello.reviewListId,
+          listAfterId: project.trello.workingListId,
         }),
         moveCard: vi
           .fn()
@@ -1343,20 +1299,12 @@ describe("pollProject", () => {
       idList: "working",
       idLabels: [],
       url: "https://trello.com/c/card-1",
-      workflowOwnership: JSON.stringify({
-        version: 1,
-        owner: "agent-orchestrator",
-        projectId: "example",
-        cardId: "card-1",
-        workflow: "implementation",
-      }),
     };
 
     const project: ProjectConfig = {
       id: "example",
       trello: {
         boardId: "board",
-        ownershipCustomFieldId: "ownership-field",
         backlogListId: "backlog-list",
         readyListId: "ready-list",
         workingListId: "working-list",
@@ -1419,6 +1367,12 @@ describe("pollProject", () => {
           }
 
           return [];
+        }),
+        getLatestListTransition: vi.fn().mockResolvedValue({
+          id: "action-1",
+          date: "2026-08-30T10:00:00.000Z",
+          listBeforeId: project.trello.reviewListId,
+          listAfterId: project.trello.workingListId,
         }),
         moveCard: vi
           .fn()
@@ -1542,20 +1496,12 @@ describe("pollProject", () => {
       idList: "working",
       idLabels: [],
       url: "https://trello.com/c/card-1",
-      workflowOwnership: JSON.stringify({
-        version: 1,
-        owner: "agent-orchestrator",
-        projectId: "example",
-        cardId: "card-1",
-        workflow: "implementation",
-      }),
     };
 
     const project: ProjectConfig = {
       id: "example",
       trello: {
         boardId: "board",
-        ownershipCustomFieldId: "ownership-field",
         backlogListId: "backlog-list",
         readyListId: "ready-list",
         workingListId: "working-list",
@@ -1614,8 +1560,13 @@ describe("pollProject", () => {
 
         return [];
       }),
+      getLatestListTransition: vi.fn().mockResolvedValue({
+        id: "action-1",
+        date: "2026-08-30T10:00:00.000Z",
+        listBeforeId: project.trello.reviewListId,
+        listAfterId: project.trello.workingListId,
+      }),
       moveCard: vi.fn(),
-      clearWorkflowOwnership: vi.fn().mockResolvedValue(undefined),
     } as unknown as TrelloClient;
 
     const git = {
@@ -1675,20 +1626,12 @@ describe("pollProject", () => {
       idList: "working",
       idLabels: [],
       url: "https://trello.com/c/card-1",
-      workflowOwnership: JSON.stringify({
-        version: 1,
-        owner: "agent-orchestrator",
-        projectId: "example",
-        cardId: "card-1",
-        workflow: "implementation",
-      }),
     };
 
     const project: ProjectConfig = {
       id: "example",
       trello: {
         boardId: "board",
-        ownershipCustomFieldId: "ownership-field",
         backlogListId: "backlog-list",
         readyListId: "ready-list",
         workingListId: "working-list",
@@ -1747,6 +1690,12 @@ describe("pollProject", () => {
 
         return [];
       }),
+      getLatestListTransition: vi.fn().mockResolvedValue({
+        id: "action-1",
+        date: "2026-08-30T10:00:00.000Z",
+        listBeforeId: project.trello.reviewListId,
+        listAfterId: project.trello.workingListId,
+      }),
       moveCard: vi
         .fn()
         .mockImplementation(async (_cardId: string, listId: string) => ({
@@ -1754,7 +1703,6 @@ describe("pollProject", () => {
           idList: listId,
         })),
       addComment: vi.fn().mockResolvedValue(undefined),
-      clearWorkflowOwnership: vi.fn().mockResolvedValue(undefined),
     } as unknown as TrelloClient;
 
     const git = {

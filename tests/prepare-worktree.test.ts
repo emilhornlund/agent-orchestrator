@@ -36,7 +36,6 @@ function createProject(worktreeRoot: string): ProjectConfig {
     },
     trello: {
       boardId: "board",
-      ownershipCustomFieldId: "ownership-field",
       backlogListId: "backlog-list",
       readyListId: "ready-list",
       workingListId: "working-list",

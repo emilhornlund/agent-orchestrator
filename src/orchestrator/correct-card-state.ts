@@ -1,7 +1,6 @@
 import type { ProjectConfig } from "../config/config.js";
 import { logger } from "../logging/logger.js";
 import type { TrelloCard, TrelloClient } from "../trello/trello-client.js";
-import { hasWorkflowOwnershipMarker } from "../trello/workflow-ownership.js";
 
 import { WorkflowError } from "./workflow-error.js";
 
@@ -30,50 +29,6 @@ export async function correctCardToBacklog(
       `Could not move card to Backlog while correcting its Trello state: ${message}`,
       { cause: error },
     );
-  }
-
-  if (hasWorkflowOwnershipMarker(card)) {
-    try {
-      await trello.clearWorkflowOwnership(
-        card.id,
-        project.trello.ownershipCustomFieldId,
-      );
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-
-      cardLog.error(
-        `Card moved to Backlog, but could not clear the ownership marker: ${message}`,
-      );
-
-      try {
-        await trello.moveCard(card.id, card.idList);
-
-        cardLog.error(
-          `Restored card to its original list after ownership cleanup failed`,
-        );
-      } catch (rollbackError) {
-        const rollbackMessage =
-          rollbackError instanceof Error
-            ? rollbackError.message
-            : String(rollbackError);
-
-        cardLog.error(
-          `Could not restore card to its original list after ownership cleanup failed: ${rollbackMessage}`,
-        );
-
-        throw new AggregateError(
-          [error, rollbackError],
-          `Could not clear the ownership marker after moving card to Backlog: ${message}; additionally could not restore card to its original list: ${rollbackMessage}`,
-          { cause: rollbackError },
-        );
-      }
-
-      throw new WorkflowError(
-        "Workflow",
-        `Could not clear the ownership marker after moving card to Backlog: ${message}`,
-        { cause: error },
-      );
-    }
   }
 
   cardLog.event(`Corrected card to Backlog: ${reason}`);
