@@ -305,6 +305,7 @@ describe("reconcileWorkingCards", () => {
       name: "Retry task",
       desc: "",
       idList: "working",
+      idLabels: [],
       url: "https://trello.example/card-1",
     };
 
@@ -343,6 +344,7 @@ describe("reconcileWorkingCards", () => {
       name: "Already published task",
       desc: "",
       idList: "working",
+      idLabels: [],
       url: "https://trello.example/card-1",
     };
 
@@ -383,6 +385,7 @@ describe("reconcileWorkingCards", () => {
       name: "Already published task",
       desc: "",
       idList: "working",
+      idLabels: [],
       url: "https://trello.example/card-1",
     };
 

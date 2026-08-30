@@ -3,11 +3,16 @@ projects:
 
     trello:
       boardId: "board-id"
+      backlogListId: "backlog-list-id"
       readyListId: "ready-list-id"
       workingListId: "working-list-id"
       reviewListId: "review-list-id"
       failedListId: "failed-list-id"
       doneListId: "done-list-id"
+      refinementLabelId: "refinement-label-id"
+      featureLabelId: "feature-label-id"
+      improvementLabelId: "improvement-label-id"
+      bugLabelId: "bug-label-id"
 
     repository:
       path: "/absolute/path/to/repository"
@@ -40,11 +45,16 @@ projects:
 
     trello:
       boardId: "another-board-id"
+      backlogListId: "..."
       readyListId: "..."
       workingListId: "..."
       reviewListId: "..."
       failedListId: "..."
       doneListId: "..."
+      refinementLabelId: "..."
+      featureLabelId: "..."
+      improvementLabelId: "..."
+      bugLabelId: "..."
 
     repository:
       path: "/absolute/path/to/another-repository"

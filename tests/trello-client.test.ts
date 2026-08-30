@@ -73,6 +73,59 @@ describe("TrelloClient", () => {
     ]);
   });
 
+  it("gets labels from a board", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify([
+          {
+            id: "feature-label",
+            name: "Feature",
+            color: "green",
+          },
+          {
+            id: "bug-label",
+            name: "Bug",
+            color: "red",
+          },
+        ]),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      ),
+    );
+
+    const client = new TrelloClient({
+      apiKey: "test-key",
+      token: "test-token",
+    });
+
+    const labels = await client.getLabels("board-1");
+
+    expect(labels).toEqual([
+      {
+        id: "feature-label",
+        name: "Feature",
+        color: "green",
+      },
+      {
+        id: "bug-label",
+        name: "Bug",
+        color: "red",
+      },
+    ]);
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+
+    const requestUrl = String(fetchMock.mock.calls[0]?.[0]);
+
+    expect(requestUrl).toContain("/boards/board-1/labels");
+    expect(requestUrl).toContain("key=test-key");
+    expect(requestUrl).toContain("token=test-token");
+  });
+
   it("gets cards from a list", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
@@ -82,6 +135,7 @@ describe("TrelloClient", () => {
             name: "Implement inventory",
             desc: "Add inventory support",
             idList: "ready-list",
+            idLabels: ["refinement-label"],
             url: "https://trello.com/c/example",
           },
         ]),
@@ -103,6 +157,7 @@ describe("TrelloClient", () => {
 
     expect(cards).toHaveLength(1);
     expect(cards[0]?.name).toBe("Implement inventory");
+    expect(cards[0]?.idLabels).toEqual(["refinement-label"]);
     expect(fetchMock).toHaveBeenCalledOnce();
 
     const requestUrl = String(fetchMock.mock.calls[0]?.[0]);
@@ -221,6 +276,7 @@ describe("TrelloClient", () => {
           name: "Implement inventory",
           desc: "Add inventory support",
           idList: "working-list",
+          idLabels: [],
           url: "https://trello.com/c/example",
         }),
         {
@@ -260,6 +316,7 @@ describe("TrelloClient", () => {
           name: "Implement inventory",
           desc: "Add inventory support",
           idList: "done-list",
+          idLabels: [],
           url: "https://trello.com/c/example",
         }),
         {
@@ -292,6 +349,63 @@ describe("TrelloClient", () => {
 
     expect(requestOptions).toEqual({
       method: "PUT",
+    });
+  });
+
+  it("adds an existing label to a card", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(null, {
+        status: 200,
+      }),
+    );
+
+    const client = new TrelloClient({
+      apiKey: "test-key",
+      token: "test-token",
+    });
+
+    await client.addLabel("card-1", "refinement-label");
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+
+    const [requestUrl, requestOptions] = fetchMock.mock.calls[0] ?? [];
+    const url = new URL(String(requestUrl));
+
+    expect(url.pathname).toBe("/1/cards/card-1/idLabels");
+    expect(url.searchParams.get("key")).toBe("test-key");
+    expect(url.searchParams.get("token")).toBe("test-token");
+    expect(url.searchParams.get("value")).toBe("refinement-label");
+
+    expect(requestOptions).toEqual({
+      method: "POST",
+    });
+  });
+
+  it("removes an existing label from a card", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(null, {
+        status: 200,
+      }),
+    );
+
+    const client = new TrelloClient({
+      apiKey: "test-key",
+      token: "test-token",
+    });
+
+    await client.removeLabel("card-1", "refinement-label");
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+
+    const [requestUrl, requestOptions] = fetchMock.mock.calls[0] ?? [];
+    const url = new URL(String(requestUrl));
+
+    expect(url.pathname).toBe("/1/cards/card-1/idLabels/refinement-label");
+    expect(url.searchParams.get("key")).toBe("test-key");
+    expect(url.searchParams.get("token")).toBe("test-token");
+
+    expect(requestOptions).toEqual({
+      method: "DELETE",
     });
   });
 

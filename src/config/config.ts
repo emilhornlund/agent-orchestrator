@@ -16,14 +16,20 @@ const absolutePath = nonBlankString
 const trelloSchema = z
   .strictObject({
     boardId: nonBlankString,
+    backlogListId: nonBlankString,
     readyListId: nonBlankString,
     workingListId: nonBlankString,
     reviewListId: nonBlankString,
     failedListId: nonBlankString,
     doneListId: nonBlankString,
+    refinementLabelId: nonBlankString,
+    featureLabelId: nonBlankString,
+    improvementLabelId: nonBlankString,
+    bugLabelId: nonBlankString,
   })
   .superRefine((trello, ctx) => {
     const listIds = [
+      trello.backlogListId,
       trello.readyListId,
       trello.workingListId,
       trello.reviewListId,
@@ -35,6 +41,20 @@ const trelloSchema = z
       ctx.addIssue({
         code: "custom",
         message: "Trello workflow list IDs must be unique",
+      });
+    }
+
+    const labelIds = [
+      trello.refinementLabelId,
+      trello.featureLabelId,
+      trello.improvementLabelId,
+      trello.bugLabelId,
+    ];
+
+    if (new Set(labelIds).size !== labelIds.length) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Trello workflow label IDs must be unique",
       });
     }
   });

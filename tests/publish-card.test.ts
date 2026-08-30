@@ -15,11 +15,16 @@ function createProject(): ProjectConfig {
     id: "example",
     trello: {
       boardId: "board",
-      readyListId: "ready",
-      workingListId: "working",
-      reviewListId: "review",
-      failedListId: "failed",
-      doneListId: "done",
+      backlogListId: "backlog-list",
+      readyListId: "ready-list",
+      workingListId: "working-list",
+      reviewListId: "review-list",
+      failedListId: "failed-list",
+      doneListId: "done-list",
+      refinementLabelId: "refinement-label",
+      featureLabelId: "feature-label",
+      improvementLabelId: "improvement-label",
+      bugLabelId: "bug-label",
     },
     repository: {
       path: "/tmp/example-repository",
@@ -59,6 +64,7 @@ function createCard(): TrelloCard {
     name: "Example task",
     desc: "Implement the example task",
     idList: "working",
+    idLabels: [],
     url: "https://trello.com/c/card-1",
   };
 }
@@ -171,7 +177,7 @@ describe("publishCard", () => {
       ],
     );
 
-    expect(moveCard).toHaveBeenCalledWith("card-1", "review");
+    expect(moveCard).toHaveBeenCalledWith("card-1", "review-list");
 
     expect(addComment).toHaveBeenCalledWith(
       "card-1",
@@ -412,7 +418,7 @@ describe("publishCard", () => {
 
     const moveCard = vi.spyOn(trello, "moveCard").mockResolvedValue({
       ...createCard(),
-      idList: "review",
+      idList: "review-list",
     });
 
     vi.spyOn(trello, "addComment").mockRejectedValue(
@@ -434,7 +440,7 @@ describe("publishCard", () => {
       }),
     ).resolves.toBeUndefined();
 
-    expect(moveCard).toHaveBeenCalledWith("card-1", "review");
+    expect(moveCard).toHaveBeenCalledWith("card-1", "review-list");
   });
 
   it("classifies a Human Review move failure as a published-state error", async () => {
@@ -474,6 +480,6 @@ describe("publishCard", () => {
     );
 
     expect(runGitHubCommand).toHaveBeenCalledTimes(1);
-    expect(moveCard).toHaveBeenCalledWith("card-1", "review");
+    expect(moveCard).toHaveBeenCalledWith("card-1", "review-list");
   });
 });

@@ -19,11 +19,18 @@ export interface TrelloList {
   closed: boolean;
 }
 
+export interface TrelloLabel {
+  id: string;
+  name: string;
+  color: string | null;
+}
+
 export interface TrelloCard {
   id: string;
   name: string;
   desc: string;
   idList: string;
+  idLabels: string[];
   url: string;
 }
 
@@ -45,11 +52,18 @@ const trelloListSchema = z.object({
   closed: z.boolean(),
 });
 
+const trelloLabelSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  color: z.string().nullable(),
+});
+
 const trelloCardSchema = z.object({
   id: z.string(),
   name: z.string(),
   desc: z.string(),
   idList: z.string(),
+  idLabels: z.array(z.string()),
   url: z.string(),
 });
 
@@ -118,6 +132,10 @@ export class TrelloClient {
     return this.get(`/boards/${boardId}/lists`, z.array(trelloListSchema));
   }
 
+  getLabels(boardId: string): Promise<TrelloLabel[]> {
+    return this.get(`/boards/${boardId}/labels`, z.array(trelloLabelSchema));
+  }
+
   getCards(listId: string): Promise<TrelloCard[]> {
     return this.get(`/lists/${listId}/cards`, z.array(trelloCardSchema));
   }
@@ -139,6 +157,16 @@ export class TrelloClient {
     }
 
     return this.put(`/cards/${cardId}`, parameters, trelloCardSchema);
+  }
+
+  async addLabel(cardId: string, labelId: string): Promise<void> {
+    await this.postWithoutResponse(`/cards/${cardId}/idLabels`, {
+      value: labelId,
+    });
+  }
+
+  async removeLabel(cardId: string, labelId: string): Promise<void> {
+    await this.delete(`/cards/${cardId}/idLabels/${labelId}`);
   }
 
   addComment(cardId: string, text: string): Promise<TrelloCommentAction> {
@@ -200,6 +228,34 @@ export class TrelloClient {
     return schema.parse(await response.json());
   }
 
+  private async postWithoutResponse(
+    path: string,
+    parameters: Record<string, string>,
+  ): Promise<void> {
+    this.throwIfAborted();
+
+    const url = new URL(`${this.baseUrl}${path}`);
+
+    url.searchParams.set("key", this.options.apiKey);
+    url.searchParams.set("token", this.options.token);
+
+    for (const [name, value] of Object.entries(parameters)) {
+      url.searchParams.set(name, value);
+    }
+
+    const signal = this.getRequestSignal();
+    const response = await this.request(url, {
+      method: "POST",
+      ...(signal === undefined ? {} : { signal }),
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        `Trello request failed: ${response.status} ${response.statusText}`,
+      );
+    }
+  }
+
   private async post<T>(
     path: string,
     parameters: Record<string, string>,
@@ -229,5 +285,26 @@ export class TrelloClient {
     }
 
     return schema.parse(await response.json());
+  }
+
+  private async delete(path: string): Promise<void> {
+    this.throwIfAborted();
+
+    const url = new URL(`${this.baseUrl}${path}`);
+
+    url.searchParams.set("key", this.options.apiKey);
+    url.searchParams.set("token", this.options.token);
+
+    const signal = this.getRequestSignal();
+    const response = await this.request(url, {
+      method: "DELETE",
+      ...(signal === undefined ? {} : { signal }),
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        `Trello request failed: ${response.status} ${response.statusText}`,
+      );
+    }
   }
 }

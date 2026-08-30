@@ -36,11 +36,16 @@ function createProject(worktreeRoot: string): ProjectConfig {
     },
     trello: {
       boardId: "board",
-      readyListId: "ready",
-      workingListId: "working",
-      reviewListId: "review",
-      failedListId: "failed",
-      doneListId: "done",
+      backlogListId: "backlog-list",
+      readyListId: "ready-list",
+      workingListId: "working-list",
+      reviewListId: "review-list",
+      failedListId: "failed-list",
+      doneListId: "done-list",
+      refinementLabelId: "refinement-label",
+      featureLabelId: "feature-label",
+      improvementLabelId: "improvement-label",
+      bugLabelId: "bug-label",
     },
     opencode: {
       implementation: {

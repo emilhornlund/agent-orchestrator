@@ -7,11 +7,16 @@ projects:
 
     trello:
       boardId: "board-one"
+      backlogListId: "backlog"
       readyListId: "ready"
       workingListId: "working"
       reviewListId: "review"
       failedListId: "failed"
       doneListId: "done"
+      refinementLabelId: "refinement"
+      featureLabelId: "feature"
+      improvementLabelId: "improvement"
+      bugLabelId: "bug"
 
     repository:
       path: "/tmp/repository"
@@ -52,6 +57,19 @@ describe("parseConfig", () => {
 
     expect(project).toBeDefined();
     expect(project!.id).toBe("project-one");
+    expect(project!.trello).toEqual({
+      boardId: "board-one",
+      backlogListId: "backlog",
+      readyListId: "ready",
+      workingListId: "working",
+      reviewListId: "review",
+      failedListId: "failed",
+      doneListId: "done",
+      refinementLabelId: "refinement",
+      featureLabelId: "feature",
+      improvementLabelId: "improvement",
+      bugLabelId: "bug",
+    });
     expect(project!.repository.github).toBe("owner/repository");
     expect(project!.repository.setupCommand).toBeUndefined();
     expect(project!.repository.validationCommand).toBe("yarn validate");
@@ -134,11 +152,16 @@ describe("parseConfig", () => {
 
     trello:
       boardId: "board-two"
+      backlogListId: "backlog-two"
       readyListId: "ready-two"
       workingListId: "working-two"
       reviewListId: "review-two"
-      failedListId: "failed"
+      failedListId: "failed-two"
       doneListId: "done-two"
+      refinementLabelId: "refinement-two"
+      featureLabelId: "feature-two"
+      improvementLabelId: "improvement-two"
+      bugLabelId: "bug-two"
 
     repository:
       path: "/tmp/repository-two"
@@ -218,6 +241,28 @@ workflow:
     );
   });
 
+  it("rejects a backlog list ID that duplicates another workflow list", () => {
+    const raw = validConfig.replace(
+      'backlogListId: "backlog"',
+      'backlogListId: "ready"',
+    );
+
+    expect(() => parseConfig(raw)).toThrow(
+      "Trello workflow list IDs must be unique",
+    );
+  });
+
+  it("rejects duplicate Trello workflow label IDs", () => {
+    const raw = validConfig.replace(
+      'bugLabelId: "bug"',
+      'bugLabelId: "feature"',
+    );
+
+    expect(() => parseConfig(raw)).toThrow(
+      "Trello workflow label IDs must be unique",
+    );
+  });
+
   it("rejects duplicate project IDs", () => {
     const raw = validConfig.replace(
       "\nworkflow:",
@@ -226,11 +271,16 @@ workflow:
 
     trello:
       boardId: "board-two"
+      backlogListId: "backlog-two"
       readyListId: "ready-two"
       workingListId: "working-two"
       reviewListId: "review-two"
-      failedListId: "failed"
+      failedListId: "failed-two"
       doneListId: "done-two"
+      refinementLabelId: "refinement-two"
+      featureLabelId: "feature-two"
+      improvementLabelId: "improvement-two"
+      bugLabelId: "bug-two"
 
     repository:
       path: "/tmp/repository-two"
@@ -271,11 +321,16 @@ workflow:`,
 
     trello:
       boardId: "board-two"
+      backlogListId: "backlog-two"
       readyListId: "ready-two"
       workingListId: "working-two"
       reviewListId: "review-two"
-      failedListId: "failed"
+      failedListId: "failed-two"
       doneListId: "done-two"
+      refinementLabelId: "refinement-two"
+      featureLabelId: "feature-two"
+      improvementLabelId: "improvement-two"
+      bugLabelId: "bug-two"
 
     repository:
       path: "/tmp/repository-two"
@@ -318,11 +373,16 @@ workflow:`,
 
     trello:
       boardId: "board-one"
+      backlogListId: "backlog-two"
       readyListId: "ready-two"
       workingListId: "working-two"
       reviewListId: "review-two"
       failedListId: "failed"
       doneListId: "done-two"
+      refinementLabelId: "refinement-two"
+      featureLabelId: "feature-two"
+      improvementLabelId: "improvement-two"
+      bugLabelId: "bug-two"
 
     repository:
       path: "/tmp/repository-two"
@@ -396,11 +456,16 @@ workflow:`,
 
     trello:
       boardId: "board-two"
+      backlogListId: "backlog-two"
       readyListId: "ready-two"
       workingListId: "working-two"
       reviewListId: "review-two"
       failedListId: "failed-two"
       doneListId: "done-two"
+      refinementLabelId: "refinement-two"
+      featureLabelId: "feature-two"
+      improvementLabelId: "improvement-two"
+      bugLabelId: "bug-two"
 
     repository:
       path: "/tmp/repository/."

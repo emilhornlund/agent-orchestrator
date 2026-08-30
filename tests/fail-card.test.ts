@@ -10,11 +10,16 @@ const project: ProjectConfig = {
   id: "example",
   trello: {
     boardId: "board",
-    readyListId: "ready",
-    workingListId: "working",
-    reviewListId: "review",
-    failedListId: "failed",
-    doneListId: "done",
+    backlogListId: "backlog-list",
+    readyListId: "ready-list",
+    workingListId: "working-list",
+    reviewListId: "review-list",
+    failedListId: "failed-list",
+    doneListId: "done-list",
+    refinementLabelId: "refinement-label",
+    featureLabelId: "feature-label",
+    improvementLabelId: "improvement-label",
+    bugLabelId: "bug-label",
   },
   repository: {
     path: "/tmp/repository",
@@ -59,6 +64,7 @@ describe("failCard", () => {
       name: "Card",
       desc: "",
       idList: "failed",
+      idLabels: [],
       url: "https://trello.com/c/card-1",
     });
 
@@ -74,7 +80,7 @@ describe("failCard", () => {
       failCard(trello, project, "card-1", workflowError),
     ).rejects.toBe(workflowError);
 
-    expect(moveCard).toHaveBeenCalledWith("card-1", "failed");
+    expect(moveCard).toHaveBeenCalledWith("card-1", "failed-list");
 
     expect(addComment).toHaveBeenCalledWith(
       "card-1",
@@ -100,6 +106,7 @@ describe("failCard", () => {
       name: "Card",
       desc: "",
       idList: "failed",
+      idLabels: [],
       url: "https://trello.com/c/card-1",
     });
 
@@ -155,6 +162,7 @@ describe("failCard", () => {
       name: "Card",
       desc: "",
       idList: "failed",
+      idLabels: [],
       url: "https://trello.com/c/card-1",
     });
 
@@ -194,6 +202,7 @@ describe("failCard", () => {
       name: "Card",
       desc: "",
       idList: "failed",
+      idLabels: [],
       url: "https://trello.com/c/card-1",
     });
 
@@ -233,6 +242,7 @@ describe("failCard", () => {
       name: "Card",
       desc: "",
       idList: "failed",
+      idLabels: [],
       url: "https://trello.com/c/card-1",
     });
 
@@ -275,6 +285,7 @@ describe("failCard", () => {
       name: "Card",
       desc: "",
       idList: "failed",
+      idLabels: [],
       url: "https://trello.com/c/card-1",
     });
 

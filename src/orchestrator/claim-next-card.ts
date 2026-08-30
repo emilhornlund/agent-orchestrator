@@ -9,7 +9,17 @@ export async function claimNextCard(
 ): Promise<TrelloCard | null> {
   const cards = await trello.getCards(project.trello.readyListId);
 
-  const card = cards[0];
+  const implementationLabelIds = new Set([
+    project.trello.featureLabelId,
+    project.trello.improvementLabelId,
+    project.trello.bugLabelId,
+  ]);
+
+  const card = cards.find(
+    (candidate) =>
+      !candidate.idLabels.includes(project.trello.refinementLabelId) &&
+      candidate.idLabels.some((labelId) => implementationLabelIds.has(labelId)),
+  );
 
   if (!card) {
     return null;

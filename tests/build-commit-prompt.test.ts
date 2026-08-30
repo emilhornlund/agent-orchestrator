@@ -10,6 +10,7 @@ describe("buildCommitPrompt", () => {
       name: "Add player inventory",
       desc: "",
       idList: "working",
+      idLabels: [],
       url: "https://trello.example/card-123",
     };
 
@@ -28,6 +29,7 @@ describe("buildCommitPrompt", () => {
       name: "Add player inventory",
       desc: "",
       idList: "working",
+      idLabels: [],
       url: "https://trello.example/card-123",
     };
 

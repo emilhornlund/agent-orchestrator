@@ -10,6 +10,7 @@ describe("buildTaskPrompt", () => {
       name: "Add player inventory",
       desc: "Create an inventory component for the player.",
       idList: "working",
+      idLabels: [],
       url: "https://trello.example/card-123",
     };
 
@@ -34,6 +35,7 @@ describe("buildTaskPrompt", () => {
       name: "Fix player movement",
       desc: "",
       idList: "working",
+      idLabels: [],
       url: "https://trello.example/card-123",
     };
 

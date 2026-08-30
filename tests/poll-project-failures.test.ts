@@ -69,6 +69,7 @@ function createScenario(options: ScenarioOptions = {}): Scenario {
     name: "Example task",
     desc: "Implement the example task",
     idList: "ready",
+    idLabels: ["feature-label"],
     url: "https://trello.com/c/card-1",
   };
   const worktreePath = path.join(worktreeRoot, card.id);
@@ -81,11 +82,16 @@ function createScenario(options: ScenarioOptions = {}): Scenario {
     id: "example",
     trello: {
       boardId: "board",
-      readyListId: "ready",
-      workingListId: "working",
-      reviewListId: "review",
-      failedListId: "failed",
-      doneListId: "done",
+      backlogListId: "backlog-list",
+      readyListId: "ready-list",
+      workingListId: "working-list",
+      reviewListId: "review-list",
+      failedListId: "failed-list",
+      doneListId: "done-list",
+      refinementLabelId: "refinement-label",
+      featureLabelId: "feature-label",
+      improvementLabelId: "improvement-label",
+      bugLabelId: "bug-label",
     },
     repository: {
       path: "/tmp/example-repository",
@@ -310,8 +316,8 @@ async function withScenario(
 function expectNothingPublished(scenario: Scenario): void {
   expect(scenario.events).not.toContain("push");
   expect(scenario.events).not.toContain("pr");
-  expect(scenario.events).not.toContain("move:review");
-  expect(scenario.events).toContain("move:failed");
+  expect(scenario.events).not.toContain("move:review-list");
+  expect(scenario.events).toContain("move:failed-list");
 }
 
 describe("pollProject failure boundaries", () => {
@@ -395,13 +401,13 @@ describe("pollProject failure boundaries", () => {
 
         expect(scenario.runCommand).not.toHaveBeenCalled();
         expect(scenario.events).toEqual([
-          "move:working",
+          "move:working-list",
           "opencode:1",
           "opencode:2",
           "opencode:3",
           "push",
           "pr",
-          "move:review",
+          "move:review-list",
         ]);
       },
     );
@@ -437,14 +443,14 @@ describe("pollProject failure boundaries", () => {
           scenario.events.indexOf("opencode:1"),
         );
         expect(scenario.events).toEqual([
-          "move:working",
+          "move:working-list",
           "setup",
           "opencode:1",
           "opencode:2",
           "opencode:3",
           "push",
           "pr",
-          "move:review",
+          "move:review-list",
         ]);
       },
     );
@@ -877,8 +883,8 @@ describe("pollProject failure boundaries", () => {
             '.[0].url // ""',
           ],
         );
-        expect(scenario.events).not.toContain("move:review");
-        expect(scenario.events).toContain("move:failed");
+        expect(scenario.events).not.toContain("move:review-list");
+        expect(scenario.events).toContain("move:failed-list");
       },
     );
   });
@@ -903,8 +909,8 @@ describe("pollProject failure boundaries", () => {
 
         expect(scenario.events).toContain("push");
         expect(scenario.runGitHub).toHaveBeenCalledTimes(3);
-        expect(scenario.events).not.toContain("move:review");
-        expect(scenario.events).toContain("move:failed");
+        expect(scenario.events).not.toContain("move:review-list");
+        expect(scenario.events).toContain("move:failed-list");
       },
     );
   });
@@ -928,13 +934,13 @@ describe("pollProject failure boundaries", () => {
         ).resolves.toBeUndefined();
 
         expect(scenario.events).toEqual([
-          "move:working",
+          "move:working-list",
           "opencode:1",
           "opencode:2",
           "opencode:3",
           "push",
           "pr",
-          "move:review",
+          "move:review-list",
         ]);
 
         expect(scenario.trello.moveCard).not.toHaveBeenCalledWith(
@@ -965,13 +971,13 @@ describe("pollProject failure boundaries", () => {
         ).resolves.toBeUndefined();
 
         expect(scenario.events).toEqual([
-          "move:working",
+          "move:working-list",
           "opencode:1",
           "opencode:2",
           "opencode:3",
           "push",
           "pr",
-          "move:review",
+          "move:review-list",
         ]);
 
         expect(scenario.trello.moveCard).not.toHaveBeenCalledWith(

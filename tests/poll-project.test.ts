@@ -29,6 +29,7 @@ describe("pollProject", () => {
       name: "Example task",
       desc: "Implement the example task",
       idList: "ready",
+      idLabels: ["feature-label"],
       url: "https://trello.com/c/card-1",
     };
 
@@ -36,11 +37,16 @@ describe("pollProject", () => {
       id: "example",
       trello: {
         boardId: "board",
-        readyListId: "ready",
-        workingListId: "working",
-        reviewListId: "review",
-        failedListId: "failed",
-        doneListId: "done",
+        backlogListId: "backlog-list",
+        readyListId: "ready-list",
+        workingListId: "working-list",
+        reviewListId: "review-list",
+        failedListId: "failed-list",
+        doneListId: "done-list",
+        refinementLabelId: "refinement-label",
+        featureLabelId: "feature-label",
+        improvementLabelId: "improvement-label",
+        bugLabelId: "bug-label",
       },
       repository: {
         path: "/tmp/example-repository",
@@ -263,6 +269,7 @@ describe("pollProject", () => {
       name: "Example task",
       desc: "Implement the example task",
       idList: "ready",
+      idLabels: ["feature-label"],
       url: "https://trello.com/c/card-1",
     };
 
@@ -270,11 +277,16 @@ describe("pollProject", () => {
       id: "example",
       trello: {
         boardId: "board",
-        readyListId: "ready",
-        workingListId: "working",
-        reviewListId: "review",
-        failedListId: "failed",
-        doneListId: "done",
+        backlogListId: "backlog-list",
+        readyListId: "ready-list",
+        workingListId: "working-list",
+        reviewListId: "review-list",
+        failedListId: "failed-list",
+        doneListId: "done-list",
+        refinementLabelId: "refinement-label",
+        featureLabelId: "feature-label",
+        improvementLabelId: "improvement-label",
+        bugLabelId: "bug-label",
       },
       repository: {
         path: "/tmp/example-repository",
@@ -482,6 +494,7 @@ describe("pollProject", () => {
       name: "Already published task",
       desc: "",
       idList: "ready",
+      idLabels: ["feature-label"],
       url: "https://trello.com/c/card-1",
     };
 
@@ -489,11 +502,16 @@ describe("pollProject", () => {
       id: "example",
       trello: {
         boardId: "board",
-        readyListId: "ready",
-        workingListId: "working",
-        reviewListId: "review",
-        failedListId: "failed",
-        doneListId: "done",
+        backlogListId: "backlog-list",
+        readyListId: "ready-list",
+        workingListId: "working-list",
+        reviewListId: "review-list",
+        failedListId: "failed-list",
+        doneListId: "done-list",
+        refinementLabelId: "refinement-label",
+        featureLabelId: "feature-label",
+        improvementLabelId: "improvement-label",
+        bugLabelId: "bug-label",
       },
       repository: {
         path: "/tmp/example-repository",
@@ -612,6 +630,7 @@ describe("pollProject", () => {
       name: "Example task",
       desc: "Implement the example task",
       idList: "review",
+      idLabels: [],
       url: "https://trello.com/c/card-1",
     };
 
@@ -619,11 +638,16 @@ describe("pollProject", () => {
       id: "example",
       trello: {
         boardId: "board",
-        readyListId: "ready",
-        workingListId: "working",
-        reviewListId: "review",
-        failedListId: "failed",
-        doneListId: "done",
+        backlogListId: "backlog-list",
+        readyListId: "ready-list",
+        workingListId: "working-list",
+        reviewListId: "review-list",
+        failedListId: "failed-list",
+        doneListId: "done-list",
+        refinementLabelId: "refinement-label",
+        featureLabelId: "feature-label",
+        improvementLabelId: "improvement-label",
+        bugLabelId: "bug-label",
       },
       repository: {
         path: "/tmp/example-repository",
@@ -821,6 +845,7 @@ describe("pollProject", () => {
       name: "Interrupted review task",
       desc: "Apply requested review changes",
       idList: "working",
+      idLabels: [],
       url: "https://trello.com/c/card-1",
     };
 
@@ -828,11 +853,16 @@ describe("pollProject", () => {
       id: "example",
       trello: {
         boardId: "board",
-        readyListId: "ready",
-        workingListId: "working",
-        reviewListId: "review",
-        failedListId: "failed",
-        doneListId: "done",
+        backlogListId: "backlog-list",
+        readyListId: "ready-list",
+        workingListId: "working-list",
+        reviewListId: "review-list",
+        failedListId: "failed-list",
+        doneListId: "done-list",
+        refinementLabelId: "refinement-label",
+        featureLabelId: "feature-label",
+        improvementLabelId: "improvement-label",
+        bugLabelId: "bug-label",
       },
       repository: {
         path: "/tmp/example-repository",
@@ -1002,6 +1032,7 @@ describe("pollProject", () => {
       name: "Interrupted review task",
       desc: "",
       idList: "working",
+      idLabels: [],
       url: "https://trello.com/c/card-1",
     };
 
@@ -1009,11 +1040,16 @@ describe("pollProject", () => {
       id: "example",
       trello: {
         boardId: "board",
-        readyListId: "ready",
-        workingListId: "working",
-        reviewListId: "review",
-        failedListId: "failed",
-        doneListId: "done",
+        backlogListId: "backlog-list",
+        readyListId: "ready-list",
+        workingListId: "working-list",
+        reviewListId: "review-list",
+        failedListId: "failed-list",
+        doneListId: "done-list",
+        refinementLabelId: "refinement-label",
+        featureLabelId: "feature-label",
+        improvementLabelId: "improvement-label",
+        bugLabelId: "bug-label",
       },
       repository: {
         path: "/tmp/example-repository",
@@ -1116,6 +1152,7 @@ describe("pollProject", () => {
       name: "Broken review task",
       desc: "",
       idList: "working",
+      idLabels: [],
       url: "https://trello.com/c/card-1",
     };
 
@@ -1123,11 +1160,16 @@ describe("pollProject", () => {
       id: "example",
       trello: {
         boardId: "board",
-        readyListId: "ready",
-        workingListId: "working",
-        reviewListId: "review",
-        failedListId: "failed",
-        doneListId: "done",
+        backlogListId: "backlog-list",
+        readyListId: "ready-list",
+        workingListId: "working-list",
+        reviewListId: "review-list",
+        failedListId: "failed-list",
+        doneListId: "done-list",
+        refinementLabelId: "refinement-label",
+        featureLabelId: "feature-label",
+        improvementLabelId: "improvement-label",
+        bugLabelId: "bug-label",
       },
       repository: {
         path: "/tmp/example-repository",

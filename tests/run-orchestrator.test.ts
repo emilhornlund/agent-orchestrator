@@ -21,11 +21,16 @@ function createProject(id: string): ProjectConfig {
     id,
     trello: {
       boardId: `board-${id}`,
+      backlogListId: `backlog-${id}`,
       readyListId: `ready-${id}`,
       workingListId: `working-${id}`,
       reviewListId: `review-${id}`,
       failedListId: `failed-${id}`,
       doneListId: `done-${id}`,
+      refinementLabelId: `refinement-${id}`,
+      featureLabelId: `feature-${id}`,
+      improvementLabelId: `improvement-${id}`,
+      bugLabelId: `bug-${id}`,
     },
     repository: {
       path: `/repos/${id}`,

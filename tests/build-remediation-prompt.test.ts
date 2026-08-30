@@ -10,6 +10,7 @@ describe("buildRemediationPrompt", () => {
       name: "Fix player movement",
       desc: "",
       idList: "working",
+      idLabels: [],
       url: "https://trello.example/card-123",
     };
 
@@ -37,6 +38,7 @@ describe("buildRemediationPrompt", () => {
         name: "Fix player movement",
         desc: "",
         idList: "working",
+        idLabels: [],
         url: "https://trello.example/card-123",
       },
       "Movement can exceed the configured speed.",
