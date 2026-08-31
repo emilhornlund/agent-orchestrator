@@ -1,6 +1,10 @@
 import type { Config, ProjectConfig } from "../config/config.js";
 import type { GitClient } from "../git/git-client.js";
 import type { GitHubClient } from "../github/github-client.js";
+import {
+  cleanupLogRetention,
+  logRetentionIntervalMilliseconds,
+} from "../logging/log-retention.js";
 import { logger } from "../logging/logger.js";
 import type { OpenCodeClient } from "../opencode/opencode-client.js";
 import type { CommandRunner } from "../process/command-runner.js";
@@ -95,6 +99,9 @@ export async function runOrchestrator(
   signal: AbortSignal,
 ): Promise<void> {
   const pollIntervalMilliseconds = config.workflow.pollIntervalSeconds * 1000;
+  const retentionTimer = setInterval(() => {
+    cleanupLogRetention(config.workflow.logRetentionDays);
+  }, logRetentionIntervalMilliseconds);
 
   console.log("");
 
@@ -102,18 +109,22 @@ export async function runOrchestrator(
     `Polling every ${config.workflow.pollIntervalSeconds} seconds...`,
   );
 
-  await Promise.all(
-    config.projects.map((project) =>
-      runProjectWorker(
-        trello,
-        git,
-        github,
-        opencode,
-        commands,
-        project,
-        pollIntervalMilliseconds,
-        signal,
+  try {
+    await Promise.all(
+      config.projects.map((project) =>
+        runProjectWorker(
+          trello,
+          git,
+          github,
+          opencode,
+          commands,
+          project,
+          pollIntervalMilliseconds,
+          signal,
+        ),
       ),
-    ),
-  );
+    );
+  } finally {
+    clearInterval(retentionTimer);
+  }
 }

@@ -1,6 +1,8 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 
+import { withActiveLogFile } from "./active-log-files.js";
+
 export interface LogContext {
   projectId?: string;
   cardId?: string;
@@ -41,11 +43,13 @@ function writeToFile(
   const timestamp = new Date().toISOString();
   const contextText = formatContext(context);
 
-  appendFileSync(
-    filePath,
-    `${timestamp} ${level.padEnd(5)} ${contextText}${message}\n`,
-    "utf8",
-  );
+  withActiveLogFile(filePath, () => {
+    appendFileSync(
+      filePath,
+      `${timestamp} ${level.padEnd(5)} ${contextText}${message}\n`,
+      "utf8",
+    );
+  });
 }
 
 function formatConsole(context: LogContext, message: string): string {

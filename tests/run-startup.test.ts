@@ -74,7 +74,7 @@ function createProject(repositoryPath: string): ProjectConfig {
 function createConfig(project: ProjectConfig): Config {
   return {
     projects: [project],
-    workflow: { pollIntervalSeconds: 1 },
+    workflow: { pollIntervalSeconds: 1, logRetentionDays: 14 },
   };
 }
 
