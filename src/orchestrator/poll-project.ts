@@ -13,7 +13,10 @@ import {
 import type { GitHubClient } from "../github/github-client.js";
 import { logger } from "../logging/logger.js";
 import { getSessionLogPath } from "../logging/session-log.js";
-import type { EmailNotifier } from "../notifications/email-notifier.js";
+import {
+  notifyRefinementCompletion,
+  type EmailNotifier,
+} from "../notifications/email-notifier.js";
 import { buildCommitPrompt } from "../opencode/build-commit-prompt.js";
 import { buildRemediationPrompt } from "../opencode/build-remediation-prompt.js";
 import { buildReviewFeedbackPrompt } from "../opencode/build-review-feedback-prompt.js";
@@ -32,6 +35,7 @@ import {
 } from "../process/command-runner.js";
 import { clearRefinementResult } from "../refinement/refinement-result.js";
 import { finalizeRefinement } from "../refinement/finalize-refinement.js";
+import { addRefinementCompletionComment } from "../refinement/refinement-completion.js";
 import { runRefinement } from "../refinement/run-refinement.js";
 import {
   TrelloRequestAbortedError,
@@ -374,6 +378,18 @@ async function processRefinementCard(
     await finalizeRefinement(trello, project, card, result, signal);
 
     cardLog.event("Refined card returned to Backlog");
+
+    await notifyRefinementCompletion(
+      emailNotifier,
+      {
+        project,
+        card,
+        result,
+      },
+      cardLog,
+    );
+
+    await addRefinementCompletionComment(trello, card, result, cardLog);
 
     if (signal.aborted) {
       return;
