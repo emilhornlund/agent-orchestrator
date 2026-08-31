@@ -126,6 +126,40 @@ describe("publishCard", () => {
     expect(notifier.send).toHaveBeenCalledTimes(1);
   });
 
+  it("preserves publication artifacts without advancing the card after shutdown", async () => {
+    const controller = new AbortController();
+    const trello = {
+      moveCard: vi.fn(),
+    } as unknown as TrelloClient;
+    const git = {
+      push: vi.fn().mockImplementation(async () => {
+        controller.abort();
+      }),
+    } as unknown as GitClient;
+    const github = {
+      findPullRequest: vi.fn(),
+    } as unknown as GitHubClient;
+
+    await expect(
+      publishCard({
+        trello,
+        git,
+        github,
+        project: createProject(),
+        card: createCard(),
+        worktreePath: "/worktree",
+        branch: "agent/card-1",
+        commitSha: "abc123",
+        reviewResult: "Passed",
+        remediationResult: "Not required",
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow("Trello request aborted");
+
+    expect(github.findPullRequest).not.toHaveBeenCalled();
+    expect(trello.moveCard).not.toHaveBeenCalled();
+  });
+
   it("keeps a published card in Human Review when email delivery fails", async () => {
     const notifier: EmailNotifier = {
       send: vi.fn().mockRejectedValue(new Error("SMTP unavailable")),

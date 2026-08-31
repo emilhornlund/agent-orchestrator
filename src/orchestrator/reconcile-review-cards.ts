@@ -46,12 +46,21 @@ export async function reconcileReviewCards(
   project: ProjectConfig,
   options: ReconcileReviewCardsOptions = {},
   emailNotifier?: EmailNotifier,
+  signal?: AbortSignal,
 ): Promise<ReviewChangeRequest | ActiveReviewCard | null> {
+  if (signal?.aborted) {
+    return null;
+  }
+
   const projectLog = logger.child({
     projectId: project.id,
   });
 
   const cards = await trello.getCards(project.trello.reviewListId);
+
+  if (signal?.aborted) {
+    return null;
+  }
 
   if (cards.length === 0) {
     return null;
@@ -62,7 +71,15 @@ export async function reconcileReviewCards(
   const states: ReviewCardState[] = [];
 
   for (const card of cards) {
-    const state = await inspectReviewCard(github, project, card);
+    if (signal?.aborted) {
+      return null;
+    }
+
+    const state = await inspectReviewCard(github, project, card, signal);
+
+    if (signal?.aborted) {
+      return null;
+    }
 
     if (state === null) {
       await correctCardToBacklog(
@@ -70,7 +87,12 @@ export async function reconcileReviewCards(
         project,
         card,
         `Human Review card has no expected pull request for agent/${card.id}`,
+        signal,
       );
+
+      if (signal?.aborted) {
+        return null;
+      }
 
       continue;
     }
@@ -79,6 +101,10 @@ export async function reconcileReviewCards(
   }
 
   const activeStates = states.filter((state) => !isTerminalReviewState(state));
+
+  if (signal?.aborted) {
+    return null;
+  }
 
   if (activeStates.length > 1) {
     const cardIds = activeStates.map((state) => state.card.id).join(", ");
@@ -94,6 +120,10 @@ export async function reconcileReviewCards(
   }
 
   for (const state of states) {
+    if (signal?.aborted) {
+      return null;
+    }
+
     if (isTerminalReviewState(state)) {
       const cardLog = logger.child({
         projectId: project.id,
@@ -109,6 +139,7 @@ export async function reconcileReviewCards(
           state.branch,
           state.mergedPullRequest,
           cardLog,
+          signal,
         );
       } else if (state.closedPullRequest !== undefined) {
         await failClosedReviewCard(
@@ -118,7 +149,12 @@ export async function reconcileReviewCards(
           state.closedPullRequest,
           cardLog,
           emailNotifier,
+          signal,
         );
+      }
+
+      if (signal?.aborted) {
+        return null;
       }
     }
   }
@@ -136,6 +172,10 @@ export async function reconcileReviewCards(
 
   if (state.changesRequested !== undefined) {
     if (options.moveRequestedChanges !== false) {
+      if (signal?.aborted) {
+        return null;
+      }
+
       try {
         await trello.moveCard(state.card.id, project.trello.workingListId);
       } catch (error) {
@@ -152,6 +192,10 @@ export async function reconcileReviewCards(
         );
       }
 
+      if (signal?.aborted) {
+        return null;
+      }
+
       cardLog.event("Card with requested changes moved to Working");
     } else {
       cardLog.event(
@@ -163,6 +207,10 @@ export async function reconcileReviewCards(
   }
 
   cardLog.event("Human Review card remains active");
+
+  if (signal?.aborted) {
+    return null;
+  }
 
   return {
     card: state.card,
@@ -181,6 +229,7 @@ async function inspectReviewCard(
   github: GitHubClient,
   project: ProjectConfig,
   card: TrelloCard,
+  signal?: AbortSignal,
 ): Promise<ReviewCardState | null> {
   const branch = `agent/${card.id}`;
   const options = {
@@ -193,6 +242,10 @@ async function inspectReviewCard(
 
   try {
     mergedPullRequest = await github.findMergedPullRequest(options);
+
+    if (signal?.aborted) {
+      return null;
+    }
   } catch (error) {
     throw reviewLookupError(card, "merged pull request", error);
   }
@@ -205,6 +258,10 @@ async function inspectReviewCard(
 
   try {
     closedPullRequest = await github.findClosedPullRequest(options);
+
+    if (signal?.aborted) {
+      return null;
+    }
   } catch (error) {
     throw reviewLookupError(card, "closed pull request", error);
   }
@@ -217,6 +274,10 @@ async function inspectReviewCard(
 
   try {
     openPullRequest = await github.findPullRequest(options);
+
+    if (signal?.aborted) {
+      return null;
+    }
   } catch (error) {
     throw reviewLookupError(card, "expected open pull request", error);
   }
@@ -230,6 +291,10 @@ async function inspectReviewCard(
   try {
     changesRequestedPullRequest =
       await github.findChangesRequestedPullRequest(options);
+
+    if (signal?.aborted) {
+      return null;
+    }
   } catch (error) {
     throw reviewLookupError(card, "requested changes", error);
   }
@@ -271,7 +336,12 @@ async function completeMergedReviewCard(
   branch: string,
   pullRequest: PullRequest,
   cardLog: ReturnType<typeof logger.child>,
+  signal?: AbortSignal,
 ): Promise<void> {
+  if (signal?.aborted) {
+    return;
+  }
+
   cardLog.event(
     `Human Review card has merged pull request: ${pullRequest.url}`,
   );
@@ -283,9 +353,22 @@ async function completeMergedReviewCard(
       branch,
     );
 
+    if (signal?.aborted) {
+      return;
+    }
+
     if (remoteBranchExists) {
+      if (signal?.aborted) {
+        return;
+      }
+
       cardLog.info(`Deleting merged remote branch ${branch}...`);
       await git.deleteRemoteBranch(project.repository.path, "origin", branch);
+
+      if (signal?.aborted) {
+        return;
+      }
+
       cardLog.info("Merged remote branch deleted");
     }
   } catch (error) {
@@ -299,6 +382,10 @@ async function completeMergedReviewCard(
       `Could not clean up merged pull request branch: ${message}`,
       { cause: error },
     );
+  }
+
+  if (signal?.aborted) {
+    return;
   }
 
   try {
@@ -320,6 +407,10 @@ async function completeMergedReviewCard(
     );
   }
 
+  if (signal?.aborted) {
+    return;
+  }
+
   try {
     removeSessionLog(project.id, card.id);
     cardLog.info("OpenCode session log removed");
@@ -337,10 +428,19 @@ async function failClosedReviewCard(
   pullRequest: PullRequest,
   cardLog: ReturnType<typeof logger.child>,
   emailNotifier?: EmailNotifier,
+  signal?: AbortSignal,
 ): Promise<void> {
+  if (signal?.aborted) {
+    return;
+  }
+
   cardLog.event(
     `Human Review card has closed pull request: ${pullRequest.url}`,
   );
+
+  if (signal?.aborted) {
+    return;
+  }
 
   try {
     await trello.moveCard(card.id, project.trello.failedListId);
@@ -356,6 +456,10 @@ async function failClosedReviewCard(
     );
   }
 
+  if (signal?.aborted) {
+    return;
+  }
+
   await notifyFailed(
     emailNotifier,
     {
@@ -366,6 +470,10 @@ async function failClosedReviewCard(
     },
     cardLog,
   );
+
+  if (signal?.aborted) {
+    return;
+  }
 
   try {
     await trello.addComment(

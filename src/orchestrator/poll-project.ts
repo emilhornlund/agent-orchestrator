@@ -149,6 +149,7 @@ export async function pollProject(
     github,
     project,
     emailNotifier,
+    signal,
   );
 
   if (signal.aborted) {
@@ -162,6 +163,7 @@ export async function pollProject(
     project,
     { moveRequestedChanges: workingChangeRequest === null },
     emailNotifier,
+    signal,
   );
 
   if (signal.aborted) {
@@ -241,9 +243,18 @@ export async function pollProject(
     return;
   }
 
-  const refinementClaim = await claimNextRefinementCard(trello, git, project);
+  const refinementClaim = await claimNextRefinementCard(
+    trello,
+    git,
+    project,
+    signal,
+  );
 
   if (refinementClaim) {
+    if (signal.aborted) {
+      return;
+    }
+
     await processRefinementCard(
       trello,
       git,
@@ -258,9 +269,13 @@ export async function pollProject(
     return;
   }
 
-  const implementationClaim = await claimNextCard(trello, git, project);
+  const implementationClaim = await claimNextCard(trello, git, project, signal);
 
   if (!implementationClaim) {
+    return;
+  }
+
+  if (signal.aborted) {
     return;
   }
 
@@ -279,9 +294,14 @@ export async function pollProject(
     project,
     card,
     emailNotifier,
+    signal,
   );
 
   if (reconciled) {
+    return;
+  }
+
+  if (signal.aborted) {
     return;
   }
 
@@ -348,9 +368,13 @@ async function processRefinementCard(
       `OpenCode refinement completed with classification: ${result.type}`,
     );
 
-    await finalizeRefinement(trello, project, card, result);
+    await finalizeRefinement(trello, project, card, result, signal);
 
     cardLog.event("Refined card returned to Backlog");
+
+    if (signal.aborted) {
+      return;
+    }
 
     clearRefinementResult(worktree.path);
 
@@ -361,7 +385,12 @@ async function processRefinementCard(
       project,
       worktreePath: worktree.path,
       branch: worktree.branch,
+      signal,
     });
+
+    if (signal.aborted) {
+      return;
+    }
 
     cardLog.info("Refinement worktree cleaned up");
   } catch (error) {
@@ -432,6 +461,11 @@ async function processReviewChangeRequest(
       emailNotifier,
     );
 
+    if (signal.aborted) {
+      cardLog.event("Review change workflow stopped before worktree cleanup");
+      return;
+    }
+
     cardLog.info("Cleaning up review feedback worktree...");
 
     try {
@@ -440,7 +474,12 @@ async function processReviewChangeRequest(
         project,
         worktreePath: worktree.path,
         branch: worktree.branch,
+        signal,
       });
+
+      if (signal.aborted) {
+        return;
+      }
 
       cardLog.info("Review feedback worktree cleaned up");
     } catch (cleanupError) {
@@ -497,6 +536,11 @@ async function processImplementationCard(
       emailNotifier,
     );
 
+    if (signal.aborted) {
+      cardLog.event("Card workflow stopped before worktree cleanup");
+      return;
+    }
+
     cardLog.info("Cleaning up published worktree...");
 
     try {
@@ -505,7 +549,12 @@ async function processImplementationCard(
         project,
         worktreePath: worktree.path,
         branch: worktree.branch,
+        signal,
       });
+
+      if (signal.aborted) {
+        return;
+      }
 
       cardLog.info("Published worktree cleaned up");
     } catch (cleanupError) {
@@ -607,6 +656,7 @@ async function processCardChanges(
       commitSha,
       reviewResult,
       remediationResult,
+      signal,
       ...(emailNotifier === undefined ? {} : { emailNotifier }),
     });
 
@@ -827,6 +877,7 @@ async function processCardChanges(
     commitSha: headAfterCommit,
     reviewResult,
     remediationResult,
+    signal,
     ...(emailNotifier === undefined ? {} : { emailNotifier }),
   });
 

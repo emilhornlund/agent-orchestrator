@@ -127,6 +127,32 @@ describe("reconcileWorkingCards", () => {
     expect(github.findPullRequest).not.toHaveBeenCalled();
   });
 
+  it("does not correct a Working card after shutdown during transition lookup", async () => {
+    const controller = new AbortController();
+    const moveCard = vi.fn();
+    const trello = {
+      getCards: vi.fn().mockResolvedValue([card()]),
+      getLatestListTransition: vi.fn().mockImplementation(async () => {
+        controller.abort();
+        return null;
+      }),
+      moveCard,
+    } as unknown as TrelloClient;
+
+    await expect(
+      reconcileWorkingCards(
+        trello,
+        {} as GitClient,
+        {} as GitHubClient,
+        project,
+        undefined,
+        controller.signal,
+      ),
+    ).resolves.toBeNull();
+
+    expect(moveCard).not.toHaveBeenCalled();
+  });
+
   it("recovers a Ready for Agent transition only with an existing expected worktree", async () => {
     const worktreeRoot = createWorktreeRoot();
     const worktreePath = path.join(worktreeRoot, "card-1");

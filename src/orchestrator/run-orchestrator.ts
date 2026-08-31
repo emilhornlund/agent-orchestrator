@@ -7,9 +7,18 @@ import {
 } from "../logging/log-retention.js";
 import { logger } from "../logging/logger.js";
 import type { EmailNotifier } from "../notifications/email-notifier.js";
-import type { OpenCodeClient } from "../opencode/opencode-client.js";
-import type { CommandRunner } from "../process/command-runner.js";
-import type { TrelloClient } from "../trello/trello-client.js";
+import {
+  OpenCodeRunAbortedError,
+  type OpenCodeClient,
+} from "../opencode/opencode-client.js";
+import {
+  CommandRunAbortedError,
+  type CommandRunner,
+} from "../process/command-runner.js";
+import {
+  TrelloRequestAbortedError,
+  type TrelloClient,
+} from "../trello/trello-client.js";
 
 import {
   formatFailureDiagnostic,
@@ -36,6 +45,15 @@ function sleep(milliseconds: number, signal: AbortSignal): Promise<void> {
 
     signal.addEventListener("abort", handleAbort, { once: true });
   });
+}
+
+function isShutdownCancellation(error: unknown, signal: AbortSignal): boolean {
+  return (
+    signal.aborted &&
+    (error instanceof OpenCodeRunAbortedError ||
+      error instanceof CommandRunAbortedError ||
+      error instanceof TrelloRequestAbortedError)
+  );
 }
 
 async function runProjectWorker(
@@ -74,6 +92,13 @@ async function runProjectWorker(
         );
       }
     } catch (error) {
+      if (
+        isShutdownCancellation(error, signal) ||
+        (signal.aborted && signal.reason === "fatal")
+      ) {
+        return;
+      }
+
       const failureContext = getFailureContext(error);
 
       logger

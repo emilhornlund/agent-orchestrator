@@ -1,5 +1,8 @@
 import "dotenv/config";
 
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
 import { loadConfig } from "./config/config.js";
 import { parseEnvironment } from "./config/environment.js";
 import { GitClient } from "./git/git-client.js";
@@ -8,37 +11,47 @@ import { logger } from "./logging/logger.js";
 import { createEmailNotifier } from "./notifications/email-notifier.js";
 import { OpenCodeClient } from "./opencode/opencode-client.js";
 import { CommandRunner } from "./process/command-runner.js";
+import {
+  installProcessHandlers,
+  type ProcessEventSource,
+  RuntimeLifecycle,
+} from "./runtime/runtime-lifecycle.js";
 import { runStartup } from "./startup/run-startup.js";
 import { TrelloClient } from "./trello/trello-client.js";
 
-async function main(): Promise<void> {
+function addConfiguredSecretValues(
+  lifecycle: RuntimeLifecycle,
+  config: ReturnType<typeof loadConfig>,
+  environment: ReturnType<typeof parseEnvironment>,
+): void {
+  const smtp = config.notifications?.email?.smtp;
+
+  lifecycle.addSecretValues([
+    environment.TRELLO_API_KEY,
+    environment.TRELLO_TOKEN,
+    ...(smtp === undefined
+      ? []
+      : [process.env[smtp.usernameEnv], process.env[smtp.passwordEnv]]),
+  ]);
+}
+
+export async function main(
+  lifecycle: RuntimeLifecycle = new RuntimeLifecycle(),
+): Promise<void> {
   const config = loadConfig();
   const environment = parseEnvironment(process.env);
-  const shutdownController = new AbortController();
+  addConfiguredSecretValues(lifecycle, config, environment);
+
   const emailNotifier = createEmailNotifier(
     config.notifications?.email,
     process.env,
-    shutdownController.signal,
+    lifecycle.signal,
   );
-
-  function handleShutdown(signal: NodeJS.Signals): void {
-    if (shutdownController.signal.aborted) {
-      return;
-    }
-
-    console.log("");
-    logger.event(`Received ${signal}; shutting down...`);
-
-    shutdownController.abort();
-  }
-
-  process.once("SIGINT", handleShutdown);
-  process.once("SIGTERM", handleShutdown);
 
   const trello = new TrelloClient({
     apiKey: environment.TRELLO_API_KEY,
     token: environment.TRELLO_TOKEN,
-    signal: shutdownController.signal,
+    signal: lifecycle.signal,
     timeoutMilliseconds: 30_000,
   });
 
@@ -91,13 +104,53 @@ async function main(): Promise<void> {
       commands,
       ...(emailNotifier === undefined ? {} : { emailNotifier }),
     },
-    shutdownController.signal,
+    lifecycle.signal,
   );
 
-  logger.event("Agent Orchestrator stopped");
+  if (lifecycle.fatalFailure === undefined) {
+    logger.event("Agent Orchestrator stopped");
+  }
 }
 
-main().catch((error: unknown) => {
-  logger.error(error instanceof Error ? error.message : String(error));
-  process.exitCode = 1;
-});
+export async function bootstrap(
+  lifecycle: RuntimeLifecycle = new RuntimeLifecycle(),
+  processObject: ProcessEventSource = process,
+): Promise<number> {
+  const removeProcessHandlers = installProcessHandlers(
+    lifecycle,
+    processObject,
+  );
+
+  try {
+    await main(lifecycle);
+  } catch (error) {
+    lifecycle.requestFatal("startup failure", error);
+  } finally {
+    removeProcessHandlers();
+  }
+
+  return lifecycle.exitCode;
+}
+
+function isEntrypoint(): boolean {
+  const entrypoint = process.argv[1];
+
+  return (
+    entrypoint !== undefined &&
+    pathToFileURL(path.resolve(entrypoint)).href === import.meta.url
+  );
+}
+
+if (isEntrypoint()) {
+  const lifecycle = new RuntimeLifecycle();
+
+  void bootstrap(lifecycle).then(
+    (exitCode) => {
+      process.exitCode = exitCode;
+    },
+    (error: unknown) => {
+      lifecycle.requestFatal("startup failure", error);
+      process.exitCode = lifecycle.exitCode;
+    },
+  );
+}

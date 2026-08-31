@@ -40,13 +40,25 @@ export async function runStartup(
   cleanupLogRetention(config.workflow.logRetentionDays);
 
   for (const project of config.projects) {
+    if (signal.aborted) {
+      return;
+    }
+
     await ensureRepository(dependencies.git, dependencies.commands, project);
   }
 
   for (const project of config.projects) {
+    if (signal.aborted) {
+      return;
+    }
+
     await operations.validateProjectTrello(dependencies.trello, project);
 
     logger.child({ projectId: project.id }).event("Trello configuration: OK");
+  }
+
+  if (signal.aborted) {
+    return;
   }
 
   if (dependencies.emailNotifier === undefined) {

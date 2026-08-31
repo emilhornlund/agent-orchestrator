@@ -205,6 +205,33 @@ describe("reconcileReviewCards", () => {
     });
   });
 
+  it("does not delete a merged remote branch after shutdown", async () => {
+    const controller = new AbortController();
+    const trello = trelloFor(card());
+    const git = {
+      remoteBranchExists: vi.fn().mockImplementation(async () => {
+        controller.abort();
+        return true;
+      }),
+      deleteRemoteBranch: vi.fn(),
+    } as unknown as GitClient;
+
+    await expect(
+      reconcileReviewCards(
+        trello,
+        git,
+        githubFor("card-1", "merged"),
+        project,
+        {},
+        undefined,
+        controller.signal,
+      ),
+    ).resolves.toBeNull();
+
+    expect(git.deleteRemoteBranch).not.toHaveBeenCalled();
+    expect(trello.moveCard).not.toHaveBeenCalled();
+  });
+
   it("reports merged remote-branch cleanup failures without moving the card to Done", async () => {
     const sessionLogPath = getSessionLogPath(project.id, "card-1");
     appendSessionLog(sessionLogPath, "OpenCode output");
