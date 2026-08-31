@@ -59,6 +59,7 @@ Changes that weaken these invariants require explicit justification.
 - Keep changes scoped to the requested task.
 - Prefer simple deterministic code over framework-heavy abstractions.
 - Avoid adding configuration for functionality that does not yet exist.
+- Never implement Trello or GitHub functionality that requires a paid plan, subscription, or paid tier. Tasks depending on paid-only functionality must not be implemented under this repository's guidance; ordinary non-paid integrations remain permitted.
 - Keep secrets out of configuration files and source control.
 - Add tests for deterministic behavior and boundary conditions.
 - Preserve useful failure state instead of aggressively cleaning it up.
