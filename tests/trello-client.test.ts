@@ -271,6 +271,31 @@ describe("TrelloClient", () => {
     ).resolves.toBeNull();
   });
 
+  it("rejects malformed action-history timestamps", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify([
+          {
+            id: "action-1",
+            type: "updateCard",
+            date: "not-a-date",
+            data: {
+              listBefore: { id: "ready-list" },
+              listAfter: { id: "working-list" },
+            },
+          },
+        ]),
+        { status: 200 },
+      ),
+    );
+    const client = new TrelloClient({
+      apiKey: "test-key",
+      token: "test-token",
+    });
+
+    await expect(client.getListTransitions("card-1")).rejects.toThrow();
+  });
+
   it("rejects a malformed card response instead of returning unchecked data", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify([{ id: "card-1", name: "Incomplete" }]), {

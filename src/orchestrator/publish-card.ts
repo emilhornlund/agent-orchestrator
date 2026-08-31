@@ -6,6 +6,10 @@ import type { TrelloCard, TrelloClient } from "../trello/trello-client.js";
 
 import { toFailureError } from "./failure-diagnostic.js";
 import { PublishedCardStateError } from "./published-card-state-error.js";
+import {
+  formatWorkflowDuration,
+  selectAutomatedWorkflowPass,
+} from "./workflow-duration.js";
 import { WorkflowError } from "./workflow-error.js";
 
 export interface PublishCardOptions {
@@ -19,6 +23,48 @@ export interface PublishCardOptions {
   commitSha: string;
   reviewResult: string;
   remediationResult: string;
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function getElapsedWorkflowLine(
+  trello: TrelloClient,
+  project: ProjectConfig,
+  cardId: string,
+  cardLog: ReturnType<typeof logger.child>,
+): Promise<string | undefined> {
+  try {
+    if (typeof trello.getListTransitions !== "function") {
+      throw new Error("Trello client does not provide list transition history");
+    }
+
+    const transitions = await trello.getListTransitions(cardId);
+
+    if (transitions === null) {
+      throw new Error(
+        "Trello action history contains an incomplete list transition",
+      );
+    }
+
+    const duration = selectAutomatedWorkflowPass(transitions, {
+      readyListId: project.trello.readyListId,
+      workingListId: project.trello.workingListId,
+      reviewListId: project.trello.reviewListId,
+      failedListId: project.trello.failedListId,
+    });
+
+    if (duration.pass === null) {
+      throw new Error(duration.reason);
+    }
+
+    return `Elapsed workflow time: ${formatWorkflowDuration(duration.pass.durationMilliseconds)}`;
+  } catch (error) {
+    cardLog.warn(`Elapsed workflow time omitted: ${getErrorMessage(error)}`);
+
+    return undefined;
+  }
 }
 
 export async function publishCard({
@@ -111,6 +157,13 @@ export async function publishCard({
 
   cardLog.event("Trello card moved to Human Review");
 
+  const elapsedWorkflowLine = await getElapsedWorkflowLine(
+    trello,
+    project,
+    card.id,
+    cardLog,
+  );
+
   const comment = [
     "Agent Orchestrator completed successfully.",
     "",
@@ -118,6 +171,7 @@ export async function publishCard({
     `Commit: ${commitSha}`,
     `Review: ${reviewResult}`,
     `Remediation: ${remediationResult}`,
+    ...(elapsedWorkflowLine === undefined ? [] : [elapsedWorkflowLine]),
   ].join("\n");
 
   try {
@@ -126,9 +180,7 @@ export async function publishCard({
     cardLog.info("Trello card updated with workflow summary");
   } catch (error) {
     cardLog.error(
-      `Failed to add workflow summary to Trello card: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
+      `Failed to add workflow summary to Trello card: ${getErrorMessage(error)}`,
     );
   }
 }

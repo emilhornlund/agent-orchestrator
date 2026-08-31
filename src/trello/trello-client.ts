@@ -175,44 +175,51 @@ export class TrelloClient {
     return this.get(`/lists/${listId}/cards`, z.array(trelloCardSchema));
   }
 
-  async getLatestListTransition(
+  async getListTransitions(
     cardId: string,
-    destinationListId: string,
-  ): Promise<TrelloListTransition | null> {
+  ): Promise<TrelloListTransition[] | null> {
     const actions = await this.getCardActions(cardId);
     let hasIncompleteListTransition = false;
-    const transitions = actions
-      .flatMap((action) => {
-        const listBefore = action.data?.listBefore;
-        const listAfter = action.data?.listAfter;
+    const transitions = actions.flatMap((action) => {
+      const listBefore = action.data?.listBefore;
+      const listAfter = action.data?.listAfter;
 
-        if (listBefore === undefined || listAfter === undefined) {
-          if (listBefore !== undefined || listAfter !== undefined) {
-            hasIncompleteListTransition = true;
-          }
-
-          return [];
+      if (listBefore === undefined || listAfter === undefined) {
+        if (listBefore !== undefined || listAfter !== undefined) {
+          hasIncompleteListTransition = true;
         }
 
-        return [
-          {
-            id: action.id,
-            date: action.date,
-            listBeforeId: listBefore.id,
-            listAfterId: listAfter.id,
-          },
-        ];
-      })
-      .sort((left, right) => Date.parse(right.date) - Date.parse(left.date));
+        return [];
+      }
+
+      return [
+        {
+          id: action.id,
+          date: action.date,
+          listBeforeId: listBefore.id,
+          listAfterId: listAfter.id,
+        },
+      ];
+    });
 
     if (hasIncompleteListTransition) {
       return null;
     }
 
+    return transitions;
+  }
+
+  async getLatestListTransition(
+    cardId: string,
+    destinationListId: string,
+  ): Promise<TrelloListTransition | null> {
+    const transitions = await this.getListTransitions(cardId);
+
     return (
-      transitions.find(
-        (transition) => transition.listAfterId === destinationListId,
-      ) ?? null
+      [...(transitions ?? [])]
+        .sort((left, right) => Date.parse(right.date) - Date.parse(left.date))
+        .find((transition) => transition.listAfterId === destinationListId) ??
+      null
     );
   }
 

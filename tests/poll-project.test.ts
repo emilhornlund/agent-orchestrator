@@ -650,6 +650,7 @@ describe("pollProject", () => {
           };
         },
       );
+      vi.spyOn(trello, "getListTransitions").mockResolvedValue([]);
 
       let statusCall = 0;
       let headCall = 0;
@@ -892,6 +893,7 @@ describe("pollProject", () => {
           };
         },
       );
+      vi.spyOn(trello, "getListTransitions").mockResolvedValue([]);
 
       let statusCall = 0;
       let headCall = 0;
