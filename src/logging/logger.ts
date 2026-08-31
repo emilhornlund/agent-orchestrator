@@ -53,7 +53,11 @@ function writeToFile(
 }
 
 function formatConsole(context: LogContext, message: string): string {
-  return `${formatContext(context)}${message}`;
+  const prefix = `${new Date().toISOString()} ${formatContext(context)}`;
+
+  return `${prefix}${message.replace(/\r\n|\r|\n/g, (lineBreak) => {
+    return `${lineBreak}${prefix}`;
+  })}`;
 }
 
 export class Logger {
