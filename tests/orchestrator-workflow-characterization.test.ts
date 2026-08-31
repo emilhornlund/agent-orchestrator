@@ -18,6 +18,7 @@ import {
   type RunCommand,
 } from "../src/process/command-runner.js";
 import { getRefinementResultPath } from "../src/refinement/refinement-result.js";
+import type { EmailNotifier } from "../src/notifications/email-notifier.js";
 import type { TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
 
 const listIds = {
@@ -40,6 +41,8 @@ interface HarnessOptions {
   feedback?: string;
   initialRemoteSha?: string | null;
   createPullRequestError?: Error;
+  backlogMoveError?: Error;
+  refinementCommentError?: Error;
 }
 
 const temporaryRoots: string[] = [];
@@ -93,6 +96,8 @@ function createHarness(options: HarnessOptions = {}) {
   let currentList = options.initialList ?? "ready";
   let pullRequestState = options.pullRequestState ?? "none";
   let createPullRequestError = options.createPullRequestError;
+  let backlogMoveError = options.backlogMoveError;
+  let refinementCommentError = options.refinementCommentError;
   let branchExists =
     options.initialWorktree === true || currentList === "review";
   let dirty = false;
@@ -155,6 +160,12 @@ function createHarness(options: HarnessOptions = {}) {
         throw new Error(`Unexpected card ${cardId}`);
       }
 
+      if (listId === listIds.backlog && backlogMoveError !== undefined) {
+        const error = backlogMoveError;
+        backlogMoveError = undefined;
+        throw error;
+      }
+
       addTransition(listIds[currentList], listId);
       currentList = (Object.keys(listIds) as ListName[]).find(
         (name) => listIds[name] === listId,
@@ -191,11 +202,23 @@ function createHarness(options: HarnessOptions = {}) {
     );
     events.push(`trello:remove-label:${labelId}`);
   });
-  const addComment = vi.fn(async () => ({
-    id: "comment-1",
-    type: "commentCard",
-    date: "2026-08-30T10:00:00.000Z",
-  }));
+  const addComment = vi.fn(async (...args: [string, string]) => {
+    if (args[1].startsWith("Agent Orchestrator completed refinement.")) {
+      events.push("trello:refinement-comment");
+
+      if (refinementCommentError !== undefined) {
+        const error = refinementCommentError;
+        refinementCommentError = undefined;
+        throw error;
+      }
+    }
+
+    return {
+      id: "comment-1",
+      type: "commentCard",
+      date: "2026-08-30T10:00:00.000Z",
+    };
+  });
   const trello = {
     getCards,
     getLatestListTransition,
@@ -727,7 +750,12 @@ describe("orchestrator workflow characterization", () => {
           "trello:add-label:feature-label",
           "trello:remove-label:refinement-label",
           "trello:move:backlog-list",
+          "trello:refinement-comment",
         ]),
+      );
+      expect(harness.addComment).toHaveBeenCalledWith(
+        harness.card.id,
+        expect.stringContaining("Classification: feature"),
       );
       expect(harness.events.indexOf("git:prepare-worktree")).toBeLessThan(
         harness.events.indexOf("trello:move:working-list"),
@@ -738,6 +766,134 @@ describe("orchestrator workflow characterization", () => {
       expect(harness.events.indexOf("trello:move:working-list")).toBeLessThan(
         harness.events.indexOf("opencode:refinement"),
       );
+      expect(harness.events.indexOf("trello:move:backlog-list")).toBeLessThan(
+        harness.events.indexOf("trello:refinement-comment"),
+      );
+    } finally {
+      harness.cleanup();
+    }
+  });
+
+  it("sends one refinement completion email and comment after Backlog, even when polled again", async () => {
+    const harness = createHarness({
+      cardLabels: ["refinement-label"],
+    });
+    const notifier: EmailNotifier = {
+      send: vi.fn(async (message) => {
+        harness.events.push("email");
+
+        expect(message.subject).toContain("Refinement Complete");
+        expect(message.text).toContain("Classification: feature");
+        expect(message.text).toContain("Refined task title: Refined task");
+        expect(message.text).toContain("# Refined task");
+      }),
+    };
+
+    try {
+      await pollProject(
+        harness.trello,
+        harness.git,
+        harness.github,
+        harness.openCode,
+        harness.commands,
+        harness.project,
+        new AbortController().signal,
+        notifier,
+      );
+      await pollProject(
+        harness.trello,
+        harness.git,
+        harness.github,
+        harness.openCode,
+        harness.commands,
+        harness.project,
+        new AbortController().signal,
+        notifier,
+      );
+
+      expect(notifier.send).toHaveBeenCalledTimes(1);
+      expect(harness.addComment).toHaveBeenCalledTimes(1);
+      expect(harness.card.idList).toBe(listIds.backlog);
+      expect(harness.events.indexOf("trello:move:backlog-list")).toBeLessThan(
+        harness.events.indexOf("email"),
+      );
+      expect(harness.events.indexOf("email")).toBeLessThan(
+        harness.events.indexOf("trello:refinement-comment"),
+      );
+    } finally {
+      harness.cleanup();
+    }
+  });
+
+  it("keeps the successful refinement state when completion delivery fails", async () => {
+    const harness = createHarness({
+      cardLabels: ["refinement-label"],
+      refinementCommentError: new Error("Trello unavailable"),
+    });
+    const notifier: EmailNotifier = {
+      send: vi.fn().mockRejectedValue(new Error("SMTP unavailable")),
+    };
+
+    try {
+      await pollProject(
+        harness.trello,
+        harness.git,
+        harness.github,
+        harness.openCode,
+        harness.commands,
+        harness.project,
+        new AbortController().signal,
+        notifier,
+      );
+
+      expect(harness.card.idList).toBe(listIds.backlog);
+      expect(notifier.send).toHaveBeenCalledTimes(1);
+      expect(harness.addComment).toHaveBeenCalledTimes(1);
+    } finally {
+      harness.cleanup();
+    }
+  });
+
+  it("does not send completion notifications when moving the refined card to Backlog fails", async () => {
+    const harness = createHarness({
+      cardLabels: ["refinement-label"],
+      backlogMoveError: new Error("Backlog unavailable"),
+    });
+    const messages: string[] = [];
+    const notifier: EmailNotifier = {
+      send: vi.fn(async (message) => {
+        messages.push(message.subject);
+      }),
+    };
+
+    try {
+      await expect(
+        pollProject(
+          harness.trello,
+          harness.git,
+          harness.github,
+          harness.openCode,
+          harness.commands,
+          harness.project,
+          new AbortController().signal,
+          notifier,
+        ),
+      ).rejects.toThrow("Backlog unavailable");
+
+      expect(messages).not.toEqual(
+        expect.arrayContaining([
+          expect.stringContaining("Refinement Complete"),
+        ]),
+      );
+      expect(harness.addComment).toHaveBeenCalledWith(
+        harness.card.id,
+        expect.not.stringContaining("completed refinement"),
+      );
+      expect(harness.moveCard).toHaveBeenCalledWith(
+        harness.card.id,
+        listIds.failed,
+      );
+      expect(harness.card.idList).toBe(listIds.failed);
     } finally {
       harness.cleanup();
     }

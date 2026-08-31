@@ -40,6 +40,9 @@ Ready for Agent + Refinement
       ├─ reject unauthorized repository changes
       ├─ update the Trello card title and description
       ├─ replace Refinement with exactly one of Feature / Improvement / Bug
+      ├─ move the card to Backlog
+      ├─ attempt the refinement completion email when enabled
+      ├─ add a refined-result summary comment
       ├─ clean up the refinement worktree
       │
       ▼
@@ -166,14 +169,19 @@ API keys, or tokens in `config.yaml` or source control. Enabled settings and ref
 at startup with field-specific errors; omitted or disabled settings require no SMTP credentials.
 
 The orchestrator sends one email after each successful orchestrator transition into `Human Review` from normal publication or
-reconciliation, and after each successful orchestrator transition into `Failed` from automated failure handling or a closed,
-unmerged pull request. It does not notify for cards merely observed in either list, unrelated list transitions, or repeated
-polling of an already completed transition. Human Review messages include the project, card, Trello URL, pull-request URL,
-commit/publication context, review result, and remediation result. Failed messages include the project, card, Trello URL,
-failure category and reason, and the deliberate retry instruction.
+reconciliation, after each successful orchestrator transition into `Failed` from automated failure handling or a closed,
+unmerged pull request, and after each successful refinement transition into `Backlog`. It does not notify for cards merely
+observed in either list, unrelated list transitions, or repeated polling of an already completed transition. Human Review
+messages include the project, card, Trello URL, pull-request URL, commit/publication context, review result, and remediation
+result. Failed messages include the project, card, Trello URL, failure category and reason, and the deliberate retry
+instruction. Refinement completion messages include the project, card, Trello URL, classification, refined title, and refined
+task description.
 
 Delivery is attempted only after the Trello move succeeds. A delivery failure is logged with project and card context and does
-not move the card, change the primary workflow error, or prevent the existing Trello summary/failure handling.
+not move the card, change the primary workflow error, or prevent the existing Trello summary/failure handling. A successfully
+refined card also receives one Trello comment containing its classification, refined title, and refined task description. Email
+and comment failures are isolated independently: the card remains in `Backlog`, and the refinement is not changed to a failed
+workflow. When email notifications are omitted or disabled, the summary comment is still added after a successful refinement.
 
 ### Pull request feedback loop
 
@@ -374,7 +382,9 @@ repository implementation files. Its only permitted write is the dedicated struc
 
 The orchestrator validates that result, updates the Trello card title and description, removes conflicting semantic
 classification labels, applies exactly one of `Feature`, `Improvement`, or `Bug`, removes `Refinement`, and moves the
-card to the top of `Backlog`.
+card to the top of `Backlog`. After that move succeeds, it attempts the optional refinement completion email and adds a Trello
+summary comment containing the result classification and refined task content. Failure to deliver either side effect is logged
+but does not change the successful `Backlog` state.
 
 If refinement fails, produces an invalid result, or modifies unauthorized repository files, the card moves to `Failed`.
 

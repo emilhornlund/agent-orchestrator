@@ -5,9 +5,11 @@ import type { Logger } from "../src/logging/logger.js";
 import {
   buildFailedEmail,
   buildHumanReviewEmail,
+  buildRefinementCompletionEmail,
   createEmailNotifier,
   notifyFailed,
   notifyHumanReview,
+  notifyRefinementCompletion,
 } from "../src/notifications/email-notifier.js";
 import type { TrelloCard } from "../src/trello/trello-client.js";
 
@@ -112,6 +114,34 @@ describe("email notifications", () => {
     });
   });
 
+  it("builds a refinement completion message with the refined task", () => {
+    expect(
+      buildRefinementCompletionEmail({
+        project,
+        card,
+        result: {
+          title: "Add inventory support",
+          type: "feature",
+          description:
+            "# Add inventory support\n\n## Description\n\nAdd inventory support.",
+        },
+      }),
+    ).toEqual({
+      subject:
+        "[Agent Orchestrator] Refinement Complete: project-one / Add email notifications",
+      text: [
+        "Event: Refinement Complete",
+        "Project: project-one",
+        "Card: Add email notifications",
+        "Trello card URL: https://trello.com/c/card-1",
+        "Classification: feature",
+        "Refined task title: Add inventory support",
+        "Refined task description:",
+        "# Add inventory support\n\n## Description\n\nAdd inventory support.",
+      ].join("\n"),
+    });
+  });
+
   it("isolates Human Review delivery failures", async () => {
     const notifier = {
       send: vi.fn().mockRejectedValue(new Error("SMTP unavailable")),
@@ -162,6 +192,34 @@ describe("email notifications", () => {
 
     expect(cardLog.error).toHaveBeenCalledWith(
       "Failed email notification failed: SMTP unavailable",
+    );
+  });
+
+  it("isolates refinement completion delivery failures", async () => {
+    const notifier = {
+      send: vi.fn().mockRejectedValue(new Error("SMTP unavailable")),
+    };
+    const cardLog = {
+      event: vi.fn(),
+      error: vi.fn(),
+    };
+
+    await notifyRefinementCompletion(
+      notifier,
+      {
+        project,
+        card,
+        result: {
+          title: "Add inventory support",
+          type: "feature",
+          description: "Refined task content",
+        },
+      },
+      cardLog as unknown as Logger,
+    );
+
+    expect(cardLog.error).toHaveBeenCalledWith(
+      "Refinement completion email notification failed: SMTP unavailable",
     );
   });
 });

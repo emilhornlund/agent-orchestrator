@@ -5,6 +5,7 @@ import type {
   EmailNotificationConfig,
   ProjectConfig,
 } from "../config/config.js";
+import type { RefinementResult } from "../refinement/refinement-result.js";
 import { SmtpEmailNotifier } from "./smtp-email-notifier.js";
 
 export interface EmailMessage {
@@ -31,6 +32,12 @@ export interface FailedNotificationDetails {
   card: Pick<TrelloCard, "name" | "url">;
   category: string;
   reason: string;
+}
+
+export interface RefinementCompletionNotificationDetails {
+  project: ProjectConfig;
+  card: Pick<TrelloCard, "name" | "url">;
+  result: RefinementResult;
 }
 
 function subjectPart(value: string): string {
@@ -74,6 +81,24 @@ export function buildFailedEmail(
   };
 }
 
+export function buildRefinementCompletionEmail(
+  details: RefinementCompletionNotificationDetails,
+): EmailMessage {
+  return {
+    subject: `[Agent Orchestrator] Refinement Complete: ${subjectPart(details.project.id)} / ${subjectPart(details.card.name)}`,
+    text: [
+      "Event: Refinement Complete",
+      `Project: ${details.project.id}`,
+      `Card: ${details.card.name}`,
+      `Trello card URL: ${details.card.url}`,
+      `Classification: ${details.result.type}`,
+      `Refined task title: ${details.result.title}`,
+      "Refined task description:",
+      details.result.description,
+    ].join("\n"),
+  };
+}
+
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -112,6 +137,25 @@ export async function notifyFailed(
   } catch (error) {
     cardLog.error(
       `Failed email notification failed: ${getErrorMessage(error)}`,
+    );
+  }
+}
+
+export async function notifyRefinementCompletion(
+  notifier: EmailNotifier | undefined,
+  details: RefinementCompletionNotificationDetails,
+  cardLog: Logger,
+): Promise<void> {
+  if (notifier === undefined) {
+    return;
+  }
+
+  try {
+    await notifier.send(buildRefinementCompletionEmail(details));
+    cardLog.event("Refinement completion email notification sent");
+  } catch (error) {
+    cardLog.error(
+      `Refinement completion email notification failed: ${getErrorMessage(error)}`,
     );
   }
 }
