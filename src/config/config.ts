@@ -104,6 +104,7 @@ const configSchema = z
 
     workflow: z.strictObject({
       pollIntervalSeconds: z.number().int().positive(),
+      logRetentionDays: z.number().int().positive().default(14),
     }),
   })
   .superRefine((config, ctx) => {

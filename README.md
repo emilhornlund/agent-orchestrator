@@ -230,12 +230,20 @@ projects:
 
 workflow:
   pollIntervalSeconds: 15
+  logRetentionDays: 14
 ```
 
 `setupCommand` and `validationCommand` are optional. When configured, `setupCommand` runs in the card worktree before
 the OpenCode implementation session. `validationCommand` is passed to OpenCode sessions that modify implementation
 files, and those agents run it before finishing and fix failures caused by their changes. The orchestrator does not
 execute the validation command itself.
+
+`logRetentionDays` defaults to `14` when omitted. It controls retention for daily orchestrator logs, including test-prefixed
+daily logs, and per-card session logs under `logs/sessions`. Files are removed when their filesystem modification time is
+strictly older than the retention cutoff. Cleanup runs at startup and once per day while the orchestrator is running. Missing
+log directories are ignored, unrelated entries and symbolic links are preserved, and cleanup failures are logged without
+stopping task processing. Failed-card session logs remain available until this policy removes them; session logs for cards
+successfully moved to `Done` are still removed immediately.
 
 `config.yaml` and `.env` are local files and are intentionally excluded from version control.
 
@@ -446,6 +454,15 @@ defaults to `360` when omitted.
 ### `workflow.pollIntervalSeconds`
 
 Interval in seconds between project polling cycles. Must be a positive integer.
+
+### `workflow.logRetentionDays`
+
+Number of days to retain log files. Must be a positive whole number and defaults to `14` when omitted. This applies to
+`logs/orchestrator-YYYY-MM-DD.log`, test-prefixed daily logs, and per-card session logs under `logs/sessions`. A file is
+eligible for removal only when its filesystem modification time is strictly older than the cutoff; files at the cutoff and
+newer are retained. Cleanup runs once at startup and once per day during continued operation. Missing log directories are a
+no-op, unrelated files and directories and symbolic links are preserved, and failures to scan or remove an individual file
+are logged with its path and the failure reason while other candidates continue to be processed.
 
 ## Safety boundaries
 

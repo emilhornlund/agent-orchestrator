@@ -91,3 +91,4 @@ projects:
 
 workflow:
   pollIntervalSeconds: 15
+  logRetentionDays: 14

@@ -9,6 +9,7 @@ import type { GitHubClient } from "../src/github/github-client.js";
 import type { OpenCodeClient } from "../src/opencode/opencode-client.js";
 import type { CommandRunner } from "../src/process/command-runner.js";
 import type { TrelloClient } from "../src/trello/trello-client.js";
+import * as logRetention from "../src/logging/log-retention.js";
 import {
   annotateFailure,
   getFailureContext,
@@ -83,6 +84,7 @@ function createConfig(
   return {
     workflow: {
       pollIntervalSeconds,
+      logRetentionDays: 14,
     },
     projects,
   };
@@ -293,5 +295,44 @@ describe("runOrchestrator", () => {
     );
 
     expect(pollProject).toHaveBeenCalledTimes(1);
+  });
+
+  it("runs log retention during continued operation", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const controller = new AbortController();
+      let resolvePoll: (() => void) | undefined;
+      const cleanupLogRetention = vi.spyOn(logRetention, "cleanupLogRetention");
+
+      pollProject.mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            resolvePoll = resolve;
+          }),
+      );
+
+      const orchestrator = runOrchestrator(
+        {} as TrelloClient,
+        {} as GitClient,
+        {} as GitHubClient,
+        {} as OpenCodeClient,
+        {} as CommandRunner,
+        createConfig([createProject("project-a")]),
+        controller.signal,
+      );
+
+      await vi.advanceTimersByTimeAsync(
+        logRetention.logRetentionIntervalMilliseconds,
+      );
+
+      expect(cleanupLogRetention).toHaveBeenCalledWith(14);
+
+      controller.abort();
+      resolvePoll?.();
+      await orchestrator;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

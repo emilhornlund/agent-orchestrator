@@ -2,6 +2,7 @@ import type { Config } from "../config/config.js";
 import { ensureRepository } from "../git/ensure-repository.js";
 import type { GitClient } from "../git/git-client.js";
 import type { GitHubClient } from "../github/github-client.js";
+import { cleanupLogRetention } from "../logging/log-retention.js";
 import { logger } from "../logging/logger.js";
 import type { OpenCodeClient } from "../opencode/opencode-client.js";
 import type { CommandRunner } from "../process/command-runner.js";
@@ -34,6 +35,8 @@ export async function runStartup(
   signal: AbortSignal,
   operations: StartupOperations = defaultStartupOperations,
 ): Promise<void> {
+  cleanupLogRetention(config.workflow.logRetentionDays);
+
   for (const project of config.projects) {
     await ensureRepository(dependencies.git, dependencies.commands, project);
   }
