@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProjectConfig } from "../src/config/config.js";
 import type { GitClient } from "../src/git/git-client.js";
 import type { GitHubClient } from "../src/github/github-client.js";
+import { Logger } from "../src/logging/logger.js";
 import {
   appendSessionLog,
   getSessionLogPath,
@@ -108,12 +109,15 @@ describe("reconcileReviewCards", () => {
   it("leaves an open PR without requested changes in Human Review", async () => {
     const trello = trelloFor(card());
     const github = githubFor("card-1", "open");
+    const event = vi.spyOn(Logger.prototype, "event");
 
     await expect(
       reconcileReviewCards(trello, {} as GitClient, github, project),
     ).resolves.toEqual({ card: card(), active: true });
 
     expect(trello.moveCard).not.toHaveBeenCalled();
+    expect(event).not.toHaveBeenCalledWith("Human Review card remains active");
+    event.mockRestore();
   });
 
   it("moves a card with no expected PR to Backlog", async () => {

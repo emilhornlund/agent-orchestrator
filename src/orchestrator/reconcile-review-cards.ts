@@ -206,8 +206,6 @@ export async function reconcileReviewCards(
     return state.changesRequested;
   }
 
-  cardLog.event("Human Review card remains active");
-
   if (signal?.aborted) {
     return null;
   }

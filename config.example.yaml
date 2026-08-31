@@ -98,6 +98,7 @@ notifications:
     smtp:
       host: "smtp.example.com"
       port: 465
+      # true uses implicit TLS; false requires a STARTTLS upgrade.
       secure: true
       usernameEnv: "SMTP_USERNAME"
       passwordEnv: "SMTP_PASSWORD"

@@ -157,9 +157,9 @@ notifications:
 ```
 
 `recipients` and `from` are email addresses. `smtp.host`, `smtp.port`, and `smtp.secure` select the SMTP server connection;
-`secure: true` uses implicit TLS. `usernameEnv` and `passwordEnv` are the names of environment variables containing the SMTP
-credentials. The default `timeoutSeconds` is `30`, and each notification makes one bounded delivery attempt without
-automatic retries.
+`secure: true` uses implicit TLS, while `secure: false` uses SMTP with a required STARTTLS upgrade. `usernameEnv` and
+`passwordEnv` are the names of environment variables containing the SMTP credentials. The default `timeoutSeconds` is `30`,
+and each notification makes one bounded delivery attempt without automatic retries.
 
 Set the referenced credentials in the ignored `.env` file or another secure runtime environment. Never put SMTP passwords,
 API keys, or tokens in `config.yaml` or source control. Enabled settings and referenced environment variables are validated
@@ -582,7 +582,7 @@ When `enabled: true`, the following fields are required:
 - `from` — sender email address.
 - `smtp.host` — SMTP server hostname.
 - `smtp.port` — SMTP server port from `1` through `65535`.
-- `smtp.secure` — whether to use implicit TLS for the connection.
+- `smtp.secure` — whether to use implicit TLS for the connection; when false, STARTTLS is required.
 - `smtp.usernameEnv` — environment-variable name containing the SMTP username.
 - `smtp.passwordEnv` — environment-variable name containing the SMTP password.
 - `smtp.timeoutSeconds` — positive connection and delivery timeout, defaulting to `30`.
