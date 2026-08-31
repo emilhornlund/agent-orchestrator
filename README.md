@@ -63,7 +63,7 @@ Ready for Agent
       ├─ agents run optional repository validation
       ├─ run independent OpenCode review
       ├─ remediate review findings when necessary
-      └─ commit, push, and create pull request
+      └─ fetch latest default branch, rebase, push, and create pull request
       │
       ▼
  Human Review
@@ -103,6 +103,18 @@ A card reaches `Done` only after the corresponding pull request has been merged 
 Implementation, review, remediation, and commit creation use separate OpenCode sessions.
 
 The review phase evaluates the completed change independently before the branch is published.
+
+### Fresh publication base
+
+Immediately before publication, the task worktree fetches `origin/<defaultBranch>` and rebases the expected
+`agent/<trello-card-id>` branch onto that fetched ref. Git leaves an already-current branch unchanged. The resulting `HEAD`
+is used for remote-branch comparison, push decisions, pull-request publication, notifications, and the Trello summary.
+The configured source checkout is never used for these operations.
+
+If fetching or rebasing fails, publication stops before push, pull-request lookup or creation, and the Trello card's success
+transition. The task worktree and branch are preserved so the failure or any rebase conflicts can be diagnosed and retried.
+An existing remote branch that would require a non-fast-forward update after rebasing is also rejected; publication uses only a
+normal non-force push.
 
 ### Elapsed workflow time
 
@@ -176,8 +188,11 @@ interrupted runs and handle already-existing branches or pull requests without b
 When a card is moved from `Failed` back to `Ready for Agent`, the orchestrator reuses the card's existing worktree and
 `agent/<trello-card-id>` branch when both are still valid. A clean branch with tracked changes relative to
 `origin/<defaultBranch>` is treated as committed implementation work. The retry skips setup, implementation, review,
-remediation, and commit, then resumes publication. It uses a normal non-force push when the remote branch is missing or
-does not yet point at that commit, checks for an existing open pull request, and creates one only when needed.
+remediation, and commit, then resumes publication. Before publication, the task worktree fetches and rebases onto the latest
+`origin/<defaultBranch>`; a rebase failure preserves the worktree and branch and prevents push, pull-request lookup or
+creation, and a Trello success transition. It uses a normal non-force push when the remote branch is missing or does not yet
+point at the resulting commit, checks for an existing open pull request, and creates one only when needed. If rebasing a
+previously published branch would require a non-fast-forward update, publication fails without changing the remote branch.
 
 An existing worktree or branch alone is not proof that implementation is complete. A branch at its base, a branch with no
 tracked committed changes, or a dirty worktree follows the normal implementation path; uncommitted work is preserved for

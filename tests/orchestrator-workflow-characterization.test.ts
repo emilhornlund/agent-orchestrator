@@ -251,6 +251,7 @@ function createHarness(options: HarnessOptions = {}) {
     return "src/example.ts";
   });
   const getRemoteBranchSha = vi.fn(async () => remoteSha);
+  const rebase = vi.fn(async () => undefined);
   const push = vi.fn(async () => {
     remoteSha = headSha;
     events.push("git:push");
@@ -281,6 +282,8 @@ function createHarness(options: HarnessOptions = {}) {
     getHeadSha,
     getChangedFiles,
     getRemoteBranchSha,
+    rebase,
+    isAncestor: vi.fn(async () => true),
     push,
     removeWorktree,
     pruneWorktrees,

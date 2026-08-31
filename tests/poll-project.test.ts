@@ -1272,6 +1272,7 @@ describe("pollProject", () => {
 
       const git = {
         fetch: vi.fn().mockResolvedValue(undefined),
+        rebase: vi.fn().mockResolvedValue(undefined),
         getCurrentBranch: vi.fn().mockResolvedValue("agent/card-1"),
         resetHardTo: vi.fn().mockResolvedValue(undefined),
         cleanUntracked: vi.fn().mockResolvedValue(undefined),
@@ -1506,6 +1507,7 @@ describe("pollProject", () => {
         cleanUntracked: vi.fn().mockResolvedValue(undefined),
         getStatus,
         getHeadSha,
+        rebase: vi.fn().mockResolvedValue(undefined),
         push: vi.fn().mockResolvedValue(undefined),
         removeWorktree: vi.fn().mockResolvedValue(undefined),
         pruneWorktrees: vi.fn().mockResolvedValue(undefined),
