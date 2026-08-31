@@ -7,6 +7,10 @@ import type { GitClient } from "../git/git-client.js";
 import type { GitHubClient } from "../github/github-client.js";
 import { logger } from "../logging/logger.js";
 import type { TrelloCard, TrelloClient } from "../trello/trello-client.js";
+import {
+  notifyHumanReview,
+  type EmailNotifier,
+} from "../notifications/email-notifier.js";
 
 import { correctCardToBacklog } from "./correct-card-state.js";
 import type { ReviewChangeRequest } from "./reconcile-review-cards.js";
@@ -36,6 +40,7 @@ export async function reconcileClaimedCard(
   github: GitHubClient,
   project: ProjectConfig,
   card: TrelloCard,
+  emailNotifier?: EmailNotifier,
 ): Promise<boolean> {
   const branch = `agent/${card.id}`;
   const cardLog = logger.child({
@@ -72,6 +77,21 @@ export async function reconcileClaimedCard(
 
   cardLog.event("Claimed card moved directly to Human Review");
 
+  await notifyHumanReview(
+    emailNotifier,
+    {
+      project,
+      card,
+      pullRequestUrl: pullRequest.url,
+      commitSha: "Not available during reconciliation",
+      reviewResult: "Not run during reconciliation",
+      remediationResult: "Not run during reconciliation",
+      publicationContext:
+        "An existing pull request was found during reconciliation and the claimed card was moved directly to Human Review.",
+    },
+    cardLog,
+  );
+
   const worktreePath = path.join(project.repository.worktreeRoot, card.id);
 
   try {
@@ -97,6 +117,7 @@ export async function reconcileWorkingCards(
   git: GitClient,
   github: GitHubClient,
   project: ProjectConfig,
+  emailNotifier?: EmailNotifier,
 ): Promise<WorkingCardRecovery | null> {
   const projectLog = logger.child({
     projectId: project.id,
@@ -163,6 +184,7 @@ export async function reconcileWorkingCards(
         project,
         card,
         workflow,
+        emailNotifier,
       );
 
       if (recovery !== null) {
@@ -220,6 +242,7 @@ async function reconcileReadyWorkingCard(
   project: ProjectConfig,
   card: TrelloCard,
   workflow: WorkflowKind,
+  emailNotifier?: EmailNotifier,
 ): Promise<WorkingCardRecovery | null> {
   const branch = `agent/${card.id}`;
   const cardLog = logger.child({
@@ -308,6 +331,21 @@ async function reconcileReadyWorkingCard(
   }
 
   cardLog.event("Reconciled card moved to Human Review");
+
+  await notifyHumanReview(
+    emailNotifier,
+    {
+      project,
+      card,
+      pullRequestUrl: pullRequest.url,
+      commitSha: "Not available during reconciliation",
+      reviewResult: "Not run during reconciliation",
+      remediationResult: "Not run during reconciliation",
+      publicationContext:
+        "An existing pull request was found during reconciliation and the Working card was moved to Human Review.",
+    },
+    cardLog,
+  );
 
   try {
     await cleanupWorktree({

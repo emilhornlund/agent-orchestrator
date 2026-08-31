@@ -4,6 +4,7 @@ import type { GitClient } from "../git/git-client.js";
 import type { GitHubClient } from "../github/github-client.js";
 import { cleanupLogRetention } from "../logging/log-retention.js";
 import { logger } from "../logging/logger.js";
+import type { EmailNotifier } from "../notifications/email-notifier.js";
 import type { OpenCodeClient } from "../opencode/opencode-client.js";
 import type { CommandRunner } from "../process/command-runner.js";
 import type { TrelloClient } from "../trello/trello-client.js";
@@ -17,6 +18,7 @@ export interface StartupDependencies {
   github: GitHubClient;
   opencode: OpenCodeClient;
   commands: CommandRunner;
+  emailNotifier?: EmailNotifier;
 }
 
 export interface StartupOperations {
@@ -47,13 +49,26 @@ export async function runStartup(
     logger.child({ projectId: project.id }).event("Trello configuration: OK");
   }
 
-  await operations.runOrchestrator(
-    dependencies.trello,
-    dependencies.git,
-    dependencies.github,
-    dependencies.opencode,
-    dependencies.commands,
-    config,
-    signal,
-  );
+  if (dependencies.emailNotifier === undefined) {
+    await operations.runOrchestrator(
+      dependencies.trello,
+      dependencies.git,
+      dependencies.github,
+      dependencies.opencode,
+      dependencies.commands,
+      config,
+      signal,
+    );
+  } else {
+    await operations.runOrchestrator(
+      dependencies.trello,
+      dependencies.git,
+      dependencies.github,
+      dependencies.opencode,
+      dependencies.commands,
+      config,
+      signal,
+      dependencies.emailNotifier,
+    );
+  }
 }

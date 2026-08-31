@@ -6,6 +6,7 @@ import {
   GitHubClient,
   type RunGitHubCommand,
 } from "../src/github/github-client.js";
+import type { EmailNotifier } from "../src/notifications/email-notifier.js";
 import { publishCard } from "../src/orchestrator/publish-card.js";
 import { WorkflowError } from "../src/orchestrator/workflow-error.js";
 import { type TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
@@ -74,6 +75,98 @@ function createCard(): TrelloCard {
 }
 
 describe("publishCard", () => {
+  it("sends a Human Review email only after the Trello move succeeds", async () => {
+    const events: string[] = [];
+    const notifier: EmailNotifier = {
+      send: vi.fn(async (message) => {
+        events.push("email");
+        expect(message.subject).toContain("Human Review");
+        expect(message.text).toContain(
+          "https://github.com/example/repository/pull/123",
+        );
+      }),
+    };
+    const trello = {
+      moveCard: vi.fn().mockImplementation(async () => {
+        events.push("move");
+        return createCard();
+      }),
+      getListTransitions: vi.fn().mockResolvedValue([]),
+      addComment: vi.fn().mockImplementation(async () => {
+        events.push("comment");
+        return undefined;
+      }),
+    } as unknown as TrelloClient;
+    const git = {
+      push: vi.fn().mockImplementation(async () => {
+        events.push("push");
+      }),
+    } as unknown as GitClient;
+    const github = {
+      findPullRequest: vi.fn().mockResolvedValue({
+        url: "https://github.com/example/repository/pull/123",
+      }),
+    } as unknown as GitHubClient;
+
+    await publishCard({
+      trello,
+      git,
+      github,
+      project: createProject(),
+      card: createCard(),
+      worktreePath: "/worktree",
+      branch: "agent/card-1",
+      commitSha: "abc123",
+      reviewResult: "Passed",
+      remediationResult: "Not required",
+      emailNotifier: notifier,
+    });
+
+    expect(events).toEqual(["push", "move", "email", "comment"]);
+    expect(notifier.send).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a published card in Human Review when email delivery fails", async () => {
+    const notifier: EmailNotifier = {
+      send: vi.fn().mockRejectedValue(new Error("SMTP unavailable")),
+    };
+    const trello = {
+      moveCard: vi.fn().mockResolvedValue({
+        ...createCard(),
+        idList: "review-list",
+      }),
+      getListTransitions: vi.fn().mockResolvedValue([]),
+      addComment: vi.fn().mockResolvedValue(undefined),
+    } as unknown as TrelloClient;
+    const git = {
+      push: vi.fn().mockResolvedValue(undefined),
+    } as unknown as GitClient;
+    const github = {
+      findPullRequest: vi.fn().mockResolvedValue({
+        url: "https://github.com/example/repository/pull/123",
+      }),
+    } as unknown as GitHubClient;
+
+    await expect(
+      publishCard({
+        trello,
+        git,
+        github,
+        project: createProject(),
+        card: createCard(),
+        worktreePath: "/worktree",
+        branch: "agent/card-1",
+        commitSha: "abc123",
+        reviewResult: "Passed",
+        remediationResult: "Not required",
+        emailNotifier: notifier,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "review-list");
+    expect(trello.addComment).toHaveBeenCalled();
+  });
+
   it("pushes, creates the PR, and moves the card in order", async () => {
     const events: string[] = [];
 

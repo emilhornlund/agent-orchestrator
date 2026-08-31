@@ -89,6 +89,20 @@ projects:
         model: "your-commit-model"
         variant: "low"
 
+notifications:
+  email:
+    enabled: false
+    recipients:
+      - "reviewers@example.com"
+    from: "agent-orchestrator@example.com"
+    smtp:
+      host: "smtp.example.com"
+      port: 465
+      secure: true
+      usernameEnv: "SMTP_USERNAME"
+      passwordEnv: "SMTP_PASSWORD"
+      timeoutSeconds: 30
+
 workflow:
   pollIntervalSeconds: 15
   logRetentionDays: 14

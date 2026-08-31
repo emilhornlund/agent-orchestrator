@@ -2,6 +2,10 @@ import type { ProjectConfig } from "../config/config.js";
 import type { GitClient } from "../git/git-client.js";
 import type { GitHubClient } from "../github/github-client.js";
 import { logger } from "../logging/logger.js";
+import {
+  notifyHumanReview,
+  type EmailNotifier,
+} from "../notifications/email-notifier.js";
 import type { TrelloCard, TrelloClient } from "../trello/trello-client.js";
 
 import { toFailureError } from "./failure-diagnostic.js";
@@ -23,6 +27,7 @@ export interface PublishCardOptions {
   commitSha: string;
   reviewResult: string;
   remediationResult: string;
+  emailNotifier?: EmailNotifier;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -78,6 +83,7 @@ export async function publishCard({
   commitSha,
   reviewResult,
   remediationResult,
+  emailNotifier,
 }: PublishCardOptions): Promise<void> {
   const cardLog = logger.child({
     projectId: project.id,
@@ -156,6 +162,21 @@ export async function publishCard({
   }
 
   cardLog.event("Trello card moved to Human Review");
+
+  await notifyHumanReview(
+    emailNotifier,
+    {
+      project,
+      card,
+      pullRequestUrl: pullRequest.url,
+      commitSha,
+      reviewResult,
+      remediationResult,
+      publicationContext:
+        "The pull request was published and the card was moved to Human Review by the implementation workflow.",
+    },
+    cardLog,
+  );
 
   const elapsedWorkflowLine = await getElapsedWorkflowLine(
     trello,

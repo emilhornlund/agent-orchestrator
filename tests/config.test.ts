@@ -99,7 +99,104 @@ describe("parseConfig", () => {
     expect(project!.opencode.timeoutMinutes).toBe(360);
     expect(config.workflow.pollIntervalSeconds).toBe(15);
     expect(config.workflow.logRetentionDays).toBe(14);
+    expect(config.notifications).toBeUndefined();
   });
+
+  it("accepts enabled email notification settings", () => {
+    const raw = validConfig.replace(
+      "\nworkflow:",
+      `
+notifications:
+  email:
+    enabled: true
+    recipients:
+      - "reviewers@example.com"
+    from: "agent-orchestrator@example.com"
+    smtp:
+      host: "smtp.example.com"
+      port: 465
+      secure: true
+      usernameEnv: "SMTP_USERNAME"
+      passwordEnv: "SMTP_PASSWORD"
+
+workflow:`,
+    );
+
+    expect(parseConfig(raw).notifications?.email).toEqual({
+      enabled: true,
+      recipients: ["reviewers@example.com"],
+      from: "agent-orchestrator@example.com",
+      smtp: {
+        host: "smtp.example.com",
+        port: 465,
+        secure: true,
+        usernameEnv: "SMTP_USERNAME",
+        passwordEnv: "SMTP_PASSWORD",
+        timeoutSeconds: 30,
+      },
+    });
+  });
+
+  it("accepts disabled email notifications without SMTP settings", () => {
+    const raw = validConfig.replace(
+      "\nworkflow:",
+      `
+notifications:
+  email:
+    enabled: false
+
+workflow:`,
+    );
+
+    expect(parseConfig(raw).notifications?.email).toEqual({ enabled: false });
+  });
+
+  it.each([
+    [
+      "recipients",
+      '    recipients:\n      - "reviewers@example.com"',
+      "    recipients: []",
+      "notifications.email.recipients",
+    ],
+    [
+      "sender",
+      '    from: "agent-orchestrator@example.com"',
+      '    from: "not-an-email"',
+      "notifications.email.from",
+    ],
+    [
+      "SMTP host",
+      '      host: "smtp.example.com"',
+      '      host: ""',
+      "notifications.email.smtp.host",
+    ],
+  ])(
+    "rejects an enabled email setting with an invalid %s",
+    (_label, target, replacement, location) => {
+      const raw = validConfig
+        .replace(
+          "\nworkflow:",
+          `
+notifications:
+  email:
+    enabled: true
+    recipients:
+      - "reviewers@example.com"
+    from: "agent-orchestrator@example.com"
+    smtp:
+      host: "smtp.example.com"
+      port: 465
+      secure: true
+      usernameEnv: "SMTP_USERNAME"
+      passwordEnv: "SMTP_PASSWORD"
+
+workflow:`,
+        )
+        .replace(target, replacement);
+
+      expect(() => parseConfig(raw)).toThrow(location);
+    },
+  );
 
   it("accepts a custom log retention period", () => {
     const raw = validConfig.replace(

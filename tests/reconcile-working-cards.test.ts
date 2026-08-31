@@ -11,6 +11,7 @@ import {
   reconcileClaimedCard,
   reconcileWorkingCards,
 } from "../src/orchestrator/reconcile-working-cards.js";
+import type { EmailNotifier } from "../src/notifications/email-notifier.js";
 import type { TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
 
 const temporaryDirectories: string[] = [];
@@ -161,6 +162,65 @@ describe("reconcileWorkingCards", () => {
     );
     expect(git.getCurrentBranch).toHaveBeenCalledWith(worktreePath);
     expect(trello.moveCard).not.toHaveBeenCalled();
+  });
+
+  it("does not resend after a later reconciliation cycle observes the card outside Working", async () => {
+    const worktreeRoot = createWorktreeRoot();
+    fs.mkdirSync(path.join(worktreeRoot, "card-1"));
+    const configuredProject = {
+      ...project,
+      repository: { ...project.repository, worktreeRoot },
+    } as ProjectConfig;
+    let listId = configuredProject.trello.workingListId;
+    const notifier: EmailNotifier = {
+      send: vi.fn(),
+    };
+    const trello = {
+      getCards: vi
+        .fn()
+        .mockImplementation(async (requestedListId: string) =>
+          requestedListId === listId ? [card({ idList: listId })] : [],
+        ),
+      getLatestListTransition: vi.fn().mockResolvedValue({
+        ...transition(configuredProject.trello.readyListId),
+        listAfterId: configuredProject.trello.workingListId,
+      }),
+      moveCard: vi.fn().mockImplementation(async () => {
+        listId = configuredProject.trello.reviewListId;
+        return { ...card(), idList: listId };
+      }),
+    } as unknown as TrelloClient;
+    const git = {
+      getCurrentBranch: vi.fn().mockResolvedValue("agent/card-1"),
+      getStatus: vi.fn().mockResolvedValue(""),
+      removeWorktree: vi.fn().mockResolvedValue(undefined),
+      pruneWorktrees: vi.fn().mockResolvedValue(undefined),
+      branchExists: vi.fn().mockResolvedValue(false),
+    } as unknown as GitClient;
+    const github = {
+      findPullRequest: vi.fn().mockResolvedValue({
+        url: "https://github.com/owner/repo/pull/1",
+      }),
+      findChangesRequestedPullRequest: vi.fn().mockResolvedValue(null),
+    } as unknown as GitHubClient;
+
+    await reconcileWorkingCards(
+      trello,
+      git,
+      github,
+      configuredProject,
+      notifier,
+    );
+    await reconcileWorkingCards(
+      trello,
+      git,
+      github,
+      configuredProject,
+      notifier,
+    );
+
+    expect(notifier.send).toHaveBeenCalledTimes(1);
+    expect(trello.moveCard).toHaveBeenCalledTimes(1);
   });
 
   it("corrects a Ready transition with a worktree on the wrong branch", async () => {
@@ -407,5 +467,30 @@ describe("reconcileClaimedCard", () => {
     ).resolves.toBe(true);
 
     expect(trello.moveCard).toHaveBeenCalledWith("card-1", "review");
+  });
+
+  it("notifies once when an initially claimed card with an existing PR reaches Human Review", async () => {
+    const notifier: EmailNotifier = {
+      send: vi.fn(async (message) => {
+        expect(message.text).toContain("existing pull request");
+        expect(message.text).toContain("https://trello.example/card-1");
+      }),
+    };
+    const trello = {
+      moveCard: vi.fn().mockResolvedValue({ ...card(), idList: "review" }),
+    } as unknown as TrelloClient;
+    const github = {
+      findPullRequest: vi.fn().mockResolvedValue({
+        url: "https://github.com/owner/repo/pull/1",
+      }),
+    } as unknown as GitHubClient;
+    const git = {
+      pruneWorktrees: vi.fn().mockResolvedValue(undefined),
+      branchExists: vi.fn().mockResolvedValue(false),
+    } as unknown as GitClient;
+
+    await reconcileClaimedCard(trello, git, github, project, card(), notifier);
+
+    expect(notifier.send).toHaveBeenCalledTimes(1);
   });
 });
