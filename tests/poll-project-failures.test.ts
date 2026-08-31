@@ -180,6 +180,7 @@ function createScenario(options: ScenarioOptions = {}): Scenario {
       idList: listId,
     };
   });
+  vi.spyOn(trello, "getListTransitions").mockResolvedValue([]);
 
   const statusOutputs = options.statusOutputs ?? [" M src/example.ts", ""];
   let statusCall = 0;

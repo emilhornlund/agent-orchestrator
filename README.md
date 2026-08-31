@@ -104,6 +104,25 @@ Implementation, review, remediation, and commit creation use separate OpenCode s
 
 The review phase evaluates the completed change independently before the branch is published.
 
+### Elapsed workflow time
+
+When an implementation card is successfully published and moved to `Human Review`, its Trello success comment includes a
+line such as:
+
+```text
+Elapsed workflow time: 1 hour 5 minutes
+```
+
+This is elapsed workflow time from the current automated pass to its successful `Human Review` transition, not OpenCode-only
+runtime. For an initial pass, the timer starts at the qualifying `Ready for Agent` to `Working` transition. A deliberate retry
+from `Failed` starts at its subsequent `Failed` to `Ready for Agent` transition. A pass responding to human review feedback
+starts at its `Human Review` to `Working` transition. The timer ends at that pass's resulting `Working` to `Human Review`
+transition.
+
+The value is formatted with explicit units, using seconds, minutes, hours, and days as needed. If Trello action history is
+missing, incomplete, malformed, ambiguous, or has invalid date ordering, the summary comment is still attempted and the card
+remains in `Human Review`; the orchestrator logs why the elapsed workflow time was omitted.
+
 ### Pull request feedback loop
 
 When GitHub reports requested changes, the orchestrator moves the Trello card back to `Working`, creates a worktree from

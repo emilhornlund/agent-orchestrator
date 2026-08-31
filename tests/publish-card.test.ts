@@ -107,6 +107,21 @@ describe("publishCard", () => {
         return createCard();
       });
 
+    vi.spyOn(trello, "getListTransitions").mockResolvedValue([
+      {
+        id: "working-transition",
+        date: "2026-08-30T10:00:00.000Z",
+        listBeforeId: "ready-list",
+        listAfterId: "working-list",
+      },
+      {
+        id: "review-transition",
+        date: "2026-08-30T11:05:00.000Z",
+        listBeforeId: "working-list",
+        listAfterId: "review-list",
+      },
+    ]);
+
     const addComment = vi
       .spyOn(trello, "addComment")
       .mockImplementation(async () => {
@@ -195,6 +210,7 @@ describe("publishCard", () => {
         "Commit: abc123",
         "Review: Passed",
         "Remediation: Not required",
+        "Elapsed workflow time: 1 hour 5 minutes",
       ].join("\n"),
     );
   });
@@ -228,6 +244,8 @@ describe("publishCard", () => {
       events.push("move");
       return createCard();
     });
+
+    vi.spyOn(trello, "getListTransitions").mockResolvedValue([]);
 
     vi.spyOn(trello, "addComment").mockImplementation(async () => {
       events.push("comment");
@@ -283,6 +301,8 @@ describe("publishCard", () => {
       ...createCard(),
       idList: "review-list",
     });
+
+    vi.spyOn(trello, "getListTransitions").mockResolvedValue([]);
 
     vi.spyOn(trello, "addComment").mockResolvedValue({
       id: "action-1",
@@ -552,6 +572,47 @@ describe("publishCard", () => {
     expect(moveCard).not.toHaveBeenCalled();
   });
 
+  it("does not block publication when transition history cannot report a duration", async () => {
+    const addComment = vi.fn().mockResolvedValue(undefined);
+    const trello = {
+      moveCard: vi.fn().mockResolvedValue({
+        ...createCard(),
+        idList: "review-list",
+      }),
+      getListTransitions: vi.fn().mockResolvedValue(null),
+      addComment,
+    } as unknown as TrelloClient;
+    const git = {
+      push: vi.fn().mockResolvedValue(undefined),
+    } as unknown as GitClient;
+    const github = {
+      findPullRequest: vi.fn().mockResolvedValue({
+        url: "https://github.com/example/repository/pull/123",
+      }),
+    } as unknown as GitHubClient;
+
+    await expect(
+      publishCard({
+        trello,
+        git,
+        github,
+        project: createProject(),
+        card: createCard(),
+        worktreePath: "/worktree",
+        branch: "agent/card-1",
+        commitSha: "commit-sha",
+        reviewResult: "Passed",
+        remediationResult: "Not required",
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "review-list");
+    expect(addComment).toHaveBeenCalledWith(
+      "card-1",
+      expect.not.stringContaining("Elapsed workflow time:"),
+    );
+  });
+
   it("does not fail publishing when adding the workflow comment fails", async () => {
     const runGit = vi.fn<RunGit>().mockResolvedValue("");
 
@@ -572,6 +633,8 @@ describe("publishCard", () => {
       ...createCard(),
       idList: "review-list",
     });
+
+    vi.spyOn(trello, "getListTransitions").mockResolvedValue([]);
 
     vi.spyOn(trello, "addComment").mockRejectedValue(
       new Error("comment failed"),
