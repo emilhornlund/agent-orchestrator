@@ -296,6 +296,16 @@ yarn dev
 
 The process continues polling until it is stopped.
 
+## Logging
+
+Lifecycle events, warnings, and errors emitted by the shared `Logger` begin with a UTC ISO 8601 timestamp, such as
+`2026-08-30T09:00:00.000Z`. The timestamp is followed by the existing project and card context, when present, and the
+message. Multiline logger messages receive the same prefix on every physical console line. Daily orchestrator log files
+keep their existing `timestamp level context message` format, including the `test-` filename prefix used by tests.
+
+Raw command and OpenCode output is written to per-card session logs or forwarded directly to process standard streams;
+it is not timestamped by the shared `Logger`.
+
 ## Development
 
 Run the complete validation suite:
