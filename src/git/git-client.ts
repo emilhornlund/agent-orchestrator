@@ -5,14 +5,52 @@ const execFileAsync = promisify(execFile);
 
 const GIT_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 
-export type RunGit = (cwd: string, args: string[]) => Promise<string>;
+export interface GitIdentity {
+  name: string;
+  email: string;
+  signingKey?: string | undefined;
+}
 
-const defaultRunGit: RunGit = async (cwd, args) => {
+export type GitEnvironment = Record<string, string>;
+
+export type RunGit = (
+  cwd: string,
+  args: string[],
+  environment?: GitEnvironment,
+) => Promise<string>;
+
+export function getGitIdentityEnvironment(
+  identity: GitIdentity,
+): GitEnvironment {
+  return {
+    GIT_AUTHOR_NAME: identity.name,
+    GIT_AUTHOR_EMAIL: identity.email,
+    GIT_COMMITTER_NAME: identity.name,
+    GIT_COMMITTER_EMAIL: identity.email,
+    ...(identity.signingKey === undefined
+      ? {}
+      : {
+          GIT_CONFIG_COUNT: "3",
+          GIT_CONFIG_KEY_0: "gpg.format",
+          GIT_CONFIG_VALUE_0: "ssh",
+          GIT_CONFIG_KEY_1: "user.signingKey",
+          GIT_CONFIG_VALUE_1: identity.signingKey,
+          GIT_CONFIG_KEY_2: "commit.gpgSign",
+          GIT_CONFIG_VALUE_2: "true",
+        }),
+  };
+}
+
+const defaultRunGit: RunGit = async (cwd, args, environment) => {
   try {
     const { stdout } = await execFileAsync("git", args, {
       cwd,
       encoding: "utf8",
       timeout: GIT_TIMEOUT_MS,
+      env: {
+        ...process.env,
+        ...environment,
+      },
     });
 
     return stdout.trim();
@@ -49,6 +87,37 @@ export class GitClient {
     branch: string,
   ): Promise<void> {
     await this.runGit(repositoryPath, ["fetch", remote, branch]);
+  }
+
+  async rebase(
+    repositoryPath: string,
+    baseRef: string,
+    identity: GitIdentity,
+  ): Promise<void> {
+    await this.runGit(
+      repositoryPath,
+      ["rebase", baseRef],
+      getGitIdentityEnvironment(identity),
+    );
+  }
+
+  async isAncestor(
+    repositoryPath: string,
+    ancestor: string,
+    descendant: string,
+  ): Promise<boolean> {
+    try {
+      await this.runGit(repositoryPath, [
+        "merge-base",
+        "--is-ancestor",
+        ancestor,
+        descendant,
+      ]);
+
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async push(

@@ -1305,7 +1305,13 @@ describe("pollProject failure boundaries", () => {
     await withScenario(
       {
         changedFilesOutputs: ["", "src/example.ts"],
-        headOutputs: ["before-commit", "after-commit", "after-commit"],
+        headOutputs: [
+          "before-commit",
+          "after-commit",
+          "after-commit",
+          "after-commit",
+          "after-commit",
+        ],
         remoteBranchShaOutputs: ["", ""],
         pushErrors: [new Error("push failed"), undefined],
       },
@@ -1383,7 +1389,13 @@ describe("pollProject failure boundaries", () => {
     await withScenario(
       {
         changedFilesOutputs: ["", "src/example.ts"],
-        headOutputs: ["before-commit", "after-commit", "after-commit"],
+        headOutputs: [
+          "before-commit",
+          "after-commit",
+          "after-commit",
+          "after-commit",
+          "after-commit",
+        ],
         remoteBranchShaOutputs: ["", "after-commit\trefs/heads/agent/card-1"],
         pullRequestErrors: [new Error("PR creation failed"), undefined],
       },

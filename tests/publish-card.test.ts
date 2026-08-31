@@ -74,6 +74,19 @@ function createCard(): TrelloCard {
   };
 }
 
+function createPublicationGit(
+  overrides: Record<string, unknown> = {},
+): GitClient {
+  return {
+    getCurrentBranch: vi.fn().mockResolvedValue("agent/card-1"),
+    fetch: vi.fn().mockResolvedValue(undefined),
+    rebase: vi.fn().mockResolvedValue(undefined),
+    getHeadSha: vi.fn().mockResolvedValue("abc123"),
+    push: vi.fn().mockResolvedValue(undefined),
+    ...overrides,
+  } as unknown as GitClient;
+}
+
 describe("publishCard", () => {
   it("sends a Human Review email only after the Trello move succeeds", async () => {
     const events: string[] = [];
@@ -97,11 +110,11 @@ describe("publishCard", () => {
         return undefined;
       }),
     } as unknown as TrelloClient;
-    const git = {
+    const git = createPublicationGit({
       push: vi.fn().mockImplementation(async () => {
         events.push("push");
       }),
-    } as unknown as GitClient;
+    });
     const github = {
       findPullRequest: vi.fn().mockResolvedValue({
         url: "https://github.com/example/repository/pull/123",
@@ -131,11 +144,11 @@ describe("publishCard", () => {
     const trello = {
       moveCard: vi.fn(),
     } as unknown as TrelloClient;
-    const git = {
+    const git = createPublicationGit({
       push: vi.fn().mockImplementation(async () => {
         controller.abort();
       }),
-    } as unknown as GitClient;
+    });
     const github = {
       findPullRequest: vi.fn(),
     } as unknown as GitHubClient;
@@ -172,9 +185,7 @@ describe("publishCard", () => {
       getListTransitions: vi.fn().mockResolvedValue([]),
       addComment: vi.fn().mockResolvedValue(undefined),
     } as unknown as TrelloClient;
-    const git = {
-      push: vi.fn().mockResolvedValue(undefined),
-    } as unknown as GitClient;
+    const git = createPublicationGit();
     const github = {
       findPullRequest: vi.fn().mockResolvedValue({
         url: "https://github.com/example/repository/pull/123",
@@ -205,6 +216,18 @@ describe("publishCard", () => {
     const events: string[] = [];
 
     const runGit = vi.fn<RunGit>(async (_cwd, args) => {
+      if (args[0] === "branch" && args[1] === "--show-current") {
+        return "agent/card-1";
+      }
+
+      if (args[0] === "fetch" || args[0] === "rebase") {
+        events.push(args[0]);
+      }
+
+      if (args[0] === "rev-parse" && args[1] === "HEAD") {
+        return "abc123";
+      }
+
       if (args[0] === "push") {
         events.push("push");
       }
@@ -273,7 +296,40 @@ describe("publishCard", () => {
       remediationResult: "Not required",
     });
 
-    expect(events).toEqual(["push", "find-pr", "create-pr", "move", "comment"]);
+    expect(events).toEqual([
+      "fetch",
+      "rebase",
+      "push",
+      "find-pr",
+      "create-pr",
+      "move",
+      "comment",
+    ]);
+
+    expect(runGit).toHaveBeenNthCalledWith(1, "/tmp/example-worktrees/card-1", [
+      "branch",
+      "--show-current",
+    ]);
+    expect(runGit).toHaveBeenNthCalledWith(2, "/tmp/example-worktrees/card-1", [
+      "fetch",
+      "origin",
+      "main",
+    ]);
+    expect(runGit).toHaveBeenNthCalledWith(
+      3,
+      "/tmp/example-worktrees/card-1",
+      ["rebase", "origin/main"],
+      {
+        GIT_AUTHOR_NAME: "Agent Orchestrator",
+        GIT_AUTHOR_EMAIL: "agent-orchestrator@users.noreply.github.com",
+        GIT_COMMITTER_NAME: "Agent Orchestrator",
+        GIT_COMMITTER_EMAIL: "agent-orchestrator@users.noreply.github.com",
+      },
+    );
+    expect(runGit).toHaveBeenNthCalledWith(4, "/tmp/example-worktrees/card-1", [
+      "rev-parse",
+      "HEAD",
+    ]);
 
     expect(runGit).toHaveBeenCalledWith("/tmp/example-worktrees/card-1", [
       "push",
@@ -342,10 +398,242 @@ describe("publishCard", () => {
     );
   });
 
+  it("uses the post-rebase HEAD for comparison and publication reporting", async () => {
+    const postRebaseSha = "rebased-commit";
+    const push = vi.fn().mockResolvedValue(undefined);
+    const git = createPublicationGit({
+      getHeadSha: vi.fn().mockResolvedValue(postRebaseSha),
+      getRemoteBranchSha: vi.fn().mockResolvedValue("published-commit"),
+      isAncestor: vi.fn().mockResolvedValue(true),
+      push,
+    });
+    const send = vi.fn().mockResolvedValue(undefined);
+    const trello = {
+      moveCard: vi.fn().mockResolvedValue(createCard()),
+      getListTransitions: vi.fn().mockResolvedValue([]),
+      addComment: vi.fn().mockResolvedValue(undefined),
+    } as unknown as TrelloClient;
+    const github = {
+      findPullRequest: vi.fn().mockResolvedValue({
+        url: "https://github.com/example/repository/pull/123",
+      }),
+      createPullRequest: vi.fn(),
+    } as unknown as GitHubClient;
+
+    await publishCard({
+      trello,
+      git,
+      github,
+      project: createProject(),
+      card: createCard(),
+      worktreePath: "/worktree",
+      branch: "agent/card-1",
+      commitSha: "stale-commit",
+      reviewResult: "Passed",
+      remediationResult: "Not required",
+      emailNotifier: { send },
+    });
+
+    expect(git.fetch).toHaveBeenCalledWith("/worktree", "origin", "main");
+    expect(git.rebase).toHaveBeenCalledWith(
+      "/worktree",
+      "origin/main",
+      createProject().repository.gitIdentity,
+    );
+    expect(git.getRemoteBranchSha).toHaveBeenCalledWith(
+      "/worktree",
+      "origin",
+      "agent/card-1",
+    );
+    expect(git.isAncestor).toHaveBeenCalledWith(
+      "/worktree",
+      "published-commit",
+      postRebaseSha,
+    );
+    expect(push).toHaveBeenCalledWith("/worktree", "origin", "agent/card-1");
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining(`Commit: ${postRebaseSha}`),
+      }),
+    );
+    expect(trello.addComment).toHaveBeenCalledWith(
+      "card-1",
+      expect.stringContaining(`Commit: ${postRebaseSha}`),
+    );
+    expect(trello.addComment).not.toHaveBeenCalledWith(
+      "card-1",
+      expect.stringContaining("Commit: stale-commit"),
+    );
+  });
+
+  it("does not push when rebasing an already-current branch leaves HEAD unchanged", async () => {
+    const commitSha = "current-commit";
+    const git = createPublicationGit({
+      getHeadSha: vi.fn().mockResolvedValue(commitSha),
+      getRemoteBranchSha: vi.fn().mockResolvedValue(commitSha),
+      push: vi.fn(),
+    });
+    const trello = {
+      moveCard: vi.fn().mockResolvedValue(createCard()),
+      getListTransitions: vi.fn().mockResolvedValue([]),
+      addComment: vi.fn().mockResolvedValue(undefined),
+    } as unknown as TrelloClient;
+    const github = {
+      findPullRequest: vi.fn().mockResolvedValue({
+        url: "https://github.com/example/repository/pull/123",
+      }),
+    } as unknown as GitHubClient;
+
+    await publishCard({
+      trello,
+      git,
+      github,
+      project: createProject(),
+      card: createCard(),
+      worktreePath: "/worktree",
+      branch: "agent/card-1",
+      commitSha,
+      reviewResult: "Passed",
+      remediationResult: "Not required",
+    });
+
+    expect(git.rebase).toHaveBeenCalledWith(
+      "/worktree",
+      "origin/main",
+      createProject().repository.gitIdentity,
+    );
+    expect(git.push).not.toHaveBeenCalled();
+    expect(github.findPullRequest).toHaveBeenCalledTimes(1);
+    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "review-list");
+  });
+
+  it("stops before publication when fetching the default branch fails", async () => {
+    const fetchError = new Error("remote unavailable");
+    const git = createPublicationGit({
+      fetch: vi.fn().mockRejectedValue(fetchError),
+      push: vi.fn(),
+    });
+    const github = {
+      findPullRequest: vi.fn(),
+      createPullRequest: vi.fn(),
+    } as unknown as GitHubClient;
+    const trello = {
+      moveCard: vi.fn(),
+    } as unknown as TrelloClient;
+
+    await expect(
+      publishCard({
+        trello,
+        git,
+        github,
+        project: createProject(),
+        card: createCard(),
+        worktreePath: "/worktree",
+        branch: "agent/card-1",
+        commitSha: "commit-sha",
+        reviewResult: "Passed",
+        remediationResult: "Not required",
+      }),
+    ).rejects.toThrow(
+      "Failed to fetch origin/main before publishing agent/card-1",
+    );
+
+    expect(git.rebase).not.toHaveBeenCalled();
+    expect(git.push).not.toHaveBeenCalled();
+    expect(github.findPullRequest).not.toHaveBeenCalled();
+    expect(trello.moveCard).not.toHaveBeenCalled();
+  });
+
+  it("stops before publication when rebasing conflicts", async () => {
+    const rebaseError = new Error("CONFLICT (content): merge conflict");
+    const git = createPublicationGit({
+      rebase: vi.fn().mockRejectedValue(rebaseError),
+      push: vi.fn(),
+    });
+    const github = {
+      findPullRequest: vi.fn(),
+      createPullRequest: vi.fn(),
+    } as unknown as GitHubClient;
+    const trello = {
+      moveCard: vi.fn(),
+    } as unknown as TrelloClient;
+
+    await expect(
+      publishCard({
+        trello,
+        git,
+        github,
+        project: createProject(),
+        card: createCard(),
+        worktreePath: "/worktree",
+        branch: "agent/card-1",
+        commitSha: "commit-sha",
+        reviewResult: "Passed",
+        remediationResult: "Not required",
+      }),
+    ).rejects.toThrow(
+      "Failed to rebase agent/card-1 onto origin/main: CONFLICT",
+    );
+
+    expect(git.getHeadSha).not.toHaveBeenCalled();
+    expect(git.push).not.toHaveBeenCalled();
+    expect(github.findPullRequest).not.toHaveBeenCalled();
+    expect(trello.moveCard).not.toHaveBeenCalled();
+  });
+
+  it("refuses a rebased branch when publication would not be fast-forward", async () => {
+    const push = vi.fn();
+    const git = createPublicationGit({
+      getHeadSha: vi.fn().mockResolvedValue("rebased-commit"),
+      getRemoteBranchSha: vi.fn().mockResolvedValue("published-commit"),
+      isAncestor: vi.fn().mockResolvedValue(false),
+      push,
+    });
+    const github = {
+      findPullRequest: vi.fn(),
+      createPullRequest: vi.fn(),
+    } as unknown as GitHubClient;
+    const trello = {
+      moveCard: vi.fn(),
+    } as unknown as TrelloClient;
+
+    await expect(
+      publishCard({
+        trello,
+        git,
+        github,
+        project: createProject(),
+        card: createCard(),
+        worktreePath: "/worktree",
+        branch: "agent/card-1",
+        commitSha: "stale-commit",
+        reviewResult: "Passed",
+        remediationResult: "Not required",
+      }),
+    ).rejects.toThrow("A non-fast-forward update would be required");
+
+    expect(push).not.toHaveBeenCalled();
+    expect(github.findPullRequest).not.toHaveBeenCalled();
+    expect(trello.moveCard).not.toHaveBeenCalled();
+    expect(
+      push.mock.calls
+        .flat()
+        .some((argument) => String(argument).includes("force")),
+    ).toBe(false);
+  });
+
   it("reuses an existing pull request instead of creating another one", async () => {
     const events: string[] = [];
 
     const runGit = vi.fn<RunGit>(async (_cwd, args) => {
+      if (args[0] === "branch" && args[1] === "--show-current") {
+        return "agent/card-1";
+      }
+
+      if (args[0] === "rev-parse" && args[1] === "HEAD") {
+        return "abc123";
+      }
+
       if (args[0] === "push") {
         events.push("push");
       }
@@ -404,6 +692,22 @@ describe("publishCard", () => {
 
   it("does not push again when the remote branch already has the commit", async () => {
     const runGit = vi.fn<RunGit>(async (_cwd, args) => {
+      if (args[0] === "branch" && args[1] === "--show-current") {
+        return "agent/card-1";
+      }
+
+      if (args[0] === "rebase") {
+        return "";
+      }
+
+      if (args[0] === "fetch") {
+        return "";
+      }
+
+      if (args[0] === "rev-parse" && args[1] === "HEAD") {
+        return "abc123";
+      }
+
       if (args[0] === "ls-remote") {
         return "abc123\trefs/heads/agent/card-1";
       }
@@ -460,7 +764,21 @@ describe("publishCard", () => {
   });
 
   it("stops before PR lookup when pushing fails", async () => {
-    const runGit = vi.fn<RunGit>().mockRejectedValue(new Error("push failed"));
+    const runGit = vi.fn<RunGit>(async (_cwd, args) => {
+      if (args[0] === "branch" && args[1] === "--show-current") {
+        return "agent/card-1";
+      }
+
+      if (args[0] === "rev-parse" && args[1] === "HEAD") {
+        return "abc123";
+      }
+
+      if (args[0] === "push") {
+        throw new Error("push failed");
+      }
+
+      return "";
+    });
 
     const runGitHubCommand = vi.fn<RunGitHubCommand>();
 
@@ -498,9 +816,9 @@ describe("publishCard", () => {
       addComment: vi.fn(),
     } as unknown as TrelloClient;
 
-    const git = {
+    const git = createPublicationGit({
       push: vi.fn().mockRejectedValue(pushError),
-    } as unknown as GitClient;
+    });
 
     const github = {
       findPullRequest: vi.fn(),
@@ -539,10 +857,10 @@ describe("publishCard", () => {
       moveCard: vi.fn(),
       addComment: vi.fn(),
     } as unknown as TrelloClient;
-    const git = {
+    const git = createPublicationGit({
       getRemoteBranchSha: vi.fn().mockRejectedValue(remoteInspectionError),
       push: vi.fn(),
-    } as unknown as GitClient;
+    });
     const github = {
       findPullRequest: vi.fn(),
       createPullRequest: vi.fn(),
@@ -587,9 +905,9 @@ describe("publishCard", () => {
       moveCard: vi.fn(),
       addComment: vi.fn(),
     } as unknown as TrelloClient;
-    const git = {
+    const git = createPublicationGit({
       push: vi.fn().mockRejectedValue(publicationFailure),
-    } as unknown as GitClient;
+    });
     const github = {
       findPullRequest: vi.fn(),
       createPullRequest: vi.fn(),
@@ -621,7 +939,17 @@ describe("publishCard", () => {
   });
 
   it("stops before moving the card when PR creation fails", async () => {
-    const runGit = vi.fn<RunGit>().mockResolvedValue("");
+    const runGit = vi.fn<RunGit>(async (_cwd, args) => {
+      if (args[0] === "branch" && args[1] === "--show-current") {
+        return "agent/card-1";
+      }
+
+      if (args[0] === "rev-parse" && args[1] === "HEAD") {
+        return "abc123";
+      }
+
+      return "";
+    });
 
     const runGitHubCommand = vi.fn<RunGitHubCommand>(async (_cwd, args) => {
       if (args[0] === "pr" && args[1] === "list") {
@@ -658,7 +986,17 @@ describe("publishCard", () => {
   });
 
   it("stops before PR creation and card movement when PR lookup fails", async () => {
-    const runGit = vi.fn<RunGit>().mockResolvedValue("");
+    const runGit = vi.fn<RunGit>(async (_cwd, args) => {
+      if (args[0] === "branch" && args[1] === "--show-current") {
+        return "agent/card-1";
+      }
+
+      if (args[0] === "rev-parse" && args[1] === "HEAD") {
+        return "abc123";
+      }
+
+      return "";
+    });
     const lookupError = new Error("PR lookup failed");
     const runGitHubCommand = vi
       .fn<RunGitHubCommand>()
@@ -709,9 +1047,9 @@ describe("publishCard", () => {
       getListTransitions: vi.fn().mockResolvedValue(null),
       addComment,
     } as unknown as TrelloClient;
-    const git = {
-      push: vi.fn().mockResolvedValue(undefined),
-    } as unknown as GitClient;
+    const git = createPublicationGit({
+      getHeadSha: vi.fn().mockResolvedValue("commit-sha"),
+    });
     const github = {
       findPullRequest: vi.fn().mockResolvedValue({
         url: "https://github.com/example/repository/pull/123",
@@ -741,7 +1079,17 @@ describe("publishCard", () => {
   });
 
   it("does not fail publishing when adding the workflow comment fails", async () => {
-    const runGit = vi.fn<RunGit>().mockResolvedValue("");
+    const runGit = vi.fn<RunGit>(async (_cwd, args) => {
+      if (args[0] === "branch" && args[1] === "--show-current") {
+        return "agent/card-1";
+      }
+
+      if (args[0] === "rev-parse" && args[1] === "HEAD") {
+        return "abc123";
+      }
+
+      return "";
+    });
 
     const runGitHubCommand = vi.fn<RunGitHubCommand>(async (_cwd, args) => {
       if (args[0] === "pr" && args[1] === "list") {
@@ -786,7 +1134,17 @@ describe("publishCard", () => {
   });
 
   it("classifies a Human Review move failure as a published-state error", async () => {
-    const runGit = vi.fn<RunGit>().mockResolvedValue("");
+    const runGit = vi.fn<RunGit>(async (_cwd, args) => {
+      if (args[0] === "branch" && args[1] === "--show-current") {
+        return "agent/card-1";
+      }
+
+      if (args[0] === "rev-parse" && args[1] === "HEAD") {
+        return "abc123";
+      }
+
+      return "";
+    });
     const runGitHubCommand = vi.fn<RunGitHubCommand>(async (_cwd, args) => {
       if (args[0] === "pr" && args[1] === "list") {
         return "https://github.com/example/repository/pull/123";

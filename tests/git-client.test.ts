@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { GitClient, type RunGit } from "../src/git/git-client.js";
+import {
+  GitClient,
+  type GitIdentity,
+  type RunGit,
+} from "../src/git/git-client.js";
 
 describe("GitClient", () => {
   it("fetches a branch from a remote", async () => {
@@ -10,6 +14,78 @@ describe("GitClient", () => {
     await git.fetch("/repo", "origin", "main");
 
     expect(runGit).toHaveBeenCalledWith("/repo", ["fetch", "origin", "main"]);
+  });
+
+  it("rebases a branch onto a base ref", async () => {
+    const runGit = vi.fn<RunGit>().mockResolvedValue("");
+    const git = new GitClient(runGit);
+    const identity: GitIdentity = {
+      name: "Agent Orchestrator",
+      email: "agent-orchestrator@example.com",
+    };
+
+    await git.rebase("/worktree", "origin/main", identity);
+
+    expect(runGit).toHaveBeenCalledWith(
+      "/worktree",
+      ["rebase", "origin/main"],
+      {
+        GIT_AUTHOR_NAME: "Agent Orchestrator",
+        GIT_AUTHOR_EMAIL: "agent-orchestrator@example.com",
+        GIT_COMMITTER_NAME: "Agent Orchestrator",
+        GIT_COMMITTER_EMAIL: "agent-orchestrator@example.com",
+      },
+    );
+  });
+
+  it("passes configured signing settings when rebasing", async () => {
+    const runGit = vi.fn<RunGit>().mockResolvedValue("");
+    const git = new GitClient(runGit);
+
+    await git.rebase("/worktree", "origin/main", {
+      name: "Agent Orchestrator",
+      email: "agent-orchestrator@example.com",
+      signingKey: "/home/agent/.ssh/signing-key.pub",
+    });
+
+    expect(runGit).toHaveBeenCalledWith(
+      "/worktree",
+      ["rebase", "origin/main"],
+      expect.objectContaining({
+        GIT_CONFIG_COUNT: "3",
+        GIT_CONFIG_KEY_0: "gpg.format",
+        GIT_CONFIG_VALUE_0: "ssh",
+        GIT_CONFIG_KEY_1: "user.signingKey",
+        GIT_CONFIG_VALUE_1: "/home/agent/.ssh/signing-key.pub",
+        GIT_CONFIG_KEY_2: "commit.gpgSign",
+        GIT_CONFIG_VALUE_2: "true",
+      }),
+    );
+  });
+
+  it("checks whether one commit is an ancestor of another", async () => {
+    const runGit = vi.fn<RunGit>().mockResolvedValue("");
+    const git = new GitClient(runGit);
+
+    await expect(
+      git.isAncestor("/worktree", "remote-sha", "head-sha"),
+    ).resolves.toBe(true);
+
+    expect(runGit).toHaveBeenCalledWith("/worktree", [
+      "merge-base",
+      "--is-ancestor",
+      "remote-sha",
+      "head-sha",
+    ]);
+  });
+
+  it("treats a failed ancestor check as not fast-forward safe", async () => {
+    const runGit = vi.fn<RunGit>().mockRejectedValue(new Error("not ancestor"));
+    const git = new GitClient(runGit);
+
+    await expect(
+      git.isAncestor("/worktree", "remote-sha", "head-sha"),
+    ).resolves.toBe(false);
   });
 
   it("detects an existing branch", async () => {

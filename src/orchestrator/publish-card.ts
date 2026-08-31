@@ -85,7 +85,6 @@ export async function publishCard({
   card,
   worktreePath,
   branch,
-  commitSha,
   reviewResult,
   remediationResult,
   emailNotifier,
@@ -97,20 +96,89 @@ export async function publishCard({
   });
 
   let pullRequest;
+  let publishedCommitSha: string;
 
   try {
     if (signal?.aborted) {
       throw new TrelloRequestAbortedError();
     }
 
+    const currentBranch = await git.getCurrentBranch(worktreePath);
+
+    if (currentBranch !== branch) {
+      throw new Error(
+        `Publication worktree is on branch "${currentBranch}", expected "${branch}"`,
+      );
+    }
+
+    const defaultBranchRef = `origin/${project.repository.defaultBranch}`;
+
+    cardLog.event(
+      `Fetching latest ${defaultBranchRef} before publishing ${branch}...`,
+    );
+
+    if (signal?.aborted) {
+      throw new TrelloRequestAbortedError();
+    }
+
+    try {
+      await git.fetch(worktreePath, "origin", project.repository.defaultBranch);
+    } catch (error) {
+      throw new WorkflowError(
+        "Git/GitHub",
+        `Failed to fetch ${defaultBranchRef} before publishing ${branch}: ${getErrorMessage(error)}. The task worktree and branch were preserved; resolve the Git failure and retry.`,
+        { cause: error },
+      );
+    }
+
+    if (signal?.aborted) {
+      throw new TrelloRequestAbortedError();
+    }
+
+    cardLog.event(`Rebasing ${branch} onto ${defaultBranchRef}...`);
+
+    try {
+      await git.rebase(
+        worktreePath,
+        defaultBranchRef,
+        project.repository.gitIdentity,
+      );
+    } catch (error) {
+      throw new WorkflowError(
+        "Git/GitHub",
+        `Failed to rebase ${branch} onto ${defaultBranchRef}: ${getErrorMessage(error)}. Resolve any conflicts in the preserved task worktree, then retry publication.`,
+        { cause: error },
+      );
+    }
+
+    publishedCommitSha = await git.getHeadSha(worktreePath);
+
+    cardLog.event(`Publication commit is ${publishedCommitSha}`);
+
     const remoteCommitSha =
       typeof git.getRemoteBranchSha === "function"
         ? await git.getRemoteBranchSha(worktreePath, "origin", branch)
         : null;
 
-    if (remoteCommitSha === commitSha) {
-      cardLog.event(`Branch ${branch} is already pushed at ${commitSha}`);
+    if (remoteCommitSha === publishedCommitSha) {
+      cardLog.event(
+        `Branch ${branch} is already pushed at ${publishedCommitSha}`,
+      );
     } else {
+      if (
+        remoteCommitSha !== null &&
+        typeof git.isAncestor === "function" &&
+        !(await git.isAncestor(
+          worktreePath,
+          remoteCommitSha,
+          publishedCommitSha,
+        ))
+      ) {
+        throw new Error(
+          `Refusing to publish ${branch}: rebasing produced ${publishedCommitSha}, which is not a fast-forward descendant of the remote commit ${remoteCommitSha}. A non-fast-forward update would be required; the branch was not pushed. The task worktree and branch were preserved for diagnosis and retry.`,
+        );
+      }
+
       if (signal?.aborted) {
         throw new TrelloRequestAbortedError();
       }
@@ -203,7 +271,7 @@ export async function publishCard({
       project,
       card,
       pullRequestUrl: pullRequest.url,
-      commitSha,
+      commitSha: publishedCommitSha,
       reviewResult,
       remediationResult,
       publicationContext:
@@ -223,7 +291,7 @@ export async function publishCard({
     "Agent Orchestrator completed successfully.",
     "",
     `PR: ${pullRequest.url}`,
-    `Commit: ${commitSha}`,
+    `Commit: ${publishedCommitSha}`,
     `Review: ${reviewResult}`,
     `Remediation: ${remediationResult}`,
     ...(elapsedWorkflowLine === undefined ? [] : [elapsedWorkflowLine]),

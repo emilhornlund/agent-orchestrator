@@ -1,7 +1,10 @@
 import type { ProjectConfig } from "../config/config.js";
 import { hasCommittedImplementation } from "../git/detect-committed-implementation.js";
 import { cleanupWorktree } from "../git/cleanup-worktree.js";
-import type { GitClient } from "../git/git-client.js";
+import {
+  getGitIdentityEnvironment,
+  type GitClient,
+} from "../git/git-client.js";
 import { prepareReviewWorktree } from "../git/prepare-review-worktree.js";
 import {
   prepareWorktree,
@@ -818,23 +821,7 @@ async function processCardChanges(
     timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
     prompt: buildCommitPrompt(card),
     signal,
-    environment: {
-      GIT_AUTHOR_NAME: project.repository.gitIdentity.name,
-      GIT_AUTHOR_EMAIL: project.repository.gitIdentity.email,
-      GIT_COMMITTER_NAME: project.repository.gitIdentity.name,
-      GIT_COMMITTER_EMAIL: project.repository.gitIdentity.email,
-      ...(project.repository.gitIdentity.signingKey === undefined
-        ? {}
-        : {
-            GIT_CONFIG_COUNT: "3",
-            GIT_CONFIG_KEY_0: "gpg.format",
-            GIT_CONFIG_VALUE_0: "ssh",
-            GIT_CONFIG_KEY_1: "user.signingKey",
-            GIT_CONFIG_VALUE_1: project.repository.gitIdentity.signingKey,
-            GIT_CONFIG_KEY_2: "commit.gpgSign",
-            GIT_CONFIG_VALUE_2: "true",
-          }),
-    },
+    environment: getGitIdentityEnvironment(project.repository.gitIdentity),
     sessionLogPath,
     sessionLabel: "OpenCode commit",
   });
