@@ -427,6 +427,33 @@ describe("pollProject failure boundaries", () => {
 
   it("does nothing when no card is ready", async () => {
     await withScenario({ cards: [] }, async (scenario) => {
+      const date = new Date().toISOString().slice(0, 10);
+      const logPath = path.join(
+        process.cwd(),
+        "logs",
+        `test-orchestrator-${date}.log`,
+      );
+      const countIdleEntries = (): number => {
+        if (!fs.existsSync(logPath)) {
+          return 0;
+        }
+
+        return fs
+          .readFileSync(logPath, "utf8")
+          .split("\n")
+          .filter((line) => line.includes("[example] No cards ready")).length;
+      };
+      const initialIdleEntries = countIdleEntries();
+
+      await pollProject(
+        scenario.trello,
+        scenario.git,
+        scenario.github,
+        scenario.openCode,
+        scenario.commands,
+        scenario.project,
+        scenario.signal,
+      );
       await pollProject(
         scenario.trello,
         scenario.git,
@@ -441,6 +468,7 @@ describe("pollProject failure boundaries", () => {
       expect(scenario.runGit).not.toHaveBeenCalled();
       expect(scenario.runGitHub).not.toHaveBeenCalled();
       expect(scenario.trello.moveCard).not.toHaveBeenCalled();
+      expect(countIdleEntries()).toBe(initialIdleEntries);
     });
   });
 
