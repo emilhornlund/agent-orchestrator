@@ -9,7 +9,12 @@ export async function correctCardToBacklog(
   project: ProjectConfig,
   card: TrelloCard,
   reason: string,
+  signal?: AbortSignal,
 ): Promise<void> {
+  if (signal?.aborted) {
+    return;
+  }
+
   const cardLog = logger.child({
     projectId: project.id,
     cardId: card.id,
@@ -31,7 +36,15 @@ export async function correctCardToBacklog(
     );
   }
 
+  if (signal?.aborted) {
+    return;
+  }
+
   cardLog.event(`Corrected card to Backlog: ${reason}`);
+
+  if (signal?.aborted) {
+    return;
+  }
 
   try {
     await trello.addComment(

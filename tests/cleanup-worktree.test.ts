@@ -205,4 +205,36 @@ describe("cleanupWorktree", () => {
 
     expect(git.pruneWorktrees).not.toHaveBeenCalled();
   });
+
+  it("stops before destructive operations when shutdown occurs during inspection", async () => {
+    const controller = new AbortController();
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.lstatSync).mockReturnValue({
+      isSymbolicLink: () => false,
+    } as fs.Stats);
+
+    const git = {
+      getCurrentBranch: vi.fn().mockResolvedValue("agent/card-1"),
+      getStatus: vi.fn().mockImplementation(async () => {
+        controller.abort();
+        return "";
+      }),
+      removeWorktree: vi.fn(),
+      pruneWorktrees: vi.fn(),
+      branchExists: vi.fn(),
+      deleteBranch: vi.fn(),
+    } as unknown as GitClient;
+
+    await cleanupWorktree({
+      git,
+      project,
+      worktreePath: "/worktrees/card-1",
+      branch: "agent/card-1",
+      signal: controller.signal,
+    });
+
+    expect(git.removeWorktree).not.toHaveBeenCalled();
+    expect(git.pruneWorktrees).not.toHaveBeenCalled();
+    expect(git.deleteBranch).not.toHaveBeenCalled();
+  });
 });

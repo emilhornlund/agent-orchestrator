@@ -6,7 +6,11 @@ import {
   notifyHumanReview,
   type EmailNotifier,
 } from "../notifications/email-notifier.js";
-import type { TrelloCard, TrelloClient } from "../trello/trello-client.js";
+import {
+  TrelloRequestAbortedError,
+  type TrelloCard,
+  type TrelloClient,
+} from "../trello/trello-client.js";
 
 import { toFailureError } from "./failure-diagnostic.js";
 import { PublishedCardStateError } from "./published-card-state-error.js";
@@ -28,6 +32,7 @@ export interface PublishCardOptions {
   reviewResult: string;
   remediationResult: string;
   emailNotifier?: EmailNotifier;
+  signal?: AbortSignal;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -84,6 +89,7 @@ export async function publishCard({
   reviewResult,
   remediationResult,
   emailNotifier,
+  signal,
 }: PublishCardOptions): Promise<void> {
   const cardLog = logger.child({
     projectId: project.id,
@@ -93,6 +99,10 @@ export async function publishCard({
   let pullRequest;
 
   try {
+    if (signal?.aborted) {
+      throw new TrelloRequestAbortedError();
+    }
+
     const remoteCommitSha =
       typeof git.getRemoteBranchSha === "function"
         ? await git.getRemoteBranchSha(worktreePath, "origin", branch)
@@ -101,6 +111,10 @@ export async function publishCard({
     if (remoteCommitSha === commitSha) {
       cardLog.event(`Branch ${branch} is already pushed at ${commitSha}`);
     } else {
+      if (signal?.aborted) {
+        throw new TrelloRequestAbortedError();
+      }
+
       cardLog.event(`Pushing branch ${branch}...`);
 
       await git.push(worktreePath, "origin", branch);
@@ -109,6 +123,10 @@ export async function publishCard({
     }
 
     cardLog.info("Checking for existing pull request...");
+
+    if (signal?.aborted) {
+      throw new TrelloRequestAbortedError();
+    }
 
     pullRequest = await github.findPullRequest({
       cwd: worktreePath,
@@ -119,6 +137,10 @@ export async function publishCard({
     if (pullRequest) {
       cardLog.event(`Existing pull request found: ${pullRequest.url}`);
     } else {
+      if (signal?.aborted) {
+        throw new TrelloRequestAbortedError();
+      }
+
       cardLog.event("Creating pull request...");
 
       pullRequest = await github.createPullRequest({
@@ -137,6 +159,10 @@ export async function publishCard({
       cardLog.event(`Pull request created: ${pullRequest.url}`);
     }
   } catch (error) {
+    if (error instanceof TrelloRequestAbortedError) {
+      throw error;
+    }
+
     if (error instanceof WorkflowError) {
       throw error;
     }
@@ -148,11 +174,19 @@ export async function publishCard({
     });
   }
 
+  if (signal?.aborted) {
+    throw new TrelloRequestAbortedError();
+  }
+
   cardLog.event("Moving Trello card to Human Review...");
 
   try {
     await trello.moveCard(card.id, project.trello.reviewListId);
   } catch (error) {
+    if (error instanceof TrelloRequestAbortedError) {
+      throw error;
+    }
+
     throw new PublishedCardStateError(
       `Pull request ${pullRequest.url} was published, but the Trello card could not be moved to Human Review`,
       {

@@ -159,4 +159,30 @@ describe("claimNextCard", () => {
     ).resolves.toBeNull();
     expect(trello.moveCard).not.toHaveBeenCalled();
   });
+
+  it("does not claim a card when shutdown occurs during worktree preparation", async () => {
+    const worktreeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "claim-card-"));
+    temporaryDirectories.push(worktreeRoot);
+    const controller = new AbortController();
+    const project = createProject(worktreeRoot);
+    const moveCard = vi.fn();
+    const trello = {
+      getCards: vi.fn().mockResolvedValue([createCard("card-1")]),
+      moveCard,
+    } as unknown as TrelloClient;
+    const git = {
+      fetch: vi.fn(),
+      branchExists: vi.fn().mockResolvedValue(false),
+      addWorktreeWithNewBranch: vi.fn(async () => {
+        fs.mkdirSync(path.join(worktreeRoot, "card-1"));
+        controller.abort();
+      }),
+    } as unknown as GitClient;
+
+    await expect(
+      claimNextCard(trello, git, project, controller.signal),
+    ).resolves.toBeNull();
+
+    expect(moveCard).not.toHaveBeenCalled();
+  });
 });

@@ -41,7 +41,12 @@ export async function reconcileClaimedCard(
   project: ProjectConfig,
   card: TrelloCard,
   emailNotifier?: EmailNotifier,
+  signal?: AbortSignal,
 ): Promise<boolean> {
+  if (signal?.aborted) {
+    return false;
+  }
+
   const branch = `agent/${card.id}`;
   const cardLog = logger.child({
     projectId: project.id,
@@ -56,6 +61,10 @@ export async function reconcileClaimedCard(
       repository: project.repository.github,
       headBranch: branch,
     });
+
+    if (signal?.aborted) {
+      return false;
+    }
   } catch (error) {
     const message = getErrorMessage(error);
 
@@ -73,9 +82,21 @@ export async function reconcileClaimedCard(
   cardLog.event(`Claimed card already has pull request: ${pullRequest.url}`);
   cardLog.event("Moving claimed card directly to Human Review...");
 
+  if (signal?.aborted) {
+    return false;
+  }
+
   await trello.moveCard(card.id, project.trello.reviewListId);
 
+  if (signal?.aborted) {
+    return true;
+  }
+
   cardLog.event("Claimed card moved directly to Human Review");
+
+  if (signal?.aborted) {
+    return true;
+  }
 
   await notifyHumanReview(
     emailNotifier,
@@ -92,6 +113,10 @@ export async function reconcileClaimedCard(
     cardLog,
   );
 
+  if (signal?.aborted) {
+    return true;
+  }
+
   const worktreePath = path.join(project.repository.worktreeRoot, card.id);
 
   try {
@@ -100,7 +125,12 @@ export async function reconcileClaimedCard(
       project,
       worktreePath,
       branch,
+      ...(signal === undefined ? {} : { signal }),
     });
+
+    if (signal?.aborted) {
+      return true;
+    }
 
     cardLog.info("Reconciled claimed card local worktree cleaned up");
   } catch (error) {
@@ -118,12 +148,21 @@ export async function reconcileWorkingCards(
   github: GitHubClient,
   project: ProjectConfig,
   emailNotifier?: EmailNotifier,
+  signal?: AbortSignal,
 ): Promise<WorkingCardRecovery | null> {
+  if (signal?.aborted) {
+    return null;
+  }
+
   const projectLog = logger.child({
     projectId: project.id,
   });
 
   const cards = await trello.getCards(project.trello.workingListId);
+
+  if (signal?.aborted) {
+    return null;
+  }
 
   if (cards.length === 0) {
     return null;
@@ -134,10 +173,18 @@ export async function reconcileWorkingCards(
   const recoverableCards: WorkingCardRecovery[] = [];
 
   for (const card of cards) {
+    if (signal?.aborted) {
+      return null;
+    }
+
     const transition = await trello.getLatestListTransition(
       card.id,
       project.trello.workingListId,
     );
+
+    if (signal?.aborted) {
+      return null;
+    }
 
     if (transition === null) {
       await correctCardToBacklog(
@@ -145,7 +192,12 @@ export async function reconcileWorkingCards(
         project,
         card,
         "Working card has no recorded transition into Working",
+        signal,
       );
+
+      if (signal?.aborted) {
+        return null;
+      }
 
       continue;
     }
@@ -159,12 +211,21 @@ export async function reconcileWorkingCards(
           project,
           card,
           "Working card has no configured workflow label",
+          signal,
         );
+
+        if (signal?.aborted) {
+          return null;
+        }
 
         continue;
       }
 
       const worktree = await getExistingWorktree(git, project, card.id);
+
+      if (signal?.aborted) {
+        return null;
+      }
 
       if (worktree === null) {
         await correctCardToBacklog(
@@ -172,7 +233,12 @@ export async function reconcileWorkingCards(
           project,
           card,
           `Working card has no valid ${worktreePathForLog(project, card.id)} worktree on agent/${card.id}`,
+          signal,
         );
+
+        if (signal?.aborted) {
+          return null;
+        }
 
         continue;
       }
@@ -185,7 +251,12 @@ export async function reconcileWorkingCards(
         card,
         workflow,
         emailNotifier,
+        signal,
       );
+
+      if (signal?.aborted) {
+        return null;
+      }
 
       if (recovery !== null) {
         recoverableCards.push(recovery);
@@ -200,7 +271,12 @@ export async function reconcileWorkingCards(
         github,
         project,
         card,
+        signal,
       );
+
+      if (signal?.aborted) {
+        return null;
+      }
 
       if (recovery !== null) {
         recoverableCards.push(recovery);
@@ -214,7 +290,16 @@ export async function reconcileWorkingCards(
       project,
       card,
       `Working card was moved from ${transition.listBeforeId}, not an eligible workflow list`,
+      signal,
     );
+
+    if (signal?.aborted) {
+      return null;
+    }
+  }
+
+  if (signal?.aborted) {
+    return null;
   }
 
   if (recoverableCards.length > 1) {
@@ -243,6 +328,7 @@ async function reconcileReadyWorkingCard(
   card: TrelloCard,
   workflow: WorkflowKind,
   emailNotifier?: EmailNotifier,
+  signal?: AbortSignal,
 ): Promise<WorkingCardRecovery | null> {
   const branch = `agent/${card.id}`;
   const cardLog = logger.child({
@@ -258,6 +344,10 @@ async function reconcileReadyWorkingCard(
       repository: project.repository.github,
       headBranch: branch,
     });
+
+    if (signal?.aborted) {
+      return null;
+    }
   } catch (error) {
     const message = getErrorMessage(error);
 
@@ -278,11 +368,16 @@ async function reconcileReadyWorkingCard(
   }
 
   if (workflow !== "implementation") {
+    if (signal?.aborted) {
+      return null;
+    }
+
     await correctCardToBacklog(
       trello,
       project,
       card,
       `Refinement Working card has unexpected pull request ${pullRequest.url}`,
+      signal,
     );
 
     return null;
@@ -296,6 +391,10 @@ async function reconcileReadyWorkingCard(
       repository: project.repository.github,
       headBranch: branch,
     });
+
+    if (signal?.aborted) {
+      return null;
+    }
   } catch (error) {
     const message = getErrorMessage(error);
 
@@ -318,6 +417,10 @@ async function reconcileReadyWorkingCard(
 
   cardLog.event("Moving reconciled card to Human Review...");
 
+  if (signal?.aborted) {
+    return null;
+  }
+
   try {
     await trello.moveCard(card.id, project.trello.reviewListId);
   } catch (error) {
@@ -330,7 +433,15 @@ async function reconcileReadyWorkingCard(
     );
   }
 
+  if (signal?.aborted) {
+    return null;
+  }
+
   cardLog.event("Reconciled card moved to Human Review");
+
+  if (signal?.aborted) {
+    return null;
+  }
 
   await notifyHumanReview(
     emailNotifier,
@@ -347,13 +458,22 @@ async function reconcileReadyWorkingCard(
     cardLog,
   );
 
+  if (signal?.aborted) {
+    return null;
+  }
+
   try {
     await cleanupWorktree({
       git,
       project,
       worktreePath: path.join(project.repository.worktreeRoot, card.id),
       branch,
+      ...(signal === undefined ? {} : { signal }),
     });
+
+    if (signal?.aborted) {
+      return null;
+    }
 
     cardLog.info("Reconciled card local worktree cleaned up");
   } catch (error) {
@@ -370,6 +490,7 @@ async function reconcileReviewToWorkingCard(
   github: GitHubClient,
   project: ProjectConfig,
   card: TrelloCard,
+  signal?: AbortSignal,
 ): Promise<ReviewChangeRequest | null> {
   const branch = `agent/${card.id}`;
   const cardLog = logger.child({
@@ -385,6 +506,10 @@ async function reconcileReviewToWorkingCard(
       repository: project.repository.github,
       headBranch: branch,
     });
+
+    if (signal?.aborted) {
+      return null;
+    }
   } catch (error) {
     const message = getErrorMessage(error);
 
@@ -396,11 +521,16 @@ async function reconcileReviewToWorkingCard(
   }
 
   if (!pullRequest) {
+    if (signal?.aborted) {
+      return null;
+    }
+
     await correctCardToBacklog(
       trello,
       project,
       card,
       `Working card moved from Human Review without an expected open pull request for ${branch}`,
+      signal,
     );
 
     return null;
@@ -414,6 +544,10 @@ async function reconcileReviewToWorkingCard(
       repository: project.repository.github,
       headBranch: branch,
     });
+
+    if (signal?.aborted) {
+      return null;
+    }
   } catch (error) {
     const message = getErrorMessage(error);
 
@@ -425,11 +559,16 @@ async function reconcileReviewToWorkingCard(
   }
 
   if (!changesRequestedPullRequest) {
+    if (signal?.aborted) {
+      return null;
+    }
+
     await correctCardToBacklog(
       trello,
       project,
       card,
       `Working card moved from Human Review without actionable requested changes on ${pullRequest.url}`,
+      signal,
     );
 
     return null;

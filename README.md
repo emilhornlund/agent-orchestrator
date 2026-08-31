@@ -373,6 +373,24 @@ yarn dev
 
 The process continues polling until it is stopped.
 
+### Shutdown and fatal runtime errors
+
+`SIGINT` and `SIGTERM` request an idempotent coordinated shutdown. The service stops claiming new cards, cancels in-flight
+subprocess and API work through the existing abort signal, and exits successfully after workers stop. An intentional signal
+shutdown is not reported as a task failure.
+
+Startup failures, uncaught exceptions, and unhandled promise rejections are logged as fatal diagnostics with the original
+error details and a UTC timestamp. Their first fatal event requests the same coordinated shutdown and the process exits with
+status `1`. Repeated fatal events or signals do not start duplicate cleanup or replace the original fatal diagnostic.
+
+Shutdown does not mark cards successful, advance workflow state, delete recoverable worktrees, or discard agent changes. A
+normal failure in one project remains isolated to that project and follows the existing card failure handling.
+
+Restart recovery depends on the existing deterministic artifacts: Trello list-transition history, the expected
+`agent/<trello-card-id>` branch and worktree, Git status and commits, pull requests, and per-card session logs. After a fatal
+exit, inspect those artifacts and restart the service to run the existing reconciliation flow; do not assume that an
+interrupted card should be marked successful or failed manually without reviewing its state.
+
 ## Logging
 
 Lifecycle events, warnings, and errors emitted by the shared `Logger` begin with a UTC ISO 8601 timestamp, such as

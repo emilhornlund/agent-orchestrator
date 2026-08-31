@@ -10,6 +10,7 @@ export interface CleanupWorktreeOptions {
   project: ProjectConfig;
   worktreePath: string;
   branch: string;
+  signal?: AbortSignal;
 }
 
 export async function cleanupWorktree({
@@ -17,7 +18,12 @@ export async function cleanupWorktree({
   project,
   worktreePath,
   branch,
+  signal,
 }: CleanupWorktreeOptions): Promise<void> {
+  if (signal?.aborted) {
+    return;
+  }
+
   const repositoryPath = project.repository.path;
   const worktreeRoot = path.resolve(project.repository.worktreeRoot);
   const resolvedWorktreePath = path.resolve(worktreePath);
@@ -52,6 +58,10 @@ export async function cleanupWorktree({
 
     const currentBranch = await git.getCurrentBranch(worktreePath);
 
+    if (signal?.aborted) {
+      return;
+    }
+
     if (currentBranch !== branch) {
       throw new Error(
         `Refusing to clean worktree ${worktreePath} on branch "${currentBranch}", expected "${branch}"`,
@@ -60,18 +70,48 @@ export async function cleanupWorktree({
 
     const status = await git.getStatus(worktreePath);
 
+    if (signal?.aborted) {
+      return;
+    }
+
     if (status.length > 0) {
       throw new Error(
         `Refusing to remove dirty worktree ${worktreePath}:\n${status}`,
       );
     }
 
+    if (signal?.aborted) {
+      return;
+    }
+
     await git.removeWorktree(repositoryPath, worktreePath);
+
+    if (signal?.aborted) {
+      return;
+    }
+  }
+
+  if (signal?.aborted) {
+    return;
   }
 
   await git.pruneWorktrees(repositoryPath);
 
-  if (await git.branchExists(repositoryPath, branch)) {
+  if (signal?.aborted) {
+    return;
+  }
+
+  const branchExists = await git.branchExists(repositoryPath, branch);
+
+  if (signal?.aborted) {
+    return;
+  }
+
+  if (branchExists) {
+    if (signal?.aborted) {
+      return;
+    }
+
     await git.deleteBranch(repositoryPath, branch);
   }
 }
