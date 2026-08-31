@@ -250,7 +250,6 @@ export async function pollProject(
   const implementationClaim = await claimNextCard(trello, git, project);
 
   if (!implementationClaim) {
-    logger.child({ projectId: project.id }).debug("No cards ready");
     return;
   }
 
