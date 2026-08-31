@@ -1,6 +1,10 @@
 import type { ProjectConfig } from "../config/config.js";
 import { logger } from "../logging/logger.js";
-import type { TrelloClient } from "../trello/trello-client.js";
+import {
+  notifyFailed,
+  type EmailNotifier,
+} from "../notifications/email-notifier.js";
+import type { TrelloCard, TrelloClient } from "../trello/trello-client.js";
 
 import {
   annotateFailure,
@@ -16,6 +20,8 @@ export async function failCard(
   project: ProjectConfig,
   cardId: string,
   workflowError: unknown,
+  emailNotifier?: EmailNotifier,
+  card?: Pick<TrelloCard, "name" | "url">,
 ): Promise<never> {
   const cardLog = logger.child({
     projectId: project.id,
@@ -75,6 +81,26 @@ export async function failCard(
   cardLog.event(
     "Failure handling: card moved to Failed; adding failure comment",
   );
+
+  if (card !== undefined) {
+    await notifyFailed(
+      emailNotifier,
+      {
+        project,
+        card: {
+          name: card.name,
+          url: card.url,
+        },
+        category: failureDescription.category,
+        reason: failureDescription.reason,
+      },
+      cardLog,
+    );
+  } else if (emailNotifier !== undefined) {
+    cardLog.warn(
+      "Failed email notification omitted because the failure handler did not receive card details",
+    );
+  }
 
   try {
     await trello.addComment(

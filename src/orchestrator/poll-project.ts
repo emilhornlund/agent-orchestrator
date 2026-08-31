@@ -10,6 +10,7 @@ import {
 import type { GitHubClient } from "../github/github-client.js";
 import { logger } from "../logging/logger.js";
 import { getSessionLogPath } from "../logging/session-log.js";
+import type { EmailNotifier } from "../notifications/email-notifier.js";
 import { buildCommitPrompt } from "../opencode/build-commit-prompt.js";
 import { buildRemediationPrompt } from "../opencode/build-remediation-prompt.js";
 import { buildReviewFeedbackPrompt } from "../opencode/build-review-feedback-prompt.js";
@@ -136,6 +137,7 @@ export async function pollProject(
   commands: CommandRunner,
   project: ProjectConfig,
   signal: AbortSignal,
+  emailNotifier?: EmailNotifier,
 ): Promise<void> {
   if (signal.aborted) {
     return;
@@ -146,6 +148,7 @@ export async function pollProject(
     git,
     github,
     project,
+    emailNotifier,
   );
 
   if (signal.aborted) {
@@ -158,6 +161,7 @@ export async function pollProject(
     github,
     project,
     { moveRequestedChanges: workingChangeRequest === null },
+    emailNotifier,
   );
 
   if (signal.aborted) {
@@ -185,6 +189,7 @@ export async function pollProject(
       project,
       reviewChangeRequest,
       signal,
+      emailNotifier,
     );
 
     return;
@@ -200,6 +205,8 @@ export async function pollProject(
           project,
           workingChangeRequest.card,
           signal,
+          undefined,
+          emailNotifier,
         );
       } else {
         await processImplementationCard(
@@ -211,6 +218,8 @@ export async function pollProject(
           project,
           workingChangeRequest.card,
           signal,
+          undefined,
+          emailNotifier,
         );
       }
 
@@ -226,6 +235,7 @@ export async function pollProject(
       project,
       workingChangeRequest,
       signal,
+      emailNotifier,
     );
 
     return;
@@ -242,6 +252,7 @@ export async function pollProject(
       refinementClaim.card,
       signal,
       refinementClaim.worktree,
+      emailNotifier,
     );
 
     return;
@@ -267,6 +278,7 @@ export async function pollProject(
     github,
     project,
     card,
+    emailNotifier,
   );
 
   if (reconciled) {
@@ -283,6 +295,7 @@ export async function pollProject(
     card,
     signal,
     implementationClaim.worktree,
+    emailNotifier,
   );
 }
 
@@ -297,6 +310,7 @@ async function processRefinementCard(
     path: string;
     branch: string;
   },
+  emailNotifier?: EmailNotifier,
 ): Promise<void> {
   const cardLog = logger.child({
     projectId: project.id,
@@ -376,7 +390,7 @@ async function processRefinementCard(
       }
     }
 
-    await failCard(trello, project, card.id, error);
+    await failCard(trello, project, card.id, error, emailNotifier, card);
   }
 }
 
@@ -389,6 +403,7 @@ async function processReviewChangeRequest(
   project: ProjectConfig,
   reviewChangeRequest: ReviewChangeRequest,
   signal: AbortSignal,
+  emailNotifier?: EmailNotifier,
 ): Promise<void> {
   const card = reviewChangeRequest.card;
 
@@ -413,6 +428,8 @@ async function processReviewChangeRequest(
         pullRequestUrl: reviewChangeRequest.pullRequestUrl,
         feedback: reviewChangeRequest.feedback,
       },
+      undefined,
+      emailNotifier,
     );
 
     cardLog.info("Cleaning up review feedback worktree...");
@@ -444,7 +461,7 @@ async function processReviewChangeRequest(
       return;
     }
 
-    await failCard(trello, project, card.id, error);
+    await failCard(trello, project, card.id, error, emailNotifier, card);
   }
 }
 
@@ -458,6 +475,7 @@ async function processImplementationCard(
   card: TrelloCard,
   signal: AbortSignal,
   preparedWorktree?: PreparedImplementationWorktree,
+  emailNotifier?: EmailNotifier,
 ): Promise<void> {
   const cardLog = logger.child({
     projectId: project.id,
@@ -476,6 +494,7 @@ async function processImplementationCard(
       signal,
       undefined,
       preparedWorktree,
+      emailNotifier,
     );
 
     cardLog.info("Cleaning up published worktree...");
@@ -516,7 +535,7 @@ async function processImplementationCard(
       return;
     }
 
-    await failCard(trello, project, card.id, error);
+    await failCard(trello, project, card.id, error, emailNotifier, card);
   }
 }
 
@@ -536,6 +555,7 @@ async function processCardChanges(
   signal: AbortSignal,
   reviewIteration?: ReviewIterationOptions,
   preparedWorktree?: PreparedImplementationWorktree,
+  emailNotifier?: EmailNotifier,
 ): Promise<{
   path: string;
   branch: string;
@@ -587,6 +607,7 @@ async function processCardChanges(
       commitSha,
       reviewResult,
       remediationResult,
+      ...(emailNotifier === undefined ? {} : { emailNotifier }),
     });
 
     return worktree;
@@ -806,6 +827,7 @@ async function processCardChanges(
     commitSha: headAfterCommit,
     reviewResult,
     remediationResult,
+    ...(emailNotifier === undefined ? {} : { emailNotifier }),
   });
 
   return worktree;

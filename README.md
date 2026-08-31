@@ -123,6 +123,46 @@ The value is formatted with explicit units, using seconds, minutes, hours, and d
 missing, incomplete, malformed, ambiguous, or has invalid date ordering, the summary comment is still attempted and the card
 remains in `Human Review`; the orchestrator logs why the elapsed workflow time was omitted.
 
+### Optional email notifications
+
+Email notifications are disabled when `notifications.email` is omitted or when its `enabled` value is `false`. To enable
+them, add this top-level configuration:
+
+```yaml
+notifications:
+  email:
+    enabled: true
+    recipients:
+      - "reviewers@example.com"
+    from: "agent-orchestrator@example.com"
+    smtp:
+      host: "smtp.example.com"
+      port: 465
+      secure: true
+      usernameEnv: "SMTP_USERNAME"
+      passwordEnv: "SMTP_PASSWORD"
+      timeoutSeconds: 30
+```
+
+`recipients` and `from` are email addresses. `smtp.host`, `smtp.port`, and `smtp.secure` select the SMTP server connection;
+`secure: true` uses implicit TLS. `usernameEnv` and `passwordEnv` are the names of environment variables containing the SMTP
+credentials. The default `timeoutSeconds` is `30`, and each notification makes one bounded delivery attempt without
+automatic retries.
+
+Set the referenced credentials in the ignored `.env` file or another secure runtime environment. Never put SMTP passwords,
+API keys, or tokens in `config.yaml` or source control. Enabled settings and referenced environment variables are validated
+at startup with field-specific errors; omitted or disabled settings require no SMTP credentials.
+
+The orchestrator sends one email after each successful orchestrator transition into `Human Review` from normal publication or
+reconciliation, and after each successful orchestrator transition into `Failed` from automated failure handling or a closed,
+unmerged pull request. It does not notify for cards merely observed in either list, unrelated list transitions, or repeated
+polling of an already completed transition. Human Review messages include the project, card, Trello URL, pull-request URL,
+commit/publication context, review result, and remediation result. Failed messages include the project, card, Trello URL,
+failure category and reason, and the deliberate retry instruction.
+
+Delivery is attempted only after the Trello move succeeds. A delivery failure is logged with project and card context and does
+not move the card, change the primary workflow error, or prevent the existing Trello summary/failure handling.
+
 ### Pull request feedback loop
 
 When GitHub reports requested changes, the orchestrator moves the Trello card back to `Working`, creates a worktree from
@@ -173,6 +213,7 @@ repository, Trello board, worktree root, and OpenCode configuration.
 - GitHub CLI (`gh`)
 - OpenCode
 - Trello API credentials
+- An SMTP server, when email notifications are enabled
 
 The GitHub CLI must already be authenticated for the repositories the orchestrator manages.
 
@@ -196,6 +237,9 @@ Add your Trello credentials to `.env`:
 ```dotenv
 TRELLO_API_KEY=
 TRELLO_TOKEN=
+# Required only when notifications.email.enabled is true.
+SMTP_USERNAME=
+SMTP_PASSWORD=
 ```
 
 Then configure one or more projects in `config.yaml`:
@@ -250,6 +294,20 @@ projects:
 workflow:
   pollIntervalSeconds: 15
   logRetentionDays: 14
+
+notifications:
+  email:
+    enabled: false
+    recipients:
+      - "reviewers@example.com"
+    from: "agent-orchestrator@example.com"
+    smtp:
+      host: "smtp.example.com"
+      port: 465
+      secure: true
+      usernameEnv: "SMTP_USERNAME"
+      passwordEnv: "SMTP_PASSWORD"
+      timeoutSeconds: 30
 ```
 
 `setupCommand` and `validationCommand` are optional. When configured, `setupCommand` runs in the card worktree before
@@ -479,6 +537,25 @@ Model and variant used for the final commit session.
 
 Maximum runtime in minutes for an individual OpenCode execution across all workflow stages. Must be positive and
 defaults to `360` when omitted.
+
+### `notifications.email`
+
+Optional global email notification settings shared by all projects. Omit this section, or set `enabled: false`, to disable
+delivery without requiring SMTP configuration.
+
+When `enabled: true`, the following fields are required:
+
+- `recipients` — one or more recipient email addresses.
+- `from` — sender email address.
+- `smtp.host` — SMTP server hostname.
+- `smtp.port` — SMTP server port from `1` through `65535`.
+- `smtp.secure` — whether to use implicit TLS for the connection.
+- `smtp.usernameEnv` — environment-variable name containing the SMTP username.
+- `smtp.passwordEnv` — environment-variable name containing the SMTP password.
+- `smtp.timeoutSeconds` — positive connection and delivery timeout, defaulting to `30`.
+
+The values of `smtp.usernameEnv` and `smtp.passwordEnv` are names, not credentials. Their values are validated at startup only
+when email notifications are enabled. Notification email bodies never include those credentials.
 
 ### `workflow.pollIntervalSeconds`
 

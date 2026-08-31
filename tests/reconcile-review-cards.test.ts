@@ -10,6 +10,7 @@ import {
   getSessionLogPath,
   removeSessionLog,
 } from "../src/logging/session-log.js";
+import type { EmailNotifier } from "../src/notifications/email-notifier.js";
 import { reconcileReviewCards } from "../src/orchestrator/reconcile-review-cards.js";
 import type { TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
 
@@ -301,6 +302,54 @@ describe("reconcileReviewCards", () => {
     );
     expect(git.remoteBranchExists).not.toHaveBeenCalled();
     expect(git.deleteRemoteBranch).not.toHaveBeenCalled();
+  });
+
+  it("sends a Failed email after closed unmerged reconciliation", async () => {
+    const notifier: EmailNotifier = {
+      send: vi.fn(async (message) => {
+        expect(message.subject).toContain("Failed");
+        expect(message.text).toContain(
+          "Pull request https://github.com/owner/repo/pull/1 was closed without being merged.",
+        );
+        expect(message.text).toContain(
+          "To retry deliberately, move this card to Ready for Agent.",
+        );
+      }),
+    };
+    const trello = trelloFor(card());
+
+    await reconcileReviewCards(
+      trello,
+      {} as GitClient,
+      githubFor("card-1", "closed"),
+      project,
+      {},
+      notifier,
+    );
+
+    expect(notifier.send).toHaveBeenCalledTimes(1);
+    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "failed");
+  });
+
+  it("does not let a closed-card email failure alter reconciliation", async () => {
+    const notifier: EmailNotifier = {
+      send: vi.fn().mockRejectedValue(new Error("SMTP unavailable")),
+    };
+    const trello = trelloFor(card());
+
+    await expect(
+      reconcileReviewCards(
+        trello,
+        {} as GitClient,
+        githubFor("card-1", "closed"),
+        project,
+        {},
+        notifier,
+      ),
+    ).resolves.toBeNull();
+
+    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "failed");
+    expect(trello.addComment).toHaveBeenCalled();
   });
 
   it("reports the primary failure when moving a closed PR card to Failed fails", async () => {

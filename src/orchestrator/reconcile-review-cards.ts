@@ -3,6 +3,10 @@ import type { GitClient } from "../git/git-client.js";
 import type { GitHubClient, PullRequest } from "../github/github-client.js";
 import { logger } from "../logging/logger.js";
 import { removeSessionLog } from "../logging/session-log.js";
+import {
+  notifyFailed,
+  type EmailNotifier,
+} from "../notifications/email-notifier.js";
 import type { TrelloCard, TrelloClient } from "../trello/trello-client.js";
 
 import { correctCardToBacklog } from "./correct-card-state.js";
@@ -41,6 +45,7 @@ export async function reconcileReviewCards(
   github: GitHubClient,
   project: ProjectConfig,
   options: ReconcileReviewCardsOptions = {},
+  emailNotifier?: EmailNotifier,
 ): Promise<ReviewChangeRequest | ActiveReviewCard | null> {
   const projectLog = logger.child({
     projectId: project.id,
@@ -112,6 +117,7 @@ export async function reconcileReviewCards(
           state.card,
           state.closedPullRequest,
           cardLog,
+          emailNotifier,
         );
       }
     }
@@ -330,6 +336,7 @@ async function failClosedReviewCard(
   card: TrelloCard,
   pullRequest: PullRequest,
   cardLog: ReturnType<typeof logger.child>,
+  emailNotifier?: EmailNotifier,
 ): Promise<void> {
   cardLog.event(
     `Human Review card has closed pull request: ${pullRequest.url}`,
@@ -348,6 +355,17 @@ async function failClosedReviewCard(
       { cause: error },
     );
   }
+
+  await notifyFailed(
+    emailNotifier,
+    {
+      project,
+      card,
+      category: "Workflow",
+      reason: `Pull request ${pullRequest.url} was closed without being merged.`,
+    },
+    cardLog,
+  );
 
   try {
     await trello.addComment(

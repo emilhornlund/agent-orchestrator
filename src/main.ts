@@ -5,6 +5,7 @@ import { parseEnvironment } from "./config/environment.js";
 import { GitClient } from "./git/git-client.js";
 import { GitHubClient } from "./github/github-client.js";
 import { logger } from "./logging/logger.js";
+import { createEmailNotifier } from "./notifications/email-notifier.js";
 import { OpenCodeClient } from "./opencode/opencode-client.js";
 import { CommandRunner } from "./process/command-runner.js";
 import { runStartup } from "./startup/run-startup.js";
@@ -14,6 +15,11 @@ async function main(): Promise<void> {
   const config = loadConfig();
   const environment = parseEnvironment(process.env);
   const shutdownController = new AbortController();
+  const emailNotifier = createEmailNotifier(
+    config.notifications?.email,
+    process.env,
+    shutdownController.signal,
+  );
 
   function handleShutdown(signal: NodeJS.Signals): void {
     if (shutdownController.signal.aborted) {
@@ -83,6 +89,7 @@ async function main(): Promise<void> {
       github,
       opencode,
       commands,
+      ...(emailNotifier === undefined ? {} : { emailNotifier }),
     },
     shutdownController.signal,
   );

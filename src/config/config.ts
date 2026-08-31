@@ -91,6 +91,52 @@ const openCodeSchema = z.strictObject({
   timeoutMinutes: z.number().positive().default(360),
 });
 
+const smtpSchema = z.strictObject({
+  host: nonBlankString,
+  port: z.number().int().min(1).max(65_535),
+  secure: z.boolean(),
+  usernameEnv: nonBlankString,
+  passwordEnv: nonBlankString,
+  timeoutSeconds: z.number().int().positive().default(30),
+});
+
+const emailNotificationSchema = z
+  .strictObject({
+    enabled: z.boolean().default(false),
+    recipients: z.array(z.string().email()).min(1).optional(),
+    from: z.string().email().optional(),
+    smtp: smtpSchema.optional(),
+  })
+  .superRefine((email, ctx) => {
+    if (!email.enabled) {
+      return;
+    }
+
+    if (email.recipients === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["recipients"],
+        message: "Required when email notifications are enabled",
+      });
+    }
+
+    if (email.from === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["from"],
+        message: "Required when email notifications are enabled",
+      });
+    }
+
+    if (email.smtp === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["smtp"],
+        message: "Required when email notifications are enabled",
+      });
+    }
+  });
+
 const projectSchema = z.strictObject({
   id: nonBlankString,
   trello: trelloSchema,
@@ -101,6 +147,12 @@ const projectSchema = z.strictObject({
 const configSchema = z
   .strictObject({
     projects: z.array(projectSchema).min(1),
+
+    notifications: z
+      .strictObject({
+        email: emailNotificationSchema.optional(),
+      })
+      .optional(),
 
     workflow: z.strictObject({
       pollIntervalSeconds: z.number().int().positive(),
@@ -169,6 +221,9 @@ const configSchema = z
 
 export type Config = z.infer<typeof configSchema>;
 export type ProjectConfig = Config["projects"][number];
+export type EmailNotificationConfig = NonNullable<
+  NonNullable<Config["notifications"]>["email"]
+>;
 
 export function parseConfig(raw: string): Config {
   let parsed: unknown;

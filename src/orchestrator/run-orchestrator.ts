@@ -6,6 +6,7 @@ import {
   logRetentionIntervalMilliseconds,
 } from "../logging/log-retention.js";
 import { logger } from "../logging/logger.js";
+import type { EmailNotifier } from "../notifications/email-notifier.js";
 import type { OpenCodeClient } from "../opencode/opencode-client.js";
 import type { CommandRunner } from "../process/command-runner.js";
 import type { TrelloClient } from "../trello/trello-client.js";
@@ -46,18 +47,32 @@ async function runProjectWorker(
   project: ProjectConfig,
   pollIntervalMilliseconds: number,
   signal: AbortSignal,
+  emailNotifier?: EmailNotifier,
 ): Promise<void> {
   while (!signal.aborted) {
     try {
-      await pollProject(
-        trello,
-        git,
-        github,
-        opencode,
-        commands,
-        project,
-        signal,
-      );
+      if (emailNotifier === undefined) {
+        await pollProject(
+          trello,
+          git,
+          github,
+          opencode,
+          commands,
+          project,
+          signal,
+        );
+      } else {
+        await pollProject(
+          trello,
+          git,
+          github,
+          opencode,
+          commands,
+          project,
+          signal,
+          emailNotifier,
+        );
+      }
     } catch (error) {
       const failureContext = getFailureContext(error);
 
@@ -97,6 +112,7 @@ export async function runOrchestrator(
   commands: CommandRunner,
   config: Config,
   signal: AbortSignal,
+  emailNotifier?: EmailNotifier,
 ): Promise<void> {
   const pollIntervalMilliseconds = config.workflow.pollIntervalSeconds * 1000;
   const retentionTimer = setInterval(() => {
@@ -121,6 +137,7 @@ export async function runOrchestrator(
           project,
           pollIntervalMilliseconds,
           signal,
+          emailNotifier,
         ),
       ),
     );

@@ -10,6 +10,7 @@ import {
   removeSessionLog,
 } from "../src/logging/session-log.js";
 import { OpenCodeTimeoutError } from "../src/opencode/opencode-client.js";
+import type { EmailNotifier } from "../src/notifications/email-notifier.js";
 import { failCard } from "../src/orchestrator/fail-card.js";
 import { WorkflowError } from "../src/orchestrator/workflow-error.js";
 import { TrelloClient } from "../src/trello/trello-client.js";
@@ -43,6 +44,64 @@ afterEach(() => {
 });
 
 describe("failCard", () => {
+  it("sends a Failed email after moving the card and preserves the primary error", async () => {
+    const events: string[] = [];
+    const notifier: EmailNotifier = {
+      send: vi.fn(async (message) => {
+        events.push("email");
+        expect(message.subject).toContain("Failed");
+        expect(message.text).toContain("OpenCode");
+        expect(message.text).toContain(
+          "To retry deliberately, move this card to Ready for Agent.",
+        );
+      }),
+    };
+    const trello = new TrelloClient({ apiKey: "key", token: "token" });
+    const moveCard = vi
+      .spyOn(trello, "moveCard")
+      .mockImplementation(async () => {
+        events.push("move");
+        return { ...card(), idList: "failed" };
+      });
+    vi.spyOn(trello, "addComment").mockResolvedValue({
+      id: "action-1",
+      type: "commentCard",
+      date: "2026-08-30T09:00:00.000Z",
+    });
+    const error = new WorkflowError("OpenCode", "implementation failed");
+
+    await expect(
+      failCard(trello, project, "card-1", error, notifier, card()),
+    ).rejects.toBe(error);
+
+    expect(moveCard).toHaveBeenCalledWith("card-1", "failed");
+    expect(events).toEqual(["move", "email"]);
+    expect(notifier.send).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps Failed state and the primary error when email delivery fails", async () => {
+    const notifier: EmailNotifier = {
+      send: vi.fn().mockRejectedValue(new Error("SMTP unavailable")),
+    };
+    const trello = new TrelloClient({ apiKey: "key", token: "token" });
+    const moveCard = vi
+      .spyOn(trello, "moveCard")
+      .mockResolvedValue({ ...card(), idList: "failed" });
+    vi.spyOn(trello, "addComment").mockResolvedValue({
+      id: "action-1",
+      type: "commentCard",
+      date: "2026-08-30T09:00:00.000Z",
+    });
+    const error = new Error("implementation failed");
+
+    await expect(
+      failCard(trello, project, "card-1", error, notifier, card()),
+    ).rejects.toBe(error);
+
+    expect(moveCard).toHaveBeenCalledWith("card-1", "failed");
+    expect(trello.addComment).toHaveBeenCalled();
+  });
+
   it("moves the card to Failed, comments, and rethrows the workflow error", async () => {
     const trello = new TrelloClient({ apiKey: "key", token: "token" });
     const moveCard = vi
