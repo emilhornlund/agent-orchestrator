@@ -2,6 +2,7 @@ import type { ProjectConfig } from "../config/config.js";
 import { logger } from "../logging/logger.js";
 import type { TrelloCard, TrelloClient } from "../trello/trello-client.js";
 
+import { annotateCardFailure } from "./failure-diagnostic.js";
 import { WorkflowError } from "./workflow-error.js";
 
 export async function correctCardToBacklog(
@@ -29,11 +30,14 @@ export async function correctCardToBacklog(
       `Could not correct card "${card.name}" to Backlog: ${message}`,
     );
 
-    throw new WorkflowError(
+    const correctionError = new WorkflowError(
       "Workflow",
       `Could not move card to Backlog while correcting its Trello state: ${message}`,
       { cause: error },
     );
+
+    annotateCardFailure(correctionError, project.id, card.id);
+    throw correctionError;
   }
 
   if (signal?.aborted) {

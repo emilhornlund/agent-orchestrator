@@ -10,6 +10,9 @@ import type { OpenCodeClient } from "../src/opencode/opencode-client.js";
 import type { CommandRunner } from "../src/process/command-runner.js";
 import type { TrelloClient } from "../src/trello/trello-client.js";
 import * as logRetention from "../src/logging/log-retention.js";
+import type { EmailNotifier } from "../src/notifications/email-notifier.js";
+import { OpenCodeRunAbortedError } from "../src/opencode/opencode-client.js";
+import { TrelloRequestAbortedError } from "../src/trello/trello-client.js";
 import {
   annotateFailure,
   getFailureContext,
@@ -226,6 +229,190 @@ describe("runOrchestrator", () => {
 
     expect(projectACalls).toHaveLength(1);
     expect(projectBCalls).toHaveLength(1);
+  });
+
+  it("emails an Attention Required alert for an unreconciled project failure", async () => {
+    const controller = new AbortController();
+    const notifier: EmailNotifier = {
+      send: vi.fn(),
+    };
+    const failure = new WorkflowError(
+      "Workflow",
+      "Multiple active cards are in Working: card-1, card-2",
+    );
+
+    annotateFailure(failure, {
+      projectId: "project-a",
+      cardIds: ["card-1", "card-2"],
+      sessionLogPaths: ["logs/sessions/project-a/card-1.log"],
+    });
+
+    pollProject.mockImplementation(
+      async (_trello, _git, _github, _opencode, _commands, project) => {
+        if (project.id === "project-a") {
+          throw failure;
+        }
+
+        controller.abort();
+      },
+    );
+
+    await runOrchestrator(
+      {} as TrelloClient,
+      {} as GitClient,
+      {} as GitHubClient,
+      {} as OpenCodeClient,
+      {} as CommandRunner,
+      createConfig([createProject("project-a"), createProject("project-b")]),
+      controller.signal,
+      notifier,
+    );
+
+    expect(notifier.send).toHaveBeenCalledWith({
+      subject: "[Agent Orchestrator] Attention Required: project-a",
+      text: expect.stringContaining("Affected card IDs: card-1, card-2"),
+    });
+    expect(notifier.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining(
+          "Failure reason: Multiple active cards are in Working: card-1, card-2",
+        ),
+      }),
+    );
+  });
+
+  it("does not email a card failure already handled by Failed transition", async () => {
+    const controller = new AbortController();
+    const notifier: EmailNotifier = {
+      send: vi.fn(),
+    };
+    const failure = new WorkflowError("OpenCode", "implementation failed");
+
+    annotateFailure(failure, {
+      projectId: "project-a",
+      cardId: "card-1",
+      handlingOutcome: "card moved to Failed and failure comment added",
+    });
+
+    pollProject.mockImplementation(
+      async (_trello, _git, _github, _opencode, _commands, project) => {
+        if (project.id === "project-a") {
+          throw failure;
+        }
+
+        controller.abort();
+      },
+    );
+
+    await runOrchestrator(
+      {} as TrelloClient,
+      {} as GitClient,
+      {} as GitHubClient,
+      {} as OpenCodeClient,
+      {} as CommandRunner,
+      createConfig([createProject("project-a"), createProject("project-b")]),
+      controller.signal,
+      notifier,
+    );
+
+    expect(notifier.send).not.toHaveBeenCalled();
+  });
+
+  it("does not email shutdown cancellation", async () => {
+    const controller = new AbortController();
+    const notifier: EmailNotifier = {
+      send: vi.fn(),
+    };
+
+    pollProject.mockImplementation(async () => {
+      controller.abort();
+      throw new OpenCodeRunAbortedError();
+    });
+
+    await runOrchestrator(
+      {} as TrelloClient,
+      {} as GitClient,
+      {} as GitHubClient,
+      {} as OpenCodeClient,
+      {} as CommandRunner,
+      createConfig([createProject("project-a")]),
+      controller.signal,
+      notifier,
+    );
+
+    expect(notifier.send).not.toHaveBeenCalled();
+  });
+
+  it("does not email a shutdown cancellation wrapped in a workflow error", async () => {
+    const controller = new AbortController();
+    const notifier: EmailNotifier = {
+      send: vi.fn(),
+    };
+
+    pollProject.mockImplementation(async () => {
+      controller.abort();
+      throw new WorkflowError("Workflow", "Trello request failed", {
+        cause: new TrelloRequestAbortedError(),
+      });
+    });
+
+    await runOrchestrator(
+      {} as TrelloClient,
+      {} as GitClient,
+      {} as GitHubClient,
+      {} as OpenCodeClient,
+      {} as CommandRunner,
+      createConfig([createProject("project-a")]),
+      controller.signal,
+      notifier,
+    );
+
+    expect(notifier.send).not.toHaveBeenCalled();
+  });
+
+  it("keeps independent workers running when Attention Required delivery fails", async () => {
+    const controller = new AbortController();
+    const notifier: EmailNotifier = {
+      send: vi.fn().mockRejectedValue(new Error("SMTP unavailable")),
+    };
+    const projectACalls: string[] = [];
+    const projectBCalls: string[] = [];
+
+    pollProject.mockImplementation(
+      async (_trello, _git, _github, _opencode, _commands, project) => {
+        if (project.id === "project-a") {
+          projectACalls.push(project.id);
+
+          const failure = new WorkflowError(
+            "Git/GitHub",
+            "Could not reconcile Human Review card: GitHub unavailable",
+          );
+          annotateFailure(failure, {
+            projectId: project.id,
+            cardId: "card-a",
+          });
+          throw failure;
+        }
+
+        projectBCalls.push(project.id);
+        controller.abort();
+      },
+    );
+
+    await runOrchestrator(
+      {} as TrelloClient,
+      {} as GitClient,
+      {} as GitHubClient,
+      {} as OpenCodeClient,
+      {} as CommandRunner,
+      createConfig([createProject("project-a"), createProject("project-b")]),
+      controller.signal,
+      notifier,
+    );
+
+    expect(projectACalls).toHaveLength(1);
+    expect(projectBCalls).toHaveLength(1);
+    expect(notifier.send).toHaveBeenCalledTimes(1);
   });
 
   it("logs a failed card with its category, card context, and handling outcome", async () => {

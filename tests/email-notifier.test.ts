@@ -5,8 +5,10 @@ import type { Logger } from "../src/logging/logger.js";
 import {
   buildFailedEmail,
   buildHumanReviewEmail,
+  buildAttentionRequiredEmail,
   buildRefinementCompletionEmail,
   createEmailNotifier,
+  notifyAttentionRequired,
   notifyFailed,
   notifyHumanReview,
   notifyRefinementCompletion,
@@ -114,6 +116,51 @@ describe("email notifications", () => {
     });
   });
 
+  it("builds an Attention Required message with project diagnostics", () => {
+    expect(
+      buildAttentionRequiredEmail({
+        project,
+        category: "Workflow",
+        reason: "Multiple active cards are in Working: card-1, card-2",
+        cardIds: ["card-1", "card-2"],
+        sessionLogPaths: [
+          "logs/sessions/project/card-1.log",
+          "logs/sessions/project/card-2.log",
+        ],
+      }),
+    ).toEqual({
+      subject: "[Agent Orchestrator] Attention Required: project-one",
+      text: [
+        "Event: Attention Required",
+        "Project: project-one",
+        "Failure category: Workflow",
+        "Failure reason: Multiple active cards are in Working: card-1, card-2",
+        "Affected card IDs: card-1, card-2",
+        "Session logs:",
+        "- logs/sessions/project/card-1.log",
+        "- logs/sessions/project/card-2.log",
+        "",
+        "Project processing cannot safely continue until the failure is resolved.",
+      ].join("\n"),
+    });
+  });
+
+  it("does not attempt Attention Required delivery without a notifier", async () => {
+    const notifier = createEmailNotifier({ enabled: false }, {});
+
+    await notifyAttentionRequired(
+      notifier,
+      {
+        project,
+        category: "Workflow",
+        reason: "Project state is ambiguous",
+      },
+      { event: vi.fn(), error: vi.fn() } as unknown as Logger,
+    );
+
+    expect(notifier).toBeUndefined();
+  });
+
   it("builds a refinement completion message with the refined task", () => {
     expect(
       buildRefinementCompletionEmail({
@@ -192,6 +239,30 @@ describe("email notifications", () => {
 
     expect(cardLog.error).toHaveBeenCalledWith(
       "Failed email notification failed: SMTP unavailable",
+    );
+  });
+
+  it("isolates Attention Required delivery failures", async () => {
+    const notifier = {
+      send: vi.fn().mockRejectedValue(new Error("SMTP unavailable")),
+    };
+    const projectLog = {
+      event: vi.fn(),
+      error: vi.fn(),
+    };
+
+    await notifyAttentionRequired(
+      notifier,
+      {
+        project,
+        category: "Workflow",
+        reason: "Project state is ambiguous",
+      },
+      projectLog as unknown as Logger,
+    );
+
+    expect(projectLog.error).toHaveBeenCalledWith(
+      "Attention-required email notification failed: SMTP unavailable",
     );
   });
 

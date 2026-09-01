@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProjectConfig } from "../src/config/config.js";
 import type { GitClient } from "../src/git/git-client.js";
 import type { GitHubClient } from "../src/github/github-client.js";
+import { getFailureContext } from "../src/orchestrator/failure-diagnostic.js";
 import {
   reconcileClaimedCard,
   reconcileWorkingCards,
@@ -419,16 +420,26 @@ describe("reconcileWorkingCards", () => {
         ),
     } as unknown as GitClient;
 
-    await expect(
-      reconcileWorkingCards(
+    try {
+      await reconcileWorkingCards(
         trello,
         git,
         {
           findPullRequest: vi.fn().mockResolvedValue(null),
         } as unknown as GitHubClient,
         configuredProject,
-      ),
-    ).rejects.toThrow("Multiple active cards are in Working");
+      );
+      throw new Error("Expected reconciliation to fail");
+    } catch (error) {
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain(
+        "Multiple active cards are in Working",
+      );
+      expect(getFailureContext(error)).toMatchObject({
+        projectId: "project",
+        cardIds: ["card-1", "card-2"],
+      });
+    }
   });
 });
 

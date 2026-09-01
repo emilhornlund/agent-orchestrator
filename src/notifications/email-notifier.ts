@@ -34,6 +34,15 @@ export interface FailedNotificationDetails {
   reason: string;
 }
 
+export interface AttentionRequiredNotificationDetails {
+  project: ProjectConfig;
+  category: string;
+  reason: string;
+  cardIds?: string[];
+  sessionLogPaths?: string[];
+  handlingOutcome?: string;
+}
+
 export interface RefinementCompletionNotificationDetails {
   project: ProjectConfig;
   card: Pick<TrelloCard, "name" | "url">;
@@ -77,6 +86,37 @@ export function buildFailedEmail(
       `Failure reason: ${details.reason}`,
       "",
       "To retry deliberately, move this card to Ready for Agent.",
+    ].join("\n"),
+  };
+}
+
+export function buildAttentionRequiredEmail(
+  details: AttentionRequiredNotificationDetails,
+): EmailMessage {
+  return {
+    subject: `[Agent Orchestrator] Attention Required: ${subjectPart(details.project.id)}`,
+    text: [
+      "Event: Attention Required",
+      `Project: ${details.project.id}`,
+      `Failure category: ${details.category}`,
+      `Failure reason: ${details.reason}`,
+      ...(details.cardIds === undefined || details.cardIds.length === 0
+        ? []
+        : [`Affected card IDs: ${details.cardIds.join(", ")}`]),
+      ...(details.sessionLogPaths === undefined ||
+      details.sessionLogPaths.length === 0
+        ? []
+        : [
+            "Session logs:",
+            ...details.sessionLogPaths.map(
+              (sessionLogPath) => `- ${sessionLogPath}`,
+            ),
+          ]),
+      ...(details.handlingOutcome === undefined
+        ? []
+        : [`Failure handling: ${details.handlingOutcome}`]),
+      "",
+      "Project processing cannot safely continue until the failure is resolved.",
     ].join("\n"),
   };
 }
@@ -137,6 +177,25 @@ export async function notifyFailed(
   } catch (error) {
     cardLog.error(
       `Failed email notification failed: ${getErrorMessage(error)}`,
+    );
+  }
+}
+
+export async function notifyAttentionRequired(
+  notifier: EmailNotifier | undefined,
+  details: AttentionRequiredNotificationDetails,
+  projectLog: Logger,
+): Promise<void> {
+  if (notifier === undefined) {
+    return;
+  }
+
+  try {
+    await notifier.send(buildAttentionRequiredEmail(details));
+    projectLog.event("Attention-required email notification sent");
+  } catch (error) {
+    projectLog.error(
+      `Attention-required email notification failed: ${getErrorMessage(error)}`,
     );
   }
 }

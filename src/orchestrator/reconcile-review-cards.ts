@@ -10,6 +10,11 @@ import {
 import type { TrelloCard, TrelloClient } from "../trello/trello-client.js";
 
 import { correctCardToBacklog } from "./correct-card-state.js";
+import {
+  annotateCardFailure,
+  annotateFailure,
+  getExistingSessionLogPath,
+} from "./failure-diagnostic.js";
 import { WorkflowError } from "./workflow-error.js";
 
 export interface ReviewChangeRequest {
@@ -56,7 +61,17 @@ export async function reconcileReviewCards(
     projectId: project.id,
   });
 
-  const cards = await trello.getCards(project.trello.reviewListId);
+  let cards: TrelloCard[];
+
+  try {
+    cards = await trello.getCards(project.trello.reviewListId);
+  } catch (error) {
+    if (error instanceof Error) {
+      annotateFailure(error, { projectId: project.id });
+    }
+
+    throw error;
+  }
 
   if (signal?.aborted) {
     return null;
@@ -113,10 +128,23 @@ export async function reconcileReviewCards(
       `Found multiple active cards in Human Review: ${cardIds}; blocking the project until the ambiguous state is resolved`,
     );
 
-    throw new WorkflowError(
+    const reconciliationError = new WorkflowError(
       "Workflow",
       `Multiple active cards are in Human Review: ${cardIds}`,
     );
+
+    annotateFailure(reconciliationError, {
+      projectId: project.id,
+      cardIds: activeStates.map((state) => state.card.id),
+      sessionLogPaths: activeStates
+        .map((state) => getExistingSessionLogPath(project.id, state.card.id))
+        .filter(
+          (sessionLogPath): sessionLogPath is string =>
+            sessionLogPath !== undefined,
+        ),
+    });
+
+    throw reconciliationError;
   }
 
   for (const state of states) {
@@ -185,11 +213,14 @@ export async function reconcileReviewCards(
           `Failed to move card "${state.card.name}" to Working for requested changes: ${message}`,
         );
 
-        throw new WorkflowError(
+        const reconciliationError = new WorkflowError(
           "Workflow",
           `Could not move Human Review card to Working for requested changes: ${message}`,
           { cause: error },
         );
+
+        annotateCardFailure(reconciliationError, project.id, state.card.id);
+        throw reconciliationError;
       }
 
       if (signal?.aborted) {
@@ -245,7 +276,7 @@ async function inspectReviewCard(
       return null;
     }
   } catch (error) {
-    throw reviewLookupError(card, "merged pull request", error);
+    throw reviewLookupError(project, card, "merged pull request", error);
   }
 
   if (mergedPullRequest !== null) {
@@ -261,7 +292,7 @@ async function inspectReviewCard(
       return null;
     }
   } catch (error) {
-    throw reviewLookupError(card, "closed pull request", error);
+    throw reviewLookupError(project, card, "closed pull request", error);
   }
 
   if (closedPullRequest !== null) {
@@ -277,7 +308,7 @@ async function inspectReviewCard(
       return null;
     }
   } catch (error) {
-    throw reviewLookupError(card, "expected open pull request", error);
+    throw reviewLookupError(project, card, "expected open pull request", error);
   }
 
   if (openPullRequest === null) {
@@ -294,7 +325,7 @@ async function inspectReviewCard(
       return null;
     }
   } catch (error) {
-    throw reviewLookupError(card, "requested changes", error);
+    throw reviewLookupError(project, card, "requested changes", error);
   }
 
   return {
@@ -313,17 +344,21 @@ async function inspectReviewCard(
 }
 
 function reviewLookupError(
+  project: ProjectConfig,
   card: TrelloCard,
   subject: string,
   error: unknown,
 ): WorkflowError {
   const message = getErrorMessage(error);
 
-  return new WorkflowError(
+  const reconciliationError = new WorkflowError(
     "Git/GitHub",
     `Could not reconcile Human Review card "${card.name}" while checking ${subject}: ${message}`,
     { cause: error },
   );
+
+  annotateCardFailure(reconciliationError, project.id, card.id);
+  return reconciliationError;
 }
 
 async function completeMergedReviewCard(
@@ -375,11 +410,14 @@ async function completeMergedReviewCard(
       `Failed to clean up merged remote branch ${branch}: ${message}`,
     );
 
-    throw new WorkflowError(
+    const reconciliationError = new WorkflowError(
       "Git/GitHub",
       `Could not clean up merged pull request branch: ${message}`,
       { cause: error },
     );
+
+    annotateCardFailure(reconciliationError, project.id, card.id);
+    throw reconciliationError;
   }
 
   if (signal?.aborted) {
@@ -398,11 +436,14 @@ async function completeMergedReviewCard(
       `Failed to move merged card "${card.name}" to Done: ${message}`,
     );
 
-    throw new WorkflowError(
+    const reconciliationError = new WorkflowError(
       "Workflow",
       `Could not complete merged Human Review card: ${message}`,
       { cause: error },
     );
+
+    annotateCardFailure(reconciliationError, project.id, card.id);
+    throw reconciliationError;
   }
 
   if (signal?.aborted) {
@@ -447,11 +488,14 @@ async function failClosedReviewCard(
     const message = getErrorMessage(error);
     cardLog.error(`Failed to move card "${card.name}" to Failed: ${message}`);
 
-    throw new WorkflowError(
+    const reconciliationError = new WorkflowError(
       "Workflow",
       `Could not move closed Human Review card to Failed: ${message}`,
       { cause: error },
     );
+
+    annotateCardFailure(reconciliationError, project.id, card.id);
+    throw reconciliationError;
   }
 
   if (signal?.aborted) {
