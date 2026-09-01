@@ -990,7 +990,7 @@ describe("orchestrator workflow characterization", () => {
       pullRequestState: "requested",
       feedback: "Please add a regression test.",
       maxPasses: 2,
-      reviewResults: ["REVIEW_FAIL", "REVIEW_PASS"],
+      reviewResults: ["REVIEW_FAIL", "REVIEW_FAIL"],
     });
 
     try {
@@ -1011,9 +1011,15 @@ describe("orchestrator workflow characterization", () => {
         "OpenCode review",
         "OpenCode remediation",
         "OpenCode review",
+        "OpenCode remediation",
         "OpenCode commit",
       ]);
       expect(harness.card.idList).toBe(listIds.review);
+      expect(harness.push).toHaveBeenCalledWith(
+        harness.worktreePath,
+        "origin",
+        "agent/card-1",
+      );
     } finally {
       harness.cleanup();
     }

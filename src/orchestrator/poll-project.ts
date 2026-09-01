@@ -859,6 +859,13 @@ async function processCardChanges(
         );
       }
 
+      if (remediationPasses >= maxRemediationPasses) {
+        cardLog.event(
+          `Remediation pass ${remediationPasses} of ${maxRemediationPasses} reached; skipping follow-up review`,
+        );
+        break;
+      }
+
       ({ output: reviewOutput, result: parsedReviewResult } =
         await runReview());
 

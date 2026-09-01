@@ -103,11 +103,11 @@ The implementation pass then:
    orchestrator does not execute this command itself.
 4. Runs the initial separate OpenCode review session. This review is always run and does not consume a remediation pass.
 5. If a review reports findings and `projects[].opencode.remediation.maxPasses` has remaining capacity, runs one separate
-   remediation session, checks that it left repository changes, and runs one new review. The pass number and configured
-   limit are logged with the project and card context. The default limit is `1`; a value of `0` skips remediation and any
-   follow-up review while continuing through the normal post-review flow.
-6. Stops immediately when any review passes. If the limit is exhausted after a failed review, it also continues to the
-   normal post-review flow without another remediation attempt.
+   remediation session and checks that it left repository changes. The pass number and configured limit are logged with the
+   project and card context. A new review runs only when another remediation pass remains. The default limit is `1`; a value
+   of `0` skips remediation and any follow-up review while continuing through the normal post-review flow.
+6. Stops immediately when the initial or an intermediate review passes. After the final allowed remediation pass, the workflow
+   continues directly to the normal post-review flow without another automated review.
 7. Runs a separate OpenCode commit session with the configured Git identity. The session must create a commit and leave a
    clean worktree.
 8. Publishes or reuses the task pull request. With `autoMerge: false`, the card moves to `Human Review`; with `autoMerge: true`,
