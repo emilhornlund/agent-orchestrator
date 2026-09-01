@@ -35,7 +35,7 @@ type PullRequestState = "none" | "open" | "requested" | "merged";
 
 interface HarnessOptions {
   initialList?: ListName;
-  cardLabels?: string[];
+  cardLabels?: readonly string[];
   initialWorktree?: boolean;
   pullRequestState?: PullRequestState;
   feedback?: string;
@@ -111,7 +111,7 @@ function createHarness(options: HarnessOptions = {}) {
     name: "Example task",
     desc: "Implement the example task",
     idList: listIds[currentList],
-    idLabels: options.cardLabels ?? [project.trello.featureLabelId],
+    idLabels: [...(options.cardLabels ?? [project.trello.featureLabelId])],
     url: "https://trello.com/c/card-1",
   };
 
@@ -601,6 +601,54 @@ describe("orchestrator workflow characterization", () => {
     }
   });
 
+  it("keeps Done after completion delivery fails and does not repeat the transition", async () => {
+    const harness = createHarness({
+      initialList: "review",
+      pullRequestState: "merged",
+    });
+    const notifier: EmailNotifier = {
+      send: vi.fn().mockRejectedValue(new Error("SMTP unavailable")),
+    };
+
+    try {
+      await expect(
+        pollProject(
+          harness.trello,
+          harness.git,
+          harness.github,
+          harness.openCode,
+          harness.commands,
+          harness.project,
+          new AbortController().signal,
+          notifier,
+        ),
+      ).resolves.toBeUndefined();
+      await expect(
+        pollProject(
+          harness.trello,
+          harness.git,
+          harness.github,
+          harness.openCode,
+          harness.commands,
+          harness.project,
+          new AbortController().signal,
+          notifier,
+        ),
+      ).resolves.toBeUndefined();
+
+      expect(harness.card.idList).toBe(listIds.done);
+      expect(harness.moveCard).toHaveBeenCalledTimes(1);
+      expect(harness.moveCard).toHaveBeenCalledWith(
+        harness.card.id,
+        listIds.done,
+        { dueComplete: true },
+      );
+      expect(notifier.send).toHaveBeenCalledTimes(1);
+    } finally {
+      harness.cleanup();
+    }
+  });
+
   it("does not notify for a merged pull request on a card already in Done", async () => {
     const harness = createHarness({
       initialList: "done",
@@ -628,6 +676,107 @@ describe("orchestrator workflow characterization", () => {
       harness.cleanup();
     }
   });
+
+  it.each([
+    ["review", "open"],
+    ["failed", "none"],
+    ["done", "none"],
+  ] as const)(
+    "does not notify a card merely observed in %s",
+    async (initialList, pullRequestState) => {
+      const harness = createHarness({
+        initialList,
+        pullRequestState,
+      });
+      const notifier: EmailNotifier = {
+        send: vi.fn(),
+      };
+
+      try {
+        await pollProject(
+          harness.trello,
+          harness.git,
+          harness.github,
+          harness.openCode,
+          harness.commands,
+          harness.project,
+          new AbortController().signal,
+          notifier,
+        );
+        await pollProject(
+          harness.trello,
+          harness.git,
+          harness.github,
+          harness.openCode,
+          harness.commands,
+          harness.project,
+          new AbortController().signal,
+          notifier,
+        );
+
+        expect(harness.card.idList).toBe(listIds[initialList]);
+        expect(harness.moveCard).not.toHaveBeenCalled();
+        expect(notifier.send).not.toHaveBeenCalled();
+      } finally {
+        harness.cleanup();
+      }
+    },
+  );
+
+  it.each([
+    ["humanReview", {}, "review", false],
+    [
+      "failed",
+      { createPullRequestError: new Error("pull request creation failed") },
+      "failed",
+      true,
+    ],
+    [
+      "refinementComplete",
+      { cardLabels: ["refinement-label"] },
+      "backlog",
+      false,
+    ],
+    [
+      "done",
+      { initialList: "review", pullRequestState: "merged" },
+      "done",
+      false,
+    ],
+  ] as const)(
+    "skips only the disabled %s delivery while preserving its workflow",
+    async (event, options, expectedList, expectedFailure) => {
+      const harness = createHarness(options);
+      const notifier: EmailNotifier = {
+        send: vi.fn(),
+        isEventEnabled: (configuredEvent) => configuredEvent !== event,
+      };
+
+      try {
+        const polling = pollProject(
+          harness.trello,
+          harness.git,
+          harness.github,
+          harness.openCode,
+          harness.commands,
+          harness.project,
+          new AbortController().signal,
+          notifier,
+        );
+
+        if (expectedFailure) {
+          await expect(polling).rejects.toThrow("pull request creation failed");
+        } else {
+          await expect(polling).resolves.toBeUndefined();
+        }
+
+        expect(harness.card.idList).toBe(listIds[expectedList]);
+        expect(notifier.send).not.toHaveBeenCalled();
+      } finally {
+        harness.cleanup();
+      }
+    },
+  );
 
   it("applies requested changes to the existing pull request without creating another", async () => {
     const harness = createHarness({
@@ -987,6 +1136,9 @@ describe("orchestrator workflow characterization", () => {
         initialList: source,
         initialWorktree: true,
       });
+      const notifier: EmailNotifier = {
+        send: vi.fn(),
+      };
 
       try {
         harness.moveCardManually("working");
@@ -999,6 +1151,7 @@ describe("orchestrator workflow characterization", () => {
           harness.commands,
           harness.project,
           new AbortController().signal,
+          notifier,
         );
 
         expect(harness.card.idList).toBe(listIds.backlog);
@@ -1013,6 +1166,7 @@ describe("orchestrator workflow characterization", () => {
         );
         expect(harness.runOpenCode).not.toHaveBeenCalled();
         expect(harness.runCommand).not.toHaveBeenCalled();
+        expect(notifier.send).not.toHaveBeenCalled();
         expect(harness.fetch).not.toHaveBeenCalled();
         expect(harness.getCurrentBranch).not.toHaveBeenCalled();
         expect(harness.getStatus).not.toHaveBeenCalled();

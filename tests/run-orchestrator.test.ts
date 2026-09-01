@@ -237,6 +237,9 @@ describe("runOrchestrator", () => {
     const notifier: EmailNotifier = {
       send: vi.fn(),
     };
+    const trello = {
+      moveCard: vi.fn(),
+    } as unknown as TrelloClient;
     const failure = new WorkflowError(
       "Workflow",
       "Multiple active cards are in Working: card-1, card-2",
@@ -246,6 +249,7 @@ describe("runOrchestrator", () => {
       projectId: "project-a",
       cardIds: ["card-1", "card-2"],
       sessionLogPaths: ["logs/sessions/project-a/card-1.log"],
+      handlingOutcome: "project remains blocked for operator investigation",
     });
 
     pollProject.mockImplementation(
@@ -259,7 +263,7 @@ describe("runOrchestrator", () => {
     );
 
     await runOrchestrator(
-      {} as TrelloClient,
+      trello,
       {} as GitClient,
       {} as GitHubClient,
       {} as OpenCodeClient,
@@ -271,15 +275,47 @@ describe("runOrchestrator", () => {
 
     expect(notifier.send).toHaveBeenCalledWith({
       subject: "[Agent Orchestrator] Attention Required: project-a",
-      text: expect.stringContaining("Affected card IDs: card-1, card-2"),
+      text: [
+        "Event: Attention Required",
+        "Project: project-a",
+        "Failure category: Workflow",
+        "Failure reason: Multiple active cards are in Working: card-1, card-2",
+        "Affected card IDs: card-1, card-2",
+        "Session logs:",
+        "- logs/sessions/project-a/card-1.log",
+        "Failure handling: project remains blocked for operator investigation",
+        "",
+        "Project processing cannot safely continue until the failure is resolved.",
+      ].join("\n"),
     });
-    expect(notifier.send).toHaveBeenCalledWith(
-      expect.objectContaining({
-        text: expect.stringContaining(
-          "Failure reason: Multiple active cards are in Working: card-1, card-2",
-        ),
-      }),
+    expect(trello.moveCard).not.toHaveBeenCalled();
+  });
+
+  it("skips a disabled Attention Required event without changing project failure handling", async () => {
+    const controller = new AbortController();
+    const notifier: EmailNotifier = {
+      send: vi.fn(),
+      isEventEnabled: (event) => event !== "attentionRequired",
+    };
+    const failure = new WorkflowError("Git/GitHub", "GitHub unavailable");
+
+    pollProject.mockImplementation(async () => {
+      controller.abort();
+      throw failure;
+    });
+
+    await runOrchestrator(
+      {} as TrelloClient,
+      {} as GitClient,
+      {} as GitHubClient,
+      {} as OpenCodeClient,
+      {} as CommandRunner,
+      createConfig([createProject("project-a")]),
+      controller.signal,
+      notifier,
     );
+
+    expect(notifier.send).not.toHaveBeenCalled();
   });
 
   it("sends only the Failed email after card failure handling moves the card", async () => {
