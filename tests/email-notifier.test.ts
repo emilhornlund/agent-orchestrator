@@ -132,6 +132,7 @@ describe("email notifications", () => {
         commitSha: "abc123",
         reviewResult: "Passed",
         remediationResult: "Not required",
+        elapsedWorkflowTime: "1 hour 5 minutes",
         publicationContext: "Created a new pull request.",
       }),
     ).toEqual({
@@ -147,6 +148,7 @@ describe("email notifications", () => {
         "Publication context: Created a new pull request.",
         "Review result: Passed",
         "Remediation result: Not required",
+        "Elapsed workflow time: 1 hour 5 minutes",
       ].join("\n"),
     });
   });

@@ -90,12 +90,18 @@ function createPublicationGit(
 describe("publishCard", () => {
   it("sends a Human Review email only after the Trello move succeeds", async () => {
     const events: string[] = [];
+    let emailText: string | undefined;
+    let summaryText: string | undefined;
     const notifier: EmailNotifier = {
       send: vi.fn(async (message) => {
         events.push("email");
+        emailText = message.text;
         expect(message.subject).toContain("Human Review");
         expect(message.text).toContain(
           "https://github.com/example/repository/pull/123",
+        );
+        expect(message.text).toContain(
+          "Elapsed workflow time: 1 hour 5 minutes",
         );
       }),
     };
@@ -104,9 +110,23 @@ describe("publishCard", () => {
         events.push("move");
         return createCard();
       }),
-      getListTransitions: vi.fn().mockResolvedValue([]),
-      addComment: vi.fn().mockImplementation(async () => {
+      getListTransitions: vi.fn().mockResolvedValue([
+        {
+          id: "working-transition",
+          date: "2026-08-30T10:00:00.000Z",
+          listBeforeId: "ready-list",
+          listAfterId: "working-list",
+        },
+        {
+          id: "review-transition",
+          date: "2026-08-30T11:05:00.000Z",
+          listBeforeId: "working-list",
+          listAfterId: "review-list",
+        },
+      ]),
+      addComment: vi.fn().mockImplementation(async (_cardId, text) => {
         events.push("comment");
+        summaryText = text;
         return undefined;
       }),
     } as unknown as TrelloClient;
@@ -137,6 +157,8 @@ describe("publishCard", () => {
 
     expect(events).toEqual(["push", "move", "email", "comment"]);
     expect(notifier.send).toHaveBeenCalledTimes(1);
+    expect(emailText).toContain("Elapsed workflow time: 1 hour 5 minutes");
+    expect(summaryText).toContain("Elapsed workflow time: 1 hour 5 minutes");
   });
 
   it("preserves publication artifacts without advancing the card after shutdown", async () => {
@@ -1039,6 +1061,7 @@ describe("publishCard", () => {
 
   it("does not block publication when transition history cannot report a duration", async () => {
     const addComment = vi.fn().mockResolvedValue(undefined);
+    const send = vi.fn().mockResolvedValue(undefined);
     const trello = {
       moveCard: vi.fn().mockResolvedValue({
         ...createCard(),
@@ -1068,10 +1091,16 @@ describe("publishCard", () => {
         commitSha: "commit-sha",
         reviewResult: "Passed",
         remediationResult: "Not required",
+        emailNotifier: { send },
       }),
     ).resolves.toBeUndefined();
 
     expect(trello.moveCard).toHaveBeenCalledWith("card-1", "review-list");
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.not.stringContaining("Elapsed workflow time:"),
+      }),
+    );
     expect(addComment).toHaveBeenCalledWith(
       "card-1",
       expect.not.stringContaining("Elapsed workflow time:"),
