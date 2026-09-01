@@ -104,8 +104,15 @@ describe("email notifications", () => {
     );
 
     expect(notifier?.isEventEnabled?.("failed")).toBe(false);
-    expect(notifier?.isEventEnabled?.("humanReview")).toBe(true);
-    expect(notifier?.isEventEnabled?.("done")).toBe(true);
+
+    for (const event of [
+      "humanReview",
+      "refinementComplete",
+      "done",
+      "attentionRequired",
+    ] as const) {
+      expect(notifier?.isEventEnabled?.(event)).toBe(true);
+    }
   });
 
   it("rejects a missing enabled SMTP credential without exposing secret values", () => {
@@ -393,7 +400,7 @@ describe("email notifications", () => {
     ["done", notifyCompletion],
     ["attentionRequired", notifyAttentionRequired],
   ] as const)(
-    "skips the disabled %s event without attempting delivery",
+    "skips the disabled %s event without suppressing another enabled delivery",
     async (event, notify) => {
       const send = vi.fn();
       const notifier: EmailNotifier = {
@@ -466,7 +473,39 @@ describe("email notifications", () => {
         );
       }
 
-      expect(send).not.toHaveBeenCalled();
+      const enabledLog = {
+        event: vi.fn(),
+        error: vi.fn(),
+      } as unknown as Logger;
+
+      if (event === "humanReview") {
+        await notifyFailed(
+          notifier,
+          {
+            project,
+            card,
+            category: "Workflow",
+            reason: "The pull request was closed without being merged.",
+          },
+          enabledLog,
+        );
+      } else {
+        await notifyHumanReview(
+          notifier,
+          {
+            project,
+            card,
+            pullRequestUrl: "https://github.com/owner/repo/pull/42",
+            commitSha: "abc123",
+            reviewResult: "Passed",
+            remediationResult: "Not required",
+            publicationContext: "Created a new pull request.",
+          },
+          enabledLog,
+        );
+      }
+
+      expect(send).toHaveBeenCalledTimes(1);
       expect(log.event).not.toHaveBeenCalled();
       expect(log.error).not.toHaveBeenCalled();
     },
