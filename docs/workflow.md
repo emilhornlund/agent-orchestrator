@@ -23,7 +23,7 @@ Ready for Agent
         |
         +-> merged pull request ----> Done
         +-> requested changes ------> Working
-         +-> closed without merge ----> Backlog
+        +-> closed without merge ----> Backlog
 ```
 
 When `projects[].autoMerge` is `true`, the implementation branch instead follows this path after publication:
