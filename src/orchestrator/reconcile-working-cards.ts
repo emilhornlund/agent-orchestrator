@@ -4,7 +4,10 @@ import type { ProjectConfig } from "../config/config.js";
 import { cleanupWorktree } from "../git/cleanup-worktree.js";
 import { getExistingWorktree } from "../git/prepare-worktree.js";
 import type { GitClient } from "../git/git-client.js";
-import type { GitHubClient } from "../github/github-client.js";
+import type {
+  GitHubClient,
+  PullRequestState,
+} from "../github/github-client.js";
 import { logger } from "../logging/logger.js";
 import type { TrelloCard, TrelloClient } from "../trello/trello-client.js";
 import {
@@ -44,6 +47,10 @@ function isReviewChangeRequest(
   return "pullRequestUrl" in recovery;
 }
 
+function isMergedPullRequest(pullRequest: PullRequestState): boolean {
+  return pullRequest.mergedAt !== null || pullRequest.state === "MERGED";
+}
+
 export async function reconcileClaimedCard(
   trello: TrelloClient,
   git: GitClient,
@@ -64,10 +71,10 @@ export async function reconcileClaimedCard(
   });
 
   if (project.autoMerge) {
-    let mergedPullRequest;
+    let pullRequestState;
 
     try {
-      mergedPullRequest = await github.findMergedPullRequest({
+      pullRequestState = await github.findPullRequestState({
         cwd: project.repository.path,
         repository: project.repository.github,
         headBranch: branch,
@@ -80,7 +87,7 @@ export async function reconcileClaimedCard(
       const message = getErrorMessage(error);
       const reconciliationError = new WorkflowError(
         "Git/GitHub",
-        `Could not reconcile claimed Working card while checking merged pull request: ${message}`,
+        `Could not reconcile claimed Working card while checking pull request state: ${message}`,
         { cause: error },
       );
 
@@ -88,16 +95,16 @@ export async function reconcileClaimedCard(
       throw reconciliationError;
     }
 
-    if (mergedPullRequest !== null) {
+    if (pullRequestState !== null && isMergedPullRequest(pullRequestState)) {
       cardLog.event(
-        `Claimed card already has merged pull request: ${mergedPullRequest.url}`,
+        `Claimed card already has merged pull request: ${pullRequestState.url}`,
       );
 
       await completeAutoMergedCard({
         trello,
         project,
         card,
-        pullRequestUrl: mergedPullRequest.url,
+        pullRequestUrl: pullRequestState.url,
         commitSha: "Not available during reconciliation",
         reviewResult: "Not run during reconciliation",
         remediationResult: "Not run during reconciliation",
@@ -533,10 +540,10 @@ async function reconcileReadyWorkingCard(
   });
 
   if (project.autoMerge && workflow === "implementation") {
-    let mergedPullRequest;
+    let pullRequestState;
 
     try {
-      mergedPullRequest = await github.findMergedPullRequest({
+      pullRequestState = await github.findPullRequestState({
         cwd: project.repository.path,
         repository: project.repository.github,
         headBranch: branch,
@@ -549,7 +556,7 @@ async function reconcileReadyWorkingCard(
       const message = getErrorMessage(error);
       const reconciliationError = new WorkflowError(
         "Git/GitHub",
-        `Could not reconcile Working card while checking merged pull request: ${message}`,
+        `Could not reconcile Working card while checking pull request state: ${message}`,
         { cause: error },
       );
 
@@ -557,16 +564,16 @@ async function reconcileReadyWorkingCard(
       throw reconciliationError;
     }
 
-    if (mergedPullRequest !== null) {
+    if (pullRequestState !== null && isMergedPullRequest(pullRequestState)) {
       cardLog.event(
-        `Working card already has merged pull request: ${mergedPullRequest.url}`,
+        `Working card already has merged pull request: ${pullRequestState.url}`,
       );
 
       await completeAutoMergedCard({
         trello,
         project,
         card,
-        pullRequestUrl: mergedPullRequest.url,
+        pullRequestUrl: pullRequestState.url,
         commitSha: "Not available during reconciliation",
         reviewResult: "Not run during reconciliation",
         remediationResult: "Not run during reconciliation",

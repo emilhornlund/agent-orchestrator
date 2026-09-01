@@ -337,12 +337,19 @@ function createHarness(options: HarnessOptions = {}) {
 
     return pullRequestState === "none" ? null : pullRequest;
   });
-  const findMergedPullRequest = vi.fn(async () => {
-    events.push("github:find-merged-pr");
+  const findPullRequestState = vi.fn(async () => {
+    events.push("github:find-pr-state");
 
-    return pullRequestState === "merged" ? pullRequest : null;
+    if (pullRequestState === "none") {
+      return null;
+    }
+
+    return {
+      ...pullRequest,
+      state: pullRequestState === "merged" ? "MERGED" : "OPEN",
+      mergedAt: pullRequestState === "merged" ? "2026-09-01T13:42:03Z" : null,
+    };
   });
-  const findClosedPullRequest = vi.fn(async () => null);
   const findChangesRequestedPullRequest = vi.fn(async () => {
     if (pullRequestState !== "requested") {
       return null;
@@ -372,8 +379,7 @@ function createHarness(options: HarnessOptions = {}) {
   });
   const github = {
     findPullRequest,
-    findMergedPullRequest,
-    findClosedPullRequest,
+    findPullRequestState,
     findChangesRequestedPullRequest,
     createPullRequest,
     mergePullRequest,
@@ -448,8 +454,7 @@ function createHarness(options: HarnessOptions = {}) {
     getCards,
     getCurrentBranch,
     findChangesRequestedPullRequest,
-    findClosedPullRequest,
-    findMergedPullRequest,
+    findPullRequestState,
     findPullRequest,
     getLatestListTransition,
     getRemoteBranchSha,
@@ -1084,8 +1089,7 @@ describe("orchestrator workflow characterization", () => {
       expect(harness.push).not.toHaveBeenCalled();
       expect(harness.createPullRequest).not.toHaveBeenCalled();
       expect(harness.findPullRequest).not.toHaveBeenCalled();
-      expect(harness.findMergedPullRequest).not.toHaveBeenCalled();
-      expect(harness.findClosedPullRequest).not.toHaveBeenCalled();
+      expect(harness.findPullRequestState).not.toHaveBeenCalled();
       expect(harness.findChangesRequestedPullRequest).not.toHaveBeenCalled();
       expect(harness.mergePullRequest).not.toHaveBeenCalled();
       expect(harness.events).toEqual(
@@ -1292,8 +1296,7 @@ describe("orchestrator workflow characterization", () => {
         expect(harness.getChangedFiles).not.toHaveBeenCalled();
         expect(harness.getRemoteBranchSha).not.toHaveBeenCalled();
         expect(harness.findPullRequest).not.toHaveBeenCalled();
-        expect(harness.findMergedPullRequest).not.toHaveBeenCalled();
-        expect(harness.findClosedPullRequest).not.toHaveBeenCalled();
+        expect(harness.findPullRequestState).not.toHaveBeenCalled();
         expect(harness.findChangesRequestedPullRequest).not.toHaveBeenCalled();
         expect(harness.events).toEqual([
           "human:move:working-list",
