@@ -72,7 +72,7 @@ Ready for Agent
  Human Review
       │
       ├─ merged ───────────────► Done
-       │                          └─ attempt the completion email when its event is enabled
+      │                          └─ attempt the completion email when its event is enabled
       │
       ├─ changes requested ────► Working
       │                          │
