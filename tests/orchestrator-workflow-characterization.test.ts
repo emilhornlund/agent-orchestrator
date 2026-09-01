@@ -1165,7 +1165,12 @@ describe("orchestrator workflow characterization", () => {
       );
       expect(harness.addComment).toHaveBeenCalledWith(
         harness.card.id,
-        expect.stringContaining("Classification: feature"),
+        [
+          "Agent Orchestrator completed refinement.",
+          "",
+          "Classification: feature",
+          "Refined task title: Refined task",
+        ].join("\n"),
       );
       expect(harness.events.indexOf("git:prepare-worktree")).toBeLessThan(
         harness.events.indexOf("trello:move:working-list"),

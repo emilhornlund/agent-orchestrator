@@ -5,15 +5,16 @@ import type { RefinementResult } from "./refinement-result.js";
 
 export function buildRefinementCompletionComment(
   result: RefinementResult,
+  elapsedWorkflowTime?: string,
 ): string {
   return [
     "Agent Orchestrator completed refinement.",
     "",
     `Classification: ${result.type}`,
     `Refined task title: ${result.title}`,
-    "",
-    "Refined task description:",
-    result.description,
+    ...(elapsedWorkflowTime === undefined
+      ? []
+      : [`Elapsed workflow time: ${elapsedWorkflowTime}`]),
   ].join("\n");
 }
 
@@ -22,9 +23,13 @@ export async function addRefinementCompletionComment(
   card: TrelloCard,
   result: RefinementResult,
   cardLog: Logger,
+  elapsedWorkflowTime?: string,
 ): Promise<void> {
   try {
-    await trello.addComment(card.id, buildRefinementCompletionComment(result));
+    await trello.addComment(
+      card.id,
+      buildRefinementCompletionComment(result, elapsedWorkflowTime),
+    );
     cardLog.info("Trello card updated with refinement summary");
   } catch (error) {
     cardLog.error(

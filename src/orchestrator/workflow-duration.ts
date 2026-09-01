@@ -12,6 +12,13 @@ export interface WorkflowListIds {
   failedListId: string;
 }
 
+export interface RefinementWorkflowListIds {
+  readyListId: string;
+  workingListId: string;
+  failedListId: string;
+  backlogListId: string;
+}
+
 export interface AutomatedWorkflowPass {
   startTransition: TrelloListTransition;
   endTransition: TrelloListTransition;
@@ -43,13 +50,45 @@ function transitionDescription(transition: TrelloListTransition): string {
   return `${transition.listBeforeId} -> ${transition.listAfterId} (${transition.id})`;
 }
 
-export function selectAutomatedWorkflowPass(
+interface WorkflowPassSelectionOptions {
+  endListId: string;
+  endListDescription: string;
+  allowReviewStart: boolean;
+}
+
+interface WorkflowPassListIds {
+  readyListId: string;
+  workingListId: string;
+  reviewListId?: string;
+  failedListId: string;
+}
+
+function selectWorkflowPass(
   transitions: readonly TrelloListTransition[],
-  listIds: WorkflowListIds,
+  listIds: WorkflowPassListIds,
+  options: WorkflowPassSelectionOptions,
 ): WorkflowDurationResult {
   const timestampedTransitions: TimestampedTransition[] = [];
 
-  for (const transition of transitions) {
+  if (!Array.isArray(transitions)) {
+    return omitted("transition history is malformed");
+  }
+
+  for (const [index, transition] of transitions.entries()) {
+    if (
+      typeof transition !== "object" ||
+      transition === null ||
+      typeof transition.id !== "string" ||
+      transition.id.length === 0 ||
+      typeof transition.date !== "string" ||
+      typeof transition.listBeforeId !== "string" ||
+      transition.listBeforeId.length === 0 ||
+      typeof transition.listAfterId !== "string" ||
+      transition.listAfterId.length === 0
+    ) {
+      return omitted(`transition at index ${index} is malformed`);
+    }
+
     const timestamp = Date.parse(transition.date);
 
     if (Number.isNaN(timestamp)) {
@@ -81,13 +120,13 @@ export function selectAutomatedWorkflowPass(
   const endCandidates = timestampedTransitions.filter(
     ({ transition }) =>
       transition.listBeforeId === listIds.workingListId &&
-      transition.listAfterId === listIds.reviewListId,
+      transition.listAfterId === options.endListId,
   );
   const end = endCandidates.at(-1);
 
   if (end === undefined) {
     return omitted(
-      `no ${listIds.workingListId} -> ${listIds.reviewListId} transition was recorded`,
+      `no ${listIds.workingListId} -> ${options.endListId} transition was recorded`,
     );
   }
 
@@ -95,7 +134,7 @@ export function selectAutomatedWorkflowPass(
 
   if (latestTransition !== end) {
     return omitted(
-      `the latest list transition is ${transitionDescription(latestTransition?.transition ?? end.transition)}, not the resulting ${listIds.workingListId} -> ${listIds.reviewListId} transition`,
+      `the latest list transition is ${transitionDescription(latestTransition?.transition ?? end.transition)}, not the resulting ${listIds.workingListId} -> ${options.endListId} transition`,
     );
   }
 
@@ -108,7 +147,7 @@ export function selectAutomatedWorkflowPass(
 
   if (workingEntry === undefined) {
     return omitted(
-      `no transition into ${listIds.workingListId} was recorded before the resulting Human Review transition`,
+      `no transition into ${listIds.workingListId} was recorded before the resulting ${options.endListDescription} transition`,
     );
   }
 
@@ -143,9 +182,12 @@ export function selectAutomatedWorkflowPass(
     ) {
       start = previousTransition;
     }
-  } else if (workingEntry.transition.listBeforeId !== listIds.reviewListId) {
+  } else if (
+    !options.allowReviewStart ||
+    workingEntry.transition.listBeforeId !== listIds.reviewListId
+  ) {
     return omitted(
-      `the current ${listIds.workingListId} entry came from ${workingEntry.transition.listBeforeId}, not ${listIds.readyListId} or ${listIds.reviewListId}`,
+      `the current ${listIds.workingListId} entry came from ${workingEntry.transition.listBeforeId}, not ${listIds.readyListId}${options.allowReviewStart ? ` or ${listIds.reviewListId}` : ""}`,
     );
   }
 
@@ -166,6 +208,36 @@ export function selectAutomatedWorkflowPass(
   };
 }
 
+export function selectAutomatedWorkflowPass(
+  transitions: readonly TrelloListTransition[],
+  listIds: WorkflowListIds,
+): WorkflowDurationResult {
+  return selectWorkflowPass(transitions, listIds, {
+    endListId: listIds.reviewListId,
+    endListDescription: "Human Review",
+    allowReviewStart: true,
+  });
+}
+
+export function selectRefinementWorkflowPass(
+  transitions: readonly TrelloListTransition[],
+  listIds: RefinementWorkflowListIds,
+): WorkflowDurationResult {
+  return selectWorkflowPass(
+    transitions,
+    {
+      readyListId: listIds.readyListId,
+      workingListId: listIds.workingListId,
+      failedListId: listIds.failedListId,
+    },
+    {
+      endListId: listIds.backlogListId,
+      endListDescription: "Backlog",
+      allowReviewStart: false,
+    },
+  );
+}
+
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -175,6 +247,40 @@ export async function getElapsedWorkflowTime(
   project: ProjectConfig,
   cardId: string,
   cardLog: Logger,
+): Promise<string | undefined> {
+  return getElapsedWorkflowTimeForPass(trello, cardId, cardLog, (transitions) =>
+    selectAutomatedWorkflowPass(transitions, {
+      readyListId: project.trello.readyListId,
+      workingListId: project.trello.workingListId,
+      reviewListId: project.trello.reviewListId,
+      failedListId: project.trello.failedListId,
+    }),
+  );
+}
+
+export async function getElapsedRefinementWorkflowTime(
+  trello: TrelloClient,
+  project: ProjectConfig,
+  cardId: string,
+  cardLog: Logger,
+): Promise<string | undefined> {
+  return getElapsedWorkflowTimeForPass(trello, cardId, cardLog, (transitions) =>
+    selectRefinementWorkflowPass(transitions, {
+      readyListId: project.trello.readyListId,
+      workingListId: project.trello.workingListId,
+      failedListId: project.trello.failedListId,
+      backlogListId: project.trello.backlogListId,
+    }),
+  );
+}
+
+async function getElapsedWorkflowTimeForPass(
+  trello: TrelloClient,
+  cardId: string,
+  cardLog: Logger,
+  selectPass: (
+    transitions: readonly TrelloListTransition[],
+  ) => WorkflowDurationResult,
 ): Promise<string | undefined> {
   try {
     if (typeof trello.getListTransitions !== "function") {
@@ -189,12 +295,7 @@ export async function getElapsedWorkflowTime(
       );
     }
 
-    const duration = selectAutomatedWorkflowPass(transitions, {
-      readyListId: project.trello.readyListId,
-      workingListId: project.trello.workingListId,
-      reviewListId: project.trello.reviewListId,
-      failedListId: project.trello.failedListId,
-    });
+    const duration = selectPass(transitions);
 
     if (duration.pass === null) {
       throw new Error(duration.reason);

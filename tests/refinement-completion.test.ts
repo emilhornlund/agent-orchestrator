@@ -7,23 +7,45 @@ import {
 } from "../src/refinement/refinement-completion.js";
 import type { TrelloClient } from "../src/trello/trello-client.js";
 
-const result = {
-  title: "Add inventory support",
-  type: "improvement" as const,
-  description: "# Add inventory support\n\nImprove inventory handling.",
-};
+function createResult(type: "feature" | "improvement" | "bug") {
+  return {
+    title: "Add inventory support",
+    type,
+    description: "# Add inventory support\n\nImprove inventory handling.",
+  };
+}
 
 describe("refinement completion", () => {
-  it("builds a summary comment with the classification and refined task", () => {
-    expect(buildRefinementCompletionComment(result)).toBe(
+  it.each(["feature", "improvement", "bug"] as const)(
+    "builds a concise %s summary comment",
+    (type) => {
+      const result = createResult(type);
+
+      expect(buildRefinementCompletionComment(result, "1 hour 5 minutes")).toBe(
+        [
+          "Agent Orchestrator completed refinement.",
+          "",
+          `Classification: ${type}`,
+          "Refined task title: Add inventory support",
+          "Elapsed workflow time: 1 hour 5 minutes",
+        ].join("\n"),
+      );
+      expect(
+        buildRefinementCompletionComment(result, "1 hour 5 minutes"),
+      ).not.toContain("Refined task description:");
+      expect(
+        buildRefinementCompletionComment(result, "1 hour 5 minutes"),
+      ).not.toContain(result.description);
+    },
+  );
+
+  it("omits elapsed workflow time when it is unavailable", () => {
+    expect(buildRefinementCompletionComment(createResult("improvement"))).toBe(
       [
         "Agent Orchestrator completed refinement.",
         "",
         "Classification: improvement",
         "Refined task title: Add inventory support",
-        "",
-        "Refined task description:",
-        "# Add inventory support\n\nImprove inventory handling.",
       ].join("\n"),
     );
   });
@@ -47,8 +69,9 @@ describe("refinement completion", () => {
         idLabels: ["refinement"],
         url: "https://trello.example/card-1",
       },
-      result,
+      createResult("improvement"),
       cardLog as unknown as Logger,
+      "5 seconds",
     );
 
     expect(cardLog.error).toHaveBeenCalledWith(

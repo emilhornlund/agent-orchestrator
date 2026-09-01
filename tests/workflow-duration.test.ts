@@ -1,12 +1,20 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   formatWorkflowDuration,
+  getElapsedRefinementWorkflowTime,
+  selectRefinementWorkflowPass,
   selectAutomatedWorkflowPass,
 } from "../src/orchestrator/workflow-duration.js";
-import type { TrelloListTransition } from "../src/trello/trello-client.js";
+import type { Logger } from "../src/logging/logger.js";
+import type { ProjectConfig } from "../src/config/config.js";
+import type {
+  TrelloClient,
+  TrelloListTransition,
+} from "../src/trello/trello-client.js";
 
 const listIds = {
+  backlog: "backlog",
   ready: "ready",
   working: "working",
   review: "review",
@@ -28,6 +36,15 @@ function select(transitions: TrelloListTransition[]) {
     workingListId: listIds.working,
     reviewListId: listIds.review,
     failedListId: listIds.failed,
+  });
+}
+
+function selectRefinement(transitions: TrelloListTransition[]) {
+  return selectRefinementWorkflowPass(transitions, {
+    readyListId: listIds.ready,
+    workingListId: listIds.working,
+    failedListId: listIds.failed,
+    backlogListId: listIds.backlog,
   });
 }
 
@@ -289,6 +306,202 @@ describe("selectAutomatedWorkflowPass", () => {
       }),
     );
   });
+});
+
+describe("selectRefinementWorkflowPass", () => {
+  it("selects the initial Ready for Agent to Backlog refinement pass", () => {
+    const result = selectRefinement([
+      transition(
+        "end",
+        listIds.working,
+        listIds.backlog,
+        "2026-08-30T11:01:01.000Z",
+      ),
+      transition(
+        "start",
+        listIds.ready,
+        listIds.working,
+        "2026-08-30T10:00:00.000Z",
+      ),
+    ]);
+
+    expect(result).toEqual({
+      pass: {
+        startTransition: expect.objectContaining({ id: "start" }),
+        endTransition: expect.objectContaining({ id: "end" }),
+        durationMilliseconds: 3_661_000,
+      },
+    });
+  });
+
+  it("starts a retried refinement pass at Failed to Ready for Agent", () => {
+    const result = selectRefinement([
+      transition(
+        "first-start",
+        listIds.ready,
+        listIds.working,
+        "2026-08-30T09:00:00.000Z",
+      ),
+      transition(
+        "failed",
+        listIds.working,
+        listIds.failed,
+        "2026-08-30T09:30:00.000Z",
+      ),
+      transition(
+        "retry-ready",
+        listIds.failed,
+        listIds.ready,
+        "2026-08-30T12:00:00.000Z",
+      ),
+      transition(
+        "retry-start",
+        listIds.ready,
+        listIds.working,
+        "2026-08-30T12:05:00.000Z",
+      ),
+      transition(
+        "end",
+        listIds.working,
+        listIds.backlog,
+        "2026-08-30T13:00:00.000Z",
+      ),
+    ]);
+
+    expect(result).toEqual({
+      pass: {
+        startTransition: expect.objectContaining({ id: "retry-ready" }),
+        endTransition: expect.objectContaining({ id: "end" }),
+        durationMilliseconds: 3_600_000,
+      },
+    });
+  });
+});
+
+describe("getElapsedRefinementWorkflowTime", () => {
+  const project = {
+    trello: {
+      readyListId: listIds.ready,
+      workingListId: listIds.working,
+      failedListId: listIds.failed,
+      backlogListId: listIds.backlog,
+    },
+  } as ProjectConfig;
+
+  it("formats a valid refinement duration using the workflow duration units", async () => {
+    const trello = {
+      getListTransitions: vi
+        .fn()
+        .mockResolvedValue([
+          transition(
+            "start",
+            listIds.ready,
+            listIds.working,
+            "2026-08-30T10:00:00.000Z",
+          ),
+          transition(
+            "end",
+            listIds.working,
+            listIds.backlog,
+            "2026-08-31T11:01:01.000Z",
+          ),
+        ]),
+    };
+
+    await expect(
+      getElapsedRefinementWorkflowTime(
+        trello as unknown as TrelloClient,
+        project,
+        "card-1",
+        { warn: vi.fn() } as unknown as Logger,
+      ),
+    ).resolves.toBe("1 day 1 hour 1 minute 1 second");
+  });
+
+  it.each([
+    {
+      name: "missing history",
+      history: [],
+      reason: "no working -> backlog transition",
+    },
+    {
+      name: "incomplete history",
+      history: null,
+      reason: "incomplete list transition",
+    },
+    {
+      name: "malformed history",
+      history: [
+        {
+          id: "malformed",
+          date: "2026-08-30T10:00:00.000Z",
+          listBeforeId: listIds.ready,
+        } as unknown as TrelloListTransition,
+      ],
+      reason: "malformed",
+    },
+    {
+      name: "ambiguous history",
+      history: [
+        transition(
+          "start-one",
+          listIds.ready,
+          listIds.working,
+          "2026-08-30T10:00:00.000Z",
+        ),
+        transition(
+          "start-two",
+          listIds.backlog,
+          listIds.working,
+          "2026-08-30T10:00:00.000Z",
+        ),
+        transition(
+          "end",
+          listIds.working,
+          listIds.backlog,
+          "2026-08-30T11:00:00.000Z",
+        ),
+      ],
+      reason: "ambiguous",
+    },
+    {
+      name: "invalid date ordering",
+      history: [
+        transition(
+          "end",
+          listIds.working,
+          listIds.backlog,
+          "2026-08-30T10:00:00.000Z",
+        ),
+        transition(
+          "start",
+          listIds.ready,
+          listIds.working,
+          "2026-08-30T11:00:00.000Z",
+        ),
+      ],
+      reason: "latest list transition",
+    },
+  ] as const)(
+    "omits duration for $name and logs the reason",
+    async ({ history, reason }) => {
+      const warn = vi.fn();
+      const trello = {
+        getListTransitions: vi.fn().mockResolvedValue(history),
+      };
+
+      await expect(
+        getElapsedRefinementWorkflowTime(
+          trello as unknown as TrelloClient,
+          project,
+          "card-1",
+          { warn } as unknown as Logger,
+        ),
+      ).resolves.toBeUndefined();
+
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining(reason));
+    },
+  );
 });
 
 describe("formatWorkflowDuration", () => {
