@@ -4,7 +4,11 @@ import tls from "node:tls";
 
 import nodemailer from "nodemailer";
 
-import type { EmailMessage, EmailNotifier } from "./email-notifier.js";
+import type {
+  EmailMessage,
+  EmailNotificationEvent,
+  EmailNotifier,
+} from "./email-notifier.js";
 
 type SmtpSocket = net.Socket | tls.TLSSocket;
 
@@ -22,6 +26,7 @@ export interface SmtpEmailNotifierOptions {
   username: string;
   password: string;
   timeoutMilliseconds: number;
+  events?: Partial<Record<EmailNotificationEvent, boolean | undefined>>;
   tls?: ConnectionOptions;
   signal?: AbortSignal;
 }
@@ -59,6 +64,10 @@ function deliveryError(
 
 export class SmtpEmailNotifier implements EmailNotifier {
   constructor(private readonly options: SmtpEmailNotifierOptions) {}
+
+  isEventEnabled(event: EmailNotificationEvent): boolean {
+    return this.options.events?.[event] ?? true;
+  }
 
   async send(message: EmailMessage): Promise<void> {
     if (this.options.signal?.aborted) {

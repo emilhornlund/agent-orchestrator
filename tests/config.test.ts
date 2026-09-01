@@ -137,6 +137,68 @@ workflow:`,
     });
   });
 
+  it("accepts all email notification event settings", () => {
+    const raw = validConfig.replace(
+      "\nworkflow:",
+      `
+notifications:
+  email:
+    enabled: true
+    events:
+      humanReview: false
+      failed: true
+      refinementComplete: false
+      done: true
+      attentionRequired: false
+    recipients:
+      - "reviewers@example.com"
+    from: "agent-orchestrator@example.com"
+    smtp:
+      host: "smtp.example.com"
+      port: 465
+      secure: true
+      usernameEnv: "SMTP_USERNAME"
+      passwordEnv: "SMTP_PASSWORD"
+
+workflow:`,
+    );
+
+    expect(parseConfig(raw).notifications?.email?.events).toEqual({
+      humanReview: false,
+      failed: true,
+      refinementComplete: false,
+      done: true,
+      attentionRequired: false,
+    });
+  });
+
+  it("accepts partial email notification event settings", () => {
+    const raw = validConfig.replace(
+      "\nworkflow:",
+      `
+notifications:
+  email:
+    enabled: true
+    events:
+      failed: false
+    recipients:
+      - "reviewers@example.com"
+    from: "agent-orchestrator@example.com"
+    smtp:
+      host: "smtp.example.com"
+      port: 465
+      secure: true
+      usernameEnv: "SMTP_USERNAME"
+      passwordEnv: "SMTP_PASSWORD"
+
+workflow:`,
+    );
+
+    expect(parseConfig(raw).notifications?.email?.events).toEqual({
+      failed: false,
+    });
+  });
+
   it("accepts disabled email notifications without SMTP settings", () => {
     const raw = validConfig.replace(
       "\nworkflow:",
@@ -150,6 +212,32 @@ workflow:`,
 
     expect(parseConfig(raw).notifications?.email).toEqual({ enabled: false });
   });
+
+  it.each([
+    [
+      "non-boolean",
+      '      humanReview: "yes"',
+      "notifications.email.events.humanReview",
+    ],
+    ["unknown", "      unexpected: false", "notifications.email.events"],
+  ])(
+    "rejects an %s email notification event setting",
+    (_label, event, location) => {
+      const raw = validConfig.replace(
+        "\nworkflow:",
+        `
+notifications:
+  email:
+    enabled: false
+    events:
+${event}
+
+workflow:`,
+      );
+
+      expect(() => parseConfig(raw)).toThrow(location);
+    },
+  );
 
   it.each([
     [

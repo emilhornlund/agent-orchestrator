@@ -92,6 +92,13 @@ projects:
 notifications:
   email:
     enabled: false
+    # Omitted events default to true when email is enabled.
+    events:
+      humanReview: true
+      failed: true
+      refinementComplete: true
+      done: true
+      attentionRequired: true
     recipients:
       - "reviewers@example.com"
     from: "agent-orchestrator@example.com"

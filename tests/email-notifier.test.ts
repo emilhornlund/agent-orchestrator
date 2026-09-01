@@ -14,6 +14,7 @@ import {
   notifyFailed,
   notifyHumanReview,
   notifyRefinementCompletion,
+  type EmailNotifier,
 } from "../src/notifications/email-notifier.js";
 import type { TrelloCard } from "../src/trello/trello-client.js";
 
@@ -45,8 +46,38 @@ describe("email notifications", () => {
   it("does not create a notifier when email notifications are omitted or disabled", () => {
     expect(createEmailNotifier(undefined, {})).toBeUndefined();
     expect(
-      createEmailNotifier({ enabled: false }, {} as NodeJS.ProcessEnv),
+      createEmailNotifier(
+        {
+          enabled: false,
+          events: {
+            humanReview: false,
+            failed: false,
+            refinementComplete: false,
+            done: false,
+            attentionRequired: false,
+          },
+        },
+        {} as NodeJS.ProcessEnv,
+      ),
     ).toBeUndefined();
+  });
+
+  it("retains SMTP validation when all email events are disabled", () => {
+    expect(() =>
+      createEmailNotifier(
+        {
+          enabled: true,
+          events: {
+            humanReview: false,
+            failed: false,
+            refinementComplete: false,
+            done: false,
+            attentionRequired: false,
+          },
+        },
+        {},
+      ),
+    ).toThrow("notifications.email.recipients");
   });
 
   it("creates an SMTP notifier with valid settings and environment secrets", () => {
@@ -56,6 +87,25 @@ describe("email notifications", () => {
         SMTP_PASSWORD: "smtp-password",
       }),
     ).toBeDefined();
+  });
+
+  it("applies configured event settings while defaulting omitted events to enabled", () => {
+    const notifier = createEmailNotifier(
+      {
+        ...emailConfig,
+        events: {
+          failed: false,
+        },
+      },
+      {
+        SMTP_USERNAME: "smtp-user",
+        SMTP_PASSWORD: "smtp-password",
+      },
+    );
+
+    expect(notifier?.isEventEnabled?.("failed")).toBe(false);
+    expect(notifier?.isEventEnabled?.("humanReview")).toBe(true);
+    expect(notifier?.isEventEnabled?.("done")).toBe(true);
   });
 
   it("rejects a missing enabled SMTP credential without exposing secret values", () => {
@@ -335,6 +385,92 @@ describe("email notifications", () => {
     expect(cardLog.event).not.toHaveBeenCalled();
     expect(cardLog.error).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["humanReview", notifyHumanReview],
+    ["failed", notifyFailed],
+    ["refinementComplete", notifyRefinementCompletion],
+    ["done", notifyCompletion],
+    ["attentionRequired", notifyAttentionRequired],
+  ] as const)(
+    "skips the disabled %s event without attempting delivery",
+    async (event, notify) => {
+      const send = vi.fn();
+      const notifier: EmailNotifier = {
+        send,
+        isEventEnabled: (configuredEvent) => configuredEvent !== event,
+      };
+      const log = {
+        event: vi.fn(),
+        error: vi.fn(),
+      } as unknown as Logger;
+
+      if (event === "humanReview") {
+        await notify(
+          notifier,
+          {
+            project,
+            card,
+            pullRequestUrl: "https://github.com/owner/repo/pull/42",
+            commitSha: "abc123",
+            reviewResult: "Passed",
+            remediationResult: "Not required",
+            publicationContext: "Created a new pull request.",
+          },
+          log,
+        );
+      } else if (event === "failed") {
+        await notify(
+          notifier,
+          {
+            project,
+            card,
+            category: "Workflow",
+            reason: "The pull request was closed without being merged.",
+          },
+          log,
+        );
+      } else if (event === "refinementComplete") {
+        await notify(
+          notifier,
+          {
+            project,
+            card,
+            result: {
+              title: "Add inventory support",
+              type: "feature",
+              description: "Refined task content",
+            },
+          },
+          log,
+        );
+      } else if (event === "done") {
+        await notify(
+          notifier,
+          {
+            project,
+            card,
+            pullRequestUrl: "https://github.com/owner/repo/pull/42",
+          },
+          log,
+        );
+      } else {
+        await notify(
+          notifier,
+          {
+            project,
+            category: "Workflow",
+            reason: "Project state is ambiguous",
+          },
+          log,
+        );
+      }
+
+      expect(send).not.toHaveBeenCalled();
+      expect(log.event).not.toHaveBeenCalled();
+      expect(log.error).not.toHaveBeenCalled();
+    },
+  );
 
   it("isolates completion delivery failures", async () => {
     const notifier = {

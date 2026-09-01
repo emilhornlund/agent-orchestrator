@@ -41,7 +41,7 @@ Ready for Agent + Refinement
       ├─ update the Trello card title and description
       ├─ replace Refinement with exactly one of Feature / Improvement / Bug
       ├─ move the card to Backlog
-      ├─ attempt the refinement completion email when enabled
+      ├─ attempt the refinement completion email when its event is enabled
       ├─ add a refined-result summary comment
       ├─ clean up the refinement worktree
       │
@@ -72,7 +72,7 @@ Ready for Agent
  Human Review
       │
       ├─ merged ───────────────► Done
-      │                          └─ attempt the completion email when enabled
+      │                          └─ attempt the completion email when its event is enabled
       │
       ├─ changes requested ────► Working
       │                          │
@@ -148,6 +148,13 @@ them, add this top-level configuration:
 notifications:
   email:
     enabled: true
+    # Every event defaults to true when omitted.
+    events:
+      humanReview: true
+      failed: true
+      refinementComplete: true
+      done: true
+      attentionRequired: true
     recipients:
       - "reviewers@example.com"
     from: "agent-orchestrator@example.com"
@@ -165,6 +172,20 @@ notifications:
 `passwordEnv` are the names of environment variables containing the SMTP credentials. The default `timeoutSeconds` is `30`,
 and each notification makes one bounded delivery attempt without automatic retries.
 
+The optional `events` map controls each existing email type independently. Every event defaults to enabled when it is omitted,
+including when only some event settings are provided:
+
+- `humanReview` — sent after a successful transition into `Human Review` from publication or reconciliation.
+- `failed` — sent after a successful transition into `Failed` from automated failure handling or a closed, unmerged pull request.
+- `refinementComplete` — sent after a successful refinement transition into `Backlog`.
+- `done` — the existing `Completed` email sent after a merged pull request successfully transitions the card into `Done`.
+- `attentionRequired` — sent for the existing project-level failure path when processing cannot safely continue.
+
+`enabled: false` (or an omitted `notifications.email` section) is the master override: it suppresses all five events and does not
+require SMTP credentials. When an individual event is `false`, only that email delivery attempt is skipped; Trello moves, comments,
+workflow state, polling, reconciliation, and other enabled emails are unchanged. Event keys and values are validated strictly at
+startup.
+
 Set the referenced credentials in the ignored `.env` file or another secure runtime environment. Never put SMTP passwords,
 API keys, or tokens in `config.yaml` or source control. Enabled settings and referenced environment variables are validated
 at startup with field-specific errors; omitted or disabled settings require no SMTP credentials.
@@ -179,8 +200,8 @@ project, card, Trello URL, and merged pull-request URL. Failed messages include 
 and reason, and the deliberate retry instruction. Refinement completion messages include the project, card, Trello URL, classification, refined
 title, and refined task description.
 
-When a project poll or reconciliation fails before a single card's normal `Failed` handling completes, the orchestrator also
-attempts an `Attention Required` email. This includes ambiguous project state, such as multiple recoverable cards in
+When a project poll or reconciliation fails before a single card's normal `Failed` handling completes, the enabled
+`Attention Required` event is attempted. This includes ambiguous project state, such as multiple recoverable cards in
 `Working` or multiple active cards in `Human Review`, and unreconciled workflow-state or external-operation failures. These
 messages contain the project ID, failure category and reason, all affected card IDs, available session-log paths, and any
 failure-handling outcome. They are not sent for shutdown cancellation or for a card failure that was already moved to `Failed`
@@ -196,8 +217,8 @@ still added after a successful refinement.
 
 An `Attention Required` email is diagnostic only. It does not correct or retry cards, and the ambiguous or otherwise unsafe
 workflow state remains available for operator investigation and the next reconciliation cycle. Disabling or omitting
-`notifications.email` suppresses these alerts as well as the existing Human Review, Failed, merged-completion, and
-refinement-completion emails; logging and workflow behavior are unchanged.
+`notifications.email` suppresses all of these alerts and event emails; individual `events` settings suppress only their
+corresponding delivery while logging and workflow behavior remain unchanged.
 
 ### Pull request feedback loop
 
@@ -602,6 +623,10 @@ defaults to `360` when omitted.
 
 Optional global email notification settings shared by all projects. Omit this section, or set `enabled: false`, to disable
 delivery without requiring SMTP configuration.
+
+The optional `events` map contains boolean controls for `humanReview`, `failed`, `refinementComplete`, `done`, and
+`attentionRequired`. Each omitted event defaults to `true`. Unknown event keys and non-boolean values are rejected at startup.
+See [Optional email notifications](#optional-email-notifications) for the event meanings and delivery boundaries.
 
 When `enabled: true`, the following fields are required:
 
