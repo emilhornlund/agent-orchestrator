@@ -14,10 +14,7 @@ import {
 
 import { toFailureError } from "./failure-diagnostic.js";
 import { PublishedCardStateError } from "./published-card-state-error.js";
-import {
-  formatWorkflowDuration,
-  selectAutomatedWorkflowPass,
-} from "./workflow-duration.js";
+import { getElapsedWorkflowTime } from "./workflow-duration.js";
 import { WorkflowError } from "./workflow-error.js";
 
 export interface PublishCardOptions {
@@ -37,44 +34,6 @@ export interface PublishCardOptions {
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-async function getElapsedWorkflowLine(
-  trello: TrelloClient,
-  project: ProjectConfig,
-  cardId: string,
-  cardLog: ReturnType<typeof logger.child>,
-): Promise<string | undefined> {
-  try {
-    if (typeof trello.getListTransitions !== "function") {
-      throw new Error("Trello client does not provide list transition history");
-    }
-
-    const transitions = await trello.getListTransitions(cardId);
-
-    if (transitions === null) {
-      throw new Error(
-        "Trello action history contains an incomplete list transition",
-      );
-    }
-
-    const duration = selectAutomatedWorkflowPass(transitions, {
-      readyListId: project.trello.readyListId,
-      workingListId: project.trello.workingListId,
-      reviewListId: project.trello.reviewListId,
-      failedListId: project.trello.failedListId,
-    });
-
-    if (duration.pass === null) {
-      throw new Error(duration.reason);
-    }
-
-    return `Elapsed workflow time: ${formatWorkflowDuration(duration.pass.durationMilliseconds)}`;
-  } catch (error) {
-    cardLog.warn(`Elapsed workflow time omitted: ${getErrorMessage(error)}`);
-
-    return undefined;
-  }
 }
 
 export async function publishCard({
@@ -265,6 +224,13 @@ export async function publishCard({
 
   cardLog.event("Trello card moved to Human Review");
 
+  const elapsedWorkflowTime = await getElapsedWorkflowTime(
+    trello,
+    project,
+    card.id,
+    cardLog,
+  );
+
   await notifyHumanReview(
     emailNotifier,
     {
@@ -274,16 +240,10 @@ export async function publishCard({
       commitSha: publishedCommitSha,
       reviewResult,
       remediationResult,
+      ...(elapsedWorkflowTime === undefined ? {} : { elapsedWorkflowTime }),
       publicationContext:
         "The pull request was published and the card was moved to Human Review by the implementation workflow.",
     },
-    cardLog,
-  );
-
-  const elapsedWorkflowLine = await getElapsedWorkflowLine(
-    trello,
-    project,
-    card.id,
     cardLog,
   );
 
@@ -294,7 +254,9 @@ export async function publishCard({
     `Commit: ${publishedCommitSha}`,
     `Review: ${reviewResult}`,
     `Remediation: ${remediationResult}`,
-    ...(elapsedWorkflowLine === undefined ? [] : [elapsedWorkflowLine]),
+    ...(elapsedWorkflowTime === undefined
+      ? []
+      : [`Elapsed workflow time: ${elapsedWorkflowTime}`]),
   ].join("\n");
 
   try {

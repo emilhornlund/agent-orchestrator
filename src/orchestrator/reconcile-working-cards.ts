@@ -19,6 +19,7 @@ import {
   getExistingSessionLogPath,
 } from "./failure-diagnostic.js";
 import type { ReviewChangeRequest } from "./reconcile-review-cards.js";
+import { getElapsedWorkflowTime } from "./workflow-duration.js";
 import { getWorkflowKind, type WorkflowKind } from "./workflow-kind.js";
 import { WorkflowError } from "./workflow-error.js";
 
@@ -113,6 +114,17 @@ export async function reconcileClaimedCard(
     return true;
   }
 
+  const elapsedWorkflowTime = await getElapsedWorkflowTime(
+    trello,
+    project,
+    card.id,
+    cardLog,
+  );
+
+  if (signal?.aborted) {
+    return true;
+  }
+
   await notifyHumanReview(
     emailNotifier,
     {
@@ -122,6 +134,7 @@ export async function reconcileClaimedCard(
       commitSha: "Not available during reconciliation",
       reviewResult: "Not run during reconciliation",
       remediationResult: "Not run during reconciliation",
+      ...(elapsedWorkflowTime === undefined ? {} : { elapsedWorkflowTime }),
       publicationContext:
         "An existing pull request was found during reconciliation and the claimed card was moved directly to Human Review.",
     },
@@ -512,6 +525,17 @@ async function reconcileReadyWorkingCard(
     return null;
   }
 
+  const elapsedWorkflowTime = await getElapsedWorkflowTime(
+    trello,
+    project,
+    card.id,
+    cardLog,
+  );
+
+  if (signal?.aborted) {
+    return null;
+  }
+
   await notifyHumanReview(
     emailNotifier,
     {
@@ -521,6 +545,7 @@ async function reconcileReadyWorkingCard(
       commitSha: "Not available during reconciliation",
       reviewResult: "Not run during reconciliation",
       remediationResult: "Not run during reconciliation",
+      ...(elapsedWorkflowTime === undefined ? {} : { elapsedWorkflowTime }),
       publicationContext:
         "An existing pull request was found during reconciliation and the Working card was moved to Human Review.",
     },

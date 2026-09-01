@@ -1,4 +1,9 @@
-import type { TrelloListTransition } from "../trello/trello-client.js";
+import type { ProjectConfig } from "../config/config.js";
+import type { Logger } from "../logging/logger.js";
+import type {
+  TrelloClient,
+  TrelloListTransition,
+} from "../trello/trello-client.js";
 
 export interface WorkflowListIds {
   readyListId: string;
@@ -159,6 +164,48 @@ export function selectAutomatedWorkflowPass(
       durationMilliseconds,
     },
   };
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+export async function getElapsedWorkflowTime(
+  trello: TrelloClient,
+  project: ProjectConfig,
+  cardId: string,
+  cardLog: Logger,
+): Promise<string | undefined> {
+  try {
+    if (typeof trello.getListTransitions !== "function") {
+      throw new Error("Trello client does not provide list transition history");
+    }
+
+    const transitions = await trello.getListTransitions(cardId);
+
+    if (transitions === null) {
+      throw new Error(
+        "Trello action history contains an incomplete list transition",
+      );
+    }
+
+    const duration = selectAutomatedWorkflowPass(transitions, {
+      readyListId: project.trello.readyListId,
+      workingListId: project.trello.workingListId,
+      reviewListId: project.trello.reviewListId,
+      failedListId: project.trello.failedListId,
+    });
+
+    if (duration.pass === null) {
+      throw new Error(duration.reason);
+    }
+
+    return formatWorkflowDuration(duration.pass.durationMilliseconds);
+  } catch (error) {
+    cardLog.warn(`Elapsed workflow time omitted: ${getErrorMessage(error)}`);
+
+    return undefined;
+  }
 }
 
 function unit(value: number, singular: string, plural: string): string {

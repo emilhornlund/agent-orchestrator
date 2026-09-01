@@ -32,6 +32,7 @@ export interface HumanReviewNotificationDetails {
   commitSha: string;
   reviewResult: string;
   remediationResult: string;
+  elapsedWorkflowTime?: string;
   publicationContext: string;
 }
 
@@ -82,6 +83,9 @@ export function buildHumanReviewEmail(
       `Publication context: ${details.publicationContext}`,
       `Review result: ${details.reviewResult}`,
       `Remediation result: ${details.remediationResult}`,
+      ...(details.elapsedWorkflowTime === undefined
+        ? []
+        : [`Elapsed workflow time: ${details.elapsedWorkflowTime}`]),
     ].join("\n"),
   };
 }

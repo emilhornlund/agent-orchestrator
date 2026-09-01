@@ -115,7 +115,8 @@ notifications, and the Trello summary. The configured source checkout is not use
 
 An existing open pull request is reused; a new one is created only when none exists. A successful publication moves the card
 to `Human Review` and adds a Trello summary with the pull-request URL, commit, review result, remediation result, and, when
-available, elapsed workflow time. A publication failure does not produce a successful card transition.
+available, elapsed workflow time. The Human Review email includes the same elapsed workflow time when reliable transition
+history is available. A publication failure does not produce a successful card transition.
 
 ## Human review
 

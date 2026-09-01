@@ -43,8 +43,8 @@ resolved. A human must review and merge the pull request before the card can rea
 
 ## Elapsed workflow time
 
-When an implementation card is successfully published and moved to `Human Review`, its Trello success comment can contain a
-line such as:
+When an implementation card is successfully published and moved to `Human Review`, its Trello success comment and Human
+Review email can contain a line such as:
 
 ```text
 Elapsed workflow time: 1 hour 5 minutes
@@ -58,7 +58,8 @@ This is elapsed workflow time for the current automated pass, not OpenCode-only 
 
 It ends at that pass's resulting `Working` to `Human Review` transition. The value uses explicit seconds, minutes, hours,
 and days as needed. If Trello action history is missing, incomplete, malformed, ambiguous, or has invalid date ordering, the
-summary is still attempted and the card remains in `Human Review`; the elapsed-time line is omitted and the reason is logged.
+summary and Human Review email are still attempted and the card remains in `Human Review`; the elapsed-time line is omitted
+and the reason is logged.
 
 ## Notifications
 
@@ -77,11 +78,12 @@ When enabled, each event is attempted once after its corresponding successful tr
 
 The service does not notify for cards merely observed in `Human Review`, `Failed`, or `Done`, unrelated list transitions, or
 repeated polling of an already completed transition. Human Review messages include project, card, Trello URL, pull-request
-URL, commit/publication context, review result, and remediation result. Completion messages include project, card, Trello
-URL, and merged pull-request URL. Failed messages include project, card, Trello URL, failure category and reason, plus the
-deliberate retry instruction. Refinement messages include project, card, Trello URL, classification, refined title, and
-refined description. Attention Required messages include the project, failure category and reason, affected card IDs when
-available, session-log paths when available, and failure-handling outcome when available.
+URL, commit/publication context, review result, remediation result, and, when reliable history is available, the elapsed
+workflow time. Completion messages include project, card, Trello URL, and merged pull-request URL. Failed messages include
+project, card, Trello URL, failure category and reason, plus the deliberate retry instruction. Refinement messages include
+project, card, Trello URL, classification, refined title, and refined description. Attention Required messages include the
+project, failure category and reason, affected card IDs when available, session-log paths when available, and
+failure-handling outcome when available.
 
 `Attention Required` is diagnostic only. It does not correct or retry cards, and an ambiguous or otherwise unsafe state stays
 available for operator investigation and the next reconciliation cycle. It is not sent for shutdown cancellation or for a
