@@ -4,6 +4,8 @@ import { prepareWorktree } from "../git/prepare-worktree.js";
 import { logger } from "../logging/logger.js";
 import { type TrelloCard, type TrelloClient } from "../trello/trello-client.js";
 
+import { annotateCardFailure, annotateFailure } from "./failure-diagnostic.js";
+
 type Project = Config["projects"][number];
 
 export interface ClaimedRefinementCard {
@@ -21,7 +23,17 @@ export async function claimNextRefinementCard(
     return null;
   }
 
-  const cards = await trello.getCards(project.trello.readyListId);
+  let cards: TrelloCard[];
+
+  try {
+    cards = await trello.getCards(project.trello.readyListId);
+  } catch (error) {
+    if (error instanceof Error) {
+      annotateFailure(error, { projectId: project.id });
+    }
+
+    throw error;
+  }
 
   for (const candidate of cards) {
     if (signal?.aborted) {
@@ -32,16 +44,36 @@ export async function claimNextRefinementCard(
       continue;
     }
 
-    const worktree = await prepareWorktree(git, project, candidate.id);
+    let worktree;
+
+    try {
+      worktree = await prepareWorktree(git, project, candidate.id);
+    } catch (error) {
+      if (error instanceof Error) {
+        annotateCardFailure(error, project.id, candidate.id);
+      }
+
+      throw error;
+    }
 
     if (signal?.aborted) {
       return null;
     }
 
-    const claimedCard = await trello.moveCard(
-      candidate.id,
-      project.trello.workingListId,
-    );
+    let claimedCard;
+
+    try {
+      claimedCard = await trello.moveCard(
+        candidate.id,
+        project.trello.workingListId,
+      );
+    } catch (error) {
+      if (error instanceof Error) {
+        annotateCardFailure(error, project.id, candidate.id);
+      }
+
+      throw error;
+    }
 
     logger
       .child({ projectId: project.id, cardId: candidate.id })

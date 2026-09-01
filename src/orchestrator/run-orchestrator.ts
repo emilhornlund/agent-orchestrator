@@ -6,7 +6,10 @@ import {
   logRetentionIntervalMilliseconds,
 } from "../logging/log-retention.js";
 import { logger } from "../logging/logger.js";
-import type { EmailNotifier } from "../notifications/email-notifier.js";
+import {
+  notifyAttentionRequired,
+  type EmailNotifier,
+} from "../notifications/email-notifier.js";
 import {
   OpenCodeRunAbortedError,
   type OpenCodeClient,
@@ -21,6 +24,7 @@ import {
 } from "../trello/trello-client.js";
 
 import {
+  describeFailure,
   formatFailureDiagnostic,
   getFailureContext,
 } from "./failure-diagnostic.js";
@@ -48,12 +52,28 @@ function sleep(milliseconds: number, signal: AbortSignal): Promise<void> {
 }
 
 function isShutdownCancellation(error: unknown, signal: AbortSignal): boolean {
-  return (
-    signal.aborted &&
-    (error instanceof OpenCodeRunAbortedError ||
-      error instanceof CommandRunAbortedError ||
-      error instanceof TrelloRequestAbortedError)
-  );
+  if (!signal.aborted) {
+    return false;
+  }
+
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+
+  while (current !== undefined && !seen.has(current)) {
+    seen.add(current);
+
+    if (
+      current instanceof OpenCodeRunAbortedError ||
+      current instanceof CommandRunAbortedError ||
+      current instanceof TrelloRequestAbortedError
+    ) {
+      return true;
+    }
+
+    current = current instanceof Error ? current.cause : undefined;
+  }
+
+  return false;
 }
 
 async function runProjectWorker(
@@ -100,29 +120,66 @@ async function runProjectWorker(
       }
 
       const failureContext = getFailureContext(error);
+      const projectLog = logger.child({
+        projectId: project.id,
+        ...(failureContext?.cardId === undefined
+          ? {}
+          : { cardId: failureContext.cardId }),
+      });
 
-      logger
-        .child({
-          projectId: project.id,
-          ...(failureContext?.cardId === undefined
+      projectLog.error(
+        formatFailureDiagnostic(
+          error,
+          failureContext === undefined
             ? {}
-            : { cardId: failureContext.cardId }),
-        })
-        .error(
-          formatFailureDiagnostic(
-            error,
-            failureContext === undefined
-              ? {}
-              : {
-                  ...(failureContext.sessionLogPath === undefined
-                    ? {}
-                    : { sessionLogPath: failureContext.sessionLogPath }),
-                  ...(failureContext.handlingOutcome === undefined
-                    ? {}
-                    : { handlingOutcome: failureContext.handlingOutcome }),
-                },
-          ),
+            : {
+                ...(failureContext.sessionLogPath === undefined
+                  ? {}
+                  : { sessionLogPath: failureContext.sessionLogPath }),
+                ...(failureContext.handlingOutcome === undefined
+                  ? {}
+                  : { handlingOutcome: failureContext.handlingOutcome }),
+              },
+        ),
+      );
+
+      const cardIds = [
+        ...(failureContext?.cardIds ?? []),
+        ...(failureContext?.cardId === undefined
+          ? []
+          : [failureContext.cardId]),
+      ].filter((cardId, index, ids) => ids.indexOf(cardId) === index);
+      const sessionLogPaths = [
+        ...(failureContext?.sessionLogPaths ?? []),
+        ...(failureContext?.sessionLogPath === undefined
+          ? []
+          : [failureContext.sessionLogPath]),
+      ].filter(
+        (sessionLogPath, index, paths) =>
+          paths.indexOf(sessionLogPath) === index,
+      );
+      const handlingOutcome = failureContext?.handlingOutcome;
+
+      const cardFailureHandled =
+        failureContext?.cardId !== undefined &&
+        handlingOutcome?.startsWith("card moved to Failed");
+
+      if (!cardFailureHandled) {
+        const failureDescription = describeFailure(error);
+
+        await notifyAttentionRequired(
+          emailNotifier,
+          {
+            project,
+            category: failureDescription.category,
+            reason: failureDescription.reason,
+            ...(cardIds.length === 0 ? {} : { cardIds }),
+            ...(sessionLogPaths.length === 0 ? {} : { sessionLogPaths }),
+            ...(handlingOutcome === undefined ? {} : { handlingOutcome }),
+          },
+          projectLog,
         );
+      }
     }
 
     await sleep(pollIntervalMilliseconds, signal);

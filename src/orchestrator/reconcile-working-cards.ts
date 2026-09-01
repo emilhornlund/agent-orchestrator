@@ -13,6 +13,11 @@ import {
 } from "../notifications/email-notifier.js";
 
 import { correctCardToBacklog } from "./correct-card-state.js";
+import {
+  annotateCardFailure,
+  annotateFailure,
+  getExistingSessionLogPath,
+} from "./failure-diagnostic.js";
 import type { ReviewChangeRequest } from "./reconcile-review-cards.js";
 import { getWorkflowKind, type WorkflowKind } from "./workflow-kind.js";
 import { WorkflowError } from "./workflow-error.js";
@@ -67,12 +72,14 @@ export async function reconcileClaimedCard(
     }
   } catch (error) {
     const message = getErrorMessage(error);
-
-    throw new WorkflowError(
+    const reconciliationError = new WorkflowError(
       "Git/GitHub",
       `Could not reconcile claimed Working card: ${message}`,
       { cause: error },
     );
+
+    annotateCardFailure(reconciliationError, project.id, card.id);
+    throw reconciliationError;
   }
 
   if (!pullRequest) {
@@ -86,7 +93,15 @@ export async function reconcileClaimedCard(
     return false;
   }
 
-  await trello.moveCard(card.id, project.trello.reviewListId);
+  try {
+    await trello.moveCard(card.id, project.trello.reviewListId);
+  } catch (error) {
+    if (error instanceof Error) {
+      annotateCardFailure(error, project.id, card.id);
+    }
+
+    throw error;
+  }
 
   if (signal?.aborted) {
     return true;
@@ -158,7 +173,17 @@ export async function reconcileWorkingCards(
     projectId: project.id,
   });
 
-  const cards = await trello.getCards(project.trello.workingListId);
+  let cards: TrelloCard[];
+
+  try {
+    cards = await trello.getCards(project.trello.workingListId);
+  } catch (error) {
+    if (error instanceof Error) {
+      annotateFailure(error, { projectId: project.id });
+    }
+
+    throw error;
+  }
 
   if (signal?.aborted) {
     return null;
@@ -177,10 +202,20 @@ export async function reconcileWorkingCards(
       return null;
     }
 
-    const transition = await trello.getLatestListTransition(
-      card.id,
-      project.trello.workingListId,
-    );
+    let transition;
+
+    try {
+      transition = await trello.getLatestListTransition(
+        card.id,
+        project.trello.workingListId,
+      );
+    } catch (error) {
+      if (error instanceof Error) {
+        annotateCardFailure(error, project.id, card.id);
+      }
+
+      throw error;
+    }
 
     if (signal?.aborted) {
       return null;
@@ -221,7 +256,17 @@ export async function reconcileWorkingCards(
         continue;
       }
 
-      const worktree = await getExistingWorktree(git, project, card.id);
+      let worktree;
+
+      try {
+        worktree = await getExistingWorktree(git, project, card.id);
+      } catch (error) {
+        if (error instanceof Error) {
+          annotateCardFailure(error, project.id, card.id);
+        }
+
+        throw error;
+      }
 
       if (signal?.aborted) {
         return null;
@@ -311,10 +356,25 @@ export async function reconcileWorkingCards(
       `Found multiple active cards in Working: ${cardIds}; blocking the project until the ambiguous state is resolved`,
     );
 
-    throw new WorkflowError(
+    const reconciliationError = new WorkflowError(
       "Workflow",
       `Multiple active cards are in Working: ${cardIds}`,
     );
+
+    annotateFailure(reconciliationError, {
+      projectId: project.id,
+      cardIds: recoverableCards.map((recovery) => recovery.card.id),
+      sessionLogPaths: recoverableCards
+        .map((recovery) =>
+          getExistingSessionLogPath(project.id, recovery.card.id),
+        )
+        .filter(
+          (sessionLogPath): sessionLogPath is string =>
+            sessionLogPath !== undefined,
+        ),
+    });
+
+    throw reconciliationError;
   }
 
   return recoverableCards[0] ?? null;
@@ -351,11 +411,14 @@ async function reconcileReadyWorkingCard(
   } catch (error) {
     const message = getErrorMessage(error);
 
-    throw new WorkflowError(
+    const reconciliationError = new WorkflowError(
       "Git/GitHub",
       `Could not reconcile Working card: ${message}`,
       { cause: error },
     );
+
+    annotateCardFailure(reconciliationError, project.id, card.id);
+    throw reconciliationError;
   }
 
   if (!pullRequest) {
@@ -398,11 +461,14 @@ async function reconcileReadyWorkingCard(
   } catch (error) {
     const message = getErrorMessage(error);
 
-    throw new WorkflowError(
+    const reconciliationError = new WorkflowError(
       "Git/GitHub",
       `Could not check requested changes for Working card: ${message}`,
       { cause: error },
     );
+
+    annotateCardFailure(reconciliationError, project.id, card.id);
+    throw reconciliationError;
   }
 
   if (changesRequestedPullRequest) {
@@ -426,11 +492,14 @@ async function reconcileReadyWorkingCard(
   } catch (error) {
     const message = getErrorMessage(error);
 
-    throw new WorkflowError(
+    const reconciliationError = new WorkflowError(
       "Workflow",
       `Could not move Working card to Human Review: ${message}`,
       { cause: error },
     );
+
+    annotateCardFailure(reconciliationError, project.id, card.id);
+    throw reconciliationError;
   }
 
   if (signal?.aborted) {
@@ -513,11 +582,14 @@ async function reconcileReviewToWorkingCard(
   } catch (error) {
     const message = getErrorMessage(error);
 
-    throw new WorkflowError(
+    const reconciliationError = new WorkflowError(
       "Git/GitHub",
       `Could not reconcile Working card moved from Human Review: ${message}`,
       { cause: error },
     );
+
+    annotateCardFailure(reconciliationError, project.id, card.id);
+    throw reconciliationError;
   }
 
   if (!pullRequest) {
@@ -551,11 +623,14 @@ async function reconcileReviewToWorkingCard(
   } catch (error) {
     const message = getErrorMessage(error);
 
-    throw new WorkflowError(
+    const reconciliationError = new WorkflowError(
       "Git/GitHub",
       `Could not check requested changes for Working card moved from Human Review: ${message}`,
       { cause: error },
     );
+
+    annotateCardFailure(reconciliationError, project.id, card.id);
+    throw reconciliationError;
   }
 
   if (!changesRequestedPullRequest) {

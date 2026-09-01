@@ -177,11 +177,25 @@ result. Failed messages include the project, card, Trello URL, failure category 
 instruction. Refinement completion messages include the project, card, Trello URL, classification, refined title, and refined
 task description.
 
-Delivery is attempted only after the Trello move succeeds. A delivery failure is logged with project and card context and does
-not move the card, change the primary workflow error, or prevent the existing Trello summary/failure handling. A successfully
-refined card also receives one Trello comment containing its classification, refined title, and refined task description. Email
-and comment failures are isolated independently: the card remains in `Backlog`, and the refinement is not changed to a failed
-workflow. When email notifications are omitted or disabled, the summary comment is still added after a successful refinement.
+When a project poll or reconciliation fails before a single card's normal `Failed` handling completes, the orchestrator also
+attempts an `Attention Required` email. This includes ambiguous project state, such as multiple recoverable cards in
+`Working` or multiple active cards in `Human Review`, and unreconciled workflow-state or external-operation failures. These
+messages contain the project ID, failure category and reason, all affected card IDs, available session-log paths, and any
+failure-handling outcome. They are not sent for shutdown cancellation or for a card failure that was already moved to `Failed`
+through the existing card notification path.
+
+Existing card transition delivery is attempted only after the corresponding Trello move succeeds. Attention Required delivery
+is attempted after a project worker failure and does not perform a Trello move. Any delivery failure is logged with project and
+card context when available and does not move a card, change the primary workflow error, or prevent the existing Trello
+summary/failure handling. A successfully refined card also receives one Trello comment containing its classification, refined
+title, and refined task description. Email and comment failures are isolated independently: the card remains in `Backlog`, and
+the refinement is not changed to a failed workflow. When email notifications are omitted or disabled, the summary comment is
+still added after a successful refinement.
+
+An `Attention Required` email is diagnostic only. It does not correct or retry cards, and the ambiguous or otherwise unsafe
+workflow state remains available for operator investigation and the next reconciliation cycle. Disabling or omitting
+`notifications.email` suppresses these alerts as well as the existing Human Review, Failed, and refinement-completion emails;
+logging and workflow behavior are unchanged.
 
 ### Pull request feedback loop
 
@@ -220,8 +234,9 @@ including when stale branches or worktrees exist. Working reconciliation never c
 `Human Review` cards are reconciled from the expected `agent/<trello-card-id>` pull request. Merged pull requests move cards to
 `Done`, closed unmerged pull requests move them to `Failed`, open pull requests with requested changes return to `Working`,
 open pull requests without requested changes remain in `Human Review`, and cards without an expected pull request return to
-`Backlog`. To retry deliberately, move a card to `Ready for Agent`; `Backlog`, `Failed`, and `Done` are not automatically
-processed.
+`Backlog`. More than one recoverable `Working` card or active `Human Review` card blocks that project's processing and sends
+an `Attention Required` email when notifications are enabled; no card is selected automatically. To retry deliberately, move
+a card to `Ready for Agent`; `Backlog`, `Failed`, and `Done` are not automatically processed.
 
 ### Multi-project operation
 

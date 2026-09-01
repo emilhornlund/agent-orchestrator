@@ -18,8 +18,10 @@ export interface FailureDescription {
 
 export interface FailureContext {
   projectId: string;
-  cardId: string;
+  cardId?: string;
+  cardIds?: string[];
   sessionLogPath?: string;
+  sessionLogPaths?: string[];
   handlingOutcome?: string;
 }
 
@@ -118,6 +120,20 @@ export function getExistingSessionLogPath(
   const sessionLogPath = getSessionLogPath(projectId, cardId);
 
   return existsSync(sessionLogPath) ? sessionLogPath : undefined;
+}
+
+export function annotateCardFailure(
+  error: Error,
+  projectId: string,
+  cardId: string,
+): void {
+  const sessionLogPath = getExistingSessionLogPath(projectId, cardId);
+
+  annotateFailure(error, {
+    projectId,
+    cardId,
+    ...(sessionLogPath === undefined ? {} : { sessionLogPath }),
+  });
 }
 
 export function annotateFailure(

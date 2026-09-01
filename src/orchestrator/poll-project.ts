@@ -46,6 +46,7 @@ import {
 import { claimNextCard } from "./claim-next-card.js";
 import { claimNextRefinementCard } from "./claim-next-refinement-card.js";
 import {
+  annotateFailure,
   formatFailureDiagnostic,
   getExistingSessionLogPath,
   toFailureError,
@@ -178,10 +179,26 @@ export async function pollProject(
   }
 
   if (reviewChangeRequest && workingChangeRequest) {
-    throw new WorkflowError(
+    const conflictingWorkflowError = new WorkflowError(
       "Workflow",
       `Cannot process workflow cards in both Human Review (${reviewChangeRequest.card.id}) and Working (${workingChangeRequest.card.id})`,
     );
+
+    annotateFailure(conflictingWorkflowError, {
+      projectId: project.id,
+      cardIds: [reviewChangeRequest.card.id, workingChangeRequest.card.id],
+      sessionLogPaths: [
+        reviewChangeRequest.card.id,
+        workingChangeRequest.card.id,
+      ]
+        .map((cardId) => getExistingSessionLogPath(project.id, cardId))
+        .filter(
+          (sessionLogPath): sessionLogPath is string =>
+            sessionLogPath !== undefined,
+        ),
+    });
+
+    throw conflictingWorkflowError;
   }
 
   if (reviewChangeRequest && "active" in reviewChangeRequest) {
