@@ -514,7 +514,7 @@ describe("reconcileClaimedCard", () => {
     } as unknown as TrelloClient;
     const mergePullRequest = vi.fn();
     const github = {
-      findMergedPullRequest: vi.fn().mockResolvedValue(null),
+      findPullRequestState: vi.fn().mockResolvedValue(null),
       findPullRequest: vi.fn().mockResolvedValue({
         url: "https://github.com/owner/repo/pull/1",
       }),

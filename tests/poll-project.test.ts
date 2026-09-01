@@ -56,8 +56,11 @@ describe("pollProject", () => {
     vi.spyOn(trello, "moveCard");
     vi.spyOn(trello, "getLatestListTransition");
     const github = {
-      findMergedPullRequest: vi.fn().mockResolvedValue(null),
-      findClosedPullRequest: vi.fn().mockResolvedValue(null),
+      findPullRequestState: vi.fn().mockResolvedValue({
+        url: "https://github.com/owner/repo/pull/1",
+        state: "OPEN",
+        mergedAt: null,
+      }),
       findPullRequest: vi.fn().mockResolvedValue({
         url: "https://github.com/owner/repo/pull/1",
       }),
@@ -139,8 +142,11 @@ describe("pollProject", () => {
     });
     const runOpenCode = vi.fn();
     const github = {
-      findMergedPullRequest: vi.fn().mockResolvedValue(null),
-      findClosedPullRequest: vi.fn().mockResolvedValue(null),
+      findPullRequestState: vi.fn().mockResolvedValue({
+        url: "https://github.com/owner/repo/pull/1",
+        state: "OPEN",
+        mergedAt: null,
+      }),
       findPullRequest: vi
         .fn()
         .mockImplementation(async ({ headBranch }) =>
@@ -244,8 +250,17 @@ describe("pollProject", () => {
       getCurrentBranch: vi.fn().mockResolvedValue("agent/working-card"),
     } as unknown as GitClient;
     const github = {
-      findMergedPullRequest: vi.fn().mockResolvedValue(null),
-      findClosedPullRequest: vi.fn().mockResolvedValue(null),
+      findPullRequestState: vi
+        .fn()
+        .mockImplementation(async ({ headBranch }: { headBranch: string }) =>
+          headBranch === "agent/review-card"
+            ? {
+                url: "https://github.com/owner/repo/pull/2",
+                state: "OPEN",
+                mergedAt: null,
+              }
+            : null,
+        ),
       findPullRequest: vi
         .fn()
         .mockImplementation(async ({ headBranch }: { headBranch: string }) =>
@@ -1291,8 +1306,11 @@ describe("pollProject", () => {
       } as unknown as GitClient;
 
       const github = {
-        findMergedPullRequest: vi.fn().mockResolvedValue(null),
-        findClosedPullRequest: vi.fn().mockResolvedValue(null),
+        findPullRequestState: vi.fn().mockResolvedValue({
+          url: "https://github.com/example/repository/pull/123",
+          state: "OPEN",
+          mergedAt: null,
+        }),
         findChangesRequestedPullRequest: vi.fn().mockResolvedValue({
           url: "https://github.com/example/repository/pull/123",
           feedback: "Please add a regression test.",

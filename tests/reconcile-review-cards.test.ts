@@ -50,20 +50,15 @@ function githubFor(
 ): GitHubClient {
   const pullRequest = {
     url: `https://github.com/owner/repo/pull/${cardId === "card-1" ? 1 : 2}`,
+    state:
+      state === "merged" ? "MERGED" : state === "closed" ? "CLOSED" : "OPEN",
+    mergedAt: state === "merged" ? "2026-09-01T13:42:03Z" : null,
   };
 
   return {
-    findMergedPullRequest: vi
+    findPullRequestState: vi
       .fn()
-      .mockResolvedValue(state === "merged" ? pullRequest : null),
-    findClosedPullRequest: vi
-      .fn()
-      .mockResolvedValue(state === "closed" ? pullRequest : null),
-    findPullRequest: vi
-      .fn()
-      .mockResolvedValue(
-        state === "open" || state === "requested" ? pullRequest : null,
-      ),
+      .mockResolvedValue(state === "none" ? null : pullRequest),
     findChangesRequestedPullRequest: vi
       .fn()
       .mockResolvedValue(
@@ -119,6 +114,21 @@ describe("reconcileReviewCards", () => {
     expect(trello.moveCard).not.toHaveBeenCalled();
     expect(event).not.toHaveBeenCalledWith("Human Review card remains active");
     event.mockRestore();
+  });
+
+  it("uses one authoritative PR-state lookup for Human Review classification", async () => {
+    const trello = trelloFor(card());
+    const github = githubFor("card-1", "open");
+
+    await reconcileReviewCards(trello, {} as GitClient, github, project);
+
+    expect(github.findPullRequestState).toHaveBeenCalledTimes(1);
+    expect(github.findPullRequestState).toHaveBeenCalledWith({
+      cwd: "/repo",
+      repository: "owner/repo",
+      headBranch: "agent/card-1",
+    });
+    expect(github.findPullRequest).toBeUndefined();
   });
 
   it("moves a card with no expected PR to Backlog", async () => {
@@ -208,6 +218,30 @@ describe("reconcileReviewCards", () => {
     expect(trello.moveCard).toHaveBeenCalledWith("card-1", "done", {
       dueComplete: true,
     });
+  });
+
+  it("treats a non-null mergedAt as merged even when state is CLOSED", async () => {
+    const trello = trelloFor(card());
+    const git = {
+      remoteBranchExists: vi.fn().mockResolvedValue(false),
+      deleteRemoteBranch: vi.fn(),
+    } as unknown as GitClient;
+    const github = {
+      findPullRequestState: vi.fn().mockResolvedValue({
+        url: "https://github.com/owner/repo/pull/1",
+        state: "CLOSED",
+        mergedAt: "2026-09-01T13:42:03Z",
+      }),
+      findChangesRequestedPullRequest: vi.fn(),
+    } as unknown as GitHubClient;
+
+    await reconcileReviewCards(trello, git, github, project);
+
+    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "done", {
+      dueComplete: true,
+    });
+    expect(trello.moveCard).not.toHaveBeenCalledWith("card-1", "failed");
+    expect(trello.addComment).not.toHaveBeenCalled();
   });
 
   it("sends a completion email after moving a merged card to Done", async () => {
@@ -339,7 +373,7 @@ describe("reconcileReviewCards", () => {
     const lookupError = new Error("GitHub unavailable");
     const trello = trelloFor(card());
     const github = {
-      findMergedPullRequest: vi.fn().mockRejectedValue(lookupError),
+      findPullRequestState: vi.fn().mockRejectedValue(lookupError),
     } as unknown as GitHubClient;
 
     await expect(
@@ -533,10 +567,10 @@ describe("reconcileReviewCards", () => {
       addComment: vi.fn(),
     } as unknown as TrelloClient;
     const github = {
-      findMergedPullRequest: vi.fn().mockResolvedValue(null),
-      findClosedPullRequest: vi.fn().mockResolvedValue(null),
-      findPullRequest: vi.fn().mockResolvedValue({
+      findPullRequestState: vi.fn().mockResolvedValue({
         url: "https://github.com/owner/repo/pull/1",
+        state: "OPEN",
+        mergedAt: null,
       }),
       findChangesRequestedPullRequest: vi.fn().mockResolvedValue(null),
     } as unknown as GitHubClient;
@@ -569,20 +603,20 @@ describe("reconcileReviewCards", () => {
       remoteBranchExists: vi.fn().mockResolvedValue(false),
     } as unknown as GitClient;
     const github = {
-      findMergedPullRequest: vi
+      findPullRequestState: vi
         .fn()
         .mockImplementation(async ({ headBranch }: { headBranch: string }) =>
           headBranch === "agent/card-1"
-            ? { url: "https://github.com/owner/repo/pull/1" }
-            : null,
-        ),
-      findClosedPullRequest: vi.fn().mockResolvedValue(null),
-      findPullRequest: vi
-        .fn()
-        .mockImplementation(async ({ headBranch }: { headBranch: string }) =>
-          headBranch === "agent/card-2"
-            ? { url: "https://github.com/owner/repo/pull/2" }
-            : null,
+            ? {
+                url: "https://github.com/owner/repo/pull/1",
+                state: "MERGED",
+                mergedAt: null,
+              }
+            : {
+                url: "https://github.com/owner/repo/pull/2",
+                state: "OPEN",
+                mergedAt: null,
+              },
         ),
       findChangesRequestedPullRequest: vi.fn().mockResolvedValue(null),
     } as unknown as GitHubClient;

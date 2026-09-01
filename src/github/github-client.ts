@@ -25,20 +25,15 @@ export interface FindPullRequestOptions {
   headBranch: string;
 }
 
-export interface FindMergedPullRequestOptions {
-  cwd: string;
-  repository: string;
-  headBranch: string;
-}
-
-export interface FindClosedPullRequestOptions {
-  cwd: string;
-  repository: string;
-  headBranch: string;
-}
-
 export interface PullRequest {
   url: string;
+}
+
+export type PullRequestStatus = "OPEN" | "CLOSED" | "MERGED";
+
+export interface PullRequestState extends PullRequest {
+  state: PullRequestStatus;
+  mergedAt: string | null;
 }
 
 export interface ChangesRequestedPullRequest extends PullRequest {
@@ -89,6 +84,40 @@ function validatePullRequestList(value: unknown): PullRequestReviewListItem[] {
       number: item.number,
       reviewDecision: item.reviewDecision,
       headRefOid: item.headRefOid,
+    };
+  });
+}
+
+function validatePullRequestStateList(value: unknown): PullRequestState[] {
+  if (!Array.isArray(value)) {
+    throw new Error("GitHub CLI returned an invalid pull request state list");
+  }
+
+  return value.map((item) => {
+    if (!isRecord(item)) {
+      throw new Error(
+        "GitHub CLI returned an invalid pull request state list item",
+      );
+    }
+
+    const url = item.url;
+    const state = item.state;
+    const mergedAt = item.mergedAt;
+
+    if (
+      typeof url !== "string" ||
+      (state !== "OPEN" && state !== "CLOSED" && state !== "MERGED") ||
+      (typeof mergedAt !== "string" && mergedAt !== null)
+    ) {
+      throw new Error(
+        "GitHub CLI returned an invalid pull request state list item",
+      );
+    }
+
+    return {
+      url: parsePullRequestUrl(url),
+      state,
+      mergedAt,
     };
   });
 }
@@ -270,9 +299,9 @@ export class GitHubClient {
     };
   }
 
-  async findMergedPullRequest(
-    options: FindMergedPullRequestOptions,
-  ): Promise<PullRequest | null> {
+  async findPullRequestState(
+    options: FindPullRequestOptions,
+  ): Promise<PullRequestState | null> {
     const output = await this.runGitHubCommand(options.cwd, [
       "pr",
       "list",
@@ -281,51 +310,33 @@ export class GitHubClient {
       "--head",
       options.headBranch,
       "--state",
-      "merged",
+      "all",
       "--json",
-      "url",
+      "url,state,mergedAt",
       "--limit",
       "1",
-      "--jq",
-      '.[0].url // ""',
     ]);
 
-    if (output.trim().length === 0) {
+    const pullRequestOutput = output.trim();
+
+    if (pullRequestOutput.length === 0) {
       return null;
     }
 
-    return {
-      url: parsePullRequestUrl(output),
-    };
-  }
+    let parsedPullRequests: unknown;
 
-  async findClosedPullRequest(
-    options: FindClosedPullRequestOptions,
-  ): Promise<PullRequest | null> {
-    const output = await this.runGitHubCommand(options.cwd, [
-      "pr",
-      "list",
-      "--repo",
-      options.repository,
-      "--head",
-      options.headBranch,
-      "--state",
-      "closed",
-      "--json",
-      "url",
-      "--limit",
-      "1",
-      "--jq",
-      '.[0].url // ""',
-    ]);
-
-    if (output.trim().length === 0) {
-      return null;
+    try {
+      parsedPullRequests = JSON.parse(pullRequestOutput);
+    } catch (error) {
+      throw new Error(
+        "GitHub CLI returned an invalid pull request state list",
+        {
+          cause: error,
+        },
+      );
     }
 
-    return {
-      url: parsePullRequestUrl(output),
-    };
+    return validatePullRequestStateList(parsedPullRequests)[0] ?? null;
   }
 
   async findChangesRequestedPullRequest(

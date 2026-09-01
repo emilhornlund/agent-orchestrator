@@ -1,6 +1,9 @@
 import type { ProjectConfig } from "../config/config.js";
 import type { GitClient } from "../git/git-client.js";
-import type { GitHubClient, PullRequest } from "../github/github-client.js";
+import type {
+  GitHubClient,
+  PullRequestState,
+} from "../github/github-client.js";
 import { logger } from "../logging/logger.js";
 import { removeSessionLog } from "../logging/session-log.js";
 import {
@@ -32,8 +35,7 @@ export interface ActiveReviewCard {
 interface ReviewCardState {
   card: TrelloCard;
   branch: string;
-  mergedPullRequest?: PullRequest;
-  closedPullRequest?: PullRequest;
+  pullRequest: PullRequestState;
   changesRequested?: ReviewChangeRequest;
 }
 
@@ -159,24 +161,24 @@ export async function reconcileReviewCards(
         cardId: state.card.id,
       });
 
-      if (state.mergedPullRequest !== undefined) {
+      if (isMergedPullRequest(state.pullRequest)) {
         await completeMergedReviewCard(
           trello,
           git,
           project,
           state.card,
           state.branch,
-          state.mergedPullRequest,
+          state.pullRequest,
           cardLog,
           emailNotifier,
           signal,
         );
-      } else if (state.closedPullRequest !== undefined) {
+      } else if (state.pullRequest.state === "CLOSED") {
         await failClosedReviewCard(
           trello,
           project,
           state.card,
-          state.closedPullRequest,
+          state.pullRequest,
           cardLog,
           emailNotifier,
           signal,
@@ -251,9 +253,13 @@ export async function reconcileReviewCards(
 
 function isTerminalReviewState(state: ReviewCardState): boolean {
   return (
-    state.mergedPullRequest !== undefined ||
-    state.closedPullRequest !== undefined
+    isMergedPullRequest(state.pullRequest) ||
+    state.pullRequest.state === "CLOSED"
   );
+}
+
+function isMergedPullRequest(pullRequest: PullRequestState): boolean {
+  return pullRequest.mergedAt !== null || pullRequest.state === "MERGED";
 }
 
 async function inspectReviewCard(
@@ -269,52 +275,24 @@ async function inspectReviewCard(
     headBranch: branch,
   };
 
-  let mergedPullRequest;
+  let pullRequest;
 
   try {
-    mergedPullRequest = await github.findMergedPullRequest(options);
+    pullRequest = await github.findPullRequestState(options);
 
     if (signal?.aborted) {
       return null;
     }
   } catch (error) {
-    throw reviewLookupError(project, card, "merged pull request", error);
+    throw reviewLookupError(project, card, "pull request state", error);
   }
 
-  if (mergedPullRequest !== null) {
-    return { card, branch, mergedPullRequest };
-  }
-
-  let closedPullRequest;
-
-  try {
-    closedPullRequest = await github.findClosedPullRequest(options);
-
-    if (signal?.aborted) {
-      return null;
-    }
-  } catch (error) {
-    throw reviewLookupError(project, card, "closed pull request", error);
-  }
-
-  if (closedPullRequest !== null) {
-    return { card, branch, closedPullRequest };
-  }
-
-  let openPullRequest;
-
-  try {
-    openPullRequest = await github.findPullRequest(options);
-
-    if (signal?.aborted) {
-      return null;
-    }
-  } catch (error) {
-    throw reviewLookupError(project, card, "expected open pull request", error);
-  }
-
-  if (openPullRequest === null) {
+  if (pullRequest === null) {
     return null;
+  }
+
+  if (isMergedPullRequest(pullRequest) || pullRequest.state === "CLOSED") {
+    return { card, branch, pullRequest };
   }
 
   let changesRequestedPullRequest;
@@ -333,6 +311,7 @@ async function inspectReviewCard(
   return {
     card,
     branch,
+    pullRequest,
     ...(changesRequestedPullRequest === null
       ? {}
       : {
@@ -369,7 +348,7 @@ async function completeMergedReviewCard(
   project: ProjectConfig,
   card: TrelloCard,
   branch: string,
-  pullRequest: PullRequest,
+  pullRequest: PullRequestState,
   cardLog: ReturnType<typeof logger.child>,
   emailNotifier?: EmailNotifier,
   signal?: AbortSignal,
@@ -481,7 +460,7 @@ async function failClosedReviewCard(
   trello: TrelloClient,
   project: ProjectConfig,
   card: TrelloCard,
-  pullRequest: PullRequest,
+  pullRequest: PullRequestState,
   cardLog: ReturnType<typeof logger.child>,
   emailNotifier?: EmailNotifier,
   signal?: AbortSignal,
