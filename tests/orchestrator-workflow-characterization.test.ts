@@ -548,6 +548,87 @@ describe("orchestrator workflow characterization", () => {
     }
   });
 
+  it("sends one merged completion email and does not repeat it when polled again", async () => {
+    const harness = createHarness({
+      initialList: "review",
+      pullRequestState: "merged",
+    });
+    const notifier: EmailNotifier = {
+      send: vi.fn(async (message) => {
+        harness.events.push("email");
+
+        expect(message.subject).toContain("Completed");
+        expect(message.text).toContain("Project: characterization-project");
+        expect(message.text).toContain("Card: Example task");
+        expect(message.text).toContain(
+          "Trello card URL: https://trello.com/c/card-1",
+        );
+        expect(message.text).toContain(
+          "Pull request URL: https://github.com/example/repository/pull/123",
+        );
+      }),
+    };
+
+    try {
+      await pollProject(
+        harness.trello,
+        harness.git,
+        harness.github,
+        harness.openCode,
+        harness.commands,
+        harness.project,
+        new AbortController().signal,
+        notifier,
+      );
+      await pollProject(
+        harness.trello,
+        harness.git,
+        harness.github,
+        harness.openCode,
+        harness.commands,
+        harness.project,
+        new AbortController().signal,
+        notifier,
+      );
+
+      expect(harness.card.idList).toBe(listIds.done);
+      expect(notifier.send).toHaveBeenCalledTimes(1);
+      expect(harness.events.indexOf("trello:move:done-list")).toBeLessThan(
+        harness.events.indexOf("email"),
+      );
+    } finally {
+      harness.cleanup();
+    }
+  });
+
+  it("does not notify for a merged pull request on a card already in Done", async () => {
+    const harness = createHarness({
+      initialList: "done",
+      pullRequestState: "merged",
+    });
+    const notifier: EmailNotifier = {
+      send: vi.fn(),
+    };
+
+    try {
+      await pollProject(
+        harness.trello,
+        harness.git,
+        harness.github,
+        harness.openCode,
+        harness.commands,
+        harness.project,
+        new AbortController().signal,
+        notifier,
+      );
+
+      expect(notifier.send).not.toHaveBeenCalled();
+      expect(harness.card.idList).toBe(listIds.done);
+    } finally {
+      harness.cleanup();
+    }
+  });
+
   it("applies requested changes to the existing pull request without creating another", async () => {
     const harness = createHarness({
       initialList: "review",

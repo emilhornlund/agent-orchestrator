@@ -72,6 +72,7 @@ Ready for Agent
  Human Review
       │
       ├─ merged ───────────────► Done
+      │                          └─ attempt the completion email when enabled
       │
       ├─ changes requested ────► Working
       │                          │
@@ -170,12 +171,13 @@ at startup with field-specific errors; omitted or disabled settings require no S
 
 The orchestrator sends one email after each successful orchestrator transition into `Human Review` from normal publication or
 reconciliation, after each successful orchestrator transition into `Failed` from automated failure handling or a closed,
-unmerged pull request, and after each successful refinement transition into `Backlog`. It does not notify for cards merely
-observed in either list, unrelated list transitions, or repeated polling of an already completed transition. Human Review
-messages include the project, card, Trello URL, pull-request URL, commit/publication context, review result, and remediation
-result. Failed messages include the project, card, Trello URL, failure category and reason, and the deliberate retry
-instruction. Refinement completion messages include the project, card, Trello URL, classification, refined title, and refined
-task description.
+unmerged pull request, after each successful merged pull request transition into `Done`, and after each successful refinement
+transition into `Backlog`. It does not notify for cards merely observed in `Human Review`, `Failed`, or `Done`, unrelated list
+transitions, or repeated polling of an already completed transition. Human Review messages include the project, card, Trello
+URL, pull-request URL, commit/publication context, review result, and remediation result. `Completed` messages include the
+project, card, Trello URL, and merged pull-request URL. Failed messages include the project, card, Trello URL, failure category
+and reason, and the deliberate retry instruction. Refinement completion messages include the project, card, Trello URL, classification, refined
+title, and refined task description.
 
 When a project poll or reconciliation fails before a single card's normal `Failed` handling completes, the orchestrator also
 attempts an `Attention Required` email. This includes ambiguous project state, such as multiple recoverable cards in
@@ -194,8 +196,8 @@ still added after a successful refinement.
 
 An `Attention Required` email is diagnostic only. It does not correct or retry cards, and the ambiguous or otherwise unsafe
 workflow state remains available for operator investigation and the next reconciliation cycle. Disabling or omitting
-`notifications.email` suppresses these alerts as well as the existing Human Review, Failed, and refinement-completion emails;
-logging and workflow behavior are unchanged.
+`notifications.email` suppresses these alerts as well as the existing Human Review, Failed, merged-completion, and
+refinement-completion emails; logging and workflow behavior are unchanged.
 
 ### Pull request feedback loop
 

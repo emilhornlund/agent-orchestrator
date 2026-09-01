@@ -49,6 +49,12 @@ export interface RefinementCompletionNotificationDetails {
   result: RefinementResult;
 }
 
+export interface CompletionNotificationDetails {
+  project: ProjectConfig;
+  card: Pick<TrelloCard, "name" | "url">;
+  pullRequestUrl: string;
+}
+
 function subjectPart(value: string): string {
   return value.replace(/[\r\n]+/g, " ").trim();
 }
@@ -139,6 +145,21 @@ export function buildRefinementCompletionEmail(
   };
 }
 
+export function buildCompletionEmail(
+  details: CompletionNotificationDetails,
+): EmailMessage {
+  return {
+    subject: `[Agent Orchestrator] Completed: ${subjectPart(details.project.id)} / ${subjectPart(details.card.name)}`,
+    text: [
+      "Event: Completed",
+      `Project: ${details.project.id}`,
+      `Card: ${details.card.name}`,
+      `Trello card URL: ${details.card.url}`,
+      `Pull request URL: ${details.pullRequestUrl}`,
+    ].join("\n"),
+  };
+}
+
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -215,6 +236,25 @@ export async function notifyRefinementCompletion(
   } catch (error) {
     cardLog.error(
       `Refinement completion email notification failed: ${getErrorMessage(error)}`,
+    );
+  }
+}
+
+export async function notifyCompletion(
+  notifier: EmailNotifier | undefined,
+  details: CompletionNotificationDetails,
+  cardLog: Logger,
+): Promise<void> {
+  if (notifier === undefined) {
+    return;
+  }
+
+  try {
+    await notifier.send(buildCompletionEmail(details));
+    cardLog.event("Completion email notification sent");
+  } catch (error) {
+    cardLog.error(
+      `Completion email notification failed: ${getErrorMessage(error)}`,
     );
   }
 }

@@ -210,6 +210,68 @@ describe("reconcileReviewCards", () => {
     });
   });
 
+  it("sends a completion email after moving a merged card to Done", async () => {
+    const sessionLogPath = getSessionLogPath(project.id, "card-1");
+    appendSessionLog(sessionLogPath, "OpenCode output");
+
+    const events: string[] = [];
+    const trello = {
+      ...trelloFor(card()),
+      moveCard: vi.fn().mockImplementation(async () => {
+        events.push("card moved to Done");
+
+        return { ...card(), idList: "done" };
+      }),
+    } as unknown as TrelloClient;
+    const git = {
+      remoteBranchExists: vi.fn().mockImplementation(async () => {
+        events.push("branch exists");
+
+        return true;
+      }),
+      deleteRemoteBranch: vi.fn().mockImplementation(async () => {
+        events.push("branch deleted");
+      }),
+    } as unknown as GitClient;
+    const notifier: EmailNotifier = {
+      send: vi.fn().mockImplementation(async (message) => {
+        events.push("email sent");
+
+        expect(message).toEqual({
+          subject: "[Agent Orchestrator] Completed: project / card-1",
+          text: [
+            "Event: Completed",
+            "Project: project",
+            "Card: card-1",
+            "Trello card URL: https://trello.example/card-1",
+            "Pull request URL: https://github.com/owner/repo/pull/1",
+          ].join("\n"),
+        });
+      }),
+    };
+
+    await reconcileReviewCards(
+      trello,
+      git,
+      githubFor("card-1", "merged"),
+      project,
+      {},
+      notifier,
+    );
+
+    expect(events).toEqual([
+      "branch exists",
+      "branch deleted",
+      "card moved to Done",
+      "email sent",
+    ]);
+    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "done", {
+      dueComplete: true,
+    });
+    expect(notifier.send).toHaveBeenCalledTimes(1);
+    expect(existsSync(sessionLogPath)).toBe(false);
+  });
+
   it("does not delete a merged remote branch after shutdown", async () => {
     const controller = new AbortController();
     const trello = trelloFor(card());
@@ -243,13 +305,23 @@ describe("reconcileReviewCards", () => {
 
     const trello = trelloFor(card());
     const deleteError = new Error("delete failed");
+    const notifier: EmailNotifier = {
+      send: vi.fn(),
+    };
     const git = {
       remoteBranchExists: vi.fn().mockResolvedValue(true),
       deleteRemoteBranch: vi.fn().mockRejectedValue(deleteError),
     } as unknown as GitClient;
 
     await expect(
-      reconcileReviewCards(trello, git, githubFor("card-1", "merged"), project),
+      reconcileReviewCards(
+        trello,
+        git,
+        githubFor("card-1", "merged"),
+        project,
+        {},
+        notifier,
+      ),
     ).rejects.toMatchObject({
       category: "Git/GitHub",
       cause: deleteError,
@@ -259,6 +331,7 @@ describe("reconcileReviewCards", () => {
     });
 
     expect(trello.moveCard).not.toHaveBeenCalled();
+    expect(notifier.send).not.toHaveBeenCalled();
     expect(existsSync(sessionLogPath)).toBe(true);
   });
 
@@ -284,6 +357,9 @@ describe("reconcileReviewCards", () => {
     appendSessionLog(sessionLogPath, "OpenCode output");
 
     const moveError = new Error("move failed");
+    const notifier: EmailNotifier = {
+      send: vi.fn(),
+    };
     const trello = {
       ...trelloFor(card()),
       moveCard: vi.fn().mockRejectedValue(moveError),
@@ -294,7 +370,14 @@ describe("reconcileReviewCards", () => {
     } as unknown as GitClient;
 
     await expect(
-      reconcileReviewCards(trello, git, githubFor("card-1", "merged"), project),
+      reconcileReviewCards(
+        trello,
+        git,
+        githubFor("card-1", "merged"),
+        project,
+        {},
+        notifier,
+      ),
     ).rejects.toMatchObject({
       category: "Workflow",
       cause: moveError,
@@ -306,7 +389,39 @@ describe("reconcileReviewCards", () => {
     expect(trello.moveCard).toHaveBeenCalledWith("card-1", "done", {
       dueComplete: true,
     });
+    expect(notifier.send).not.toHaveBeenCalled();
     expect(existsSync(sessionLogPath)).toBe(true);
+  });
+
+  it("keeps the Done state and removes the session log when completion delivery fails", async () => {
+    const sessionLogPath = getSessionLogPath(project.id, "card-1");
+    appendSessionLog(sessionLogPath, "OpenCode output");
+
+    const notifier: EmailNotifier = {
+      send: vi.fn().mockRejectedValue(new Error("SMTP unavailable")),
+    };
+    const trello = trelloFor(card());
+    const git = {
+      remoteBranchExists: vi.fn().mockResolvedValue(false),
+      deleteRemoteBranch: vi.fn(),
+    } as unknown as GitClient;
+
+    await expect(
+      reconcileReviewCards(
+        trello,
+        git,
+        githubFor("card-1", "merged"),
+        project,
+        {},
+        notifier,
+      ),
+    ).resolves.toBeNull();
+
+    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "done", {
+      dueComplete: true,
+    });
+    expect(notifier.send).toHaveBeenCalledTimes(1);
+    expect(existsSync(sessionLogPath)).toBe(false);
   });
 
   it("moves a closed unmerged expected PR to Failed and comments", async () => {
