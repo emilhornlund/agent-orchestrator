@@ -58,8 +58,9 @@ For a card that came from `Ready for Agent`:
 - Without an expected open pull request, the implementation or refinement workflow resumes from its existing worktree.
 - A refinement card with an unexpected pull request is corrected to `Backlog`.
 - An implementation card with an open pull request and actionable requested changes resumes the feedback workflow.
-- An implementation card with an open pull request but no actionable requested changes is moved to `Human Review`; its local
-  worktree is cleaned up after that transition.
+- An implementation card with an open pull request but no actionable requested changes is moved to `Human Review` when
+  `autoMerge` is disabled; when it is enabled, the pull request is merged and the card is completed in `Done`.
+- An enabled implementation card with an already merged pull request is completed in `Done` without another merge attempt.
 
 For a card that came from `Human Review`, the expected open pull request and actionable requested changes are both required
 to resume feedback implementation. Otherwise the card is corrected to `Backlog`.
@@ -82,6 +83,9 @@ For each card in `Human Review`, the orchestrator checks the expected `agent/<tr
 More than one active card in `Human Review` is an ambiguous project state. The active-state check runs before terminal cards
 are transitioned, so the project is blocked, no active card is selected, and no terminal card is transitioned in that cycle.
 Merged or closed cards remain available for reconciliation on the next cycle after the ambiguity is resolved.
+
+An enabled implementation normally does not enter `Human Review`. A card already in that list continues through the existing
+human-review reconciliation path, so enabling `autoMerge` does not reinterpret an operator-managed review card.
 
 ## Deliberate retry from `Failed`
 
@@ -115,6 +119,12 @@ If a pull request was published but the move to `Human Review` failed, the card 
 reconciliation rather than being moved to `Failed` without evidence. If a project poll or reconciliation fails before a
 single card's failure handling completes, the project-level `Attention Required` path can report the affected cards and
 session logs; it does not correct or retry them.
+
+If automatic merging succeeds but the move to `Done` fails, the card is left in `Working` with the merged pull request and
+the preserved worktree and session log. The next reconciliation observes the merged pull request, moves the card to `Done`
+with `dueComplete: true`, sends the `done` event when enabled, and adds the auto-merge summary without merging the pull
+request again. Merge failures leave the card available to normal failure diagnostics and preserve the task artifacts; no
+success summary or completion email is sent before both the merge and `Done` transition succeed.
 
 The implementation workflow does not automatically remove a failed task worktree or branch. Successful publication and
 successful refinement have their normal cleanup paths, while failed-card session logs remain available until log retention

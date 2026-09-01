@@ -12,6 +12,13 @@ export interface CreatePullRequestOptions {
   body: string;
 }
 
+export interface MergePullRequestOptions {
+  cwd: string;
+  repository: string;
+  pullRequestUrl: string;
+  commitSha: string;
+}
+
 export interface FindPullRequestOptions {
   cwd: string;
   repository: string;
@@ -436,5 +443,19 @@ export class GitHubClient {
     return {
       url: parsePullRequestUrl(output),
     };
+  }
+
+  async mergePullRequest(options: MergePullRequestOptions): Promise<void> {
+    await this.runGitHubCommand(options.cwd, [
+      "pr",
+      "merge",
+      parsePullRequestUrl(options.pullRequestUrl),
+      "--repo",
+      options.repository,
+      "--match-head-commit",
+      options.commitSha,
+      "--merge",
+      "--delete-branch",
+    ]);
   }
 }

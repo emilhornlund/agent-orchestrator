@@ -32,6 +32,7 @@ const { runOrchestrator } =
 function createProject(id: string): ProjectConfig {
   return {
     id,
+    autoMerge: false,
     trello: {
       boardId: `board-${id}`,
       backlogListId: `backlog-${id}`,

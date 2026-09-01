@@ -27,6 +27,7 @@ function createTemporaryDirectory(): string {
 function createProject(repositoryPath: string): ProjectConfig {
   return {
     id: "test-project",
+    autoMerge: false,
     repository: {
       path: repositoryPath,
       github: "owner/repository",

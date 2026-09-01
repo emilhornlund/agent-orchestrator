@@ -22,6 +22,7 @@ import type { TrelloClient } from "../src/trello/trello-client.js";
 function createProject(repositoryPath: string): ProjectConfig {
   return {
     id: "test-project",
+    autoMerge: false,
     repository: {
       path: repositoryPath,
       github: "owner/repository",

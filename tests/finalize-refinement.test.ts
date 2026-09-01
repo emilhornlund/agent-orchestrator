@@ -8,6 +8,7 @@ import type { TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
 function createProject(): ProjectConfig {
   return {
     id: "project",
+    autoMerge: false,
     trello: {
       boardId: "board",
       backlogListId: "backlog",

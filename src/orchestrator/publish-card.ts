@@ -13,6 +13,10 @@ import {
 } from "../trello/trello-client.js";
 
 import { toFailureError } from "./failure-diagnostic.js";
+import {
+  completeAutoMergedCard,
+  mergePullRequestForAutoMerge,
+} from "./auto-merge.js";
 import { PublishedCardStateError } from "./published-card-state-error.js";
 import { getElapsedWorkflowTime } from "./workflow-duration.js";
 import { WorkflowError } from "./workflow-error.js";
@@ -185,6 +189,22 @@ export async function publishCard({
 
       cardLog.event(`Pull request created: ${pullRequest.url}`);
     }
+
+    if (project.autoMerge) {
+      cardLog.event(`Auto-merging pull request: ${pullRequest.url}`);
+
+      await mergePullRequestForAutoMerge(
+        github,
+        project,
+        card,
+        pullRequest.url,
+        publishedCommitSha,
+        worktreePath,
+        signal,
+      );
+
+      cardLog.event(`Pull request auto-merged: ${pullRequest.url}`);
+    }
   } catch (error) {
     if (error instanceof TrelloRequestAbortedError) {
       throw error;
@@ -203,6 +223,23 @@ export async function publishCard({
 
   if (signal?.aborted) {
     throw new TrelloRequestAbortedError();
+  }
+
+  if (project.autoMerge) {
+    await completeAutoMergedCard({
+      trello,
+      project,
+      card,
+      pullRequestUrl: pullRequest.url,
+      commitSha: publishedCommitSha,
+      reviewResult,
+      remediationResult,
+      cardLog,
+      ...(emailNotifier === undefined ? {} : { emailNotifier }),
+      ...(signal === undefined ? {} : { signal }),
+    });
+
+    return;
   }
 
   cardLog.event("Moving Trello card to Human Review...");

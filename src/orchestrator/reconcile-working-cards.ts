@@ -12,6 +12,10 @@ import {
   type EmailNotifier,
 } from "../notifications/email-notifier.js";
 
+import {
+  completeAutoMergedCard,
+  mergePullRequestForAutoMerge,
+} from "./auto-merge.js";
 import { correctCardToBacklog } from "./correct-card-state.js";
 import {
   annotateCardFailure,
@@ -59,6 +63,58 @@ export async function reconcileClaimedCard(
     cardId: card.id,
   });
 
+  if (project.autoMerge) {
+    let mergedPullRequest;
+
+    try {
+      mergedPullRequest = await github.findMergedPullRequest({
+        cwd: project.repository.path,
+        repository: project.repository.github,
+        headBranch: branch,
+      });
+
+      if (signal?.aborted) {
+        return false;
+      }
+    } catch (error) {
+      const message = getErrorMessage(error);
+      const reconciliationError = new WorkflowError(
+        "Git/GitHub",
+        `Could not reconcile claimed Working card while checking merged pull request: ${message}`,
+        { cause: error },
+      );
+
+      annotateCardFailure(reconciliationError, project.id, card.id);
+      throw reconciliationError;
+    }
+
+    if (mergedPullRequest !== null) {
+      cardLog.event(
+        `Claimed card already has merged pull request: ${mergedPullRequest.url}`,
+      );
+
+      await completeAutoMergedCard({
+        trello,
+        project,
+        card,
+        pullRequestUrl: mergedPullRequest.url,
+        commitSha: "Not available during reconciliation",
+        reviewResult: "Not run during reconciliation",
+        remediationResult: "Not run during reconciliation",
+        cardLog,
+        ...(emailNotifier === undefined ? {} : { emailNotifier }),
+        ...(signal === undefined ? {} : { signal }),
+      });
+
+      if (signal?.aborted) {
+        return true;
+      }
+
+      await cleanupReconciledWorktree(git, project, card, cardLog, signal);
+      return true;
+    }
+  }
+
   let pullRequest;
 
   try {
@@ -85,6 +141,91 @@ export async function reconcileClaimedCard(
 
   if (!pullRequest) {
     return false;
+  }
+
+  let changesRequestedPullRequest;
+
+  if (project.autoMerge) {
+    try {
+      changesRequestedPullRequest =
+        await github.findChangesRequestedPullRequest({
+          cwd: project.repository.path,
+          repository: project.repository.github,
+          headBranch: branch,
+        });
+
+      if (signal?.aborted) {
+        return false;
+      }
+    } catch (error) {
+      const message = getErrorMessage(error);
+      const reconciliationError = new WorkflowError(
+        "Git/GitHub",
+        `Could not check requested changes for claimed Working card: ${message}`,
+        { cause: error },
+      );
+
+      annotateCardFailure(reconciliationError, project.id, card.id);
+      throw reconciliationError;
+    }
+  }
+
+  if (project.autoMerge) {
+    if (changesRequestedPullRequest === null) {
+      let commitSha;
+
+      try {
+        commitSha = await git.getHeadSha(
+          path.join(project.repository.worktreeRoot, card.id),
+        );
+      } catch (error) {
+        const message = getErrorMessage(error);
+        const reconciliationError = new WorkflowError(
+          "Git/GitHub",
+          `Could not reconcile claimed Working card while checking its published commit: ${message}`,
+          { cause: error },
+        );
+
+        annotateCardFailure(reconciliationError, project.id, card.id);
+        throw reconciliationError;
+      }
+
+      cardLog.event(
+        `Auto-merging claimed card pull request: ${pullRequest.url}`,
+      );
+
+      await mergePullRequestForAutoMerge(
+        github,
+        project,
+        card,
+        pullRequest.url,
+        commitSha,
+        path.join(project.repository.worktreeRoot, card.id),
+        signal,
+      );
+
+      await completeAutoMergedCard({
+        trello,
+        project,
+        card,
+        pullRequestUrl: pullRequest.url,
+        commitSha,
+        reviewResult: "Not run during reconciliation",
+        remediationResult: "Not run during reconciliation",
+        cardLog,
+        ...(emailNotifier === undefined ? {} : { emailNotifier }),
+        ...(signal === undefined ? {} : { signal }),
+      });
+
+      if (signal?.aborted) {
+        return true;
+      }
+
+      await cleanupReconciledWorktree(git, project, card, cardLog, signal);
+      return true;
+    }
+
+    cardLog.event("Claimed card has actionable requested changes");
   }
 
   cardLog.event(`Claimed card already has pull request: ${pullRequest.url}`);
@@ -145,27 +286,7 @@ export async function reconcileClaimedCard(
     return true;
   }
 
-  const worktreePath = path.join(project.repository.worktreeRoot, card.id);
-
-  try {
-    await cleanupWorktree({
-      git,
-      project,
-      worktreePath,
-      branch,
-      ...(signal === undefined ? {} : { signal }),
-    });
-
-    if (signal?.aborted) {
-      return true;
-    }
-
-    cardLog.info("Reconciled claimed card local worktree cleaned up");
-  } catch (error) {
-    cardLog.error(
-      `Claimed card moved to Human Review, but local cleanup failed: ${getErrorMessage(error)}`,
-    );
-  }
+  await cleanupReconciledWorktree(git, project, card, cardLog, signal);
 
   return true;
 }
@@ -308,6 +429,7 @@ export async function reconcileWorkingCards(
         project,
         card,
         workflow,
+        worktree,
         emailNotifier,
         signal,
       );
@@ -400,6 +522,7 @@ async function reconcileReadyWorkingCard(
   project: ProjectConfig,
   card: TrelloCard,
   workflow: WorkflowKind,
+  worktree: { path: string; branch: string },
   emailNotifier?: EmailNotifier,
   signal?: AbortSignal,
 ): Promise<WorkingCardRecovery | null> {
@@ -408,6 +531,58 @@ async function reconcileReadyWorkingCard(
     projectId: project.id,
     cardId: card.id,
   });
+
+  if (project.autoMerge && workflow === "implementation") {
+    let mergedPullRequest;
+
+    try {
+      mergedPullRequest = await github.findMergedPullRequest({
+        cwd: project.repository.path,
+        repository: project.repository.github,
+        headBranch: branch,
+      });
+
+      if (signal?.aborted) {
+        return null;
+      }
+    } catch (error) {
+      const message = getErrorMessage(error);
+      const reconciliationError = new WorkflowError(
+        "Git/GitHub",
+        `Could not reconcile Working card while checking merged pull request: ${message}`,
+        { cause: error },
+      );
+
+      annotateCardFailure(reconciliationError, project.id, card.id);
+      throw reconciliationError;
+    }
+
+    if (mergedPullRequest !== null) {
+      cardLog.event(
+        `Working card already has merged pull request: ${mergedPullRequest.url}`,
+      );
+
+      await completeAutoMergedCard({
+        trello,
+        project,
+        card,
+        pullRequestUrl: mergedPullRequest.url,
+        commitSha: "Not available during reconciliation",
+        reviewResult: "Not run during reconciliation",
+        remediationResult: "Not run during reconciliation",
+        cardLog,
+        ...(emailNotifier === undefined ? {} : { emailNotifier }),
+        ...(signal === undefined ? {} : { signal }),
+      });
+
+      if (signal?.aborted) {
+        return null;
+      }
+
+      await cleanupReconciledWorktree(git, project, card, cardLog, signal);
+      return null;
+    }
+  }
 
   let pullRequest;
 
@@ -492,6 +667,56 @@ async function reconcileReadyWorkingCard(
       pullRequestUrl: changesRequestedPullRequest.url,
       feedback: changesRequestedPullRequest.feedback,
     };
+  }
+
+  if (project.autoMerge) {
+    cardLog.event(`Auto-merging reconciled pull request: ${pullRequest.url}`);
+
+    let commitSha: string;
+
+    try {
+      commitSha = await git.getHeadSha(worktree.path);
+    } catch (error) {
+      const message = getErrorMessage(error);
+      const reconciliationError = new WorkflowError(
+        "Git/GitHub",
+        `Could not reconcile Working card while checking its published commit: ${message}`,
+        { cause: error },
+      );
+
+      annotateCardFailure(reconciliationError, project.id, card.id);
+      throw reconciliationError;
+    }
+
+    await mergePullRequestForAutoMerge(
+      github,
+      project,
+      card,
+      pullRequest.url,
+      commitSha,
+      worktree.path,
+      signal,
+    );
+
+    await completeAutoMergedCard({
+      trello,
+      project,
+      card,
+      pullRequestUrl: pullRequest.url,
+      commitSha,
+      reviewResult: "Not run during reconciliation",
+      remediationResult: "Not run during reconciliation",
+      cardLog,
+      ...(emailNotifier === undefined ? {} : { emailNotifier }),
+      ...(signal === undefined ? {} : { signal }),
+    });
+
+    if (signal?.aborted) {
+      return null;
+    }
+
+    await cleanupReconciledWorktree(git, project, card, cardLog, signal);
+    return null;
   }
 
   cardLog.event("Moving reconciled card to Human Review...");
@@ -685,6 +910,38 @@ async function reconcileReviewToWorkingCard(
 
 function worktreePathForLog(project: ProjectConfig, cardId: string): string {
   return path.join(project.repository.worktreeRoot, cardId);
+}
+
+async function cleanupReconciledWorktree(
+  git: GitClient,
+  project: ProjectConfig,
+  card: TrelloCard,
+  cardLog: ReturnType<typeof logger.child>,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (signal?.aborted) {
+    return;
+  }
+
+  try {
+    await cleanupWorktree({
+      git,
+      project,
+      worktreePath: worktreePathForLog(project, card.id),
+      branch: `agent/${card.id}`,
+      ...(signal === undefined ? {} : { signal }),
+    });
+
+    if (signal?.aborted) {
+      return;
+    }
+
+    cardLog.info("Reconciled completed card local worktree cleaned up");
+  } catch (error) {
+    cardLog.error(
+      `Reconciled completed card, but local cleanup failed: ${getErrorMessage(error)}`,
+    );
+  }
 }
 
 export function isImplementationWorkingCard(

@@ -33,6 +33,7 @@ function createWorktree(): string {
 function createProject(): ProjectConfig {
   return {
     id: "project",
+    autoMerge: false,
     trello: {
       boardId: "board",
       backlogListId: "backlog",

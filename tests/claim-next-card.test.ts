@@ -15,6 +15,7 @@ const temporaryDirectories: string[] = [];
 function createProject(worktreeRoot: string): Project {
   return {
     id: "project",
+    autoMerge: false,
     trello: {
       boardId: "board",
       backlogListId: "backlog",
