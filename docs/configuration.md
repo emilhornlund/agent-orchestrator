@@ -157,11 +157,12 @@ The `remediation` stage also accepts the optional `maxPasses` setting:
 | ----------- | ------------------------------------------------------------------------------------------------- |
 | `maxPasses` | Non-negative integer maximum number of automatic remediation passes; defaults to `1` when omitted |
 
-The initial automated review is not counted. Each remediation pass consists of one remediation session followed by one new
-review. A value of `0` disables automatic remediation, but the initial review still runs and the normal commit and publication
-flow continues even when that review reports findings. A positive limit stops the loop after the configured number of passes;
-the normal commit, publication, Human Review, and enabled auto-merge boundaries remain unchanged. The counter exists only for
-the current workflow execution and is not stored on the Trello card.
+The initial automated review is not counted. Each remediation pass consists of one remediation session; a new review runs
+after it only when another remediation pass remains. Therefore, a value of `1` runs the initial review and one remediation with
+no final follow-up review, while a value of `2` permits one review between two remediation sessions. A value of `0` disables
+automatic remediation, but the initial review still runs and the normal commit and publication flow continues even when that
+review reports findings. The normal commit, publication, Human Review, and enabled auto-merge boundaries remain unchanged.
+The counter exists only for the current workflow execution and is not stored on the Trello card.
 
 ## Validation rules
 
