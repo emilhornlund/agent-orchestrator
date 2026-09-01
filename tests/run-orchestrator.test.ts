@@ -17,6 +17,7 @@ import {
   annotateFailure,
   getFailureContext,
 } from "../src/orchestrator/failure-diagnostic.js";
+import { failCard } from "../src/orchestrator/fail-card.js";
 import { WorkflowError } from "../src/orchestrator/workflow-error.js";
 
 const pollProject = vi.fn();
@@ -281,26 +282,29 @@ describe("runOrchestrator", () => {
     );
   });
 
-  it("does not email a card failure already handled by Failed transition", async () => {
+  it("sends only the Failed email after card failure handling moves the card", async () => {
     const controller = new AbortController();
     const notifier: EmailNotifier = {
       send: vi.fn(),
     };
     const failure = new WorkflowError("OpenCode", "implementation failed");
-
-    annotateFailure(failure, {
-      projectId: "project-a",
-      cardId: "card-1",
-      handlingOutcome: "card moved to Failed and failure comment added",
-    });
+    const trello = {
+      moveCard: vi.fn().mockResolvedValue({ id: "card-1", idList: "failed" }),
+      addComment: vi.fn().mockResolvedValue({}),
+    } as unknown as TrelloClient;
 
     pollProject.mockImplementation(
       async (_trello, _git, _github, _opencode, _commands, project) => {
         if (project.id === "project-a") {
-          throw failure;
+          try {
+            await failCard(trello, project, "card-1", failure, notifier, {
+              name: "Example task",
+              url: "https://trello.example/card-1",
+            });
+          } finally {
+            controller.abort();
+          }
         }
-
-        controller.abort();
       },
     );
 
@@ -315,7 +319,104 @@ describe("runOrchestrator", () => {
       notifier,
     );
 
-    expect(notifier.send).not.toHaveBeenCalled();
+    expect(notifier.send).toHaveBeenCalledTimes(1);
+    expect(notifier.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subject: "[Agent Orchestrator] Failed: project-a / Example task",
+      }),
+    );
+    expect(notifier.send).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        subject: expect.stringContaining("Attention Required"),
+      }),
+    );
+    expect(getFailureContext(failure)?.cardFailureHandled).toBe(true);
+  });
+
+  it("sends Attention Required when card failure handling cannot move the card", async () => {
+    const controller = new AbortController();
+    const notifier: EmailNotifier = {
+      send: vi.fn(),
+    };
+    const failure = new WorkflowError("OpenCode", "implementation failed");
+    const trello = {
+      moveCard: vi.fn().mockRejectedValue(new Error("Trello unavailable")),
+      addComment: vi.fn(),
+    } as unknown as TrelloClient;
+
+    pollProject.mockImplementation(
+      async (_trello, _git, _github, _opencode, _commands, project) => {
+        try {
+          await failCard(trello, project, "card-1", failure, notifier, {
+            name: "Example task",
+            url: "https://trello.example/card-1",
+          });
+        } finally {
+          controller.abort();
+        }
+      },
+    );
+
+    await runOrchestrator(
+      {} as TrelloClient,
+      {} as GitClient,
+      {} as GitHubClient,
+      {} as OpenCodeClient,
+      {} as CommandRunner,
+      createConfig([createProject("project-a")]),
+      controller.signal,
+      notifier,
+    );
+
+    expect(notifier.send).toHaveBeenCalledTimes(1);
+    expect(notifier.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subject: "[Agent Orchestrator] Attention Required: project-a",
+        text: expect.stringContaining("Trello unavailable"),
+      }),
+    );
+    expect(notifier.send).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        subject: expect.stringContaining("Failed"),
+      }),
+    );
+    expect(getFailureContext(failure)?.cardFailureHandled).toBe(false);
+  });
+
+  it("does not infer completed card failure handling from diagnostic text", async () => {
+    const controller = new AbortController();
+    const notifier: EmailNotifier = {
+      send: vi.fn(),
+    };
+    const failure = new WorkflowError("OpenCode", "implementation failed");
+
+    annotateFailure(failure, {
+      projectId: "project-a",
+      cardId: "card-1",
+      handlingOutcome: "card moved to Failed and failure comment added",
+    });
+
+    pollProject.mockImplementation(async () => {
+      controller.abort();
+      throw failure;
+    });
+
+    await runOrchestrator(
+      {} as TrelloClient,
+      {} as GitClient,
+      {} as GitHubClient,
+      {} as OpenCodeClient,
+      {} as CommandRunner,
+      createConfig([createProject("project-a")]),
+      controller.signal,
+      notifier,
+    );
+
+    expect(notifier.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subject: "[Agent Orchestrator] Attention Required: project-a",
+      }),
+    );
   });
 
   it("does not email shutdown cancellation", async () => {
@@ -425,6 +526,7 @@ describe("runOrchestrator", () => {
     annotateFailure(failure, {
       projectId: "project-a",
       cardId: "card-123",
+      cardFailureHandled: true,
       handlingOutcome: "card moved to Failed and failure comment added",
     });
 

@@ -12,6 +12,7 @@ import {
 import { OpenCodeTimeoutError } from "../src/opencode/opencode-client.js";
 import type { EmailNotifier } from "../src/notifications/email-notifier.js";
 import { failCard } from "../src/orchestrator/fail-card.js";
+import { getFailureContext } from "../src/orchestrator/failure-diagnostic.js";
 import { WorkflowError } from "../src/orchestrator/workflow-error.js";
 import { TrelloClient } from "../src/trello/trello-client.js";
 
@@ -77,6 +78,7 @@ describe("failCard", () => {
     expect(moveCard).toHaveBeenCalledWith("card-1", "failed");
     expect(events).toEqual(["move", "email"]);
     expect(notifier.send).toHaveBeenCalledTimes(1);
+    expect(getFailureContext(error)?.cardFailureHandled).toBe(true);
   });
 
   it("keeps Failed state and the primary error when email delivery fails", async () => {
@@ -100,6 +102,7 @@ describe("failCard", () => {
 
     expect(moveCard).toHaveBeenCalledWith("card-1", "failed");
     expect(trello.addComment).toHaveBeenCalled();
+    expect(getFailureContext(error)?.cardFailureHandled).toBe(true);
   });
 
   it("moves the card to Failed, comments, and rethrows the workflow error", async () => {
@@ -171,6 +174,7 @@ describe("failCard", () => {
     expect(fs.readFileSync(getDailyLogPath(), "utf8")).toContain(
       "Failure handling incomplete: card moved to Failed, but adding the failure comment failed: comment failed; preserving the primary failure",
     );
+    expect(getFailureContext(error)?.cardFailureHandled).toBe(true);
   });
 
   it("logs the category, reason, and retained session log for a failed card", async () => {

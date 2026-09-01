@@ -34,6 +34,7 @@ export async function failCard(
   const failureContext: FailureContext = {
     projectId: project.id,
     cardId,
+    cardFailureHandled: false,
     ...(sessionLogPath === undefined ? {} : { sessionLogPath }),
   };
 
@@ -76,6 +77,7 @@ export async function failCard(
 
   annotateFailure(originalError, {
     ...failureContext,
+    cardFailureHandled: true,
     handlingOutcome: "card moved to Failed",
   });
   cardLog.event(
@@ -117,6 +119,7 @@ export async function failCard(
 
     annotateFailure(originalError, {
       ...failureContext,
+      cardFailureHandled: true,
       handlingOutcome: "card moved to Failed and failure comment added",
     });
     cardLog.event("Failure handling: failure comment added to Trello card");
@@ -125,6 +128,7 @@ export async function failCard(
 
     annotateFailure(originalError, {
       ...failureContext,
+      cardFailureHandled: true,
       handlingOutcome: `card moved to Failed, but adding the failure comment failed: ${commentFailure.message}`,
     });
     cardLog.error(

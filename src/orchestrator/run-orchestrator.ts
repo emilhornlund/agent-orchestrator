@@ -162,7 +162,7 @@ async function runProjectWorker(
 
       const cardFailureHandled =
         failureContext?.cardId !== undefined &&
-        handlingOutcome?.startsWith("card moved to Failed");
+        failureContext.cardFailureHandled === true;
 
       if (!cardFailureHandled) {
         const failureDescription = describeFailure(error);
