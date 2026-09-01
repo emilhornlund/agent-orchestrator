@@ -75,7 +75,7 @@ For each card in `Human Review`, the orchestrator checks the expected `agent/<tr
 | Evidence                                                    | Reconciliation                                                                                                                             |
 | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | Pull request is merged                                      | Delete the merged remote branch when present, move the card to `Done`, mark it complete, and remove the session log on a best-effort basis |
-| Pull request is closed without merge                        | Move the card to `Failed`, send the failed event when enabled, and add a Trello failure comment                                            |
+| Pull request is closed without merge                        | Move the card to `Backlog` and add a Trello comment identifying the closed pull request                                                    |
 | Pull request is open with current-head requested changes    | Move the card to `Working` and resume feedback implementation                                                                              |
 | Pull request is open without current-head requested changes | Leave the card in `Human Review`                                                                                                           |
 | No expected pull request                                    | Correct the card to `Backlog`                                                                                                              |
@@ -83,6 +83,12 @@ For each card in `Human Review`, the orchestrator checks the expected `agent/<tr
 More than one active card in `Human Review` is an ambiguous project state. The active-state check runs before terminal cards
 are transitioned, so the project is blocked, no active card is selected, and no terminal card is transitioned in that cycle.
 Merged or closed cards remain available for reconciliation on the next cycle after the ambiguity is resolved.
+
+A closed pull request without merge evidence is treated as a deliberate rejection or cancellation. Reconciliation moves the
+card to `Backlog`, adds a comment stating that the pull request was closed without being merged and including its URL, and does
+not send the `failed` event. If the move to `Backlog` fails, reconciliation preserves the diagnostic failure and does not add
+the cancellation comment. If the move succeeds but the comment fails, the card remains in `Backlog` and the comment failure is
+logged.
 
 An enabled implementation normally does not enter `Human Review`. A card already in that list continues through the existing
 human-review reconciliation path, so enabling `autoMerge` does not reinterpret an operator-managed review card.

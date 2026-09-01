@@ -23,7 +23,7 @@ Ready for Agent
         |
         +-> merged pull request ----> Done
         +-> requested changes ------> Working
-        +-> closed without merge ----> Failed
+        +-> closed without merge ----> Backlog
 ```
 
 When `projects[].autoMerge` is `true`, the implementation branch instead follows this path after publication:
@@ -142,7 +142,7 @@ with `autoMerge: false`; an enabled project merges only its normal implementatio
 | GitHub state                                                 | Trello result                                                |
 | ------------------------------------------------------------ | ------------------------------------------------------------ |
 | Pull request merged                                          | Move the card to `Done` and mark it complete                 |
-| Pull request closed without merge                            | Move the card to `Failed` and add the failure comment        |
+| Pull request closed without merge                            | Move the card to `Backlog` and add the closed-PR comment     |
 | Open pull request with changes requested on its current head | Move the card to `Working` and pass the feedback to OpenCode |
 | Open pull request without actionable requested changes       | Leave the card in `Human Review`                             |
 | No expected pull request                                     | Reconcile the card to `Backlog`                              |
@@ -159,6 +159,12 @@ Automated failures move the card to `Failed` rather than silently advancing it. 
 reason, and the instruction to move the card to `Ready for Agent` for a deliberate retry. If moving the card to `Failed`
 fails, the orchestrator preserves the primary failure and does not pretend that failure handling completed. If adding the
 failure comment fails after the move, the card remains in `Failed` and the comment failure is logged.
+
+A pull request that a human closes without merging is a deliberate rejection or cancellation, not an automated failure. The
+card is moved to `Backlog` and receives a comment stating that the pull request was closed without being merged, with its URL;
+this outcome does not send the `failed` notification. If the `Backlog` move fails, the reconciliation fails with diagnostic
+context and no cancellation comment is added. If the move succeeds but the comment fails, the card remains in `Backlog` and
+the comment failure is logged.
 
 An external operation must succeed before its related workflow transition is treated as complete. For example, if an enabled
 project merged a pull request but moving the card to `Done` failed, the card remains available for reconciliation as a merged

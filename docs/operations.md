@@ -73,7 +73,7 @@ When enabled, each event is attempted once after its corresponding successful tr
 | Event                | Sent when                                                                                                    |
 | -------------------- | ------------------------------------------------------------------------------------------------------------ |
 | `humanReview`        | A card successfully enters `Human Review` after normal publication or reconciliation                         |
-| `failed`             | A card successfully enters `Failed` through automated failure handling or a closed, unmerged pull request    |
+| `failed`             | A card successfully enters `Failed` through automated failure handling                                       |
 | `refinementComplete` | A refinement card successfully enters `Backlog`                                                              |
 | `done`               | A merged pull request successfully moves its card to `Done`, whether it was merged by a human or auto-merged |
 | `attentionRequired`  | A project poll or reconciliation cannot safely continue, including ambiguous active-card state               |
@@ -86,6 +86,10 @@ project, card, Trello URL, failure category and reason, plus the deliberate retr
 project, card, Trello URL, classification, refined title, and refined description. Attention Required messages include the
 project, failure category and reason, affected card IDs when available, session-log paths when available, and
 failure-handling outcome when available.
+
+Closing an expected pull request without merging moves its Human Review card to `Backlog` and adds a Trello explanation with
+the pull-request URL; it does not send the `failed` event. A failed Backlog move is retained as a reconciliation diagnostic,
+while a comment failure after a successful move is logged and leaves the card in `Backlog`.
 
 `Attention Required` is diagnostic only. It does not correct or retry cards, and an ambiguous or otherwise unsafe state stays
 available for operator investigation and the next reconciliation cycle. It is not sent for shutdown cancellation or for a
