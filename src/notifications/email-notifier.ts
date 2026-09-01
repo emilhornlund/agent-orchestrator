@@ -13,8 +13,16 @@ export interface EmailMessage {
   text: string;
 }
 
+export type EmailNotificationEvent =
+  | "humanReview"
+  | "failed"
+  | "refinementComplete"
+  | "done"
+  | "attentionRequired";
+
 export interface EmailNotifier {
   send(message: EmailMessage): Promise<void>;
+  isEventEnabled?(event: EmailNotificationEvent): boolean;
 }
 
 export interface HumanReviewNotificationDetails {
@@ -164,12 +172,19 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function isEventEnabled(
+  notifier: EmailNotifier,
+  event: EmailNotificationEvent,
+): boolean {
+  return notifier.isEventEnabled?.(event) ?? true;
+}
+
 export async function notifyHumanReview(
   notifier: EmailNotifier | undefined,
   details: HumanReviewNotificationDetails,
   cardLog: Logger,
 ): Promise<void> {
-  if (notifier === undefined) {
+  if (notifier === undefined || !isEventEnabled(notifier, "humanReview")) {
     return;
   }
 
@@ -188,7 +203,7 @@ export async function notifyFailed(
   details: FailedNotificationDetails,
   cardLog: Logger,
 ): Promise<void> {
-  if (notifier === undefined) {
+  if (notifier === undefined || !isEventEnabled(notifier, "failed")) {
     return;
   }
 
@@ -207,7 +222,10 @@ export async function notifyAttentionRequired(
   details: AttentionRequiredNotificationDetails,
   projectLog: Logger,
 ): Promise<void> {
-  if (notifier === undefined) {
+  if (
+    notifier === undefined ||
+    !isEventEnabled(notifier, "attentionRequired")
+  ) {
     return;
   }
 
@@ -226,7 +244,10 @@ export async function notifyRefinementCompletion(
   details: RefinementCompletionNotificationDetails,
   cardLog: Logger,
 ): Promise<void> {
-  if (notifier === undefined) {
+  if (
+    notifier === undefined ||
+    !isEventEnabled(notifier, "refinementComplete")
+  ) {
     return;
   }
 
@@ -245,7 +266,7 @@ export async function notifyCompletion(
   details: CompletionNotificationDetails,
   cardLog: Logger,
 ): Promise<void> {
-  if (notifier === undefined) {
+  if (notifier === undefined || !isEventEnabled(notifier, "done")) {
     return;
   }
 
@@ -310,6 +331,7 @@ export function createEmailNotifier(
     username: requiredSecret(environment, config.smtp.usernameEnv),
     password: requiredSecret(environment, config.smtp.passwordEnv),
     timeoutMilliseconds: config.smtp.timeoutSeconds * 1000,
+    ...(config.events === undefined ? {} : { events: config.events }),
     ...(signal === undefined ? {} : { signal }),
   });
 }

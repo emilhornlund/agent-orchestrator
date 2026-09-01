@@ -100,9 +100,18 @@ const smtpSchema = z.strictObject({
   timeoutSeconds: z.number().int().positive().default(30),
 });
 
+const emailNotificationEventsSchema = z.strictObject({
+  humanReview: z.boolean().optional(),
+  failed: z.boolean().optional(),
+  refinementComplete: z.boolean().optional(),
+  done: z.boolean().optional(),
+  attentionRequired: z.boolean().optional(),
+});
+
 const emailNotificationSchema = z
   .strictObject({
     enabled: z.boolean().default(false),
+    events: emailNotificationEventsSchema.optional(),
     recipients: z.array(z.string().email()).min(1).optional(),
     from: z.string().email().optional(),
     smtp: smtpSchema.optional(),
