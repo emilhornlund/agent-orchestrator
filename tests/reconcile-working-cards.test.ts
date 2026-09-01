@@ -506,6 +506,44 @@ describe("reconcileClaimedCard", () => {
     expect(trello.moveCard).toHaveBeenCalledWith("card-1", "review");
   });
 
+  it("does not auto-merge a claimed card with current requested changes", async () => {
+    const autoMergeProject = { ...project, autoMerge: true } as ProjectConfig;
+    const cardValue = card();
+    const trello = {
+      moveCard: vi.fn().mockResolvedValue({ ...cardValue, idList: "review" }),
+    } as unknown as TrelloClient;
+    const mergePullRequest = vi.fn();
+    const github = {
+      findMergedPullRequest: vi.fn().mockResolvedValue(null),
+      findPullRequest: vi.fn().mockResolvedValue({
+        url: "https://github.com/owner/repo/pull/1",
+      }),
+      findChangesRequestedPullRequest: vi.fn().mockResolvedValue({
+        url: "https://github.com/owner/repo/pull/1",
+        feedback: "Fix this before merging.",
+      }),
+      mergePullRequest,
+    } as unknown as GitHubClient;
+    const git = {
+      getHeadSha: vi.fn(),
+      pruneWorktrees: vi.fn().mockResolvedValue(undefined),
+      branchExists: vi.fn().mockResolvedValue(false),
+    } as unknown as GitClient;
+
+    await expect(
+      reconcileClaimedCard(trello, git, github, autoMergeProject, cardValue),
+    ).resolves.toBe(true);
+
+    expect(github.findChangesRequestedPullRequest).toHaveBeenCalledWith({
+      cwd: "/repo",
+      repository: "owner/repo",
+      headBranch: "agent/card-1",
+    });
+    expect(mergePullRequest).not.toHaveBeenCalled();
+    expect(git.getHeadSha).not.toHaveBeenCalled();
+    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "review");
+  });
+
   it("notifies once when an initially claimed card with an existing PR reaches Human Review", async () => {
     const notifier: EmailNotifier = {
       send: vi.fn(async (message) => {

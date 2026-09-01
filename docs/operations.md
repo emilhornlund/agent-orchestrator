@@ -19,8 +19,8 @@ unknown worktrees.
 For an initial claim, the expected worktree is prepared before the Trello card is moved to `Working`. A failed move leaves
 that prepared worktree available for the next attempt. Reconciliation checks existing worktrees but does not create them.
 After a successful implementation publication, cleanup is best effort and a cleanup failure is logged without undoing the
-publication or review transition. Refinement clears its result and attempts cleanup after moving the card to `Backlog`; a
-refinement cleanup failure follows normal failure handling while preserving diagnostic state.
+publication or resulting `Human Review` or `Done` transition. Refinement clears its result and attempts cleanup after moving
+the card to `Backlog`; a refinement cleanup failure follows normal failure handling while preserving diagnostic state.
 
 ## Publication and GitHub boundaries
 
@@ -36,10 +36,12 @@ The publication rules are:
   update.
 - Fetch or rebase failure stops before push, pull-request lookup or creation, and the successful `Human Review` transition.
 - An existing open pull request is reused; a new pull request is created only when needed.
-- The orchestrator never force-pushes and never merges pull requests.
+- The orchestrator never force-pushes. It merges a pull request only for a project with `autoMerge: true`, after that project's
+  normal implementation publication succeeds.
 
-The task worktree and branch are preserved after fetch, rebase, or publication failures so conflicts and diagnostics can be
-resolved. A human must review and merge the pull request before the card can reach `Done`.
+The task worktree and branch are preserved after fetch, rebase, publication, or merge failures so conflicts and diagnostics
+can be resolved. A human must review and merge the pull request before the card can reach `Done` when `autoMerge` is disabled.
+An enabled project's successful auto-merge is followed by the same `Done` transition and completion handling.
 
 ## Elapsed workflow time
 
@@ -68,13 +70,13 @@ credentials, and event defaults are in the [configuration reference](configurati
 
 When enabled, each event is attempted once after its corresponding successful transition or project-level failure:
 
-| Event                | Sent when                                                                                                 |
-| -------------------- | --------------------------------------------------------------------------------------------------------- |
-| `humanReview`        | A card successfully enters `Human Review` after normal publication or reconciliation                      |
-| `failed`             | A card successfully enters `Failed` through automated failure handling or a closed, unmerged pull request |
-| `refinementComplete` | A refinement card successfully enters `Backlog`                                                           |
-| `done`               | A merged pull request successfully moves its card to `Done`                                               |
-| `attentionRequired`  | A project poll or reconciliation cannot safely continue, including ambiguous active-card state            |
+| Event                | Sent when                                                                                                    |
+| -------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `humanReview`        | A card successfully enters `Human Review` after normal publication or reconciliation                         |
+| `failed`             | A card successfully enters `Failed` through automated failure handling or a closed, unmerged pull request    |
+| `refinementComplete` | A refinement card successfully enters `Backlog`                                                              |
+| `done`               | A merged pull request successfully moves its card to `Done`, whether it was merged by a human or auto-merged |
+| `attentionRequired`  | A project poll or reconciliation cannot safely continue, including ambiguous active-card state               |
 
 The service does not notify for cards merely observed in `Human Review`, `Failed`, or `Done`, unrelated list transitions, or
 repeated polling of an already completed transition. Human Review messages include project, card, Trello URL, pull-request
@@ -150,7 +152,7 @@ own project; it does not silently advance another project's workflow.
 
 Operators should expect the orchestrator to refuse or stop rather than guess. It does not:
 
-- merge pull requests;
+- merge pull requests for projects whose `autoMerge` setting is `false`;
 - force-push task branches;
 - run agent implementation in the configured source checkout;
 - resume a `Working` card without qualifying transition and worktree or pull-request evidence;

@@ -19,11 +19,17 @@ Ready for Agent
        +-> isolated worktree, setup, implementation, review, remediation, commit
        |
        v
-  Human Review
-       |
-       +-> merged pull request ----> Done
-       +-> requested changes ------> Working
-       +-> closed without merge ----> Failed
+   Human Review
+        |
+        +-> merged pull request ----> Done
+        +-> requested changes ------> Working
+        +-> closed without merge ----> Failed
+```
+
+When `projects[].autoMerge` is `true`, the implementation branch instead follows this path after publication:
+
+```text
+Ready for Agent -> Working -> publish expected PR -> merge PR -> Done
 ```
 
 Refinement uses the same initial claim but returns the card to `Backlog`:
@@ -99,7 +105,8 @@ The implementation pass then:
 5. If the review reports findings, runs a separate remediation session and checks that remediation left repository changes.
 6. Runs a separate OpenCode commit session with the configured Git identity. The session must create a commit and leave a
    clean worktree.
-7. Publishes the task branch and pull request, then moves the card to `Human Review`.
+7. Publishes or reuses the task pull request. With `autoMerge: false`, the card moves to `Human Review`; with `autoMerge: true`,
+   the pull request is merged and the card moves directly to `Done`.
 
 An OpenCode stage that exits unsuccessfully, produces no expected changes, fails to create a commit, or leaves changes after
 the commit stage fails the workflow. Publication details and non-force-push boundaries are in [Operations](operations.md).
@@ -113,14 +120,18 @@ Before publication, the task worktree fetches `origin/<defaultBranch>` and rebas
 reference. The resulting `HEAD` is used for remote-branch comparison, push decisions, pull-request publication,
 notifications, and the Trello summary. The configured source checkout is not used for these operations.
 
-An existing open pull request is reused; a new one is created only when none exists. A successful publication moves the card
-to `Human Review` and adds a Trello summary with the pull-request URL, commit, review result, remediation result, and, when
-available, elapsed workflow time. The Human Review email includes the same elapsed workflow time when reliable transition
-history is available. A publication failure does not produce a successful card transition.
+An existing open pull request is reused; a new one is created only when none exists. With `autoMerge: false`, successful
+publication moves the card to `Human Review`, adds a Trello summary with the pull-request URL, commit, review result,
+remediation result, and, when available, elapsed workflow time, and uses the Human Review email path. With `autoMerge: true`,
+the expected pull request is merged immediately after publication. Only a successful merge permits the card to move to `Done`
+with `dueComplete: true`; after that transition the orchestrator attempts the existing `done` email and adds a distinct
+auto-merged summary containing the pull-request URL, final published commit, and automated review/remediation results. A
+publication, merge, or card-transition failure does not produce a successful completion.
 
 ## Human review
 
-Human review takes place on GitHub. The orchestrator never merges a pull request.
+Human review takes place on GitHub when `autoMerge` is disabled. The orchestrator never merges a pull request for a project
+with `autoMerge: false`; an enabled project merges only its normal implementation pull requests after successful publication.
 
 | GitHub state                                                 | Trello result                                                |
 | ------------------------------------------------------------ | ------------------------------------------------------------ |
@@ -132,7 +143,8 @@ Human review takes place on GitHub. The orchestrator never merges a pull request
 
 When requested changes are detected, the orchestrator creates a worktree from the existing task branch, supplies the GitHub
 feedback to the implementation session, runs review and remediation again as needed, and republishes the updated branch and
-pull request. A requested-changes pass starts only when the review feedback applies to the pull request's current head.
+pull request. An enabled project auto-merges the successfully republished pull request; a disabled project returns it to
+Human Review. A requested-changes pass starts only when the review feedback applies to the pull request's current head.
 
 ## Failures and transitions
 
@@ -141,6 +153,7 @@ reason, and the instruction to move the card to `Ready for Agent` for a delibera
 fails, the orchestrator preserves the primary failure and does not pretend that failure handling completed. If adding the
 failure comment fails after the move, the card remains in `Failed` and the comment failure is logged.
 
-An external operation must succeed before its related workflow transition is treated as complete. For example, if a pull
-request was published but moving the card to `Human Review` failed, the card remains available for reconciliation as a
-published `Working` card; it is not silently marked successful or failed. See [Recovery](recovery.md) for these states.
+An external operation must succeed before its related workflow transition is treated as complete. For example, if an enabled
+project merged a pull request but moving the card to `Done` failed, the card remains available for reconciliation as a merged
+`Working` card; reconciliation completes it without attempting another merge. If a disabled project published but moving the
+card to `Human Review` failed, the same published `Working` recovery applies. See [Recovery](recovery.md) for these states.

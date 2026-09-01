@@ -75,6 +75,46 @@ describe("GitHubClient", () => {
     });
   });
 
+  it("merges a pull request through the injected command runner", async () => {
+    const runGitHubCommand = vi.fn<RunGitHubCommand>(async () => "");
+    const github = new GitHubClient(runGitHubCommand);
+
+    await github.mergePullRequest({
+      cwd: "/tmp/worktree",
+      repository: "example/repository",
+      pullRequestUrl: "https://github.com/example/repository/pull/123",
+      commitSha: "abc123",
+    });
+
+    expect(runGitHubCommand).toHaveBeenCalledWith("/tmp/worktree", [
+      "pr",
+      "merge",
+      "https://github.com/example/repository/pull/123",
+      "--repo",
+      "example/repository",
+      "--match-head-commit",
+      "abc123",
+      "--merge",
+      "--delete-branch",
+    ]);
+  });
+
+  it("surfaces pull request merge failures", async () => {
+    const mergeError = new Error("merge is blocked");
+    const github = new GitHubClient(
+      vi.fn<RunGitHubCommand>().mockRejectedValue(mergeError),
+    );
+
+    await expect(
+      github.mergePullRequest({
+        cwd: "/tmp/worktree",
+        repository: "example/repository",
+        pullRequestUrl: "https://github.com/example/repository/pull/123",
+        commitSha: "abc123",
+      }),
+    ).rejects.toBe(mergeError);
+  });
+
   it("finds an existing pull request", async () => {
     const runGitHubCommand = vi.fn<RunGitHubCommand>(
       async () => "https://github.com/example/repository/pull/123",

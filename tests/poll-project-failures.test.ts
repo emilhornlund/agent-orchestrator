@@ -87,6 +87,7 @@ function createScenario(options: ScenarioOptions = {}): Scenario {
 
   const project: ProjectConfig = {
     id: "example",
+    autoMerge: false,
     trello: {
       boardId: "board",
       backlogListId: "backlog-list",

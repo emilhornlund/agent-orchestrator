@@ -1,5 +1,7 @@
 projects:
   - id: "project"
+    # Keep disabled to require human approval before merging implementation PRs.
+    autoMerge: false
 
     trello:
       boardId: "board-id"
@@ -45,6 +47,7 @@ projects:
         variant: "low"
 
   - id: "another-project"
+    autoMerge: false
 
     trello:
       boardId: "another-board-id"

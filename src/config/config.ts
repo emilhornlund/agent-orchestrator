@@ -148,6 +148,7 @@ const emailNotificationSchema = z
 
 const projectSchema = z.strictObject({
   id: nonBlankString,
+  autoMerge: z.boolean().default(false),
   trello: trelloSchema,
   repository: repositorySchema,
   opencode: openCodeSchema,

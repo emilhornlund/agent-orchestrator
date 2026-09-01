@@ -7,8 +7,8 @@
 Agent Orchestrator is a local automation service that turns Trello cards into reviewed GitHub pull requests using
 OpenCode.
 
-It coordinates Trello, Git worktrees, OpenCode, and GitHub into a controlled software-engineering workflow while keeping
-human approval at the merge boundary.
+It coordinates Trello, Git worktrees, OpenCode, and GitHub into a controlled software-engineering workflow. Human approval
+remains at the merge boundary by default; a project can explicitly opt into automatic implementation merges.
 
 ## How it works
 
@@ -17,9 +17,10 @@ The orchestrator polls each project independently and processes eligible cards:
 
 ```text
 Ready for Agent -> Working -> Human Review -> Done
-                         ^          |
-                         |          +-> merged pull request
-                         +----------+    requested changes
+                         |          ^          |
+                         |          |          +-> merged pull request
+                         |          +----------+    requested changes
+                         +-> auto-merge -> Done
 
 Automated failure -> Failed
 Refinement: Ready for Agent -> Working -> Backlog -> Ready for Agent
@@ -27,8 +28,8 @@ Refinement: Ready for Agent -> Working -> Backlog -> Ready for Agent
 
 Cards with the `Refinement` label are refined before implementation. Other eligible cards need at least one implementation
 classification label: `Feature`, `Improvement`, or `Bug`. The orchestrator creates pull requests and responds to review
-feedback, but a human merges pull requests. See the [workflow reference](docs/workflow.md) for the complete lifecycle,
-lists, labels, and transitions.
+feedback. Human approval is required unless the project's `autoMerge` setting is explicitly enabled. See the [workflow
+reference](docs/workflow.md) for the complete lifecycle, lists, labels, and transitions.
 
 ## Documentation
 
@@ -48,7 +49,8 @@ reorganized; current configuration names, states, commands, and safety boundarie
 
 - Agent work runs in an isolated worktree and task branch; the configured source checkout is not used as the agent's
   working directory.
-- The orchestrator never merges pull requests or force-pushes task branches.
+- Pull requests are never merged automatically unless the owning project explicitly enables `autoMerge`; task branches are
+  never force-pushed.
 - Only one task is active per project at a time. Independent projects can be processed concurrently.
 - Failed or interrupted work is reconciled from deterministic Trello, Git, GitHub, and session-log artifacts rather than
   being silently discarded. See [Recovery](docs/recovery.md).

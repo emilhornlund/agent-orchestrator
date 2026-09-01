@@ -34,6 +34,7 @@ type ListName = keyof typeof listIds;
 type PullRequestState = "none" | "open" | "requested" | "merged";
 
 interface HarnessOptions {
+  autoMerge?: boolean;
   initialList?: ListName;
   cardLabels?: readonly string[];
   initialWorktree?: boolean;
@@ -42,14 +43,16 @@ interface HarnessOptions {
   initialRemoteSha?: string | null;
   createPullRequestError?: Error;
   backlogMoveError?: Error;
+  doneMoveError?: Error;
   refinementCommentError?: Error;
 }
 
 const temporaryRoots: string[] = [];
 
-function createProject(worktreeRoot: string): ProjectConfig {
+function createProject(worktreeRoot: string, autoMerge = false): ProjectConfig {
   return {
     id: "characterization-project",
+    autoMerge,
     trello: {
       boardId: "board",
       backlogListId: listIds.backlog,
@@ -90,13 +93,14 @@ function createHarness(options: HarnessOptions = {}) {
   );
   temporaryRoots.push(worktreeRoot);
 
-  const project = createProject(worktreeRoot);
+  const project = createProject(worktreeRoot, options.autoMerge);
   const cardId = "card-1";
   const worktreePath = path.join(worktreeRoot, cardId);
   let currentList = options.initialList ?? "ready";
   let pullRequestState = options.pullRequestState ?? "none";
   let createPullRequestError = options.createPullRequestError;
   let backlogMoveError = options.backlogMoveError;
+  let doneMoveError = options.doneMoveError;
   let refinementCommentError = options.refinementCommentError;
   let branchExists =
     options.initialWorktree === true || currentList === "review";
@@ -163,6 +167,12 @@ function createHarness(options: HarnessOptions = {}) {
       if (listId === listIds.backlog && backlogMoveError !== undefined) {
         const error = backlogMoveError;
         backlogMoveError = undefined;
+        throw error;
+      }
+
+      if (listId === listIds.done && doneMoveError !== undefined) {
+        const error = doneMoveError;
+        doneMoveError = undefined;
         throw error;
       }
 
@@ -356,7 +366,10 @@ function createHarness(options: HarnessOptions = {}) {
 
     return pullRequest;
   });
-  const mergePullRequest = vi.fn();
+  const mergePullRequest = vi.fn(async () => {
+    pullRequestState = "merged";
+    events.push("github:merge-pr");
+  });
   const github = {
     findPullRequest,
     findMergedPullRequest,
@@ -471,6 +484,110 @@ afterEach(() => {
 });
 
 describe("orchestrator workflow characterization", () => {
+  it("implements, publishes, auto-merges, and completes without Human Review", async () => {
+    const harness = createHarness({ autoMerge: true });
+
+    try {
+      await pollProject(
+        harness.trello,
+        harness.git,
+        harness.github,
+        harness.openCode,
+        harness.commands,
+        harness.project,
+        new AbortController().signal,
+      );
+
+      expect(harness.card.idList).toBe(listIds.done);
+      expect(harness.runOpenCode).toHaveBeenCalledTimes(3);
+      expect(harness.mergePullRequest).toHaveBeenCalledWith({
+        cwd: harness.worktreePath,
+        repository: "example/repository",
+        pullRequestUrl: "https://github.com/example/repository/pull/123",
+        commitSha: "implementation-commit",
+      });
+      expect(harness.moveCard).toHaveBeenCalledWith(
+        harness.card.id,
+        listIds.done,
+        { dueComplete: true },
+      );
+      expect(harness.moveCard).not.toHaveBeenCalledWith(
+        harness.card.id,
+        listIds.review,
+      );
+      expect(harness.events.indexOf("github:merge-pr")).toBeLessThan(
+        harness.events.indexOf("trello:move:done-list"),
+      );
+      expect(harness.events).not.toContain("trello:move:review-list");
+    } finally {
+      harness.cleanup();
+    }
+  });
+
+  it("reconciles a merged PR after the initial Done transition fails without merging again", async () => {
+    const harness = createHarness({
+      autoMerge: true,
+      doneMoveError: new Error("Done unavailable"),
+    });
+
+    try {
+      await expect(
+        pollProject(
+          harness.trello,
+          harness.git,
+          harness.github,
+          harness.openCode,
+          harness.commands,
+          harness.project,
+          new AbortController().signal,
+        ),
+      ).resolves.toBeUndefined();
+
+      expect(harness.card.idList).toBe(listIds.working);
+      expect(harness.mergePullRequest).toHaveBeenCalledTimes(1);
+      expect(harness.trello.addComment).not.toHaveBeenCalledWith(
+        harness.card.id,
+        expect.stringContaining("Status: Auto-merged"),
+      );
+
+      await pollProject(
+        harness.trello,
+        harness.git,
+        harness.github,
+        harness.openCode,
+        harness.commands,
+        harness.project,
+        new AbortController().signal,
+      );
+
+      expect(harness.card.idList).toBe(listIds.done);
+      expect(harness.mergePullRequest).toHaveBeenCalledTimes(1);
+      expect(
+        harness.moveCard.mock.calls.filter(
+          ([, listId]) => listId === listIds.done,
+        ),
+      ).toHaveLength(2);
+      expect(harness.moveCard).toHaveBeenNthCalledWith(
+        2,
+        harness.card.id,
+        listIds.done,
+        { dueComplete: true },
+      );
+      expect(harness.moveCard).toHaveBeenNthCalledWith(
+        3,
+        harness.card.id,
+        listIds.done,
+        { dueComplete: true },
+      );
+      expect(harness.trello.addComment).toHaveBeenCalledWith(
+        harness.card.id,
+        expect.stringContaining("Status: Auto-merged"),
+      );
+    } finally {
+      harness.cleanup();
+    }
+  });
+
   it("implements, publishes, waits for a human merge, and then completes", async () => {
     const harness = createHarness();
 

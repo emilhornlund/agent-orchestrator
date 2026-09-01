@@ -302,6 +302,7 @@ describe("pollProject", () => {
 
     const project: ProjectConfig = {
       id: "example",
+      autoMerge: false,
       trello: {
         boardId: "board",
         backlogListId: "backlog-list",
@@ -565,6 +566,7 @@ describe("pollProject", () => {
 
     const project: ProjectConfig = {
       id: "example",
+      autoMerge: false,
       trello: {
         boardId: "board",
         backlogListId: "backlog-list",
@@ -811,6 +813,7 @@ describe("pollProject", () => {
 
     const project: ProjectConfig = {
       id: "example",
+      autoMerge: false,
       trello: {
         boardId: "board",
         backlogListId: "backlog-list",
@@ -1041,6 +1044,7 @@ describe("pollProject", () => {
 
     const project: ProjectConfig = {
       id: "example",
+      autoMerge: false,
       trello: {
         boardId: "board",
         backlogListId: "backlog-list",
@@ -1181,6 +1185,7 @@ describe("pollProject", () => {
 
     const project: ProjectConfig = {
       id: "example",
+      autoMerge: false,
       trello: {
         boardId: "board",
         backlogListId: "backlog-list",
@@ -1407,6 +1412,7 @@ describe("pollProject", () => {
 
     const project: ProjectConfig = {
       id: "example",
+      autoMerge: false,
       trello: {
         boardId: "board",
         backlogListId: "backlog-list",
@@ -1605,6 +1611,7 @@ describe("pollProject", () => {
 
     const project: ProjectConfig = {
       id: "example",
+      autoMerge: false,
       trello: {
         boardId: "board",
         backlogListId: "backlog-list",
@@ -1735,6 +1742,7 @@ describe("pollProject", () => {
 
     const project: ProjectConfig = {
       id: "example",
+      autoMerge: false,
       trello: {
         boardId: "board",
         backlogListId: "backlog-list",

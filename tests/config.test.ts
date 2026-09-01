@@ -60,6 +60,7 @@ describe("parseConfig", () => {
 
     expect(project).toBeDefined();
     expect(project!.id).toBe("project-one");
+    expect(project!.autoMerge).toBe(false);
     expect(project!.trello).toEqual({
       boardId: "board-one",
       backlogListId: "backlog",
@@ -100,6 +101,27 @@ describe("parseConfig", () => {
     expect(config.workflow.pollIntervalSeconds).toBe(15);
     expect(config.workflow.logRetentionDays).toBe(14);
     expect(config.notifications).toBeUndefined();
+  });
+
+  it("accepts opt-in automatic merging for a project", () => {
+    const raw = validConfig.replace(
+      '  - id: "project-one"',
+      '  - id: "project-one"\n    autoMerge: true',
+    );
+
+    expect(parseConfig(raw).projects[0]?.autoMerge).toBe(true);
+  });
+
+  it.each([
+    ["non-boolean", '    autoMerge: "yes"'],
+    ["unknown", "    automaticMerge: true"],
+  ])("rejects a project auto-merge setting that is %s", (_label, setting) => {
+    const raw = validConfig.replace(
+      '  - id: "project-one"',
+      `  - id: "project-one"\n${setting}`,
+    );
+
+    expect(() => parseConfig(raw)).toThrow("projects.0");
   });
 
   it("accepts enabled email notification settings", () => {

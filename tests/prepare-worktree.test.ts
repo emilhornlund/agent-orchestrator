@@ -23,6 +23,7 @@ function createTemporaryDirectory(): string {
 function createProject(worktreeRoot: string): ProjectConfig {
   return {
     id: "test-project",
+    autoMerge: false,
     repository: {
       path: "/repositories/test-project",
       github: "example/test-project",

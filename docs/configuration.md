@@ -40,8 +40,8 @@ out of configuration files and source control.
 
 ### `projects`
 
-`projects` is a non-empty list. Each item has `id`, `trello`, `repository`, and `opencode` settings. Project IDs must be
-unique.
+`projects` is a non-empty list. Each item has `id`, `autoMerge`, `trello`, `repository`, and `opencode` settings. Project IDs
+must be unique.
 
 ### `workflow`
 
@@ -80,6 +80,12 @@ The optional `events` map controls the existing notification types. Its accepted
 ### `projects[].id`
 
 Non-blank identifier used to distinguish projects in configuration and logs. It must be unique.
+
+### `projects[].autoMerge`
+
+Boolean that defaults to `false`. When `true`, only that project's normal implementation workflow automatically merges its
+published pull request and moves the card to `Done`; refinement remains unchanged. When omitted or `false`, the pull
+request is published and the card enters `Human Review` for the existing human-merge workflow. The value must be a boolean.
 
 ### `projects[].trello`
 
