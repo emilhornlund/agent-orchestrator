@@ -82,11 +82,17 @@ const openCodeStageSchema = z.strictObject({
   variant: nonBlankString,
 });
 
+const remediationSchema = z.strictObject({
+  model: nonBlankString,
+  variant: nonBlankString,
+  maxPasses: z.number().int().nonnegative().default(1),
+});
+
 const openCodeSchema = z.strictObject({
   refinement: openCodeStageSchema,
   implementation: openCodeStageSchema,
   review: openCodeStageSchema,
-  remediation: openCodeStageSchema,
+  remediation: remediationSchema,
   commit: openCodeStageSchema,
   timeoutMinutes: z.number().positive().default(360),
 });

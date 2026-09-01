@@ -62,6 +62,7 @@ function createProject(repositoryPath: string): ProjectConfig {
       remediation: {
         model: "remediation-model",
         variant: "remediation-variant",
+        maxPasses: 1,
       },
       commit: {
         model: "commit-model",

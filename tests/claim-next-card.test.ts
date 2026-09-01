@@ -43,7 +43,11 @@ function createProject(worktreeRoot: string): Project {
       refinement: { model: "refinement", variant: "xhigh" },
       implementation: { model: "implementation", variant: "xhigh" },
       review: { model: "review", variant: "high" },
-      remediation: { model: "remediation", variant: "xhigh" },
+      remediation: {
+        model: "remediation",
+        variant: "xhigh",
+        maxPasses: 1,
+      },
       commit: { model: "commit", variant: "low" },
       timeoutMinutes: 360,
     },

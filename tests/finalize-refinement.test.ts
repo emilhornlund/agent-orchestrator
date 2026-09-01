@@ -48,6 +48,7 @@ function createProject(): ProjectConfig {
       remediation: {
         model: "openai/remediation-model",
         variant: "xhigh",
+        maxPasses: 1,
       },
       commit: {
         model: "openai/commit-model",

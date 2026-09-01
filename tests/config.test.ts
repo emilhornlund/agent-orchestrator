@@ -92,6 +92,7 @@ describe("parseConfig", () => {
     expect(project!.opencode.remediation).toEqual({
       model: "openai/remediation-model",
       variant: "xhigh",
+      maxPasses: 1,
     });
     expect(project!.opencode.commit).toEqual({
       model: "openai/commit-model",
@@ -101,6 +102,55 @@ describe("parseConfig", () => {
     expect(config.workflow.pollIntervalSeconds).toBe(15);
     expect(config.workflow.logRetentionDays).toBe(14);
     expect(config.notifications).toBeUndefined();
+  });
+
+  it.each([0, 3])("accepts maxPasses: %s", (maxPasses) => {
+    const raw = validConfig.replace(
+      `      remediation:
+        model: "openai/remediation-model"
+        variant: "xhigh"`,
+      `      remediation:
+        model: "openai/remediation-model"
+        variant: "xhigh"
+        maxPasses: ${maxPasses}`,
+    );
+
+    expect(parseConfig(raw).projects[0]?.opencode.remediation.maxPasses).toBe(
+      maxPasses,
+    );
+  });
+
+  it.each([
+    ["negative", "-1"],
+    ["fractional", "1.5"],
+    ["non-numeric", '"three"'],
+    ["boolean", "true"],
+    ["null", "null"],
+    ["array", "[]"],
+    ["object", "{}"],
+  ])("rejects a %s maxPasses value", (_label, value) => {
+    const raw = validConfig.replace(
+      `      remediation:
+        model: "openai/remediation-model"
+        variant: "xhigh"`,
+      `      remediation:
+        model: "openai/remediation-model"
+        variant: "xhigh"
+        maxPasses: ${value}`,
+    );
+
+    expect(() => parseConfig(raw)).toThrow(
+      "projects.0.opencode.remediation.maxPasses",
+    );
+  });
+
+  it("rejects unsupported remediation configuration keys", () => {
+    const raw = validConfig.replace(
+      '        variant: "xhigh"\n      commit:',
+      '        variant: "xhigh"\n        maxPassesTypo: 1\n      commit:',
+    );
+
+    expect(() => parseConfig(raw)).toThrow("projects.0.opencode.remediation");
   });
 
   it("accepts opt-in automatic merging for a project", () => {

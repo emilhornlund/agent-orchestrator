@@ -357,6 +357,7 @@ describe("pollProject", () => {
         remediation: {
           model: "remediation-model",
           variant: "remediation-variant",
+          maxPasses: 1,
         },
         commit: {
           model: "commit-model",
@@ -622,6 +623,7 @@ describe("pollProject", () => {
         remediation: {
           model: "remediation-model",
           variant: "remediation-variant",
+          maxPasses: 1,
         },
         commit: {
           model: "commit-model",
@@ -810,7 +812,7 @@ describe("pollProject", () => {
     }
   });
 
-  it("remediates before committing and publishing without re-reviewing", async () => {
+  it("re-reviews after remediation before committing and publishing", async () => {
     const events: string[] = [];
 
     const worktreeRoot = fs.mkdtempSync(
@@ -868,6 +870,7 @@ describe("pollProject", () => {
         remediation: {
           model: "remediation-model",
           variant: "remediation-variant",
+          maxPasses: 1,
         },
         commit: {
           model: "commit-model",
@@ -991,6 +994,16 @@ describe("pollProject", () => {
         }
 
         if (openCodeCall === 4) {
+          events.push("review-pass");
+
+          return {
+            exitCode: 0,
+            output: "REVIEW_PASS",
+            errorOutput: "",
+          };
+        }
+
+        if (openCodeCall === 5) {
           events.push("commit");
 
           return {
@@ -1033,6 +1046,7 @@ describe("pollProject", () => {
         "implementation",
         "review-fail",
         "remediation",
+        "review-pass",
         "commit",
         "push",
         "pr",
@@ -1099,6 +1113,7 @@ describe("pollProject", () => {
         remediation: {
           model: "remediation-model",
           variant: "remediation-variant",
+          maxPasses: 1,
         },
         commit: {
           model: "commit-model",
@@ -1240,6 +1255,7 @@ describe("pollProject", () => {
         remediation: {
           model: "remediation-model",
           variant: "remediation-variant",
+          maxPasses: 1,
         },
         commit: {
           model: "commit-model",
@@ -1470,6 +1486,7 @@ describe("pollProject", () => {
         remediation: {
           model: "remediation-model",
           variant: "remediation-variant",
+          maxPasses: 1,
         },
         commit: {
           model: "commit-model",
@@ -1669,6 +1686,7 @@ describe("pollProject", () => {
         remediation: {
           model: "remediation-model",
           variant: "remediation-variant",
+          maxPasses: 1,
         },
         commit: {
           model: "commit-model",
@@ -1800,6 +1818,7 @@ describe("pollProject", () => {
         remediation: {
           model: "remediation-model",
           variant: "remediation-variant",
+          maxPasses: 1,
         },
         commit: {
           model: "commit-model",
