@@ -4,6 +4,7 @@ import type { GitHubClient, PullRequest } from "../github/github-client.js";
 import { logger } from "../logging/logger.js";
 import { removeSessionLog } from "../logging/session-log.js";
 import {
+  notifyCompletion,
   notifyFailed,
   type EmailNotifier,
 } from "../notifications/email-notifier.js";
@@ -167,6 +168,7 @@ export async function reconcileReviewCards(
           state.branch,
           state.mergedPullRequest,
           cardLog,
+          emailNotifier,
           signal,
         );
       } else if (state.closedPullRequest !== undefined) {
@@ -369,6 +371,7 @@ async function completeMergedReviewCard(
   branch: string,
   pullRequest: PullRequest,
   cardLog: ReturnType<typeof logger.child>,
+  emailNotifier?: EmailNotifier,
   signal?: AbortSignal,
 ): Promise<void> {
   if (signal?.aborted) {
@@ -445,6 +448,20 @@ async function completeMergedReviewCard(
     annotateCardFailure(reconciliationError, project.id, card.id);
     throw reconciliationError;
   }
+
+  if (signal?.aborted) {
+    return;
+  }
+
+  await notifyCompletion(
+    emailNotifier,
+    {
+      project,
+      card,
+      pullRequestUrl: pullRequest.url,
+    },
+    cardLog,
+  );
 
   if (signal?.aborted) {
     return;

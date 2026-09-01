@@ -3,12 +3,14 @@ import { describe, expect, it, vi } from "vitest";
 import type { ProjectConfig } from "../src/config/config.js";
 import type { Logger } from "../src/logging/logger.js";
 import {
+  buildCompletionEmail,
   buildFailedEmail,
   buildHumanReviewEmail,
   buildAttentionRequiredEmail,
   buildRefinementCompletionEmail,
   createEmailNotifier,
   notifyAttentionRequired,
+  notifyCompletion,
   notifyFailed,
   notifyHumanReview,
   notifyRefinementCompletion,
@@ -189,6 +191,26 @@ describe("email notifications", () => {
     });
   });
 
+  it("builds a completion message with both workflow links", () => {
+    expect(
+      buildCompletionEmail({
+        project,
+        card,
+        pullRequestUrl: "https://github.com/owner/repo/pull/42",
+      }),
+    ).toEqual({
+      subject:
+        "[Agent Orchestrator] Completed: project-one / Add email notifications",
+      text: [
+        "Event: Completed",
+        "Project: project-one",
+        "Card: Add email notifications",
+        "Trello card URL: https://trello.com/c/card-1",
+        "Pull request URL: https://github.com/owner/repo/pull/42",
+      ].join("\n"),
+    });
+  });
+
   it("isolates Human Review delivery failures", async () => {
     const notifier = {
       send: vi.fn().mockRejectedValue(new Error("SMTP unavailable")),
@@ -291,6 +313,50 @@ describe("email notifications", () => {
 
     expect(cardLog.error).toHaveBeenCalledWith(
       "Refinement completion email notification failed: SMTP unavailable",
+    );
+  });
+
+  it("does not attempt completion delivery without a notifier", async () => {
+    const cardLog = {
+      event: vi.fn(),
+      error: vi.fn(),
+    };
+
+    await notifyCompletion(
+      undefined,
+      {
+        project,
+        card,
+        pullRequestUrl: "https://github.com/owner/repo/pull/42",
+      },
+      cardLog as unknown as Logger,
+    );
+
+    expect(cardLog.event).not.toHaveBeenCalled();
+    expect(cardLog.error).not.toHaveBeenCalled();
+  });
+
+  it("isolates completion delivery failures", async () => {
+    const notifier = {
+      send: vi.fn().mockRejectedValue(new Error("SMTP unavailable")),
+    };
+    const cardLog = {
+      event: vi.fn(),
+      error: vi.fn(),
+    };
+
+    await notifyCompletion(
+      notifier,
+      {
+        project,
+        card,
+        pullRequestUrl: "https://github.com/owner/repo/pull/42",
+      },
+      cardLog as unknown as Logger,
+    );
+
+    expect(cardLog.error).toHaveBeenCalledWith(
+      "Completion email notification failed: SMTP unavailable",
     );
   });
 });
