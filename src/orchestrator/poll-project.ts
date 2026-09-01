@@ -64,6 +64,7 @@ import {
   reconcileWorkingCards,
 } from "./reconcile-working-cards.js";
 import { WorkflowError } from "./workflow-error.js";
+import { getElapsedRefinementWorkflowTime } from "./workflow-duration.js";
 
 function isWorkflowAbort(error: unknown, signal: AbortSignal): boolean {
   return (
@@ -396,6 +397,13 @@ async function processRefinementCard(
 
     cardLog.event("Refined card returned to Backlog");
 
+    const elapsedWorkflowTime = await getElapsedRefinementWorkflowTime(
+      trello,
+      project,
+      card.id,
+      cardLog,
+    );
+
     await notifyRefinementCompletion(
       emailNotifier,
       {
@@ -406,7 +414,13 @@ async function processRefinementCard(
       cardLog,
     );
 
-    await addRefinementCompletionComment(trello, card, result, cardLog);
+    await addRefinementCompletionComment(
+      trello,
+      card,
+      result,
+      cardLog,
+      elapsedWorkflowTime,
+    );
 
     if (signal.aborted) {
       return;

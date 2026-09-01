@@ -45,6 +45,21 @@ An enabled project's successful auto-merge is followed by the same `Done` transi
 
 ## Elapsed workflow time
 
+When a refinement card is successfully moved to `Backlog`, its concise Trello completion comment can contain:
+
+```text
+Agent Orchestrator completed refinement.
+
+Classification: improvement
+Refined task title: Add inventory support
+Elapsed workflow time: 1 hour 5 minutes
+```
+
+For refinement, the timer starts at the current pass's `Ready for Agent` to `Working` transition, or at `Failed` to `Ready
+for Agent` for a deliberate retry. It ends at that pass's successful `Working` to `Backlog` transition. The comment omits the
+elapsed-time line when that transition history is missing, incomplete, malformed, ambiguous, or has invalid date ordering;
+the reason is logged and the successful `Backlog` state is preserved.
+
 When an implementation card is successfully published and moved to `Human Review`, its Trello success comment and Human
 Review email can contain a line such as:
 
@@ -82,10 +97,10 @@ The service does not notify for cards merely observed in `Human Review`, `Failed
 repeated polling of an already completed transition. Human Review messages include project, card, Trello URL, pull-request
 URL, commit/publication context, review result, remediation result, and, when reliable history is available, the elapsed
 workflow time. Completion messages include project, card, Trello URL, and merged pull-request URL. Failed messages include
-project, card, Trello URL, failure category and reason, plus the deliberate retry instruction. Refinement messages include
-project, card, Trello URL, classification, refined title, and refined description. Attention Required messages include the
-project, failure category and reason, affected card IDs when available, session-log paths when available, and
-failure-handling outcome when available.
+project, card, Trello URL, failure category and reason, plus the deliberate retry instruction. Refinement completion emails
+include project, card, Trello URL, classification, refined title, and refined description; the corresponding Trello comment is
+the concise summary described above. Attention Required messages include the project, failure category and reason, affected
+card IDs when available, session-log paths when available, and failure-handling outcome when available.
 
 Closing an expected pull request without merging moves its Human Review card to `Backlog` and adds a Trello explanation with
 the pull-request URL; it does not send the `failed` event. A failed Backlog move is retained as a reconciliation diagnostic,

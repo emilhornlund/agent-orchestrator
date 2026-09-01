@@ -81,8 +81,9 @@ When a refinement card is claimed:
 3. The orchestrator validates the structured result and rejects unauthorized repository changes.
 4. It updates the Trello title and description, removes conflicting implementation labels, applies exactly one of
    `Feature`, `Improvement`, or `Bug`, removes `Refinement`, and moves the card to the top of `Backlog`.
-5. After the move succeeds, it attempts the optional refinement-completion email and adds one Trello comment containing the
-   classification, refined title, and refined task description.
+5. After the move succeeds, it attempts the optional refinement-completion email and adds one concise Trello comment containing
+   the classification, refined title, and, when reliable transition history is available, elapsed workflow time. The comment
+   does not repeat the refined task description.
 6. The successful refinement result artifact is cleared and the refinement worktree is cleaned up.
 
 Email and comment failures are logged independently and do not undo the successful `Backlog` transition. If refinement
