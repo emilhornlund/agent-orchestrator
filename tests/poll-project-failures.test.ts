@@ -27,6 +27,7 @@ import { type TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
 
 interface ScenarioOptions {
   cards?: TrelloCard[];
+  maxPasses?: number;
   setupCommand?: string;
   setupExitCodes?: number[];
   validationCommand?: string;
@@ -133,6 +134,7 @@ function createScenario(options: ScenarioOptions = {}): Scenario {
       remediation: {
         model: "remediation-model",
         variant: "remediation-variant",
+        maxPasses: options.maxPasses ?? 1,
       },
       commit: {
         model: "commit-model",
@@ -1062,7 +1064,7 @@ describe("pollProject failure boundaries", () => {
     );
   });
 
-  it("publishes after one remediation without re-reviewing", async () => {
+  it("publishes after one remediation and a passing follow-up review", async () => {
     await withScenario(
       {
         statusOutputs: [" M src/example.ts", " M src/example.ts", ""],
@@ -1074,6 +1076,7 @@ describe("pollProject failure boundaries", () => {
             output: "Review finding\nREVIEW_FAIL",
           },
           { exitCode: 0, output: "" },
+          { exitCode: 0, output: "REVIEW_PASS" },
           { exitCode: 0, output: "" },
         ],
       },
@@ -1088,7 +1091,7 @@ describe("pollProject failure boundaries", () => {
           scenario.signal,
         );
 
-        expect(scenario.runOpenCode).toHaveBeenCalledTimes(4);
+        expect(scenario.runOpenCode).toHaveBeenCalledTimes(5);
 
         expect(scenario.runOpenCode.mock.calls[0]?.[0]).toMatchObject({
           model: "implementation-model",
@@ -1106,6 +1109,11 @@ describe("pollProject failure boundaries", () => {
         });
 
         expect(scenario.runOpenCode.mock.calls[3]?.[0]).toMatchObject({
+          model: "review-model",
+          variant: "review-variant",
+        });
+
+        expect(scenario.runOpenCode.mock.calls[4]?.[0]).toMatchObject({
           model: "commit-model",
           variant: "commit-variant",
         });
@@ -1139,6 +1147,7 @@ describe("pollProject failure boundaries", () => {
             output: "Potential blocking issue\nREVIEW_FAIL",
           },
           { exitCode: 0, output: "" },
+          { exitCode: 0, output: "REVIEW_FAIL" },
           { exitCode: 0, output: "" },
         ],
       },
@@ -1153,7 +1162,7 @@ describe("pollProject failure boundaries", () => {
           scenario.signal,
         );
 
-        expect(scenario.runOpenCode).toHaveBeenCalledTimes(4);
+        expect(scenario.runOpenCode).toHaveBeenCalledTimes(5);
 
         expect(scenario.trello.moveCard).toHaveBeenCalledWith(
           scenario.card.id,
@@ -1164,6 +1173,164 @@ describe("pollProject failure boundaries", () => {
           scenario.card.id,
           scenario.project.trello.failedListId,
         );
+      },
+    );
+  });
+
+  it("runs the initial review but no remediation or follow-up review at zero", async () => {
+    await withScenario(
+      {
+        maxPasses: 0,
+        statusOutputs: [" M src/example.ts", ""],
+        headOutputs: ["before-commit", "after-commit"],
+        openCodeResults: [
+          { exitCode: 0, output: "" },
+          { exitCode: 0, output: "REVIEW_FAIL" },
+          { exitCode: 0, output: "" },
+        ],
+      },
+      async (scenario) => {
+        await pollProject(
+          scenario.trello,
+          scenario.git,
+          scenario.github,
+          scenario.openCode,
+          scenario.commands,
+          scenario.project,
+          scenario.signal,
+        );
+
+        expect(scenario.runOpenCode).toHaveBeenCalledTimes(3);
+        expect(
+          scenario.runOpenCode.mock.calls.map(([run]) => run.sessionLabel),
+        ).toEqual([
+          "OpenCode implementation",
+          "OpenCode review",
+          "OpenCode commit",
+        ]);
+        expect(scenario.events).toContain("push");
+        expect(scenario.events).toContain("pr");
+        expect(scenario.events).toContain("move:review-list");
+        expect(scenario.events).not.toContain("move:failed-list");
+      },
+    );
+  });
+
+  it("runs exactly the configured remediation passes and follow-up reviews", async () => {
+    await withScenario(
+      {
+        maxPasses: 2,
+        statusOutputs: [
+          " M src/example.ts",
+          " M src/example.ts",
+          " M src/example.ts",
+          "",
+        ],
+        headOutputs: ["before-commit", "after-commit"],
+        openCodeResults: [
+          { exitCode: 0, output: "" },
+          { exitCode: 0, output: "REVIEW_FAIL" },
+          { exitCode: 0, output: "" },
+          { exitCode: 0, output: "REVIEW_FAIL" },
+          { exitCode: 0, output: "" },
+          { exitCode: 0, output: "REVIEW_FAIL" },
+          { exitCode: 0, output: "" },
+        ],
+      },
+      async (scenario) => {
+        await pollProject(
+          scenario.trello,
+          scenario.git,
+          scenario.github,
+          scenario.openCode,
+          scenario.commands,
+          scenario.project,
+          scenario.signal,
+        );
+
+        expect(scenario.runOpenCode).toHaveBeenCalledTimes(7);
+        expect(
+          scenario.runOpenCode.mock.calls.map(([run]) => run.sessionLabel),
+        ).toEqual([
+          "OpenCode implementation",
+          "OpenCode review",
+          "OpenCode remediation",
+          "OpenCode review",
+          "OpenCode remediation",
+          "OpenCode review",
+          "OpenCode commit",
+        ]);
+        expect(scenario.events).not.toContain("move:failed-list");
+        expect(scenario.events).toContain("move:review-list");
+      },
+    );
+  });
+
+  it("logs the current remediation pass and configured limit", async () => {
+    const consoleLog = vi
+      .spyOn(console, "log")
+      .mockImplementation(() => undefined);
+
+    try {
+      await withScenario(
+        {
+          maxPasses: 3,
+          statusOutputs: [" M src/example.ts", " M src/example.ts", ""],
+          openCodeResults: [
+            { exitCode: 0, output: "" },
+            { exitCode: 0, output: "REVIEW_FAIL" },
+            { exitCode: 0, output: "" },
+            { exitCode: 0, output: "REVIEW_PASS" },
+            { exitCode: 0, output: "" },
+          ],
+        },
+        async (scenario) => {
+          await pollProject(
+            scenario.trello,
+            scenario.git,
+            scenario.github,
+            scenario.openCode,
+            scenario.commands,
+            scenario.project,
+            scenario.signal,
+          );
+
+          expect(consoleLog).toHaveBeenCalledWith(
+            expect.stringContaining("Starting remediation pass 1 of 3"),
+          );
+        },
+      );
+    } finally {
+      consoleLog.mockRestore();
+    }
+  });
+
+  it("does not publish when a follow-up review process fails", async () => {
+    await withScenario(
+      {
+        statusOutputs: [" M src/example.ts", " M src/example.ts"],
+        openCodeResults: [
+          { exitCode: 0, output: "" },
+          { exitCode: 0, output: "REVIEW_FAIL" },
+          { exitCode: 0, output: "" },
+          { exitCode: 2, output: "follow-up review failed" },
+        ],
+      },
+      async (scenario) => {
+        await expect(
+          pollProject(
+            scenario.trello,
+            scenario.git,
+            scenario.github,
+            scenario.openCode,
+            scenario.commands,
+            scenario.project,
+            scenario.signal,
+          ),
+        ).rejects.toThrow("OpenCode review exited with code 2");
+
+        expect(scenario.runOpenCode).toHaveBeenCalledTimes(4);
+        expectNothingPublished(scenario);
       },
     );
   });

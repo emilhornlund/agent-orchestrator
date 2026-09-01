@@ -145,11 +145,23 @@ Each stage requires a non-blank `model` and `variant`:
 | `refinement`     | Refining a Trello task and classifying it                          |
 | `implementation` | Initial implementation and implementation of human review feedback |
 | `review`         | Independent review pass                                            |
-| `remediation`    | Addressing review findings                                         |
+| `remediation`    | Addressing review findings; includes the automatic pass limit      |
 | `commit`         | Final commit session                                               |
 
 `projects[].opencode.timeoutMinutes` is the positive maximum runtime in minutes for an individual OpenCode execution at any
 stage. It defaults to `360` when omitted.
+
+The `remediation` stage also accepts the optional `maxPasses` setting:
+
+| Key         | Meaning and validation                                                                            |
+| ----------- | ------------------------------------------------------------------------------------------------- |
+| `maxPasses` | Non-negative integer maximum number of automatic remediation passes; defaults to `1` when omitted |
+
+The initial automated review is not counted. Each remediation pass consists of one remediation session followed by one new
+review. A value of `0` disables automatic remediation, but the initial review still runs and the normal commit and publication
+flow continues even when that review reports findings. A positive limit stops the loop after the configured number of passes;
+the normal commit, publication, Human Review, and enabled auto-merge boundaries remain unchanged. The counter exists only for
+the current workflow execution and is not stored on the Trello card.
 
 ## Validation rules
 

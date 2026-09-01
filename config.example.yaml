@@ -42,6 +42,8 @@ projects:
       remediation:
         model: "your-remediation-model"
         variant: "xhigh"
+        # Defaults to 1; each pass is one remediation session followed by one review.
+        maxPasses: 1
       commit:
         model: "your-commit-model"
         variant: "low"
@@ -88,6 +90,7 @@ projects:
       remediation:
         model: "your-remediation-model"
         variant: "xhigh"
+        maxPasses: 1
       commit:
         model: "your-commit-model"
         variant: "low"

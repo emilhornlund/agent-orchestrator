@@ -35,6 +35,7 @@ type PullRequestState = "none" | "open" | "requested" | "merged";
 
 interface HarnessOptions {
   autoMerge?: boolean;
+  maxPasses?: number;
   initialList?: ListName;
   cardLabels?: readonly string[];
   initialWorktree?: boolean;
@@ -45,11 +46,16 @@ interface HarnessOptions {
   backlogMoveError?: Error;
   doneMoveError?: Error;
   refinementCommentError?: Error;
+  reviewResults?: Array<"REVIEW_PASS" | "REVIEW_FAIL">;
 }
 
 const temporaryRoots: string[] = [];
 
-function createProject(worktreeRoot: string, autoMerge = false): ProjectConfig {
+function createProject(
+  worktreeRoot: string,
+  autoMerge = false,
+  maxPasses = 1,
+): ProjectConfig {
   return {
     id: "characterization-project",
     autoMerge,
@@ -80,7 +86,11 @@ function createProject(worktreeRoot: string, autoMerge = false): ProjectConfig {
       refinement: { model: "refinement-model", variant: "xhigh" },
       implementation: { model: "implementation-model", variant: "xhigh" },
       review: { model: "review-model", variant: "high" },
-      remediation: { model: "remediation-model", variant: "xhigh" },
+      remediation: {
+        model: "remediation-model",
+        variant: "xhigh",
+        maxPasses,
+      },
       commit: { model: "commit-model", variant: "low" },
       timeoutMinutes: 360,
     },
@@ -93,7 +103,11 @@ function createHarness(options: HarnessOptions = {}) {
   );
   temporaryRoots.push(worktreeRoot);
 
-  const project = createProject(worktreeRoot, options.autoMerge);
+  const project = createProject(
+    worktreeRoot,
+    options.autoMerge,
+    options.maxPasses,
+  );
   const cardId = "card-1";
   const worktreePath = path.join(worktreeRoot, cardId);
   let currentList = options.initialList ?? "ready";
@@ -102,6 +116,7 @@ function createHarness(options: HarnessOptions = {}) {
   let backlogMoveError = options.backlogMoveError;
   let doneMoveError = options.doneMoveError;
   let refinementCommentError = options.refinementCommentError;
+  const reviewResults = [...(options.reviewResults ?? [])];
   let branchExists =
     options.initialWorktree === true || currentList === "review";
   let dirty = false;
@@ -422,7 +437,10 @@ function createHarness(options: HarnessOptions = {}) {
 
       return {
         exitCode: 0,
-        output: label === "OpenCode review" ? "REVIEW_PASS" : "",
+        output:
+          label === "OpenCode review"
+            ? (reviewResults.shift() ?? "REVIEW_PASS")
+            : "",
         errorOutput: "",
       };
     },
@@ -961,6 +979,41 @@ describe("orchestrator workflow characterization", () => {
       );
       expect(harness.mergePullRequest).not.toHaveBeenCalled();
       expect(harness.forcePush).not.toHaveBeenCalled();
+    } finally {
+      harness.cleanup();
+    }
+  });
+
+  it("applies the bounded remediation loop to a requested-changes implementation rerun", async () => {
+    const harness = createHarness({
+      initialList: "review",
+      pullRequestState: "requested",
+      feedback: "Please add a regression test.",
+      maxPasses: 2,
+      reviewResults: ["REVIEW_FAIL", "REVIEW_PASS"],
+    });
+
+    try {
+      await pollProject(
+        harness.trello,
+        harness.git,
+        harness.github,
+        harness.openCode,
+        harness.commands,
+        harness.project,
+        new AbortController().signal,
+      );
+
+      expect(
+        harness.runOpenCode.mock.calls.map(([run]) => run.sessionLabel),
+      ).toEqual([
+        "OpenCode review feedback implementation",
+        "OpenCode review",
+        "OpenCode remediation",
+        "OpenCode review",
+        "OpenCode commit",
+      ]);
+      expect(harness.card.idList).toBe(listIds.review);
     } finally {
       harness.cleanup();
     }
