@@ -22,6 +22,7 @@ export interface FailureContext {
   cardIds?: string[];
   sessionLogPath?: string;
   sessionLogPaths?: string[];
+  cardFailureHandled?: boolean;
   handlingOutcome?: string;
 }
 
