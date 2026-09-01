@@ -458,7 +458,7 @@ describe("reconcileReviewCards", () => {
     expect(existsSync(sessionLogPath)).toBe(false);
   });
 
-  it("moves a closed unmerged expected PR to Failed and comments", async () => {
+  it("moves a closed unmerged expected PR to Backlog and comments", async () => {
     const trello = trelloFor(card());
     const git = {
       remoteBranchExists: vi.fn(),
@@ -472,7 +472,8 @@ describe("reconcileReviewCards", () => {
       project,
     );
 
-    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "failed");
+    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "backlog");
+    expect(trello.moveCard).not.toHaveBeenCalledWith("card-1", "failed");
     expect(trello.addComment).toHaveBeenCalledWith(
       "card-1",
       [
@@ -485,17 +486,9 @@ describe("reconcileReviewCards", () => {
     expect(git.deleteRemoteBranch).not.toHaveBeenCalled();
   });
 
-  it("sends a Failed email after closed unmerged reconciliation", async () => {
+  it("does not send a Failed email after closed unmerged reconciliation", async () => {
     const notifier: EmailNotifier = {
-      send: vi.fn(async (message) => {
-        expect(message.subject).toContain("Failed");
-        expect(message.text).toContain(
-          "Pull request https://github.com/owner/repo/pull/1 was closed without being merged.",
-        );
-        expect(message.text).toContain(
-          "To retry deliberately, move this card to Ready for Agent.",
-        );
-      }),
+      send: vi.fn(),
     };
     const trello = trelloFor(card());
 
@@ -508,11 +501,11 @@ describe("reconcileReviewCards", () => {
       notifier,
     );
 
-    expect(notifier.send).toHaveBeenCalledTimes(1);
-    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "failed");
+    expect(notifier.send).not.toHaveBeenCalled();
+    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "backlog");
   });
 
-  it("does not let a closed-card email failure alter reconciliation", async () => {
+  it("does not invoke the Failed email path for a closed card", async () => {
     const notifier: EmailNotifier = {
       send: vi.fn().mockRejectedValue(new Error("SMTP unavailable")),
     };
@@ -529,11 +522,12 @@ describe("reconcileReviewCards", () => {
       ),
     ).resolves.toBeNull();
 
-    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "failed");
+    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "backlog");
+    expect(notifier.send).not.toHaveBeenCalled();
     expect(trello.addComment).toHaveBeenCalled();
   });
 
-  it("reports the primary failure when moving a closed PR card to Failed fails", async () => {
+  it("reports the primary failure when moving a closed PR card to Backlog fails", async () => {
     const moveError = new Error("move failed");
     const trello = {
       ...trelloFor(card()),
@@ -552,11 +546,41 @@ describe("reconcileReviewCards", () => {
       category: "Workflow",
       cause: moveError,
       message: expect.stringContaining(
-        "Could not move closed Human Review card to Failed",
+        "Could not move closed Human Review card to Backlog",
       ),
     });
 
     expect(trello.addComment).not.toHaveBeenCalled();
+  });
+
+  it("keeps a closed PR in Backlog when its explanatory comment fails", async () => {
+    const commentError = new Error("comment failed");
+    const trello = {
+      ...trelloFor(card()),
+      addComment: vi.fn().mockRejectedValue(commentError),
+    } as unknown as TrelloClient;
+    const error = vi.spyOn(Logger.prototype, "error");
+
+    await expect(
+      reconcileReviewCards(
+        trello,
+        {} as GitClient,
+        githubFor("card-1", "closed"),
+        project,
+      ),
+    ).resolves.toBeNull();
+
+    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "backlog");
+    expect(trello.addComment).toHaveBeenCalledWith(
+      "card-1",
+      expect.stringContaining(
+        "Pull request: https://github.com/owner/repo/pull/1",
+      ),
+    );
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("Failed to add closed pull request comment"),
+    );
+    error.mockRestore();
   });
 
   it("blocks the project when multiple expected PRs are active", async () => {

@@ -8,7 +8,6 @@ import { logger } from "../logging/logger.js";
 import { removeSessionLog } from "../logging/session-log.js";
 import {
   notifyCompletion,
-  notifyFailed,
   type EmailNotifier,
 } from "../notifications/email-notifier.js";
 import type { TrelloCard, TrelloClient } from "../trello/trello-client.js";
@@ -174,13 +173,12 @@ export async function reconcileReviewCards(
           signal,
         );
       } else if (state.pullRequest.state === "CLOSED") {
-        await failClosedReviewCard(
+        await returnClosedReviewCardToBacklog(
           trello,
           project,
           state.card,
           state.pullRequest,
           cardLog,
-          emailNotifier,
           signal,
         );
       }
@@ -456,13 +454,12 @@ async function completeMergedReviewCard(
   }
 }
 
-async function failClosedReviewCard(
+async function returnClosedReviewCardToBacklog(
   trello: TrelloClient,
   project: ProjectConfig,
   card: TrelloCard,
   pullRequest: PullRequestState,
   cardLog: ReturnType<typeof logger.child>,
-  emailNotifier?: EmailNotifier,
   signal?: AbortSignal,
 ): Promise<void> {
   if (signal?.aborted) {
@@ -478,36 +475,21 @@ async function failClosedReviewCard(
   }
 
   try {
-    await trello.moveCard(card.id, project.trello.failedListId);
-    cardLog.event("Card with closed pull request moved to Failed");
+    await trello.moveCard(card.id, project.trello.backlogListId);
+    cardLog.event("Card with closed pull request moved to Backlog");
   } catch (error) {
     const message = getErrorMessage(error);
-    cardLog.error(`Failed to move card "${card.name}" to Failed: ${message}`);
+    cardLog.error(`Failed to move card "${card.name}" to Backlog: ${message}`);
 
     const reconciliationError = new WorkflowError(
       "Workflow",
-      `Could not move closed Human Review card to Failed: ${message}`,
+      `Could not move closed Human Review card to Backlog: ${message}`,
       { cause: error },
     );
 
     annotateCardFailure(reconciliationError, project.id, card.id);
     throw reconciliationError;
   }
-
-  if (signal?.aborted) {
-    return;
-  }
-
-  await notifyFailed(
-    emailNotifier,
-    {
-      project,
-      card,
-      category: "Workflow",
-      reason: `Pull request ${pullRequest.url} was closed without being merged.`,
-    },
-    cardLog,
-  );
 
   if (signal?.aborted) {
     return;
