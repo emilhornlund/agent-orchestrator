@@ -12,457 +12,87 @@ human approval at the merge boundary.
 
 ## How it works
 
-Each configured project connects:
-
-- a local Git repository;
-- a GitHub repository;
-- a Trello board;
-- an OpenCode model and runtime configuration.
-
-The orchestrator continuously polls each project and routes cards in `Ready for Agent` according to their configured
-workflow labels.
-
-Cards carrying the configured `Refinement` label enter the refinement workflow. Refinement takes precedence even when
-the card also carries a `Feature`, `Improvement`, or `Bug` label.
-
-Cards without `Refinement` enter the implementation workflow when they carry at least one configured `Feature`,
-`Improvement`, or `Bug` label:
+Each configured project connects a local Git repository, a GitHub repository, a Trello board, and an OpenCode runtime.
+The orchestrator polls each project independently and processes eligible cards:
 
 ```text
-Ready for Agent + Refinement
-      │
-      ▼
-    Working
-      │
-      ├─ create isolated Git worktree
-      ├─ run OpenCode refinement
-      ├─ validate the structured refinement result
-      ├─ reject unauthorized repository changes
-      ├─ update the Trello card title and description
-      ├─ replace Refinement with exactly one of Feature / Improvement / Bug
-      ├─ move the card to Backlog
-      ├─ attempt the refinement completion email when its event is enabled
-      ├─ add a refined-result summary comment
-      ├─ clean up the refinement worktree
-      │
-      ▼
-    Backlog
+Ready for Agent -> Working -> Human Review -> Done
+                         ^          |
+                         |          +-> merged pull request
+                         +----------+    requested changes
+
+Automated failure -> Failed
+Refinement: Ready for Agent -> Working -> Backlog -> Ready for Agent
 ```
 
-Successful refinement returns the card to the top of `Backlog`. It must be explicitly moved back to `Ready for Agent`
-before implementation begins.
+Cards with the `Refinement` label are refined before implementation. Other eligible cards need at least one implementation
+classification label: `Feature`, `Improvement`, or `Bug`. The orchestrator creates pull requests and responds to review
+feedback, but a human merges pull requests. See the [workflow reference](docs/workflow.md) for the complete lifecycle,
+lists, labels, and transitions.
 
-The normal implementation workflow is:
+## Documentation
 
-```text
-Ready for Agent
-      │
-      ▼
-    Working
-      │
-      ├─ create isolated Git worktree
-      ├─ run optional repository setup
-      ├─ run OpenCode implementation
-      ├─ agents run optional repository validation
-      ├─ run independent OpenCode review
-      ├─ remediate review findings when necessary
-      └─ fetch latest default branch, rebase, push, and create pull request
-      │
-      ▼
- Human Review
-      │
-      ├─ merged ───────────────► Done
-      │                          └─ attempt the completion email when its event is enabled
-      │
-      ├─ changes requested ────► Working
-      │                          │
-      │                          └─ remediate, review, and update PR
-      │
-      └─ closed without merge ─► Failed
-```
+| Topic                                                                | Reference                              |
+| -------------------------------------------------------------------- | -------------------------------------- |
+| Workflow lifecycle, Trello states, refinement, and review feedback   | [Workflow](docs/workflow.md)           |
+| `config.yaml`, environment variables, defaults, and validation       | [Configuration](docs/configuration.md) |
+| Reconciliation, restart recovery, retries, and ambiguous state       | [Recovery](docs/recovery.md)           |
+| Worktree safety, publication, notifications, logging, and operations | [Operations](docs/operations.md)       |
+| Development setup, testing, and pull requests                        | [CONTRIBUTING.md](CONTRIBUTING.md)     |
+| Private vulnerability reporting                                      | [SECURITY.md](SECURITY.md)             |
 
-Failures during automated processing move the card to `Failed` rather than silently advancing the workflow.
+The focused pages are the canonical references for their topics. The implementation does not change when documentation is
+reorganized; current configuration names, states, commands, and safety boundaries are described there.
 
 ## Key properties
 
-### Isolated execution
-
-Agent work runs in dedicated Git worktrees and task branches. The configured source checkout is not used as the agent's
-working directory.
-
-Branches follow the convention:
-
-```text
-agent/<trello-card-id>
-```
-
-### Human-controlled merges
-
-The orchestrator creates and updates pull requests, but it does not merge them.
-
-A card reaches `Done` only after the corresponding pull request has been merged on GitHub.
-
-### Independent implementation and review
-
-Implementation, review, remediation, and commit creation use separate OpenCode sessions.
-
-The review phase evaluates the completed change independently before the branch is published.
-
-### Fresh publication base
-
-Immediately before publication, the task worktree fetches `origin/<defaultBranch>` and rebases the expected
-`agent/<trello-card-id>` branch onto that fetched ref. Git leaves an already-current branch unchanged. The resulting `HEAD`
-is used for remote-branch comparison, push decisions, pull-request publication, notifications, and the Trello summary.
-The configured source checkout is never used for these operations.
-
-If fetching or rebasing fails, publication stops before push, pull-request lookup or creation, and the Trello card's success
-transition. The task worktree and branch are preserved so the failure or any rebase conflicts can be diagnosed and retried.
-An existing remote branch that would require a non-fast-forward update after rebasing is also rejected; publication uses only a
-normal non-force push.
-
-### Elapsed workflow time
-
-When an implementation card is successfully published and moved to `Human Review`, its Trello success comment includes a
-line such as:
-
-```text
-Elapsed workflow time: 1 hour 5 minutes
-```
-
-This is elapsed workflow time from the current automated pass to its successful `Human Review` transition, not OpenCode-only
-runtime. For an initial pass, the timer starts at the qualifying `Ready for Agent` to `Working` transition. A deliberate retry
-from `Failed` starts at its subsequent `Failed` to `Ready for Agent` transition. A pass responding to human review feedback
-starts at its `Human Review` to `Working` transition. The timer ends at that pass's resulting `Working` to `Human Review`
-transition.
-
-The value is formatted with explicit units, using seconds, minutes, hours, and days as needed. If Trello action history is
-missing, incomplete, malformed, ambiguous, or has invalid date ordering, the summary comment is still attempted and the card
-remains in `Human Review`; the orchestrator logs why the elapsed workflow time was omitted.
-
-### Optional email notifications
-
-Email notifications are disabled when `notifications.email` is omitted or when its `enabled` value is `false`. To enable
-them, add this top-level configuration:
-
-```yaml
-notifications:
-  email:
-    enabled: true
-    # Every event defaults to true when omitted.
-    events:
-      humanReview: true
-      failed: true
-      refinementComplete: true
-      done: true
-      attentionRequired: true
-    recipients:
-      - "reviewers@example.com"
-    from: "agent-orchestrator@example.com"
-    smtp:
-      host: "smtp.example.com"
-      port: 465
-      secure: true
-      usernameEnv: "SMTP_USERNAME"
-      passwordEnv: "SMTP_PASSWORD"
-      timeoutSeconds: 30
-```
-
-`recipients` and `from` are email addresses. `smtp.host`, `smtp.port`, and `smtp.secure` select the SMTP server connection;
-`secure: true` uses implicit TLS, while `secure: false` uses SMTP with a required STARTTLS upgrade. `usernameEnv` and
-`passwordEnv` are the names of environment variables containing the SMTP credentials. The default `timeoutSeconds` is `30`,
-and each notification makes one bounded delivery attempt without automatic retries.
-
-The optional `events` map controls each existing email type independently. Every event defaults to enabled when it is omitted,
-including when only some event settings are provided:
-
-- `humanReview` — sent after a successful transition into `Human Review` from publication or reconciliation.
-- `failed` — sent after a successful transition into `Failed` from automated failure handling or a closed, unmerged pull request.
-- `refinementComplete` — sent after a successful refinement transition into `Backlog`.
-- `done` — the existing `Completed` email sent after a merged pull request successfully transitions the card into `Done`.
-- `attentionRequired` — sent for the existing project-level failure path when processing cannot safely continue.
-
-`enabled: false` (or an omitted `notifications.email` section) is the master override: it suppresses all five events and does not
-require SMTP credentials. When an individual event is `false`, only that email delivery attempt is skipped; Trello moves, comments,
-workflow state, polling, reconciliation, and other enabled emails are unchanged. Event keys and values are validated strictly at
-startup.
-
-Set the referenced credentials in the ignored `.env` file or another secure runtime environment. Never put SMTP passwords,
-API keys, or tokens in `config.yaml` or source control. Enabled settings and referenced environment variables are validated
-at startup with field-specific errors; omitted or disabled settings require no SMTP credentials.
-
-The orchestrator sends one email after each successful orchestrator transition into `Human Review` from normal publication or
-reconciliation, after each successful orchestrator transition into `Failed` from automated failure handling or a closed,
-unmerged pull request, after each successful merged pull request transition into `Done`, and after each successful refinement
-transition into `Backlog`. It does not notify for cards merely observed in `Human Review`, `Failed`, or `Done`, unrelated list
-transitions, or repeated polling of an already completed transition. Human Review messages include the project, card, Trello
-URL, pull-request URL, commit/publication context, review result, and remediation result. `Completed` messages include the
-project, card, Trello URL, and merged pull-request URL. Failed messages include the project, card, Trello URL, failure category
-and reason, and the deliberate retry instruction. Refinement completion messages include the project, card, Trello URL, classification, refined
-title, and refined task description.
-
-When a project poll or reconciliation fails before a single card's normal `Failed` handling completes, the enabled
-`Attention Required` event is attempted. This includes ambiguous project state, such as multiple recoverable cards in
-`Working` or multiple active cards in `Human Review`, and unreconciled workflow-state or external-operation failures. These
-messages contain the project ID, failure category and reason, all affected card IDs, available session-log paths, and any
-failure-handling outcome. They are not sent for shutdown cancellation or for a card failure that was already moved to `Failed`
-through the existing card notification path.
-
-Existing card transition delivery is attempted only after the corresponding Trello move succeeds. Attention Required delivery
-is attempted after a project worker failure and does not perform a Trello move. Any delivery failure is logged with project and
-card context when available and does not move a card, change the primary workflow error, or prevent the existing Trello
-summary/failure handling. A successfully refined card also receives one Trello comment containing its classification, refined
-title, and refined task description. Email and comment failures are isolated independently: the card remains in `Backlog`, and
-the refinement is not changed to a failed workflow. When email notifications are omitted or disabled, the summary comment is
-still added after a successful refinement.
-
-An `Attention Required` email is diagnostic only. It does not correct or retry cards, and the ambiguous or otherwise unsafe
-workflow state remains available for operator investigation and the next reconciliation cycle. Disabling or omitting
-`notifications.email` suppresses all of these alerts and event emails; individual `events` settings suppress only their
-corresponding delivery while logging and workflow behavior remain unchanged.
-
-### Pull request feedback loop
-
-When GitHub reports requested changes, the orchestrator moves the Trello card back to `Working`, creates a worktree from
-the existing task branch, supplies the review feedback to OpenCode, and republishes the updated branch.
-
-### Recovery and reconciliation
-
-The orchestrator reconciles Trello state with Git and GitHub on every polling cycle. This allows it to recover from
-interrupted runs and handle already-existing branches or pull requests without blindly recreating workflow state.
-
-When a card is moved from `Failed` back to `Ready for Agent`, the orchestrator reuses the card's existing worktree and
-`agent/<trello-card-id>` branch when both are still valid. A clean branch with tracked changes relative to
-`origin/<defaultBranch>` is treated as committed implementation work. The retry skips setup, implementation, review,
-remediation, and commit, then resumes publication. Before publication, the task worktree fetches and rebases onto the latest
-`origin/<defaultBranch>`; a rebase failure preserves the worktree and branch and prevents push, pull-request lookup or
-creation, and a Trello success transition. It uses a normal non-force push when the remote branch is missing or does not yet
-point at the resulting commit, checks for an existing open pull request, and creates one only when needed. If rebasing a
-previously published branch would require a non-fast-forward update, publication fails without changing the remote branch.
-
-An existing worktree or branch alone is not proof that implementation is complete. A branch at its base, a branch with no
-tracked committed changes, or a dirty worktree follows the normal implementation path; uncommitted work is preserved for
-OpenCode to inspect. If an open pull request already exists, the card is reconciled directly to `Human Review` without
-rerunning implementation or creating a duplicate pull request. Publication or Trello failures leave the card in its
-failure/reconciliation state instead of advancing it silently.
-
-Workflow recovery uses only deterministic workflow artifacts. Before a newly claimed card is moved to `Working`, its
-`<worktreeRoot>/<trello-card-id>` worktree is prepared on `agent/<trello-card-id>`. If the move fails, that worktree remains
-available for the next attempt.
-
-A `Working` card is recoverable only when Trello action history shows its latest transition into `Working` came from `Ready for
-Agent` and the expected worktree exists on the expected branch, or when the transition came from `Human Review` and the
-expected open pull request has actionable requested changes. Other manual moves into `Working` are corrected to `Backlog`,
-including when stale branches or worktrees exist. Working reconciliation never creates worktrees.
-
-`Human Review` cards are reconciled from the expected `agent/<trello-card-id>` pull request. Merged pull requests move cards to
-`Done`, closed unmerged pull requests move them to `Failed`, open pull requests with requested changes return to `Working`,
-open pull requests without requested changes remain in `Human Review`, and cards without an expected pull request return to
-`Backlog`. More than one recoverable `Working` card or active `Human Review` card blocks that project's processing and sends
-an `Attention Required` email when notifications are enabled; no card is selected automatically. To retry deliberately, move
-a card to `Ready for Agent`; `Backlog`, `Failed`, and `Done` are not automatically processed.
-
-### Multi-project operation
-
-Multiple projects can be configured in a single `config.yaml`. Each project is polled independently with its own
-repository, Trello board, worktree root, and OpenCode configuration.
+- Agent work runs in an isolated worktree and task branch; the configured source checkout is not used as the agent's
+  working directory.
+- The orchestrator never merges pull requests or force-pushes task branches.
+- Only one task is active per project at a time. Independent projects can be processed concurrently.
+- Failed or interrupted work is reconciled from deterministic Trello, Git, GitHub, and session-log artifacts rather than
+  being silently discarded. See [Recovery](docs/recovery.md).
 
 ## Requirements
 
 - Node.js 24 or later
 - Yarn Classic 1.x
 - Git
-- GitHub CLI (`gh`)
+- GitHub CLI (`gh`), already authenticated for managed repositories
 - OpenCode
 - Trello API credentials
-- An SMTP server, when email notifications are enabled
-
-The GitHub CLI must already be authenticated for the repositories the orchestrator manages.
+- An SMTP server when email notifications are enabled
 
 ## Setup
 
-Install dependencies:
+Install dependencies from the repository root:
 
 ```bash
 yarn install
 ```
 
-Create the local configuration files:
+Create the ignored local configuration files:
 
 ```bash
 cp config.example.yaml config.yaml
 cp .env.example .env
 ```
 
-Add your Trello credentials to `.env`:
-
-```dotenv
-TRELLO_API_KEY=
-TRELLO_TOKEN=
-# Required only when notifications.email.enabled is true.
-SMTP_USERNAME=
-SMTP_PASSWORD=
-```
-
-Then configure one or more projects in `config.yaml`:
-
-```yaml
-projects:
-  - id: "my-project"
-
-    trello:
-      boardId: "board-id"
-      backlogListId: "backlog-list-id"
-      readyListId: "ready-list-id"
-      workingListId: "working-list-id"
-      reviewListId: "review-list-id"
-      failedListId: "failed-list-id"
-      doneListId: "done-list-id"
-      refinementLabelId: "refinement-label-id"
-      featureLabelId: "feature-label-id"
-      improvementLabelId: "improvement-label-id"
-      bugLabelId: "bug-label-id"
-
-    repository:
-      path: "/absolute/path/to/repository"
-      github: "owner/repository"
-      defaultBranch: "main"
-      worktreeRoot: "/absolute/path/to/worktrees/repository"
-      setupCommand: "yarn install"
-      validationCommand: "yarn validate"
-      gitIdentity:
-        name: "Agent Orchestrator"
-        email: "agent-orchestrator@users.noreply.github.com"
-        signingKey: "/absolute/path/to/signing-key"
-
-    opencode:
-      timeoutMinutes: 360
-      refinement:
-        model: "your-refinement-model"
-        variant: "xhigh"
-      implementation:
-        model: "openai/implementation-model"
-        variant: "xhigh"
-      review:
-        model: "openai/review-model"
-        variant: "high"
-      remediation:
-        model: "openai/remediation-model"
-        variant: "xhigh"
-      commit:
-        model: "openai/commit-model"
-        variant: "low"
-
-workflow:
-  pollIntervalSeconds: 15
-  logRetentionDays: 14
-
-notifications:
-  email:
-    enabled: false
-    recipients:
-      - "reviewers@example.com"
-    from: "agent-orchestrator@example.com"
-    smtp:
-      host: "smtp.example.com"
-      port: 465
-      secure: true
-      usernameEnv: "SMTP_USERNAME"
-      passwordEnv: "SMTP_PASSWORD"
-      timeoutSeconds: 30
-```
-
-`setupCommand` and `validationCommand` are optional. When configured, `setupCommand` runs in the card worktree before
-the OpenCode implementation session. `validationCommand` is passed to OpenCode sessions that modify implementation
-files, and those agents run it before finishing and fix failures caused by their changes. The orchestrator does not
-execute the validation command itself.
-
-`logRetentionDays` defaults to `14` when omitted. It controls retention for daily orchestrator logs, including test-prefixed
-daily logs, and per-card session logs under `logs/sessions`. Files are removed when their filesystem modification time is
-strictly older than the retention cutoff. Cleanup runs at startup and once per day while the orchestrator is running. Missing
-log directories are ignored, unrelated entries and symbolic links are preserved, and cleanup failures are logged without
-stopping task processing. Failed-card session logs remain available until this policy removes them; session logs for cards
-successfully moved to `Done` are still removed immediately.
-
-`config.yaml` and `.env` are local files and are intentionally excluded from version control.
-
-## Trello board
-
-Each project requires six configured workflow lists:
-
-| List              | Purpose                                                       |
-| ----------------- | ------------------------------------------------------------- |
-| `Backlog`         | Tasks that are not currently queued for automated processing  |
-| `Ready for Agent` | Tasks waiting to be claimed                                   |
-| `Working`         | Tasks currently under automated implementation or remediation |
-| `Human Review`    | Tasks with a published pull request awaiting human review     |
-| `Failed`          | Tasks that could not complete the automated workflow          |
-| `Done`            | Tasks whose pull requests have been merged                    |
-
-Each project also requires four configured workflow labels:
-
-| Label         | Purpose                                                |
-| ------------- | ------------------------------------------------------ |
-| `Refinement`  | Marks a task for refinement rather than implementation |
-| `Feature`     | Classifies the card as feature implementation work     |
-| `Improvement` | Classifies the card as improvement implementation work |
-| `Bug`         | Classifies the card as bug-fix implementation work     |
-
-The configured list and label names themselves are not significant; the orchestrator uses their Trello IDs.
-
-For normal implementation, a card in `Ready for Agent` must have at least one of the configured `Feature`,
-`Improvement`, or `Bug` labels. Unlabelled cards are ignored.
-
-The configured `Refinement` label takes precedence over implementation labels. A card carrying `Refinement` is routed
-through the refinement workflow even if it also carries `Feature`, `Improvement`, or `Bug`.
-
-During refinement, OpenCode may inspect repository code, tests, documentation, and architecture, but it must not modify
-repository implementation files. Its only permitted write is the dedicated structured refinement result artifact.
-
-The orchestrator validates that result, updates the Trello card title and description, removes conflicting semantic
-classification labels, applies exactly one of `Feature`, `Improvement`, or `Bug`, removes `Refinement`, and moves the
-card to the top of `Backlog`. After that move succeeds, it attempts the optional refinement completion email and adds a Trello
-summary comment containing the result classification and refined task content. Failure to deliver either side effect is logged
-but does not change the successful `Backlog` state.
-
-If refinement fails, produces an invalid result, or modifies unauthorized repository files, the card moves to `Failed`.
+Add `TRELLO_API_KEY` and `TRELLO_TOKEN` to `.env`, then configure one or more projects in `config.yaml`. Email credentials
+are only needed when email notifications are enabled. See the [configuration reference](docs/configuration.md) for every
+setting, default, and validation rule.
 
 ## Running
 
-Start the orchestrator:
+Start the orchestrator with:
 
 ```bash
 yarn dev
 ```
 
-The process continues polling until it is stopped.
-
-### Shutdown and fatal runtime errors
-
-`SIGINT` and `SIGTERM` request an idempotent coordinated shutdown. The service stops claiming new cards, cancels in-flight
-subprocess and API work through the existing abort signal, and exits successfully after workers stop. An intentional signal
-shutdown is not reported as a task failure.
-
-Startup failures, uncaught exceptions, and unhandled promise rejections are logged as fatal diagnostics with the original
-error details and a UTC timestamp. Their first fatal event requests the same coordinated shutdown and the process exits with
-status `1`. Repeated fatal events or signals do not start duplicate cleanup or replace the original fatal diagnostic.
-
-Shutdown does not mark cards successful, advance workflow state, delete recoverable worktrees, or discard agent changes. A
-normal failure in one project remains isolated to that project and follows the existing card failure handling.
-
-Restart recovery depends on the existing deterministic artifacts: Trello list-transition history, the expected
-`agent/<trello-card-id>` branch and worktree, Git status and commits, pull requests, and per-card session logs. After a fatal
-exit, inspect those artifacts and restart the service to run the existing reconciliation flow; do not assume that an
-interrupted card should be marked successful or failed manually without reviewing its state.
-
-## Logging
-
-Lifecycle events, warnings, and errors emitted by the shared `Logger` begin with a UTC ISO 8601 timestamp, such as
-`2026-08-30T09:00:00.000Z`. The timestamp is followed by the existing project and card context, when present, and the
-message. Multiline logger messages receive the same prefix on every physical console line. Daily orchestrator log files
-keep their existing `timestamp level context message` format, including the `test-` filename prefix used by tests.
-
-Raw command and OpenCode output is written to per-card session logs or forwarded directly to process standard streams;
-it is not timestamped by the shared `Logger`.
+The process continues polling until it is stopped. Shutdown, fatal errors, notifications, logging, and other operator
+guidance are covered in [Operations](docs/operations.md). If the process is interrupted, use [Recovery](docs/recovery.md)
+before changing cards, branches, or worktrees.
 
 ## Development
 
@@ -472,217 +102,22 @@ Run the complete validation suite:
 yarn validate
 ```
 
-Individual commands are also available:
+The production build and formatting check can be run with:
 
 ```bash
-yarn lint
-yarn typecheck
-yarn test
+yarn build
 yarn format:check
 ```
 
-Apply automatic lint fixes:
-
-```bash
-yarn lint:fix
-```
-
-Format the repository:
-
-```bash
-yarn format
-```
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, individual checks, testing, commits, and pull requests.
 
 ## Continuous integration
 
-GitHub Actions validates every pull request targeting `main` and every push to `main`.
-
-CI verifies:
-
-- formatting;
-- linting;
-- TypeScript type checking;
-- tests;
-- production build.
-
-Run the primary validation suite locally with:
-
-```bash
-yarn validate
-yarn format:check
-yarn build
-```
-
-## Dependabot updates
-
-Dependabot checks the npm and GitHub Actions ecosystems weekly from the repository root, with up to five open update
-pull requests per ecosystem. Both update entries use an explicit `cooldown.default-days: 7` policy: routine version
-updates wait seven days after release before Dependabot can propose them during a later scheduled check. This observation
-window reduces supply-chain risk from newly published releases that may be compromised or otherwise unsafe.
-
-The cooldown applies only to routine version updates. Dependabot security updates are not delayed by this setting and can
-be proposed promptly when a vulnerability is identified.
-
-## Configuration reference
-
-### `projects[].id`
-
-Non-empty identifier used to distinguish projects in configuration and logs. Project IDs must be unique.
-
-### `projects[].trello`
-
-Trello board, workflow list, and workflow label IDs for the project.
-
-The configured fields are:
-
-- `boardId` — Trello board containing the workflow.
-- `backlogListId` — Backlog list.
-- `readyListId` — list from which eligible implementation cards are claimed.
-- `workingListId` — list used while automated work is in progress.
-- `reviewListId` — list used while a published pull request awaits human review.
-- `failedListId` — list used for failed automated work.
-- `doneListId` — list used after the associated pull request is merged.
-- `refinementLabelId` — label that routes a Ready card through automated refinement instead of normal implementation.
-- `featureLabelId` — Feature implementation classification.
-- `improvementLabelId` — Improvement implementation classification.
-- `bugLabelId` — Bug implementation classification.
-
-All configured workflow list IDs must be unique. All configured workflow label IDs must also be unique.
-
-At startup, the orchestrator verifies that every configured workflow list exists and is open on the configured board and that
-every configured workflow label exists on that board.
-
-Each configured project must use a different Trello board.
-
-### `projects[].repository.path`
-
-Absolute path to the normal local checkout of the repository. Repository paths must be unique across configured
-projects.
-
-### `projects[].repository.github`
-
-GitHub repository in `owner/repository` format. GitHub repositories must be unique across configured projects.
-
-### `projects[].repository.defaultBranch`
-
-Base branch used for task branches and pull requests.
-
-### `projects[].repository.worktreeRoot`
-
-Absolute directory under which isolated agent worktrees are created. Worktree roots must be unique across configured
-projects.
-
-### `projects[].repository.setupCommand`
-
-Optional command executed in the card worktree before the OpenCode implementation session.
-
-### `projects[].repository.validationCommand`
-
-Optional repository validation command supplied to OpenCode sessions that modify implementation files. Those agents run
-the command before finishing and address failures caused by their changes. The orchestrator does not execute the command
-itself.
-
-### `projects[].repository.gitIdentity`
-
-Git identity used when the orchestrator creates commits for the project.
-
-`gitIdentity` is required and contains:
-
-- `name` — non-empty Git commit author and committer name.
-- `email` — valid Git commit author and committer email address.
-- `signingKey` — optional absolute path to the SSH signing key used for signed commits.
-
-When `signingKey` is configured, the key must be available at that path in the environment where the orchestrator runs.
-
-### `projects[].opencode.refinement`
-
-Model and variant used for task refinement sessions.
-
-### `projects[].opencode.implementation`
-
-Model and variant used for task implementation and human review feedback implementation.
-
-### `projects[].opencode.review`
-
-Model and variant used for fresh code review passes.
-
-### `projects[].opencode.remediation`
-
-Model and variant used to address failed review findings.
-
-### `projects[].opencode.commit`
-
-Model and variant used for the final commit session.
-
-### `projects[].opencode.timeoutMinutes`
-
-Maximum runtime in minutes for an individual OpenCode execution across all workflow stages. Must be positive and
-defaults to `360` when omitted.
-
-### `notifications.email`
-
-Optional global email notification settings shared by all projects. Omit this section, or set `enabled: false`, to disable
-delivery without requiring SMTP configuration.
-
-The optional `events` map contains boolean controls for `humanReview`, `failed`, `refinementComplete`, `done`, and
-`attentionRequired`. Each omitted event defaults to `true`. Unknown event keys and non-boolean values are rejected at startup.
-See [Optional email notifications](#optional-email-notifications) for the event meanings and delivery boundaries.
-
-When `enabled: true`, the following fields are required:
-
-- `recipients` — one or more recipient email addresses.
-- `from` — sender email address.
-- `smtp.host` — SMTP server hostname.
-- `smtp.port` — SMTP server port from `1` through `65535`.
-- `smtp.secure` — whether to use implicit TLS for the connection; when false, STARTTLS is required.
-- `smtp.usernameEnv` — environment-variable name containing the SMTP username.
-- `smtp.passwordEnv` — environment-variable name containing the SMTP password.
-- `smtp.timeoutSeconds` — positive connection and delivery timeout, defaulting to `30`.
-
-The values of `smtp.usernameEnv` and `smtp.passwordEnv` are names, not credentials. Their values are validated at startup only
-when email notifications are enabled. Notification email bodies never include those credentials.
-
-### `workflow.pollIntervalSeconds`
-
-Interval in seconds between project polling cycles. Must be a positive integer.
-
-### `workflow.logRetentionDays`
-
-Number of days to retain log files. Must be a positive whole number and defaults to `14` when omitted. This applies to
-`logs/orchestrator-YYYY-MM-DD.log`, test-prefixed daily logs, and per-card session logs under `logs/sessions`. A file is
-eligible for removal only when its filesystem modification time is strictly older than the cutoff; files at the cutoff and
-newer are retained. Cleanup runs once at startup and once per day during continued operation. Missing log directories are a
-no-op, unrelated files and directories and symbolic links are preserved, and failures to scan or remove an individual file
-are logged with its path and the failure reason while other candidates continue to be processed.
-
-## Safety boundaries
-
-Agent Orchestrator deliberately keeps several operations outside automated control.
-
-It does not:
-
-    - merge pull requests;
-    - force-push task branches;
-    - run agent implementation directly in the source checkout;
-    - resume a `Working` card unless its latest recorded transition and expected worktree, branch, or pull-request evidence make it recoverable;
-    - process an active `Human Review` card without actionable requested changes on its expected pull request;
-    - treat failed external operations as successful workflow transitions;
-
-- silently discard failed agent work;
-- delete arbitrary or unrecognized worktrees.
-
-The orchestrator owns workflow coordination. OpenCode owns software-engineering execution. Humans retain final approval
-through GitHub review and merge.
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, validation,
-testing, commit, and pull request guidance.
-
-## Security
-
-Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md),
-not through public issues.
+GitHub Actions validates pull requests targeting `main` and pushes to `main` with formatting, linting, TypeScript type
+checking, tests, and a production build.
+
+Dependabot checks the npm and GitHub Actions ecosystems weekly, with up to five open update pull requests per ecosystem.
+Routine version updates use a seven-day cooldown; security updates are not delayed.
 
 ## License
 
