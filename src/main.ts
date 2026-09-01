@@ -10,6 +10,7 @@ import { GitHubClient } from "./github/github-client.js";
 import { logger } from "./logging/logger.js";
 import { createEmailNotifier } from "./notifications/email-notifier.js";
 import { OpenCodeClient } from "./opencode/opencode-client.js";
+import { loadStartupEvent } from "./package-version.js";
 import { CommandRunner } from "./process/command-runner.js";
 import {
   installProcessHandlers,
@@ -63,7 +64,7 @@ export async function main(
 
   const commands = new CommandRunner();
 
-  logger.event("Agent Orchestrator");
+  logger.event(loadStartupEvent());
   logger.event(`Projects: ${config.projects.length}`);
 
   for (const project of config.projects) {

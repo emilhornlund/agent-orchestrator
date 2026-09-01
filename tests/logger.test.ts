@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { Logger } from "../src/logging/logger.js";
+import { loadStartupEvent } from "../src/package-version.js";
 
 const timestamp = "2026-08-30T09:00:00.000Z";
 let temporaryDirectory: string | undefined;
@@ -49,17 +50,16 @@ function getDailyLogPath(): string {
 describe("Logger", () => {
   it("prefixes root event output and preserves the daily log format", () => {
     const logger = new Logger();
+    const startupEvent = loadStartupEvent();
 
-    logger.event("Agent Orchestrator started");
+    logger.event(startupEvent);
 
     expect(console.log).toHaveBeenCalledOnce();
-    expect(console.log).toHaveBeenCalledWith(
-      `${timestamp} Agent Orchestrator started`,
-    );
+    expect(console.log).toHaveBeenCalledWith(`${timestamp} ${startupEvent}`);
     expect(console.warn).not.toHaveBeenCalled();
     expect(console.error).not.toHaveBeenCalled();
     expect(fs.readFileSync(getDailyLogPath(), "utf8")).toBe(
-      `${timestamp} INFO  Agent Orchestrator started\n`,
+      `${timestamp} INFO  ${startupEvent}\n`,
     );
   });
 

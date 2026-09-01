@@ -115,6 +115,15 @@ normal failure in one project remains isolated to that project and follows norma
 
 Shared `Logger` lifecycle events, warnings, and errors begin with a UTC ISO 8601 timestamp, followed by project and card
 context when available and the message. Multiline console logger messages receive the same prefix on every physical line.
+At startup, the root logger emits one version event before startup polling begins:
+
+```text
+2026-08-30T09:00:00.000Z Agent Orchestrator v0.1.0
+```
+
+The version is the `version` value from the application's `package.json`, loaded relative to the built application rather than
+from the working directory, environment, or Git. The event uses the normal root `Logger` path, so it appears in both console
+output and the managed daily log. Missing or invalid package metadata is a fatal startup error and does not start polling.
 Daily files use the existing format:
 
 ```text
