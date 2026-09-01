@@ -41,7 +41,7 @@ Ready for Agent + Refinement
       ├─ update the Trello card title and description
       ├─ replace Refinement with exactly one of Feature / Improvement / Bug
       ├─ move the card to Backlog
-       ├─ attempt the refinement completion email when its event is enabled
+      ├─ attempt the refinement completion email when its event is enabled
       ├─ add a refined-result summary comment
       ├─ clean up the refinement worktree
       │
