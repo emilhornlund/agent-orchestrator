@@ -162,6 +162,14 @@ republished pull request; a disabled project returns it to Human Review. A reque
 feedback applies to the pull request's current head, and it gets its own transient remediation counter. A retry that reuses
 already committed work skips all OpenCode stages, including attachment-dependent prompts, and proceeds directly to publication.
 
+GitHub reads used by `Human Review` and `Working` reconciliation are retryable when GitHub returns HTTP 500, 502, 503, or
+504, a rate limit, a timeout, or a temporary network/connectivity error. The card remains in its current list and no
+corrective comment, failure transition, or workflow decision is made from the failed read. The project worker logs each
+attempt and retries on a later polling cycle, up to three consecutive attempts. Recovery clears the counter; exhaustion
+uses the existing project diagnostic and `Attention Required` escalation. Invalid authentication, configuration failures,
+malformed responses, and other non-transient errors retain immediate failure handling. Cards already in `Failed` are never
+automatically retried.
+
 ## Failures and transitions
 
 Automated failures move the card to `Failed` rather than silently advancing it. A failure comment contains the category,

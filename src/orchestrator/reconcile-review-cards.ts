@@ -18,6 +18,7 @@ import {
   annotateFailure,
   getExistingSessionLogPath,
 } from "./failure-diagnostic.js";
+import { githubReconciliationError } from "./github-reconciliation-error.js";
 import { WorkflowError } from "./workflow-error.js";
 
 export interface ReviewChangeRequest {
@@ -331,19 +332,16 @@ async function inspectReviewCard(
 function reviewLookupError(
   project: ProjectConfig,
   card: TrelloCard,
-  subject: string,
+  subject: "pull request state" | "requested changes",
   error: unknown,
 ): WorkflowError {
-  const message = getErrorMessage(error);
-
-  const reconciliationError = new WorkflowError(
-    "Git/GitHub",
-    `Could not reconcile Human Review card "${card.name}" while checking ${subject}: ${message}`,
-    { cause: error },
+  return githubReconciliationError(
+    project.id,
+    card.id,
+    subject,
+    error,
+    `Could not reconcile Human Review card "${card.name}" while checking ${subject}: ${getErrorMessage(error)}`,
   );
-
-  annotateCardFailure(reconciliationError, project.id, card.id);
-  return reconciliationError;
 }
 
 async function completeMergedReviewCard(

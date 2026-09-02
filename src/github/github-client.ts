@@ -156,6 +156,116 @@ function validateRequestedChangesReview(
 
 export type RunGitHubCommand = (cwd: string, args: string[]) => Promise<string>;
 
+const transientHttpStatuses = new Set([408, 425, 429, 500, 502, 503, 504]);
+
+function errorChain(error: unknown): Error[] {
+  const errors: Error[] = [];
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+
+  while (current instanceof Error && !seen.has(current)) {
+    seen.add(current);
+    errors.push(current);
+    current = current.cause;
+  }
+
+  return errors;
+}
+
+function hasTransientHttpStatus(error: unknown, message: string): boolean {
+  const statusValues: unknown[] = [];
+
+  for (const entry of errorChain(error)) {
+    const candidate = entry as Error & {
+      status?: unknown;
+      statusCode?: unknown;
+      response?: { status?: unknown };
+    };
+
+    statusValues.push(
+      candidate.status,
+      candidate.statusCode,
+      candidate.response?.status,
+    );
+  }
+
+  if (
+    statusValues.some(
+      (status) =>
+        typeof status === "number" && transientHttpStatuses.has(status),
+    )
+  ) {
+    return true;
+  }
+
+  const statusMatches = message.match(/\b(?:HTTP\s+)?([45]\d{2})\b/gi) ?? [];
+
+  return statusMatches.some((match) => {
+    const status = Number(match.match(/\d{3}/)?.[0]);
+    return transientHttpStatuses.has(status);
+  });
+}
+
+/** Returns true only for failures that can reasonably change on a later read. */
+export function isRetryableGitHubError(error: unknown): boolean {
+  const messages = errorChain(error).map((entry) =>
+    entry.message.toLowerCase(),
+  );
+  const message = messages.join("\n");
+
+  if (messages.some((entry) => /\brate[- ]limit\b|\bratelimit\b/.test(entry))) {
+    return true;
+  }
+
+  if (
+    messages.some(
+      (entry) =>
+        entry.includes("authentication") ||
+        entry.includes("not logged in") ||
+        entry.includes("bad credentials") ||
+        entry.includes("invalid token") ||
+        entry.includes("permission denied") ||
+        entry.includes("configuration") ||
+        entry.includes("configur") ||
+        entry.includes("invalid pull request") ||
+        entry.includes("invalid requested changes") ||
+        entry.includes("invalid json") ||
+        entry.includes("unexpected token") ||
+        /\b(?:http\s*)?(?:401|403)\b/.test(entry),
+    )
+  ) {
+    return false;
+  }
+
+  if (hasTransientHttpStatus(error, message)) {
+    return true;
+  }
+
+  return messages.some(
+    (entry) =>
+      entry.includes("timed out") ||
+      entry.includes("timeout") ||
+      entry.includes("etimedout") ||
+      entry.includes("econnreset") ||
+      entry.includes("econnrefused") ||
+      entry.includes("enetunreach") ||
+      entry.includes("ehostunreach") ||
+      entry.includes("eai_again") ||
+      entry.includes("enotfound") ||
+      entry.includes("socket hang up") ||
+      entry.includes("temporary network") ||
+      entry.includes("temporary connectivity") ||
+      entry.includes("temporary failure in name resolution") ||
+      entry.includes("network error") ||
+      entry.includes("network is unreachable") ||
+      entry.includes("connection reset") ||
+      entry.includes("connection refused") ||
+      entry.includes("connection aborted") ||
+      entry.includes("failed to fetch") ||
+      entry.includes("service unavailable"),
+  );
+}
+
 function parsePullRequestUrl(value: string): string {
   const url = value.trim();
 

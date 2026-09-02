@@ -32,6 +32,10 @@ import {
   formatFailureDiagnostic,
   getFailureContext,
 } from "./failure-diagnostic.js";
+import {
+  MAX_GITHUB_RECONCILIATION_ATTEMPTS,
+  RetryableGitHubReconciliationError,
+} from "./github-reconciliation-error.js";
 import { pollProject, type PollingProject } from "./poll-project.js";
 
 function sleep(milliseconds: number, signal: AbortSignal): Promise<void> {
@@ -91,6 +95,8 @@ async function runProjectWorker(
   signal: AbortSignal,
   emailNotifier?: EmailNotifier,
 ): Promise<void> {
+  const githubReconciliationAttempts = new Map<string, number>();
+
   while (!signal.aborted) {
     try {
       if (emailNotifier === undefined) {
@@ -115,12 +121,43 @@ async function runProjectWorker(
           emailNotifier,
         );
       }
+
+      githubReconciliationAttempts.clear();
     } catch (error) {
       if (
         isShutdownCancellation(error, signal) ||
         (signal.aborted && signal.reason === "fatal")
       ) {
         return;
+      }
+
+      if (error instanceof RetryableGitHubReconciliationError) {
+        const attemptKey = `${error.cardId}:${error.operation}`;
+        const attempt = (githubReconciliationAttempts.get(attemptKey) ?? 0) + 1;
+
+        githubReconciliationAttempts.set(attemptKey, attempt);
+
+        const projectLog = logger.child({
+          projectId: project.id,
+          cardId: error.cardId,
+        });
+        const causeMessage =
+          error.cause instanceof Error
+            ? error.cause.message
+            : String(error.cause);
+
+        projectLog.warn(
+          `Retryable GitHub reconciliation attempt ${attempt}/${MAX_GITHUB_RECONCILIATION_ATTEMPTS} failed for ${error.operation}: ${causeMessage}`,
+        );
+
+        if (attempt < MAX_GITHUB_RECONCILIATION_ATTEMPTS) {
+          await sleep(pollIntervalMilliseconds, signal);
+          continue;
+        }
+
+        projectLog.error(
+          `GitHub reconciliation retry threshold exhausted for ${error.operation}; escalating the project failure`,
+        );
       }
 
       const failureContext = getFailureContext(error);
