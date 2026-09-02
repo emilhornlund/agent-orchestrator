@@ -26,8 +26,10 @@ Preserve the task worktree, branch, session log, and diagnostic information whil
 worktree or discard agent changes as a first response. Restarting the service runs the normal reconciliation flow.
 
 Card context is retained independently of repository and worktree cleanup. A successful preparation leaves the current
-manifest and materialized uploads available for a later retry; a failed preparation preserves the last successfully published
-manifest and unrelated files, while partial new downloads are removed. The service does not automatically delete card context.
+manifest and materialized uploads available for a later retry, after removing stale regular files claimed by the prior
+manifest. It never removes unknown or unrelated files. A failed preparation preserves the last successfully published
+manifest and its materialized files, while partial new downloads are removed. The service does not automatically delete
+card context broadly.
 Operators may remove only known card-context data below the configured `contextRoot` after the card no longer needs a retry or
 diagnosis, and must not remove unknown files outside that root.
 

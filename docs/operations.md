@@ -54,7 +54,9 @@ reconciliation:
 `mimeType` and `bytes` retain Trello's nullable and empty values. `localFilename` is a single filename, never a path. Names
 are reduced to safe filename components and duplicate names receive stable numeric suffixes. Existing valid files are reused
 when all stored Trello metadata matches, so repeated preparation does not download them again. Files not present in the
-current Trello response are retained; the service does not delete arbitrary context files.
+current Trello response are removed when they are regular files claimed by the previous manifest, including a superseded
+file after a replacement is published. Unknown and unrelated context files are retained; the service does not delete
+arbitrary files.
 
 Each new upload is limited to `maxAttachmentBytes`, which defaults to 50 MiB, and all new downloads in one preparation are
 limited to `maxTotalAttachmentBytes`, which defaults to 200 MiB. The limits apply to declared metadata, response
@@ -86,11 +88,13 @@ the storage location used by the service, and it is not the path shown to OpenCo
 
 Card context is operational filesystem data, not Git state. It is outside the source checkout and all worktrees, is not
 committed or included in task branches, and should be backed up, retained, and access-controlled independently from Git
-repositories.
+repositories. Successful attachment reconciliation removes only stale regular files claimed by the prior manifest; it
+does not remove unknown files.
 
 The service does not automatically remove card context after a successful, failed, resumed, or retried card. A failed
-preparation keeps the last successfully published manifest and removes only partial files created by that preparation. Unknown
-files and stale downloaded files remain available for diagnosis and are never removed as part of attachment reconciliation.
+preparation keeps the last successfully published manifest and its materialized files and removes only partial files created
+by that preparation. Stale managed files are cleaned as part of a successful manifest publication. Unknown files remain
+available for diagnosis and are never removed as part of attachment reconciliation.
 Any operator cleanup must be limited to known card-context paths below the configured `contextRoot`.
 
 ## Isolated worktrees
