@@ -46,6 +46,12 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function isMissingRemoteBranchDeletionError(error: unknown): boolean {
+  return getErrorMessage(error)
+    .toLowerCase()
+    .includes("remote ref does not exist");
+}
+
 export async function reconcileReviewCards(
   trello: TrelloClient,
   git: GitClient,
@@ -376,7 +382,33 @@ async function completeMergedReviewCard(
       }
 
       cardLog.info(`Deleting merged remote branch ${branch}...`);
-      await git.deleteRemoteBranch(project.repository.path, "origin", branch);
+
+      try {
+        await git.deleteRemoteBranch(project.repository.path, "origin", branch);
+      } catch (error) {
+        if (!isMissingRemoteBranchDeletionError(error)) {
+          throw error;
+        }
+
+        // A remote branch can disappear after the existence check but before deletion.
+        let branchStillExists: boolean;
+
+        try {
+          branchStillExists = await git.remoteBranchExists(
+            project.repository.path,
+            "origin",
+            branch,
+          );
+        } catch {
+          throw error;
+        }
+
+        if (branchStillExists) {
+          throw error;
+        }
+
+        cardLog.info("Merged remote branch was already absent");
+      }
 
       if (signal?.aborted) {
         return;

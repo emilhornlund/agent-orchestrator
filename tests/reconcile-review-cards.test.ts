@@ -220,6 +220,65 @@ describe("reconcileReviewCards", () => {
     });
   });
 
+  it("completes a merged card when its remote branch disappears during cleanup", async () => {
+    const sessionLogPath = getSessionLogPath(project.id, "card-1");
+    appendSessionLog(sessionLogPath, "OpenCode output");
+
+    const events: string[] = [];
+    const trello = {
+      ...trelloFor(card()),
+      moveCard: vi.fn().mockImplementation(async () => {
+        events.push("card moved to Done");
+
+        return { ...card(), idList: "done" };
+      }),
+    } as unknown as TrelloClient;
+    const git = {
+      remoteBranchExists: vi.fn().mockImplementation(async () => {
+        events.push("branch checked");
+
+        return (
+          events.filter((event) => event === "branch checked").length === 1
+        );
+      }),
+      deleteRemoteBranch: vi.fn().mockImplementation(async () => {
+        events.push("delete failed because branch was absent");
+        throw new Error(
+          "git push origin --delete agent/card-1 failed: unable to delete 'agent/card-1': remote ref does not exist",
+        );
+      }),
+    } as unknown as GitClient;
+    const notifier: EmailNotifier = {
+      send: vi.fn().mockImplementation(async () => {
+        events.push("email sent");
+      }),
+    };
+
+    await expect(
+      reconcileReviewCards(
+        trello,
+        git,
+        githubFor("card-1", "merged"),
+        project,
+        {},
+        notifier,
+      ),
+    ).resolves.toBeNull();
+
+    expect(events).toEqual([
+      "branch checked",
+      "delete failed because branch was absent",
+      "branch checked",
+      "card moved to Done",
+      "email sent",
+    ]);
+    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "done", {
+      dueComplete: true,
+    });
+    expect(notifier.send).toHaveBeenCalledTimes(1);
+    expect(existsSync(sessionLogPath)).toBe(false);
+  });
+
   it("treats a non-null mergedAt as merged even when state is CLOSED", async () => {
     const trello = trelloFor(card());
     const git = {
@@ -367,6 +426,27 @@ describe("reconcileReviewCards", () => {
     expect(trello.moveCard).not.toHaveBeenCalled();
     expect(notifier.send).not.toHaveBeenCalled();
     expect(existsSync(sessionLogPath)).toBe(true);
+  });
+
+  it("does not suppress an unexpected deletion failure when the branch is absent afterward", async () => {
+    const trello = trelloFor(card());
+    const deleteError = new Error("permission denied");
+    const git = {
+      remoteBranchExists: vi
+        .fn()
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(false),
+      deleteRemoteBranch: vi.fn().mockRejectedValue(deleteError),
+    } as unknown as GitClient;
+
+    await expect(
+      reconcileReviewCards(trello, git, githubFor("card-1", "merged"), project),
+    ).rejects.toMatchObject({
+      category: "Git/GitHub",
+      cause: deleteError,
+    });
+
+    expect(trello.moveCard).not.toHaveBeenCalled();
   });
 
   it("keeps a Human Review card unchanged when GitHub reconciliation fails", async () => {
