@@ -4,7 +4,11 @@ import {
   notifyFailed,
   type EmailNotifier,
 } from "../notifications/email-notifier.js";
-import type { TrelloCard, TrelloClient } from "../trello/trello-client.js";
+import {
+  isRetryableTrelloError,
+  type TrelloCard,
+  type TrelloClient,
+} from "../trello/trello-client.js";
 
 import {
   annotateFailure,
@@ -39,6 +43,18 @@ export async function failCard(
   };
 
   annotateFailure(originalError, failureContext, failureDescription);
+
+  if (isRetryableTrelloError(originalError)) {
+    annotateFailure(originalError, {
+      ...failureContext,
+      handlingOutcome:
+        "retryable Trello failure; card state left unchanged for reconciliation",
+    });
+    cardLog.warn(
+      `Retryable Trello failure; leaving card in its last known state and deferring failure handling: ${originalError.message}`,
+    );
+    throw originalError;
+  }
 
   cardLog.error(
     `${formatFailureDiagnostic(originalError, failureContext)}; attempting to move card to Failed`,

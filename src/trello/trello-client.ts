@@ -68,6 +68,20 @@ export interface TrelloCommentAction {
   date: string;
 }
 
+export type TrelloRequestOperation =
+  | "board lookup"
+  | "list lookup"
+  | "label lookup"
+  | "card lookup"
+  | "card action lookup"
+  | "transition history"
+  | "card move"
+  | "card content update"
+  | "label update"
+  | "comment"
+  | "attachment metadata"
+  | "attachment download";
+
 const trelloBoardSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -133,6 +147,188 @@ export class TrelloRequestAbortedError extends Error {
   }
 }
 
+export class TrelloRequestError extends Error {
+  readonly operation: TrelloRequestOperation;
+  readonly status: number | undefined;
+  readonly statusCode: number | undefined;
+  readonly retryable: boolean;
+  readonly classification: "retryable" | "non-retryable";
+
+  constructor(
+    operation: TrelloRequestOperation,
+    message: string,
+    options: ErrorOptions & {
+      status?: number;
+      retryable?: boolean;
+    } = {},
+  ) {
+    super(message, options);
+    this.name = "TrelloRequestError";
+    this.operation = operation;
+    this.status = options.status;
+    this.retryable = options.retryable ?? false;
+    this.statusCode = this.status;
+    this.classification = this.retryable ? "retryable" : "non-retryable";
+  }
+}
+
+export class TrelloRequestTimeoutError extends TrelloRequestError {
+  constructor(operation: TrelloRequestOperation, cause?: unknown) {
+    super(
+      operation,
+      `Trello request timed out during ${operation}`,
+      cause === undefined ? {} : { cause, retryable: true },
+    );
+    this.name = "TrelloRequestTimeoutError";
+  }
+}
+
+const transientHttpStatuses = new Set([408, 425, 429, 500, 502, 503, 504]);
+
+function errorChain(error: unknown): Error[] {
+  const errors: Error[] = [];
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+
+  while (current instanceof Error && !seen.has(current)) {
+    seen.add(current);
+    errors.push(current);
+    current = current.cause;
+  }
+
+  return errors;
+}
+
+function isTimeoutReason(reason: unknown): boolean {
+  return (
+    typeof reason === "object" &&
+    reason !== null &&
+    "name" in reason &&
+    reason.name === "TimeoutError"
+  );
+}
+
+function safeErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+
+  return message
+    .replace(/\bhttps?:\/\/[^\s<>"']+/gi, "[redacted URL]")
+    .replace(
+      /([?&](?:key|token|api[_-]?key|access[_-]?token|password|secret)=)[^&#\s]+/gi,
+      "$1[redacted]",
+    );
+}
+
+function throwForResponse(
+  operation: TrelloRequestOperation,
+  response: Response,
+): never {
+  throw new TrelloRequestError(
+    operation,
+    `Trello request failed: ${response.status} ${response.statusText}`,
+    {
+      status: response.status,
+      retryable: transientHttpStatuses.has(response.status),
+    },
+  );
+}
+
+function hasTransientStatus(error: unknown): boolean {
+  const statuses: unknown[] = [];
+
+  for (const entry of errorChain(error)) {
+    const candidate = entry as Error & {
+      status?: unknown;
+      statusCode?: unknown;
+      response?: { status?: unknown };
+    };
+
+    statuses.push(
+      candidate.status,
+      candidate.statusCode,
+      candidate.response?.status,
+    );
+  }
+
+  return statuses.some(
+    (status) => typeof status === "number" && transientHttpStatuses.has(status),
+  );
+}
+
+/** Returns true only for failures that can reasonably succeed later. */
+export function isRetryableTrelloError(error: unknown): boolean {
+  if (
+    errorChain(error).some(
+      (entry) => entry instanceof TrelloRequestAbortedError,
+    )
+  ) {
+    return false;
+  }
+
+  const errors = errorChain(error);
+
+  if (
+    errors.some((entry) =>
+      /github|opencode|commandrunner|smtp/i.test(entry.name),
+    )
+  ) {
+    return false;
+  }
+
+  if (errors.some((entry) => entry instanceof TrelloRequestError)) {
+    return errors.some(
+      (entry) => entry instanceof TrelloRequestError && entry.retryable,
+    );
+  }
+
+  const messages = errors.map((entry) => entry.message.toLowerCase());
+  const message = messages.join("\n");
+
+  if (!message.includes("trello")) {
+    return false;
+  }
+
+  if (/\b(?:http\s*)?(?:401|403|404)\b/.test(message)) {
+    return false;
+  }
+
+  if (hasTransientStatus(error)) {
+    return true;
+  }
+
+  return messages.some(
+    (entry) =>
+      entry.includes("timed out") ||
+      entry.includes("timeout") ||
+      entry.includes("etimedout") ||
+      entry.includes("econnreset") ||
+      entry.includes("econnrefused") ||
+      entry.includes("enetunreach") ||
+      entry.includes("ehostunreach") ||
+      entry.includes("eai_again") ||
+      entry.includes("socket hang up") ||
+      entry.includes("temporary network") ||
+      entry.includes("temporary connectivity") ||
+      entry.includes("temporary failure in name resolution") ||
+      entry.includes("network error") ||
+      entry.includes("network is unreachable") ||
+      entry.includes("connection reset") ||
+      entry.includes("connection refused") ||
+      entry.includes("connection aborted") ||
+      entry.includes("failed to fetch") ||
+      entry.includes("service unavailable") ||
+      /\b(?:http\s*)?(?:408|425|429|500|502|503|504)\b/.test(entry),
+  );
+}
+
+export function getTrelloRequestOperation(
+  error: unknown,
+): TrelloRequestOperation | undefined {
+  return errorChain(error).find(
+    (entry): entry is TrelloRequestError => entry instanceof TrelloRequestError,
+  )?.operation;
+}
+
 export class TrelloClient {
   private readonly baseUrl = "https://api.trello.com/1";
 
@@ -167,32 +363,67 @@ export class TrelloClient {
     }
   }
 
-  private async request(url: URL, init?: RequestInit): Promise<Response> {
+  private async request(
+    url: URL,
+    operation: TrelloRequestOperation,
+    init?: RequestInit,
+  ): Promise<Response> {
     try {
       return await fetch(url, init);
     } catch (error) {
-      if (this.options.signal?.aborted || init?.signal?.aborted) {
+      if (
+        this.options.signal?.aborted ||
+        (init?.signal?.aborted && !isTimeoutReason(init.signal.reason))
+      ) {
         throw new TrelloRequestAbortedError();
       }
 
-      throw error;
+      if (init?.signal?.aborted && isTimeoutReason(init.signal.reason)) {
+        throw new TrelloRequestTimeoutError(operation, error);
+      }
+
+      throw new TrelloRequestError(
+        operation,
+        `Trello request failed during ${operation}: ${safeErrorMessage(error)}`,
+        { cause: error, retryable: true },
+      );
     }
   }
 
   getBoard(boardId: string): Promise<TrelloBoard> {
-    return this.get(`/boards/${boardId}`, trelloBoardSchema);
+    return this.get(
+      `/boards/${boardId}`,
+      trelloBoardSchema,
+      {},
+      "board lookup",
+    );
   }
 
   getLists(boardId: string): Promise<TrelloList[]> {
-    return this.get(`/boards/${boardId}/lists`, z.array(trelloListSchema));
+    return this.get(
+      `/boards/${boardId}/lists`,
+      z.array(trelloListSchema),
+      {},
+      "list lookup",
+    );
   }
 
   getLabels(boardId: string): Promise<TrelloLabel[]> {
-    return this.get(`/boards/${boardId}/labels`, z.array(trelloLabelSchema));
+    return this.get(
+      `/boards/${boardId}/labels`,
+      z.array(trelloLabelSchema),
+      {},
+      "label lookup",
+    );
   }
 
   getCards(listId: string): Promise<TrelloCard[]> {
-    return this.get(`/lists/${listId}/cards`, z.array(trelloCardSchema));
+    return this.get(
+      `/lists/${listId}/cards`,
+      z.array(trelloCardSchema),
+      {},
+      "card lookup",
+    );
   }
 
   getCardAttachments(
@@ -203,6 +434,7 @@ export class TrelloClient {
       `/cards/${cardId}/attachments`,
       z.array(trelloAttachmentSchema),
       {},
+      "attachment metadata",
       signal,
     );
   }
@@ -264,12 +496,18 @@ export class TrelloClient {
     const requestSignal = this.getRequestSignalFor(signal);
     const response = await this.request(
       url,
+      "attachment download",
       requestSignal === undefined ? undefined : { signal: requestSignal },
     );
 
     if (!response.ok) {
-      throw new Error(
+      throw new TrelloRequestError(
+        "attachment download",
         `Trello request failed: ${response.status} ${response.statusText}`,
+        {
+          status: response.status,
+          retryable: transientHttpStatuses.has(response.status),
+        },
       );
     }
 
@@ -279,7 +517,7 @@ export class TrelloClient {
   async getListTransitions(
     cardId: string,
   ): Promise<TrelloListTransition[] | null> {
-    const actions = await this.getCardActions(cardId);
+    const actions = await this.getCardActions(cardId, "transition history");
     let hasIncompleteListTransition = false;
     const transitions = actions.flatMap((action) => {
       const listBefore = action.data?.listBefore;
@@ -324,11 +562,15 @@ export class TrelloClient {
     );
   }
 
-  getCardActions(cardId: string): Promise<TrelloCardAction[]> {
+  getCardActions(
+    cardId: string,
+    operation: TrelloRequestOperation = "card action lookup",
+  ): Promise<TrelloCardAction[]> {
     return this.get(
       `/cards/${cardId}/actions`,
       z.array(trelloCardActionSchema),
       { filter: "updateCard", limit: "1000" },
+      operation,
     );
   }
 
@@ -348,7 +590,12 @@ export class TrelloClient {
       parameters.dueComplete = String(options.dueComplete);
     }
 
-    return this.put(`/cards/${cardId}`, parameters, trelloCardSchema);
+    return this.put(
+      `/cards/${cardId}`,
+      parameters,
+      trelloCardSchema,
+      "card move",
+    );
   }
 
   updateCardContent(
@@ -363,17 +610,22 @@ export class TrelloClient {
         desc: description,
       },
       trelloCardSchema,
+      "card content update",
     );
   }
 
   async addLabel(cardId: string, labelId: string): Promise<void> {
-    await this.postWithoutResponse(`/cards/${cardId}/idLabels`, {
-      value: labelId,
-    });
+    await this.postWithoutResponse(
+      `/cards/${cardId}/idLabels`,
+      {
+        value: labelId,
+      },
+      "label update",
+    );
   }
 
   async removeLabel(cardId: string, labelId: string): Promise<void> {
-    await this.delete(`/cards/${cardId}/idLabels/${labelId}`);
+    await this.delete(`/cards/${cardId}/idLabels/${labelId}`, "label update");
   }
 
   addComment(cardId: string, text: string): Promise<TrelloCommentAction> {
@@ -381,6 +633,7 @@ export class TrelloClient {
       `/cards/${cardId}/actions/comments`,
       { text },
       trelloCommentActionSchema,
+      "comment",
     );
   }
 
@@ -388,6 +641,7 @@ export class TrelloClient {
     path: string,
     schema: z.ZodType<T>,
     parameters: Record<string, string> = {},
+    operation: TrelloRequestOperation = "card lookup",
     additionalSignal?: AbortSignal,
   ): Promise<T> {
     this.throwIfAborted(additionalSignal);
@@ -402,12 +656,14 @@ export class TrelloClient {
     }
 
     const signal = this.getRequestSignalFor(additionalSignal);
-    const response = await this.request(url, signal ? { signal } : undefined);
+    const response = await this.request(
+      url,
+      operation,
+      signal ? { signal } : undefined,
+    );
 
     if (!response.ok) {
-      throw new Error(
-        `Trello request failed: ${response.status} ${response.statusText}`,
-      );
+      throwForResponse(operation, response);
     }
 
     return schema.parse(await response.json());
@@ -417,6 +673,7 @@ export class TrelloClient {
     path: string,
     parameters: Record<string, string>,
     schema: z.ZodType<T>,
+    operation: TrelloRequestOperation,
   ): Promise<T> {
     this.throwIfAborted();
 
@@ -430,15 +687,13 @@ export class TrelloClient {
     }
 
     const signal = this.getRequestSignal();
-    const response = await this.request(url, {
+    const response = await this.request(url, operation, {
       method: "PUT",
       ...(signal === undefined ? {} : { signal }),
     });
 
     if (!response.ok) {
-      throw new Error(
-        `Trello request failed: ${response.status} ${response.statusText}`,
-      );
+      throwForResponse(operation, response);
     }
 
     return schema.parse(await response.json());
@@ -447,6 +702,7 @@ export class TrelloClient {
   private async postWithoutResponse(
     path: string,
     parameters: Record<string, string>,
+    operation: TrelloRequestOperation,
   ): Promise<void> {
     this.throwIfAborted();
 
@@ -460,15 +716,13 @@ export class TrelloClient {
     }
 
     const signal = this.getRequestSignal();
-    const response = await this.request(url, {
+    const response = await this.request(url, operation, {
       method: "POST",
       ...(signal === undefined ? {} : { signal }),
     });
 
     if (!response.ok) {
-      throw new Error(
-        `Trello request failed: ${response.status} ${response.statusText}`,
-      );
+      throwForResponse(operation, response);
     }
   }
 
@@ -476,6 +730,7 @@ export class TrelloClient {
     path: string,
     parameters: Record<string, string>,
     schema: z.ZodType<T>,
+    operation: TrelloRequestOperation,
   ): Promise<T> {
     this.throwIfAborted();
 
@@ -489,21 +744,22 @@ export class TrelloClient {
     }
 
     const signal = this.getRequestSignal();
-    const response = await this.request(url, {
+    const response = await this.request(url, operation, {
       method: "POST",
       ...(signal === undefined ? {} : { signal }),
     });
 
     if (!response.ok) {
-      throw new Error(
-        `Trello request failed: ${response.status} ${response.statusText}`,
-      );
+      throwForResponse(operation, response);
     }
 
     return schema.parse(await response.json());
   }
 
-  private async delete(path: string): Promise<void> {
+  private async delete(
+    path: string,
+    operation: TrelloRequestOperation,
+  ): Promise<void> {
     this.throwIfAborted();
 
     const url = new URL(`${this.baseUrl}${path}`);
@@ -512,15 +768,13 @@ export class TrelloClient {
     url.searchParams.set("token", this.options.token);
 
     const signal = this.getRequestSignal();
-    const response = await this.request(url, {
+    const response = await this.request(url, operation, {
       method: "DELETE",
       ...(signal === undefined ? {} : { signal }),
     });
 
     if (!response.ok) {
-      throw new Error(
-        `Trello request failed: ${response.status} ${response.statusText}`,
-      );
+      throwForResponse(operation, response);
     }
   }
 }

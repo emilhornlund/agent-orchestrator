@@ -24,8 +24,11 @@ import {
 } from "../process/command-runner.js";
 import {
   TrelloRequestAbortedError,
+  getTrelloRequestOperation,
+  isRetryableTrelloError,
   type TrelloClient,
 } from "../trello/trello-client.js";
+import type { validateProjectTrello } from "../trello/validate-project-trello.js";
 
 import {
   describeFailure,
@@ -37,6 +40,7 @@ import {
   RetryableGitHubReconciliationError,
 } from "./github-reconciliation-error.js";
 import { pollProject, type PollingProject } from "./poll-project.js";
+import { MAX_TRELLO_RECONCILIATION_ATTEMPTS } from "./trello-reconciliation-error.js";
 
 function sleep(milliseconds: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -94,11 +98,19 @@ async function runProjectWorker(
   pollIntervalMilliseconds: number,
   signal: AbortSignal,
   emailNotifier?: EmailNotifier,
+  deferredTrelloValidation?: typeof validateProjectTrello,
 ): Promise<void> {
   const githubReconciliationAttempts = new Map<string, number>();
+  const trelloTransientAttempts = new Map<string, number>();
+  let pendingTrelloValidation = deferredTrelloValidation;
 
   while (!signal.aborted) {
     try {
+      if (pendingTrelloValidation !== undefined) {
+        await pendingTrelloValidation(trello, project);
+        pendingTrelloValidation = undefined;
+      }
+
       if (emailNotifier === undefined) {
         await pollProject(
           trello,
@@ -123,6 +135,7 @@ async function runProjectWorker(
       }
 
       githubReconciliationAttempts.clear();
+      trelloTransientAttempts.clear();
     } catch (error) {
       if (
         isShutdownCancellation(error, signal) ||
@@ -130,6 +143,8 @@ async function runProjectWorker(
       ) {
         return;
       }
+
+      const failureContext = getFailureContext(error);
 
       if (error instanceof RetryableGitHubReconciliationError) {
         const attemptKey = `${error.cardId}:${error.operation}`;
@@ -160,7 +175,33 @@ async function runProjectWorker(
         );
       }
 
-      const failureContext = getFailureContext(error);
+      if (isRetryableTrelloError(error)) {
+        const operation = getTrelloRequestOperation(error) ?? "card operation";
+        const cardId = failureContext?.cardId;
+        const attemptKey = `${cardId ?? "project"}:${operation}`;
+        const attempt = (trelloTransientAttempts.get(attemptKey) ?? 0) + 1;
+
+        trelloTransientAttempts.set(attemptKey, attempt);
+
+        const projectLog = logger.child({
+          projectId: project.id,
+          ...(cardId === undefined ? {} : { cardId }),
+        });
+
+        projectLog.warn(
+          `Retryable Trello operation attempt ${attempt}/${MAX_TRELLO_RECONCILIATION_ATTEMPTS} failed for ${operation}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+
+        if (attempt < MAX_TRELLO_RECONCILIATION_ATTEMPTS) {
+          await sleep(pollIntervalMilliseconds, signal);
+          continue;
+        }
+
+        projectLog.error(
+          `Trello retry threshold exhausted for ${operation}; escalating the project failure`,
+        );
+      }
+
       const projectLog = logger.child({
         projectId: project.id,
         ...(failureContext?.cardId === undefined
@@ -236,6 +277,7 @@ export async function runOrchestrator(
   config: Config,
   signal: AbortSignal,
   emailNotifier?: EmailNotifier,
+  deferredTrelloValidation?: typeof validateProjectTrello,
 ): Promise<void> {
   const pollIntervalMilliseconds = config.workflow.pollIntervalSeconds * 1000;
   const retentionTimer = setInterval(
@@ -289,6 +331,7 @@ export async function runOrchestrator(
           pollIntervalMilliseconds,
           signal,
           emailNotifier,
+          deferredTrelloValidation,
         ),
       ),
     );

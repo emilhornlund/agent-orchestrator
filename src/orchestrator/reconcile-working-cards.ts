@@ -9,7 +9,11 @@ import type {
   PullRequestState,
 } from "../github/github-client.js";
 import { logger } from "../logging/logger.js";
-import type { TrelloCard, TrelloClient } from "../trello/trello-client.js";
+import {
+  isRetryableTrelloError,
+  type TrelloCard,
+  type TrelloClient,
+} from "../trello/trello-client.js";
 import {
   notifyHumanReview,
   type EmailNotifier,
@@ -27,6 +31,7 @@ import {
 } from "./failure-diagnostic.js";
 import { githubReconciliationError } from "./github-reconciliation-error.js";
 import type { ReviewChangeRequest } from "./reconcile-review-cards.js";
+import { trelloReconciliationError } from "./trello-reconciliation-error.js";
 import { getElapsedWorkflowTime } from "./workflow-duration.js";
 import { getWorkflowKind, type WorkflowKind } from "./workflow-kind.js";
 import { WorkflowError } from "./workflow-error.js";
@@ -240,11 +245,13 @@ export async function reconcileClaimedCard(
   try {
     await trello.moveCard(card.id, project.trello.reviewListId);
   } catch (error) {
-    if (error instanceof Error) {
-      annotateCardFailure(error, project.id, card.id);
-    }
-
-    throw error;
+    throw trelloReconciliationError(
+      project.id,
+      card.id,
+      "card move",
+      error,
+      `Could not move claimed Working card to Human Review: ${getErrorMessage(error)}`,
+    );
   }
 
   if (signal?.aborted) {
@@ -314,11 +321,13 @@ export async function reconcileWorkingCards(
   try {
     cards = await trello.getCards(project.trello.workingListId);
   } catch (error) {
-    if (error instanceof Error) {
-      annotateFailure(error, { projectId: project.id });
-    }
-
-    throw error;
+    throw trelloReconciliationError(
+      project.id,
+      undefined,
+      "card lookup",
+      error,
+      `Could not retrieve Working cards: ${getErrorMessage(error)}`,
+    );
   }
 
   if (signal?.aborted) {
@@ -346,11 +355,17 @@ export async function reconcileWorkingCards(
         project.trello.workingListId,
       );
     } catch (error) {
-      if (error instanceof Error) {
-        annotateCardFailure(error, project.id, card.id);
+      if (!isRetryableTrelloError(error)) {
+        throw error;
       }
 
-      throw error;
+      throw trelloReconciliationError(
+        project.id,
+        card.id,
+        "transition history",
+        error,
+        `Could not read Working card transition history: ${getErrorMessage(error)}`,
+      );
     }
 
     if (signal?.aborted) {
@@ -724,13 +739,14 @@ async function reconcileReadyWorkingCard(
   } catch (error) {
     const message = getErrorMessage(error);
 
-    const reconciliationError = new WorkflowError(
-      "Workflow",
+    const reconciliationError = trelloReconciliationError(
+      project.id,
+      card.id,
+      "card move",
+      error,
       `Could not move Working card to Human Review: ${message}`,
-      { cause: error },
     );
 
-    annotateCardFailure(reconciliationError, project.id, card.id);
     throw reconciliationError;
   }
 

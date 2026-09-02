@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { TrelloClient } from "../src/trello/trello-client.js";
+import {
+  isRetryableTrelloError,
+  TrelloClient,
+  TrelloRequestAbortedError,
+  TrelloRequestError,
+} from "../src/trello/trello-client.js";
 
 describe("TrelloClient", () => {
   afterEach(() => {
@@ -966,4 +971,173 @@ describe("TrelloClient", () => {
       method: "POST",
     });
   });
+
+  it.each([500, 502, 503, 504])(
+    "classifies HTTP %s as a retryable Trello card lookup failure",
+    async (status) => {
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        new Response(null, { status, statusText: "Temporary failure" }),
+      );
+
+      const client = new TrelloClient({
+        apiKey: "test-key",
+        token: "test-token",
+      });
+
+      await expect(client.getCards("ready-list")).rejects.toMatchObject({
+        name: "TrelloRequestError",
+        operation: "card lookup",
+        status,
+        retryable: true,
+        message: `Trello request failed: ${status} Temporary failure`,
+      });
+    },
+  );
+
+  it.each([
+    [
+      "card move",
+      (client: TrelloClient) => client.moveCard("card-1", "working-list"),
+    ],
+    [
+      "card content update",
+      (client: TrelloClient) =>
+        client.updateCardContent("card-1", "Title", "Description"),
+    ],
+    [
+      "label update",
+      (client: TrelloClient) => client.addLabel("card-1", "label-1"),
+    ],
+    [
+      "comment",
+      (client: TrelloClient) => client.addComment("card-1", "Comment"),
+    ],
+  ] as const)(
+    "preserves the Trello operation for retryable %s failures",
+    async (operation, invoke) => {
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        new Response(null, { status: 503, statusText: "Unavailable" }),
+      );
+
+      const client = new TrelloClient({
+        apiKey: "test-key",
+        token: "test-token",
+      });
+
+      await expect(invoke(client)).rejects.toMatchObject({
+        operation,
+        status: 503,
+        retryable: true,
+      });
+    },
+  );
+
+  it("classifies attachment metadata and download failures independently", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(null, { status: 503, statusText: "Unavailable" }),
+      );
+    const client = new TrelloClient({
+      apiKey: "test-key",
+      token: "test-token",
+    });
+    const attachment = {
+      id: "attachment-file",
+      name: "design.pdf",
+      mimeType: "application/pdf",
+      bytes: null,
+      url: "https://trello.com/1/cards/card-1/attachments/attachment-file/download/design.pdf",
+      isUpload: true,
+    };
+
+    await expect(client.getCardAttachments("card-1")).rejects.toMatchObject({
+      operation: "attachment metadata",
+      retryable: true,
+    });
+    await expect(
+      client.downloadCardAttachment(attachment),
+    ).rejects.toMatchObject({
+      operation: "attachment download",
+      retryable: true,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("classifies a transport failure as retryable without exposing request credentials", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockRejectedValue(
+        new Error(
+          "fetch failed for https://api.trello.com/1/cards/card-1?key=test-key&token=test-token",
+        ),
+      );
+    const client = new TrelloClient({
+      apiKey: "test-key",
+      token: "test-token",
+    });
+
+    const error = await client
+      .getCards("ready-list")
+      .catch((failure: unknown) => failure);
+
+    expect(error).toMatchObject({
+      name: "TrelloRequestError",
+      operation: "card lookup",
+      retryable: true,
+      cause: expect.any(Error),
+    });
+    expect((error as Error).message).not.toContain("test-key");
+    expect((error as Error).message).not.toContain("test-token");
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("classifies request timeouts as retryable but not shutdown cancellation", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async (_input, init) => {
+        await new Promise<never>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("Timed out", "TimeoutError")),
+            { once: true },
+          );
+        });
+
+        throw new Error("unreachable");
+      });
+    const client = new TrelloClient({
+      apiKey: "test-key",
+      token: "test-token",
+      timeoutMilliseconds: 5,
+    });
+
+    await expect(client.getBoard("board-1")).rejects.toMatchObject({
+      name: "TrelloRequestTimeoutError",
+      operation: "board lookup",
+      retryable: true,
+    });
+    expect(isRetryableTrelloError(new TrelloRequestAbortedError())).toBe(false);
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it.each([401, 403, 404])(
+    "does not classify HTTP %s as retryable",
+    async (status) => {
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        new Response(null, { status, statusText: "Permanent failure" }),
+      );
+
+      const client = new TrelloClient({
+        apiKey: "test-key",
+        token: "test-token",
+      });
+      const error = await client
+        .getBoard("board-1")
+        .catch((failure: unknown) => failure);
+
+      expect(error).toBeInstanceOf(TrelloRequestError);
+      expect(isRetryableTrelloError(error)).toBe(false);
+    },
+  );
 });

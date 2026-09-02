@@ -8,7 +8,10 @@ import type { GitClient } from "../src/git/git-client.js";
 import type { GitHubClient } from "../src/github/github-client.js";
 import type { OpenCodeClient } from "../src/opencode/opencode-client.js";
 import type { CommandRunner } from "../src/process/command-runner.js";
-import type { TrelloClient } from "../src/trello/trello-client.js";
+import {
+  TrelloRequestError,
+  type TrelloClient,
+} from "../src/trello/trello-client.js";
 import * as cardContextRetention from "../src/context/card-context-retention.js";
 import * as logRetention from "../src/logging/log-retention.js";
 import type { EmailNotifier } from "../src/notifications/email-notifier.js";
@@ -23,6 +26,10 @@ import {
   githubReconciliationError,
   MAX_GITHUB_RECONCILIATION_ATTEMPTS,
 } from "../src/orchestrator/github-reconciliation-error.js";
+import {
+  MAX_TRELLO_RECONCILIATION_ATTEMPTS,
+  trelloReconciliationError,
+} from "../src/orchestrator/trello-reconciliation-error.js";
 import { WorkflowError } from "../src/orchestrator/workflow-error.js";
 
 const pollProject = vi.fn();
@@ -416,6 +423,128 @@ describe("runOrchestrator", () => {
 
     expect(calls).toBe(5);
     expect(notifier.send).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries a transient Trello operation in a later poll without escalation", async () => {
+    const controller = new AbortController();
+    const notifier: EmailNotifier = { send: vi.fn() };
+    const failure = trelloReconciliationError(
+      "project-a",
+      "card-1",
+      "transition history",
+      new TrelloRequestError(
+        "transition history",
+        "Trello request failed: 503 Unavailable",
+        { status: 503, retryable: true },
+      ),
+      "Could not read Trello transition history",
+    );
+    let calls = 0;
+
+    pollProject.mockImplementation(async () => {
+      calls += 1;
+
+      if (calls < MAX_TRELLO_RECONCILIATION_ATTEMPTS) {
+        throw failure;
+      }
+
+      controller.abort();
+    });
+
+    await runOrchestrator(
+      {} as TrelloClient,
+      {} as GitClient,
+      {} as GitHubClient,
+      {} as OpenCodeClient,
+      {} as CommandRunner,
+      createConfig([createProject("project-a")], 0),
+      controller.signal,
+      notifier,
+    );
+
+    expect(calls).toBe(MAX_TRELLO_RECONCILIATION_ATTEMPTS);
+    expect(notifier.send).not.toHaveBeenCalled();
+  });
+
+  it("retries deferred startup Trello validation in the project worker", async () => {
+    const controller = new AbortController();
+    const notifier: EmailNotifier = { send: vi.fn() };
+    const validationFailure = new TrelloRequestError(
+      "label lookup",
+      "Trello request failed: 503 Unavailable",
+      { status: 503, retryable: true },
+    );
+    const validateProjectTrello = vi
+      .fn()
+      .mockRejectedValueOnce(validationFailure)
+      .mockRejectedValueOnce(validationFailure)
+      .mockResolvedValue(undefined);
+
+    pollProject.mockImplementation(async () => {
+      controller.abort();
+    });
+
+    await runOrchestrator(
+      {} as TrelloClient,
+      {} as GitClient,
+      {} as GitHubClient,
+      {} as OpenCodeClient,
+      {} as CommandRunner,
+      createConfig([createProject("project-a")], 0),
+      controller.signal,
+      notifier,
+      validateProjectTrello,
+    );
+
+    expect(validateProjectTrello).toHaveBeenCalledTimes(3);
+    expect(pollProject).toHaveBeenCalledOnce();
+    expect(notifier.send).not.toHaveBeenCalled();
+  });
+
+  it("escalates a persistent transient Trello operation only after the retry bound", async () => {
+    const controller = new AbortController();
+    const notifier: EmailNotifier = { send: vi.fn() };
+    const failure = trelloReconciliationError(
+      "project-a",
+      "card-1",
+      "card move",
+      new TrelloRequestError(
+        "card move",
+        "Trello request failed: 504 Gateway Timeout",
+        { status: 504, retryable: true },
+      ),
+      "Could not move card to Working",
+    );
+    let calls = 0;
+
+    pollProject.mockImplementation(async () => {
+      calls += 1;
+
+      if (calls === MAX_TRELLO_RECONCILIATION_ATTEMPTS) {
+        controller.abort();
+      }
+
+      throw failure;
+    });
+
+    await runOrchestrator(
+      {} as TrelloClient,
+      {} as GitClient,
+      {} as GitHubClient,
+      {} as OpenCodeClient,
+      {} as CommandRunner,
+      createConfig([createProject("project-a")], 0),
+      controller.signal,
+      notifier,
+    );
+
+    expect(calls).toBe(MAX_TRELLO_RECONCILIATION_ATTEMPTS);
+    expect(notifier.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subject: "[Agent Orchestrator] Attention Required: project-a",
+        text: expect.stringContaining("Could not move card to Working"),
+      }),
+    );
   });
 
   it("skips a disabled Attention Required event without changing project failure handling", async () => {

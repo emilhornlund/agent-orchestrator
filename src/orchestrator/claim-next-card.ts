@@ -4,7 +4,8 @@ import { logger } from "../logging/logger.js";
 import type { GitClient } from "../git/git-client.js";
 import { type TrelloCard, type TrelloClient } from "../trello/trello-client.js";
 
-import { annotateCardFailure, annotateFailure } from "./failure-diagnostic.js";
+import { annotateCardFailure } from "./failure-diagnostic.js";
+import { trelloReconciliationError } from "./trello-reconciliation-error.js";
 import { getWorkflowKind } from "./workflow-kind.js";
 
 type Project = Config["projects"][number];
@@ -29,11 +30,13 @@ export async function claimNextCard(
   try {
     cards = await trello.getCards(project.trello.readyListId);
   } catch (error) {
-    if (error instanceof Error) {
-      annotateFailure(error, { projectId: project.id });
-    }
-
-    throw error;
+    throw trelloReconciliationError(
+      project.id,
+      undefined,
+      "card lookup",
+      error,
+      `Could not retrieve Ready for Agent cards: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 
   for (const candidate of cards) {
@@ -69,11 +72,13 @@ export async function claimNextCard(
         project.trello.workingListId,
       );
     } catch (error) {
-      if (error instanceof Error) {
-        annotateCardFailure(error, project.id, candidate.id);
-      }
-
-      throw error;
+      throw trelloReconciliationError(
+        project.id,
+        candidate.id,
+        "card move",
+        error,
+        `Could not move card to Working: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
 
     logger

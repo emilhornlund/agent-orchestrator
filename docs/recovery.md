@@ -95,14 +95,20 @@ More than one active card in `Human Review` is an ambiguous project state. The a
 are transitioned, so the project is blocked, no active card is selected, and no terminal card is transitioned in that cycle.
 Merged or closed cards remain available for reconciliation on the next cycle after the ambiguity is resolved.
 
-GitHub read failures during this reconciliation, and during the equivalent `Working` recovery lookups, are handled
-separately from card failures. HTTP 500, 502, 503, and 504 responses, rate limits, timeouts, and temporary connectivity
-errors leave the card in its current list with no corrective comment or workflow transition. Each project records the
-attempt in its running worker and logs the project, card, lookup, attempt number, and error. The next project cycle retries
-the lookup; three consecutive failed attempts are the deterministic bound, after which the existing project-level
-diagnostic and `Attention Required` escalation is emitted. A successful project reconciliation clears this transient
-failure tracking. Authentication, configuration, malformed-response, and other non-transient failures continue directly to
-the normal failure diagnostics.
+Trello and GitHub read failures during reconciliation are handled separately from card failures. Trello HTTP 500, 502, 503,
+and 504 responses, rate limits, timeouts, and temporary connectivity errors leave the card in its current list with no
+missing-card inference, corrective comment, or workflow transition. The same Trello classification applies to card discovery,
+transition history, labels, comments, content updates, and attachment metadata/download requests. Each project records the
+attempt in its running worker and logs the project, card when known, operation, attempt number, classification, and safe error
+context. The next project cycle retries the operation; three consecutive failed attempts are the deterministic bound, after
+which the existing project-level diagnostic and `Attention Required` escalation is emitted. A successful poll clears transient
+failure tracking. Authentication, configuration, malformed-response, not-found, and other non-transient failures continue
+directly to the normal failure diagnostics.
+
+If a Trello mutation fails transiently, its requested transition or update is unconfirmed. The orchestrator does not move the
+card to `Failed` merely because the request was unavailable. It preserves the last known workflow state and lets a later
+reconciliation read Trello transition history and card state before retrying an uncertain move or resuming work. Shutdown
+cancellation is not retryable and does not cause new work or state transitions.
 
 An already-absent `agent/<trello-card-id>` remote branch is a successful merged-card cleanup outcome. Reconciliation skips the
 delete command when the initial check finds no branch, and also accepts Git's missing-remote-ref result when the branch
@@ -149,7 +155,7 @@ fails, the card remains in `Failed` and the comment error is logged.
 If a pull request was published but the move to `Human Review` failed, the card is left in a published `Working` state for
 reconciliation rather than being moved to `Failed` without evidence. If a project poll or reconciliation fails before a
 single card's failure handling completes, the project-level `Attention Required` path can report the affected cards and
-session logs; transient GitHub read failures are the exception described above and are retried before escalation. No
+session logs; transient Trello and GitHub failures are the exceptions described above and are retried before escalation. No
 transient attempt moves a card to `Failed` or is treated as evidence that its workflow state is invalid.
 
 If automatic merging succeeds but the move to `Done` fails, the card is left in `Working` with the merged pull request and

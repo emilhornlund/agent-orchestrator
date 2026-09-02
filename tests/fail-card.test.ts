@@ -14,7 +14,10 @@ import type { EmailNotifier } from "../src/notifications/email-notifier.js";
 import { failCard } from "../src/orchestrator/fail-card.js";
 import { getFailureContext } from "../src/orchestrator/failure-diagnostic.js";
 import { WorkflowError } from "../src/orchestrator/workflow-error.js";
-import { TrelloClient } from "../src/trello/trello-client.js";
+import {
+  TrelloClient,
+  TrelloRequestError,
+} from "../src/trello/trello-client.js";
 
 const project = {
   id: "project",
@@ -126,6 +129,32 @@ describe("failCard", () => {
       "card-1",
       expect.stringContaining("Reason: implementation failed"),
     );
+  });
+
+  it("does not move a card to Failed for a transient Trello failure", async () => {
+    const trello = new TrelloClient({ apiKey: "key", token: "token" });
+    const moveCard = vi.spyOn(trello, "moveCard");
+    const transientError = new TrelloRequestError(
+      "card content update",
+      "Trello request failed: 503 Unavailable",
+      { status: 503, retryable: true },
+    );
+    const workflowError = new WorkflowError(
+      "Workflow",
+      "Could not update Trello card content",
+      { cause: transientError },
+    );
+
+    await expect(
+      failCard(trello, project, "card-1", workflowError),
+    ).rejects.toBe(workflowError);
+
+    expect(moveCard).not.toHaveBeenCalled();
+    expect(getFailureContext(workflowError)).toMatchObject({
+      cardFailureHandled: false,
+      handlingOutcome:
+        "retryable Trello failure; card state left unchanged for reconciliation",
+    });
   });
 
   it("preserves both errors when moving to Failed fails", async () => {

@@ -237,5 +237,6 @@ OpenCode, Trello, notification, SMTP, or event keys are rejected.
 Startup also verifies the configured repositories and Trello resources. An existing repository path must be a valid Git
 repository; a missing path may be cloned from the configured GitHub repository with `gh`. The GitHub CLI must already be
 authenticated for managed repositories. Trello lists and labels are checked on their configured boards before polling
-starts. Context directories are created only by the context-storage helpers, not as an implicit side effect of loading
-configuration or starting the service.
+starts. A transient Trello failure during that check is deferred to the project worker, which retries it on later polling
+cycles before processing cards. Context directories are created only by the context-storage helpers, not as an implicit side
+effect of loading configuration or starting the service.
