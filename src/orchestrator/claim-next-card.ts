@@ -7,6 +7,7 @@ import { type TrelloCard, type TrelloClient } from "../trello/trello-client.js";
 import { annotateCardFailure } from "./failure-diagnostic.js";
 import { trelloReconciliationError } from "./trello-reconciliation-error.js";
 import { getWorkflowKind } from "./workflow-kind.js";
+import { isCardStartDateReached } from "./card-start-eligibility.js";
 
 type Project = Config["projects"][number];
 
@@ -39,9 +40,15 @@ export async function claimNextCard(
     );
   }
 
+  const now = Date.now();
+
   for (const candidate of cards) {
     if (signal?.aborted) {
       return null;
+    }
+
+    if (!isCardStartDateReached(candidate, now)) {
+      continue;
     }
 
     if (getWorkflowKind(candidate, project) !== "implementation") {

@@ -106,8 +106,11 @@ cards with a present value must provide a timestamp accepted by `Date.parse`,
 using the same validation convention as Trello transition dates. The original
 timestamp string is preserved, including its timezone information, so consumers
 must use `Date.parse` for absolute-time comparisons rather than comparing strings
-or local-time components. The field is informational only: start dates do not
-filter, delay, reorder, claim, or transition cards.
+or local-time components. During a Ready for Agent scan, cards without a start
+date or whose start instant has been reached are eligible. A future-dated card
+is skipped without being claimed or modified, does not block later eligible
+cards, and is reconsidered on a later normal poll. This rule only affects Ready
+list claiming; it does not reorder cards or change other workflow transitions.
 
 ## Commits
 

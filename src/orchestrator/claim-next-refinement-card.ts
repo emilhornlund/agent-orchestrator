@@ -5,6 +5,7 @@ import { logger } from "../logging/logger.js";
 import { type TrelloCard, type TrelloClient } from "../trello/trello-client.js";
 
 import { annotateCardFailure } from "./failure-diagnostic.js";
+import { isCardStartDateReached } from "./card-start-eligibility.js";
 import { trelloReconciliationError } from "./trello-reconciliation-error.js";
 
 type Project = Config["projects"][number];
@@ -38,9 +39,15 @@ export async function claimNextRefinementCard(
     );
   }
 
+  const now = Date.now();
+
   for (const candidate of cards) {
     if (signal?.aborted) {
       return null;
+    }
+
+    if (!isCardStartDateReached(candidate, now)) {
+      continue;
     }
 
     if (!candidate.idLabels.includes(project.trello.refinementLabelId)) {
