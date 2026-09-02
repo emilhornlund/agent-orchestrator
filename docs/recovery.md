@@ -95,6 +95,11 @@ More than one active card in `Human Review` is an ambiguous project state. The a
 are transitioned, so the project is blocked, no active card is selected, and no terminal card is transitioned in that cycle.
 Merged or closed cards remain available for reconciliation on the next cycle after the ambiguity is resolved.
 
+An already-absent `agent/<trello-card-id>` remote branch is a successful merged-card cleanup outcome. Reconciliation skips the
+delete command when the initial check finds no branch, and also accepts Git's missing-remote-ref result when the branch
+disappears between that check and the delete attempt. Other Git or GitHub cleanup failures remain fatal and leave the card
+available for failure diagnostics rather than moving it to `Done`.
+
 A closed pull request without merge evidence is treated as a deliberate rejection or cancellation. Reconciliation moves the
 card to `Backlog`, adds a comment stating that the pull request was closed without being merged and including its URL, and does
 not send the `failed` event. If the move to `Backlog` fails, reconciliation preserves the diagnostic failure and does not add
