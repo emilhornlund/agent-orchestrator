@@ -163,6 +163,7 @@ describe("TrelloClient", () => {
     expect(cards).toHaveLength(1);
     expect(cards[0]?.name).toBe("Implement inventory");
     expect(cards[0]?.idLabels).toEqual(["refinement-label"]);
+    expect(cards[0]).not.toHaveProperty("start");
     expect(fetchMock).toHaveBeenCalledOnce();
 
     const requestUrl = String(fetchMock.mock.calls[0]?.[0]);
@@ -170,6 +171,105 @@ describe("TrelloClient", () => {
     expect(requestUrl).toContain("/lists/ready-list/cards");
     expect(requestUrl).toContain("key=test-key");
     expect(requestUrl).toContain("token=test-token");
+  });
+
+  it("omits a null card start date", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify([
+          {
+            id: "card-1",
+            name: "Implement inventory",
+            desc: "Add inventory support",
+            idList: "ready-list",
+            idLabels: ["feature-label"],
+            url: "https://trello.com/c/example",
+            start: null,
+          },
+        ]),
+        { status: 200 },
+      ),
+    );
+
+    const client = new TrelloClient({
+      apiKey: "test-key",
+      token: "test-token",
+    });
+
+    const [card] = await client.getCards("ready-list");
+
+    expect(card).not.toHaveProperty("start");
+  });
+
+  it("exposes valid card start dates with absolute time semantics", async () => {
+    const pastStart = "2026-09-02T05:00:00+02:00";
+    const futureStart = "2026-09-02T00:00:00-04:00";
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify([
+          {
+            id: "card-past",
+            name: "Past start",
+            desc: "",
+            idList: "ready-list",
+            idLabels: [],
+            url: "https://trello.com/c/past",
+            start: pastStart,
+          },
+          {
+            id: "card-future",
+            name: "Future start",
+            desc: "",
+            idList: "ready-list",
+            idLabels: [],
+            url: "https://trello.com/c/future",
+            start: futureStart,
+          },
+        ]),
+        { status: 200 },
+      ),
+    );
+
+    const client = new TrelloClient({
+      apiKey: "test-key",
+      token: "test-token",
+    });
+
+    const cards = await client.getCards("ready-list");
+    const referenceTime = Date.parse("2026-09-02T03:15:00.000Z");
+
+    expect(cards.map((card) => card.start)).toEqual([pastStart, futureStart]);
+    expect(Date.parse(cards[0]?.start ?? "")).toBeLessThan(referenceTime);
+    expect(Date.parse(cards[1]?.start ?? "")).toBeGreaterThan(referenceTime);
+  });
+
+  it("rejects a malformed card start date", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify([
+          {
+            id: "card-1",
+            name: "Invalid start",
+            desc: "",
+            idList: "ready-list",
+            idLabels: [],
+            url: "https://trello.com/c/example",
+            start: "not-a-date",
+          },
+        ]),
+        { status: 200 },
+      ),
+    );
+
+    const client = new TrelloClient({
+      apiKey: "test-key",
+      token: "test-token",
+    });
+
+    await expect(client.getCards("ready-list")).rejects.toThrow(
+      "Must be a valid date",
+    );
   });
 
   it("gets card attachment metadata in Trello order", async () => {

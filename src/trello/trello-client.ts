@@ -32,6 +32,7 @@ export interface TrelloCard {
   idList: string;
   idLabels: string[];
   url: string;
+  start?: string;
 }
 
 export interface TrelloAttachment {
@@ -100,6 +101,12 @@ const trelloLabelSchema = z.object({
   color: z.string().nullable(),
 });
 
+const trelloTimestampSchema = z
+  .string()
+  .refine((value) => !Number.isNaN(Date.parse(value)), {
+    message: "Must be a valid date",
+  });
+
 const trelloCardResponseSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -107,9 +114,13 @@ const trelloCardResponseSchema = z.object({
   idList: z.string(),
   idLabels: z.array(z.string()),
   url: z.string(),
+  start: trelloTimestampSchema.nullable().optional(),
 });
 
-const trelloCardSchema = trelloCardResponseSchema;
+const trelloCardSchema = trelloCardResponseSchema.transform(
+  ({ start, ...card }) =>
+    start === undefined || start === null ? card : { ...card, start },
+);
 
 const trelloAttachmentSchema = z.object({
   id: z.string(),
@@ -123,9 +134,7 @@ const trelloAttachmentSchema = z.object({
 const trelloCardActionSchema = z.object({
   id: z.string(),
   type: z.string(),
-  date: z.string().refine((value) => !Number.isNaN(Date.parse(value)), {
-    message: "Must be a valid date",
-  }),
+  date: trelloTimestampSchema,
   data: z
     .object({
       listBefore: z.object({ id: z.string() }).optional(),
