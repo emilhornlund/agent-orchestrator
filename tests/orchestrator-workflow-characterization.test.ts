@@ -34,6 +34,7 @@ type ListName = keyof typeof listIds;
 type PullRequestState = "none" | "open" | "requested" | "merged";
 
 interface HarnessOptions {
+  cardContext?: boolean;
   autoMerge?: boolean;
   maxPasses?: number;
   initialList?: ListName;
@@ -102,12 +103,21 @@ function createHarness(options: HarnessOptions = {}) {
     path.join(os.tmpdir(), "agent-orchestrator-characterization-"),
   );
   temporaryRoots.push(worktreeRoot);
+  const contextRoot =
+    options.cardContext === true
+      ? fs.mkdtempSync(
+          path.join(os.tmpdir(), "agent-orchestrator-card-context-"),
+        )
+      : undefined;
 
-  const project = createProject(
-    worktreeRoot,
-    options.autoMerge,
-    options.maxPasses,
-  );
+  if (contextRoot !== undefined) {
+    temporaryRoots.push(contextRoot);
+  }
+
+  const project = {
+    ...createProject(worktreeRoot, options.autoMerge, options.maxPasses),
+    ...(contextRoot === undefined ? {} : { contextRoot }),
+  };
   const cardId = "card-1";
   const worktreePath = path.join(worktreeRoot, cardId);
   let currentList = options.initialList ?? "ready";
@@ -139,6 +149,11 @@ function createHarness(options: HarnessOptions = {}) {
   }
 
   const events: string[] = [];
+  const getCardAttachments = vi.fn(async () => {
+    events.push("trello:get-attachments");
+    return [];
+  });
+  const downloadCardAttachment = vi.fn();
   const transitions = [] as Array<{
     id: string;
     date: string;
@@ -246,6 +261,8 @@ function createHarness(options: HarnessOptions = {}) {
   });
   const trello = {
     getCards,
+    getCardAttachments,
+    downloadCardAttachment,
     getLatestListTransition,
     moveCard,
     updateCardContent,
@@ -470,6 +487,7 @@ function createHarness(options: HarnessOptions = {}) {
     forcePush,
     getChangedFiles,
     getCards,
+    getCardAttachments,
     getCurrentBranch,
     findChangesRequestedPullRequest,
     findPullRequestState,
@@ -492,6 +510,7 @@ function createHarness(options: HarnessOptions = {}) {
     trello,
     git,
     worktreePath,
+    contextRoot,
     cleanup: () => {
       fs.rmSync(worktreeRoot, { recursive: true, force: true });
     },
@@ -507,6 +526,43 @@ afterEach(() => {
 });
 
 describe("orchestrator workflow characterization", () => {
+  it("materializes card context before OpenCode without changing its prompt", async () => {
+    const harness = createHarness({ cardContext: true });
+
+    try {
+      await pollProject(
+        harness.trello,
+        harness.git,
+        harness.github,
+        harness.openCode,
+        harness.commands,
+        harness.project,
+        new AbortController().signal,
+      );
+
+      expect(harness.getCardAttachments).toHaveBeenCalledOnce();
+      expect(harness.events.indexOf("trello:get-attachments")).toBeLessThan(
+        harness.events.indexOf("opencode:implementation"),
+      );
+      expect(harness.runOpenCode.mock.calls[0]?.[0].prompt).not.toContain(
+        "attachment",
+      );
+      expect(harness.contextRoot).toBeDefined();
+      expect(
+        fs.existsSync(
+          path.join(
+            harness.contextRoot!,
+            harness.project.id,
+            harness.card.id,
+            "attachments.json",
+          ),
+        ),
+      ).toBe(true);
+    } finally {
+      harness.cleanup();
+    }
+  });
+
   it("implements, publishes, auto-merges, and completes without Human Review", async () => {
     const harness = createHarness({ autoMerge: true });
 

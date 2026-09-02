@@ -244,6 +244,77 @@ describe("TrelloClient", () => {
     await expect(client.getCardAttachments("card-1")).resolves.toEqual([]);
   });
 
+  it("downloads uploaded attachments with Trello authentication", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(new Uint8Array([1, 2, 3]), { status: 200 }),
+      );
+    const client = new TrelloClient({
+      apiKey: "test-key",
+      token: "test-token",
+    });
+    const attachment = {
+      id: "attachment-file",
+      name: "design.pdf",
+      mimeType: "application/pdf",
+      bytes: "3",
+      url: "https://trello.com/1/cards/card-1/attachments/attachment-file/download/design.pdf",
+      isUpload: true,
+    };
+
+    await expect(
+      client.downloadCardAttachment(attachment),
+    ).resolves.toBeInstanceOf(Response);
+
+    const url = new URL(String(fetchMock.mock.calls[0]?.[0]));
+    expect(url.pathname).toBe(
+      "/1/cards/card-1/attachments/attachment-file/download/design.pdf",
+    );
+    expect(url.searchParams.get("key")).toBe("test-key");
+    expect(url.searchParams.get("token")).toBe("test-token");
+  });
+
+  it("does not download external attachment metadata through the client method", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const client = new TrelloClient({
+      apiKey: "test-key",
+      token: "test-token",
+    });
+
+    await expect(
+      client.downloadCardAttachment({
+        id: "attachment-link",
+        name: "reference",
+        mimeType: null,
+        bytes: null,
+        url: "https://example.com/reference",
+        isUpload: false,
+      }),
+    ).rejects.toThrow("non-upload");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects an uploaded attachment URL outside Trello's download route", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const client = new TrelloClient({
+      apiKey: "test-key",
+      token: "test-token",
+    });
+
+    await expect(
+      client.downloadCardAttachment({
+        id: "attachment-file",
+        name: "design.pdf",
+        mimeType: "application/pdf",
+        bytes: null,
+        url: "https://trello.com/1/cards/card-1/comments",
+        isUpload: true,
+      }),
+    ).rejects.toThrow("non-attachment Trello URL");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("preserves nullable and empty unavailable attachment metadata", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(

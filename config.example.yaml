@@ -123,3 +123,6 @@ workflow:
   logRetentionDays: 14
   # Optional; defaults to /opt/.agent-context. Keep this outside repositories and worktree roots.
   contextRoot: "/opt/.agent-context"
+  # Optional; defaults to 50 MiB per uploaded file and 200 MiB for new downloads per preparation.
+  maxAttachmentBytes: 52428800
+  maxTotalAttachmentBytes: 209715200

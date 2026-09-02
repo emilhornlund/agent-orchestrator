@@ -139,28 +139,30 @@ export class TrelloClient {
   constructor(private readonly options: TrelloClientOptions) {}
 
   private getRequestSignal(): AbortSignal | undefined {
-    const { signal, timeoutMilliseconds } = this.options;
-
-    if (signal !== undefined && timeoutMilliseconds !== undefined) {
-      return AbortSignal.any([
-        signal,
-        AbortSignal.timeout(timeoutMilliseconds),
-      ]);
-    }
-
-    if (signal !== undefined) {
-      return signal;
-    }
-
-    if (timeoutMilliseconds !== undefined) {
-      return AbortSignal.timeout(timeoutMilliseconds);
-    }
-
-    return undefined;
+    return this.getRequestSignalFor();
   }
 
-  private throwIfAborted(): void {
-    if (this.options.signal?.aborted) {
+  private getRequestSignalFor(
+    additionalSignal?: AbortSignal,
+  ): AbortSignal | undefined {
+    const { signal, timeoutMilliseconds } = this.options;
+    const signals = [signal, additionalSignal].filter(
+      (candidate): candidate is AbortSignal => candidate !== undefined,
+    );
+
+    if (timeoutMilliseconds !== undefined) {
+      signals.push(AbortSignal.timeout(timeoutMilliseconds));
+    }
+
+    if (signals.length > 1) {
+      return AbortSignal.any(signals);
+    }
+
+    return signals[0];
+  }
+
+  private throwIfAborted(additionalSignal?: AbortSignal): void {
+    if (this.options.signal?.aborted || additionalSignal?.aborted) {
       throw new TrelloRequestAbortedError();
     }
   }
@@ -169,7 +171,7 @@ export class TrelloClient {
     try {
       return await fetch(url, init);
     } catch (error) {
-      if (this.options.signal?.aborted) {
+      if (this.options.signal?.aborted || init?.signal?.aborted) {
         throw new TrelloRequestAbortedError();
       }
 
@@ -198,6 +200,75 @@ export class TrelloClient {
       `/cards/${cardId}/attachments`,
       z.array(trelloAttachmentSchema),
     );
+  }
+
+  async downloadCardAttachment(
+    attachment: TrelloAttachment,
+    signal?: AbortSignal,
+  ): Promise<Response> {
+    if (!attachment.isUpload) {
+      throw new Error(
+        `Refusing to download non-upload Trello attachment "${attachment.id}"`,
+      );
+    }
+
+    let url: URL;
+
+    try {
+      url = new URL(attachment.url);
+    } catch (error) {
+      throw new Error(
+        `Invalid Trello attachment URL for "${attachment.id}": ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        { cause: error },
+      );
+    }
+
+    if (
+      url.protocol !== "https:" ||
+      (url.port !== "" && url.port !== "443") ||
+      !["trello.com", "www.trello.com", "api.trello.com"].includes(url.hostname)
+    ) {
+      throw new Error(
+        `Refusing to send Trello credentials to non-Trello attachment URL for "${attachment.id}"`,
+      );
+    }
+
+    const pathSegments = url.pathname.split("/");
+
+    if (
+      pathSegments.length < 7 ||
+      pathSegments[1] !== "1" ||
+      pathSegments[2] !== "cards" ||
+      pathSegments[3]?.length === 0 ||
+      pathSegments[4] !== "attachments" ||
+      pathSegments[5]?.length === 0 ||
+      pathSegments[6] !== "download"
+    ) {
+      throw new Error(
+        `Refusing non-attachment Trello URL for uploaded attachment "${attachment.id}"`,
+      );
+    }
+
+    this.throwIfAborted(signal);
+
+    url.searchParams.set("key", this.options.apiKey);
+    url.searchParams.set("token", this.options.token);
+
+    const requestSignal = this.getRequestSignalFor(signal);
+    const response = await this.request(
+      url,
+      requestSignal === undefined ? undefined : { signal: requestSignal },
+    );
+
+    if (!response.ok) {
+      throw new Error(
+        `Trello request failed: ${response.status} ${response.statusText}`,
+      );
+    }
+
+    return response;
   }
 
   async getListTransitions(

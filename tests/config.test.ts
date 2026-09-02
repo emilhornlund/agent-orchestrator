@@ -105,6 +105,32 @@ describe("parseConfig", () => {
     expect(config.notifications).toBeUndefined();
   });
 
+  it("accepts optional finite attachment limits", () => {
+    const raw = validConfig.replace(
+      "  pollIntervalSeconds: 15",
+      "  pollIntervalSeconds: 15\n  maxAttachmentBytes: 1048576\n  maxTotalAttachmentBytes: 4194304",
+    );
+
+    expect(parseConfig(raw).workflow).toMatchObject({
+      maxAttachmentBytes: 1_048_576,
+      maxTotalAttachmentBytes: 4_194_304,
+    });
+  });
+
+  it.each([
+    ["maxAttachmentBytes", "0"],
+    ["maxAttachmentBytes", "1.5"],
+    ["maxTotalAttachmentBytes", "0"],
+    ["maxTotalAttachmentBytes", "1.5"],
+  ])("rejects invalid attachment limit %s: %s", (name, value) => {
+    const raw = validConfig.replace(
+      "  pollIntervalSeconds: 15",
+      `  pollIntervalSeconds: 15\n  ${name}: ${value}`,
+    );
+
+    expect(() => parseConfig(raw)).toThrow("Invalid configuration");
+  });
+
   it.each([0, 3])("accepts maxPasses: %s", (maxPasses) => {
     const raw = validConfig.replace(
       `      remediation:

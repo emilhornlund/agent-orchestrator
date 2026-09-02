@@ -1,4 +1,5 @@
 import type { ProjectConfig } from "../config/config.js";
+import { materializeCardAttachments } from "../context/materialize-card-attachments.js";
 import { hasCommittedImplementation } from "../git/detect-committed-implementation.js";
 import { cleanupWorktree } from "../git/cleanup-worktree.js";
 import {
@@ -66,13 +67,35 @@ import {
 import { WorkflowError } from "./workflow-error.js";
 import { getElapsedRefinementWorkflowTime } from "./workflow-duration.js";
 
+export type PollingProject = ProjectConfig & {
+  contextRoot?: string;
+  maxAttachmentBytes?: number;
+  maxTotalAttachmentBytes?: number;
+};
+
 function isWorkflowAbort(error: unknown, signal: AbortSignal): boolean {
-  return (
-    signal.aborted &&
-    (error instanceof OpenCodeRunAbortedError ||
-      error instanceof CommandRunAbortedError ||
-      error instanceof TrelloRequestAbortedError)
-  );
+  if (!signal.aborted) {
+    return false;
+  }
+
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+
+  while (current !== undefined && !seen.has(current)) {
+    seen.add(current);
+
+    if (
+      current instanceof OpenCodeRunAbortedError ||
+      current instanceof CommandRunAbortedError ||
+      current instanceof TrelloRequestAbortedError
+    ) {
+      return true;
+    }
+
+    current = current instanceof Error ? current.cause : undefined;
+  }
+
+  return false;
 }
 
 function hasOpenCodePermissionDenial(result: OpenCodeRunResult): boolean {
@@ -144,7 +167,7 @@ export async function pollProject(
   github: GitHubClient,
   opencode: OpenCodeClient,
   commands: CommandRunner,
-  project: ProjectConfig,
+  project: PollingProject,
   signal: AbortSignal,
   emailNotifier?: EmailNotifier,
 ): Promise<void> {
@@ -348,7 +371,7 @@ async function processRefinementCard(
   trello: TrelloClient,
   git: GitClient,
   opencode: OpenCodeClient,
-  project: ProjectConfig,
+  project: PollingProject,
   card: TrelloCard,
   signal: AbortSignal,
   preparedWorktree?: {
@@ -377,6 +400,8 @@ async function processRefinementCard(
 
     cardLog.info(`Branch: ${worktree.branch}`);
     cardLog.info(`Worktree: ${worktree.path}`);
+
+    await prepareCardContext(trello, project, card, signal);
 
     cardLog.event("Starting OpenCode refinement...");
 
@@ -560,7 +585,7 @@ async function processImplementationCard(
   github: GitHubClient,
   opencode: OpenCodeClient,
   commands: CommandRunner,
-  project: ProjectConfig,
+  project: PollingProject,
   card: TrelloCard,
   signal: AbortSignal,
   preparedWorktree?: PreparedImplementationWorktree,
@@ -649,7 +674,7 @@ async function processCardChanges(
   github: GitHubClient,
   opencode: OpenCodeClient,
   commands: CommandRunner,
-  project: ProjectConfig,
+  project: PollingProject,
   card: TrelloCard,
   signal: AbortSignal,
   reviewIteration?: ReviewIterationOptions,
@@ -675,6 +700,8 @@ async function processCardChanges(
 
   cardLog.info(`Branch: ${worktree.branch}`);
   cardLog.info(`Worktree: ${worktree.path}`);
+
+  await prepareCardContext(trello, project, card, signal);
 
   const implementationWorktree = reviewIteration
     ? undefined
@@ -959,4 +986,41 @@ async function processCardChanges(
   });
 
   return worktree;
+}
+
+async function prepareCardContext(
+  trello: TrelloClient,
+  project: PollingProject,
+  card: TrelloCard,
+  signal: AbortSignal,
+): Promise<void> {
+  if (project.contextRoot === undefined) {
+    return;
+  }
+
+  try {
+    await materializeCardAttachments(
+      trello,
+      project.contextRoot,
+      project.id,
+      card.id,
+      {
+        signal,
+        ...(project.maxAttachmentBytes === undefined
+          ? {}
+          : { maxAttachmentBytes: project.maxAttachmentBytes }),
+        ...(project.maxTotalAttachmentBytes === undefined
+          ? {}
+          : { maxTotalAttachmentBytes: project.maxTotalAttachmentBytes }),
+      },
+    );
+  } catch (error) {
+    throw new WorkflowError(
+      "Workflow",
+      `Could not prepare card context attachments for card "${card.id}": ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      { cause: error },
+    );
+  }
 }
