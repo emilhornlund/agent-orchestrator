@@ -1,10 +1,15 @@
 import type { TrelloCard } from "../trello/trello-client.js";
+import {
+  buildCardAttachmentPromptLines,
+  type CardAttachmentPromptContext,
+} from "../context/card-attachment-prompt.js";
 
 export function buildReviewFeedbackPrompt(
   card: TrelloCard,
   pullRequestUrl: string,
   feedback: string,
   validationCommand?: string,
+  attachmentContext?: CardAttachmentPromptContext,
 ): string {
   return [
     "Apply the human review feedback for the existing pull request.",
@@ -14,6 +19,7 @@ export function buildReviewFeedbackPrompt(
     "",
     "Human review feedback:",
     feedback.trim(),
+    ...buildCardAttachmentPromptLines(attachmentContext),
     "",
     "Inspect the current repository and existing implementation before editing.",
     "Address all still-applicable requested changes completely.",

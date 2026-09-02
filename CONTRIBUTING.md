@@ -80,8 +80,17 @@ attachments remain metadata-only and are never requested. The manifest uses
 external entries. Unchanged regular uploads are reused; removed attachments and
 unrelated files are retained. Per-upload and aggregate new-download limits are
 documented in the card-context sections of `docs/operations.md` and
-`docs/configuration.md`. Attachment files and paths are not yet exposed in any
-OpenCode prompt.
+`docs/configuration.md`. Before the applicable OpenCode session starts,
+materialized attachment metadata is used to add a compact section to refinement,
+implementation, automatic remediation, and review-feedback remediation prompts.
+The section lists each name, any non-blank MIME type, and either the absolute
+runtime path to an uploaded file or the external URL for a link. It is omitted
+when there are no attachments. Prompt paths use the configured `contextRoot` in
+the filesystem namespace visible to the running service and OpenCode process,
+not the source checkout or worktree. Attachment contents and excerpts must never
+be added to prompts; automated review-only and commit prompts remain unchanged.
+Unsafe or unavailable materialized locations must fail the workflow before its
+affected OpenCode session starts rather than being omitted silently.
 
 ## Commits
 

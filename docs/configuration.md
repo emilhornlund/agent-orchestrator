@@ -82,8 +82,20 @@ download leaves no manifest entry claiming success and stops the card before Ope
 symbolic links, and unexpected file types are rejected. The storage helpers create directories and enforce the same path
 boundary, but do not change Trello data.
 
-Attachment files and manifest metadata are not currently added to any OpenCode prompt. They remain isolated card context and
-are not placed in a repository or Git worktree.
+When attachments exist, the refinement, implementation, automatic remediation, and review-feedback remediation prompts
+include a compact attachment section with each name, each non-blank Trello MIME type, and its location. Uploaded files are
+listed as absolute paths resolved in the configured runtime namespace, for example
+`/opt/.agent-context/<project-id>/<card-id>/attachments/<localFilename>`. External-link entries are listed as their
+external URLs and never have a local path. Cards without attachments have no attachment section. The section contains
+metadata and locations only: file contents, excerpts, and other full attachment data are never included. Automated
+review-only and commit prompts remain unchanged.
+
+The path shown to OpenCode is in the filesystem namespace of the running service and OpenCode process. In a containerized
+deployment, the configured `contextRoot` must be mounted at the same absolute container path; a host path that is not
+mounted there is not the runtime location and is not advertised to the agent. If materialized manifest data or an uploaded
+file cannot be safely resolved, the workflow reports the affected card context error and does not start the OpenCode session.
+
+Attachment files and manifest metadata remain outside repositories and Git worktrees.
 
 ### `notifications.email`
 

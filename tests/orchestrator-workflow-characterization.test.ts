@@ -19,7 +19,11 @@ import {
 } from "../src/process/command-runner.js";
 import { getRefinementResultPath } from "../src/refinement/refinement-result.js";
 import type { EmailNotifier } from "../src/notifications/email-notifier.js";
-import type { TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
+import type {
+  TrelloAttachment,
+  TrelloCard,
+  TrelloClient,
+} from "../src/trello/trello-client.js";
 
 const listIds = {
   backlog: "backlog-list",
@@ -35,6 +39,7 @@ type PullRequestState = "none" | "open" | "requested" | "merged";
 
 interface HarnessOptions {
   cardContext?: boolean;
+  attachments?: TrelloAttachment[];
   autoMerge?: boolean;
   maxPasses?: number;
   initialList?: ListName;
@@ -98,6 +103,27 @@ function createProject(
   };
 }
 
+function createAttachmentFixtures(): TrelloAttachment[] {
+  return [
+    {
+      id: "attachment-upload",
+      name: "requirements.md",
+      mimeType: "text/markdown",
+      bytes: null,
+      url: "https://trello.example/requirements.md",
+      isUpload: true,
+    },
+    {
+      id: "attachment-link",
+      name: "Design reference",
+      mimeType: null,
+      bytes: null,
+      url: "https://example.com/design",
+      isUpload: false,
+    },
+  ];
+}
+
 function createHarness(options: HarnessOptions = {}) {
   const worktreeRoot = fs.mkdtempSync(
     path.join(os.tmpdir(), "agent-orchestrator-characterization-"),
@@ -151,9 +177,12 @@ function createHarness(options: HarnessOptions = {}) {
   const events: string[] = [];
   const getCardAttachments = vi.fn(async () => {
     events.push("trello:get-attachments");
-    return [];
+    return options.attachments ?? [];
   });
-  const downloadCardAttachment = vi.fn();
+  const downloadCardAttachment = vi.fn(async (attachment: TrelloAttachment) => {
+    events.push(`trello:download-attachment:${attachment.id}`);
+    return new Response(`attachment-content:${attachment.id}`);
+  });
   const transitions = [] as Array<{
     id: string;
     date: string;
@@ -526,7 +555,7 @@ afterEach(() => {
 });
 
 describe("orchestrator workflow characterization", () => {
-  it("materializes card context before OpenCode without changing its prompt", async () => {
+  it("materializes card context before OpenCode and omits an empty section", async () => {
     const harness = createHarness({ cardContext: true });
 
     try {
@@ -558,6 +587,58 @@ describe("orchestrator workflow characterization", () => {
           ),
         ),
       ).toBe(true);
+    } finally {
+      harness.cleanup();
+    }
+  });
+
+  it("passes materialized attachment context to implementation and remediation only", async () => {
+    const harness = createHarness({
+      cardContext: true,
+      attachments: createAttachmentFixtures(),
+      reviewResults: ["REVIEW_FAIL"],
+    });
+
+    try {
+      await pollProject(
+        harness.trello,
+        harness.git,
+        harness.github,
+        harness.openCode,
+        harness.commands,
+        harness.project,
+        new AbortController().signal,
+      );
+
+      const requirementsPath = path.join(
+        harness.contextRoot!,
+        harness.project.id,
+        harness.card.id,
+        "attachments",
+        "requirements.md",
+      );
+      const promptsByLabel = new Map(
+        harness.runOpenCode.mock.calls.map(([run]) => [
+          run.sessionLabel,
+          run.prompt,
+        ]),
+      );
+
+      expect(harness.events.indexOf("trello:get-attachments")).toBeLessThan(
+        harness.events.indexOf("opencode:implementation"),
+      );
+      expect(promptsByLabel.get("OpenCode implementation")).toContain(
+        `- requirements.md (text/markdown): local file: ${requirementsPath}`,
+      );
+      expect(promptsByLabel.get("OpenCode remediation")).toContain(
+        `- requirements.md (text/markdown): local file: ${requirementsPath}`,
+      );
+      expect(promptsByLabel.get("OpenCode review")).not.toContain(
+        "Trello card attachments:",
+      );
+      expect(promptsByLabel.get("OpenCode commit")).not.toContain(
+        "Trello card attachments:",
+      );
     } finally {
       harness.cleanup();
     }
@@ -979,6 +1060,8 @@ describe("orchestrator workflow characterization", () => {
       initialList: "review",
       pullRequestState: "requested",
       feedback: "Please add a regression test.",
+      cardContext: true,
+      attachments: createAttachmentFixtures(),
     });
 
     try {
@@ -1001,6 +1084,18 @@ describe("orchestrator workflow characterization", () => {
       });
       expect(harness.runOpenCode.mock.calls[0]?.[0].prompt).toContain(
         "Human review feedback:\nPlease add a regression test.",
+      );
+      expect(harness.runOpenCode.mock.calls[0]?.[0].prompt).toContain(
+        `- requirements.md (text/markdown): local file: ${path.join(
+          harness.contextRoot!,
+          harness.project.id,
+          harness.card.id,
+          "attachments",
+          "requirements.md",
+        )}`,
+      );
+      expect(harness.events.indexOf("trello:get-attachments")).toBeLessThan(
+        harness.events.indexOf("opencode:review-feedback-implementation"),
       );
       expect(harness.createPullRequest).not.toHaveBeenCalled();
       expect(harness.findPullRequest).toHaveBeenCalled();
@@ -1047,6 +1142,8 @@ describe("orchestrator workflow characterization", () => {
       feedback: "Please add a regression test.",
       maxPasses: 2,
       reviewResults: ["REVIEW_FAIL", "REVIEW_FAIL"],
+      cardContext: true,
+      attachments: createAttachmentFixtures(),
     });
 
     try {
@@ -1071,6 +1168,23 @@ describe("orchestrator workflow characterization", () => {
         "OpenCode commit",
       ]);
       expect(harness.card.idList).toBe(listIds.review);
+      const requirementsPath = path.join(
+        harness.contextRoot!,
+        harness.project.id,
+        harness.card.id,
+        "attachments",
+        "requirements.md",
+      );
+      for (const [run] of harness.runOpenCode.mock.calls) {
+        if (
+          run.sessionLabel === "OpenCode review feedback implementation" ||
+          run.sessionLabel === "OpenCode remediation"
+        ) {
+          expect(run.prompt).toContain(
+            `- requirements.md (text/markdown): local file: ${requirementsPath}`,
+          );
+        }
+      }
       expect(harness.push).toHaveBeenCalledWith(
         harness.worktreePath,
         "origin",
@@ -1179,6 +1293,8 @@ describe("orchestrator workflow characterization", () => {
   it("refines a ready card in an isolated worktree and returns it to Backlog", async () => {
     const harness = createHarness({
       cardLabels: ["refinement-label"],
+      cardContext: true,
+      attachments: createAttachmentFixtures(),
     });
 
     try {
@@ -1200,6 +1316,18 @@ describe("orchestrator workflow characterization", () => {
         model: "refinement-model",
         sessionLabel: "OpenCode refinement",
       });
+      expect(harness.runOpenCode.mock.calls[0]?.[0].prompt).toContain(
+        `- requirements.md (text/markdown): local file: ${path.join(
+          harness.contextRoot!,
+          harness.project.id,
+          harness.card.id,
+          "attachments",
+          "requirements.md",
+        )}`,
+      );
+      expect(harness.events.indexOf("trello:get-attachments")).toBeLessThan(
+        harness.events.indexOf("opencode:refinement"),
+      );
       expect(harness.runCommand).not.toHaveBeenCalled();
       expect(harness.push).not.toHaveBeenCalled();
       expect(harness.createPullRequest).not.toHaveBeenCalled();
