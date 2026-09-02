@@ -5,6 +5,37 @@
 This page is the canonical operator reference for execution isolation, publication boundaries, timing, notifications,
 shutdown, logging, retention, and multi-project operation.
 
+## Card context storage
+
+`workflow.contextRoot` is the optional workflow-level filesystem boundary for future card-specific external context. It
+defaults to `/opt/.agent-context` and must be an absolute path separate from every configured source checkout and Git
+worktree root. The service never uses the current working directory, a Git repository, or a Git worktree as this default.
+
+When a card context is created, its exact layout is:
+
+```text
+<contextRoot>/<project-id>/<card-id>/
+<contextRoot>/<project-id>/<card-id>/attachments/
+<contextRoot>/<project-id>/<card-id>/attachments.json
+```
+
+The context directory and `attachments/` directory are created recursively and idempotently. Existing files, directory
+contents, and manifest contents are preserved. Managed directory components and existing manifest or attachment paths are
+checked with `lstat`; symbolic links and unexpected non-directory paths are refused. Project IDs, card IDs, and attachment
+filenames must be safe single path components, so traversal, absolute paths, separators, NUL characters, and blank values
+are rejected. The manifest path is only resolved; this feature does not download attachments, populate the manifest, call
+Trello, or add context to OpenCode prompts.
+
+The path is resolved in the filesystem namespace of the running process. In a local deployment, create or grant write
+permission to the configured root for the service user. In Docker, configure the same absolute path inside the container and
+mount a persistent host or named volume at that container path; permissions and ownership must allow the container process
+to create project, card, and attachment directories. A host path that is not mounted at the configured container path is not
+the storage location used by the service.
+
+Card context is operational filesystem data, not Git state. It is outside the source checkout and all worktrees, is not
+committed or included in task branches, and should be backed up, retained, and access-controlled independently from Git
+repositories.
+
 ## Isolated worktrees
 
 The configured `repository.path` is the normal source checkout. Agent execution takes place in a dedicated worktree at

@@ -51,6 +51,24 @@ must be unique.
 | --------------------- | ---------------------------------------------------------------------------------------- |
 | `pollIntervalSeconds` | Positive integer interval between project polling cycles                                 |
 | `logRetentionDays`    | Positive integer number of days for managed log retention; defaults to `14` when omitted |
+| `contextRoot`         | Optional absolute root for card context; defaults to `/opt/.agent-context`               |
+
+`contextRoot` is normalized with `path.resolve` like the other configured absolute paths. A custom value must be non-blank
+and absolute. The root must not equal, contain, or be contained by any configured `projects[].repository.path` or
+`projects[].repository.worktreeRoot`, including after normalization. Unknown `workflow` keys are rejected.
+
+Card context storage uses this layout, with project IDs, card IDs, and attachment filenames treated as untrusted single path
+components:
+
+```text
+<contextRoot>/<project-id>/<card-id>/
+<contextRoot>/<project-id>/<card-id>/attachments/
+<contextRoot>/<project-id>/<card-id>/attachments.json
+```
+
+The storage helpers create the card directory and `attachments/` recursively when requested. They do not create or replace
+`attachments.json`, download attachments, populate the manifest, or change Trello data. Invalid, traversal, absolute,
+separator-containing, or NUL-containing path components are rejected.
 
 ### `notifications.email`
 
@@ -173,4 +191,5 @@ OpenCode, Trello, notification, SMTP, or event keys are rejected.
 Startup also verifies the configured repositories and Trello resources. An existing repository path must be a valid Git
 repository; a missing path may be cloned from the configured GitHub repository with `gh`. The GitHub CLI must already be
 authenticated for managed repositories. Trello lists and labels are checked on their configured boards before polling
-starts.
+starts. Context directories are created only by the context-storage helpers, not as an implicit side effect of loading
+configuration or starting the service.

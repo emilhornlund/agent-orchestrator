@@ -13,6 +13,32 @@ const absolutePath = nonBlankString
   })
   .transform((value) => path.resolve(value));
 
+export const DEFAULT_CONTEXT_ROOT = "/opt/.agent-context";
+
+const pathComponent = nonBlankString.refine(
+  (value) =>
+    value !== "." &&
+    value !== ".." &&
+    !value.includes("/") &&
+    !value.includes("\\") &&
+    !path.isAbsolute(value) &&
+    !path.win32.isAbsolute(value) &&
+    path.win32.parse(value).root.length === 0 &&
+    !value.includes("\0"),
+  {
+    message:
+      "Must be a single relative path component without traversal, separators, or NUL characters",
+  },
+);
+
+function pathsOverlap(first: string, second: string): boolean {
+  return (
+    first === second ||
+    first.startsWith(`${second}${path.sep}`) ||
+    second.startsWith(`${first}${path.sep}`)
+  );
+}
+
 const trelloSchema = z
   .strictObject({
     boardId: nonBlankString,
@@ -153,7 +179,7 @@ const emailNotificationSchema = z
   });
 
 const projectSchema = z.strictObject({
-  id: nonBlankString,
+  id: pathComponent,
   autoMerge: z.boolean().default(false),
   trello: trelloSchema,
   repository: repositorySchema,
@@ -173,6 +199,7 @@ const configSchema = z
     workflow: z.strictObject({
       pollIntervalSeconds: z.number().int().positive(),
       logRetentionDays: z.number().int().positive().default(14),
+      contextRoot: absolutePath.default(DEFAULT_CONTEXT_ROOT),
     }),
   })
   .superRefine((config, ctx) => {
@@ -232,6 +259,25 @@ const configSchema = z
         path: ["projects"],
         message: "Trello board IDs must be unique",
       });
+    }
+
+    const contextRoot = config.workflow.contextRoot;
+
+    for (const project of config.projects) {
+      const configuredPaths = [
+        ["repository path", project.repository.path],
+        ["worktree root", project.repository.worktreeRoot],
+      ] as const;
+
+      for (const [description, configuredPath] of configuredPaths) {
+        if (pathsOverlap(contextRoot, configuredPath)) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["workflow", "contextRoot"],
+            message: `Context root "${contextRoot}" overlaps ${description} "${configuredPath}" for project "${project.id}"`,
+          });
+        }
+      }
     }
   });
 

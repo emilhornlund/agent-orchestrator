@@ -101,6 +101,7 @@ describe("parseConfig", () => {
     expect(project!.opencode.timeoutMinutes).toBe(360);
     expect(config.workflow.pollIntervalSeconds).toBe(15);
     expect(config.workflow.logRetentionDays).toBe(14);
+    expect(config.workflow.contextRoot).toBe("/opt/.agent-context");
     expect(config.notifications).toBeUndefined();
   });
 
@@ -512,6 +513,61 @@ workflow:
     expect(() => parseConfig(raw)).toThrow("Must be an absolute path");
   });
 
+  it("accepts and normalizes a custom context root", () => {
+    const raw = validConfig.replace(
+      "pollIntervalSeconds: 15",
+      'pollIntervalSeconds: 15\n  contextRoot: "/tmp/card-context/."',
+    );
+
+    expect(parseConfig(raw).workflow.contextRoot).toBe("/tmp/card-context");
+  });
+
+  it.each([
+    ["relative", 'contextRoot: "./card-context"', "Must be an absolute path"],
+    ["blank", 'contextRoot: "  "', "Must not be blank"],
+  ])("rejects a %s context root", (_label, setting, message) => {
+    const raw = validConfig.replace(
+      "pollIntervalSeconds: 15",
+      `pollIntervalSeconds: 15\n  ${setting}`,
+    );
+
+    expect(() => parseConfig(raw)).toThrow(message);
+  });
+
+  it("rejects unknown workflow keys", () => {
+    const raw = validConfig.replace(
+      "pollIntervalSeconds: 15",
+      "pollIntervalSeconds: 15\n  contextRoots: /tmp/card-context",
+    );
+
+    expect(() => parseConfig(raw)).toThrow("Unrecognized key");
+  });
+
+  it.each([
+    ["repository path", "/tmp/repository"],
+    ["inside repository path", "/tmp/repository/context"],
+    ["containing repository path", "/tmp"],
+    ["worktree root", "/tmp/worktrees"],
+    ["inside worktree root", "/tmp/worktrees/context"],
+    ["containing worktree root", "/tmp"],
+  ])("rejects a context root overlapping the %s", (_label, contextRoot) => {
+    const raw = validConfig.replace(
+      "pollIntervalSeconds: 15",
+      `pollIntervalSeconds: 15\n  contextRoot: "${contextRoot}"`,
+    );
+
+    expect(() => parseConfig(raw)).toThrow("Context root");
+  });
+
+  it("rejects normalized context root overlap", () => {
+    const raw = validConfig.replace(
+      "pollIntervalSeconds: 15",
+      'pollIntervalSeconds: 15\n  contextRoot: "/tmp/worktrees/."',
+    );
+
+    expect(() => parseConfig(raw)).toThrow("Context root");
+  });
+
   it("rejects malformed GitHub repository names", () => {
     const raw = validConfig.replace(
       'github: "owner/repository"',
@@ -752,6 +808,17 @@ workflow:`,
     const raw = validConfig.replace('boardId: "board-one"', 'boardId: " "');
 
     expect(() => parseConfig(raw)).toThrow("Must not be blank");
+  });
+
+  it.each([
+    ["separator", "project/one"],
+    ["traversal", "../project"],
+    ["absolute", "/project"],
+    ["NUL-containing", "project\0one"],
+  ])("rejects an unsafe project ID: %s", (_label, projectId) => {
+    const raw = validConfig.replace('id: "project-one"', `id: "${projectId}"`);
+
+    expect(() => parseConfig(raw)).toThrow("projects.0.id");
   });
 
   it("rejects unknown configuration keys instead of silently ignoring typos", () => {
