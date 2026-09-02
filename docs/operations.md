@@ -60,14 +60,26 @@ integers in `workflow`. A failed, aborted, over-limit, or filesystem-failed tran
 manifest claiming success, and prevents OpenCode from starting. Existing manifests and managed paths are validated with
 `lstat`; malformed manifests, traversal paths, symlinks, and unexpected file types are refused.
 
-The context is intentionally not included in implementation, refinement, review, remediation, or commit prompts. The files
-are available for future use but are not yet exposed to OpenCode.
+When a card has attachments, the refinement, implementation, automatic remediation, and review-feedback remediation
+prompts include a compact section containing the attachment name, a non-blank MIME type when Trello provides one, and a
+usable location. The section is omitted when the card has no attachments. Its format is:
+
+```text
+Trello card attachments:
+These attachments are part of the Trello task context. Inspect them when relevant.
+- design.pdf (application/pdf): local file: /opt/.agent-context/project-id/card-id/attachments/design.pdf
+- Reference: external URL: https://example.com/reference
+```
+
+Uploaded attachments are represented by the absolute path to the downloaded file. External-link attachments are represented
+by their URL and are never dereferenced or assigned a local path. The automated review-only and commit prompts do not
+include this section. No attachment contents, excerpts, or other full attachment data are placed in any prompt.
 
 The path is resolved in the filesystem namespace of the running process. In a local deployment, create or grant write
 permission to the configured root for the service user. In Docker, configure the same absolute path inside the container and
 mount a persistent host or named volume at that container path; permissions and ownership must allow the container process
 to create project, card, and attachment directories. A host path that is not mounted at the configured container path is not
-the storage location used by the service.
+the storage location used by the service, and it is not the path shown to OpenCode.
 
 Card context is operational filesystem data, not Git state. It is outside the source checkout and all worktrees, is not
 committed or included in task branches, and should be backed up, retained, and access-controlled independently from Git

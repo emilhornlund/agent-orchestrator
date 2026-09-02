@@ -1,5 +1,9 @@
 import type { TrelloCard } from "../trello/trello-client.js";
 import { refinementResultRelativePath } from "../refinement/refinement-result.js";
+import {
+  buildCardAttachmentPromptLines,
+  type CardAttachmentPromptContext,
+} from "../context/card-attachment-prompt.js";
 
 const featureTemplate = `# <Feature Title>
 
@@ -97,7 +101,10 @@ platforms, data, or workflows>.
 - Update documentation if the fix changes documented behavior or constraints.
 - Run the repository's appropriate validation checks successfully before considering the task complete.`;
 
-export function buildRefinementPrompt(card: TrelloCard): string {
+export function buildRefinementPrompt(
+  card: TrelloCard,
+  attachmentContext?: CardAttachmentPromptContext,
+): string {
   const description = card.desc.trim();
 
   return [
@@ -108,6 +115,7 @@ export function buildRefinementPrompt(card: TrelloCard): string {
     description.length > 0
       ? `Original description:\n${description}`
       : "No original task description was provided.",
+    ...buildCardAttachmentPromptLines(attachmentContext),
     "",
     "Inspect the repository as needed to understand the existing implementation, architecture, tests, documentation, and conventions.",
     "Use repository evidence together with the original Trello task to clarify the intended work.",

@@ -1,9 +1,14 @@
 import type { TrelloCard } from "../trello/trello-client.js";
+import {
+  buildCardAttachmentPromptLines,
+  type CardAttachmentPromptContext,
+} from "../context/card-attachment-prompt.js";
 
 export function buildRemediationPrompt(
   card: TrelloCard,
   reviewOutput: string,
   validationCommand?: string,
+  attachmentContext?: CardAttachmentPromptContext,
 ): string {
   return [
     "Fix the issues found by the review of the current uncommitted changes.",
@@ -12,6 +17,7 @@ export function buildRemediationPrompt(
     "",
     "Review findings:",
     reviewOutput.trim(),
+    ...buildCardAttachmentPromptLines(attachmentContext),
     "",
     "Inspect the repository and current changes before editing.",
     "Address the review findings completely.",

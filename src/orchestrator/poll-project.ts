@@ -1,5 +1,9 @@
 import type { ProjectConfig } from "../config/config.js";
-import { materializeCardAttachments } from "../context/materialize-card-attachments.js";
+import { type CardAttachmentPromptContext } from "../context/card-attachment-prompt.js";
+import {
+  materializeCardAttachments,
+  type CardAttachmentManifest,
+} from "../context/materialize-card-attachments.js";
 import { hasCommittedImplementation } from "../git/detect-committed-implementation.js";
 import { cleanupWorktree } from "../git/cleanup-worktree.js";
 import {
@@ -401,7 +405,17 @@ async function processRefinementCard(
     cardLog.info(`Branch: ${worktree.branch}`);
     cardLog.info(`Worktree: ${worktree.path}`);
 
-    await prepareCardContext(trello, project, card, signal);
+    const attachmentManifest = await prepareCardContext(
+      trello,
+      project,
+      card,
+      signal,
+    );
+    const attachmentContext = createCardAttachmentPromptContext(
+      project,
+      card,
+      attachmentManifest,
+    );
 
     cardLog.event("Starting OpenCode refinement...");
 
@@ -412,6 +426,7 @@ async function processRefinementCard(
       card,
       worktree.path,
       signal,
+      attachmentContext,
     );
 
     cardLog.event(
@@ -701,7 +716,17 @@ async function processCardChanges(
   cardLog.info(`Branch: ${worktree.branch}`);
   cardLog.info(`Worktree: ${worktree.path}`);
 
-  await prepareCardContext(trello, project, card, signal);
+  const attachmentManifest = await prepareCardContext(
+    trello,
+    project,
+    card,
+    signal,
+  );
+  const attachmentContext = createCardAttachmentPromptContext(
+    project,
+    card,
+    attachmentManifest,
+  );
 
   const implementationWorktree = reviewIteration
     ? undefined
@@ -773,8 +798,13 @@ async function processCardChanges(
         reviewIteration.pullRequestUrl,
         reviewIteration.feedback,
         project.repository.validationCommand,
+        attachmentContext,
       )
-    : buildTaskPrompt(card, project.repository.validationCommand);
+    : buildTaskPrompt(
+        card,
+        project.repository.validationCommand,
+        attachmentContext,
+      );
 
   cardLog.event(`Starting OpenCode ${implementationLabel}...`);
 
@@ -876,6 +906,7 @@ async function processCardChanges(
           card,
           reviewOutput,
           project.repository.validationCommand,
+          attachmentContext,
         ),
         signal,
         sessionLogPath,
@@ -993,13 +1024,13 @@ async function prepareCardContext(
   project: PollingProject,
   card: TrelloCard,
   signal: AbortSignal,
-): Promise<void> {
+): Promise<CardAttachmentManifest | undefined> {
   if (project.contextRoot === undefined) {
-    return;
+    return undefined;
   }
 
   try {
-    await materializeCardAttachments(
+    return await materializeCardAttachments(
       trello,
       project.contextRoot,
       project.id,
@@ -1023,4 +1054,21 @@ async function prepareCardContext(
       { cause: error },
     );
   }
+}
+
+function createCardAttachmentPromptContext(
+  project: PollingProject,
+  card: TrelloCard,
+  manifest: CardAttachmentManifest | undefined,
+): CardAttachmentPromptContext | undefined {
+  if (project.contextRoot === undefined || manifest === undefined) {
+    return undefined;
+  }
+
+  return {
+    manifest,
+    contextRoot: project.contextRoot,
+    projectId: project.id,
+    cardId: card.id,
+  };
 }

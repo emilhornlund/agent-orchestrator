@@ -1,4 +1,5 @@
 import type { ProjectConfig } from "../config/config.js";
+import type { CardAttachmentPromptContext } from "../context/card-attachment-prompt.js";
 import type { GitClient } from "../git/git-client.js";
 import { getSessionLogPath } from "../logging/session-log.js";
 import { buildRefinementPrompt } from "../opencode/build-refinement-prompt.js";
@@ -45,6 +46,7 @@ export async function runRefinement(
   card: TrelloCard,
   worktreePath: string,
   signal: AbortSignal,
+  attachmentContext?: CardAttachmentPromptContext,
 ): Promise<RefinementResult> {
   clearRefinementResult(worktreePath);
 
@@ -55,7 +57,7 @@ export async function runRefinement(
     model: project.opencode.refinement.model,
     variant: project.opencode.refinement.variant,
     timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
-    prompt: buildRefinementPrompt(card),
+    prompt: buildRefinementPrompt(card, attachmentContext),
     signal,
     sessionLogPath,
     sessionLabel: "OpenCode refinement",
