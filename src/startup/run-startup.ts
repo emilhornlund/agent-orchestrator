@@ -2,6 +2,7 @@ import type { Config } from "../config/config.js";
 import { ensureRepository } from "../git/ensure-repository.js";
 import type { GitClient } from "../git/git-client.js";
 import type { GitHubClient } from "../github/github-client.js";
+import { cleanupCardContextRetention } from "../context/card-context-retention.js";
 import { cleanupLogRetention } from "../logging/log-retention.js";
 import { logger } from "../logging/logger.js";
 import type { EmailNotifier } from "../notifications/email-notifier.js";
@@ -38,6 +39,12 @@ export async function runStartup(
   operations: StartupOperations = defaultStartupOperations,
 ): Promise<void> {
   cleanupLogRetention(config.workflow.logRetentionDays);
+  cleanupCardContextRetention(
+    config.workflow.contextRoot,
+    config.workflow.contextRetentionDays,
+    new Date(),
+    config.projects.map((project) => project.id),
+  );
 
   for (const project of config.projects) {
     if (signal.aborted) {

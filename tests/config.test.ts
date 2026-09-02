@@ -101,6 +101,7 @@ describe("parseConfig", () => {
     expect(project!.opencode.timeoutMinutes).toBe(360);
     expect(config.workflow.pollIntervalSeconds).toBe(15);
     expect(config.workflow.logRetentionDays).toBe(14);
+    expect(config.workflow.contextRetentionDays).toBe(14);
     expect(config.workflow.contextRoot).toBe("/opt/.agent-context");
     expect(config.notifications).toBeUndefined();
   });
@@ -820,6 +821,30 @@ workflow:`,
     );
 
     expect(() => parseConfig(raw)).toThrow("workflow.logRetentionDays");
+  });
+
+  it("accepts a custom context retention period", () => {
+    const raw = validConfig.replace(
+      "pollIntervalSeconds: 15",
+      "pollIntervalSeconds: 15\n  contextRetentionDays: 30",
+    );
+
+    expect(parseConfig(raw).workflow.contextRetentionDays).toBe(30);
+  });
+
+  it.each([
+    ["zero", "0"],
+    ["negative", "-1"],
+    ["fractional", "1.5"],
+    ["non-numeric", '"fourteen"'],
+    ["malformed", "{}"],
+  ])("rejects a %s context retention period", (_label, value) => {
+    const raw = validConfig.replace(
+      "pollIntervalSeconds: 15",
+      `pollIntervalSeconds: 15\n  contextRetentionDays: ${value}`,
+    );
+
+    expect(() => parseConfig(raw)).toThrow("workflow.contextRetentionDays");
   });
 
   it("rejects an empty validation command", () => {

@@ -9,6 +9,7 @@ import type { GitHubClient } from "../src/github/github-client.js";
 import type { OpenCodeClient } from "../src/opencode/opencode-client.js";
 import type { CommandRunner } from "../src/process/command-runner.js";
 import type { TrelloClient } from "../src/trello/trello-client.js";
+import * as cardContextRetention from "../src/context/card-context-retention.js";
 import * as logRetention from "../src/logging/log-retention.js";
 import type { EmailNotifier } from "../src/notifications/email-notifier.js";
 import { OpenCodeRunAbortedError } from "../src/opencode/opencode-client.js";
@@ -91,6 +92,7 @@ function createConfig(
     workflow: {
       pollIntervalSeconds,
       logRetentionDays: 14,
+      contextRetentionDays: 14,
       contextRoot: "/opt/.agent-context",
     },
     projects,
@@ -632,6 +634,10 @@ describe("runOrchestrator", () => {
       const controller = new AbortController();
       let resolvePoll: (() => void) | undefined;
       const cleanupLogRetention = vi.spyOn(logRetention, "cleanupLogRetention");
+      const cleanupCardContextRetention = vi.spyOn(
+        cardContextRetention,
+        "cleanupCardContextRetention",
+      );
 
       pollProject.mockImplementation(
         () =>
@@ -655,10 +661,24 @@ describe("runOrchestrator", () => {
       );
 
       expect(cleanupLogRetention).toHaveBeenCalledWith(14);
+      expect(cleanupCardContextRetention).toHaveBeenCalledWith(
+        "/opt/.agent-context",
+        14,
+        expect.any(Date),
+        ["project-a"],
+      );
 
       controller.abort();
       resolvePoll?.();
       await orchestrator;
+
+      const contextCleanupCalls = cleanupCardContextRetention.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(
+        logRetention.logRetentionIntervalMilliseconds,
+      );
+      expect(cleanupCardContextRetention).toHaveBeenCalledTimes(
+        contextCleanupCalls,
+      );
     } finally {
       vi.useRealTimers();
     }

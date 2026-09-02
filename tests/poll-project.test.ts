@@ -12,12 +12,95 @@ import {
   OpenCodeRunAbortedError,
   type OpenCodeRunOptions,
 } from "../src/opencode/opencode-client.js";
+import { cleanupCardContextRetention } from "../src/context/card-context-retention.js";
 import { pollProject } from "../src/orchestrator/poll-project.js";
 import { CommandRunner } from "../src/process/command-runner.js";
 import { getRefinementResultPath } from "../src/refinement/refinement-result.js";
 import { type TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
 
 describe("pollProject", () => {
+  it("protects card context while reconciliation is awaiting external state", async () => {
+    const temporaryDirectory = fs.mkdtempSync(
+      path.join(os.tmpdir(), "agent-orchestrator-reconciliation-context-"),
+    );
+    const contextRoot = path.join(temporaryDirectory, "context-root");
+    const contextDirectory = path.join(contextRoot, "project-1", "card-1");
+    const expired = new Date("2025-12-31T23:59:59.999Z");
+    const now = new Date("2026-01-15T00:00:00.000Z");
+    const card: TrelloCard = {
+      id: "card-1",
+      name: "Task",
+      desc: "",
+      idList: "working",
+      idLabels: ["feature"],
+      url: "https://trello.com/c/card-1",
+    };
+    const project = {
+      id: "project-1",
+      repository: {
+        path: "/repo",
+        github: "owner/repo",
+        worktreeRoot: "/worktrees",
+      },
+      trello: {
+        readyListId: "ready",
+        workingListId: "working",
+        reviewListId: "review",
+        backlogListId: "backlog",
+        failedListId: "failed",
+        doneListId: "done",
+        refinementLabelId: "refinement",
+        featureLabelId: "feature",
+        improvementLabelId: "improvement",
+        bugLabelId: "bug",
+      },
+    } as ProjectConfig;
+
+    fs.mkdirSync(contextDirectory, { recursive: true });
+    fs.writeFileSync(path.join(contextDirectory, "context.txt"), "context");
+    fs.utimesSync(contextDirectory, expired, expired);
+
+    try {
+      const trello = new TrelloClient({ apiKey: "key", token: "token" });
+      vi.spyOn(trello, "getCards").mockImplementation(async (listId) =>
+        listId === project.trello.workingListId ? [card] : [],
+      );
+      vi.spyOn(trello, "getLatestListTransition").mockImplementation(
+        async () => {
+          cleanupCardContextRetention(contextRoot, 14, now, [project.id]);
+
+          expect(fs.existsSync(contextDirectory)).toBe(true);
+
+          return null;
+        },
+      );
+      vi.spyOn(trello, "moveCard").mockResolvedValue({
+        ...card,
+        idList: project.trello.backlogListId,
+      });
+      vi.spyOn(trello, "addComment").mockResolvedValue({
+        id: "comment-1",
+        type: "commentCard",
+        date: now.toISOString(),
+      });
+
+      await pollProject(
+        trello,
+        {} as GitClient,
+        {} as GitHubClient,
+        {} as OpenCodeClient,
+        {} as CommandRunner,
+        project,
+        new AbortController().signal,
+      );
+
+      cleanupCardContextRetention(contextRoot, 14, now, [project.id]);
+      expect(fs.existsSync(contextDirectory)).toBe(false);
+    } finally {
+      fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+    }
+  });
+
   it("does not claim another card while an active Human Review card is present", async () => {
     const project = {
       id: "project-1",

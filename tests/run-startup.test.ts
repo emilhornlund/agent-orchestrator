@@ -12,6 +12,7 @@ import {
   CommandRunner,
   type RunCommand,
 } from "../src/process/command-runner.js";
+import * as cardContextRetention from "../src/context/card-context-retention.js";
 import {
   runStartup,
   type StartupDependencies,
@@ -79,12 +80,53 @@ function createConfig(project: ProjectConfig): Config {
     workflow: {
       pollIntervalSeconds: 1,
       logRetentionDays: 14,
+      contextRetentionDays: 14,
       contextRoot: "/opt/.agent-context",
     },
   };
 }
 
 describe("runStartup", () => {
+  it("runs context retention cleanup before startup operations", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "agent-orchestrator-"));
+    const repositoryPath = path.join(root, "repository");
+    fs.mkdirSync(repositoryPath);
+    const cleanup = vi.spyOn(
+      cardContextRetention,
+      "cleanupCardContextRetention",
+    );
+
+    try {
+      const dependencies: StartupDependencies = {
+        trello: {} as TrelloClient,
+        git: new GitClient(vi.fn<RunGit>().mockResolvedValue("true")),
+        github: {} as GitHubClient,
+        opencode: {} as OpenCodeClient,
+        commands: new CommandRunner(vi.fn<RunCommand>()),
+      };
+      const operations: StartupOperations = {
+        validateProjectTrello: vi.fn().mockResolvedValue(undefined),
+        runOrchestrator: vi.fn().mockResolvedValue(undefined),
+      };
+
+      await runStartup(
+        createConfig(createProject(repositoryPath)),
+        dependencies,
+        new AbortController().signal,
+        operations,
+      );
+
+      expect(cleanup).toHaveBeenCalledWith(
+        "/opt/.agent-context",
+        14,
+        expect.any(Date),
+        ["test-project"],
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("prevents Trello validation and polling after bootstrap failure", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "agent-orchestrator-"));
     const repositoryPath = path.join(root, "repository");

@@ -51,6 +51,7 @@ must be unique.
 | ------------------------- | ----------------------------------------------------------------------------------------- |
 | `pollIntervalSeconds`     | Positive integer interval between project polling cycles                                  |
 | `logRetentionDays`        | Positive integer number of days for managed log retention; defaults to `14` when omitted  |
+| `contextRetentionDays`    | Positive integer number of days for card context retention; defaults to `14` when omitted |
 | `contextRoot`             | Optional absolute root for card context; defaults to `/opt/.agent-context`                |
 | `maxAttachmentBytes`      | Optional positive safe integer per-upload limit in bytes; defaults to 50 MiB              |
 | `maxTotalAttachmentBytes` | Optional positive safe integer aggregate new-download limit in bytes; defaults to 200 MiB |
@@ -100,10 +101,19 @@ mounted there is not the runtime location and is not advertised to the agent. If
 file cannot be safely resolved, the workflow reports the affected card context error and does not start the OpenCode session.
 
 Attachment files and manifest metadata remain outside repositories and Git worktrees.
-The service retains context after successful and failed processing, including for resumed and retried cards; it does not
-automatically clean the configured context root. After successful reconciliation, stale regular files claimed by the prior
+The service retains context after successful and failed processing, including for resumed and retried cards, until scheduled
+retention cleanup expires the card context directory. After successful reconciliation, stale regular files claimed by the prior
 manifest are removed, while unknown and unrelated files remain. Partial files from a failed preparation are removed, while
 the previous successfully published manifest and its materialized files are preserved for diagnosis and retry.
+
+Context retention cleanup runs once during startup and once per day while the orchestrator continues running. A card context
+directory is removed only when its filesystem modification time is strictly older than the cutoff calculated at cleanup time;
+the exact cutoff and newer directories are retained. Cleanup scans only configured project directories and their direct card
+context directories below `contextRoot`. It never removes `contextRoot`, an empty project directory, unrelated entries, or
+anything in a source repository or Git worktree. Active cards are protected while their context is being reconciled or used by
+an OpenCode workflow stage. Missing paths and concurrent removals are treated as no-ops, and symbolic links are skipped without
+following their targets. Scan, inspection, and removal failures are logged and do not stop independent contexts from being
+processed.
 
 ### `notifications.email`
 

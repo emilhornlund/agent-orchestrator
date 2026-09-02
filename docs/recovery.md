@@ -27,9 +27,10 @@ worktree or discard agent changes as a first response. Restarting the service ru
 
 Card context is retained independently of repository and worktree cleanup. A successful preparation leaves the current
 manifest and materialized uploads available for a later retry, after removing stale regular files claimed by the prior
-manifest. It never removes unknown or unrelated files. A failed preparation preserves the last successfully published
-manifest and its materialized files, while partial new downloads are removed. The service does not automatically delete
-card context broadly.
+manifest. It never removes unknown or unrelated files during reconciliation. A failed preparation preserves the last
+successfully published manifest and its materialized files, while partial new downloads are removed. Scheduled context
+retention removes an expired card context directory as a unit only after its retention cutoff, and never while that card is
+actively being processed.
 Operators may remove only known card-context data below the configured `contextRoot` after the card no longer needs a retry or
 diagnosis, and must not remove unknown files outside that root.
 
