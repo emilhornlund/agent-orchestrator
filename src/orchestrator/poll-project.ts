@@ -49,6 +49,7 @@ import { addRefinementCompletionComment } from "../refinement/refinement-complet
 import { runRefinement } from "../refinement/run-refinement.js";
 import {
   TrelloRequestAbortedError,
+  isRetryableTrelloError,
   type TrelloCard,
   type TrelloClient,
 } from "../trello/trello-client.js";
@@ -703,6 +704,13 @@ async function processImplementationCard(
     if (isWorkflowAbort(error, signal)) {
       cardLog.event("Card workflow interrupted by orchestrator shutdown");
       return;
+    }
+
+    if (isRetryableTrelloError(error)) {
+      cardLog.warn(
+        `Retryable Trello failure; leaving the published card in Working for later reconciliation: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      throw error;
     }
 
     if (error instanceof PublishedCardStateError) {

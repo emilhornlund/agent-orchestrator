@@ -237,13 +237,15 @@ the pull-request URL; it does not send the `failed` event. A failed Backlog move
 while a comment failure after a successful move is logged and leaves the card in `Backlog`.
 
 `Attention Required` is diagnostic only. It does not correct or retry cards, and an ambiguous or otherwise unsafe state stays
-available for operator investigation and the next reconciliation cycle. GitHub reconciliation reads classify HTTP 500, 502,
+available for operator investigation and the next reconciliation cycle. Trello and GitHub operations classify HTTP 500, 502,
 503, and 504, rate limits, timeouts, and temporary connectivity failures as retryable. The project worker logs each failed
-attempt with project, card, operation, error, and a deterministic `1/3`-style count; it sends no attention event until three
-consecutive attempts fail. A successful reconciliation clears that project worker's transient counter. Authentication,
-configuration, malformed-response, and other non-transient failures still notify immediately. This policy applies only to
-reconciliation reads and does not add automatic retries for publication, merge, or cards already in `Failed`. It is not sent
-for shutdown cancellation or for a card failure already moved to `Failed` through the normal card notification path.
+attempt with project, card when known, operation, classification, safe error context, and a deterministic `1/3`-style count;
+it sends no attention event until three consecutive attempts fail. A successful poll clears the project's transient counters.
+Transient Trello reads never infer that a card is missing or invalid. Transient Trello mutations leave the last known card state
+unchanged or unconfirmed and never move a card to `Failed` solely for the transient error; reconciliation determines whether an
+uncertain move took effect. Authentication, configuration, malformed-response, not-found, and other non-transient failures
+still use immediate diagnostics. This policy does not add automatic retries for cards already in `Failed`. It is not sent for
+shutdown cancellation or for a card failure already moved to `Failed` through the normal card notification path.
 
 Notification delivery is isolated from workflow state. Existing card-transition email is attempted only after its Trello move
 succeeds. A delivery failure is logged with project and card context when available; it does not move a card, replace the
@@ -269,8 +271,10 @@ normal failure in one project remains isolated to that project and follows norma
 
 Shared `Logger` lifecycle events, warnings, and errors begin with a UTC ISO 8601 timestamp, followed by project and card
 context when available and the message. Multiline console logger messages receive the same prefix on every physical line.
-Retryable GitHub reconciliation attempts are warnings and include the affected operation and bounded attempt count; exhausted
-attempts are logged as project errors before the existing failure diagnostic and attention notification.
+Retryable Trello and GitHub reconciliation attempts are warnings and include the affected operation and bounded attempt count;
+exhausted attempts are logged as project errors before the existing failure diagnostic and attention notification. Trello request
+errors retain operation, status, retry classification, and the underlying error as structured context without logging tokens,
+authenticated URLs, or response bodies.
 Daily files use the existing format:
 
 ```text

@@ -8,10 +8,19 @@ import { logger } from "../logging/logger.js";
 import type { EmailNotifier } from "../notifications/email-notifier.js";
 import type { OpenCodeClient } from "../opencode/opencode-client.js";
 import type { CommandRunner } from "../process/command-runner.js";
-import type { TrelloClient } from "../trello/trello-client.js";
+import {
+  getTrelloRequestOperation,
+  isRetryableTrelloError,
+  type TrelloClient,
+} from "../trello/trello-client.js";
 import { validateProjectTrello } from "../trello/validate-project-trello.js";
 
 import { runOrchestrator } from "../orchestrator/run-orchestrator.js";
+
+type DeferredTrelloValidation = (
+  trello: TrelloClient,
+  project: Config["projects"][number],
+) => Promise<void>;
 
 export interface StartupDependencies {
   trello: TrelloClient;
@@ -54,12 +63,30 @@ export async function runStartup(
     await ensureRepository(dependencies.git, dependencies.commands, project);
   }
 
+  const pendingTrelloValidations = new Set<string>();
+
   for (const project of config.projects) {
     if (signal.aborted) {
       return;
     }
 
-    await operations.validateProjectTrello(dependencies.trello, project);
+    try {
+      await operations.validateProjectTrello(dependencies.trello, project);
+    } catch (error) {
+      if (!isRetryableTrelloError(error)) {
+        throw error;
+      }
+
+      pendingTrelloValidations.add(project.id);
+
+      logger
+        .child({ projectId: project.id })
+        .warn(
+          `Startup Trello validation temporarily failed for ${getTrelloRequestOperation(error) ?? "project configuration"}; polling will retry it: ${error instanceof Error ? error.message : String(error)}`,
+        );
+
+      continue;
+    }
 
     logger.child({ projectId: project.id }).event("Trello configuration: OK");
   }
@@ -68,26 +95,69 @@ export async function runStartup(
     return;
   }
 
+  const deferredTrelloValidation: DeferredTrelloValidation | undefined =
+    pendingTrelloValidations.size === 0
+      ? undefined
+      : async (trello, project) => {
+          if (!pendingTrelloValidations.has(project.id)) {
+            return;
+          }
+
+          await operations.validateProjectTrello(trello, project);
+          pendingTrelloValidations.delete(project.id);
+          logger
+            .child({ projectId: project.id })
+            .event("Trello configuration: OK");
+        };
+
   if (dependencies.emailNotifier === undefined) {
-    await operations.runOrchestrator(
-      dependencies.trello,
-      dependencies.git,
-      dependencies.github,
-      dependencies.opencode,
-      dependencies.commands,
-      config,
-      signal,
-    );
+    if (deferredTrelloValidation === undefined) {
+      await operations.runOrchestrator(
+        dependencies.trello,
+        dependencies.git,
+        dependencies.github,
+        dependencies.opencode,
+        dependencies.commands,
+        config,
+        signal,
+      );
+    } else {
+      await operations.runOrchestrator(
+        dependencies.trello,
+        dependencies.git,
+        dependencies.github,
+        dependencies.opencode,
+        dependencies.commands,
+        config,
+        signal,
+        undefined,
+        deferredTrelloValidation,
+      );
+    }
   } else {
-    await operations.runOrchestrator(
-      dependencies.trello,
-      dependencies.git,
-      dependencies.github,
-      dependencies.opencode,
-      dependencies.commands,
-      config,
-      signal,
-      dependencies.emailNotifier,
-    );
+    if (deferredTrelloValidation === undefined) {
+      await operations.runOrchestrator(
+        dependencies.trello,
+        dependencies.git,
+        dependencies.github,
+        dependencies.opencode,
+        dependencies.commands,
+        config,
+        signal,
+        dependencies.emailNotifier,
+      );
+    } else {
+      await operations.runOrchestrator(
+        dependencies.trello,
+        dependencies.git,
+        dependencies.github,
+        dependencies.opencode,
+        dependencies.commands,
+        config,
+        signal,
+        dependencies.emailNotifier,
+        deferredTrelloValidation,
+      );
+    }
   }
 }

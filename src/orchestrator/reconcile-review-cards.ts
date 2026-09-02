@@ -19,6 +19,7 @@ import {
   getExistingSessionLogPath,
 } from "./failure-diagnostic.js";
 import { githubReconciliationError } from "./github-reconciliation-error.js";
+import { trelloReconciliationError } from "./trello-reconciliation-error.js";
 import { WorkflowError } from "./workflow-error.js";
 
 export interface ReviewChangeRequest {
@@ -75,11 +76,13 @@ export async function reconcileReviewCards(
   try {
     cards = await trello.getCards(project.trello.reviewListId);
   } catch (error) {
-    if (error instanceof Error) {
-      annotateFailure(error, { projectId: project.id });
-    }
-
-    throw error;
+    throw trelloReconciliationError(
+      project.id,
+      undefined,
+      "card lookup",
+      error,
+      `Could not retrieve Human Review cards: ${getErrorMessage(error)}`,
+    );
   }
 
   if (signal?.aborted) {
@@ -222,13 +225,14 @@ export async function reconcileReviewCards(
           `Failed to move card "${state.card.name}" to Working for requested changes: ${message}`,
         );
 
-        const reconciliationError = new WorkflowError(
-          "Workflow",
+        const reconciliationError = trelloReconciliationError(
+          project.id,
+          state.card.id,
+          "card move",
+          error,
           `Could not move Human Review card to Working for requested changes: ${message}`,
-          { cause: error },
         );
 
-        annotateCardFailure(reconciliationError, project.id, state.card.id);
         throw reconciliationError;
       }
 
@@ -446,13 +450,14 @@ async function completeMergedReviewCard(
       `Failed to move merged card "${card.name}" to Done: ${message}`,
     );
 
-    const reconciliationError = new WorkflowError(
-      "Workflow",
+    const reconciliationError = trelloReconciliationError(
+      project.id,
+      card.id,
+      "card move",
+      error,
       `Could not complete merged Human Review card: ${message}`,
-      { cause: error },
     );
 
-    annotateCardFailure(reconciliationError, project.id, card.id);
     throw reconciliationError;
   }
 
@@ -511,13 +516,14 @@ async function returnClosedReviewCardToBacklog(
     const message = getErrorMessage(error);
     cardLog.error(`Failed to move card "${card.name}" to Backlog: ${message}`);
 
-    const reconciliationError = new WorkflowError(
-      "Workflow",
+    const reconciliationError = trelloReconciliationError(
+      project.id,
+      card.id,
+      "card move",
+      error,
       `Could not move closed Human Review card to Backlog: ${message}`,
-      { cause: error },
     );
 
-    annotateCardFailure(reconciliationError, project.id, card.id);
     throw reconciliationError;
   }
 

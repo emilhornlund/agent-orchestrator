@@ -18,7 +18,10 @@ import {
   type StartupDependencies,
   type StartupOperations,
 } from "../src/startup/run-startup.js";
-import type { TrelloClient } from "../src/trello/trello-client.js";
+import {
+  TrelloRequestError,
+  type TrelloClient,
+} from "../src/trello/trello-client.js";
 
 function createProject(repositoryPath: string): ProjectConfig {
   return {
@@ -159,6 +162,52 @@ describe("runStartup", () => {
 
       expect(operations.validateProjectTrello).not.toHaveBeenCalled();
       expect(operations.runOrchestrator).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("defers transient Trello validation failures to the polling worker", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "agent-orchestrator-"));
+    const repositoryPath = path.join(root, "repository");
+    fs.mkdirSync(repositoryPath);
+
+    try {
+      const project = createProject(repositoryPath);
+      const validateProjectTrello = vi
+        .fn()
+        .mockRejectedValueOnce(
+          new TrelloRequestError(
+            "board lookup",
+            "Trello request failed: 503 Unavailable",
+            { status: 503, retryable: true },
+          ),
+        )
+        .mockResolvedValue(undefined);
+      const runOrchestrator = vi.fn().mockResolvedValue(undefined);
+      const dependencies: StartupDependencies = {
+        trello: {} as TrelloClient,
+        git: new GitClient(vi.fn<RunGit>().mockResolvedValue("true")),
+        github: {} as GitHubClient,
+        opencode: {} as OpenCodeClient,
+        commands: new CommandRunner(vi.fn<RunCommand>()),
+      };
+
+      await runStartup(
+        createConfig(project),
+        dependencies,
+        new AbortController().signal,
+        { validateProjectTrello, runOrchestrator },
+      );
+
+      expect(runOrchestrator).toHaveBeenCalledOnce();
+      const deferredValidation = runOrchestrator.mock.calls[0]?.[8] as
+        | ((trello: TrelloClient, project: ProjectConfig) => Promise<void>)
+        | undefined;
+
+      expect(deferredValidation).toBeDefined();
+      await deferredValidation?.(dependencies.trello, project);
+      expect(validateProjectTrello).toHaveBeenCalledTimes(2);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

@@ -162,13 +162,15 @@ republished pull request; a disabled project returns it to Human Review. A reque
 feedback applies to the pull request's current head, and it gets its own transient remediation counter. A retry that reuses
 already committed work skips all OpenCode stages, including attachment-dependent prompts, and proceeds directly to publication.
 
-GitHub reads used by `Human Review` and `Working` reconciliation are retryable when GitHub returns HTTP 500, 502, 503, or
-504, a rate limit, a timeout, or a temporary network/connectivity error. The card remains in its current list and no
-corrective comment, failure transition, or workflow decision is made from the failed read. The project worker logs each
-attempt and retries on a later polling cycle, up to three consecutive attempts. Recovery clears the counter; exhaustion
-uses the existing project diagnostic and `Attention Required` escalation. Invalid authentication, configuration failures,
-malformed responses, and other non-transient errors retain immediate failure handling. Cards already in `Failed` are never
-automatically retried.
+Trello and GitHub operations used by discovery, reconciliation, transition-history checks, card moves, content and label
+updates, comments, and attachment context are retryable when the service returns HTTP 500, 502, 503, or 504, a rate limit, a
+timeout, or a temporary network/connectivity error. A failed authoritative Trello read does not mean that a card is missing,
+misplaced, or invalid. A failed Trello mutation is not confirmed. The card remains in its last known list, and no corrective
+comment, failure transition, or workflow decision is made from incomplete Trello state. The project worker logs each attempt
+and retries on a later polling cycle, up to three consecutive attempts. Recovery clears the counter; exhaustion uses the
+existing project diagnostic and `Attention Required` escalation. Invalid authentication, configuration failures, malformed
+responses, not-found errors, and other non-transient errors retain immediate failure handling. Shutdown cancellation is not
+retryable. Cards already in `Failed` are never automatically retried.
 
 ## Failures and transitions
 

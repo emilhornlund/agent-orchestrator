@@ -15,7 +15,11 @@ import {
 } from "../src/logging/session-log.js";
 import type { EmailNotifier } from "../src/notifications/email-notifier.js";
 import { reconcileReviewCards } from "../src/orchestrator/reconcile-review-cards.js";
-import type { TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
+import {
+  TrelloRequestError,
+  type TrelloCard,
+  type TrelloClient,
+} from "../src/trello/trello-client.js";
 
 const project = {
   id: "project",
@@ -101,6 +105,39 @@ describe("reconcileReviewCards", () => {
     });
 
     expect(trello.moveCard).toHaveBeenCalledWith("card-1", "working");
+  });
+
+  it("leaves a card in Human Review when a requested-changes move is uncertain and retries later", async () => {
+    const trello = trelloFor(card());
+    const moveCard = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new TrelloRequestError(
+          "card move",
+          "Trello request failed: 503 Unavailable",
+          { status: 503, retryable: true },
+        ),
+      )
+      .mockResolvedValueOnce({ ...card(), idList: "working" });
+    trello.moveCard = moveCard;
+    const github = githubFor("card-1", "requested");
+
+    await expect(
+      reconcileReviewCards(trello, {} as GitClient, github, project),
+    ).rejects.toMatchObject({
+      name: "RetryableTrelloReconciliationError",
+      operation: "card move",
+    });
+    expect(moveCard).toHaveBeenCalledTimes(1);
+
+    await expect(
+      reconcileReviewCards(trello, {} as GitClient, github, project),
+    ).resolves.toEqual({
+      card: card(),
+      pullRequestUrl: "https://github.com/owner/repo/pull/1",
+      feedback: "Fix this.",
+    });
+    expect(moveCard).toHaveBeenCalledTimes(2);
   });
 
   it("leaves an open PR without requested changes in Human Review", async () => {
