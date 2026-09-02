@@ -34,6 +34,15 @@ export interface TrelloCard {
   url: string;
 }
 
+export interface TrelloAttachment {
+  id: string;
+  name: string;
+  mimeType: string | null;
+  bytes: string | null;
+  url: string;
+  isUpload: boolean;
+}
+
 export interface TrelloCardAction {
   id: string;
   type: string;
@@ -87,6 +96,15 @@ const trelloCardResponseSchema = z.object({
 });
 
 const trelloCardSchema = trelloCardResponseSchema;
+
+const trelloAttachmentSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  mimeType: z.string().nullable(),
+  bytes: z.string().nullable(),
+  url: z.string(),
+  isUpload: z.boolean(),
+});
 
 const trelloCardActionSchema = z.object({
   id: z.string(),
@@ -173,6 +191,13 @@ export class TrelloClient {
 
   getCards(listId: string): Promise<TrelloCard[]> {
     return this.get(`/lists/${listId}/cards`, z.array(trelloCardSchema));
+  }
+
+  getCardAttachments(cardId: string): Promise<TrelloAttachment[]> {
+    return this.get(
+      `/cards/${cardId}/attachments`,
+      z.array(trelloAttachmentSchema),
+    );
   }
 
   async getListTransitions(

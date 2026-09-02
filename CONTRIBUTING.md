@@ -64,6 +64,16 @@ Tests use the repository's Vitest-based test suite. Run them with `yarn test`
 or as part of `yarn validate`. Unit tests must remain deterministic and must
 not require live Trello, GitHub, or OpenCode services.
 
+### Trello attachment metadata
+
+`TrelloClient.getCardAttachments(cardId)` retrieves the metadata for a card's
+attachments from Trello and returns the attachments in Trello's order. Each
+`TrelloAttachment` exposes `id`, `name`, `mimeType`, `bytes`, `url`, and
+`isUpload`; `mimeType` and `bytes` remain nullable when Trello does not provide
+those values, and empty values are preserved. Trello returns `bytes` as a string
+when available. The method only requests and validates metadata. It does not
+dereference attachment URLs or download attachment contents.
+
 ## Commits
 
 Use the concise commit format used in the repository's recent history:
