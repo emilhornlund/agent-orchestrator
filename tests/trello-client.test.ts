@@ -167,6 +167,236 @@ describe("TrelloClient", () => {
     expect(requestUrl).toContain("token=test-token");
   });
 
+  it("gets card attachment metadata in Trello order", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify([
+          {
+            id: "attachment-file",
+            name: "design.pdf",
+            mimeType: "application/pdf",
+            bytes: "2048",
+            url: "https://trello.com/1/cards/card-1/attachments/attachment-file/download/design.pdf",
+            isUpload: true,
+          },
+          {
+            id: "attachment-link",
+            name: "Design reference",
+            mimeType: null,
+            bytes: null,
+            url: "https://example.com/design",
+            isUpload: false,
+          },
+        ]),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      ),
+    );
+
+    const client = new TrelloClient({
+      apiKey: "test-key",
+      token: "test-token",
+    });
+
+    await expect(client.getCardAttachments("card-1")).resolves.toEqual([
+      {
+        id: "attachment-file",
+        name: "design.pdf",
+        mimeType: "application/pdf",
+        bytes: "2048",
+        url: "https://trello.com/1/cards/card-1/attachments/attachment-file/download/design.pdf",
+        isUpload: true,
+      },
+      {
+        id: "attachment-link",
+        name: "Design reference",
+        mimeType: null,
+        bytes: null,
+        url: "https://example.com/design",
+        isUpload: false,
+      },
+    ]);
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+
+    const [requestUrl] = fetchMock.mock.calls[0] ?? [];
+    const url = new URL(String(requestUrl));
+
+    expect(url.pathname).toBe("/1/cards/card-1/attachments");
+    expect(url.searchParams.get("key")).toBe("test-key");
+    expect(url.searchParams.get("token")).toBe("test-token");
+  });
+
+  it("returns an empty list when a card has no attachments", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify([]), { status: 200 }),
+    );
+
+    const client = new TrelloClient({
+      apiKey: "test-key",
+      token: "test-token",
+    });
+
+    await expect(client.getCardAttachments("card-1")).resolves.toEqual([]);
+  });
+
+  it("preserves nullable and empty unavailable attachment metadata", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify([
+          {
+            id: "attachment-null-metadata",
+            name: "External documentation",
+            mimeType: null,
+            bytes: null,
+            url: "https://example.com/docs",
+            isUpload: false,
+          },
+          {
+            id: "attachment-empty-mime",
+            name: "External issue",
+            mimeType: "",
+            bytes: null,
+            url: "https://example.com/issues/1",
+            isUpload: false,
+          },
+        ]),
+        { status: 200 },
+      ),
+    );
+
+    const client = new TrelloClient({
+      apiKey: "test-key",
+      token: "test-token",
+    });
+
+    await expect(client.getCardAttachments("card-1")).resolves.toEqual([
+      {
+        id: "attachment-null-metadata",
+        name: "External documentation",
+        mimeType: null,
+        bytes: null,
+        url: "https://example.com/docs",
+        isUpload: false,
+      },
+      {
+        id: "attachment-empty-mime",
+        name: "External issue",
+        mimeType: "",
+        bytes: null,
+        url: "https://example.com/issues/1",
+        isUpload: false,
+      },
+    ]);
+  });
+
+  it("rejects a non-array attachment response", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ id: "attachment-1" }), {
+        status: 200,
+      }),
+    );
+
+    const client = new TrelloClient({
+      apiKey: "test-key",
+      token: "test-token",
+    });
+
+    await expect(client.getCardAttachments("card-1")).rejects.toThrow();
+  });
+
+  it("rejects an attachment missing required metadata", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify([
+          {
+            id: "attachment-1",
+            name: "Incomplete attachment",
+            mimeType: null,
+            bytes: null,
+            url: "https://example.com/attachment",
+          },
+        ]),
+        { status: 200 },
+      ),
+    );
+
+    const client = new TrelloClient({
+      apiKey: "test-key",
+      token: "test-token",
+    });
+
+    await expect(client.getCardAttachments("card-1")).rejects.toThrow();
+  });
+
+  it.each([
+    { id: 123 },
+    { name: 123 },
+    { mimeType: 123 },
+    { bytes: 2048 },
+    { url: 123 },
+    { isUpload: "true" },
+  ])("rejects an attachment with an incorrectly typed field", async (field) => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify([
+          {
+            id: "attachment-1",
+            name: "Attachment",
+            mimeType: "application/pdf",
+            bytes: "2048",
+            url: "https://example.com/attachment",
+            isUpload: true,
+            ...field,
+          },
+        ]),
+        { status: 200 },
+      ),
+    );
+
+    const client = new TrelloClient({
+      apiKey: "test-key",
+      token: "test-token",
+    });
+
+    await expect(client.getCardAttachments("card-1")).rejects.toThrow();
+  });
+
+  it("propagates attachment response JSON parsing failures", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("not-json", { status: 200 }),
+    );
+
+    const client = new TrelloClient({
+      apiKey: "test-key",
+      token: "test-token",
+    });
+
+    await expect(client.getCardAttachments("card-1")).rejects.toThrow();
+  });
+
+  it("throws when Trello returns an attachment error", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(null, {
+        status: 404,
+        statusText: "Not Found",
+      }),
+    );
+
+    const client = new TrelloClient({
+      apiKey: "test-key",
+      token: "test-token",
+    });
+
+    await expect(client.getCardAttachments("card-1")).rejects.toThrow(
+      "Trello request failed: 404 Not Found",
+    );
+  });
+
   it("gets the latest list transition into a requested list", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
