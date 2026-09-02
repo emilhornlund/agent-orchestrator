@@ -222,19 +222,20 @@ describe("email notifications", () => {
     expect(notifier).toBeUndefined();
   });
 
-  it("builds a refinement completion message with the refined task", () => {
-    expect(
-      buildRefinementCompletionEmail({
-        project,
-        card,
-        result: {
-          title: "Add inventory support",
-          type: "feature",
-          description:
-            "# Add inventory support\n\n## Description\n\nAdd inventory support.",
-        },
-      }),
-    ).toEqual({
+  it("builds a concise refinement completion message with elapsed time", () => {
+    const email = buildRefinementCompletionEmail({
+      project,
+      card,
+      result: {
+        title: "Add inventory support",
+        type: "feature",
+        description:
+          "# Add inventory support\n\n## Description\n\nAdd inventory support.",
+      },
+      elapsedWorkflowTime: "1 hour 5 minutes",
+    });
+
+    expect(email).toEqual({
       subject:
         "[Agent Orchestrator] Refinement Complete: project-one / Add email notifications",
       text: [
@@ -244,10 +245,37 @@ describe("email notifications", () => {
         "Trello card URL: https://trello.com/c/card-1",
         "Classification: feature",
         "Refined task title: Add inventory support",
-        "Refined task description:",
-        "# Add inventory support\n\n## Description\n\nAdd inventory support.",
+        "Elapsed workflow time: 1 hour 5 minutes",
       ].join("\n"),
     });
+    expect(email.text).not.toContain("Refined task description:");
+    expect(email.text).not.toContain("# Add inventory support");
+  });
+
+  it("omits unavailable refinement elapsed time and description", () => {
+    const email = buildRefinementCompletionEmail({
+      project,
+      card,
+      result: {
+        title: "Add inventory support",
+        type: "feature",
+        description: "Refined task description content",
+      },
+    });
+
+    expect(email.text).toBe(
+      [
+        "Event: Refinement Complete",
+        "Project: project-one",
+        "Card: Add email notifications",
+        "Trello card URL: https://trello.com/c/card-1",
+        "Classification: feature",
+        "Refined task title: Add inventory support",
+      ].join("\n"),
+    );
+    expect(email.text).not.toContain("Elapsed workflow time:");
+    expect(email.text).not.toContain("Refined task description:");
+    expect(email.text).not.toContain("Refined task description content");
   });
 
   it("builds a completion message with both workflow links", () => {

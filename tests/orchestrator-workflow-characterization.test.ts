@@ -49,6 +49,7 @@ interface HarnessOptions {
   pullRequestState?: PullRequestState;
   feedback?: string;
   initialRemoteSha?: string | null;
+  listTransitionHistory?: boolean;
   createPullRequestError?: Error;
   backlogMoveError?: Error;
   doneMoveError?: Error;
@@ -222,6 +223,7 @@ function createHarness(options: HarnessOptions = {}) {
       null
     );
   });
+  const getListTransitions = vi.fn(async () => transitions);
   const moveCard = vi.fn(
     async (...args: [string, string, { dueComplete?: boolean }?]) => {
       const cardId = args[0];
@@ -301,6 +303,7 @@ function createHarness(options: HarnessOptions = {}) {
     getCardAttachments,
     downloadCardAttachment,
     getLatestListTransition,
+    ...(options.listTransitionHistory === true ? { getListTransitions } : {}),
     moveCard,
     updateCardContent,
     addLabel,
@@ -1603,7 +1606,8 @@ describe("orchestrator workflow characterization", () => {
         expect(message.subject).toContain("Refinement Complete");
         expect(message.text).toContain("Classification: feature");
         expect(message.text).toContain("Refined task title: Refined task");
-        expect(message.text).toContain("# Refined task");
+        expect(message.text).not.toContain("Refined task description:");
+        expect(message.text).not.toContain("# Refined task");
       }),
     };
 
@@ -1637,6 +1641,42 @@ describe("orchestrator workflow characterization", () => {
       );
       expect(harness.events.indexOf("email")).toBeLessThan(
         harness.events.indexOf("trello:refinement-comment"),
+      );
+    } finally {
+      harness.cleanup();
+    }
+  });
+
+  it("passes the calculated refinement elapsed time to the completion email", async () => {
+    const harness = createHarness({
+      cardLabels: ["refinement-label"],
+      listTransitionHistory: true,
+    });
+    let emailText: string | undefined;
+    const notifier: EmailNotifier = {
+      send: vi.fn(async (message) => {
+        emailText = message.text;
+      }),
+    };
+
+    try {
+      await pollProject(
+        harness.trello,
+        harness.git,
+        harness.github,
+        harness.openCode,
+        harness.commands,
+        harness.project,
+        new AbortController().signal,
+        notifier,
+      );
+
+      expect(emailText).toContain("Elapsed workflow time: 1 minute");
+      expect(emailText).not.toContain("Refined task description:");
+      expect(emailText).not.toContain("# Refined task");
+      expect(harness.addComment).toHaveBeenCalledWith(
+        harness.card.id,
+        expect.stringContaining("Elapsed workflow time: 1 minute"),
       );
     } finally {
       harness.cleanup();

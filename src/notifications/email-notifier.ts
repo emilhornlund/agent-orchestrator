@@ -56,6 +56,7 @@ export interface RefinementCompletionNotificationDetails {
   project: ProjectConfig;
   card: Pick<TrelloCard, "name" | "url">;
   result: RefinementResult;
+  elapsedWorkflowTime?: string;
 }
 
 export interface CompletionNotificationDetails {
@@ -151,8 +152,9 @@ export function buildRefinementCompletionEmail(
       `Trello card URL: ${details.card.url}`,
       `Classification: ${details.result.type}`,
       `Refined task title: ${details.result.title}`,
-      "Refined task description:",
-      details.result.description,
+      ...(details.elapsedWorkflowTime === undefined
+        ? []
+        : [`Elapsed workflow time: ${details.elapsedWorkflowTime}`]),
     ].join("\n"),
   };
 }
