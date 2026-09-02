@@ -7,9 +7,9 @@ shutdown, logging, retention, and multi-project operation.
 
 ## Card context storage
 
-`workflow.contextRoot` is the optional workflow-level filesystem boundary for future card-specific external context. It
-defaults to `/opt/.agent-context` and must be an absolute path separate from every configured source checkout and Git
-worktree root. The service never uses the current working directory, a Git repository, or a Git worktree as this default.
+`workflow.contextRoot` is the workflow-level filesystem boundary for card-specific external context. It defaults to
+`/opt/.agent-context` and must be an absolute path separate from every configured source checkout and Git worktree root.
+The service never uses the current working directory, a Git repository, or a Git worktree as this default.
 
 When a card context is created, its exact layout is:
 
@@ -19,12 +19,49 @@ When a card context is created, its exact layout is:
 <contextRoot>/<project-id>/<card-id>/attachments.json
 ```
 
-The context directory and `attachments/` directory are created recursively and idempotently. Existing files, directory
-contents, and manifest contents are preserved. Managed directory components and existing manifest or attachment paths are
-checked with `lstat`; symbolic links and unexpected non-directory paths are refused. Project IDs, card IDs, and attachment
-filenames must be safe single path components, so traversal, absolute paths, separators, NUL characters, and blank values
-are rejected. The manifest path is only resolved; this feature does not download attachments, populate the manifest, call
-Trello, or add context to OpenCode prompts.
+Before an OpenCode session starts for a card, the current Trello attachment metadata is reconciled into this directory.
+Uploaded Trello files are downloaded with Trello authentication under `attachments/`; external URL attachments are never
+dereferenced and have no local file. `attachments.json` always contains the current attachments in Trello order:
+
+```json
+{
+  "attachments": [
+    {
+      "id": "attachment-id",
+      "name": "design.pdf",
+      "mimeType": "application/pdf",
+      "bytes": "1234",
+      "url": "https://trello.com/1/cards/...",
+      "isUpload": true,
+      "localFilename": "design.pdf"
+    },
+    {
+      "id": "reference-id",
+      "name": "Reference",
+      "mimeType": null,
+      "bytes": null,
+      "url": "https://example.com/reference",
+      "isUpload": false,
+      "localFilename": null
+    }
+  ]
+}
+```
+
+`mimeType` and `bytes` retain Trello's nullable and empty values. `localFilename` is a single filename, never a path. Names
+are reduced to safe filename components and duplicate names receive stable numeric suffixes. Existing valid files are reused
+when all stored Trello metadata matches, so repeated preparation does not download them again. Files not present in the
+current Trello response are retained; the service does not delete arbitrary context files.
+
+Each new upload is limited to `maxAttachmentBytes`, which defaults to 50 MiB, and all new downloads in one preparation are
+limited to `maxTotalAttachmentBytes`, which defaults to 200 MiB. The limits apply to declared metadata, response
+`Content-Length`, and streamed bytes, including when a size is unknown or unusable. The optional settings are positive safe
+integers in `workflow`. A failed, aborted, over-limit, or filesystem-failed transfer does not publish its final file or a
+manifest claiming success, and prevents OpenCode from starting. Existing manifests and managed paths are validated with
+`lstat`; malformed manifests, traversal paths, symlinks, and unexpected file types are refused.
+
+The context is intentionally not included in implementation, refinement, review, remediation, or commit prompts. The files
+are available for future use but are not yet exposed to OpenCode.
 
 The path is resolved in the filesystem namespace of the running process. In a local deployment, create or grant write
 permission to the configured root for the service user. In Docker, configure the same absolute path inside the container and

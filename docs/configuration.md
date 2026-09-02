@@ -47,11 +47,13 @@ must be unique.
 
 `workflow` is required and contains:
 
-| Key                   | Meaning and validation                                                                   |
-| --------------------- | ---------------------------------------------------------------------------------------- |
-| `pollIntervalSeconds` | Positive integer interval between project polling cycles                                 |
-| `logRetentionDays`    | Positive integer number of days for managed log retention; defaults to `14` when omitted |
-| `contextRoot`         | Optional absolute root for card context; defaults to `/opt/.agent-context`               |
+| Key                       | Meaning and validation                                                                    |
+| ------------------------- | ----------------------------------------------------------------------------------------- |
+| `pollIntervalSeconds`     | Positive integer interval between project polling cycles                                  |
+| `logRetentionDays`        | Positive integer number of days for managed log retention; defaults to `14` when omitted  |
+| `contextRoot`             | Optional absolute root for card context; defaults to `/opt/.agent-context`                |
+| `maxAttachmentBytes`      | Optional positive safe integer per-upload limit in bytes; defaults to 50 MiB              |
+| `maxTotalAttachmentBytes` | Optional positive safe integer aggregate new-download limit in bytes; defaults to 200 MiB |
 
 `contextRoot` is normalized with `path.resolve` like the other configured absolute paths. A custom value must be non-blank
 and absolute. The root must not equal, contain, or be contained by any configured `projects[].repository.path` or
@@ -66,9 +68,22 @@ components:
 <contextRoot>/<project-id>/<card-id>/attachments.json
 ```
 
-The storage helpers create the card directory and `attachments/` recursively when requested. They do not create or replace
-`attachments.json`, download attachments, populate the manifest, or change Trello data. Invalid, traversal, absolute,
-separator-containing, or NUL-containing path components are rejected.
+Before OpenCode starts for a card, the service reconciles Trello's current attachments into `attachments.json` and downloads
+only `isUpload: true` files into `attachments/`. External URL attachments are retained as metadata with
+`localFilename: null`; their URLs are never requested. Uploaded entries contain a safe single-component `localFilename`.
+`mimeType` and `bytes` retain nullable and empty Trello values. Repeated preparation reuses an unchanged upload when its
+stored metadata and regular local file match. Attachments removed from Trello and unrelated files in `attachments/` are
+retained rather than deleted.
+
+The default per-upload limit is 50 MiB and the default aggregate new-download limit is 200 MiB. `maxAttachmentBytes` and
+`maxTotalAttachmentBytes` can override those defaults with positive safe integers. Limits apply to declared Trello sizes,
+response `Content-Length`, and actual streamed bytes; unknown or unusable sizes are still bounded. A failed or partial
+download leaves no manifest entry claiming success and stops the card before OpenCode. Malformed manifests, unsafe paths,
+symbolic links, and unexpected file types are rejected. The storage helpers create directories and enforce the same path
+boundary, but do not change Trello data.
+
+Attachment files and manifest metadata are not currently added to any OpenCode prompt. They remain isolated card context and
+are not placed in a repository or Git worktree.
 
 ### `notifications.email`
 

@@ -1,4 +1,4 @@
-import type { Config, ProjectConfig } from "../config/config.js";
+import type { Config } from "../config/config.js";
 import type { GitClient } from "../git/git-client.js";
 import type { GitHubClient } from "../github/github-client.js";
 import {
@@ -28,7 +28,7 @@ import {
   formatFailureDiagnostic,
   getFailureContext,
 } from "./failure-diagnostic.js";
-import { pollProject } from "./poll-project.js";
+import { pollProject, type PollingProject } from "./poll-project.js";
 
 function sleep(milliseconds: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -82,7 +82,7 @@ async function runProjectWorker(
   github: GitHubClient,
   opencode: OpenCodeClient,
   commands: CommandRunner,
-  project: ProjectConfig,
+  project: PollingProject,
   pollIntervalMilliseconds: number,
   signal: AbortSignal,
   emailNotifier?: EmailNotifier,
@@ -216,7 +216,19 @@ export async function runOrchestrator(
           github,
           opencode,
           commands,
-          project,
+          {
+            ...project,
+            contextRoot: config.workflow.contextRoot,
+            ...(config.workflow.maxAttachmentBytes === undefined
+              ? {}
+              : { maxAttachmentBytes: config.workflow.maxAttachmentBytes }),
+            ...(config.workflow.maxTotalAttachmentBytes === undefined
+              ? {}
+              : {
+                  maxTotalAttachmentBytes:
+                    config.workflow.maxTotalAttachmentBytes,
+                }),
+          } satisfies PollingProject,
           pollIntervalMilliseconds,
           signal,
           emailNotifier,

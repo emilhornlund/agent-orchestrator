@@ -64,15 +64,24 @@ Tests use the repository's Vitest-based test suite. Run them with `yarn test`
 or as part of `yarn validate`. Unit tests must remain deterministic and must
 not require live Trello, GitHub, or OpenCode services.
 
-### Trello attachment metadata
+### Trello attachments and card context
 
 `TrelloClient.getCardAttachments(cardId)` retrieves the metadata for a card's
 attachments from Trello and returns the attachments in Trello's order. Each
 `TrelloAttachment` exposes `id`, `name`, `mimeType`, `bytes`, `url`, and
 `isUpload`; `mimeType` and `bytes` remain nullable when Trello does not provide
 those values, and empty values are preserved. Trello returns `bytes` as a string
-when available. The method only requests and validates metadata. It does not
-dereference attachment URLs or download attachment contents.
+when available.
+
+Card processing materializes uploaded files below the configured card context
+root and writes the ordered metadata to `attachments.json`. External URL
+attachments remain metadata-only and are never requested. The manifest uses
+`localFilename` for a safe single filename on uploaded entries and `null` for
+external entries. Unchanged regular uploads are reused; removed attachments and
+unrelated files are retained. Per-upload and aggregate new-download limits are
+documented in the card-context sections of `docs/operations.md` and
+`docs/configuration.md`. Attachment files and paths are not yet exposed in any
+OpenCode prompt.
 
 ## Commits
 
