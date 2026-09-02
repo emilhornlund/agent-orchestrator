@@ -12,6 +12,7 @@ import type { CardAttachmentManifest } from "../src/context/materialize-card-att
 import { buildReviewFeedbackPrompt } from "../src/opencode/build-review-feedback-prompt.js";
 import { buildRemediationPrompt } from "../src/opencode/build-remediation-prompt.js";
 import { buildRefinementPrompt } from "../src/opencode/build-refinement-prompt.js";
+import { buildReviewPrompt } from "../src/opencode/build-review-prompt.js";
 import { buildTaskPrompt } from "../src/opencode/build-task-prompt.js";
 import type { TrelloCard } from "../src/trello/trello-client.js";
 
@@ -95,6 +96,7 @@ function buildPrompts(
     buildTaskPrompt(card, "yarn validate", context),
     buildRefinementPrompt(card, context),
     buildRemediationPrompt(card, "Review finding", "yarn validate", context),
+    buildReviewPrompt(card, context),
     buildReviewFeedbackPrompt(
       card,
       "https://github.com/example/repository/pull/1",
@@ -187,6 +189,9 @@ describe("card attachment prompt context", () => {
     };
 
     expect(() => buildTaskPrompt(createCard(), undefined, context)).toThrow(
+      "materialized file",
+    );
+    expect(() => buildReviewPrompt(createCard(), context)).toThrow(
       "materialized file",
     );
   });

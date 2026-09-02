@@ -73,8 +73,9 @@ Before each applicable OpenCode session starts for a card, the service reconcile
 `attachments.json` and downloads only `isUpload: true` files into `attachments/`. External URL attachments are retained as metadata with
 `localFilename: null`; their URLs are never requested. Uploaded entries contain a safe single-component `localFilename`.
 `mimeType` and `bytes` retain nullable and empty Trello values. Initial, resumed, and deliberate-retry implementation paths
-prepare context before their implementation session, and each automatic remediation pass refreshes it before its remediation
-session. A retry that reuses already committed work skips all OpenCode stages and does not need an attachment-dependent prompt.
+prepare context before their implementation session. Each automatic review refreshes it immediately before the review, and
+each automatic remediation pass refreshes it before its remediation session. A retry that reuses already committed work skips
+all OpenCode stages and does not need an attachment-dependent prompt.
 Repeated preparation reuses an unchanged upload when its
 stored metadata and regular local file match. A successful reconciliation removes regular files claimed by the previous
 manifest for attachments removed from Trello or replaced uploads. Unrelated or unknown files in `attachments/` are retained.
@@ -87,13 +88,13 @@ manifest and its files remain in place after a failed refresh; stale managed-fil
 manifest publication. Malformed manifests, unsafe paths, symbolic links, and unexpected file types are rejected. The storage helpers
 create directories and enforce the same path boundary, but do not change Trello data.
 
-When attachments exist, the refinement, implementation, automatic remediation, and review-feedback remediation prompts
-include a compact attachment section with each name, each non-blank Trello MIME type, and its location. Uploaded files are
+When attachments exist, the refinement, implementation, automatic review, automatic remediation, and review-feedback
+remediation prompts include a compact attachment section with each name, each non-blank Trello MIME type, and its location. Uploaded files are
 listed as absolute paths resolved in the configured runtime namespace, for example
 `/opt/.agent-context/<project-id>/<card-id>/attachments/<localFilename>`. External-link entries are listed as their
 external URLs and never have a local path. Cards without attachments have no attachment section. The section contains
-metadata and locations only: file contents, excerpts, and other full attachment data are never included. Automated
-review-only and commit prompts remain unchanged.
+metadata and locations only: file contents, excerpts, and other full attachment data are never included. Commit prompts
+remain unchanged.
 
 The path shown to OpenCode is in the filesystem namespace of the running service and OpenCode process. In a containerized
 deployment, the configured `contextRoot` must be mounted at the same absolute container path; a host path that is not

@@ -894,6 +894,18 @@ async function processCardChanges(
     output: string;
     result: ReturnType<typeof parseReviewResult>;
   }> {
+    const reviewManifest = await prepareCardContext(
+      trello,
+      project,
+      card,
+      signal,
+    );
+    const reviewAttachmentContext = createCardAttachmentPromptContext(
+      project,
+      card,
+      reviewManifest,
+    );
+
     cardLog.event("Starting OpenCode review...");
 
     const review = await opencode.run({
@@ -901,7 +913,7 @@ async function processCardChanges(
       model: project.opencode.review.model,
       variant: project.opencode.review.variant,
       timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
-      prompt: buildReviewPrompt(card),
+      prompt: buildReviewPrompt(card, reviewAttachmentContext),
       signal,
       sessionLogPath,
       sessionLabel: "OpenCode review",
