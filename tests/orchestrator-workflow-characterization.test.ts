@@ -778,6 +778,16 @@ describe("orchestrator workflow characterization", () => {
       expect(harness.events.indexOf("trello:get-attachments")).toBeLessThan(
         harness.events.indexOf("opencode:implementation"),
       );
+
+      const date = new Date().toISOString().slice(0, 10);
+      const logPath = path.join(
+        process.cwd(),
+        "logs",
+        `test-orchestrator-${date}.log`,
+      );
+      expect(fs.readFileSync(logPath, "utf8")).toContain(
+        "[characterization-project] [card:card-1] Trello attachment context refreshed: reused uploaded attachments: 0; newly downloaded uploaded attachments: 1; removed stale managed attachments: 0; external URL attachments: 1; total current attachments: 2",
+      );
     } finally {
       harness.cleanup();
     }
@@ -805,6 +815,19 @@ describe("orchestrator workflow characterization", () => {
       expect(harness.card.idList).toBe(listIds.failed);
       expect(harness.events).not.toContain("git:push");
       expect(harness.events).not.toContain("github:create-pr");
+
+      const date = new Date().toISOString().slice(0, 10);
+      const logPath = path.join(
+        process.cwd(),
+        "logs",
+        `test-orchestrator-${date}.log`,
+      );
+      expect(fs.readFileSync(logPath, "utf8")).toContain(
+        '[characterization-project] [card:card-1] Task failed. Category: Workflow; Reason: Could not prepare Trello attachment context for project "characterization-project", card "card-1"',
+      );
+      expect(fs.readFileSync(logPath, "utf8")).toContain(
+        "Trello attachment retrieval failed",
+      );
     } finally {
       harness.cleanup();
     }

@@ -6,6 +6,7 @@ import {
 import { type CardAttachmentPromptContext } from "../context/card-attachment-prompt.js";
 import {
   materializeCardAttachments,
+  type CardAttachmentReconciliationSummary,
   type CardAttachmentManifest,
 } from "../context/materialize-card-attachments.js";
 import { hasCommittedImplementation } from "../git/detect-committed-implementation.js";
@@ -20,7 +21,7 @@ import {
   type PreparedImplementationWorktree,
 } from "../git/prepare-worktree.js";
 import type { GitHubClient } from "../github/github-client.js";
-import { logger } from "../logging/logger.js";
+import { logger, type Logger } from "../logging/logger.js";
 import { getSessionLogPath } from "../logging/session-log.js";
 import {
   notifyRefinementCompletion,
@@ -449,6 +450,7 @@ async function processRefinementCard(
       project,
       card,
       signal,
+      cardLog,
     );
     cardContextPreparationFailed = false;
     const attachmentContext = createCardAttachmentPromptContext(
@@ -821,6 +823,7 @@ async function processCardChanges(
     project,
     card,
     signal,
+    cardLog,
   );
   const attachmentContext = createCardAttachmentPromptContext(
     project,
@@ -899,6 +902,7 @@ async function processCardChanges(
       project,
       card,
       signal,
+      cardLog,
     );
     const reviewAttachmentContext = createCardAttachmentPromptContext(
       project,
@@ -954,6 +958,7 @@ async function processCardChanges(
         project,
         card,
         signal,
+        cardLog,
       );
       const remediationAttachmentContext = createCardAttachmentPromptContext(
         project,
@@ -1088,6 +1093,7 @@ async function prepareCardContext(
   project: PollingProject,
   card: TrelloCard,
   signal: AbortSignal,
+  cardLog: Logger,
 ): Promise<CardAttachmentManifest | undefined> {
   if (project.contextRoot === undefined) {
     return undefined;
@@ -1107,6 +1113,13 @@ async function prepareCardContext(
         ...(project.maxTotalAttachmentBytes === undefined
           ? {}
           : { maxTotalAttachmentBytes: project.maxTotalAttachmentBytes }),
+        onSuccessfulReconciliation: (
+          summary: CardAttachmentReconciliationSummary,
+        ) => {
+          cardLog.event(
+            `Trello attachment context refreshed: reused uploaded attachments: ${summary.reusedUploadedAttachments}; newly downloaded uploaded attachments: ${summary.downloadedUploadedAttachments}; removed stale managed attachments: ${summary.removedStaleManagedAttachments}; external URL attachments: ${summary.externalUrlAttachments}; total current attachments: ${summary.totalCurrentAttachments}`,
+          );
+        },
       },
     );
   } catch (error) {
