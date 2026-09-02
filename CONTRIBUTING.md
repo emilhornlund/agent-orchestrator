@@ -98,6 +98,17 @@ retained outside Git and worktree cleanup for successful processing, failures,
 resumes, and retries. Failed refreshes preserve the last successfully published
 manifest and its files, while reconciliation never removes unknown files.
 
+### Trello card start dates
+
+`TrelloCard.start` exposes Trello's optional card start timestamp to workflow
+consumers. Cards with no `start` value, or with a `null` value, omit this field;
+cards with a present value must provide a timestamp accepted by `Date.parse`,
+using the same validation convention as Trello transition dates. The original
+timestamp string is preserved, including its timezone information, so consumers
+must use `Date.parse` for absolute-time comparisons rather than comparing strings
+or local-time components. The field is informational only: start dates do not
+filter, delay, reorder, claim, or transition cards.
+
 ## Commits
 
 Use the concise commit format used in the repository's recent history:
