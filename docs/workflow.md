@@ -76,7 +76,8 @@ When a refinement card is claimed:
 
 1. The orchestrator prepares `<worktreeRoot>/<trello-card-id>` on `agent/<trello-card-id>` before moving the card to
    `Working`.
-2. OpenCode may inspect repository code, tests, documentation, and architecture. It must not modify repository
+2. The orchestrator reconciles the current Trello attachments into the card context immediately before the refinement
+   session. OpenCode may inspect repository code, tests, documentation, and architecture. It must not modify repository
    implementation files; its only permitted write is the dedicated structured refinement result artifact.
 3. The orchestrator validates the structured result and rejects unauthorized repository changes.
 4. It updates the Trello title and description, removes conflicting implementation labels, applies exactly one of
@@ -98,20 +99,23 @@ An implementation card is claimed only from `Ready for Agent`. The worktree is p
 The implementation pass then:
 
 1. Runs the optional `repository.setupCommand` in the card worktree.
-2. Runs an OpenCode implementation session using the configured implementation model and variant.
-3. Requires OpenCode to leave repository changes. The configured `validationCommand`, when present, is supplied to sessions
+2. Reconciles the current Trello attachments immediately before each applicable OpenCode session. Uploaded files are
+   materialized outside the repository and worktree; external URLs remain metadata-only.
+3. Runs an OpenCode implementation session using the configured implementation model and variant.
+4. Requires OpenCode to leave repository changes. The configured `validationCommand`, when present, is supplied to sessions
    that modify implementation files; those agents run it before finishing and fix failures caused by their changes. The
    orchestrator does not execute this command itself.
-4. Runs the initial separate OpenCode review session. This review is always run and does not consume a remediation pass.
-5. If a review reports findings and `projects[].opencode.remediation.maxPasses` has remaining capacity, runs one separate
-   remediation session and checks that it left repository changes. The pass number and configured limit are logged with the
-   project and card context. A new review runs only when another remediation pass remains. The default limit is `1`; a value
-   of `0` skips remediation and any follow-up review while continuing through the normal post-review flow.
-6. Stops immediately when the initial or an intermediate review passes. After the final allowed remediation pass, the workflow
+5. Runs the initial separate OpenCode review session. This review is always run and does not consume a remediation pass.
+6. If a review reports findings and `projects[].opencode.remediation.maxPasses` has remaining capacity, refreshes the card
+   context immediately before each separate remediation session and checks that it left repository changes. The pass number
+   and configured limit are logged with the project and card context. A new review runs only when another remediation pass
+   remains. The default limit is `1`; a value of `0` skips remediation and any follow-up review while continuing through the
+   normal post-review flow.
+7. Stops immediately when the initial or an intermediate review passes. After the final allowed remediation pass, the workflow
    continues directly to the normal post-review flow without another automated review.
-7. Runs a separate OpenCode commit session with the configured Git identity. The session must create a commit and leave a
+8. Runs a separate OpenCode commit session with the configured Git identity. The session must create a commit and leave a
    clean worktree.
-8. Publishes or reuses the task pull request. With `autoMerge: false`, the card moves to `Human Review`; with `autoMerge: true`,
+9. Publishes or reuses the task pull request. With `autoMerge: false`, the card moves to `Human Review`; with `autoMerge: true`,
    the pull request is merged and the card moves directly to `Done`.
 
 An OpenCode stage that exits unsuccessfully, produces no expected changes, fails to create a commit, or leaves changes after
@@ -149,10 +153,11 @@ with `autoMerge: false`; an enabled project merges only its normal implementatio
 | No expected pull request                                     | Reconcile the card to `Backlog`                              |
 
 When requested changes are detected, the orchestrator creates a worktree from the existing task branch, supplies the GitHub
-feedback to the implementation session, runs the same initial-review and bounded remediation loop, and republishes the
-updated branch and pull request. An enabled project auto-merges the successfully republished pull request; a disabled project
-returns it to Human Review. A requested-changes pass starts only when the review feedback applies to the pull request's
-current head, and it gets its own transient remediation counter.
+feedback to the implementation session after refreshing the current Trello attachment context, runs the same initial-review and
+bounded remediation loop, and republishes the updated branch and pull request. An enabled project auto-merges the successfully
+republished pull request; a disabled project returns it to Human Review. A requested-changes pass starts only when the review
+feedback applies to the pull request's current head, and it gets its own transient remediation counter. A retry that reuses
+already committed work skips all OpenCode stages, including attachment-dependent prompts, and proceeds directly to publication.
 
 ## Failures and transitions
 

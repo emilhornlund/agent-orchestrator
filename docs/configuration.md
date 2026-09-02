@@ -68,10 +68,13 @@ components:
 <contextRoot>/<project-id>/<card-id>/attachments.json
 ```
 
-Before OpenCode starts for a card, the service reconciles Trello's current attachments into `attachments.json` and downloads
-only `isUpload: true` files into `attachments/`. External URL attachments are retained as metadata with
+Before each applicable OpenCode session starts for a card, the service reconciles Trello's current attachments into
+`attachments.json` and downloads only `isUpload: true` files into `attachments/`. External URL attachments are retained as metadata with
 `localFilename: null`; their URLs are never requested. Uploaded entries contain a safe single-component `localFilename`.
-`mimeType` and `bytes` retain nullable and empty Trello values. Repeated preparation reuses an unchanged upload when its
+`mimeType` and `bytes` retain nullable and empty Trello values. Initial, resumed, and deliberate-retry implementation paths
+prepare context before their implementation session, and each automatic remediation pass refreshes it before its remediation
+session. A retry that reuses already committed work skips all OpenCode stages and does not need an attachment-dependent prompt.
+Repeated preparation reuses an unchanged upload when its
 stored metadata and regular local file match. Attachments removed from Trello and unrelated files in `attachments/` are
 retained rather than deleted.
 
@@ -96,6 +99,9 @@ mounted there is not the runtime location and is not advertised to the agent. If
 file cannot be safely resolved, the workflow reports the affected card context error and does not start the OpenCode session.
 
 Attachment files and manifest metadata remain outside repositories and Git worktrees.
+The service retains context after successful and failed processing, including for resumed and retried cards; it does not
+automatically clean the configured context root. Partial files from a failed preparation are removed, while existing manifests,
+stale downloaded files, and unrelated files are preserved for diagnosis.
 
 ### `notifications.email`
 

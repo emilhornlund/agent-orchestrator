@@ -21,6 +21,16 @@ function normalizeContextRoot(contextRoot: string): string {
   return path.resolve(contextRoot);
 }
 
+function hasControlCharacter(value: string): boolean {
+  return Array.from(value).some((character) => {
+    const code = character.codePointAt(0);
+
+    return (
+      code !== undefined && (code <= 0x1f || (code >= 0x7f && code <= 0x9f))
+    );
+  });
+}
+
 function validatePathComponent(component: string, description: string): void {
   if (typeof component !== "string" || component.trim().length === 0) {
     throw new Error(
@@ -28,9 +38,9 @@ function validatePathComponent(component: string, description: string): void {
     );
   }
 
-  if (component.includes("\0")) {
+  if (hasControlCharacter(component)) {
     throw new Error(
-      `Invalid ${description} "${component}": NUL characters are not allowed`,
+      `Invalid ${description} "${component}": control characters are not allowed`,
     );
   }
 
@@ -274,10 +284,16 @@ function ensureDirectoryPath(targetPath: string, description: string): void {
       try {
         fs.mkdirSync(currentPath);
       } catch (error) {
-        throw new Error(
-          `Unable to create ${description} directory "${currentPath}": ${formatFilesystemError(error)}`,
-          { cause: error },
-        );
+        if (!(
+          error instanceof Error &&
+          "code" in error &&
+          error.code === "EEXIST"
+        )) {
+          throw new Error(
+            `Unable to create ${description} directory "${currentPath}": ${formatFilesystemError(error)}`,
+            { cause: error },
+          );
+        }
       }
 
       try {

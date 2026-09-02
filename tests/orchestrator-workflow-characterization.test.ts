@@ -42,6 +42,7 @@ interface HarnessOptions {
   attachments?: TrelloAttachment[];
   autoMerge?: boolean;
   maxPasses?: number;
+  setupCommand?: string;
   initialList?: ListName;
   cardLabels?: readonly string[];
   initialWorktree?: boolean;
@@ -61,6 +62,7 @@ function createProject(
   worktreeRoot: string,
   autoMerge = false,
   maxPasses = 1,
+  setupCommand?: string,
 ): ProjectConfig {
   return {
     id: "characterization-project",
@@ -83,6 +85,7 @@ function createProject(
       github: "example/repository",
       defaultBranch: "main",
       worktreeRoot,
+      ...(setupCommand === undefined ? {} : { setupCommand }),
       gitIdentity: {
         name: "Agent Orchestrator",
         email: "agent-orchestrator@users.noreply.github.com",
@@ -141,7 +144,12 @@ function createHarness(options: HarnessOptions = {}) {
   }
 
   const project = {
-    ...createProject(worktreeRoot, options.autoMerge, options.maxPasses),
+    ...createProject(
+      worktreeRoot,
+      options.autoMerge,
+      options.maxPasses,
+      options.setupCommand,
+    ),
     ...(contextRoot === undefined ? {} : { contextRoot }),
   };
   const cardId = "card-1";
@@ -639,6 +647,128 @@ describe("orchestrator workflow characterization", () => {
       expect(promptsByLabel.get("OpenCode commit")).not.toContain(
         "Trello card attachments:",
       );
+    } finally {
+      harness.cleanup();
+    }
+  });
+
+  it("refreshes attachment context before every remediation session", async () => {
+    const harness = createHarness({
+      cardContext: true,
+      attachments: createAttachmentFixtures(),
+      reviewResults: ["REVIEW_FAIL"],
+    });
+    const refreshedAttachment: TrelloAttachment = {
+      ...createAttachmentFixtures()[0]!,
+      name: "updated-requirements.md",
+    };
+    const attachmentResponses = [
+      createAttachmentFixtures(),
+      [refreshedAttachment, createAttachmentFixtures()[1]!],
+    ];
+
+    harness.getCardAttachments.mockImplementation(async () => {
+      harness.events.push("trello:get-attachments");
+
+      return attachmentResponses.shift() ?? [];
+    });
+
+    try {
+      await pollProject(
+        harness.trello,
+        harness.git,
+        harness.github,
+        harness.openCode,
+        harness.commands,
+        harness.project,
+        new AbortController().signal,
+      );
+
+      expect(harness.getCardAttachments).toHaveBeenCalledTimes(2);
+
+      const remediationPrompt = harness.runOpenCode.mock.calls.find(
+        ([run]) => run.sessionLabel === "OpenCode remediation",
+      )?.[0].prompt;
+
+      expect(remediationPrompt).toContain(
+        `- updated-requirements.md (text/markdown): local file: ${path.join(
+          harness.contextRoot!,
+          harness.project.id,
+          harness.card.id,
+          "attachments",
+          "updated-requirements.md",
+        )}`,
+      );
+      expect(remediationPrompt).not.toContain(
+        `- requirements.md (text/markdown): local file: ${path.join(
+          harness.contextRoot!,
+          harness.project.id,
+          harness.card.id,
+          "attachments",
+          "requirements.md",
+        )}`,
+      );
+    } finally {
+      harness.cleanup();
+    }
+  });
+
+  it("prepares attachment context after setup and before implementation", async () => {
+    const harness = createHarness({
+      cardContext: true,
+      attachments: createAttachmentFixtures(),
+      setupCommand: "yarn install",
+    });
+    harness.runCommand.mockImplementation(async () => {
+      harness.events.push("setup");
+
+      return { exitCode: 0 };
+    });
+
+    try {
+      await pollProject(
+        harness.trello,
+        harness.git,
+        harness.github,
+        harness.openCode,
+        harness.commands,
+        harness.project,
+        new AbortController().signal,
+      );
+
+      expect(harness.events.indexOf("setup")).toBeLessThan(
+        harness.events.indexOf("trello:get-attachments"),
+      );
+      expect(harness.events.indexOf("trello:get-attachments")).toBeLessThan(
+        harness.events.indexOf("opencode:implementation"),
+      );
+    } finally {
+      harness.cleanup();
+    }
+  });
+
+  it("fails before implementation when attachment context preparation fails", async () => {
+    const harness = createHarness({ cardContext: true });
+    const attachmentError = new Error("Trello attachment retrieval failed");
+    harness.getCardAttachments.mockRejectedValue(attachmentError);
+
+    try {
+      await expect(
+        pollProject(
+          harness.trello,
+          harness.git,
+          harness.github,
+          harness.openCode,
+          harness.commands,
+          harness.project,
+          new AbortController().signal,
+        ),
+      ).rejects.toThrow("Trello attachment retrieval failed");
+
+      expect(harness.runOpenCode).not.toHaveBeenCalled();
+      expect(harness.card.idList).toBe(listIds.failed);
+      expect(harness.events).not.toContain("git:push");
+      expect(harness.events).not.toContain("github:create-pr");
     } finally {
       harness.cleanup();
     }

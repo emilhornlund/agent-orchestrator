@@ -336,6 +336,22 @@ describe("materializeCardAttachments", () => {
     expect(fs.existsSync(paths.manifest)).toBe(false);
   });
 
+  it("rejects a truncated response using the declared size when Content-Length is absent", async () => {
+    const root = makeTemporaryRoot();
+    const file = upload("file-1", "truncated.bin", "4");
+    const attachments = source([file], {
+      "file-1": new Response(new Uint8Array([1, 2]), { headers: {} }),
+    });
+
+    await expect(
+      materializeCardAttachments(attachments, root, "project-one", "card-1"),
+    ).rejects.toThrow("declared size was 4 bytes but 2 bytes were received");
+
+    const paths = contextPaths(root);
+    expect(fs.readdirSync(paths.attachments)).toEqual([]);
+    expect(fs.existsSync(paths.manifest)).toBe(false);
+  });
+
   it("does not count reused files against the new-download aggregate limit", async () => {
     const root = makeTemporaryRoot();
     const reused = upload("file-1", "reused.bin", "4");
@@ -360,6 +376,90 @@ describe("materializeCardAttachments", () => {
       }),
     ).resolves.toMatchObject({ attachments: expect.any(Array) });
     expect(attachments.downloadCardAttachment).toHaveBeenCalledOnce();
+  });
+
+  it("removes stale manifest entries without deleting retained files", async () => {
+    const root = makeTemporaryRoot();
+    const stale = upload("stale", "stale.txt");
+    const current = upload("current", "current.txt");
+    const attachments = source([stale, current]);
+
+    await materializeCardAttachments(
+      attachments,
+      root,
+      "project-one",
+      "card-1",
+    );
+    attachments.getCardAttachments.mockResolvedValue([current]);
+    attachments.downloadCardAttachment.mockClear();
+
+    const manifest = await materializeCardAttachments(
+      attachments,
+      root,
+      "project-one",
+      "card-1",
+    );
+
+    expect(manifest.attachments.map((entry) => entry.id)).toEqual(["current"]);
+    expect(attachments.downloadCardAttachment).not.toHaveBeenCalled();
+    expect(
+      fs.existsSync(path.join(contextPaths(root).attachments, "stale.txt")),
+    ).toBe(true);
+  });
+
+  it("keeps generated filenames within the filename safety bound", async () => {
+    const root = makeTemporaryRoot();
+    const longName = upload("file-1", `a.${"x".repeat(220)}`);
+    const attachments = source([longName]);
+
+    const manifest = await materializeCardAttachments(
+      attachments,
+      root,
+      "project-one",
+      "card-1",
+    );
+    const localFilename = manifest.attachments[0]?.localFilename;
+
+    expect(localFilename).toEqual(expect.any(String));
+    expect(localFilename!.length).toBeLessThanOrEqual(180);
+    expect(
+      fs
+        .statSync(path.join(contextPaths(root).attachments, localFilename!))
+        .isFile(),
+    ).toBe(true);
+  });
+
+  it("uses a safe fallback filename for an empty attachment name", async () => {
+    const root = makeTemporaryRoot();
+    const unnamed = upload("file-1", "");
+    const attachments = source([unnamed]);
+
+    const manifest = await materializeCardAttachments(
+      attachments,
+      root,
+      "project-one",
+      "card-1",
+    );
+
+    expect(manifest.attachments[0]?.localFilename).toBe("attachment");
+    expect(
+      fs.existsSync(path.join(contextPaths(root).attachments, "attachment")),
+    ).toBe(true);
+  });
+
+  it("rejects malformed attachment metadata before publishing a manifest", async () => {
+    const root = makeTemporaryRoot();
+    const attachments = source([
+      {
+        ...external("link-1", "Reference"),
+        url: "   ",
+      },
+    ]);
+
+    await expect(
+      materializeCardAttachments(attachments, root, "project-one", "card-1"),
+    ).rejects.toThrow("invalid metadata");
+    expect(fs.existsSync(contextPaths(root).manifest)).toBe(false);
   });
 
   it("rejects malformed manifests instead of silently replacing them", async () => {

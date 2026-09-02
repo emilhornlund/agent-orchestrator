@@ -19,9 +19,12 @@ When a card context is created, its exact layout is:
 <contextRoot>/<project-id>/<card-id>/attachments.json
 ```
 
-Before an OpenCode session starts for a card, the current Trello attachment metadata is reconciled into this directory.
+Before each applicable OpenCode session starts for a card, the current Trello attachment metadata is reconciled into this
+directory. Refinement, implementation, automatic remediation, and human review-feedback implementation sessions use the
+context; automated review-only and commit sessions do not.
 Uploaded Trello files are downloaded with Trello authentication under `attachments/`; external URL attachments are never
-dereferenced and have no local file. `attachments.json` always contains the current attachments in Trello order:
+dereferenced and have no local file. `attachments.json` contains the current attachments in Trello order after a successful
+reconciliation:
 
 ```json
 {
@@ -84,6 +87,11 @@ the storage location used by the service, and it is not the path shown to OpenCo
 Card context is operational filesystem data, not Git state. It is outside the source checkout and all worktrees, is not
 committed or included in task branches, and should be backed up, retained, and access-controlled independently from Git
 repositories.
+
+The service does not automatically remove card context after a successful, failed, resumed, or retried card. A failed
+preparation keeps the last successfully published manifest and removes only partial files created by that preparation. Unknown
+files and stale downloaded files remain available for diagnosis and are never removed as part of attachment reconciliation.
+Any operator cleanup must be limited to known card-context paths below the configured `contextRoot`.
 
 ## Isolated worktrees
 
