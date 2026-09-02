@@ -227,9 +227,10 @@ repeated polling of an already completed transition. Human Review messages inclu
 URL, commit/publication context, review result, remediation result, and, when reliable history is available, the elapsed
 workflow time. Completion messages include project, card, Trello URL, and merged pull-request URL. Failed messages include
 project, card, Trello URL, failure category and reason, plus the deliberate retry instruction. Refinement completion emails
-include project, card, Trello URL, classification, refined title, and refined description; the corresponding Trello comment is
-the concise summary described above. Attention Required messages include the project, failure category and reason, affected
-card IDs when available, session-log paths when available, and failure-handling outcome when available.
+include project, card, Trello URL, classification, refined title, and, when reliable history is available, elapsed workflow time;
+they do not include the refined description. The corresponding Trello comment is the concise summary described above. Attention
+Required messages include the project, failure category and reason, affected card IDs when available, session-log paths when
+available, and failure-handling outcome when available.
 
 Closing an expected pull request without merging moves its Human Review card to `Backlog` and adds a Trello explanation with
 the pull-request URL; it does not send the `failed` event. A failed Backlog move is retained as a reconciliation diagnostic,

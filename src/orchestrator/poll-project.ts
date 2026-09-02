@@ -492,6 +492,7 @@ async function processRefinementCard(
         project,
         card,
         result,
+        ...(elapsedWorkflowTime === undefined ? {} : { elapsedWorkflowTime }),
       },
       cardLog,
     );
