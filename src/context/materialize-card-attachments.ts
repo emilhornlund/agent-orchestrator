@@ -47,8 +47,32 @@ interface TemporaryFile {
   handle: fs.promises.FileHandle;
 }
 
+interface StaleFileBackup {
+  filename: string;
+  path: string;
+}
+
+interface StaleCleanupTransaction {
+  attachmentsDirectory: string;
+  stagedDirectory: string;
+  temporaryDirectory: string;
+  backups: StaleFileBackup[];
+}
+
+class AttachmentsNotRestoredError extends Error {
+  readonly attachmentsRestored = false;
+
+  constructor(message: string, cause: unknown) {
+    super(message, { cause });
+  }
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function hasErrorCode(error: unknown, code: string): boolean {
+  return error instanceof Error && "code" in error && error.code === code;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -778,6 +802,324 @@ async function publishManifest(
   }
 }
 
+async function removeTemporaryDirectory(directory: string): Promise<void> {
+  try {
+    await fs.promises.rm(directory, { force: true, recursive: true });
+  } catch {
+    // The directory contains only private reconciliation backups.
+  }
+}
+
+async function detachAttachmentsDirectory(paths: CardContextPaths): Promise<{
+  attachmentsDirectory: string;
+  stagedDirectory: string;
+  temporaryDirectory: string;
+}> {
+  let temporaryDirectory: string;
+
+  try {
+    temporaryDirectory = await fs.promises.mkdtemp(
+      path.join(paths.contextDirectory, ".attachments-reconcile-"),
+    );
+  } catch (error) {
+    throw new Error(
+      `Unable to create temporary attachment reconciliation directory: ${errorMessage(error)}`,
+      { cause: error },
+    );
+  }
+
+  const stagedDirectory = path.join(temporaryDirectory, "attachments");
+  let detached = false;
+  let stagedDirectoryVerified = false;
+
+  try {
+    const stat = await fs.promises.lstat(paths.attachmentsDirectory);
+
+    if (stat.isSymbolicLink()) {
+      throw new Error(
+        `Refusing symbolic-link attachments directory "${paths.attachmentsDirectory}"`,
+      );
+    }
+
+    if (!stat.isDirectory()) {
+      throw new Error(
+        `Refusing non-directory attachments directory "${paths.attachmentsDirectory}"`,
+      );
+    }
+
+    await fs.promises.rename(paths.attachmentsDirectory, stagedDirectory);
+    detached = true;
+
+    const stagedStat = await fs.promises.lstat(stagedDirectory);
+
+    if (stagedStat.isSymbolicLink()) {
+      throw new Error(
+        `Refusing symbolic-link staged attachments directory "${stagedDirectory}"`,
+      );
+    }
+
+    if (!stagedStat.isDirectory()) {
+      throw new Error(
+        `Refusing unsafe staged attachments directory "${stagedDirectory}"`,
+      );
+    }
+
+    stagedDirectoryVerified = true;
+  } catch (error) {
+    if (detached && stagedDirectoryVerified) {
+      try {
+        await fs.promises.rename(stagedDirectory, paths.attachmentsDirectory);
+      } catch (restoreError) {
+        throw new AttachmentsNotRestoredError(
+          `Unable to restore attachments directory after staging failure: ${errorMessage(restoreError)}`,
+          restoreError,
+        );
+      }
+
+      await removeTemporaryDirectory(temporaryDirectory);
+    } else if (detached) {
+      throw new Error(
+        `${errorMessage(error)}; temporary attachment reconciliation directory retained at "${temporaryDirectory}"`,
+        { cause: error },
+      );
+    }
+
+    if (!detached) {
+      await removeTemporaryDirectory(temporaryDirectory);
+    }
+
+    throw error;
+  }
+
+  return {
+    attachmentsDirectory: paths.attachmentsDirectory,
+    stagedDirectory,
+    temporaryDirectory,
+  };
+}
+
+async function restoreStaleFileBackups(
+  transaction: StaleCleanupTransaction,
+): Promise<void> {
+  for (const backup of transaction.backups) {
+    const originalPath = path.join(
+      transaction.stagedDirectory,
+      backup.filename,
+    );
+
+    try {
+      await fs.promises.copyFile(
+        backup.path,
+        originalPath,
+        fs.constants.COPYFILE_EXCL,
+      );
+    } catch (error) {
+      if (hasErrorCode(error, "EEXIST")) {
+        continue;
+      }
+
+      throw new Error(
+        `Unable to restore stale attachment file "${originalPath}": ${errorMessage(error)}`,
+        { cause: error },
+      );
+    }
+  }
+}
+
+async function rollbackStaleCleanup(
+  transaction: StaleCleanupTransaction,
+): Promise<void> {
+  await restoreStaleFileBackups(transaction);
+  await fs.promises.rename(
+    transaction.stagedDirectory,
+    transaction.attachmentsDirectory,
+  );
+  await removeTemporaryDirectory(transaction.temporaryDirectory);
+}
+
+async function removeCreatedAttachmentFiles(
+  paths: CardContextPaths,
+  createdAttachmentPaths: string[],
+): Promise<void> {
+  if (createdAttachmentPaths.length === 0) {
+    return;
+  }
+
+  let detached: Awaited<ReturnType<typeof detachAttachmentsDirectory>>;
+
+  try {
+    detached = await detachAttachmentsDirectory(paths);
+  } catch {
+    return;
+  }
+
+  let restored = false;
+
+  try {
+    for (const createdAttachmentPath of createdAttachmentPaths) {
+      await removeFile(
+        path.join(
+          detached.stagedDirectory,
+          path.basename(createdAttachmentPath),
+        ),
+      );
+    }
+
+    await fs.promises.rename(
+      detached.stagedDirectory,
+      detached.attachmentsDirectory,
+    );
+    restored = true;
+  } catch {
+    // Preserve the staged tree when it cannot be safely restored.
+  }
+
+  if (restored) {
+    await removeTemporaryDirectory(detached.temporaryDirectory);
+  }
+}
+
+async function stageStaleManagedFiles(
+  paths: CardContextPaths,
+  previousManifest: CardAttachmentManifest | undefined,
+  finalManifest: CardAttachmentManifest,
+): Promise<StaleCleanupTransaction | undefined> {
+  if (previousManifest === undefined) {
+    return undefined;
+  }
+
+  const finalFilenames = new Set(
+    finalManifest.attachments.flatMap((attachment) =>
+      attachment.isUpload && attachment.localFilename !== null
+        ? [attachment.localFilename]
+        : [],
+    ),
+  );
+  const staleFilenames = new Set(
+    previousManifest.attachments.flatMap((attachment) =>
+      attachment.isUpload && attachment.localFilename !== null
+        ? [attachment.localFilename]
+        : [],
+    ),
+  );
+
+  for (const filename of finalFilenames) {
+    staleFilenames.delete(filename);
+  }
+
+  if (staleFilenames.size === 0) {
+    return undefined;
+  }
+
+  const detached = await detachAttachmentsDirectory(paths);
+  const transaction: StaleCleanupTransaction = {
+    ...detached,
+    backups: [],
+  };
+
+  try {
+    for (const filename of staleFilenames) {
+      const attachmentPath = path.join(detached.stagedDirectory, filename);
+      let stat: fs.Stats;
+
+      try {
+        stat = await fs.promises.lstat(attachmentPath);
+      } catch (error) {
+        if (hasErrorCode(error, "ENOENT")) {
+          continue;
+        }
+
+        throw new Error(
+          `Unable to inspect stale attachment file "${attachmentPath}": ${errorMessage(error)}`,
+          { cause: error },
+        );
+      }
+
+      if (stat.isSymbolicLink() || !stat.isFile()) {
+        continue;
+      }
+
+      const backupPath = path.join(
+        detached.temporaryDirectory,
+        `stale-${transaction.backups.length}`,
+      );
+
+      try {
+        await fs.promises.copyFile(
+          attachmentPath,
+          backupPath,
+          fs.constants.COPYFILE_EXCL,
+        );
+      } catch (error) {
+        throw new Error(
+          `Unable to back up stale attachment file "${attachmentPath}": ${errorMessage(error)}`,
+          { cause: error },
+        );
+      }
+
+      transaction.backups.push({ filename, path: backupPath });
+    }
+
+    for (const backup of transaction.backups) {
+      const attachmentPath = path.join(
+        detached.stagedDirectory,
+        backup.filename,
+      );
+
+      try {
+        await fs.promises.unlink(attachmentPath);
+      } catch (error) {
+        if (hasErrorCode(error, "ENOENT")) {
+          continue;
+        }
+
+        throw new Error(
+          `Unable to remove stale attachment file "${attachmentPath}": ${errorMessage(error)}`,
+          { cause: error },
+        );
+      }
+    }
+  } catch (error) {
+    try {
+      await rollbackStaleCleanup(transaction);
+    } catch (rollbackError) {
+      throw new AttachmentsNotRestoredError(
+        `Unable to preserve attachments after stale-file cleanup failed: ${errorMessage(rollbackError)}`,
+        rollbackError,
+      );
+    }
+
+    throw error;
+  }
+
+  return transaction;
+}
+
+async function commitStaleCleanup(
+  transaction: StaleCleanupTransaction,
+): Promise<void> {
+  await fs.promises.rename(
+    transaction.stagedDirectory,
+    transaction.attachmentsDirectory,
+  );
+
+  // A failure here cannot affect the published attachment state. Keep the
+  // private backup directory for diagnosis rather than failing the refresh.
+  await removeTemporaryDirectory(transaction.temporaryDirectory);
+}
+
+async function restoreManifestAfterFailure(
+  paths: CardContextPaths,
+  previousManifest: CardAttachmentManifest | undefined,
+): Promise<void> {
+  if (previousManifest === undefined) {
+    await removeFile(paths.manifestPath);
+    return;
+  }
+
+  await publishManifest(paths, previousManifest);
+}
+
 export async function materializeCardAttachments(
   source: TrelloAttachmentSource,
   contextRoot: string,
@@ -899,7 +1241,10 @@ export async function materializeCardAttachments(
 
   const manifestEntries: CardAttachmentManifestEntry[] = [];
   const createdAttachmentPaths: string[] = [];
+  const manifest = { attachments: manifestEntries };
   let downloadedBytes = 0;
+  let staleCleanup: StaleCleanupTransaction | undefined;
+  let manifestPublished = false;
 
   try {
     for (const planned of plannedAttachments) {
@@ -936,18 +1281,50 @@ export async function materializeCardAttachments(
 
     throwIfAborted(options.signal);
 
-    const manifest = { attachments: manifestEntries };
+    staleCleanup = await stageStaleManagedFiles(
+      paths,
+      existingManifest,
+      manifest,
+    );
     await publishManifest(paths, manifest);
-    return manifest;
+    manifestPublished = true;
+
+    if (staleCleanup !== undefined) {
+      await commitStaleCleanup(staleCleanup);
+    }
   } catch (error) {
-    for (const attachmentPath of createdAttachmentPaths) {
+    let failure: unknown = error;
+    let attachmentsRestored = !(error instanceof AttachmentsNotRestoredError);
+
+    if (manifestPublished) {
       try {
-        await removeFile(attachmentPath);
-      } catch {
-        // Preserve the primary failure and never claim these files in a manifest.
+        await restoreManifestAfterFailure(paths, existingManifest);
+      } catch (restoreError) {
+        failure = new Error(
+          `Unable to restore attachments manifest after reconciliation failure: ${errorMessage(restoreError)}`,
+          { cause: restoreError },
+        );
       }
     }
 
-    throw error;
+    if (staleCleanup !== undefined) {
+      try {
+        await rollbackStaleCleanup(staleCleanup);
+      } catch (rollbackError) {
+        attachmentsRestored = false;
+        failure = new Error(
+          `Unable to preserve attachments after reconciliation failure: ${errorMessage(rollbackError)}`,
+          { cause: failure },
+        );
+      }
+    }
+
+    if (attachmentsRestored) {
+      await removeCreatedAttachmentFiles(paths, createdAttachmentPaths);
+    }
+
+    throw failure;
   }
+
+  return manifest;
 }

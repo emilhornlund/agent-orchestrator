@@ -75,15 +75,16 @@ Before each applicable OpenCode session starts for a card, the service reconcile
 prepare context before their implementation session, and each automatic remediation pass refreshes it before its remediation
 session. A retry that reuses already committed work skips all OpenCode stages and does not need an attachment-dependent prompt.
 Repeated preparation reuses an unchanged upload when its
-stored metadata and regular local file match. Attachments removed from Trello and unrelated files in `attachments/` are
-retained rather than deleted.
+stored metadata and regular local file match. A successful reconciliation removes regular files claimed by the previous
+manifest for attachments removed from Trello or replaced uploads. Unrelated or unknown files in `attachments/` are retained.
 
 The default per-upload limit is 50 MiB and the default aggregate new-download limit is 200 MiB. `maxAttachmentBytes` and
 `maxTotalAttachmentBytes` can override those defaults with positive safe integers. Limits apply to declared Trello sizes,
 response `Content-Length`, and actual streamed bytes; unknown or unusable sizes are still bounded. A failed or partial
-download leaves no manifest entry claiming success and stops the card before OpenCode. Malformed manifests, unsafe paths,
-symbolic links, and unexpected file types are rejected. The storage helpers create directories and enforce the same path
-boundary, but do not change Trello data.
+download leaves no manifest entry claiming success and stops the card before OpenCode. The previous successfully published
+manifest and its files remain in place after a failed refresh; stale managed-file cleanup is committed only with successful
+manifest publication. Malformed manifests, unsafe paths, symbolic links, and unexpected file types are rejected. The storage helpers
+create directories and enforce the same path boundary, but do not change Trello data.
 
 When attachments exist, the refinement, implementation, automatic remediation, and review-feedback remediation prompts
 include a compact attachment section with each name, each non-blank Trello MIME type, and its location. Uploaded files are
@@ -100,8 +101,9 @@ file cannot be safely resolved, the workflow reports the affected card context e
 
 Attachment files and manifest metadata remain outside repositories and Git worktrees.
 The service retains context after successful and failed processing, including for resumed and retried cards; it does not
-automatically clean the configured context root. Partial files from a failed preparation are removed, while existing manifests,
-stale downloaded files, and unrelated files are preserved for diagnosis.
+automatically clean the configured context root. After successful reconciliation, stale regular files claimed by the prior
+manifest are removed, while unknown and unrelated files remain. Partial files from a failed preparation are removed, while
+the previous successfully published manifest and its materialized files are preserved for diagnosis and retry.
 
 ### `notifications.email`
 

@@ -77,8 +77,10 @@ Card processing materializes uploaded files below the configured card context
 root and writes the ordered metadata to `attachments.json`. External URL
 attachments remain metadata-only and are never requested. The manifest uses
 `localFilename` for a safe single filename on uploaded entries and `null` for
-external entries. Unchanged regular uploads are reused; removed attachments and
-unrelated files are retained. Per-upload and aggregate new-download limits are
+external entries. Unchanged regular uploads are reused. A successful
+reconciliation removes regular files claimed by the previous manifest for
+removed or replaced attachments; unrelated and unknown files are retained.
+Per-upload and aggregate new-download limits are
 documented in the card-context sections of `docs/operations.md` and
 `docs/configuration.md`. Before each applicable OpenCode session starts,
 materialized attachment metadata is refreshed and used to add a compact section
@@ -93,7 +95,8 @@ be added to prompts; automated review-only and commit prompts remain unchanged.
 Unsafe or unavailable materialized locations must fail the workflow before its
 affected OpenCode session starts rather than being omitted silently. Context is
 retained outside Git and worktree cleanup for successful processing, failures,
-resumes, and retries; reconciliation never removes unknown files.
+resumes, and retries. Failed refreshes preserve the last successfully published
+manifest and its files, while reconciliation never removes unknown files.
 
 ## Commits
 

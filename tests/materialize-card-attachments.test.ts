@@ -182,9 +182,13 @@ describe("materializeCardAttachments", () => {
       "same-2.txt",
       "same-3.txt",
     ]);
+    expect(fs.existsSync(path.join(paths.attachments, "same.txt"))).toBe(false);
     expect(
-      fs.readFileSync(path.join(paths.attachments, "same.txt"), "utf8"),
-    ).toBe("first");
+      fs.readFileSync(path.join(paths.attachments, "same-2.txt"), "utf8"),
+    ).toBe("changed");
+    expect(
+      fs.readFileSync(path.join(paths.attachments, "same-3.txt"), "utf8"),
+    ).toBe("new!");
   });
 
   it("does not request external URLs and allocates safe stable duplicate names", async () => {
@@ -378,7 +382,7 @@ describe("materializeCardAttachments", () => {
     expect(attachments.downloadCardAttachment).toHaveBeenCalledOnce();
   });
 
-  it("removes stale manifest entries without deleting retained files", async () => {
+  it("removes a removed upload and its managed file while retaining unrelated files", async () => {
     const root = makeTemporaryRoot();
     const stale = upload("stale", "stale.txt");
     const current = upload("current", "current.txt");
@@ -390,6 +394,9 @@ describe("materializeCardAttachments", () => {
       "project-one",
       "card-1",
     );
+    const paths = contextPaths(root);
+    const unrelatedPath = path.join(paths.attachments, "operator-notes.txt");
+    fs.writeFileSync(unrelatedPath, "keep me");
     attachments.getCardAttachments.mockResolvedValue([current]);
     attachments.downloadCardAttachment.mockClear();
 
@@ -402,9 +409,219 @@ describe("materializeCardAttachments", () => {
 
     expect(manifest.attachments.map((entry) => entry.id)).toEqual(["current"]);
     expect(attachments.downloadCardAttachment).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(paths.attachments, "stale.txt"))).toBe(
+      false,
+    );
     expect(
-      fs.existsSync(path.join(contextPaths(root).attachments, "stale.txt")),
-    ).toBe(true);
+      fs.readFileSync(path.join(paths.attachments, "current.txt"), "utf8"),
+    ).toBe("contents:current");
+    expect(fs.readFileSync(unrelatedPath, "utf8")).toBe("keep me");
+    for (const entry of manifest.attachments) {
+      if (entry.localFilename !== null) {
+        expect(
+          fs
+            .statSync(path.join(paths.attachments, entry.localFilename))
+            .isFile(),
+        ).toBe(true);
+      }
+    }
+  });
+
+  it("preserves the published manifest and files after a failed reconciliation", async () => {
+    const root = makeTemporaryRoot();
+    const original = upload("file-1", "original.txt");
+    const attachments = source([original], {
+      "file-1": new Response("original"),
+    });
+
+    await materializeCardAttachments(
+      attachments,
+      root,
+      "project-one",
+      "card-1",
+    );
+
+    const paths = contextPaths(root);
+    const previousManifest = fs.readFileSync(paths.manifest, "utf8");
+    const unrelatedPath = path.join(paths.attachments, "operator-notes.txt");
+    fs.writeFileSync(unrelatedPath, "keep me");
+    const changed = { ...original, bytes: "changed" };
+    const added = upload("file-2", "added.txt");
+    attachments.getCardAttachments.mockResolvedValue([changed, added]);
+    attachments.downloadCardAttachment.mockImplementation(
+      async (attachment: TrelloAttachment) => {
+        if (attachment.id === "file-2") {
+          throw new Error("connection reset");
+        }
+
+        return new Response("replacement");
+      },
+    );
+
+    await expect(
+      materializeCardAttachments(attachments, root, "project-one", "card-1"),
+    ).rejects.toThrow("connection reset");
+
+    expect(fs.readFileSync(paths.manifest, "utf8")).toBe(previousManifest);
+    expect(
+      fs.readFileSync(path.join(paths.attachments, "original.txt"), "utf8"),
+    ).toBe("original");
+    expect(fs.existsSync(path.join(paths.attachments, "original-2.txt"))).toBe(
+      false,
+    );
+    expect(fs.existsSync(path.join(paths.attachments, "added.txt"))).toBe(
+      false,
+    );
+    expect(fs.readFileSync(unrelatedPath, "utf8")).toBe("keep me");
+  });
+
+  it("preserves all managed files when a later stale-file removal fails", async () => {
+    const root = makeTemporaryRoot();
+    const first = upload("file-1", "first.txt");
+    const second = upload("file-2", "second.txt");
+    const attachments = source([first, second]);
+
+    await materializeCardAttachments(
+      attachments,
+      root,
+      "project-one",
+      "card-1",
+    );
+
+    const paths = contextPaths(root);
+    const previousManifest = fs.readFileSync(paths.manifest, "utf8");
+    const originalUnlink = fs.promises.unlink;
+    const unlink = vi
+      .spyOn(fs.promises, "unlink")
+      .mockImplementation(async (filePath) => {
+        if (path.basename(filePath.toString()) === "second.txt") {
+          throw new Error("permission denied");
+        }
+
+        return originalUnlink(filePath);
+      });
+    attachments.getCardAttachments.mockResolvedValue([]);
+
+    await expect(
+      materializeCardAttachments(attachments, root, "project-one", "card-1"),
+    ).rejects.toThrow("permission denied");
+
+    expect(fs.readFileSync(paths.manifest, "utf8")).toBe(previousManifest);
+    expect(
+      fs.readFileSync(path.join(paths.attachments, "first.txt"), "utf8"),
+    ).toBe("contents:file-1");
+    expect(
+      fs.readFileSync(path.join(paths.attachments, "second.txt"), "utf8"),
+    ).toBe("contents:file-2");
+    expect(unlink).toHaveBeenCalled();
+  });
+
+  it("restores the previous state when manifest publication fails after staging cleanup", async () => {
+    const root = makeTemporaryRoot();
+    const stale = upload("file-1", "stale.txt");
+    const attachments = source([stale]);
+
+    await materializeCardAttachments(
+      attachments,
+      root,
+      "project-one",
+      "card-1",
+    );
+
+    const paths = contextPaths(root);
+    const previousManifest = fs.readFileSync(paths.manifest, "utf8");
+    attachments.getCardAttachments.mockResolvedValue([]);
+
+    const originalRename = fs.promises.rename;
+    vi.spyOn(fs.promises, "rename").mockImplementation(
+      async (sourcePath, destinationPath) => {
+        if (
+          destinationPath.toString() === paths.manifest &&
+          sourcePath.toString().includes(".manifest.")
+        ) {
+          throw new Error("manifest publication failed");
+        }
+
+        return originalRename(sourcePath, destinationPath);
+      },
+    );
+
+    await expect(
+      materializeCardAttachments(attachments, root, "project-one", "card-1"),
+    ).rejects.toThrow("manifest publication failed");
+    expect(fs.readFileSync(paths.manifest, "utf8")).toBe(previousManifest);
+    expect(
+      fs.readFileSync(path.join(paths.attachments, "stale.txt"), "utf8"),
+    ).toBe("contents:file-1");
+  });
+
+  it("does not clean outside the context when the live attachments path becomes a symlink", async () => {
+    const root = makeTemporaryRoot();
+    const stale = upload("file-1", "stale.txt");
+    const attachments = source([stale]);
+
+    await materializeCardAttachments(
+      attachments,
+      root,
+      "project-one",
+      "card-1",
+    );
+
+    const paths = contextPaths(root);
+    const outside = path.join(path.dirname(root), "outside");
+    const outsideFile = path.join(outside, "stale.txt");
+    fs.mkdirSync(outside);
+    fs.writeFileSync(outsideFile, "do not delete");
+    attachments.getCardAttachments.mockResolvedValue([]);
+
+    const originalLstat = fs.promises.lstat;
+    let replaced = false;
+    vi.spyOn(fs.promises, "lstat").mockImplementation(async (filePath) => {
+      const stat = await originalLstat(filePath);
+
+      if (!replaced && filePath.toString() === paths.attachments) {
+        replaced = true;
+        fs.rmSync(paths.attachments, { recursive: true, force: true });
+        fs.symlinkSync(outside, paths.attachments, "dir");
+      }
+
+      return stat;
+    });
+
+    await expect(
+      materializeCardAttachments(attachments, root, "project-one", "card-1"),
+    ).rejects.toThrow("symbolic-link");
+    expect(fs.existsSync(paths.attachments)).toBe(false);
+    expect(fs.readFileSync(outsideFile, "utf8")).toBe("do not delete");
+  });
+
+  it("does not clean outside the context when failure cleanup sees a symlink", async () => {
+    const root = makeTemporaryRoot();
+    const file = upload("file-1", "new.txt");
+    const attachments = source([file]);
+    const paths = contextPaths(root);
+    const outside = path.join(path.dirname(root), "outside");
+    const outsideFile = path.join(outside, "new.txt");
+    fs.mkdirSync(outside);
+    fs.writeFileSync(outsideFile, "do not delete");
+
+    const originalRename = fs.promises.rename;
+    vi.spyOn(fs.promises, "rename").mockImplementation(
+      async (sourcePath, destinationPath) => {
+        if (destinationPath.toString() === paths.manifest) {
+          fs.rmSync(paths.attachments, { recursive: true, force: true });
+          fs.symlinkSync(outside, paths.attachments, "dir");
+          throw new Error("manifest publication failed");
+        }
+
+        return originalRename(sourcePath, destinationPath);
+      },
+    );
+
+    await expect(
+      materializeCardAttachments(attachments, root, "project-one", "card-1"),
+    ).rejects.toThrow("manifest publication failed");
+    expect(fs.readFileSync(outsideFile, "utf8")).toBe("do not delete");
   });
 
   it("keeps generated filenames within the filename safety bound", async () => {
