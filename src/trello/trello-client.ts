@@ -195,10 +195,15 @@ export class TrelloClient {
     return this.get(`/lists/${listId}/cards`, z.array(trelloCardSchema));
   }
 
-  getCardAttachments(cardId: string): Promise<TrelloAttachment[]> {
+  getCardAttachments(
+    cardId: string,
+    signal?: AbortSignal,
+  ): Promise<TrelloAttachment[]> {
     return this.get(
       `/cards/${cardId}/attachments`,
       z.array(trelloAttachmentSchema),
+      {},
+      signal,
     );
   }
 
@@ -383,8 +388,9 @@ export class TrelloClient {
     path: string,
     schema: z.ZodType<T>,
     parameters: Record<string, string> = {},
+    additionalSignal?: AbortSignal,
   ): Promise<T> {
-    this.throwIfAborted();
+    this.throwIfAborted(additionalSignal);
 
     const url = new URL(`${this.baseUrl}${path}`);
 
@@ -395,7 +401,7 @@ export class TrelloClient {
       url.searchParams.set(name, value);
     }
 
-    const signal = this.getRequestSignal();
+    const signal = this.getRequestSignalFor(additionalSignal);
     const response = await this.request(url, signal ? { signal } : undefined);
 
     if (!response.ok) {

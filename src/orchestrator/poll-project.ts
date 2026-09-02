@@ -397,6 +397,7 @@ async function processRefinementCard(
         branch: string;
       }
     | undefined;
+  let cardContextPreparationFailed = false;
 
   try {
     worktree =
@@ -405,12 +406,14 @@ async function processRefinementCard(
     cardLog.info(`Branch: ${worktree.branch}`);
     cardLog.info(`Worktree: ${worktree.path}`);
 
+    cardContextPreparationFailed = true;
     const attachmentManifest = await prepareCardContext(
       trello,
       project,
       card,
       signal,
     );
+    cardContextPreparationFailed = false;
     const attachmentContext = createCardAttachmentPromptContext(
       project,
       card,
@@ -489,7 +492,7 @@ async function processRefinementCard(
       return;
     }
 
-    if (worktree) {
+    if (worktree && !cardContextPreparationFailed) {
       cardLog.info("Resetting failed refinement worktree...");
 
       try {
@@ -716,18 +719,6 @@ async function processCardChanges(
   cardLog.info(`Branch: ${worktree.branch}`);
   cardLog.info(`Worktree: ${worktree.path}`);
 
-  const attachmentManifest = await prepareCardContext(
-    trello,
-    project,
-    card,
-    signal,
-  );
-  const attachmentContext = createCardAttachmentPromptContext(
-    project,
-    card,
-    attachmentManifest,
-  );
-
   const implementationWorktree = reviewIteration
     ? undefined
     : (worktree as PreparedImplementationWorktree);
@@ -787,6 +778,18 @@ async function processCardChanges(
 
     cardLog.event("Repository setup passed");
   }
+
+  const attachmentManifest = await prepareCardContext(
+    trello,
+    project,
+    card,
+    signal,
+  );
+  const attachmentContext = createCardAttachmentPromptContext(
+    project,
+    card,
+    attachmentManifest,
+  );
 
   const implementationLabel = reviewIteration
     ? "review feedback implementation"
@@ -897,6 +900,18 @@ async function processCardChanges(
         `Starting remediation pass ${remediationPasses} of ${maxRemediationPasses}`,
       );
 
+      const remediationManifest = await prepareCardContext(
+        trello,
+        project,
+        card,
+        signal,
+      );
+      const remediationAttachmentContext = createCardAttachmentPromptContext(
+        project,
+        card,
+        remediationManifest,
+      );
+
       const remediation = await opencode.run({
         cwd: worktree.path,
         model: project.opencode.remediation.model,
@@ -906,7 +921,7 @@ async function processCardChanges(
           card,
           reviewOutput,
           project.repository.validationCommand,
-          attachmentContext,
+          remediationAttachmentContext,
         ),
         signal,
         sessionLogPath,
@@ -1048,9 +1063,7 @@ async function prepareCardContext(
   } catch (error) {
     throw new WorkflowError(
       "Workflow",
-      `Could not prepare card context attachments for card "${card.id}": ${
-        error instanceof Error ? error.message : String(error)
-      }`,
+      `Could not prepare Trello attachment context for project "${project.id}", card "${card.id}" at context root "${project.contextRoot}": ${error instanceof Error ? error.message : String(error)}`,
       { cause: error },
     );
   }

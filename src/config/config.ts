@@ -15,6 +15,16 @@ const absolutePath = nonBlankString
 
 export const DEFAULT_CONTEXT_ROOT = "/opt/.agent-context";
 
+function hasControlCharacter(value: string): boolean {
+  return Array.from(value).some((character) => {
+    const code = character.codePointAt(0);
+
+    return (
+      code !== undefined && (code <= 0x1f || (code >= 0x7f && code <= 0x9f))
+    );
+  });
+}
+
 const pathComponent = nonBlankString.refine(
   (value) =>
     value !== "." &&
@@ -24,19 +34,26 @@ const pathComponent = nonBlankString.refine(
     !path.isAbsolute(value) &&
     !path.win32.isAbsolute(value) &&
     path.win32.parse(value).root.length === 0 &&
-    !value.includes("\0"),
+    !hasControlCharacter(value),
   {
     message:
-      "Must be a single relative path component without traversal, separators, or NUL characters",
+      "Must be a single relative path component without traversal, separators, or control characters",
   },
 );
 
 function pathsOverlap(first: string, second: string): boolean {
-  return (
-    first === second ||
-    first.startsWith(`${second}${path.sep}`) ||
-    second.startsWith(`${first}${path.sep}`)
-  );
+  const isWithin = (parent: string, candidate: string): boolean => {
+    const relative = path.relative(parent, candidate);
+
+    return (
+      relative === "" ||
+      (relative !== ".." &&
+        !relative.startsWith(`..${path.sep}`) &&
+        !path.isAbsolute(relative))
+    );
+  };
+
+  return isWithin(first, second) || isWithin(second, first);
 }
 
 const trelloSchema = z

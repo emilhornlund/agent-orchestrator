@@ -244,6 +244,33 @@ describe("TrelloClient", () => {
     await expect(client.getCardAttachments("card-1")).resolves.toEqual([]);
   });
 
+  it("honors an attachment metadata request abort signal", async () => {
+    const controller = new AbortController();
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async (_input, init) => {
+        await new Promise<never>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("Aborted", "AbortError")),
+            { once: true },
+          );
+        });
+
+        throw new Error("unreachable");
+      });
+    const client = new TrelloClient({
+      apiKey: "test-key",
+      token: "test-token",
+    });
+    const request = client.getCardAttachments("card-1", controller.signal);
+
+    controller.abort();
+
+    await expect(request).rejects.toThrow("Trello request aborted");
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   it("downloads uploaded attachments with Trello authentication", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")

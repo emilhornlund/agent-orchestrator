@@ -94,17 +94,58 @@ function parseUsableByteCount(value: string | null): number | undefined {
   return Number.isSafeInteger(parsed) ? parsed : undefined;
 }
 
-function validateAttachment(attachment: TrelloAttachment, index: number): void {
+function hasControlCharacter(value: string): boolean {
+  return Array.from(value).some((character) => {
+    const code = character.codePointAt(0);
+
+    return (
+      code !== undefined && (code <= 0x1f || (code >= 0x7f && code <= 0x9f))
+    );
+  });
+}
+
+function isUsableExternalUrl(value: string): boolean {
+  try {
+    const url = new URL(value.trim());
+
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function validateAttachmentMetadata(
+  attachment: unknown,
+  description: string,
+): asserts attachment is TrelloAttachment {
   if (
+    !isRecord(attachment) ||
     typeof attachment.id !== "string" ||
     typeof attachment.name !== "string" ||
     (typeof attachment.mimeType !== "string" && attachment.mimeType !== null) ||
     (typeof attachment.bytes !== "string" && attachment.bytes !== null) ||
     typeof attachment.url !== "string" ||
-    typeof attachment.isUpload !== "boolean"
+    typeof attachment.isUpload !== "boolean" ||
+    attachment.id.trim().length === 0 ||
+    attachment.url.trim().length === 0 ||
+    (!attachment.isUpload && !isUsableExternalUrl(attachment.url)) ||
+    hasControlCharacter(attachment.id) ||
+    hasControlCharacter(attachment.name) ||
+    hasControlCharacter(attachment.url) ||
+    (typeof attachment.mimeType === "string" &&
+      hasControlCharacter(attachment.mimeType)) ||
+    (typeof attachment.bytes === "string" &&
+      hasControlCharacter(attachment.bytes))
   ) {
-    throw new Error(`Trello attachment ${index} has invalid metadata`);
+    throw new Error(`${description} has invalid metadata`);
   }
+}
+
+function validateAttachment(
+  attachment: unknown,
+  index: number,
+): asserts attachment is TrelloAttachment {
+  validateAttachmentMetadata(attachment, `Trello attachment ${index}`);
 }
 
 function validateMetadata(
@@ -148,6 +189,11 @@ function normalizeFilename(name: string): string {
   }
 
   const extension = path.extname(leaf);
+
+  if (extension.length >= maximumFilenameLength) {
+    return leaf.slice(0, maximumFilenameLength);
+  }
+
   const stem = extension.length > 0 ? leaf.slice(0, -extension.length) : leaf;
   const availableStemLength = Math.max(
     1,
@@ -158,11 +204,26 @@ function normalizeFilename(name: string): string {
 }
 
 function addFilenameSuffix(filename: string, suffix: number): string {
+  const suffixText = `-${suffix}`;
   const extension = path.extname(filename);
+  const boundedExtension =
+    extension.length + suffixText.length < maximumFilenameLength
+      ? extension
+      : "";
   const stem =
-    extension.length > 0 ? filename.slice(0, -extension.length) : filename;
+    boundedExtension.length > 0
+      ? filename.slice(0, -boundedExtension.length)
+      : filename;
+  const availableStemLength = Math.max(
+    1,
+    maximumFilenameLength - boundedExtension.length - suffixText.length,
+  );
 
-  return `${stem}-${suffix}${extension}`;
+  if (suffixText.length >= maximumFilenameLength) {
+    return suffixText.slice(-maximumFilenameLength);
+  }
+
+  return `${stem.slice(0, availableStemLength)}${suffixText}${boundedExtension}`;
 }
 
 function allocateFilename(
@@ -198,18 +259,19 @@ function parseManifestEntry(
     `Existing attachments manifest entry ${index}`,
   );
 
-  if (
-    typeof value.id !== "string" ||
-    typeof value.name !== "string" ||
-    (typeof value.mimeType !== "string" && value.mimeType !== null) ||
-    (typeof value.bytes !== "string" && value.bytes !== null) ||
-    typeof value.url !== "string" ||
-    typeof value.isUpload !== "boolean"
-  ) {
-    throw new Error(
-      `Existing attachments manifest entry ${index} has invalid metadata`,
-    );
-  }
+  const attachment = {
+    id: value.id,
+    name: value.name,
+    mimeType: value.mimeType,
+    bytes: value.bytes,
+    url: value.url,
+    isUpload: value.isUpload,
+  };
+
+  validateAttachmentMetadata(
+    attachment,
+    `Existing attachments manifest entry ${index}`,
+  );
 
   const localFilename = value.localFilename;
 
@@ -219,26 +281,17 @@ function parseManifestEntry(
     );
   }
 
-  if (value.isUpload && localFilename === null) {
+  if (attachment.isUpload && localFilename === null) {
     throw new Error(
       `Existing attachments manifest entry ${index} is an upload without a localFilename`,
     );
   }
 
-  if (!value.isUpload && localFilename !== null) {
+  if (!attachment.isUpload && localFilename !== null) {
     throw new Error(
       `Existing attachments manifest entry ${index} assigns a localFilename to an external attachment`,
     );
   }
-
-  const attachment: TrelloAttachment = {
-    id: value.id,
-    name: value.name,
-    mimeType: value.mimeType,
-    bytes: value.bytes,
-    url: value.url,
-    isUpload: value.isUpload,
-  };
 
   return {
     ...attachment,
@@ -620,9 +673,18 @@ async function downloadAttachmentToFile(
       }
     }
 
-    if (contentLength !== undefined && receivedBytes !== contentLength) {
+    const declaredSizeMismatch =
+      declaredBytes !== undefined && receivedBytes < declaredBytes;
+    const contentLengthMismatch =
+      contentLength !== undefined && receivedBytes !== contentLength;
+
+    if (declaredSizeMismatch || contentLengthMismatch) {
+      const expectedDescription = contentLengthMismatch
+        ? `response Content-Length was ${contentLength}`
+        : `declared size was ${declaredBytes}`;
+
       throw new Error(
-        `Trello attachment "${attachment.name}" (${attachment.id}) response Content-Length was ${contentLength} bytes but ${receivedBytes} bytes were received`,
+        `Trello attachment "${attachment.name}" (${attachment.id}) ${expectedDescription} bytes but ${receivedBytes} bytes were received`,
       );
     }
 
@@ -744,8 +806,21 @@ export async function materializeCardAttachments(
   let attachments: TrelloAttachment[];
 
   try {
-    attachments = await source.getCardAttachments(cardId);
+    const response =
+      options.signal === undefined
+        ? await source.getCardAttachments(cardId)
+        : await source.getCardAttachments(cardId, options.signal);
+
+    if (!Array.isArray(response)) {
+      throw new Error("Trello attachment response must be an array");
+    }
+
+    attachments = response;
   } catch (error) {
+    if (options.signal?.aborted) {
+      throw new TrelloRequestAbortedError();
+    }
+
     throw new Error(
       `Unable to retrieve Trello attachments for card "${cardId}": ${errorMessage(error)}`,
       { cause: error },

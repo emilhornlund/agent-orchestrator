@@ -573,6 +573,7 @@ workflow:
     ["repository path", "/tmp/repository"],
     ["inside repository path", "/tmp/repository/context"],
     ["containing repository path", "/tmp"],
+    ["filesystem root", "/"],
     ["worktree root", "/tmp/worktrees"],
     ["inside worktree root", "/tmp/worktrees/context"],
     ["containing worktree root", "/tmp"],

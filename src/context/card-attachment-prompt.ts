@@ -1,7 +1,10 @@
 import fs from "node:fs";
 
 import { resolveCardAttachmentPath } from "./card-context-storage.js";
-import type { CardAttachmentManifest } from "./materialize-card-attachments.js";
+import type {
+  CardAttachmentManifest,
+  CardAttachmentManifestEntry,
+} from "./materialize-card-attachments.js";
 
 export interface CardAttachmentPromptContext {
   manifest: CardAttachmentManifest;
@@ -18,6 +21,93 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+function hasControlCharacter(value: string): boolean {
+  return Array.from(value).some((character) => {
+    const code = character.codePointAt(0);
+
+    return (
+      code !== undefined && (code <= 0x1f || (code >= 0x7f && code <= 0x9f))
+    );
+  });
+}
+
+function isUsableExternalUrl(value: string): boolean {
+  try {
+    const url = new URL(value.trim());
+
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function assertExactKeys(
+  value: Record<string, unknown>,
+  keys: readonly string[],
+  description: string,
+): void {
+  const allowedKeys = new Set(keys);
+  const unexpectedKey = Object.keys(value).find((key) => !allowedKeys.has(key));
+
+  if (unexpectedKey !== undefined) {
+    throw new Error(
+      `${description} contains unsupported field "${unexpectedKey}"`,
+    );
+  }
+}
+
+function validateManifestEntry(
+  value: unknown,
+  index: number,
+): asserts value is CardAttachmentManifestEntry {
+  const description = `Cannot expose Trello attachment ${index}`;
+
+  if (!isRecord(value)) {
+    throw new Error(
+      `${description}: materialized manifest entry is not an object`,
+    );
+  }
+
+  assertExactKeys(
+    value,
+    ["id", "name", "mimeType", "bytes", "url", "isUpload", "localFilename"],
+    description,
+  );
+
+  if (
+    typeof value.id !== "string" ||
+    typeof value.name !== "string" ||
+    (typeof value.mimeType !== "string" && value.mimeType !== null) ||
+    (typeof value.bytes !== "string" && value.bytes !== null) ||
+    typeof value.url !== "string" ||
+    typeof value.isUpload !== "boolean" ||
+    (typeof value.localFilename !== "string" && value.localFilename !== null) ||
+    value.id.trim().length === 0 ||
+    value.url.trim().length === 0 ||
+    (!value.isUpload && !isUsableExternalUrl(value.url)) ||
+    hasControlCharacter(value.id) ||
+    hasControlCharacter(value.name) ||
+    hasControlCharacter(value.url) ||
+    (typeof value.mimeType === "string" &&
+      hasControlCharacter(value.mimeType)) ||
+    (typeof value.bytes === "string" && hasControlCharacter(value.bytes))
+  ) {
+    throw new Error(
+      `${description}: materialized manifest entry has invalid metadata`,
+    );
+  }
+
+  if (value.isUpload && value.localFilename === null) {
+    throw new Error(
+      `${description}: uploaded attachment has no local filename`,
+    );
+  }
+
+  if (!value.isUpload && value.localFilename !== null) {
+    throw new Error(`${description}: external attachment has a local filename`);
+  }
+}
+
 function getManifestAttachments(
   context: CardAttachmentPromptContext,
 ): CardAttachmentManifest["attachments"] {
@@ -29,22 +119,34 @@ function getManifestAttachments(
     );
   }
 
+  assertExactKeys(
+    manifest,
+    ["attachments"],
+    "Cannot expose Trello card attachments manifest",
+  );
+
+  const ids = new Set<string>();
+  const localFilenames = new Set<string>();
+
   for (const [index, attachment] of manifest.attachments.entries()) {
-    if (
-      !isRecord(attachment) ||
-      typeof attachment.id !== "string" ||
-      typeof attachment.name !== "string" ||
-      (typeof attachment.mimeType !== "string" &&
-        attachment.mimeType !== null) ||
-      (typeof attachment.bytes !== "string" && attachment.bytes !== null) ||
-      typeof attachment.url !== "string" ||
-      typeof attachment.isUpload !== "boolean" ||
-      (typeof attachment.localFilename !== "string" &&
-        attachment.localFilename !== null)
-    ) {
+    validateManifestEntry(attachment, index);
+
+    if (ids.has(attachment.id)) {
       throw new Error(
-        `Cannot expose Trello attachment ${index}: materialized manifest entry has invalid metadata`,
+        `Cannot expose Trello attachment ${index}: duplicate attachment ID "${attachment.id}"`,
       );
+    }
+
+    ids.add(attachment.id);
+
+    if (attachment.localFilename !== null) {
+      if (localFilenames.has(attachment.localFilename)) {
+        throw new Error(
+          `Cannot expose Trello attachment ${index}: duplicate local filename "${attachment.localFilename}"`,
+        );
+      }
+
+      localFilenames.add(attachment.localFilename);
     }
   }
 

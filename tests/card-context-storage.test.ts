@@ -84,6 +84,28 @@ describe("card context storage", () => {
     expect(fs.statSync(paths.attachmentsDirectory).isDirectory()).toBe(true);
   });
 
+  it("accepts a context directory created concurrently", () => {
+    const root = path.join(makeTemporaryDirectory(), "context-root");
+    const paths = resolveCardContextPaths(root, "project-one", "card-one");
+    const originalMkdirSync = fs.mkdirSync;
+
+    vi.spyOn(fs, "mkdirSync").mockImplementation((targetPath, options) => {
+      if (targetPath.toString() === root) {
+        originalMkdirSync(targetPath, options);
+        const error = new Error("already exists") as NodeJS.ErrnoException;
+        error.code = "EEXIST";
+        throw error;
+      }
+
+      return originalMkdirSync(targetPath, options);
+    });
+
+    expect(() =>
+      createCardContextDirectories(root, "project-one", "card-one"),
+    ).not.toThrow();
+    expect(fs.lstatSync(paths.contextDirectory).isDirectory()).toBe(true);
+  });
+
   it.each([
     ["blank", ""],
     ["whitespace", "  "],
