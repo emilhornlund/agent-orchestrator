@@ -7,6 +7,7 @@ import type { GitClient } from "../src/git/git-client.js";
 import type { GitHubClient } from "../src/github/github-client.js";
 import { Logger } from "../src/logging/logger.js";
 import { getFailureContext } from "../src/orchestrator/failure-diagnostic.js";
+import { RetryableGitHubReconciliationError } from "../src/orchestrator/github-reconciliation-error.js";
 import {
   appendSessionLog,
   getSessionLogPath,
@@ -464,6 +465,41 @@ describe("reconcileReviewCards", () => {
     });
 
     expect(trello.moveCard).not.toHaveBeenCalled();
+  });
+
+  it.each([500, 502, 503, 504])(
+    "keeps a Human Review card unchanged for a retryable HTTP %s failure",
+    async (status) => {
+      const trello = trelloFor(card());
+      const github = {
+        findPullRequestState: vi
+          .fn()
+          .mockRejectedValue(new Error(`GitHub API returned HTTP ${status}`)),
+      } as unknown as GitHubClient;
+
+      await expect(
+        reconcileReviewCards(trello, {} as GitClient, github, project),
+      ).rejects.toBeInstanceOf(RetryableGitHubReconciliationError);
+
+      expect(trello.moveCard).not.toHaveBeenCalled();
+      expect(trello.addComment).not.toHaveBeenCalled();
+    },
+  );
+
+  it("handles an authentication failure immediately instead of retrying it", async () => {
+    const trello = trelloFor(card());
+    const github = {
+      findPullRequestState: vi
+        .fn()
+        .mockRejectedValue(new Error("HTTP 401: Bad credentials")),
+    } as unknown as GitHubClient;
+
+    await expect(
+      reconcileReviewCards(trello, {} as GitClient, github, project),
+    ).rejects.not.toBeInstanceOf(RetryableGitHubReconciliationError);
+
+    expect(trello.moveCard).not.toHaveBeenCalled();
+    expect(trello.addComment).not.toHaveBeenCalled();
   });
 
   it("keeps the session log when moving a merged card to Done fails", async () => {

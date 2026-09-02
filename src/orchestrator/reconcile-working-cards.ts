@@ -25,6 +25,7 @@ import {
   annotateFailure,
   getExistingSessionLogPath,
 } from "./failure-diagnostic.js";
+import { githubReconciliationError } from "./github-reconciliation-error.js";
 import type { ReviewChangeRequest } from "./reconcile-review-cards.js";
 import { getElapsedWorkflowTime } from "./workflow-duration.js";
 import { getWorkflowKind, type WorkflowKind } from "./workflow-kind.js";
@@ -84,15 +85,13 @@ export async function reconcileClaimedCard(
         return false;
       }
     } catch (error) {
-      const message = getErrorMessage(error);
-      const reconciliationError = new WorkflowError(
-        "Git/GitHub",
-        `Could not reconcile claimed Working card while checking pull request state: ${message}`,
-        { cause: error },
+      throw githubReconciliationError(
+        project.id,
+        card.id,
+        "pull request state",
+        error,
+        `Could not reconcile claimed Working card while checking pull request state: ${getErrorMessage(error)}`,
       );
-
-      annotateCardFailure(reconciliationError, project.id, card.id);
-      throw reconciliationError;
     }
 
     if (pullRequestState !== null && isMergedPullRequest(pullRequestState)) {
@@ -135,15 +134,13 @@ export async function reconcileClaimedCard(
       return false;
     }
   } catch (error) {
-    const message = getErrorMessage(error);
-    const reconciliationError = new WorkflowError(
-      "Git/GitHub",
-      `Could not reconcile claimed Working card: ${message}`,
-      { cause: error },
+    throw githubReconciliationError(
+      project.id,
+      card.id,
+      "pull request",
+      error,
+      `Could not reconcile claimed Working card: ${getErrorMessage(error)}`,
     );
-
-    annotateCardFailure(reconciliationError, project.id, card.id);
-    throw reconciliationError;
   }
 
   if (!pullRequest) {
@@ -165,15 +162,13 @@ export async function reconcileClaimedCard(
         return false;
       }
     } catch (error) {
-      const message = getErrorMessage(error);
-      const reconciliationError = new WorkflowError(
-        "Git/GitHub",
-        `Could not check requested changes for claimed Working card: ${message}`,
-        { cause: error },
+      throw githubReconciliationError(
+        project.id,
+        card.id,
+        "requested changes",
+        error,
+        `Could not check requested changes for claimed Working card: ${getErrorMessage(error)}`,
       );
-
-      annotateCardFailure(reconciliationError, project.id, card.id);
-      throw reconciliationError;
     }
   }
 
@@ -553,15 +548,13 @@ async function reconcileReadyWorkingCard(
         return null;
       }
     } catch (error) {
-      const message = getErrorMessage(error);
-      const reconciliationError = new WorkflowError(
-        "Git/GitHub",
-        `Could not reconcile Working card while checking pull request state: ${message}`,
-        { cause: error },
+      throw githubReconciliationError(
+        project.id,
+        card.id,
+        "pull request state",
+        error,
+        `Could not reconcile Working card while checking pull request state: ${getErrorMessage(error)}`,
       );
-
-      annotateCardFailure(reconciliationError, project.id, card.id);
-      throw reconciliationError;
     }
 
     if (pullRequestState !== null && isMergedPullRequest(pullRequestState)) {
@@ -604,16 +597,13 @@ async function reconcileReadyWorkingCard(
       return null;
     }
   } catch (error) {
-    const message = getErrorMessage(error);
-
-    const reconciliationError = new WorkflowError(
-      "Git/GitHub",
-      `Could not reconcile Working card: ${message}`,
-      { cause: error },
+    throw githubReconciliationError(
+      project.id,
+      card.id,
+      "pull request",
+      error,
+      `Could not reconcile Working card: ${getErrorMessage(error)}`,
     );
-
-    annotateCardFailure(reconciliationError, project.id, card.id);
-    throw reconciliationError;
   }
 
   if (!pullRequest) {
@@ -654,16 +644,13 @@ async function reconcileReadyWorkingCard(
       return null;
     }
   } catch (error) {
-    const message = getErrorMessage(error);
-
-    const reconciliationError = new WorkflowError(
-      "Git/GitHub",
-      `Could not check requested changes for Working card: ${message}`,
-      { cause: error },
+    throw githubReconciliationError(
+      project.id,
+      card.id,
+      "requested changes",
+      error,
+      `Could not check requested changes for Working card: ${getErrorMessage(error)}`,
     );
-
-    annotateCardFailure(reconciliationError, project.id, card.id);
-    throw reconciliationError;
   }
 
   if (changesRequestedPullRequest) {
@@ -837,16 +824,13 @@ async function reconcileReviewToWorkingCard(
       return null;
     }
   } catch (error) {
-    const message = getErrorMessage(error);
-
-    const reconciliationError = new WorkflowError(
-      "Git/GitHub",
-      `Could not reconcile Working card moved from Human Review: ${message}`,
-      { cause: error },
+    throw githubReconciliationError(
+      project.id,
+      card.id,
+      "pull request",
+      error,
+      `Could not reconcile Working card moved from Human Review: ${getErrorMessage(error)}`,
     );
-
-    annotateCardFailure(reconciliationError, project.id, card.id);
-    throw reconciliationError;
   }
 
   if (!pullRequest) {
@@ -878,16 +862,13 @@ async function reconcileReviewToWorkingCard(
       return null;
     }
   } catch (error) {
-    const message = getErrorMessage(error);
-
-    const reconciliationError = new WorkflowError(
-      "Git/GitHub",
-      `Could not check requested changes for Working card moved from Human Review: ${message}`,
-      { cause: error },
+    throw githubReconciliationError(
+      project.id,
+      card.id,
+      "requested changes",
+      error,
+      `Could not check requested changes for Working card moved from Human Review: ${getErrorMessage(error)}`,
     );
-
-    annotateCardFailure(reconciliationError, project.id, card.id);
-    throw reconciliationError;
   }
 
   if (!changesRequestedPullRequest) {

@@ -10,6 +10,7 @@ vi.mock("node:child_process", () => ({
 
 import {
   GitHubClient,
+  isRetryableGitHubError,
   type RunGitHubCommand,
 } from "../src/github/github-client.js";
 
@@ -37,6 +38,42 @@ describe("GitHubClient", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+  });
+
+  it.each([500, 502, 503, 504])(
+    "classifies HTTP %s as a retryable GitHub failure",
+    (status) => {
+      expect(
+        isRetryableGitHubError(
+          new Error(`GitHub API returned HTTP ${status}: temporary outage`),
+        ),
+      ).toBe(true);
+    },
+  );
+
+  it.each([
+    "GitHub API returned HTTP 403: API rate limit exceeded for user ID 123",
+    "GitHub API returned HTTP 403: You have exceeded a secondary rate limit",
+  ])("classifies rate-limit failures as retryable: %s", (message) => {
+    expect(isRetryableGitHubError(new Error(message))).toBe(true);
+  });
+
+  it.each([
+    "temporary connectivity failure",
+    "connect ECONNRESET",
+    "getaddrinfo ETIMEDOUT",
+    "request timed out",
+  ])("classifies %s as a retryable GitHub failure", (message) => {
+    expect(isRetryableGitHubError(new Error(message))).toBe(true);
+  });
+
+  it.each([
+    "HTTP 401: Bad credentials",
+    "HTTP 403: Resource access denied",
+    "GitHub CLI returned an invalid pull request state list",
+    "GitHub configuration is invalid",
+  ])("does not classify %s as retryable", (message) => {
+    expect(isRetryableGitHubError(new Error(message))).toBe(false);
   });
 
   it("creates a pull request through the injected command runner", async () => {

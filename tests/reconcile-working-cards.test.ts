@@ -8,6 +8,7 @@ import type { ProjectConfig } from "../src/config/config.js";
 import type { GitClient } from "../src/git/git-client.js";
 import type { GitHubClient } from "../src/github/github-client.js";
 import { getFailureContext } from "../src/orchestrator/failure-diagnostic.js";
+import { RetryableGitHubReconciliationError } from "../src/orchestrator/github-reconciliation-error.js";
 import {
   reconcileClaimedCard,
   reconcileWorkingCards,
@@ -371,6 +372,28 @@ describe("reconcileWorkingCards", () => {
       pullRequestUrl: "https://github.com/owner/repo/pull/1",
       feedback: "Fix the regression.",
     });
+
+    expect(trello.moveCard).not.toHaveBeenCalled();
+  });
+
+  it("leaves a Working card unchanged when its requested-changes lookup times out", async () => {
+    const trello = {
+      getCards: vi.fn().mockResolvedValue([card()]),
+      getLatestListTransition: vi.fn().mockResolvedValue(transition("review")),
+      moveCard: vi.fn(),
+    } as unknown as TrelloClient;
+    const github = {
+      findPullRequest: vi.fn().mockResolvedValue({
+        url: "https://github.com/owner/repo/pull/1",
+      }),
+      findChangesRequestedPullRequest: vi
+        .fn()
+        .mockRejectedValue(new Error("GitHub request timed out")),
+    } as unknown as GitHubClient;
+
+    await expect(
+      reconcileWorkingCards(trello, {} as GitClient, github, project),
+    ).rejects.toBeInstanceOf(RetryableGitHubReconciliationError);
 
     expect(trello.moveCard).not.toHaveBeenCalled();
   });
