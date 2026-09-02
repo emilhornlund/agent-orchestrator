@@ -1,4 +1,8 @@
 import type { ProjectConfig } from "../config/config.js";
+import {
+  withActiveCardContext,
+  withActiveProjectContext,
+} from "../context/active-card-context.js";
 import { type CardAttachmentPromptContext } from "../context/card-attachment-prompt.js";
 import {
   materializeCardAttachments,
@@ -179,32 +183,45 @@ export async function pollProject(
     return;
   }
 
-  const workingChangeRequest = await reconcileWorkingCards(
-    trello,
-    git,
-    github,
-    project,
-    emailNotifier,
-    signal,
+  const reconciliation = await withActiveProjectContext(
+    project.id,
+    async () => {
+      const workingChangeRequest = await reconcileWorkingCards(
+        trello,
+        git,
+        github,
+        project,
+        emailNotifier,
+        signal,
+      );
+
+      if (signal.aborted) {
+        return undefined;
+      }
+
+      const reviewChangeRequest = await reconcileReviewCards(
+        trello,
+        git,
+        github,
+        project,
+        { moveRequestedChanges: workingChangeRequest === null },
+        emailNotifier,
+        signal,
+      );
+
+      if (signal.aborted) {
+        return undefined;
+      }
+
+      return { workingChangeRequest, reviewChangeRequest };
+    },
   );
 
-  if (signal.aborted) {
+  if (reconciliation === undefined) {
     return;
   }
 
-  const reviewChangeRequest = await reconcileReviewCards(
-    trello,
-    git,
-    github,
-    project,
-    { moveRequestedChanges: workingChangeRequest === null },
-    emailNotifier,
-    signal,
-  );
-
-  if (signal.aborted) {
-    return;
-  }
+  const { workingChangeRequest, reviewChangeRequest } = reconciliation;
 
   if (reviewChangeRequest && workingChangeRequest) {
     const conflictingWorkflowError = new WorkflowError(
@@ -234,16 +251,18 @@ export async function pollProject(
   }
 
   if (reviewChangeRequest) {
-    await processReviewChangeRequest(
-      trello,
-      git,
-      github,
-      opencode,
-      commands,
-      project,
-      reviewChangeRequest,
-      signal,
-      emailNotifier,
+    await withActiveCardContext(project.id, reviewChangeRequest.card.id, () =>
+      processReviewChangeRequest(
+        trello,
+        git,
+        github,
+        opencode,
+        commands,
+        project,
+        reviewChangeRequest,
+        signal,
+        emailNotifier,
+      ),
     );
 
     return;
@@ -252,44 +271,56 @@ export async function pollProject(
   if (workingChangeRequest) {
     if (isImplementationWorkingCard(workingChangeRequest)) {
       if (workingChangeRequest.workflow === "refinement") {
-        await processRefinementCard(
-          trello,
-          git,
-          opencode,
-          project,
-          workingChangeRequest.card,
-          signal,
-          undefined,
-          emailNotifier,
+        await withActiveCardContext(
+          project.id,
+          workingChangeRequest.card.id,
+          () =>
+            processRefinementCard(
+              trello,
+              git,
+              opencode,
+              project,
+              workingChangeRequest.card,
+              signal,
+              undefined,
+              emailNotifier,
+            ),
         );
       } else {
-        await processImplementationCard(
-          trello,
-          git,
-          github,
-          opencode,
-          commands,
-          project,
-          workingChangeRequest.card,
-          signal,
-          undefined,
-          emailNotifier,
+        await withActiveCardContext(
+          project.id,
+          workingChangeRequest.card.id,
+          () =>
+            processImplementationCard(
+              trello,
+              git,
+              github,
+              opencode,
+              commands,
+              project,
+              workingChangeRequest.card,
+              signal,
+              undefined,
+              emailNotifier,
+            ),
         );
       }
 
       return;
     }
 
-    await processReviewChangeRequest(
-      trello,
-      git,
-      github,
-      opencode,
-      commands,
-      project,
-      workingChangeRequest,
-      signal,
-      emailNotifier,
+    await withActiveCardContext(project.id, workingChangeRequest.card.id, () =>
+      processReviewChangeRequest(
+        trello,
+        git,
+        github,
+        opencode,
+        commands,
+        project,
+        workingChangeRequest,
+        signal,
+        emailNotifier,
+      ),
     );
 
     return;
@@ -307,15 +338,17 @@ export async function pollProject(
       return;
     }
 
-    await processRefinementCard(
-      trello,
-      git,
-      opencode,
-      project,
-      refinementClaim.card,
-      signal,
-      refinementClaim.worktree,
-      emailNotifier,
+    await withActiveCardContext(project.id, refinementClaim.card.id, () =>
+      processRefinementCard(
+        trello,
+        git,
+        opencode,
+        project,
+        refinementClaim.card,
+        signal,
+        refinementClaim.worktree,
+        emailNotifier,
+      ),
     );
 
     return;
@@ -339,14 +372,16 @@ export async function pollProject(
 
   cardLog.event(`Claimed card: ${card.name}`);
 
-  const reconciled = await reconcileClaimedCard(
-    trello,
-    git,
-    github,
-    project,
-    card,
-    emailNotifier,
-    signal,
+  const reconciled = await withActiveCardContext(project.id, card.id, () =>
+    reconcileClaimedCard(
+      trello,
+      git,
+      github,
+      project,
+      card,
+      emailNotifier,
+      signal,
+    ),
   );
 
   if (reconciled) {
@@ -357,17 +392,19 @@ export async function pollProject(
     return;
   }
 
-  await processImplementationCard(
-    trello,
-    git,
-    github,
-    opencode,
-    commands,
-    project,
-    card,
-    signal,
-    implementationClaim.worktree,
-    emailNotifier,
+  await withActiveCardContext(project.id, card.id, () =>
+    processImplementationCard(
+      trello,
+      git,
+      github,
+      opencode,
+      commands,
+      project,
+      card,
+      signal,
+      implementationClaim.worktree,
+      emailNotifier,
+    ),
   );
 }
 

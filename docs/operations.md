@@ -91,11 +91,32 @@ committed or included in task branches, and should be backed up, retained, and a
 repositories. Successful attachment reconciliation removes only stale regular files claimed by the prior manifest; it
 does not remove unknown files.
 
-The service does not automatically remove card context after a successful, failed, resumed, or retried card. A failed
+The service does not remove card context immediately after a successful, failed, resumed, or retried card. A failed
 preparation keeps the last successfully published manifest and its materialized files and removes only partial files created
 by that preparation. Stale managed files are cleaned as part of a successful manifest publication. Unknown files remain
-available for diagnosis and are never removed as part of attachment reconciliation.
-Any operator cleanup must be limited to known card-context paths below the configured `contextRoot`.
+available for diagnosis and are never removed as part of attachment reconciliation. Scheduled context retention later removes
+the expired card context directory as a unit; there is no separate operator-triggered cleanup command. Any manual cleanup must
+be limited to known card-context paths below the configured `contextRoot`.
+
+### Card context retention
+
+`workflow.contextRetentionDays` defaults to `14`. Cleanup runs once during startup and once per day while the orchestrator is
+running, and its periodic timer is stopped during shutdown. Expiration uses the card context directory's filesystem
+modification time and the cleanup-time cutoff: only a directory strictly older than the cutoff is removed. A directory at the
+exact cutoff or newer is retained.
+
+The scanner examines only the configured project directories and their direct card context directories under:
+
+```text
+<contextRoot>/<project-id>/<card-id>/
+```
+
+It never removes the context root, project directories merely because they are empty, unrelated entries, repositories,
+worktree roots, worktrees, or any path outside `contextRoot`. Active cards are protected for the full processing interval,
+including attachment reconciliation and OpenCode stages. Missing paths and concurrent removals are harmless; scan,
+inspection, and removal failures include the affected path and reason in diagnostics while independent candidates continue.
+Symbolic links at managed paths, and symbolic links found inside a candidate context, are skipped without following or removing
+them. The configured context root is normalized and each candidate is checked against that boundary.
 
 ## Isolated worktrees
 

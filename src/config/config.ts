@@ -216,6 +216,7 @@ const configSchema = z
     workflow: z.strictObject({
       pollIntervalSeconds: z.number().int().positive(),
       logRetentionDays: z.number().int().positive().default(14),
+      contextRetentionDays: z.number().int().positive().default(14),
       contextRoot: absolutePath.default(DEFAULT_CONTEXT_ROOT),
       maxAttachmentBytes: z.number().int().positive().safe().optional(),
       maxTotalAttachmentBytes: z.number().int().positive().safe().optional(),

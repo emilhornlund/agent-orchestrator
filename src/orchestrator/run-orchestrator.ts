@@ -1,4 +1,8 @@
 import type { Config } from "../config/config.js";
+import {
+  cleanupCardContextRetention,
+  contextRetentionIntervalMilliseconds,
+} from "../context/card-context-retention.js";
 import type { GitClient } from "../git/git-client.js";
 import type { GitHubClient } from "../github/github-client.js";
 import {
@@ -197,9 +201,25 @@ export async function runOrchestrator(
   emailNotifier?: EmailNotifier,
 ): Promise<void> {
   const pollIntervalMilliseconds = config.workflow.pollIntervalSeconds * 1000;
-  const retentionTimer = setInterval(() => {
-    cleanupLogRetention(config.workflow.logRetentionDays);
-  }, logRetentionIntervalMilliseconds);
+  const retentionTimer = setInterval(
+    () => {
+      if (signal.aborted) {
+        return;
+      }
+
+      cleanupLogRetention(config.workflow.logRetentionDays);
+      cleanupCardContextRetention(
+        config.workflow.contextRoot,
+        config.workflow.contextRetentionDays,
+        new Date(),
+        config.projects.map((project) => project.id),
+      );
+    },
+    Math.max(
+      logRetentionIntervalMilliseconds,
+      contextRetentionIntervalMilliseconds,
+    ),
+  );
 
   console.log("");
 

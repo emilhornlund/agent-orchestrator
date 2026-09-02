@@ -121,6 +121,7 @@ notifications:
 workflow:
   pollIntervalSeconds: 15
   logRetentionDays: 14
+  contextRetentionDays: 14
   # Optional; defaults to /opt/.agent-context. Keep this outside repositories and worktree roots.
   contextRoot: "/opt/.agent-context"
   # Optional; defaults to 50 MiB per uploaded file and 200 MiB for new downloads per preparation.
