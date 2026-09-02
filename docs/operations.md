@@ -58,6 +58,22 @@ current Trello response are removed when they are regular files claimed by the p
 file after a replacement is published. Unknown and unrelated context files are retained; the service does not delete
 arbitrary files.
 
+After every successful refresh, the existing project- and card-scoped logger emits one concise reconciliation event. Its format is:
+
+```text
+Trello attachment context refreshed: reused uploaded attachments: 1; newly downloaded uploaded attachments: 1; removed stale managed attachments: 1; external URL attachments: 1; total current attachments: 3
+```
+
+The counts mean:
+
+- `reused uploaded attachments`: current uploads whose stored metadata and existing regular materialized file were reused.
+- `newly downloaded uploaded attachments`: new or changed uploads materialized during this refresh.
+- `removed stale managed attachments`: regular files claimed by the previous manifest that were removed because they are no longer current, including replaced uploads. Unknown and unrelated files are not counted or removed.
+- `external URL attachments`: external attachments in the current Trello response. They are metadata-only and are never downloaded.
+- `total current attachments`: all entries in the successfully published current manifest, including uploads and external URLs.
+
+All categories are logged when zero, including for an empty card. A retrieval, validation, download, manifest, filesystem, stale-file, or abort failure emits no successful summary. The card-scoped failure diagnostic identifies attachment context preparation and its reason through the normal failure flow. Attachment contents, response bodies, credentials, authenticated download URLs, and other sensitive request data are not included in attachment summaries or failure diagnostics.
+
 Each new upload is limited to `maxAttachmentBytes`, which defaults to 50 MiB, and all new downloads in one preparation are
 limited to `maxTotalAttachmentBytes`, which defaults to 200 MiB. The limits apply to declared metadata, response
 `Content-Length`, and streamed bytes, including when a size is unknown or unusable. The optional settings are positive safe

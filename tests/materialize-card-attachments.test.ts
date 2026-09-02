@@ -96,6 +96,85 @@ afterEach(() => {
 });
 
 describe("materializeCardAttachments", () => {
+  it("reports reused, downloaded, removed, external, and total reconciliation counts", async () => {
+    const root = makeTemporaryRoot();
+    const stale = upload("stale", "stale.txt");
+    const reused = upload("reused", "reused.txt");
+    const attachments = source([stale, reused]);
+    const onSuccessfulReconciliation = vi.fn();
+
+    await materializeCardAttachments(
+      attachments,
+      root,
+      "project-one",
+      "card-1",
+    );
+
+    const link = external("link", "reference");
+    const replaced = { ...stale, bytes: "changed" };
+    attachments.getCardAttachments.mockResolvedValue([reused, replaced, link]);
+
+    await materializeCardAttachments(
+      attachments,
+      root,
+      "project-one",
+      "card-1",
+      { onSuccessfulReconciliation },
+    );
+
+    expect(onSuccessfulReconciliation).toHaveBeenCalledOnce();
+    expect(onSuccessfulReconciliation).toHaveBeenCalledWith({
+      reusedUploadedAttachments: 1,
+      downloadedUploadedAttachments: 1,
+      removedStaleManagedAttachments: 1,
+      externalUrlAttachments: 1,
+      totalCurrentAttachments: 3,
+    });
+  });
+
+  it("reports zero for every category when an empty card refresh succeeds", async () => {
+    const root = makeTemporaryRoot();
+    const onSuccessfulReconciliation = vi.fn();
+
+    await materializeCardAttachments(
+      source([]),
+      root,
+      "project-one",
+      "card-1",
+      { onSuccessfulReconciliation },
+    );
+
+    expect(onSuccessfulReconciliation).toHaveBeenCalledWith({
+      reusedUploadedAttachments: 0,
+      downloadedUploadedAttachments: 0,
+      removedStaleManagedAttachments: 0,
+      externalUrlAttachments: 0,
+      totalCurrentAttachments: 0,
+    });
+  });
+
+  it("does not report a successful refresh when attachment retrieval fails", async () => {
+    const root = makeTemporaryRoot();
+    const attachments = source([]);
+    const retrievalError = new Error(
+      "request failed: Authorization: Bearer trello-secret-credential",
+    );
+    const onSuccessfulReconciliation = vi.fn();
+    attachments.getCardAttachments.mockRejectedValue(retrievalError);
+
+    const refresh = materializeCardAttachments(
+      attachments,
+      root,
+      "project-one",
+      "card-1",
+      { onSuccessfulReconciliation },
+    );
+
+    await expect(refresh).rejects.toThrow("Authorization: Bearer [redacted]");
+    await expect(refresh).rejects.not.toThrow("trello-secret-credential");
+    expect(onSuccessfulReconciliation).not.toHaveBeenCalled();
+  });
+
   it("downloads uploads and writes ordered metadata with external links", async () => {
     const root = makeTemporaryRoot();
     const file = upload("file-1", "design.bin", "4");
@@ -310,10 +389,14 @@ describe("materializeCardAttachments", () => {
       "file-1": new Response("first"),
       "file-2": new Error("connection reset"),
     });
+    const onSuccessfulReconciliation = vi.fn();
 
     await expect(
-      materializeCardAttachments(attachments, root, "project-one", "card-1"),
+      materializeCardAttachments(attachments, root, "project-one", "card-1", {
+        onSuccessfulReconciliation,
+      }),
     ).rejects.toThrow("connection reset");
+    expect(onSuccessfulReconciliation).not.toHaveBeenCalled();
 
     const paths = contextPaths(root);
     expect(fs.readdirSync(paths.attachments)).toEqual([]);
@@ -501,10 +584,14 @@ describe("materializeCardAttachments", () => {
         return originalUnlink(filePath);
       });
     attachments.getCardAttachments.mockResolvedValue([]);
+    const onSuccessfulReconciliation = vi.fn();
 
     await expect(
-      materializeCardAttachments(attachments, root, "project-one", "card-1"),
+      materializeCardAttachments(attachments, root, "project-one", "card-1", {
+        onSuccessfulReconciliation,
+      }),
     ).rejects.toThrow("permission denied");
+    expect(onSuccessfulReconciliation).not.toHaveBeenCalled();
 
     expect(fs.readFileSync(paths.manifest, "utf8")).toBe(previousManifest);
     expect(
@@ -545,10 +632,14 @@ describe("materializeCardAttachments", () => {
         return originalRename(sourcePath, destinationPath);
       },
     );
+    const onSuccessfulReconciliation = vi.fn();
 
     await expect(
-      materializeCardAttachments(attachments, root, "project-one", "card-1"),
+      materializeCardAttachments(attachments, root, "project-one", "card-1", {
+        onSuccessfulReconciliation,
+      }),
     ).rejects.toThrow("manifest publication failed");
+    expect(onSuccessfulReconciliation).not.toHaveBeenCalled();
     expect(fs.readFileSync(paths.manifest, "utf8")).toBe(previousManifest);
     expect(
       fs.readFileSync(path.join(paths.attachments, "stale.txt"), "utf8"),

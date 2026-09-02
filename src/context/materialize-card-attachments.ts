@@ -25,10 +25,21 @@ export interface CardAttachmentManifest {
   attachments: CardAttachmentManifestEntry[];
 }
 
+export interface CardAttachmentReconciliationSummary {
+  reusedUploadedAttachments: number;
+  downloadedUploadedAttachments: number;
+  removedStaleManagedAttachments: number;
+  externalUrlAttachments: number;
+  totalCurrentAttachments: number;
+}
+
 export interface MaterializeCardAttachmentsOptions {
   signal?: AbortSignal;
   maxAttachmentBytes?: number;
   maxTotalAttachmentBytes?: number;
+  onSuccessfulReconciliation?: (
+    summary: CardAttachmentReconciliationSummary,
+  ) => void;
 }
 
 export type TrelloAttachmentSource = Pick<
@@ -68,7 +79,15 @@ class AttachmentsNotRestoredError extends Error {
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  const message = error instanceof Error ? error.message : String(error);
+
+  return message
+    .replace(/\bhttps?:\/\/[^\s<>"']+/gi, "[redacted URL]")
+    .replace(/(\bauthorization\s*:\s*bearer)\s+\S+/gi, "$1 [redacted]")
+    .replace(
+      /\b(authorization\s*:\s*bearer|(?:api[-_ ]?key|token|password|secret))\s*[:=]\s*\S+/gi,
+      "$1=[redacted]",
+    );
 }
 
 function hasErrorCode(error: unknown, code: string): boolean {
@@ -1325,6 +1344,20 @@ export async function materializeCardAttachments(
 
     throw failure;
   }
+
+  options.onSuccessfulReconciliation?.({
+    reusedUploadedAttachments: plannedAttachments.filter(
+      (planned) => planned.attachment.isUpload && planned.reuse,
+    ).length,
+    downloadedUploadedAttachments: plannedAttachments.filter(
+      (planned) => planned.attachment.isUpload && !planned.reuse,
+    ).length,
+    removedStaleManagedAttachments: staleCleanup?.backups.length ?? 0,
+    externalUrlAttachments: manifest.attachments.filter(
+      (attachment) => !attachment.isUpload,
+    ).length,
+    totalCurrentAttachments: manifest.attachments.length,
+  });
 
   return manifest;
 }
