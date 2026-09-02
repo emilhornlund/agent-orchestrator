@@ -91,6 +91,7 @@ function createConfig(
     workflow: {
       pollIntervalSeconds,
       logRetentionDays: 14,
+      contextRoot: "/opt/.agent-context",
     },
     projects,
   };
