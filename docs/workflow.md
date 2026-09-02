@@ -105,14 +105,17 @@ The implementation pass then:
 4. Requires OpenCode to leave repository changes. The configured `validationCommand`, when present, is supplied to sessions
    that modify implementation files; those agents run it before finishing and fix failures caused by their changes. The
    orchestrator does not execute this command itself.
-5. Runs the initial separate OpenCode review session. This review is always run and does not consume a remediation pass.
+5. Refreshes the current Trello attachment context immediately before every automatic review, then runs the initial
+   separate OpenCode review session with compact attachment metadata and usable locations. This review is always run and
+   does not consume a remediation pass.
 6. If a review reports findings and `projects[].opencode.remediation.maxPasses` has remaining capacity, refreshes the card
    context immediately before each separate remediation session and checks that it left repository changes. The pass number
    and configured limit are logged with the project and card context. A new review runs only when another remediation pass
    remains. The default limit is `1`; a value of `0` skips remediation and any follow-up review while continuing through the
    normal post-review flow.
 7. Stops immediately when the initial or an intermediate review passes. After the final allowed remediation pass, the workflow
-   continues directly to the normal post-review flow without another automated review.
+   continues directly to the normal post-review flow without another automated review. Review attachment context is refreshed
+   separately for each review and is not reused from implementation or remediation.
 8. Runs a separate OpenCode commit session with the configured Git identity. The session must create a commit and leave a
    clean worktree.
 9. Publishes or reuses the task pull request. With `autoMerge: false`, the card moves to `Human Review`; with `autoMerge: true`,

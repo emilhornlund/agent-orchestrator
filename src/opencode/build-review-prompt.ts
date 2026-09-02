@@ -1,6 +1,13 @@
 import type { TrelloCard } from "../trello/trello-client.js";
+import {
+  buildCardAttachmentPromptLines,
+  type CardAttachmentPromptContext,
+} from "../context/card-attachment-prompt.js";
 
-export function buildReviewPrompt(card: TrelloCard): string {
+export function buildReviewPrompt(
+  card: TrelloCard,
+  attachmentContext?: CardAttachmentPromptContext,
+): string {
   const description = card.desc.trim();
 
   return [
@@ -11,6 +18,7 @@ export function buildReviewPrompt(card: TrelloCard): string {
     description.length > 0
       ? `Description:\n${description}`
       : "No additional task description was provided.",
+    ...buildCardAttachmentPromptLines(attachmentContext),
     "",
     "Inspect the repository instructions, complete Git diff/status, relevant implementation, and relevant tests.",
     "",

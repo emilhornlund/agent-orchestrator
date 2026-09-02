@@ -20,8 +20,8 @@ When a card context is created, its exact layout is:
 ```
 
 Before each applicable OpenCode session starts for a card, the current Trello attachment metadata is reconciled into this
-directory. Refinement, implementation, automatic remediation, and human review-feedback implementation sessions use the
-context; automated review-only and commit sessions do not.
+directory. Refinement, implementation, automatic review, automatic remediation, and human review-feedback implementation
+sessions use the context; commit sessions do not.
 Uploaded Trello files are downloaded with Trello authentication under `attachments/`; external URL attachments are never
 dereferenced and have no local file. `attachments.json` contains the current attachments in Trello order after a successful
 reconciliation:
@@ -65,9 +65,9 @@ integers in `workflow`. A failed, aborted, over-limit, or filesystem-failed tran
 manifest claiming success, and prevents OpenCode from starting. Existing manifests and managed paths are validated with
 `lstat`; malformed manifests, traversal paths, symlinks, and unexpected file types are refused.
 
-When a card has attachments, the refinement, implementation, automatic remediation, and review-feedback remediation
-prompts include a compact section containing the attachment name, a non-blank MIME type when Trello provides one, and a
-usable location. The section is omitted when the card has no attachments. Its format is:
+When a card has attachments, the refinement, implementation, automatic review, automatic remediation, and review-feedback
+remediation prompts include a compact section containing the attachment name, a non-blank MIME type when Trello provides
+one, and a usable location. The section is omitted when the card has no attachments. Its format is:
 
 ```text
 Trello card attachments:
@@ -77,8 +77,8 @@ These attachments are part of the Trello task context. Inspect them when relevan
 ```
 
 Uploaded attachments are represented by the absolute path to the downloaded file. External-link attachments are represented
-by their URL and are never dereferenced or assigned a local path. The automated review-only and commit prompts do not
-include this section. No attachment contents, excerpts, or other full attachment data are placed in any prompt.
+by their URL and are never dereferenced or assigned a local path. Commit prompts do not include this section. No attachment
+contents, excerpts, or other full attachment data are placed in any prompt.
 
 The path is resolved in the filesystem namespace of the running process. In a local deployment, create or grant write
 permission to the configured root for the service user. In Docker, configure the same absolute path inside the container and
