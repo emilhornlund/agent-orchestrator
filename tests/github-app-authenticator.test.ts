@@ -29,6 +29,10 @@ function response(body: unknown, status = 201): Response {
   return new Response(JSON.stringify(body), { status });
 }
 
+function tokenResponse(token: string, expiresAt: string): Response {
+  return response({ token, expires_at: expiresAt });
+}
+
 describe("GitHubAppAuthenticator", () => {
   it("creates a GitHub-compatible RS256 JWT", () => {
     const jwt = createGitHubAppJwt(
@@ -65,7 +69,9 @@ describe("GitHubAppAuthenticator", () => {
     const readPrivateKey = vi.fn().mockResolvedValue(privateKeyPem);
     const request = vi
       .fn()
-      .mockResolvedValue(response({ token: "installation-token" }));
+      .mockResolvedValue(
+        tokenResponse("installation-token", "2023-11-14T23:00:00Z"),
+      );
     const authenticator = new GitHubAppAuthenticator({
       readPrivateKey,
       request,
@@ -87,6 +93,137 @@ describe("GitHubAppAuthenticator", () => {
         },
       },
     );
+  });
+
+  it("reuses an installation token before its refresh window", async () => {
+    let nowMilliseconds = 1_700_000_000_000;
+    const request = vi
+      .fn()
+      .mockResolvedValue(
+        tokenResponse("installation-token", "2023-11-14T23:00:00Z"),
+      );
+    const authenticator = new GitHubAppAuthenticator({
+      readPrivateKey: vi.fn().mockResolvedValue(privateKeyPem),
+      request,
+      now: () => nowMilliseconds,
+    });
+
+    await expect(authenticator.getInstallationToken(githubApp)).resolves.toBe(
+      "installation-token",
+    );
+    nowMilliseconds += 30 * 60 * 1_000;
+    await expect(authenticator.getInstallationToken(githubApp)).resolves.toBe(
+      "installation-token",
+    );
+
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it("refreshes an installation token at the five-minute boundary", async () => {
+    let nowMilliseconds = 1_700_000_000_000;
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce(
+        tokenResponse("old-installation-token", "2023-11-14T23:00:00Z"),
+      )
+      .mockResolvedValueOnce(
+        tokenResponse("new-installation-token", "2023-11-15T00:00:00Z"),
+      );
+    const authenticator = new GitHubAppAuthenticator({
+      readPrivateKey: vi.fn().mockResolvedValue(privateKeyPem),
+      request,
+      now: () => nowMilliseconds,
+    });
+
+    await expect(authenticator.getInstallationToken(githubApp)).resolves.toBe(
+      "old-installation-token",
+    );
+    nowMilliseconds = Date.parse("2023-11-14T22:55:00Z");
+    await expect(authenticator.getInstallationToken(githubApp)).resolves.toBe(
+      "new-installation-token",
+    );
+
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+
+  it("replaces an expired installation token after a successful exchange", async () => {
+    let nowMilliseconds = Date.parse("2023-11-14T22:00:00Z");
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce(
+        tokenResponse("expired-installation-token", "2023-11-14T22:30:00Z"),
+      )
+      .mockResolvedValueOnce(
+        tokenResponse("replacement-installation-token", "2023-11-15T00:00:00Z"),
+      );
+    const authenticator = new GitHubAppAuthenticator({
+      readPrivateKey: vi.fn().mockResolvedValue(privateKeyPem),
+      request,
+      now: () => nowMilliseconds,
+    });
+
+    await expect(authenticator.getInstallationToken(githubApp)).resolves.toBe(
+      "expired-installation-token",
+    );
+    nowMilliseconds = Date.parse("2023-11-14T22:31:00Z");
+    await expect(authenticator.getInstallationToken(githubApp)).resolves.toBe(
+      "replacement-installation-token",
+    );
+
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps installation tokens separate for different App identities", async () => {
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce(
+        tokenResponse("app-a-token", "2023-11-14T23:00:00Z"),
+      )
+      .mockResolvedValueOnce(
+        tokenResponse("app-b-token", "2023-11-14T23:00:00Z"),
+      );
+    const authenticator = new GitHubAppAuthenticator({
+      readPrivateKey: vi.fn().mockResolvedValue(privateKeyPem),
+      request,
+      now: () => 1_700_000_000_000,
+    });
+
+    await expect(authenticator.getInstallationToken(githubApp)).resolves.toBe(
+      "app-a-token",
+    );
+    await expect(
+      authenticator.getInstallationToken({
+        ...githubApp,
+        appId: "654321",
+      }),
+    ).resolves.toBe("app-b-token");
+
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not cache a response with an invalid expiration", async () => {
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce(
+        response({ token: "uncacheable-token", expires_at: "invalid" }),
+      )
+      .mockResolvedValueOnce(
+        tokenResponse("replacement-token", "2023-11-14T23:00:00Z"),
+      );
+    const authenticator = new GitHubAppAuthenticator({
+      readPrivateKey: vi.fn().mockResolvedValue(privateKeyPem),
+      request,
+      now: () => 1_700_000_000_000,
+    });
+
+    await expect(
+      authenticator.getInstallationToken(githubApp),
+    ).rejects.toBeInstanceOf(GitHubAppApiError);
+    await expect(authenticator.getInstallationToken(githubApp)).resolves.toBe(
+      "replacement-token",
+    );
+
+    expect(request).toHaveBeenCalledTimes(2);
   });
 
   it("does not read a key until token generation is requested", () => {
@@ -211,9 +348,28 @@ describe("GitHubAppAuthenticator", () => {
 
   it.each([
     ["malformed JSON", new Response("not json", { status: 201 })],
-    ["missing token", response({ expires_at: "later" })],
-    ["blank token", response({ token: "  " })],
-    ["non-string token", response({ token: 42 })],
+    ["missing token", response({ expires_at: "2023-11-14T23:00:00Z" })],
+    [
+      "blank token",
+      response({ token: "  ", expires_at: "2023-11-14T23:00:00Z" }),
+    ],
+    [
+      "non-string token",
+      response({ token: 42, expires_at: "2023-11-14T23:00:00Z" }),
+    ],
+    ["missing expiration", response({ token: "installation-token" })],
+    [
+      "blank expiration",
+      response({ token: "installation-token", expires_at: "  " }),
+    ],
+    [
+      "invalid expiration",
+      response({ token: "installation-token", expires_at: "later" }),
+    ],
+    [
+      "non-string expiration",
+      response({ token: "installation-token", expires_at: 42 }),
+    ],
   ])(
     "rejects %s without exposing response data",
     async (_label, tokenResponse) => {

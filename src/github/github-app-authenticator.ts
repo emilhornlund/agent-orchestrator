@@ -8,6 +8,7 @@ const GITHUB_API_URL = "https://api.github.com";
 const GITHUB_API_VERSION = "2022-11-28";
 const JWT_LIFETIME_SECONDS = 9 * 60;
 const JWT_ISSUED_AT_OFFSET_SECONDS = 60;
+const INSTALLATION_TOKEN_REFRESH_WINDOW_MILLISECONDS = 5 * 60 * 1_000;
 
 export type GitHubAppOperation =
   | "configuration"
@@ -133,14 +134,42 @@ export function createGitHubAppJwt(
   return `${signingInput}.${signature.toString("base64url")}`;
 }
 
-function isTokenResponse(value: unknown): value is { token: string } {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "token" in value &&
-    typeof value.token === "string" &&
-    value.token.trim().length > 0
-  );
+interface CachedInstallationToken {
+  readonly token: string;
+  readonly expiresAtMilliseconds: number;
+}
+
+interface InstallationTokenResponse {
+  readonly token: string;
+  readonly expiresAtMilliseconds: number;
+}
+
+function parseTokenResponse(
+  value: unknown,
+): InstallationTokenResponse | undefined {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !("token" in value) ||
+    typeof value.token !== "string" ||
+    value.token.trim().length === 0 ||
+    !("expires_at" in value) ||
+    typeof value.expires_at !== "string" ||
+    value.expires_at.trim().length === 0
+  ) {
+    return undefined;
+  }
+
+  const expiresAtMilliseconds = Date.parse(value.expires_at);
+
+  if (!Number.isFinite(expiresAtMilliseconds)) {
+    return undefined;
+  }
+
+  return {
+    token: value.token,
+    expiresAtMilliseconds,
+  };
 }
 
 const defaultRequest: RequestGitHubAppToken = (input, init) =>
@@ -151,6 +180,11 @@ export class GitHubAppAuthenticator {
   private readonly signJwt: SignGitHubAppJwt;
   private readonly request: RequestGitHubAppToken;
   private readonly now: () => number;
+  private readonly installationTokens = new Map<
+    string,
+    CachedInstallationToken
+  >();
+  private readonly pendingExchanges = new Map<string, Promise<string>>();
 
   constructor(options: GitHubAppAuthenticatorOptions = {}) {
     this.readPrivateKey =
@@ -166,6 +200,48 @@ export class GitHubAppAuthenticator {
   ): Promise<string> {
     validateGithubAppConfig(githubApp);
 
+    const cacheKey = JSON.stringify([
+      githubApp.appId,
+      githubApp.installationId,
+      githubApp.privateKeyPath,
+    ]);
+    const nowMilliseconds = this.now();
+    const cachedToken = this.installationTokens.get(cacheKey);
+
+    if (
+      cachedToken !== undefined &&
+      nowMilliseconds <
+        cachedToken.expiresAtMilliseconds -
+          INSTALLATION_TOKEN_REFRESH_WINDOW_MILLISECONDS
+    ) {
+      return cachedToken.token;
+    }
+
+    const pendingExchange = this.pendingExchanges.get(cacheKey);
+
+    if (pendingExchange !== undefined) {
+      return pendingExchange;
+    }
+
+    const exchange = this.exchangeInstallationToken(
+      githubApp,
+      nowMilliseconds,
+      cacheKey,
+    );
+    this.pendingExchanges.set(cacheKey, exchange);
+
+    try {
+      return await exchange;
+    } finally {
+      this.pendingExchanges.delete(cacheKey);
+    }
+  }
+
+  private async exchangeInstallationToken(
+    githubApp: GitHubAppConfig,
+    nowMilliseconds: number,
+    cacheKey: string,
+  ): Promise<string> {
     let privateKeyPem: string;
 
     try {
@@ -180,7 +256,7 @@ export class GitHubAppAuthenticator {
       jwt = createGitHubAppJwt(
         githubApp.appId,
         privateKeyPem,
-        this.now(),
+        nowMilliseconds,
         this.signJwt,
       );
     } catch {
@@ -221,13 +297,20 @@ export class GitHubAppAuthenticator {
       );
     }
 
-    if (!isTokenResponse(body)) {
+    const tokenResponse = parseTokenResponse(body);
+
+    if (tokenResponse === undefined) {
       throw new GitHubAppApiError(
         "GitHub App installation token exchange returned an invalid token response",
         response.status,
       );
     }
 
-    return body.token;
+    this.installationTokens.set(cacheKey, {
+      token: tokenResponse.token,
+      expiresAtMilliseconds: tokenResponse.expiresAtMilliseconds,
+    });
+
+    return tokenResponse.token;
   }
 }
