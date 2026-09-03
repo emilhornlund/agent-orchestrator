@@ -45,6 +45,7 @@ describe("GitHubCredentialProvider", () => {
 
     expect(getInstallationToken).toHaveBeenCalledWith(
       configuredProject.repository.githubApp,
+      configuredProject.repository.github,
     );
     expect(credential.mode).toBe("github-app");
     expect(credential.environment.GH_TOKEN).toBe(
@@ -112,26 +113,36 @@ describe("GitHubCredentialProvider", () => {
   });
 
   it("does not fall back when App token acquisition fails", async () => {
-    const provider = new GitHubCredentialProvider({
-      authenticator: {
-        getInstallationToken: vi
-          .fn()
-          .mockRejectedValue(new Error("exchange failed")),
-      },
-    });
-    const configuredProject = project("project-a", {
-      appId: "app-a",
-      installationId: "installation-a",
-      privateKeyPath: "/secrets/app-a.pem",
-    });
+    vi.stubEnv("GH_TOKEN", "ambient-pat");
+    vi.stubEnv("GITHUB_TOKEN", "ambient-github-token");
 
-    await expect(provider.resolve(configuredProject)).rejects.toMatchObject({
-      name: "GitHubCredentialResolutionError",
-      projectId: "project-a",
-    });
-    await expect(provider.resolve(configuredProject)).rejects.toThrow(
-      'GitHub authentication failed for project "project-a"',
-    );
+    try {
+      const provider = new GitHubCredentialProvider({
+        authenticator: {
+          getInstallationToken: vi
+            .fn()
+            .mockRejectedValue(new Error("scoped exchange failed")),
+        },
+      });
+      const configuredProject = project("project-a", {
+        appId: "app-a",
+        installationId: "installation-a",
+        privateKeyPath: "/secrets/app-a.pem",
+      });
+
+      await expect(provider.resolve(configuredProject)).rejects.toMatchObject({
+        name: "GitHubCredentialResolutionError",
+        projectId: "project-a",
+      });
+      await expect(provider.resolve(configuredProject)).rejects.toThrow(
+        'GitHub authentication failed for project "project-a"',
+      );
+      await expect(provider.resolve(configuredProject)).rejects.toThrow(
+        'repository "project-a/repository"',
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("keeps concurrent project credentials isolated", async () => {

@@ -90,6 +90,7 @@ export class GitHubCredentialProvider {
     try {
       token = await this.authenticator.getInstallationToken(
         project.repository.githubApp,
+        project.repository.github,
       );
     } catch (error) {
       throw new GitHubCredentialResolutionError(project, error);

@@ -97,6 +97,18 @@ function validateGithubAppConfig(
   }
 }
 
+function validateGithubRepository(
+  repository: string | undefined,
+): asserts repository is string {
+  if (
+    typeof repository !== "string" ||
+    repository.trim().length === 0 ||
+    !/^[^/]+\/[^/]+$/.test(repository)
+  ) {
+    throw new GitHubAppConfigurationError();
+  }
+}
+
 function defaultSignJwt(
   signingInput: string,
   privateKey: ReturnType<typeof createPrivateKey>,
@@ -197,13 +209,17 @@ export class GitHubAppAuthenticator {
 
   async getInstallationToken(
     githubApp: GitHubAppConfig | undefined,
+    repository: string | undefined,
   ): Promise<string> {
     validateGithubAppConfig(githubApp);
+    validateGithubRepository(repository);
+    const repositoryName = repository.slice(repository.indexOf("/") + 1);
 
     const cacheKey = JSON.stringify([
       githubApp.appId,
       githubApp.installationId,
       githubApp.privateKeyPath,
+      repository,
     ]);
     const nowMilliseconds = this.now();
     const cachedToken = this.installationTokens.get(cacheKey);
@@ -225,6 +241,7 @@ export class GitHubAppAuthenticator {
 
     const exchange = this.exchangeInstallationToken(
       githubApp,
+      repositoryName,
       nowMilliseconds,
       cacheKey,
     );
@@ -239,6 +256,7 @@ export class GitHubAppAuthenticator {
 
   private async exchangeInstallationToken(
     githubApp: GitHubAppConfig,
+    repository: string,
     nowMilliseconds: number,
     cacheKey: string,
   ): Promise<string> {
@@ -274,6 +292,7 @@ export class GitHubAppAuthenticator {
           Authorization: `Bearer ${jwt}`,
           "X-GitHub-Api-Version": GITHUB_API_VERSION,
         },
+        body: JSON.stringify({ repositories: [repository] }),
       });
     } catch {
       throw new GitHubAppNetworkError();
