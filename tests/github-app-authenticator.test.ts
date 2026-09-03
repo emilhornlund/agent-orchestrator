@@ -17,6 +17,7 @@ const githubApp = {
   installationId: "987654",
   privateKeyPath: "/secrets/github-app.pem",
 };
+const repository = "owner/repository";
 
 const { privateKey, publicKey } = generateKeyPairSync("rsa", {
   modulusLength: 2048,
@@ -78,9 +79,9 @@ describe("GitHubAppAuthenticator", () => {
       now: () => 1_700_000_000_000,
     });
 
-    await expect(authenticator.getInstallationToken(githubApp)).resolves.toBe(
-      "installation-token",
-    );
+    await expect(
+      authenticator.getInstallationToken(githubApp, repository),
+    ).resolves.toBe("installation-token");
     expect(readPrivateKey).toHaveBeenCalledWith(githubApp.privateKeyPath);
     expect(request).toHaveBeenCalledWith(
       "https://api.github.com/app/installations/987654/access_tokens",
@@ -91,6 +92,7 @@ describe("GitHubAppAuthenticator", () => {
           Authorization: expect.stringMatching(/^Bearer\s+\S+$/),
           "X-GitHub-Api-Version": "2022-11-28",
         },
+        body: JSON.stringify({ repositories: ["repository"] }),
       },
     );
   });
@@ -108,13 +110,13 @@ describe("GitHubAppAuthenticator", () => {
       now: () => nowMilliseconds,
     });
 
-    await expect(authenticator.getInstallationToken(githubApp)).resolves.toBe(
-      "installation-token",
-    );
+    await expect(
+      authenticator.getInstallationToken(githubApp, repository),
+    ).resolves.toBe("installation-token");
     nowMilliseconds += 30 * 60 * 1_000;
-    await expect(authenticator.getInstallationToken(githubApp)).resolves.toBe(
-      "installation-token",
-    );
+    await expect(
+      authenticator.getInstallationToken(githubApp, repository),
+    ).resolves.toBe("installation-token");
 
     expect(request).toHaveBeenCalledTimes(1);
   });
@@ -135,13 +137,13 @@ describe("GitHubAppAuthenticator", () => {
       now: () => nowMilliseconds,
     });
 
-    await expect(authenticator.getInstallationToken(githubApp)).resolves.toBe(
-      "old-installation-token",
-    );
+    await expect(
+      authenticator.getInstallationToken(githubApp, repository),
+    ).resolves.toBe("old-installation-token");
     nowMilliseconds = Date.parse("2023-11-14T22:55:00Z");
-    await expect(authenticator.getInstallationToken(githubApp)).resolves.toBe(
-      "new-installation-token",
-    );
+    await expect(
+      authenticator.getInstallationToken(githubApp, repository),
+    ).resolves.toBe("new-installation-token");
 
     expect(request).toHaveBeenCalledTimes(2);
   });
@@ -162,13 +164,13 @@ describe("GitHubAppAuthenticator", () => {
       now: () => nowMilliseconds,
     });
 
-    await expect(authenticator.getInstallationToken(githubApp)).resolves.toBe(
-      "expired-installation-token",
-    );
+    await expect(
+      authenticator.getInstallationToken(githubApp, repository),
+    ).resolves.toBe("expired-installation-token");
     nowMilliseconds = Date.parse("2023-11-14T22:31:00Z");
-    await expect(authenticator.getInstallationToken(githubApp)).resolves.toBe(
-      "replacement-installation-token",
-    );
+    await expect(
+      authenticator.getInstallationToken(githubApp, repository),
+    ).resolves.toBe("replacement-installation-token");
 
     expect(request).toHaveBeenCalledTimes(2);
   });
@@ -188,17 +190,111 @@ describe("GitHubAppAuthenticator", () => {
       now: () => 1_700_000_000_000,
     });
 
-    await expect(authenticator.getInstallationToken(githubApp)).resolves.toBe(
-      "app-a-token",
-    );
     await expect(
-      authenticator.getInstallationToken({
-        ...githubApp,
-        appId: "654321",
-      }),
+      authenticator.getInstallationToken(githubApp, repository),
+    ).resolves.toBe("app-a-token");
+    await expect(
+      authenticator.getInstallationToken(
+        {
+          ...githubApp,
+          appId: "654321",
+        },
+        repository,
+      ),
     ).resolves.toBe("app-b-token");
 
     expect(request).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps installation tokens separate for different repository scopes", async () => {
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce(
+        tokenResponse("repository-a-token", "2023-11-14T23:00:00Z"),
+      )
+      .mockResolvedValueOnce(
+        tokenResponse("repository-b-token", "2023-11-14T23:00:00Z"),
+      );
+    const authenticator = new GitHubAppAuthenticator({
+      readPrivateKey: vi.fn().mockResolvedValue(privateKeyPem),
+      request,
+      now: () => 1_700_000_000_000,
+    });
+
+    await expect(
+      authenticator.getInstallationToken(githubApp, "owner/repository-a"),
+    ).resolves.toBe("repository-a-token");
+    await expect(
+      authenticator.getInstallationToken(githubApp, "owner/repository-b"),
+    ).resolves.toBe("repository-b-token");
+    await expect(
+      authenticator.getInstallationToken(githubApp, "owner/repository-a"),
+    ).resolves.toBe("repository-a-token");
+
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(request.mock.calls[0]?.[1]?.body).toBe(
+      JSON.stringify({ repositories: ["repository-a"] }),
+    );
+    expect(request.mock.calls[1]?.[1]?.body).toBe(
+      JSON.stringify({ repositories: ["repository-b"] }),
+    );
+  });
+
+  it("does not share in-flight exchanges across repository scopes", async () => {
+    let resolveFirst: ((value: Response) => void) | undefined;
+    const request = vi.fn((input: string, init: RequestInit) => {
+      if (init.body === JSON.stringify({ repositories: ["repository-a"] })) {
+        return new Promise<Response>((resolve) => {
+          resolveFirst = resolve;
+        });
+      }
+
+      return Promise.resolve(
+        tokenResponse("repository-b-token", "2023-11-14T23:00:00Z"),
+      );
+    });
+    const authenticator = new GitHubAppAuthenticator({
+      readPrivateKey: vi.fn().mockResolvedValue(privateKeyPem),
+      request,
+      now: () => 1_700_000_000_000,
+    });
+
+    const first = authenticator.getInstallationToken(
+      githubApp,
+      "owner/repository-a",
+    );
+    await expect(
+      authenticator.getInstallationToken(githubApp, "owner/repository-b"),
+    ).resolves.toBe("repository-b-token");
+
+    resolveFirst?.(tokenResponse("repository-a-token", "2023-11-14T23:00:00Z"));
+    await expect(first).resolves.toBe("repository-a-token");
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not cache or broaden a rejected repository-scoped exchange", async () => {
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce(response({ message: "Not Found" }, 404))
+      .mockResolvedValueOnce(
+        tokenResponse("replacement-token", "2023-11-14T23:00:00Z"),
+      );
+    const authenticator = new GitHubAppAuthenticator({
+      readPrivateKey: vi.fn().mockResolvedValue(privateKeyPem),
+      request,
+      now: () => 1_700_000_000_000,
+    });
+
+    await expect(
+      authenticator.getInstallationToken(githubApp, repository),
+    ).rejects.toMatchObject({ name: "GitHubAppApiError", status: 404 });
+    await expect(
+      authenticator.getInstallationToken(githubApp, repository),
+    ).resolves.toBe("replacement-token");
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(
+      request.mock.calls.every((call) => call[1]?.body !== undefined),
+    ).toBe(true);
   });
 
   it("does not cache a response with an invalid expiration", async () => {
@@ -217,11 +313,11 @@ describe("GitHubAppAuthenticator", () => {
     });
 
     await expect(
-      authenticator.getInstallationToken(githubApp),
+      authenticator.getInstallationToken(githubApp, repository),
     ).rejects.toBeInstanceOf(GitHubAppApiError);
-    await expect(authenticator.getInstallationToken(githubApp)).resolves.toBe(
-      "replacement-token",
-    );
+    await expect(
+      authenticator.getInstallationToken(githubApp, repository),
+    ).resolves.toBe("replacement-token");
 
     expect(request).toHaveBeenCalledTimes(2);
   });
@@ -241,11 +337,24 @@ describe("GitHubAppAuthenticator", () => {
     });
 
     await expect(
-      authenticator.getInstallationToken(undefined),
+      authenticator.getInstallationToken(undefined, repository),
     ).rejects.toBeInstanceOf(GitHubAppConfigurationError);
     await expect(
-      authenticator.getInstallationToken(undefined),
+      authenticator.getInstallationToken(undefined, repository),
     ).rejects.not.toThrow(secret);
+  });
+
+  it("rejects an absent repository scope without making an unrestricted request", async () => {
+    const request = vi.fn();
+    const authenticator = new GitHubAppAuthenticator({
+      readPrivateKey: vi.fn().mockResolvedValue(privateKeyPem),
+      request,
+    });
+
+    await expect(
+      authenticator.getInstallationToken(githubApp, undefined),
+    ).rejects.toBeInstanceOf(GitHubAppConfigurationError);
+    expect(request).not.toHaveBeenCalled();
   });
 
   it("classifies unreadable private keys without exposing the read failure", async () => {
@@ -255,7 +364,7 @@ describe("GitHubAppAuthenticator", () => {
     });
 
     const error = await authenticator
-      .getInstallationToken(githubApp)
+      .getInstallationToken(githubApp, repository)
       .catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(GitHubAppCredentialError);
@@ -274,7 +383,7 @@ describe("GitHubAppAuthenticator", () => {
     });
 
     await expect(
-      authenticator.getInstallationToken(githubApp),
+      authenticator.getInstallationToken(githubApp, repository),
     ).rejects.toMatchObject({
       name: "GitHubAppCredentialError",
       operation: "JWT generation",
@@ -291,7 +400,7 @@ describe("GitHubAppAuthenticator", () => {
     });
 
     await expect(
-      signingAuthenticator.getInstallationToken(githubApp),
+      signingAuthenticator.getInstallationToken(githubApp, repository),
     ).rejects.toMatchObject({
       name: "GitHubAppCredentialError",
       operation: "JWT generation",
@@ -307,7 +416,7 @@ describe("GitHubAppAuthenticator", () => {
     });
 
     const error = await authenticator
-      .getInstallationToken(githubApp)
+      .getInstallationToken(githubApp, repository)
       .catch((caught: unknown) => caught);
     const authorization = request.mock.calls[0]?.[1]?.headers;
     const jwt =
@@ -332,7 +441,7 @@ describe("GitHubAppAuthenticator", () => {
     });
 
     const error = await authenticator
-      .getInstallationToken(githubApp)
+      .getInstallationToken(githubApp, repository)
       .catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(GitHubAppApiError);
@@ -380,7 +489,7 @@ describe("GitHubAppAuthenticator", () => {
       });
 
       const error = await authenticator
-        .getInstallationToken(githubApp)
+        .getInstallationToken(githubApp, repository)
         .catch((caught: unknown) => caught);
 
       expect(error).toBeInstanceOf(GitHubAppApiError);

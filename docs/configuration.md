@@ -212,7 +212,7 @@ GitHub authentication is selected independently for each project at the `reposit
 supported modes:
 
 - **GitHub App:** When `repository.githubApp` is configured, the project's authenticated GitHub operations use a short-lived
-  installation token for that App installation.
+  installation token scoped to exactly the configured `repository.github` repository.
 - **Ambient authentication:** When `repository.githubApp` is omitted, the service leaves the existing GitHub CLI and Git
   authentication available. This supports an authenticated `gh` session and PATs supplied through `GH_TOKEN` or
   `GITHUB_TOKEN`, as well as other ambient Git authentication.
@@ -230,9 +230,11 @@ All three fields are required when `githubApp` is present. `appId` and `installa
 `privateKeyPath` must be a non-blank absolute path; absolute paths are normalized before use. Unknown keys and invalid or
 incomplete values are rejected during startup. The private-key file is not read by configuration loading. Callers can use the
 GitHub App authenticator to read the PEM key on demand, create an App JWT, and exchange it for a short-lived installation
-access token. A successful token and its `expires_at` value are retained only in process memory for that App installation;
+access token. The exchange request includes only the configured repository name in the GitHub `repositories` field, for example
+`{"repositories":["repository"]}` for the configured `owner/repository` repository. A successful token and its `expires_at` value are retained only in process memory;
 the token is reused until five minutes before expiration, then refreshed. Cache entries include the App ID, installation ID,
-and private-key path, and are not shared across different App configurations or installations. The private key, JWT, token,
+private-key path, and repository scope, and are not shared across different App configurations, installations, or repositories.
+The private key, JWT, token,
 and expiration data are not logged, persisted, or included in configuration. The resolved token is supplied only through a
 child-process environment for the bounded operation that needs it: `gh repo clone`, other
 GitHub CLI pull-request and review operations, and `git fetch`, `git ls-remote`, `git push`, or remote-branch deletion. Git

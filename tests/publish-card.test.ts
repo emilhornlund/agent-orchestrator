@@ -952,18 +952,22 @@ describe("publishCard", () => {
     expect(getInstallationToken).toHaveBeenNthCalledWith(
       1,
       project.repository.githubApp,
+      project.repository.github,
     );
     expect(getInstallationToken).toHaveBeenNthCalledWith(
       2,
       project.repository.githubApp,
+      project.repository.github,
     );
     expect(getInstallationToken).toHaveBeenNthCalledWith(
       3,
       project.repository.githubApp,
+      project.repository.github,
     );
     expect(getInstallationToken).toHaveBeenNthCalledWith(
       4,
       project.repository.githubApp,
+      project.repository.github,
     );
 
     for (const [cwd, args, environment] of runGit.mock.calls) {

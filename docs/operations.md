@@ -157,14 +157,16 @@ GitHub authentication is selected per project at the `repository.githubApp` oper
 modes:
 
 - **GitHub App:** If `repository.githubApp` is configured, the service reads its private key on demand and exchanges an App JWT
-  for a short-lived installation token. The token is used for the project's repository cloning, GitHub CLI pull-request,
-  review, and merge calls, and authenticated `git fetch`, `git ls-remote`, `git push`, and remote-branch deletion.
+  for a short-lived installation token scoped to exactly the project's configured `repository.github` repository. The request
+  sends that repository's name, rather than its full `owner/repository` name, in GitHub's `repositories` field. The token is used for the project's repository cloning, GitHub CLI
+  pull-request, review, and merge calls, and authenticated `git fetch`, `git ls-remote`, `git push`, and remote-branch deletion.
 - **Ambient authentication:** If `repository.githubApp` is omitted, the service leaves ambient GitHub CLI and Git
   authentication unchanged. This supports an authenticated `gh` session and PATs supplied through `GH_TOKEN` or
   `GITHUB_TOKEN`, including other ambient Git authentication.
 
-Successful installation tokens are cached in process memory per App identity and installation, reused until five minutes before
-the returned `expires_at`, and then refreshed. For Git, a bounded invocation clears configured credential helpers and uses
+Successful installation tokens are cached in process memory per App identity, installation, and repository scope, reused until
+five minutes before the returned `expires_at`, and then refreshed. Projects using the same App installation but different
+repositories never share a completed or in-flight exchange. For Git, a bounded invocation clears configured credential helpers and uses
 `GIT_ASKPASS` to read the token from its child environment. The token never appears in command arguments, repository URLs,
 logs, session logs, persisted state, or failure diagnostics. Ambient `GH_TOKEN` and `GITHUB_TOKEN` values are used only to redact
 child output and failures; the ambient child environment is otherwise unchanged.
