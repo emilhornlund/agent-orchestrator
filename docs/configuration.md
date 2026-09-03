@@ -221,8 +221,9 @@ arguments or repository URLs. If any App setting is present but the key cannot b
 GitHub rejects the token exchange, that operation fails and does not fall back to ambient authentication.
 
 When `githubApp` is omitted, the orchestrator leaves the GitHub CLI and Git environment unchanged. Operators may therefore use
-the existing `gh` login, `GH_TOKEN`, or other ambient Git authentication. App credentials are resolved separately for each
-project and operation, so credentials are not shared between concurrent project workers.
+the existing `gh` login, `GH_TOKEN`, or other ambient Git authentication. Ambient `GH_TOKEN` and `GITHUB_TOKEN` values are
+recognized only for output redaction; they are not replaced or copied into a child environment. App credentials are resolved
+separately for each project and operation, so credentials are not shared between concurrent project workers.
 
 ### `projects[].opencode`
 

@@ -561,6 +561,7 @@ describe("reconcileClaimedCard", () => {
       cwd: "/repo",
       repository: "owner/repo",
       headBranch: "agent/card-1",
+      project: autoMergeProject,
     });
     expect(mergePullRequest).not.toHaveBeenCalled();
     expect(git.getHeadSha).not.toHaveBeenCalled();

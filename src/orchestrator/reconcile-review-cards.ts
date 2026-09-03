@@ -282,6 +282,7 @@ async function inspectReviewCard(
     cwd: project.repository.path,
     repository: project.repository.github,
     headBranch: branch,
+    project,
   };
 
   let pullRequest;
@@ -372,6 +373,7 @@ async function completeMergedReviewCard(
       project.repository.path,
       "origin",
       branch,
+      project,
     );
 
     if (signal?.aborted) {
@@ -386,7 +388,12 @@ async function completeMergedReviewCard(
       cardLog.info(`Deleting merged remote branch ${branch}...`);
 
       try {
-        await git.deleteRemoteBranch(project.repository.path, "origin", branch);
+        await git.deleteRemoteBranch(
+          project.repository.path,
+          "origin",
+          branch,
+          project,
+        );
       } catch (error) {
         if (!isMissingRemoteBranchDeletionError(error)) {
           throw error;
@@ -400,6 +407,7 @@ async function completeMergedReviewCard(
             project.repository.path,
             "origin",
             branch,
+            project,
           );
         } catch {
           throw error;

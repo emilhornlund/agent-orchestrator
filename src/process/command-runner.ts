@@ -4,7 +4,10 @@ import {
   appendSessionLog,
   appendSessionSection,
 } from "../logging/session-log.js";
-import { redactSecrets } from "../security/redact-secrets.js";
+import {
+  createSecretRedactor,
+  redactSecrets,
+} from "../security/redact-secrets.js";
 
 const commandTerminationGraceMilliseconds = 5_000;
 
@@ -105,6 +108,31 @@ const defaultRunCommand: RunCommand = async ({
     let timedOut = false;
     let timeout: NodeJS.Timeout | undefined;
     let forceKillTimeout: NodeJS.Timeout | undefined;
+    const stdoutRedactor = createSecretRedactor(secretValues);
+    const stderrRedactor = createSecretRedactor(secretValues);
+    let outputFlushed = false;
+
+    function writeOutput(text: string, stream: NodeJS.WriteStream): void {
+      if (text.length === 0) {
+        return;
+      }
+
+      if (sessionLogPath) {
+        appendSessionLog(sessionLogPath, text);
+      } else {
+        stream.write(text);
+      }
+    }
+
+    function flushOutput(): void {
+      if (outputFlushed) {
+        return;
+      }
+
+      outputFlushed = true;
+      writeOutput(stdoutRedactor.flush(), process.stdout);
+      writeOutput(stderrRedactor.flush(), process.stderr);
+    }
 
     function settle(): void {
       settled = true;
@@ -164,24 +192,12 @@ const defaultRunCommand: RunCommand = async ({
 
     child.stdout.on("data", (chunk: Buffer) => {
       const text = chunk.toString();
-      const safeText = redactSecrets(text, secretValues);
-
-      if (sessionLogPath) {
-        appendSessionLog(sessionLogPath, safeText);
-      } else {
-        process.stdout.write(safeText);
-      }
+      writeOutput(stdoutRedactor.push(text), process.stdout);
     });
 
     child.stderr.on("data", (chunk: Buffer) => {
       const text = chunk.toString();
-      const safeText = redactSecrets(text, secretValues);
-
-      if (sessionLogPath) {
-        appendSessionLog(sessionLogPath, safeText);
-      } else {
-        process.stderr.write(safeText);
-      }
+      writeOutput(stderrRedactor.push(text), process.stderr);
     });
 
     child.once("error", (error) => {
@@ -189,6 +205,7 @@ const defaultRunCommand: RunCommand = async ({
         return;
       }
 
+      flushOutput();
       settle();
 
       reject(
@@ -203,6 +220,7 @@ const defaultRunCommand: RunCommand = async ({
         return;
       }
 
+      flushOutput();
       settle();
 
       if (timedOut) {

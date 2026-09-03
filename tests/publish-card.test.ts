@@ -151,6 +151,7 @@ describe("publishCard", () => {
       repository: "example/repository",
       pullRequestUrl: "https://github.com/example/repository/pull/123",
       commitSha: "abc123",
+      project,
     });
   });
 
@@ -635,7 +636,12 @@ describe("publishCard", () => {
       emailNotifier: { send },
     });
 
-    expect(git.fetch).toHaveBeenCalledWith("/worktree", "origin", "main");
+    expect(git.fetch).toHaveBeenCalledWith(
+      "/worktree",
+      "origin",
+      "main",
+      createProject(),
+    );
     expect(git.rebase).toHaveBeenCalledWith(
       "/worktree",
       "origin/main",
@@ -645,13 +651,19 @@ describe("publishCard", () => {
       "/worktree",
       "origin",
       "agent/card-1",
+      createProject(),
     );
     expect(git.isAncestor).toHaveBeenCalledWith(
       "/worktree",
       "published-commit",
       postRebaseSha,
     );
-    expect(push).toHaveBeenCalledWith("/worktree", "origin", "agent/card-1");
+    expect(push).toHaveBeenCalledWith(
+      "/worktree",
+      "origin",
+      "agent/card-1",
+      createProject(),
+    );
     expect(send).toHaveBeenCalledWith(
       expect.objectContaining({
         text: expect.stringContaining(`Commit: ${postRebaseSha}`),

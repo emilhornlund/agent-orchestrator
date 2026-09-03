@@ -106,7 +106,7 @@ export async function prepareWorktree(
     };
   }
 
-  await git.fetch(repositoryPath, "origin", defaultBranch);
+  await git.fetch(repositoryPath, "origin", defaultBranch, project);
 
   const branchExists = await git.branchExists(repositoryPath, branch);
 

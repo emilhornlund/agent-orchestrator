@@ -887,6 +887,7 @@ describe("orchestrator workflow characterization", () => {
         repository: "example/repository",
         pullRequestUrl: "https://github.com/example/repository/pull/123",
         commitSha: "implementation-commit",
+        project: harness.project,
       });
       expect(harness.moveCard).toHaveBeenCalledWith(
         harness.card.id,
@@ -1040,6 +1041,7 @@ describe("orchestrator workflow characterization", () => {
         harness.project.repository.path,
         "origin",
         "agent/card-1",
+        harness.project,
       );
       expect(harness.mergePullRequest).not.toHaveBeenCalled();
     } finally {
@@ -1325,6 +1327,7 @@ describe("orchestrator workflow characterization", () => {
         harness.worktreePath,
         "origin",
         "agent/card-1",
+        harness.project,
       );
       expect(harness.moveCard).toHaveBeenNthCalledWith(
         1,
@@ -1411,6 +1414,7 @@ describe("orchestrator workflow characterization", () => {
         harness.worktreePath,
         "origin",
         "agent/card-1",
+        harness.project,
       );
     } finally {
       harness.cleanup();

@@ -4,7 +4,11 @@ import { promisify } from "node:util";
 import type { ProjectConfig } from "../config/config.js";
 import { GitHubCredentialProvider } from "../github/github-credential-provider.js";
 import { getGitHubOperationProject } from "../github/github-operation-context.js";
-import { redactSecrets } from "../security/redact-secrets.js";
+import {
+  containsSecret,
+  redactError,
+  redactSecrets,
+} from "../security/redact-secrets.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -62,7 +66,7 @@ const defaultRunGit: RunGit = async (cwd, args, environment) => {
   } catch (error) {
     const message = redactSecrets(
       error instanceof Error ? error.message : String(error),
-      Object.values(environment ?? {}),
+      [environment?.GH_TOKEN, environment?.GITHUB_TOKEN],
     );
 
     throw new Error(`git ${args.join(" ")} failed in ${cwd}: ${message}`, {
@@ -84,26 +88,32 @@ export class GitClient {
   ): Promise<string> {
     const operationProject = project ?? getGitHubOperationProject();
 
-    if (operationProject === undefined) {
-      return this.runGit(cwd, args);
-    }
-
     const credential = await this.credentials.resolve(operationProject);
-
-    if (Object.keys(credential.environment).length === 0) {
-      return this.runGit(cwd, args);
-    }
+    const authenticatedArgs =
+      credential.mode === "github-app"
+        ? ["-c", "credential.helper=", ...args]
+        : args;
 
     try {
-      return await this.runGit(cwd, args, credential.environment);
+      const output =
+        Object.keys(credential.environment).length === 0
+          ? await this.runGit(cwd, authenticatedArgs)
+          : await this.runGit(cwd, authenticatedArgs, credential.environment);
+
+      return redactSecrets(output, credential.secretValues);
     } catch (error) {
-      throw new Error(
-        redactSecrets(
-          error instanceof Error ? error.message : String(error),
-          credential.secretValues,
-        ),
-        { cause: error },
-      );
+      const safeError = redactError(error, credential.secretValues);
+
+      if (
+        credential.mode === "ambient" &&
+        !containsSecret(error, credential.secretValues)
+      ) {
+        throw error;
+      }
+
+      // Do not retain the caught error: Git output may have included a credential.
+      // eslint-disable-next-line preserve-caught-error
+      throw new Error(safeError.message, { cause: safeError });
     }
   }
 

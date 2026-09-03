@@ -1,7 +1,12 @@
 import { spawn } from "node:child_process";
 
 import type { ProjectConfig } from "../config/config.js";
-import { redactSecrets } from "../security/redact-secrets.js";
+import {
+  containsSecret,
+  createSecretRedactor,
+  redactError,
+  redactSecrets,
+} from "../security/redact-secrets.js";
 import { getGitHubOperationProject } from "./github-operation-context.js";
 import {
   GitHubCredentialProvider,
@@ -323,6 +328,12 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
     let settled = false;
     let timedOut = false;
     let forceKillTimeout: NodeJS.Timeout | undefined;
+    const environmentSecrets = [
+      environment?.GH_TOKEN,
+      environment?.GITHUB_TOKEN,
+    ];
+    const stdoutRedactor = createSecretRedactor(environmentSecrets);
+    const stderrRedactor = createSecretRedactor(environmentSecrets);
 
     const timeout = setTimeout(() => {
       if (settled) {
@@ -344,11 +355,11 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
     }, GITHUB_TIMEOUT_MS);
 
     child.stdout.on("data", (chunk: Buffer) => {
-      output += chunk.toString();
+      output += stdoutRedactor.push(chunk.toString());
     });
 
     child.stderr.on("data", (chunk: Buffer) => {
-      errorOutput += chunk.toString();
+      errorOutput += stderrRedactor.push(chunk.toString());
     });
 
     child.once("error", (error) => {
@@ -356,6 +367,8 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
         return;
       }
 
+      output += stdoutRedactor.flush();
+      errorOutput += stderrRedactor.flush();
       settled = true;
       clearTimeout(timeout);
       if (forceKillTimeout !== undefined) {
@@ -374,6 +387,8 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
         return;
       }
 
+      output += stdoutRedactor.flush();
+      errorOutput += stderrRedactor.flush();
       settled = true;
       clearTimeout(timeout);
       if (forceKillTimeout !== undefined) {
@@ -388,7 +403,7 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
       if (code !== 0) {
         reject(
           new Error(
-            `GitHub CLI exited with code ${code ?? 1}: ${redactSecrets(errorOutput.trim(), Object.values(environment ?? {}))}`,
+            `GitHub CLI exited with code ${code ?? 1}: ${redactSecrets(errorOutput.trim(), environmentSecrets)}`,
           ),
         );
         return;
@@ -411,36 +426,37 @@ export class GitHubClient {
   private async run(
     cwd: string,
     args: string[],
-    credential?: GitHubCredential,
+    credential: GitHubCredential,
   ): Promise<string> {
-    if (
-      credential === undefined ||
-      Object.keys(credential.environment).length === 0
-    ) {
-      return this.runGitHubCommand(cwd, args);
-    }
-
     try {
-      return await this.runGitHubCommand(cwd, args, credential.environment);
+      const output =
+        Object.keys(credential.environment).length === 0
+          ? await this.runGitHubCommand(cwd, args)
+          : await this.runGitHubCommand(cwd, args, credential.environment);
+
+      return redactSecrets(output, credential.secretValues);
     } catch (error) {
-      throw new Error(
-        redactSecrets(
-          error instanceof Error ? error.message : String(error),
-          credential.secretValues,
-        ),
-        { cause: error },
-      );
+      const safeError = redactError(error, credential.secretValues);
+
+      if (
+        credential.mode === "ambient" &&
+        !containsSecret(error, credential.secretValues)
+      ) {
+        throw error;
+      }
+
+      // Do not retain the caught error: CLI output may have included a credential.
+      // eslint-disable-next-line preserve-caught-error
+      throw new Error(safeError.message, { cause: safeError });
     }
   }
 
   private resolveCredential(
     project?: ProjectConfig,
-  ): Promise<GitHubCredential | undefined> {
+  ): Promise<GitHubCredential> {
     const operationProject = project ?? getGitHubOperationProject();
 
-    return operationProject === undefined
-      ? Promise.resolve(undefined)
-      : this.credentials.resolve(operationProject);
+    return this.credentials.resolve(operationProject);
   }
 
   async findPullRequest(

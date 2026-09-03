@@ -52,6 +52,7 @@ export async function mergePullRequestForAutoMerge(
       repository: project.repository.github,
       pullRequestUrl,
       commitSha,
+      project,
     });
   } catch (error) {
     const mergeError = new WorkflowError(
