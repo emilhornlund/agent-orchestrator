@@ -130,7 +130,12 @@ const githubAppSchema = z
         });
       }
     }
-  });
+  })
+  .transform((githubApp) => ({
+    appId: githubApp.appId!,
+    installationId: githubApp.installationId!,
+    privateKeyPath: githubApp.privateKeyPath!,
+  }));
 
 const repositorySchema = z.strictObject({
   path: absolutePath,
@@ -328,6 +333,9 @@ const configSchema = z
 
 export type Config = z.infer<typeof configSchema>;
 export type ProjectConfig = Config["projects"][number];
+export type GitHubAppConfig = NonNullable<
+  ProjectConfig["repository"]["githubApp"]
+>;
 export type EmailNotificationConfig = NonNullable<
   NonNullable<Config["notifications"]>["email"]
 >;

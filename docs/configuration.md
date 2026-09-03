@@ -186,7 +186,7 @@ The configured list and label names do not matter to the service. The IDs are wh
 | `setupCommand`      | Optional non-blank command run in the card worktree before implementation                                                   |
 | `validationCommand` | Optional non-blank command supplied to OpenCode sessions that modify implementation files; the orchestrator does not run it |
 | `gitIdentity`       | Required identity used by the commit session                                                                                |
-| `githubApp`         | Optional GitHub App identity reserved for future authentication                                                             |
+| `githubApp`         | Optional GitHub App identity used to generate installation tokens when requested                                            |
 
 `path`, `worktreeRoot`, and an optional `gitIdentity.signingKey` must be absolute paths. Parsed absolute paths are resolved
 before use. `gitIdentity` contains:
@@ -212,9 +212,11 @@ githubApp:
 
 All three fields are required when `githubApp` is present. `appId` and `installationId` must be non-blank identifiers, and
 `privateKeyPath` must be a non-blank absolute path; absolute paths are normalized before use. Unknown keys and invalid or
-incomplete values are rejected during startup. The private-key file is not read by configuration loading. GitHub App
-authentication is deferred: the service continues to use the existing authenticated `gh` CLI behavior, including PAT and
-`GH_TOKEN` authentication, and does not pass these settings to GitHub commands.
+incomplete values are rejected during startup. The private-key file is not read by configuration loading. Callers can use the
+GitHub App authenticator to read the PEM key on demand, create an App JWT, and exchange it for a short-lived installation
+access token. The private key, JWT, and token are not logged, persisted, cached, or automatically refreshed. Existing Git
+and `gh` operations continue to use their current authentication, including PAT and `GH_TOKEN`; the generated token is not
+wired into those operations yet.
 
 ### `projects[].opencode`
 
