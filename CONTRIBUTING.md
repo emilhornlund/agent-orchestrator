@@ -28,10 +28,13 @@ cp .env.example .env
 ```
 
 Add the Trello credentials to `.env`, configure the project and workflow IDs
-in `config.yaml`, and either authenticate the GitHub CLI for projects without a
-`repository.githubApp` or configure the App's private key path for App-backed
-projects. Do not commit `config.yaml`, `.env`, credentials, private keys, or
-other secrets.
+in `config.yaml`, and choose the project's GitHub authentication mode at
+`repository.githubApp`: projects without it use an authenticated `gh` session
+or ambient GitHub authentication such as `GH_TOKEN` or `GITHUB_TOKEN`; projects
+with it use the configured App installation. A configured App does not fall
+back to ambient authentication when its credentials or token exchange fail.
+Do not commit `config.yaml`, `.env`, credentials, private keys, or other
+secrets.
 
 ## Validation
 

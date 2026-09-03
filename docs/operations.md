@@ -153,23 +153,28 @@ the card to `Backlog`; a refinement cleanup failure follows normal failure handl
 
 ## Publication and GitHub boundaries
 
-GitHub authentication is selected per project at the operation boundary. If `repository.githubApp` is configured, the service
-reads its private key on demand and exchanges an App JWT for a short-lived installation token. Successful installation tokens
-are cached in process memory per App identity and installation, reused until five minutes before the returned `expires_at`, and
-then refreshed. The token is used for repository
-cloning, GitHub CLI pull-request/review/merge calls, and authenticated `git fetch`, `git ls-remote`, `git push`, and remote-branch
-deletion. For Git, a bounded invocation clears configured credential helpers and uses `GIT_ASKPASS` to read the token from its
-child environment. The token never appears in command arguments, repository URLs, logs, session logs, persisted state, or failure
-diagnostics. Projects without an App use the existing ambient `gh` and Git authentication, including `GH_TOKEN`. Ambient
-`GH_TOKEN` and `GITHUB_TOKEN` values are used only to redact child output and failures; the ambient child environment is otherwise
-unchanged.
+GitHub authentication is selected per project at the `repository.githubApp` operation boundary. These are the two supported
+modes:
 
-App credential resolution is project-isolated and has precedence over ambient credentials. A missing/unreadable private key,
-invalid key, failed JWT generation, or failed installation-token exchange fails the affected operation without fallback. Startup
-clone failures stop startup; workflow failures preserve the card's existing failure/reconciliation behavior and preserve
-recoverable worktrees and agent changes. Operators must correct the App configuration or external GitHub access and retry through
-the normal workflow; the service does not persist tokens or expiration data. A missing, blank, or invalid `expires_at` makes the
-exchange fail and is not cached.
+- **GitHub App:** If `repository.githubApp` is configured, the service reads its private key on demand and exchanges an App JWT
+  for a short-lived installation token. The token is used for the project's repository cloning, GitHub CLI pull-request,
+  review, and merge calls, and authenticated `git fetch`, `git ls-remote`, `git push`, and remote-branch deletion.
+- **Ambient authentication:** If `repository.githubApp` is omitted, the service leaves ambient GitHub CLI and Git
+  authentication unchanged. This supports an authenticated `gh` session and PATs supplied through `GH_TOKEN` or
+  `GITHUB_TOKEN`, including other ambient Git authentication.
+
+Successful installation tokens are cached in process memory per App identity and installation, reused until five minutes before
+the returned `expires_at`, and then refreshed. For Git, a bounded invocation clears configured credential helpers and uses
+`GIT_ASKPASS` to read the token from its child environment. The token never appears in command arguments, repository URLs,
+logs, session logs, persisted state, or failure diagnostics. Ambient `GH_TOKEN` and `GITHUB_TOKEN` values are used only to redact
+child output and failures; the ambient child environment is otherwise unchanged.
+
+App credential resolution is project-isolated and has precedence over ambient credentials. A missing or unreadable private key,
+invalid App credentials, failed JWT generation, or failed installation-token exchange fails the affected operation without PAT or
+other ambient fallback. Startup clone failures stop startup; workflow failures preserve the card's existing failure/reconciliation
+behavior and preserve recoverable worktrees and agent changes. Operators must correct the App configuration or external GitHub
+access and retry through the normal workflow; the service does not persist tokens or expiration data. A missing, blank, or invalid
+`expires_at` makes the exchange fail and is not cached.
 
 Immediately before publication, the task worktree fetches `origin/<defaultBranch>` and rebases `agent/<trello-card-id>` onto
 that fetched ref. Git leaves an already-current branch unchanged. The resulting `HEAD` drives remote comparison, push

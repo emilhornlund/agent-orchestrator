@@ -33,6 +33,11 @@ When `notifications.email.enabled` is `true`, the names in `notifications.email.
 `notifications.email.smtp.passwordEnv` identify two additional required environment variables. Their values are the SMTP
 credentials and must not be put in YAML. When email is omitted or disabled, those SMTP variables are not required.
 
+For projects that omit `repository.githubApp`, GitHub authentication may come from an authenticated `gh` session or ambient
+Git credentials. Operators using a PAT may supply it through the optional `GH_TOKEN` or `GITHUB_TOKEN` environment variable;
+`GH_TOKEN` is included as an optional PAT example in [`.env.example`](../.env.example). Neither variable is globally required,
+and PAT environment variables are unnecessary for projects using a GitHub App.
+
 `.env` is ignored by the repository. Keep Trello credentials, SMTP credentials, API keys, access tokens, and other secrets
 out of configuration files and source control.
 
@@ -201,6 +206,17 @@ If `setupCommand` is configured, it runs in the task worktree before the OpenCod
 `validationCommand` is configured, it is passed to the relevant OpenCode prompts; those agents run it before finishing and
 fix failures caused by their changes.
 
+#### GitHub authentication modes
+
+GitHub authentication is selected independently for each project at the `repository.githubApp` boundary. These are the two
+supported modes:
+
+- **GitHub App:** When `repository.githubApp` is configured, the project's authenticated GitHub operations use a short-lived
+  installation token for that App installation.
+- **Ambient authentication:** When `repository.githubApp` is omitted, the service leaves the existing GitHub CLI and Git
+  authentication available. This supports an authenticated `gh` session and PATs supplied through `GH_TOKEN` or
+  `GITHUB_TOKEN`, as well as other ambient Git authentication.
+
 `githubApp` is an optional strict object containing:
 
 ```yaml
@@ -221,13 +237,15 @@ and expiration data are not logged, persisted, or included in configuration. The
 child-process environment for the bounded operation that needs it: `gh repo clone`, other
 GitHub CLI pull-request and review operations, and `git fetch`, `git ls-remote`, `git push`, or remote-branch deletion. Git
 temporarily clears configured credential helpers and obtains the token through `GIT_ASKPASS`; it is not placed in command
-arguments or repository URLs. If any App setting is present but the key cannot be read, the JWT cannot be generated, or
-GitHub rejects the token exchange, that operation fails and does not fall back to ambient authentication.
+arguments or repository URLs. If an App is configured, that App mode takes precedence for the project. A missing or unreadable
+private key, invalid App credentials, a JWT generation failure, or an installation-token exchange failure fails the affected
+operation. None of these failures trigger a fallback to PAT or other ambient authentication. The App is configured at the
+project boundary, so its credentials are not shared with another project.
 
-When `githubApp` is omitted, the orchestrator leaves the GitHub CLI and Git environment unchanged. Operators may therefore use
-the existing `gh` login, `GH_TOKEN`, or other ambient Git authentication. Ambient `GH_TOKEN` and `GITHUB_TOKEN` values are
-recognized only for output redaction; they are not replaced or copied into a child environment. App credentials are resolved
-separately for each project and operation, so credentials are not shared between concurrent project workers.
+When `githubApp` is omitted, the orchestrator leaves the GitHub CLI and Git environment unchanged. Ambient `GH_TOKEN` and
+`GITHUB_TOKEN` values are recognized for output redaction only; they are not replaced or copied into a child environment.
+`GH_TOKEN` is therefore optional and is needed only when an operator chooses PAT-based ambient authentication. It is not
+required for projects using a GitHub App.
 
 ### `projects[].opencode`
 
