@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProjectConfig } from "../src/config/config.js";
 import { ensureRepository } from "../src/git/ensure-repository.js";
 import { GitClient, type RunGit } from "../src/git/git-client.js";
+import { GitHubCredentialProvider } from "../src/github/github-credential-provider.js";
 import {
   CommandRunner,
   type RunCommand,
@@ -24,7 +25,10 @@ function createTemporaryDirectory(): string {
   return directory;
 }
 
-function createProject(repositoryPath: string): ProjectConfig {
+function createProject(
+  repositoryPath: string,
+  githubApp?: ProjectConfig["repository"]["githubApp"],
+): ProjectConfig {
   return {
     id: "test-project",
     autoMerge: false,
@@ -37,6 +41,7 @@ function createProject(repositoryPath: string): ProjectConfig {
         name: "Agent Orchestrator",
         email: "agent-orchestrator@users.noreply.github.com",
       },
+      ...(githubApp === undefined ? {} : { githubApp }),
     },
     trello: {
       boardId: "board",
@@ -118,6 +123,40 @@ describe("ensureRepository", () => {
       "rev-parse",
       "--is-inside-work-tree",
     ]);
+  });
+
+  it("uses the project installation token when cloning a missing repository", async () => {
+    const root = createTemporaryDirectory();
+    const repositoryPath = path.join(root, "repository");
+    const project = createProject(repositoryPath, {
+      appId: "app-a",
+      installationId: "installation-a",
+      privateKeyPath: "/secrets/app-a.pem",
+    });
+    const runGit = vi.fn<RunGit>().mockResolvedValue("true");
+    const runCommand = vi
+      .fn<RunCommand>()
+      .mockImplementation(async (options) => {
+        expect(options.environment?.GH_TOKEN).toBe("token-a");
+        expect(options.command).not.toContain("token-a");
+        expect(options.secretValues).toEqual(["token-a"]);
+        fs.mkdirSync(repositoryPath);
+        return { exitCode: 0 };
+      });
+    const credentials = new GitHubCredentialProvider({
+      authenticator: {
+        getInstallationToken: vi.fn().mockResolvedValue("token-a"),
+      },
+    });
+
+    await ensureRepository(
+      createGit(runGit),
+      new CommandRunner(runCommand),
+      project,
+      credentials,
+    );
+
+    expect(runCommand).toHaveBeenCalledTimes(1);
   });
 
   it("leaves an existing Git repository untouched", async () => {

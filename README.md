@@ -60,7 +60,8 @@ reorganized; current configuration names, states, commands, and safety boundarie
 - Node.js 24 or later
 - Yarn Classic 1.x
 - Git
-- GitHub CLI (`gh`), already authenticated for managed repositories
+- GitHub CLI (`gh`), already authenticated for projects that omit `repository.githubApp`; App-backed projects authenticate with
+  their configured installation token
 - OpenCode
 - Trello API credentials
 - An SMTP server when email notifications are enabled

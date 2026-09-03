@@ -2,6 +2,8 @@ import type { Config } from "../config/config.js";
 import { ensureRepository } from "../git/ensure-repository.js";
 import type { GitClient } from "../git/git-client.js";
 import type { GitHubClient } from "../github/github-client.js";
+import { GitHubCredentialProvider } from "../github/github-credential-provider.js";
+import { withGitHubOperationProject } from "../github/github-operation-context.js";
 import { cleanupCardContextRetention } from "../context/card-context-retention.js";
 import { cleanupLogRetention } from "../logging/log-retention.js";
 import { logger } from "../logging/logger.js";
@@ -28,6 +30,7 @@ export interface StartupDependencies {
   github: GitHubClient;
   opencode: OpenCodeClient;
   commands: CommandRunner;
+  githubCredentials?: GitHubCredentialProvider;
   emailNotifier?: EmailNotifier;
 }
 
@@ -55,12 +58,22 @@ export async function runStartup(
     config.projects.map((project) => project.id),
   );
 
+  const githubCredentials =
+    dependencies.githubCredentials ?? new GitHubCredentialProvider();
+
   for (const project of config.projects) {
     if (signal.aborted) {
       return;
     }
 
-    await ensureRepository(dependencies.git, dependencies.commands, project);
+    await withGitHubOperationProject(project, () =>
+      ensureRepository(
+        dependencies.git,
+        dependencies.commands,
+        project,
+        githubCredentials,
+      ),
+    );
   }
 
   const pendingTrelloValidations = new Set<string>();

@@ -1,5 +1,14 @@
 import { spawn } from "node:child_process";
 
+import type { ProjectConfig } from "../config/config.js";
+import { redactSecrets } from "../security/redact-secrets.js";
+import { getGitHubOperationProject } from "./github-operation-context.js";
+import {
+  GitHubCredentialProvider,
+  type GitHubCredential,
+  type GitHubCredentialEnvironment,
+} from "./github-credential-provider.js";
+
 const GITHUB_TIMEOUT_MS = 2 * 60 * 1000;
 const GITHUB_TERMINATION_GRACE_MS = 5_000;
 
@@ -10,6 +19,7 @@ export interface CreatePullRequestOptions {
   headBranch: string;
   title: string;
   body: string;
+  project?: ProjectConfig;
 }
 
 export interface MergePullRequestOptions {
@@ -17,12 +27,14 @@ export interface MergePullRequestOptions {
   repository: string;
   pullRequestUrl: string;
   commitSha: string;
+  project?: ProjectConfig;
 }
 
 export interface FindPullRequestOptions {
   cwd: string;
   repository: string;
   headBranch: string;
+  project?: ProjectConfig;
 }
 
 export interface PullRequest {
@@ -154,7 +166,11 @@ function validateRequestedChangesReview(
   };
 }
 
-export type RunGitHubCommand = (cwd: string, args: string[]) => Promise<string>;
+export type RunGitHubCommand = (
+  cwd: string,
+  args: string[],
+  environment?: GitHubCredentialEnvironment,
+) => Promise<string>;
 
 const transientHttpStatuses = new Set([408, 425, 429, 500, 502, 503, 504]);
 
@@ -288,11 +304,18 @@ function parsePullRequestUrl(value: string): string {
   return url;
 }
 
-const defaultRunGitHubCommand: RunGitHubCommand = async (cwd, args) =>
+const defaultRunGitHubCommand: RunGitHubCommand = async (
+  cwd,
+  args,
+  environment,
+) =>
   new Promise((resolve, reject) => {
     const child = spawn("gh", args, {
       cwd,
       stdio: ["inherit", "pipe", "pipe"],
+      ...(environment === undefined
+        ? {}
+        : { env: { ...process.env, ...environment } }),
     });
 
     let output = "";
@@ -365,7 +388,7 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (cwd, args) =>
       if (code !== 0) {
         reject(
           new Error(
-            `GitHub CLI exited with code ${code ?? 1}: ${errorOutput.trim()}`,
+            `GitHub CLI exited with code ${code ?? 1}: ${redactSecrets(errorOutput.trim(), Object.values(environment ?? {}))}`,
           ),
         );
         return;
@@ -376,29 +399,74 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (cwd, args) =>
   });
 
 export class GitHubClient {
+  private readonly credentials: GitHubCredentialProvider;
+
   constructor(
     private readonly runGitHubCommand: RunGitHubCommand = defaultRunGitHubCommand,
-  ) {}
+    credentials: GitHubCredentialProvider = new GitHubCredentialProvider(),
+  ) {
+    this.credentials = credentials;
+  }
+
+  private async run(
+    cwd: string,
+    args: string[],
+    credential?: GitHubCredential,
+  ): Promise<string> {
+    if (
+      credential === undefined ||
+      Object.keys(credential.environment).length === 0
+    ) {
+      return this.runGitHubCommand(cwd, args);
+    }
+
+    try {
+      return await this.runGitHubCommand(cwd, args, credential.environment);
+    } catch (error) {
+      throw new Error(
+        redactSecrets(
+          error instanceof Error ? error.message : String(error),
+          credential.secretValues,
+        ),
+        { cause: error },
+      );
+    }
+  }
+
+  private resolveCredential(
+    project?: ProjectConfig,
+  ): Promise<GitHubCredential | undefined> {
+    const operationProject = project ?? getGitHubOperationProject();
+
+    return operationProject === undefined
+      ? Promise.resolve(undefined)
+      : this.credentials.resolve(operationProject);
+  }
 
   async findPullRequest(
     options: FindPullRequestOptions,
   ): Promise<PullRequest | null> {
-    const output = await this.runGitHubCommand(options.cwd, [
-      "pr",
-      "list",
-      "--repo",
-      options.repository,
-      "--head",
-      options.headBranch,
-      "--state",
-      "open",
-      "--json",
-      "url",
-      "--limit",
-      "1",
-      "--jq",
-      '.[0].url // ""',
-    ]);
+    const credential = await this.resolveCredential(options.project);
+    const output = await this.run(
+      options.cwd,
+      [
+        "pr",
+        "list",
+        "--repo",
+        options.repository,
+        "--head",
+        options.headBranch,
+        "--state",
+        "open",
+        "--json",
+        "url",
+        "--limit",
+        "1",
+        "--jq",
+        '.[0].url // ""',
+      ],
+      credential,
+    );
 
     if (output.trim().length === 0) {
       return null;
@@ -412,20 +480,25 @@ export class GitHubClient {
   async findPullRequestState(
     options: FindPullRequestOptions,
   ): Promise<PullRequestState | null> {
-    const output = await this.runGitHubCommand(options.cwd, [
-      "pr",
-      "list",
-      "--repo",
-      options.repository,
-      "--head",
-      options.headBranch,
-      "--state",
-      "all",
-      "--json",
-      "url,state,mergedAt",
-      "--limit",
-      "1",
-    ]);
+    const credential = await this.resolveCredential(options.project);
+    const output = await this.run(
+      options.cwd,
+      [
+        "pr",
+        "list",
+        "--repo",
+        options.repository,
+        "--head",
+        options.headBranch,
+        "--state",
+        "all",
+        "--json",
+        "url,state,mergedAt",
+        "--limit",
+        "1",
+      ],
+      credential,
+    );
 
     const pullRequestOutput = output.trim();
 
@@ -452,20 +525,25 @@ export class GitHubClient {
   async findChangesRequestedPullRequest(
     options: FindPullRequestOptions,
   ): Promise<ChangesRequestedPullRequest | null> {
-    const output = await this.runGitHubCommand(options.cwd, [
-      "pr",
-      "list",
-      "--repo",
-      options.repository,
-      "--head",
-      options.headBranch,
-      "--state",
-      "open",
-      "--json",
-      "url,number,reviewDecision,headRefOid",
-      "--limit",
-      "1",
-    ]);
+    const credential = await this.resolveCredential(options.project);
+    const output = await this.run(
+      options.cwd,
+      [
+        "pr",
+        "list",
+        "--repo",
+        options.repository,
+        "--head",
+        options.headBranch,
+        "--state",
+        "open",
+        "--json",
+        "url,number,reviewDecision,headRefOid",
+        "--limit",
+        "1",
+      ],
+      credential,
+    );
 
     const pullRequestOutput = output.trim();
 
@@ -481,14 +559,18 @@ export class GitHubClient {
       return null;
     }
 
-    const reviewOutput = await this.runGitHubCommand(options.cwd, [
-      "api",
-      `repos/${options.repository}/pulls/${pullRequest.number}/reviews`,
-      "--paginate",
-      "--slurp",
-      "--jq",
-      'flatten | map(select(.state == "CHANGES_REQUESTED")) | sort_by(.submitted_at) | last | {id, body, commitId: .commit_id, author: .user.login}',
-    ]);
+    const reviewOutput = await this.run(
+      options.cwd,
+      [
+        "api",
+        `repos/${options.repository}/pulls/${pullRequest.number}/reviews`,
+        "--paginate",
+        "--slurp",
+        "--jq",
+        'flatten | map(select(.state == "CHANGES_REQUESTED")) | sort_by(.submitted_at) | last | {id, body, commitId: .commit_id, author: .user.login}',
+      ],
+      credential,
+    );
 
     const requestedChangesOutput = reviewOutput.trim();
 
@@ -507,14 +589,18 @@ export class GitHubClient {
       return null;
     }
 
-    const inlineComments = await this.runGitHubCommand(options.cwd, [
-      "api",
-      `repos/${options.repository}/pulls/${pullRequest.number}/comments`,
-      "--paginate",
-      "--slurp",
-      "--jq",
-      `flatten | map(select(.pull_request_review_id == ${review.id} and .body != null and .body != "")) | .[] | "\\(.user.login): \\(.body)"`,
-    ]);
+    const inlineComments = await this.run(
+      options.cwd,
+      [
+        "api",
+        `repos/${options.repository}/pulls/${pullRequest.number}/comments`,
+        "--paginate",
+        "--slurp",
+        "--jq",
+        `flatten | map(select(.pull_request_review_id == ${review.id} and .body != null and .body != "")) | .[] | "\\(.user.login): \\(.body)"`,
+      ],
+      credential,
+    );
 
     const feedbackParts: string[] = [];
 
@@ -542,20 +628,25 @@ export class GitHubClient {
   async createPullRequest(
     options: CreatePullRequestOptions,
   ): Promise<PullRequest> {
-    const output = await this.runGitHubCommand(options.cwd, [
-      "pr",
-      "create",
-      "--repo",
-      options.repository,
-      "--base",
-      options.baseBranch,
-      "--head",
-      options.headBranch,
-      "--title",
-      options.title,
-      "--body",
-      options.body,
-    ]);
+    const credential = await this.resolveCredential(options.project);
+    const output = await this.run(
+      options.cwd,
+      [
+        "pr",
+        "create",
+        "--repo",
+        options.repository,
+        "--base",
+        options.baseBranch,
+        "--head",
+        options.headBranch,
+        "--title",
+        options.title,
+        "--body",
+        options.body,
+      ],
+      credential,
+    );
 
     if (output.trim().length === 0) {
       throw new Error("GitHub CLI did not return a pull request URL");
@@ -567,16 +658,21 @@ export class GitHubClient {
   }
 
   async mergePullRequest(options: MergePullRequestOptions): Promise<void> {
-    await this.runGitHubCommand(options.cwd, [
-      "pr",
-      "merge",
-      parsePullRequestUrl(options.pullRequestUrl),
-      "--repo",
-      options.repository,
-      "--match-head-commit",
-      options.commitSha,
-      "--merge",
-      "--delete-branch",
-    ]);
+    const credential = await this.resolveCredential(options.project);
+    await this.run(
+      options.cwd,
+      [
+        "pr",
+        "merge",
+        parsePullRequestUrl(options.pullRequestUrl),
+        "--repo",
+        options.repository,
+        "--match-head-commit",
+        options.commitSha,
+        "--merge",
+        "--delete-branch",
+      ],
+      credential,
+    );
   }
 }

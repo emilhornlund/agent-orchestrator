@@ -1,6 +1,11 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
+import type { ProjectConfig } from "../config/config.js";
+import { GitHubCredentialProvider } from "../github/github-credential-provider.js";
+import { getGitHubOperationProject } from "../github/github-operation-context.js";
+import { redactSecrets } from "../security/redact-secrets.js";
+
 const execFileAsync = promisify(execFile);
 
 const GIT_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
@@ -55,7 +60,10 @@ const defaultRunGit: RunGit = async (cwd, args, environment) => {
 
     return stdout.trim();
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = redactSecrets(
+      error instanceof Error ? error.message : String(error),
+      Object.values(environment ?? {}),
+    );
 
     throw new Error(`git ${args.join(" ")} failed in ${cwd}: ${message}`, {
       cause: error,
@@ -64,7 +72,40 @@ const defaultRunGit: RunGit = async (cwd, args, environment) => {
 };
 
 export class GitClient {
-  constructor(private readonly runGit: RunGit = defaultRunGit) {}
+  constructor(
+    private readonly runGit: RunGit = defaultRunGit,
+    private readonly credentials: GitHubCredentialProvider = new GitHubCredentialProvider(),
+  ) {}
+
+  private async runAuthenticated(
+    cwd: string,
+    args: string[],
+    project?: ProjectConfig,
+  ): Promise<string> {
+    const operationProject = project ?? getGitHubOperationProject();
+
+    if (operationProject === undefined) {
+      return this.runGit(cwd, args);
+    }
+
+    const credential = await this.credentials.resolve(operationProject);
+
+    if (Object.keys(credential.environment).length === 0) {
+      return this.runGit(cwd, args);
+    }
+
+    try {
+      return await this.runGit(cwd, args, credential.environment);
+    } catch (error) {
+      throw new Error(
+        redactSecrets(
+          error instanceof Error ? error.message : String(error),
+          credential.secretValues,
+        ),
+        { cause: error },
+      );
+    }
+  }
 
   async isValidRepository(repositoryPath: string): Promise<boolean> {
     try {
@@ -85,8 +126,13 @@ export class GitClient {
     repositoryPath: string,
     remote: string,
     branch: string,
+    project?: ProjectConfig,
   ): Promise<void> {
-    await this.runGit(repositoryPath, ["fetch", remote, branch]);
+    await this.runAuthenticated(
+      repositoryPath,
+      ["fetch", remote, branch],
+      project,
+    );
   }
 
   async rebase(
@@ -124,13 +170,13 @@ export class GitClient {
     repositoryPath: string,
     remote: string,
     branch: string,
+    project?: ProjectConfig,
   ): Promise<void> {
-    await this.runGit(repositoryPath, [
-      "push",
-      "--set-upstream",
-      remote,
-      branch,
-    ]);
+    await this.runAuthenticated(
+      repositoryPath,
+      ["push", "--set-upstream", remote, branch],
+      project,
+    );
   }
 
   async branchExists(repositoryPath: string, branch: string): Promise<boolean> {
@@ -234,9 +280,15 @@ export class GitClient {
     repositoryPath: string,
     remote: string,
     branch: string,
+    project?: ProjectConfig,
   ): Promise<boolean> {
     return (
-      (await this.getRemoteBranchSha(repositoryPath, remote, branch)) !== null
+      (await this.getRemoteBranchSha(
+        repositoryPath,
+        remote,
+        branch,
+        project,
+      )) !== null
     );
   }
 
@@ -244,13 +296,13 @@ export class GitClient {
     repositoryPath: string,
     remote: string,
     branch: string,
+    project?: ProjectConfig,
   ): Promise<string | null> {
-    const output = await this.runGit(repositoryPath, [
-      "ls-remote",
-      "--heads",
-      remote,
-      `refs/heads/${branch}`,
-    ]);
+    const output = await this.runAuthenticated(
+      repositoryPath,
+      ["ls-remote", "--heads", remote, `refs/heads/${branch}`],
+      project,
+    );
 
     const remoteOutput = output.trim();
 
@@ -293,7 +345,12 @@ export class GitClient {
     repositoryPath: string,
     remote: string,
     branch: string,
+    project?: ProjectConfig,
   ): Promise<void> {
-    await this.runGit(repositoryPath, ["push", remote, "--delete", branch]);
+    await this.runAuthenticated(
+      repositoryPath,
+      ["push", remote, "--delete", branch],
+      project,
+    );
   }
 }

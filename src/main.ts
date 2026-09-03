@@ -7,6 +7,7 @@ import { loadConfig } from "./config/config.js";
 import { parseEnvironment } from "./config/environment.js";
 import { GitClient } from "./git/git-client.js";
 import { GitHubClient } from "./github/github-client.js";
+import { GitHubCredentialProvider } from "./github/github-credential-provider.js";
 import { logger } from "./logging/logger.js";
 import { createEmailNotifier } from "./notifications/email-notifier.js";
 import { OpenCodeClient } from "./opencode/opencode-client.js";
@@ -55,9 +56,9 @@ export async function main(
     timeoutMilliseconds: 30_000,
   });
 
-  const git = new GitClient();
-
-  const github = new GitHubClient();
+  const githubCredentials = new GitHubCredentialProvider();
+  const git = new GitClient(undefined, githubCredentials);
+  const github = new GitHubClient(undefined, githubCredentials);
 
   const opencode = new OpenCodeClient();
 
@@ -102,6 +103,7 @@ export async function main(
       github,
       opencode,
       commands,
+      githubCredentials,
       ...(emailNotifier === undefined ? {} : { emailNotifier }),
     },
     lifecycle.signal,

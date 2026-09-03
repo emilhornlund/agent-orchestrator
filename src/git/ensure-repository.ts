@@ -1,6 +1,10 @@
 import fs from "node:fs";
 
 import type { ProjectConfig } from "../config/config.js";
+import {
+  GitHubCredentialProvider,
+  type GitHubCredential,
+} from "../github/github-credential-provider.js";
 import { CommandRunner } from "../process/command-runner.js";
 
 import { GitClient } from "./git-client.js";
@@ -17,6 +21,7 @@ export async function ensureRepository(
   git: GitClient,
   commands: CommandRunner,
   project: ProjectConfig,
+  credentials: GitHubCredentialProvider = new GitHubCredentialProvider(),
 ): Promise<void> {
   const repositoryPath = project.repository.path;
 
@@ -41,9 +46,17 @@ export async function ensureRepository(
   let cloneResult;
 
   try {
+    const credential: GitHubCredential = await credentials.resolve(project);
+
     cloneResult = await commands.run({
       cwd: process.cwd(),
       command: cloneCommand,
+      ...(Object.keys(credential.environment).length === 0
+        ? {}
+        : {
+            environment: credential.environment,
+            secretValues: credential.secretValues,
+          }),
     });
   } catch (error) {
     throw new Error(

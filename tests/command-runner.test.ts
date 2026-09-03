@@ -84,6 +84,42 @@ describe("CommandRunner", () => {
     });
   });
 
+  it("passes operation credentials to the child and redacts command output", async () => {
+    const child = createFakeChild();
+    const stdoutWrite = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+
+    spawnMock.mockImplementationOnce(() => {
+      queueMicrotask(() => {
+        child.stdout.emit("data", Buffer.from("token-a\n"));
+        child.emit("close", 0);
+      });
+      return child;
+    });
+
+    const runner = new CommandRunner();
+
+    await runner.run({
+      cwd: "/worktree",
+      command: "gh repo clone owner/repository /repo",
+      environment: { GH_TOKEN: "token-a" },
+      secretValues: ["token-a"],
+    });
+
+    expect(spawnMock).toHaveBeenCalledWith(
+      "gh repo clone owner/repository /repo",
+      {
+        cwd: "/worktree",
+        shell: true,
+        stdio: ["inherit", "pipe", "pipe"],
+        detached: process.platform !== "win32",
+        env: expect.objectContaining({ GH_TOKEN: "token-a" }),
+      },
+    );
+    expect(stdoutWrite).toHaveBeenCalledWith("[REDACTED]\n");
+  });
+
   it("terminates and rejects a command that exceeds its timeout", async () => {
     vi.useFakeTimers();
 
