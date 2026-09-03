@@ -186,6 +186,7 @@ The configured list and label names do not matter to the service. The IDs are wh
 | `setupCommand`      | Optional non-blank command run in the card worktree before implementation                                                   |
 | `validationCommand` | Optional non-blank command supplied to OpenCode sessions that modify implementation files; the orchestrator does not run it |
 | `gitIdentity`       | Required identity used by the commit session                                                                                |
+| `githubApp`         | Optional GitHub App identity reserved for future authentication                                                             |
 
 `path`, `worktreeRoot`, and an optional `gitIdentity.signingKey` must be absolute paths. Parsed absolute paths are resolved
 before use. `gitIdentity` contains:
@@ -199,6 +200,21 @@ before use. `gitIdentity` contains:
 If `setupCommand` is configured, it runs in the task worktree before the OpenCode implementation session. If
 `validationCommand` is configured, it is passed to the relevant OpenCode prompts; those agents run it before finishing and
 fix failures caused by their changes.
+
+`githubApp` is an optional strict object containing:
+
+```yaml
+githubApp:
+  appId: "123456789"
+  installationId: "987654321"
+  privateKeyPath: "/absolute/path/to/github-app-private-key.pem"
+```
+
+All three fields are required when `githubApp` is present. `appId` and `installationId` must be non-blank identifiers, and
+`privateKeyPath` must be a non-blank absolute path; absolute paths are normalized before use. Unknown keys and invalid or
+incomplete values are rejected during startup. The private-key file is not read by configuration loading. GitHub App
+authentication is deferred: the service continues to use the existing authenticated `gh` CLI behavior, including PAT and
+`GH_TOKEN` authentication, and does not pass these settings to GitHub commands.
 
 ### `projects[].opencode`
 

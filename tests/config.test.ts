@@ -50,6 +50,45 @@ workflow:
   pollIntervalSeconds: 15
 `;
 
+const githubAppValues = {
+  appId: '"123456"',
+  installationId: '"987654"',
+  privateKeyPath: '"/tmp/github-app-key/../private-key.pem"',
+} as const;
+
+type GitHubAppField = keyof typeof githubAppValues;
+
+function configWithGithubApp(fields: readonly GitHubAppField[]): string {
+  const settings = fields
+    .map((field) => `        ${field}: ${githubAppValues[field]}`)
+    .join("\n");
+  const githubApp =
+    settings.length === 0
+      ? "      githubApp: {}"
+      : `      githubApp:\n${settings}`;
+
+  return validConfig.replace(
+    '      github: "owner/repository"',
+    `      github: "owner/repository"\n${githubApp}`,
+  );
+}
+
+function configWithGithubAppValues(
+  values: Partial<Record<GitHubAppField, string>>,
+): string {
+  const fields = Object.keys(githubAppValues) as GitHubAppField[];
+  const settings = fields
+    .map(
+      (field) => `        ${field}: ${values[field] ?? githubAppValues[field]}`,
+    )
+    .join("\n");
+
+  return validConfig.replace(
+    '      github: "owner/repository"',
+    `      github: "owner/repository"\n      githubApp:\n${settings}`,
+  );
+}
+
 describe("parseConfig", () => {
   it("accepts valid configuration", () => {
     const config = parseConfig(validConfig);
@@ -75,6 +114,7 @@ describe("parseConfig", () => {
       bugLabelId: "bug",
     });
     expect(project!.repository.github).toBe("owner/repository");
+    expect(project!.repository.githubApp).toBeUndefined();
     expect(project!.repository.setupCommand).toBeUndefined();
     expect(project!.repository.validationCommand).toBe("yarn validate");
     expect(project!.opencode.refinement).toEqual({
@@ -104,6 +144,99 @@ describe("parseConfig", () => {
     expect(config.workflow.contextRetentionDays).toBe(14);
     expect(config.workflow.contextRoot).toBe("/opt/.agent-context");
     expect(config.notifications).toBeUndefined();
+  });
+
+  it("accepts and normalizes a complete GitHub App configuration", () => {
+    const config = parseConfig(
+      configWithGithubApp(["appId", "installationId", "privateKeyPath"]),
+    );
+
+    expect(config.projects[0]?.repository.githubApp).toEqual({
+      appId: "123456",
+      installationId: "987654",
+      privateKeyPath: "/tmp/private-key.pem",
+    });
+  });
+
+  it.each<[string, readonly GitHubAppField[], readonly GitHubAppField[]]>([
+    ["empty", [], ["appId", "installationId", "privateKeyPath"]],
+    ["app ID only", ["appId"], ["installationId", "privateKeyPath"]],
+    ["installation ID only", ["installationId"], ["appId", "privateKeyPath"]],
+    ["private key path only", ["privateKeyPath"], ["appId", "installationId"]],
+    [
+      "app and installation IDs",
+      ["appId", "installationId"],
+      ["privateKeyPath"],
+    ],
+    [
+      "app ID and private key path",
+      ["appId", "privateKeyPath"],
+      ["installationId"],
+    ],
+    [
+      "installation ID and private key path",
+      ["installationId", "privateKeyPath"],
+      ["appId"],
+    ],
+  ])(
+    "rejects an incomplete GitHub App configuration: %s",
+    (_label, suppliedFields, missingFields) => {
+      let thrown: unknown;
+
+      try {
+        parseConfig(configWithGithubApp(suppliedFields));
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown).toBeInstanceOf(Error);
+
+      if (thrown instanceof Error) {
+        for (const field of missingFields) {
+          expect(thrown.message).toContain(
+            `projects.0.repository.githubApp.${field}`,
+          );
+        }
+      }
+    },
+  );
+
+  it.each([
+    ["blank app ID", "appId", '"  "', "Must not be blank"],
+    ["blank installation ID", "installationId", '"  "', "Must not be blank"],
+    [
+      "relative private key path",
+      "privateKeyPath",
+      '"keys/private-key.pem"',
+      "Must be an absolute path",
+    ],
+    ["blank private key path", "privateKeyPath", '"  "', "Must not be blank"],
+    ["numeric app ID", "appId", "123456", "expected string"],
+    ["numeric installation ID", "installationId", "987654", "expected string"],
+  ] as const)(
+    "rejects an invalid GitHub App value: %s",
+    (_label, field, value, message) => {
+      const raw = configWithGithubAppValues({ [field]: value });
+
+      expect(() => parseConfig(raw)).toThrow(
+        `projects.0.repository.githubApp.${field}`,
+      );
+      expect(() => parseConfig(raw)).toThrow(message);
+    },
+  );
+
+  it("rejects unknown GitHub App configuration keys", () => {
+    const raw = configWithGithubApp([
+      "appId",
+      "installationId",
+      "privateKeyPath",
+    ]).replace(
+      '        privateKeyPath: "/tmp/github-app-key/../private-key.pem"',
+      '        privateKeyPath: "/tmp/github-app-key/../private-key.pem"\n        privateKeyPth: "/tmp/typo.pem"',
+    );
+
+    expect(() => parseConfig(raw)).toThrow("projects.0.repository.githubApp");
+    expect(() => parseConfig(raw)).toThrow("Unrecognized key");
   });
 
   it("accepts optional finite attachment limits", () => {

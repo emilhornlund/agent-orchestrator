@@ -108,6 +108,30 @@ const gitIdentitySchema = z.strictObject({
   signingKey: absolutePath.optional(),
 });
 
+const githubAppSchema = z
+  .strictObject({
+    appId: nonBlankString.optional(),
+    installationId: nonBlankString.optional(),
+    privateKeyPath: absolutePath.optional(),
+  })
+  .superRefine((githubApp, ctx) => {
+    const requiredFields = [
+      ["appId", githubApp.appId],
+      ["installationId", githubApp.installationId],
+      ["privateKeyPath", githubApp.privateKeyPath],
+    ] as const;
+
+    for (const [field, value] of requiredFields) {
+      if (value === undefined) {
+        ctx.addIssue({
+          code: "custom",
+          path: [field],
+          message: "Required when GitHub App settings are configured",
+        });
+      }
+    }
+  });
+
 const repositorySchema = z.strictObject({
   path: absolutePath,
   github: nonBlankString.regex(githubRepositoryPattern, {
@@ -118,6 +142,7 @@ const repositorySchema = z.strictObject({
   setupCommand: nonBlankString.optional(),
   validationCommand: nonBlankString.optional(),
   gitIdentity: gitIdentitySchema,
+  githubApp: githubAppSchema.optional(),
 });
 
 const openCodeStageSchema = z.strictObject({
