@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ProjectConfig } from "../src/config/config.js";
 import { GitClient, type RunGit } from "../src/git/git-client.js";
@@ -6,7 +6,9 @@ import {
   GitHubClient,
   type RunGitHubCommand,
 } from "../src/github/github-client.js";
+import { GitHubCredentialProvider } from "../src/github/github-credential-provider.js";
 import type { EmailNotifier } from "../src/notifications/email-notifier.js";
+import { formatFailureDiagnostic } from "../src/orchestrator/failure-diagnostic.js";
 import { publishCard } from "../src/orchestrator/publish-card.js";
 import { WorkflowError } from "../src/orchestrator/workflow-error.js";
 import { type TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
@@ -65,6 +67,22 @@ function createProject(): ProjectConfig {
   };
 }
 
+function createGithubAppProject(): ProjectConfig {
+  const project = createProject();
+
+  return {
+    ...project,
+    repository: {
+      ...project.repository,
+      githubApp: {
+        appId: "app-id",
+        installationId: "installation-id",
+        privateKeyPath: "/secrets/github-app.pem",
+      },
+    },
+  };
+}
+
 function createCard(): TrelloCard {
   return {
     id: "card-1",
@@ -88,6 +106,10 @@ function createPublicationGit(
     ...overrides,
   } as unknown as GitClient;
 }
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 describe("publishCard", () => {
   it("auto-merges after publication and completes before notifying", async () => {
@@ -416,6 +438,7 @@ describe("publishCard", () => {
 
   it("pushes, creates the PR, and moves the card in order", async () => {
     const events: string[] = [];
+    vi.stubEnv("GH_TOKEN", "ambient-pat");
 
     const runGit = vi.fn<RunGit>(async (_cwd, args) => {
       if (args[0] === "branch" && args[1] === "--show-current") {
@@ -560,6 +583,20 @@ describe("publishCard", () => {
         '.[0].url // ""',
       ],
     );
+
+    for (const [cwd, args, environment] of runGit.mock.calls) {
+      if (["fetch", "ls-remote", "push"].includes(args[0] ?? "")) {
+        expect(cwd).toBe("/tmp/example-worktrees/card-1");
+        expect(environment).toBeUndefined();
+        expect(args).not.toContain("ambient-pat");
+      }
+    }
+    for (const [cwd, args, environment] of runGitHubCommand.mock.calls) {
+      expect(cwd).toBe("/tmp/example-worktrees/card-1");
+      expect(environment).toBeUndefined();
+      expect(args).not.toContain("ambient-pat");
+    }
+    expect(JSON.stringify(addComment.mock.calls)).not.toContain("ambient-pat");
 
     expect(runGitHubCommand).toHaveBeenNthCalledWith(
       2,
@@ -837,8 +874,16 @@ describe("publishCard", () => {
 
   it("reuses an existing pull request instead of creating another one", async () => {
     const events: string[] = [];
+    const project = createGithubAppProject();
+    const token = "project-installation-token";
+    const getInstallationToken = vi.fn().mockResolvedValue(token);
+    const credentials = new GitHubCredentialProvider({
+      authenticator: { getInstallationToken },
+    });
 
     const runGit = vi.fn<RunGit>(async (_cwd, args) => {
+      const command = args[0] === "-c" ? args[2] : args[0];
+
       if (args[0] === "branch" && args[1] === "--show-current") {
         return "agent/card-1";
       }
@@ -847,7 +892,7 @@ describe("publishCard", () => {
         return "abc123";
       }
 
-      if (args[0] === "push") {
+      if (command === "push") {
         events.push("push");
       }
 
@@ -875,21 +920,23 @@ describe("publishCard", () => {
 
     vi.spyOn(trello, "getListTransitions").mockResolvedValue([]);
 
-    vi.spyOn(trello, "addComment").mockImplementation(async () => {
-      events.push("comment");
+    const addComment = vi
+      .spyOn(trello, "addComment")
+      .mockImplementation(async () => {
+        events.push("comment");
 
-      return {
-        id: "action-1",
-        type: "commentCard",
-        date: "2026-08-22T09:00:00.000Z",
-      };
-    });
+        return {
+          id: "action-1",
+          type: "commentCard",
+          date: "2026-08-22T09:00:00.000Z",
+        };
+      });
 
     await publishCard({
       trello,
-      git: new GitClient(runGit),
-      github: new GitHubClient(runGitHubCommand),
-      project: createProject(),
+      git: new GitClient(runGit, credentials),
+      github: new GitHubClient(runGitHubCommand, credentials),
+      project,
       card: createCard(),
       worktreePath: "/tmp/example-worktrees/card-1",
       branch: "agent/card-1",
@@ -901,6 +948,117 @@ describe("publishCard", () => {
     expect(events).toEqual(["push", "find-pr", "move", "comment"]);
 
     expect(runGitHubCommand).toHaveBeenCalledTimes(1);
+    expect(getInstallationToken).toHaveBeenCalledTimes(4);
+    expect(getInstallationToken).toHaveBeenNthCalledWith(
+      1,
+      project.repository.githubApp,
+    );
+    expect(getInstallationToken).toHaveBeenNthCalledWith(
+      2,
+      project.repository.githubApp,
+    );
+    expect(getInstallationToken).toHaveBeenNthCalledWith(
+      3,
+      project.repository.githubApp,
+    );
+    expect(getInstallationToken).toHaveBeenNthCalledWith(
+      4,
+      project.repository.githubApp,
+    );
+
+    for (const [cwd, args, environment] of runGit.mock.calls) {
+      const command = args[0] === "-c" ? args[2] : args[0];
+
+      if (["fetch", "ls-remote", "push"].includes(command ?? "")) {
+        expect(cwd).toBe("/tmp/example-worktrees/card-1");
+        expect(environment?.GH_TOKEN).toBe(token);
+        expect(environment?.GITHUB_TOKEN).toBe(token);
+        expect(environment?.GIT_ASKPASS).toBeDefined();
+        expect(environment?.GIT_TERMINAL_PROMPT).toBe("0");
+        expect(args).not.toContain(token);
+      }
+    }
+    for (const [cwd, args, environment] of runGitHubCommand.mock.calls) {
+      expect(cwd).toBe("/tmp/example-worktrees/card-1");
+      expect(environment?.GH_TOKEN).toBe(token);
+      expect(environment?.GITHUB_TOKEN).toBe(token);
+      expect(args).not.toContain(token);
+    }
+    expect(JSON.stringify(addComment.mock.calls)).not.toContain(token);
+  });
+
+  it("publishes with a GitHub App token when no pull request exists", async () => {
+    const project = createGithubAppProject();
+    const token = "project-installation-token";
+    const getInstallationToken = vi.fn().mockResolvedValue(token);
+    const credentials = new GitHubCredentialProvider({
+      authenticator: { getInstallationToken },
+    });
+    const runGit = vi.fn<RunGit>(async (_cwd, args) => {
+      const command = args[0] === "-c" ? args[2] : args[0];
+
+      if (command === "branch") {
+        return "agent/card-1";
+      }
+      if (command === "rev-parse") {
+        return "abc123";
+      }
+      if (command === "ls-remote") {
+        return "";
+      }
+
+      return "";
+    });
+    const runGitHubCommand = vi.fn<RunGitHubCommand>(async (_cwd, args) => {
+      if (args[0] === "pr" && args[1] === "list") {
+        return "";
+      }
+
+      return "https://github.com/example/repository/pull/123";
+    });
+    const addComment = vi.fn().mockResolvedValue(undefined);
+    const trello = {
+      moveCard: vi.fn().mockResolvedValue(createCard()),
+      getListTransitions: vi.fn().mockResolvedValue([]),
+      addComment,
+    } as unknown as TrelloClient;
+
+    await publishCard({
+      trello,
+      git: new GitClient(runGit, credentials),
+      github: new GitHubClient(runGitHubCommand, credentials),
+      project,
+      card: createCard(),
+      worktreePath: "/worktree",
+      branch: "agent/card-1",
+      commitSha: "abc123",
+      reviewResult: "Passed",
+      remediationResult: "Not required",
+    });
+
+    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "review-list");
+    expect(runGitHubCommand).toHaveBeenCalledTimes(2);
+    expect(getInstallationToken).toHaveBeenCalledTimes(5);
+    for (const call of getInstallationToken.mock.calls) {
+      expect(call[0]).toBe(project.repository.githubApp);
+    }
+    for (const [, args, environment] of runGit.mock.calls) {
+      const command = args[0] === "-c" ? args[2] : args[0];
+
+      if (["fetch", "ls-remote", "push"].includes(command ?? "")) {
+        expect(environment?.GH_TOKEN).toBe(token);
+        expect(environment?.GITHUB_TOKEN).toBe(token);
+        expect(environment?.GIT_ASKPASS).toBeDefined();
+        expect(environment?.GIT_TERMINAL_PROMPT).toBe("0");
+        expect(args).not.toContain(token);
+      }
+    }
+    for (const [, args, environment] of runGitHubCommand.mock.calls) {
+      expect(environment?.GH_TOKEN).toBe(token);
+      expect(environment?.GITHUB_TOKEN).toBe(token);
+      expect(args).not.toContain(token);
+    }
+    expect(JSON.stringify(addComment.mock.calls)).not.toContain(token);
   });
 
   it("does not push again when the remote branch already has the commit", async () => {
@@ -977,7 +1135,15 @@ describe("publishCard", () => {
   });
 
   it("stops before PR lookup when pushing fails", async () => {
+    const project = createGithubAppProject();
+    const token = "project-installation-token";
+    const getInstallationToken = vi.fn().mockResolvedValue(token);
+    const credentials = new GitHubCredentialProvider({
+      authenticator: { getInstallationToken },
+    });
     const runGit = vi.fn<RunGit>(async (_cwd, args) => {
+      const command = args[0] === "-c" ? args[2] : args[0];
+
       if (args[0] === "branch" && args[1] === "--show-current") {
         return "agent/card-1";
       }
@@ -986,8 +1152,8 @@ describe("publishCard", () => {
         return "abc123";
       }
 
-      if (args[0] === "push") {
-        throw new Error("push failed");
+      if (command === "push") {
+        throw new Error(`push failed with ${token}`);
       }
 
       return "";
@@ -1002,23 +1168,43 @@ describe("publishCard", () => {
 
     const moveCard = vi.spyOn(trello, "moveCard");
 
-    await expect(
-      publishCard({
-        trello,
-        git: new GitClient(runGit),
-        github: new GitHubClient(runGitHubCommand),
-        project: createProject(),
-        card: createCard(),
-        worktreePath: "/tmp/example-worktrees/card-1",
-        branch: "agent/card-1",
-        commitSha: "abc123",
-        reviewResult: "Passed",
-        remediationResult: "Not required",
-      }),
-    ).rejects.toThrow("push failed");
+    const request = publishCard({
+      trello,
+      git: new GitClient(runGit, credentials),
+      github: new GitHubClient(runGitHubCommand, credentials),
+      project,
+      card: createCard(),
+      worktreePath: "/tmp/example-worktrees/card-1",
+      branch: "agent/card-1",
+      commitSha: "abc123",
+      reviewResult: "Passed",
+      remediationResult: "Not required",
+    });
+
+    let failure: unknown;
+    try {
+      await request;
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain("push failed");
+    expect((failure as Error).message).not.toContain(token);
+    expect(formatFailureDiagnostic(failure)).not.toContain(token);
 
     expect(runGitHubCommand).not.toHaveBeenCalled();
     expect(moveCard).not.toHaveBeenCalled();
+    expect(getInstallationToken).toHaveBeenCalledTimes(3);
+    for (const [, args, environment] of runGit.mock.calls) {
+      if (args[0] === "-c") {
+        expect(environment?.GH_TOKEN).toBe(token);
+        expect(environment?.GITHUB_TOKEN).toBe(token);
+        expect(environment?.GIT_ASKPASS).toBeDefined();
+        expect(environment?.GIT_TERMINAL_PROMPT).toBe("0");
+        expect(args).not.toContain(token);
+      }
+    }
   });
 
   it("classifies push failures as Git/GitHub workflow errors", async () => {
