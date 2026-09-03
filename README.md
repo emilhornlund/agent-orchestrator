@@ -60,8 +60,9 @@ reorganized; current configuration names, states, commands, and safety boundarie
 - Node.js 24 or later
 - Yarn Classic 1.x
 - Git
-- GitHub CLI (`gh`), already authenticated for projects that omit `repository.githubApp`; App-backed projects authenticate with
-  their configured installation token
+- GitHub CLI (`gh`); projects that omit `repository.githubApp` use an authenticated `gh` session or ambient GitHub
+  authentication such as a PAT in `GH_TOKEN` or `GITHUB_TOKEN`, while App-backed projects use their configured installation
+  token
 - OpenCode
 - Trello API credentials
 - An SMTP server when email notifications are enabled
@@ -81,9 +82,11 @@ cp config.example.yaml config.yaml
 cp .env.example .env
 ```
 
-Add `TRELLO_API_KEY` and `TRELLO_TOKEN` to `.env`, then configure one or more projects in `config.yaml`. Email credentials
-are only needed when email notifications are enabled. See the [configuration reference](docs/configuration.md) for every
-setting, default, and validation rule.
+Add `TRELLO_API_KEY` and `TRELLO_TOKEN` to `.env`, then configure one or more projects in `config.yaml`. For a project without
+`repository.githubApp`, optionally set `GH_TOKEN` or `GITHUB_TOKEN` for PAT-based ambient GitHub authentication, or use an
+authenticated `gh` session. These variables are unnecessary for projects using a GitHub App. Email credentials are only needed
+when email notifications are enabled. See the [configuration reference](docs/configuration.md) for every setting, default, and
+validation rule.
 
 ## Running
 
