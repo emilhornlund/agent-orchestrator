@@ -158,7 +158,8 @@ reads its private key on demand and exchanges an App JWT for a short-lived insta
 cloning, GitHub CLI pull-request/review/merge calls, and authenticated Git fetch, push, and remote-branch cleanup. It is passed
 through child-process environments only; it never appears in command arguments, repository URLs, logs, session logs, persisted
 state, or failure diagnostics. Projects without an App use the existing ambient `gh` and Git authentication, including
-`GH_TOKEN`.
+`GH_TOKEN`. Ambient `GH_TOKEN` and `GITHUB_TOKEN` values are used only to redact child output and failures; the ambient child
+environment is otherwise unchanged.
 
 App credential resolution is project-isolated and has precedence over ambient credentials. A missing/unreadable private key,
 invalid key, failed JWT generation, or failed installation-token exchange fails the affected operation without fallback. Startup

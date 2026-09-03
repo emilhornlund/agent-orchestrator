@@ -41,7 +41,7 @@ export async function prepareReviewWorktree(
     }
   }
 
-  await git.fetch(repositoryPath, "origin", branch);
+  await git.fetch(repositoryPath, "origin", branch, project);
 
   const existingWorktreeStat = fs.lstatSync(worktreePath, {
     throwIfNoEntry: false,

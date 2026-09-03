@@ -165,6 +165,7 @@ describe("reconcileReviewCards", () => {
       cwd: "/repo",
       repository: "owner/repo",
       headBranch: "agent/card-1",
+      project,
     });
     expect(github.findPullRequest).toBeUndefined();
   });
@@ -226,6 +227,7 @@ describe("reconcileReviewCards", () => {
       "/repo",
       "origin",
       "agent/card-1",
+      project,
     );
     expect(events).toEqual([
       "branch exists",

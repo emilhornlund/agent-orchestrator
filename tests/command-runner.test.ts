@@ -92,7 +92,8 @@ describe("CommandRunner", () => {
 
     spawnMock.mockImplementationOnce(() => {
       queueMicrotask(() => {
-        child.stdout.emit("data", Buffer.from("token-a\n"));
+        child.stdout.emit("data", Buffer.from("to"));
+        child.stdout.emit("data", Buffer.from("ken-a\n"));
         child.emit("close", 0);
       });
       return child;

@@ -102,9 +102,19 @@ describe("ensureRepository", () => {
     const runCommand = vi
       .fn<RunCommand>()
       .mockImplementation(async (options) => {
+        const ambientSecretValues = [
+          process.env.GH_TOKEN,
+          process.env.GITHUB_TOKEN,
+        ].filter(
+          (value): value is string => value !== undefined && value.length > 0,
+        );
+
         expect(options).toEqual({
           cwd: process.cwd(),
           command: `gh repo clone owner/repository ${repositoryPath}`,
+          ...(ambientSecretValues.length === 0
+            ? {}
+            : { secretValues: ambientSecretValues }),
         });
 
         fs.mkdirSync(repositoryPath);
@@ -138,7 +148,9 @@ describe("ensureRepository", () => {
       .fn<RunCommand>()
       .mockImplementation(async (options) => {
         expect(options.environment?.GH_TOKEN).toBe("token-a");
-        expect(options.command).not.toContain("token-a");
+        expect(options.command).toBe(
+          `gh repo clone owner/repository ${repositoryPath} -- -c credential.helper=`,
+        );
         expect(options.secretValues).toEqual(["token-a"]);
         fs.mkdirSync(repositoryPath);
         return { exitCode: 0 };

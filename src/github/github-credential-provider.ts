@@ -18,12 +18,19 @@ export interface GitHubCredential {
 }
 
 function describeCredentialFailure(cause: unknown): string {
-  if (
-    cause instanceof GitHubAppConfigurationError ||
-    cause instanceof GitHubAppCredentialError ||
-    cause instanceof GitHubAppNetworkError ||
-    cause instanceof GitHubAppApiError
-  ) {
+  if (cause instanceof GitHubAppApiError) {
+    return `GitHub App installation token exchange failed with HTTP ${cause.status ?? "unknown status"}`;
+  }
+
+  if (cause instanceof GitHubAppConfigurationError) {
+    return cause.message;
+  }
+
+  if (cause instanceof GitHubAppCredentialError) {
+    return cause.message;
+  }
+
+  if (cause instanceof GitHubAppNetworkError) {
     return cause.message;
   }
 
@@ -35,9 +42,11 @@ export class GitHubCredentialResolutionError extends Error {
   readonly repository: string;
 
   constructor(project: ProjectConfig, cause: unknown) {
+    const safeCause = describeCredentialFailure(cause);
+
     super(
       `GitHub authentication failed for project "${project.id}" repository "${project.repository.github}": ${describeCredentialFailure(cause)}`,
-      { cause },
+      { cause: new Error(safeCause) },
     );
     this.name = "GitHubCredentialResolutionError";
     this.projectId = project.id;
@@ -65,12 +74,14 @@ export class GitHubCredentialProvider {
     this.authenticator = options.authenticator ?? new GitHubAppAuthenticator();
   }
 
-  async resolve(project: ProjectConfig): Promise<GitHubCredential> {
-    if (project.repository.githubApp === undefined) {
+  async resolve(project?: ProjectConfig): Promise<GitHubCredential> {
+    if (project?.repository.githubApp === undefined) {
       return {
         mode: "ambient",
         environment: {},
-        secretValues: [],
+        secretValues: [process.env.GH_TOKEN, process.env.GITHUB_TOKEN].filter(
+          (value): value is string => value !== undefined && value.length > 0,
+        ),
       };
     }
 

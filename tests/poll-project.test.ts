@@ -269,6 +269,7 @@ describe("pollProject", () => {
       cwd: "/repo",
       repository: "owner/repo",
       headBranch: "agent/working-card",
+      project,
     });
   });
 
@@ -1465,6 +1466,7 @@ describe("pollProject", () => {
         project.repository.path,
         "origin",
         "agent/card-1",
+        project,
       );
 
       expect(git.resetHardTo).toHaveBeenCalledWith(
@@ -1487,12 +1489,14 @@ describe("pollProject", () => {
         worktreePath,
         "origin",
         "agent/card-1",
+        project,
       );
 
       expect(github.findPullRequest).toHaveBeenCalledWith({
         cwd: worktreePath,
         repository: "example/repository",
         headBranch: "agent/card-1",
+        project,
       });
 
       expect(github.createPullRequest).not.toHaveBeenCalled();
@@ -1683,6 +1687,7 @@ describe("pollProject", () => {
         cwd: project.repository.path,
         repository: project.repository.github,
         headBranch: "agent/card-1",
+        project,
       });
 
       expect(runOpenCode).toHaveBeenCalledTimes(3);
@@ -1702,6 +1707,7 @@ describe("pollProject", () => {
         worktreePath,
         "origin",
         "agent/card-1",
+        project,
       );
 
       expect(github.createPullRequest).not.toHaveBeenCalled();

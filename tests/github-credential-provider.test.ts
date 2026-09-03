@@ -104,7 +104,9 @@ describe("GitHubCredentialProvider", () => {
     await expect(provider.resolve(project("ambient"))).resolves.toEqual({
       mode: "ambient",
       environment: {},
-      secretValues: [],
+      secretValues: [process.env.GH_TOKEN, process.env.GITHUB_TOKEN].filter(
+        (value): value is string => value !== undefined && value.length > 0,
+      ),
     });
     expect(getInstallationToken).not.toHaveBeenCalled();
   });
@@ -213,6 +215,216 @@ describe("GitHub credential command wiring", () => {
     }
   });
 
+  it("uses the project token for state lookup, creation, and merge", async () => {
+    const runGitHubCommand = vi
+      .fn<RunGitHubCommand>()
+      .mockResolvedValueOnce(
+        JSON.stringify([
+          {
+            url: "https://github.com/project-a/repository/pull/1",
+            state: "OPEN",
+            mergedAt: null,
+          },
+        ]),
+      )
+      .mockResolvedValueOnce("https://github.com/project-a/repository/pull/1")
+      .mockResolvedValueOnce("");
+    const provider = new GitHubCredentialProvider({
+      authenticator: {
+        getInstallationToken: vi.fn().mockResolvedValue("token-a"),
+      },
+    });
+    const github = new GitHubClient(runGitHubCommand, provider);
+    const configuredProject = project("project-a", {
+      appId: "app-a",
+      installationId: "installation-a",
+      privateKeyPath: "/secrets/app-a.pem",
+    });
+
+    await github.findPullRequestState({
+      cwd: "/repo",
+      repository: "project-a/repository",
+      headBranch: "agent/card-1",
+      project: configuredProject,
+    });
+    await github.createPullRequest({
+      cwd: "/repo",
+      repository: "project-a/repository",
+      baseBranch: "main",
+      headBranch: "agent/card-1",
+      title: "Task",
+      body: "Body",
+      project: configuredProject,
+    });
+    await github.mergePullRequest({
+      cwd: "/repo",
+      repository: "project-a/repository",
+      pullRequestUrl: "https://github.com/project-a/repository/pull/1",
+      commitSha: "head",
+      project: configuredProject,
+    });
+
+    expect(runGitHubCommand).toHaveBeenCalledTimes(3);
+    for (const call of runGitHubCommand.mock.calls) {
+      expect(call[2]?.GH_TOKEN).toBe("token-a");
+      expect(call[1]).not.toContain("token-a");
+    }
+  });
+
+  it("does not run GitHub CLI when project credential resolution fails", async () => {
+    const runGitHubCommand = vi.fn<RunGitHubCommand>();
+    const provider = new GitHubCredentialProvider({
+      authenticator: {
+        getInstallationToken: vi
+          .fn()
+          .mockRejectedValue(new Error("token-a must not be exposed")),
+      },
+    });
+    const github = new GitHubClient(runGitHubCommand, provider);
+    const configuredProject = project("project-a", {
+      appId: "app-a",
+      installationId: "installation-a",
+      privateKeyPath: "/secrets/app-a.pem",
+    });
+
+    const request = github.findPullRequest({
+      cwd: "/repo",
+      repository: "project-a/repository",
+      headBranch: "agent/card-1",
+      project: configuredProject,
+    });
+
+    await expect(request).rejects.toThrow("GitHub authentication failed");
+    await expect(request).rejects.not.toThrow("token-a");
+    expect(runGitHubCommand).not.toHaveBeenCalled();
+  });
+
+  it("redacts an App token from successful GitHub review output", async () => {
+    const runGitHubCommand = vi
+      .fn<RunGitHubCommand>()
+      .mockResolvedValueOnce(
+        JSON.stringify([
+          {
+            url: "https://github.com/project-a/repository/pull/1",
+            number: 1,
+            reviewDecision: "CHANGES_REQUESTED",
+            headRefOid: "head",
+          },
+        ]),
+      )
+      .mockResolvedValueOnce(
+        JSON.stringify({
+          id: 2,
+          body: "token-a must not reach feedback",
+          commitId: "head",
+          author: "reviewer",
+        }),
+      )
+      .mockResolvedValueOnce("");
+    const provider = new GitHubCredentialProvider({
+      authenticator: {
+        getInstallationToken: vi.fn().mockResolvedValue("token-a"),
+      },
+    });
+    const github = new GitHubClient(runGitHubCommand, provider);
+
+    const result = await github.findChangesRequestedPullRequest({
+      cwd: "/repo",
+      repository: "project-a/repository",
+      headBranch: "agent/card-1",
+      project: project("project-a", {
+        appId: "app-a",
+        installationId: "installation-a",
+        privateKeyPath: "/secrets/app-a.pem",
+      }),
+    });
+
+    expect(result?.feedback).not.toContain("token-a");
+    expect(result?.feedback).toContain("[REDACTED]");
+  });
+
+  it("preserves ambient GH_TOKEN without passing an environment override", async () => {
+    vi.stubEnv("GH_TOKEN", "ambient-token");
+
+    try {
+      const runGitHubCommand = vi
+        .fn<RunGitHubCommand>()
+        .mockRejectedValue(new Error("ambient-token was not accepted"));
+      const github = new GitHubClient(runGitHubCommand);
+
+      await expect(
+        github.findPullRequest({
+          cwd: "/repo",
+          repository: "project-a/repository",
+          headBranch: "agent/card-1",
+        }),
+      ).rejects.toThrow("[REDACTED]");
+
+      expect(runGitHubCommand).toHaveBeenCalledTimes(1);
+      expect(runGitHubCommand.mock.calls[0]).toHaveLength(2);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("isolates project tokens across concurrent GitHub CLI operations", async () => {
+    const calls: Array<{ repository: string; token: string | undefined }> = [];
+    const runGitHubCommand = vi.fn<RunGitHubCommand>(
+      async (_cwd, args, environment) => {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        calls.push({
+          repository: args[args.indexOf("--repo") + 1] ?? "",
+          token: environment?.GH_TOKEN,
+        });
+        return `https://github.com/${args[args.indexOf("--repo") + 1]}/pull/1`;
+      },
+    );
+    const provider = new GitHubCredentialProvider({
+      authenticator: {
+        getInstallationToken: vi.fn(async (githubApp) =>
+          githubApp.appId === "app-a" ? "token-a" : "token-b",
+        ),
+      },
+    });
+    const github = new GitHubClient(runGitHubCommand, provider);
+    const projectA = project("project-a", {
+      appId: "app-a",
+      installationId: "installation-a",
+      privateKeyPath: "/secrets/a.pem",
+    });
+    const projectB = project("project-b", {
+      appId: "app-b",
+      installationId: "installation-b",
+      privateKeyPath: "/secrets/b.pem",
+    });
+
+    await Promise.all([
+      github.createPullRequest({
+        cwd: "/repo-a",
+        repository: "project-a/repository",
+        baseBranch: "main",
+        headBranch: "agent/a",
+        title: "A",
+        body: "A",
+        project: projectA,
+      }),
+      github.createPullRequest({
+        cwd: "/repo-b",
+        repository: "project-b/repository",
+        baseBranch: "main",
+        headBranch: "agent/b",
+        title: "B",
+        body: "B",
+        project: projectB,
+      }),
+    ]);
+
+    expect(calls).toEqual([
+      { repository: "project-a/repository", token: "token-a" },
+      { repository: "project-b/repository", token: "token-b" },
+    ]);
+  });
+
   it("uses the project token for Git fetch, push, and remote cleanup", async () => {
     const runGit = vi
       .fn<RunGit>()
@@ -241,6 +453,7 @@ describe("GitHub credential command wiring", () => {
     expect(runGit).toHaveBeenCalledTimes(4);
     for (const call of runGit.mock.calls) {
       expect(call[2]?.GH_TOKEN).toBe("token-a");
+      expect(call[1].slice(0, 2)).toEqual(["-c", "credential.helper="]);
       expect(call[1]).not.toContain("token-a");
     }
   });

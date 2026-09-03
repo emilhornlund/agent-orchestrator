@@ -84,6 +84,7 @@ export async function reconcileClaimedCard(
         cwd: project.repository.path,
         repository: project.repository.github,
         headBranch: branch,
+        project,
       });
 
       if (signal?.aborted) {
@@ -133,6 +134,7 @@ export async function reconcileClaimedCard(
       cwd: project.repository.path,
       repository: project.repository.github,
       headBranch: branch,
+      project,
     });
 
     if (signal?.aborted) {
@@ -161,6 +163,7 @@ export async function reconcileClaimedCard(
           cwd: project.repository.path,
           repository: project.repository.github,
           headBranch: branch,
+          project,
         });
 
       if (signal?.aborted) {
@@ -557,6 +560,7 @@ async function reconcileReadyWorkingCard(
         cwd: project.repository.path,
         repository: project.repository.github,
         headBranch: branch,
+        project,
       });
 
       if (signal?.aborted) {
@@ -606,6 +610,7 @@ async function reconcileReadyWorkingCard(
       cwd: project.repository.path,
       repository: project.repository.github,
       headBranch: branch,
+      project,
     });
 
     if (signal?.aborted) {
@@ -653,6 +658,7 @@ async function reconcileReadyWorkingCard(
       cwd: project.repository.path,
       repository: project.repository.github,
       headBranch: branch,
+      project,
     });
 
     if (signal?.aborted) {
@@ -834,6 +840,7 @@ async function reconcileReviewToWorkingCard(
       cwd: project.repository.path,
       repository: project.repository.github,
       headBranch: branch,
+      project,
     });
 
     if (signal?.aborted) {
@@ -872,6 +879,7 @@ async function reconcileReviewToWorkingCard(
       cwd: project.repository.path,
       repository: project.repository.github,
       headBranch: branch,
+      project,
     });
 
     if (signal?.aborted) {

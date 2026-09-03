@@ -6,6 +6,7 @@ import {
   type GitHubCredential,
 } from "../github/github-credential-provider.js";
 import { CommandRunner } from "../process/command-runner.js";
+import { redactError, redactSecrets } from "../security/redact-secrets.js";
 
 import { GitClient } from "./git-client.js";
 
@@ -44,24 +45,34 @@ export async function ensureRepository(
   ].join(" ");
 
   let cloneResult;
+  let credential: GitHubCredential | undefined;
 
   try {
-    const credential: GitHubCredential = await credentials.resolve(project);
+    credential = await credentials.resolve(project);
 
     cloneResult = await commands.run({
       cwd: process.cwd(),
-      command: cloneCommand,
+      command:
+        credential.mode === "github-app"
+          ? `${cloneCommand} -- -c credential.helper=`
+          : cloneCommand,
       ...(Object.keys(credential.environment).length === 0
         ? {}
         : {
             environment: credential.environment,
-            secretValues: credential.secretValues,
           }),
+      ...(credential.secretValues.length === 0
+        ? {}
+        : { secretValues: credential.secretValues }),
     });
   } catch (error) {
+    const safeError = redactError(error, credential?.secretValues);
+
+    // Do not retain the caught error: an external command may have included a credential.
     throw new Error(
-      `Failed to clone repository "${project.repository.github}" into "${repositoryPath}": ${error instanceof Error ? error.message : String(error)}`,
-      { cause: error },
+      `Failed to clone repository "${project.repository.github}" into "${repositoryPath}": ${redactSecrets(safeError.message, credential?.secretValues)}`,
+      // eslint-disable-next-line preserve-caught-error
+      { cause: safeError },
     );
   }
 

@@ -85,7 +85,12 @@ export async function publishCard({
     }
 
     try {
-      await git.fetch(worktreePath, "origin", project.repository.defaultBranch);
+      await git.fetch(
+        worktreePath,
+        "origin",
+        project.repository.defaultBranch,
+        project,
+      );
     } catch (error) {
       throw new WorkflowError(
         "Git/GitHub",
@@ -120,7 +125,7 @@ export async function publishCard({
 
     const remoteCommitSha =
       typeof git.getRemoteBranchSha === "function"
-        ? await git.getRemoteBranchSha(worktreePath, "origin", branch)
+        ? await git.getRemoteBranchSha(worktreePath, "origin", branch, project)
         : null;
 
     if (remoteCommitSha === publishedCommitSha) {
@@ -148,7 +153,7 @@ export async function publishCard({
 
       cardLog.event(`Pushing branch ${branch}...`);
 
-      await git.push(worktreePath, "origin", branch);
+      await git.push(worktreePath, "origin", branch, project);
 
       cardLog.event("Branch pushed");
     }
@@ -163,6 +168,7 @@ export async function publishCard({
       cwd: worktreePath,
       repository: project.repository.github,
       headBranch: branch,
+      project,
     });
 
     if (pullRequest) {
@@ -185,6 +191,7 @@ export async function publishCard({
           "",
           "Implemented automatically by Agent Orchestrator.",
         ].join("\n"),
+        project,
       });
 
       cardLog.event(`Pull request created: ${pullRequest.url}`);
