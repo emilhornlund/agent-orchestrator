@@ -3,10 +3,17 @@ import { existsSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ProjectConfig } from "../src/config/config.js";
-import type { GitClient } from "../src/git/git-client.js";
-import type { GitHubClient } from "../src/github/github-client.js";
+import { GitClient, type RunGit } from "../src/git/git-client.js";
+import {
+  GitHubClient,
+  type RunGitHubCommand,
+} from "../src/github/github-client.js";
+import { GitHubCredentialProvider } from "../src/github/github-credential-provider.js";
 import { Logger } from "../src/logging/logger.js";
-import { getFailureContext } from "../src/orchestrator/failure-diagnostic.js";
+import {
+  formatFailureDiagnostic,
+  getFailureContext,
+} from "../src/orchestrator/failure-diagnostic.js";
 import { RetryableGitHubReconciliationError } from "../src/orchestrator/github-reconciliation-error.js";
 import {
   appendSessionLog,
@@ -37,6 +44,20 @@ const project = {
     doneListId: "done",
   },
 } as ProjectConfig;
+
+function createGithubAppProject(): ProjectConfig {
+  return {
+    ...project,
+    repository: {
+      ...project.repository,
+      githubApp: {
+        appId: "app-id",
+        installationId: "installation-id",
+        privateKeyPath: "/secrets/github-app.pem",
+      },
+    },
+  };
+}
 
 function card(id = "card-1"): TrelloCard {
   return {
@@ -170,6 +191,78 @@ describe("reconcileReviewCards", () => {
     expect(github.findPullRequest).toBeUndefined();
   });
 
+  it("uses the project GitHub App token for state and review reconciliation", async () => {
+    const configuredProject = createGithubAppProject();
+    const token = "project-installation-token";
+    const getInstallationToken = vi.fn().mockResolvedValue(token);
+    const credentials = new GitHubCredentialProvider({
+      authenticator: { getInstallationToken },
+    });
+    const runGitHubCommand = vi
+      .fn<RunGitHubCommand>()
+      .mockResolvedValueOnce(
+        JSON.stringify([
+          {
+            url: "https://github.com/owner/repo/pull/1",
+            state: "OPEN",
+            mergedAt: null,
+          },
+        ]),
+      )
+      .mockResolvedValueOnce(
+        JSON.stringify([
+          {
+            url: "https://github.com/owner/repo/pull/1",
+            number: 1,
+            reviewDecision: "CHANGES_REQUESTED",
+            headRefOid: "head-sha",
+          },
+        ]),
+      )
+      .mockResolvedValueOnce(
+        JSON.stringify({
+          id: 2,
+          body: "Please fix this.",
+          commitId: "head-sha",
+          author: "reviewer",
+        }),
+      )
+      .mockResolvedValueOnce("reviewer: Add a regression test.");
+    const trello = trelloFor(card());
+
+    await expect(
+      reconcileReviewCards(
+        trello,
+        {} as GitClient,
+        new GitHubClient(runGitHubCommand, credentials),
+        configuredProject,
+      ),
+    ).resolves.toEqual({
+      card: card(),
+      pullRequestUrl: "https://github.com/owner/repo/pull/1",
+      feedback: [
+        "reviewer: Please fix this.",
+        "",
+        "Inline review comments:",
+        "reviewer: Add a regression test.",
+      ].join("\n"),
+    });
+
+    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "working");
+    expect(getInstallationToken).toHaveBeenCalledTimes(2);
+    for (const call of getInstallationToken.mock.calls) {
+      expect(call[0]).toBe(configuredProject.repository.githubApp);
+    }
+    for (const [, args, environment] of runGitHubCommand.mock.calls) {
+      expect(environment?.GH_TOKEN).toBe(token);
+      expect(environment?.GITHUB_TOKEN).toBe(token);
+      expect(args).not.toContain(token);
+    }
+    expect(
+      JSON.stringify(runGitHubCommand.mock.calls.map(([, args]) => args)),
+    ).not.toContain(token);
+  });
+
   it("moves a card with no expected PR to Backlog", async () => {
     const trello = {
       ...trelloFor(card()),
@@ -238,6 +331,63 @@ describe("reconcileReviewCards", () => {
       dueComplete: true,
     });
     expect(existsSync(sessionLogPath)).toBe(false);
+  });
+
+  it("uses the project GitHub App token for merged branch cleanup", async () => {
+    const configuredProject = createGithubAppProject();
+    const token = "project-installation-token";
+    const getInstallationToken = vi.fn().mockResolvedValue(token);
+    const credentials = new GitHubCredentialProvider({
+      authenticator: { getInstallationToken },
+    });
+    const runGit = vi.fn<RunGit>(async (_cwd, args) => {
+      const command = args[0] === "-c" ? args[2] : args[0];
+
+      if (command === "ls-remote") {
+        return "merged-sha\trefs/heads/agent/card-1";
+      }
+
+      return "";
+    });
+    const runGitHubCommand = vi.fn<RunGitHubCommand>().mockResolvedValue(
+      JSON.stringify([
+        {
+          url: "https://github.com/owner/repo/pull/1",
+          state: "MERGED",
+          mergedAt: "2026-09-01T13:42:03Z",
+        },
+      ]),
+    );
+    const trello = trelloFor(card());
+
+    await expect(
+      reconcileReviewCards(
+        trello,
+        new GitClient(runGit, credentials),
+        new GitHubClient(runGitHubCommand, credentials),
+        configuredProject,
+      ),
+    ).resolves.toBeNull();
+
+    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "done", {
+      dueComplete: true,
+    });
+    expect(getInstallationToken).toHaveBeenCalledTimes(3);
+    for (const call of getInstallationToken.mock.calls) {
+      expect(call[0]).toBe(configuredProject.repository.githubApp);
+    }
+    for (const [, args, environment] of runGit.mock.calls) {
+      expect(environment?.GH_TOKEN).toBe(token);
+      expect(environment?.GITHUB_TOKEN).toBe(token);
+      expect(environment?.GIT_ASKPASS).toBeDefined();
+      expect(environment?.GIT_TERMINAL_PROMPT).toBe("0");
+      expect(args).not.toContain(token);
+    }
+    for (const [, args, environment] of runGitHubCommand.mock.calls) {
+      expect(environment?.GH_TOKEN).toBe(token);
+      expect(environment?.GITHUB_TOKEN).toBe(token);
+      expect(args).not.toContain(token);
+    }
   });
 
   it("moves a merged expected PR to Done when its remote branch is already absent", async () => {
@@ -537,6 +687,72 @@ describe("reconcileReviewCards", () => {
       reconcileReviewCards(trello, {} as GitClient, github, project),
     ).rejects.not.toBeInstanceOf(RetryableGitHubReconciliationError);
 
+    expect(trello.moveCard).not.toHaveBeenCalled();
+    expect(trello.addComment).not.toHaveBeenCalled();
+  });
+
+  it("does not fall back to ambient authentication when App resolution fails", async () => {
+    const token = "token-must-not-appear";
+    const configuredProject = createGithubAppProject();
+    const runGitHubCommand = vi.fn<RunGitHubCommand>();
+    const credentials = new GitHubCredentialProvider({
+      authenticator: {
+        getInstallationToken: vi
+          .fn()
+          .mockRejectedValue(new Error(`token exchange failed: ${token}`)),
+      },
+    });
+    const trello = trelloFor(card());
+    const github = new GitHubClient(runGitHubCommand, credentials);
+
+    const request = reconcileReviewCards(
+      trello,
+      {} as GitClient,
+      github,
+      configuredProject,
+    );
+
+    await expect(request).rejects.toThrow("GitHub authentication failed");
+    await expect(request).rejects.not.toThrow(token);
+    expect(runGitHubCommand).not.toHaveBeenCalled();
+    expect(trello.moveCard).not.toHaveBeenCalled();
+    expect(trello.addComment).not.toHaveBeenCalled();
+  });
+
+  it("does not advance a card after an authenticated GitHub command fails", async () => {
+    const token = "project-installation-token";
+    const configuredProject = createGithubAppProject();
+    const getInstallationToken = vi.fn().mockResolvedValue(token);
+    const credentials = new GitHubCredentialProvider({
+      authenticator: { getInstallationToken },
+    });
+    const runGitHubCommand = vi
+      .fn<RunGitHubCommand>()
+      .mockRejectedValue(new Error(`GitHub request failed with ${token}`));
+    const trello = trelloFor(card());
+    const github = new GitHubClient(runGitHubCommand, credentials);
+
+    let failure: unknown;
+    try {
+      await reconcileReviewCards(
+        trello,
+        {} as GitClient,
+        github,
+        configuredProject,
+      );
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).not.toContain(token);
+    expect(formatFailureDiagnostic(failure)).not.toContain(token);
+    expect(runGitHubCommand).toHaveBeenCalledWith(
+      "/repo",
+      expect.any(Array),
+      expect.objectContaining({ GH_TOKEN: token, GITHUB_TOKEN: token }),
+    );
+    expect(runGitHubCommand.mock.calls[0]?.[1]).not.toContain(token);
     expect(trello.moveCard).not.toHaveBeenCalled();
     expect(trello.addComment).not.toHaveBeenCalled();
   });
