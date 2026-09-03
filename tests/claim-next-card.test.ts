@@ -66,12 +66,119 @@ function createCard(id: string, idLabels: string[] = ["feature"]): TrelloCard {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
+
   for (const directory of temporaryDirectories.splice(0)) {
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });
 
 describe("claimNextCard", () => {
+  it("returns null for an empty Ready list", async () => {
+    const trello = {
+      getCards: vi.fn().mockResolvedValue([]),
+      moveCard: vi.fn(),
+    } as unknown as TrelloClient;
+
+    await expect(
+      claimNextCard(trello, {} as GitClient, createProject("/worktrees")),
+    ).resolves.toBeNull();
+    expect(trello.moveCard).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["without a start date", undefined, true],
+    ["with a past start date", "2026-09-02T02:00:00.000Z", true],
+    ["with a start date reached exactly", "2026-09-02T03:15:00.000Z", true],
+    ["with a future start date", "2026-09-02T04:00:00.000Z", false],
+    [
+      "with a reached timezone-offset start date",
+      "2026-09-02T05:00:00+02:00",
+      true,
+    ],
+  ] as const)(
+    "treats an implementation card %s as eligible: %s",
+    async (_case, start, eligible) => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-09-02T03:15:00.000Z"));
+
+      const worktreeRoot = fs.mkdtempSync(
+        path.join(os.tmpdir(), "claim-card-"),
+      );
+      temporaryDirectories.push(worktreeRoot);
+      const candidate = {
+        ...createCard("card-1"),
+        ...(start === undefined ? {} : { start }),
+      };
+      const prepare = vi.fn(async (...args: unknown[]) => {
+        fs.mkdirSync(args[1] as string);
+      });
+      const moveCard = vi.fn(async () => ({ ...candidate, idList: "working" }));
+      const git = {
+        fetch: vi.fn(async () => undefined),
+        branchExists: vi.fn(async () => false),
+        addWorktreeWithNewBranch: prepare,
+      } as unknown as GitClient;
+      const trello = {
+        getCards: vi.fn().mockResolvedValue([candidate]),
+        moveCard,
+      } as unknown as TrelloClient;
+
+      const result = await claimNextCard(
+        trello,
+        git,
+        createProject(worktreeRoot),
+      );
+
+      expect(result?.card.id).toBe(eligible ? "card-1" : undefined);
+      expect(prepare).toHaveBeenCalledTimes(eligible ? 1 : 0);
+      expect(moveCard).toHaveBeenCalledTimes(eligible ? 1 : 0);
+    },
+  );
+
+  it("skips a future-dated card and claims the next eligible implementation card", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-02T03:15:00.000Z"));
+
+    const worktreeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "claim-card-"));
+    temporaryDirectories.push(worktreeRoot);
+    const futureCard = {
+      ...createCard("future-card"),
+      start: "2026-09-02T00:00:00-04:00",
+    };
+    const eligibleCard = createCard("eligible-card");
+    const preparedCardIds: string[] = [];
+    const moveCard = vi.fn(async (cardId: string) => ({
+      ...createCard(cardId),
+      idList: "working",
+    }));
+    const git = {
+      fetch: vi.fn(async () => undefined),
+      branchExists: vi.fn(async () => false),
+      addWorktreeWithNewBranch: vi.fn(
+        async (_repository, worktreePath: string) => {
+          preparedCardIds.push(path.basename(worktreePath));
+          fs.mkdirSync(worktreePath);
+        },
+      ),
+    } as unknown as GitClient;
+    const trello = {
+      getCards: vi.fn().mockResolvedValue([futureCard, eligibleCard]),
+      moveCard,
+    } as unknown as TrelloClient;
+
+    const result = await claimNextCard(
+      trello,
+      git,
+      createProject(worktreeRoot),
+    );
+
+    expect(result?.card.id).toBe("eligible-card");
+    expect(preparedCardIds).toEqual(["eligible-card"]);
+    expect(moveCard).toHaveBeenCalledWith("eligible-card", "working");
+    expect(moveCard).not.toHaveBeenCalledWith("future-card", "working");
+  });
+
   it("prepares the first eligible worktree before moving the card to Working", async () => {
     const worktreeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "claim-card-"));
     temporaryDirectories.push(worktreeRoot);
