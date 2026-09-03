@@ -662,6 +662,14 @@ describe("pollProject", () => {
       idLabels: ["feature-label"],
       url: "https://trello.com/c/card-1",
     };
+    const lowerPriorityRefinementCard: TrelloCard = {
+      id: "card-2",
+      name: "Lower priority refinement",
+      desc: "Refine this later",
+      idList: "ready",
+      idLabels: ["refinement-label"],
+      url: "https://trello.com/c/card-2",
+    };
 
     const project: ProjectConfig = {
       id: "example",
@@ -734,7 +742,7 @@ describe("pollProject", () => {
 
         if (listId === project.trello.readyListId) {
           events.push("get-ready");
-          return [card];
+          return [card, lowerPriorityRefinementCard];
         }
 
         return [];
@@ -857,7 +865,6 @@ describe("pollProject", () => {
 
       expect(events).toEqual([
         "get-working",
-        "get-ready",
         "get-ready",
         "implementation",
         "review",
