@@ -28,8 +28,9 @@ cp .env.example .env
 ```
 
 Add the Trello credentials to `.env`, configure the project and workflow IDs
-in `config.yaml`, and authenticate the GitHub CLI for the repositories the
-orchestrator manages. Do not commit `config.yaml`, `.env`, credentials, or
+in `config.yaml`, and either authenticate the GitHub CLI for projects without a
+`repository.githubApp` or configure the App's private key path for App-backed
+projects. Do not commit `config.yaml`, `.env`, credentials, private keys, or
 other secrets.
 
 ## Validation

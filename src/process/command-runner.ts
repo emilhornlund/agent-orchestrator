@@ -4,6 +4,7 @@ import {
   appendSessionLog,
   appendSessionSection,
 } from "../logging/session-log.js";
+import { redactSecrets } from "../security/redact-secrets.js";
 
 const commandTerminationGraceMilliseconds = 5_000;
 
@@ -34,6 +35,8 @@ export interface CommandRunOptions {
   command: string;
   signal?: AbortSignal;
   timeoutMilliseconds?: number;
+  environment?: Record<string, string>;
+  secretValues?: readonly string[];
   sessionLogPath?: string;
   sessionLabel?: string;
 }
@@ -65,6 +68,8 @@ const defaultRunCommand: RunCommand = async ({
   command,
   signal,
   timeoutMilliseconds,
+  environment,
+  secretValues,
   sessionLogPath,
   sessionLabel,
 }) =>
@@ -79,7 +84,10 @@ const defaultRunCommand: RunCommand = async ({
 
       appendSessionLog(
         sessionLogPath,
-        [`Working directory: ${cwd}`, `Command: ${command}`, ""].join("\n"),
+        redactSecrets(
+          [`Working directory: ${cwd}`, `Command: ${command}`, ""].join("\n"),
+          secretValues,
+        ),
       );
     }
 
@@ -88,6 +96,9 @@ const defaultRunCommand: RunCommand = async ({
       shell: true,
       stdio: ["inherit", "pipe", "pipe"],
       detached: process.platform !== "win32",
+      ...(environment === undefined
+        ? {}
+        : { env: { ...process.env, ...environment } }),
     });
 
     let settled = false;
@@ -153,21 +164,23 @@ const defaultRunCommand: RunCommand = async ({
 
     child.stdout.on("data", (chunk: Buffer) => {
       const text = chunk.toString();
+      const safeText = redactSecrets(text, secretValues);
 
       if (sessionLogPath) {
-        appendSessionLog(sessionLogPath, text);
+        appendSessionLog(sessionLogPath, safeText);
       } else {
-        process.stdout.write(text);
+        process.stdout.write(safeText);
       }
     });
 
     child.stderr.on("data", (chunk: Buffer) => {
       const text = chunk.toString();
+      const safeText = redactSecrets(text, secretValues);
 
       if (sessionLogPath) {
-        appendSessionLog(sessionLogPath, text);
+        appendSessionLog(sessionLogPath, safeText);
       } else {
-        process.stderr.write(text);
+        process.stderr.write(safeText);
       }
     });
 

@@ -186,7 +186,7 @@ The configured list and label names do not matter to the service. The IDs are wh
 | `setupCommand`      | Optional non-blank command run in the card worktree before implementation                                                   |
 | `validationCommand` | Optional non-blank command supplied to OpenCode sessions that modify implementation files; the orchestrator does not run it |
 | `gitIdentity`       | Required identity used by the commit session                                                                                |
-| `githubApp`         | Optional GitHub App identity used to generate installation tokens when requested                                            |
+| `githubApp`         | Optional GitHub App identity used for all authenticated GitHub operations for this project                                  |
 
 `path`, `worktreeRoot`, and an optional `gitIdentity.signingKey` must be absolute paths. Parsed absolute paths are resolved
 before use. `gitIdentity` contains:
@@ -214,9 +214,15 @@ All three fields are required when `githubApp` is present. `appId` and `installa
 `privateKeyPath` must be a non-blank absolute path; absolute paths are normalized before use. Unknown keys and invalid or
 incomplete values are rejected during startup. The private-key file is not read by configuration loading. Callers can use the
 GitHub App authenticator to read the PEM key on demand, create an App JWT, and exchange it for a short-lived installation
-access token. The private key, JWT, and token are not logged, persisted, cached, or automatically refreshed. Existing Git
-and `gh` operations continue to use their current authentication, including PAT and `GH_TOKEN`; the generated token is not
-wired into those operations yet.
+access token. The private key, JWT, and token are not logged, persisted, cached, or automatically refreshed. The resolved
+token is supplied only through a child-process environment for the bounded operation that needs it: `gh repo clone`, other
+GitHub CLI pull-request and review operations, and Git fetch, push, and remote-branch cleanup. It is not placed in command
+arguments or repository URLs. If any App setting is present but the key cannot be read, the JWT cannot be generated, or
+GitHub rejects the token exchange, that operation fails and does not fall back to ambient authentication.
+
+When `githubApp` is omitted, the orchestrator leaves the GitHub CLI and Git environment unchanged. Operators may therefore use
+the existing `gh` login, `GH_TOKEN`, or other ambient Git authentication. App credentials are resolved separately for each
+project and operation, so credentials are not shared between concurrent project workers.
 
 ### `projects[].opencode`
 
@@ -253,8 +259,9 @@ worktree roots, and Trello board IDs. The YAML object structure is strict, so un
 OpenCode, Trello, notification, SMTP, or event keys are rejected.
 
 Startup also verifies the configured repositories and Trello resources. An existing repository path must be a valid Git
-repository; a missing path may be cloned from the configured GitHub repository with `gh`. The GitHub CLI must already be
-authenticated for managed repositories. Trello lists and labels are checked on their configured boards before polling
+repository; a missing path may be cloned from the configured GitHub repository with `gh`. Projects without `githubApp` must
+already have ambient GitHub authentication available. Projects with `githubApp` use the configured App during cloning and
+every later GitHub operation. Trello lists and labels are checked on their configured boards before polling
 starts. A transient Trello failure during that check is deferred to the project worker, which retries it on later polling
 cycles before processing cards. Context directories are created only by the context-storage helpers, not as an implicit side
 effect of loading configuration or starting the service.

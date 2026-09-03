@@ -27,8 +27,9 @@ projects:
         name: "Agent Orchestrator"
         email: "agent-orchestrator@users.noreply.github.com"
         signingKey: "/absolute/path/to/agent-orchestrator-signing-key"
-      # Optional GitHub App identity for callers that request an installation token.
-      # The private key is read only when that token is requested.
+      # Optional GitHub App identity. When configured, all GitHub operations for
+      # this project use a short-lived installation token.
+      # The private key is read only when a GitHub operation needs authentication.
       # githubApp:
       #   appId: "123456789"
       #   installationId: "987654321"

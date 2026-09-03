@@ -5,6 +5,7 @@ import {
 } from "../context/card-context-retention.js";
 import type { GitClient } from "../git/git-client.js";
 import type { GitHubClient } from "../github/github-client.js";
+import { withGitHubOperationProject } from "../github/github-operation-context.js";
 import {
   cleanupLogRetention,
   logRetentionIntervalMilliseconds,
@@ -112,25 +113,21 @@ async function runProjectWorker(
       }
 
       if (emailNotifier === undefined) {
-        await pollProject(
-          trello,
-          git,
-          github,
-          opencode,
-          commands,
-          project,
-          signal,
+        await withGitHubOperationProject(project, () =>
+          pollProject(trello, git, github, opencode, commands, project, signal),
         );
       } else {
-        await pollProject(
-          trello,
-          git,
-          github,
-          opencode,
-          commands,
-          project,
-          signal,
-          emailNotifier,
+        await withGitHubOperationProject(project, () =>
+          pollProject(
+            trello,
+            git,
+            github,
+            opencode,
+            commands,
+            project,
+            signal,
+            emailNotifier,
+          ),
         );
       }
 

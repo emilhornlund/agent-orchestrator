@@ -153,6 +153,19 @@ the card to `Backlog`; a refinement cleanup failure follows normal failure handl
 
 ## Publication and GitHub boundaries
 
+GitHub authentication is selected per project at the operation boundary. If `repository.githubApp` is configured, the service
+reads its private key on demand and exchanges an App JWT for a short-lived installation token. The token is used for repository
+cloning, GitHub CLI pull-request/review/merge calls, and authenticated Git fetch, push, and remote-branch cleanup. It is passed
+through child-process environments only; it never appears in command arguments, repository URLs, logs, session logs, persisted
+state, or failure diagnostics. Projects without an App use the existing ambient `gh` and Git authentication, including
+`GH_TOKEN`.
+
+App credential resolution is project-isolated and has precedence over ambient credentials. A missing/unreadable private key,
+invalid key, failed JWT generation, or failed installation-token exchange fails the affected operation without fallback. Startup
+clone failures stop startup; workflow failures preserve the card's existing failure/reconciliation behavior and preserve
+recoverable worktrees and agent changes. Operators must correct the App configuration or external GitHub access and retry through
+the normal workflow; the service does not persist or automatically refresh tokens.
+
 Immediately before publication, the task worktree fetches `origin/<defaultBranch>` and rebases `agent/<trello-card-id>` onto
 that fetched ref. Git leaves an already-current branch unchanged. The resulting `HEAD` drives remote comparison, push
 decisions, pull-request publication, notifications, and the Trello summary.
