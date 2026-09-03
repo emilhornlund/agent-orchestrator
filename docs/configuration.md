@@ -216,7 +216,8 @@ incomplete values are rejected during startup. The private-key file is not read 
 GitHub App authenticator to read the PEM key on demand, create an App JWT, and exchange it for a short-lived installation
 access token. The private key, JWT, and token are not logged, persisted, cached, or automatically refreshed. The resolved
 token is supplied only through a child-process environment for the bounded operation that needs it: `gh repo clone`, other
-GitHub CLI pull-request and review operations, and Git fetch, push, and remote-branch cleanup. It is not placed in command
+GitHub CLI pull-request and review operations, and `git fetch`, `git ls-remote`, `git push`, or remote-branch deletion. Git
+temporarily clears configured credential helpers and obtains the token through `GIT_ASKPASS`; it is not placed in command
 arguments or repository URLs. If any App setting is present but the key cannot be read, the JWT cannot be generated, or
 GitHub rejects the token exchange, that operation fails and does not fall back to ambient authentication.
 
