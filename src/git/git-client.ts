@@ -56,10 +56,9 @@ const defaultRunGit: RunGit = async (cwd, args, environment) => {
       cwd,
       encoding: "utf8",
       timeout: GIT_TIMEOUT_MS,
-      env: {
-        ...process.env,
-        ...environment,
-      },
+      ...(environment === undefined
+        ? {}
+        : { env: { ...process.env, ...environment } }),
     });
 
     return stdout.trim();
@@ -106,6 +105,7 @@ export class GitClient {
 
       if (
         credential.mode === "ambient" &&
+        error instanceof Error &&
         !containsSecret(error, credential.secretValues)
       ) {
         throw error;

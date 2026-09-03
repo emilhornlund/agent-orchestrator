@@ -429,7 +429,7 @@ describe("GitHub credential command wiring", () => {
     const runGit = vi
       .fn<RunGit>()
       .mockImplementation(async (_cwd, args) =>
-        args[0] === "ls-remote" ? "abc\trefs/heads/agent/card-1" : "",
+        args.includes("ls-remote") ? "abc\trefs/heads/agent/card-1" : "",
       );
     const provider = new GitHubCredentialProvider({
       authenticator: {
@@ -444,10 +444,20 @@ describe("GitHub credential command wiring", () => {
     });
 
     await withGitHubOperationProject(configuredProject, async () => {
-      await git.fetch("/repo", "origin", "main");
-      await git.push("/repo", "origin", "agent/card-1");
-      await git.remoteBranchExists("/repo", "origin", "agent/card-1");
-      await git.deleteRemoteBranch("/repo", "origin", "agent/card-1");
+      await git.fetch("/repo", "origin", "main", configuredProject);
+      await git.push("/repo", "origin", "agent/card-1", configuredProject);
+      await git.remoteBranchExists(
+        "/repo",
+        "origin",
+        "agent/card-1",
+        configuredProject,
+      );
+      await git.deleteRemoteBranch(
+        "/repo",
+        "origin",
+        "agent/card-1",
+        configuredProject,
+      );
     });
 
     expect(runGit).toHaveBeenCalledTimes(4);
@@ -455,6 +465,133 @@ describe("GitHub credential command wiring", () => {
       expect(call[2]?.GH_TOKEN).toBe("token-a");
       expect(call[1].slice(0, 2)).toEqual(["-c", "credential.helper="]);
       expect(call[1]).not.toContain("token-a");
+    }
+  });
+
+  it("does not copy ambient credentials into Git command overrides", async () => {
+    vi.stubEnv("GH_TOKEN", "ambient-token");
+
+    try {
+      const runGit = vi.fn<RunGit>().mockResolvedValue("");
+      const git = new GitClient(runGit);
+
+      await git.fetch("/repo", "origin", "main");
+
+      expect(runGit).toHaveBeenCalledWith("/repo", ["fetch", "origin", "main"]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("redacts a Git failure without retaining an App token", async () => {
+    const runGit = vi
+      .fn<RunGit>()
+      .mockRejectedValue(new Error("remote rejected token-a"));
+    const provider = new GitHubCredentialProvider({
+      authenticator: {
+        getInstallationToken: vi.fn().mockResolvedValue("token-a"),
+      },
+    });
+    const git = new GitClient(runGit, provider);
+    const configuredProject = project("project-a", {
+      appId: "app-a",
+      installationId: "installation-a",
+      privateKeyPath: "/secrets/app-a.pem",
+    });
+
+    const request = git.push(
+      "/repo",
+      "origin",
+      "agent/card-1",
+      configuredProject,
+    );
+
+    await expect(request).rejects.toThrow("[REDACTED]");
+    await expect(request).rejects.not.toThrow("token-a");
+    expect(runGit).toHaveBeenCalledWith(
+      "/repo",
+      [
+        "-c",
+        "credential.helper=",
+        "push",
+        "--set-upstream",
+        "origin",
+        "agent/card-1",
+      ],
+      expect.objectContaining({
+        GH_TOKEN: "token-a",
+        GITHUB_TOKEN: "token-a",
+      }),
+    );
+  });
+
+  it("fails Git when App credential resolution fails without falling back", async () => {
+    const runGit = vi.fn<RunGit>().mockResolvedValue("");
+    const provider = new GitHubCredentialProvider({
+      authenticator: {
+        getInstallationToken: vi
+          .fn()
+          .mockRejectedValue(new Error("token-a must not be exposed")),
+      },
+    });
+    const git = new GitClient(runGit, provider);
+    const configuredProject = project("project-a", {
+      appId: "app-a",
+      installationId: "installation-a",
+      privateKeyPath: "/secrets/app-a.pem",
+    });
+
+    const request = git.fetch("/repo", "origin", "main", configuredProject);
+
+    await expect(request).rejects.toThrow("GitHub authentication failed");
+    await expect(request).rejects.not.toThrow("token-a");
+    expect(runGit).not.toHaveBeenCalled();
+  });
+
+  it("keeps credentials isolated across concurrent Git operations", async () => {
+    const calls: Array<{
+      repositoryPath: string;
+      token: string | undefined;
+    }> = [];
+    const runGit = vi.fn<RunGit>(async (cwd, _args, environment) => {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      calls.push({
+        repositoryPath: cwd,
+        token: environment?.GH_TOKEN,
+      });
+      return "";
+    });
+    const provider = new GitHubCredentialProvider({
+      authenticator: {
+        getInstallationToken: vi.fn(async (githubApp) =>
+          githubApp.appId === "app-a" ? "token-a" : "token-b",
+        ),
+      },
+    });
+    const git = new GitClient(runGit, provider);
+    const projectA = project("project-a", {
+      appId: "app-a",
+      installationId: "installation-a",
+      privateKeyPath: "/secrets/a.pem",
+    });
+    const projectB = project("project-b", {
+      appId: "app-b",
+      installationId: "installation-b",
+      privateKeyPath: "/secrets/b.pem",
+    });
+
+    await Promise.all([
+      git.fetch("/repo-a", "origin", "main", projectA),
+      git.push("/repo-b", "origin", "agent/card-1", projectB),
+    ]);
+
+    expect(calls).toEqual([
+      { repositoryPath: "/repo-a", token: "token-a" },
+      { repositoryPath: "/repo-b", token: "token-b" },
+    ]);
+    for (const call of runGit.mock.calls) {
+      expect(call[1]).not.toContain("token-a");
+      expect(call[1]).not.toContain("token-b");
     }
   });
 
