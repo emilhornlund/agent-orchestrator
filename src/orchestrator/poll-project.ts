@@ -54,8 +54,7 @@ import {
   type TrelloClient,
 } from "../trello/trello-client.js";
 
-import { claimNextCard } from "./claim-next-card.js";
-import { claimNextRefinementCard } from "./claim-next-refinement-card.js";
+import { claimNextReadyCard } from "./claim-next-ready-card.js";
 import {
   annotateFailure,
   formatFailureDiagnostic,
@@ -328,27 +327,26 @@ export async function pollProject(
     return;
   }
 
-  const refinementClaim = await claimNextRefinementCard(
-    trello,
-    git,
-    project,
-    signal,
-  );
+  const readyClaim = await claimNextReadyCard(trello, git, project, signal);
 
-  if (refinementClaim) {
+  if (!readyClaim) {
+    return;
+  }
+
+  if (readyClaim.workflow === "refinement") {
     if (signal.aborted) {
       return;
     }
 
-    await withActiveCardContext(project.id, refinementClaim.card.id, () =>
+    await withActiveCardContext(project.id, readyClaim.card.id, () =>
       processRefinementCard(
         trello,
         git,
         opencode,
         project,
-        refinementClaim.card,
+        readyClaim.card,
         signal,
-        refinementClaim.worktree,
+        readyClaim.worktree,
         emailNotifier,
       ),
     );
@@ -356,17 +354,11 @@ export async function pollProject(
     return;
   }
 
-  const implementationClaim = await claimNextCard(trello, git, project, signal);
-
-  if (!implementationClaim) {
-    return;
-  }
-
   if (signal.aborted) {
     return;
   }
 
-  const card = implementationClaim.card;
+  const card = readyClaim.card;
   const cardLog = logger.child({
     projectId: project.id,
     cardId: card.id,
@@ -404,7 +396,7 @@ export async function pollProject(
       project,
       card,
       signal,
-      implementationClaim.worktree,
+      readyClaim.worktree,
       emailNotifier,
     ),
   );

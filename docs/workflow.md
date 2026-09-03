@@ -64,14 +64,15 @@ configured board.
 | `Improvement` | Classifies improvement implementation work                 |
 | `Bug`         | Classifies bug-fix implementation work                     |
 
-All four labels must exist on the configured board. A card in `Ready for Agent` is eligible for normal implementation only
-when it has at least one of the configured `Feature`, `Improvement`, or `Bug` labels and has no future start date. A card
-with no start date, or whose start instant has been reached, remains eligible. Future-dated cards are skipped without being
-claimed and do not block a later eligible card; they become eligible automatically on a later normal poll. Unlabelled cards
-are ignored.
+All four labels must exist on the configured board. Eligible cards in `Ready for Agent` are considered in the order returned
+by Trello, from top to bottom, and the first eligible card is claimed regardless of workflow. A card is eligible for normal
+implementation only when it has at least one of the configured `Feature`, `Improvement`, or `Bug` labels and has no future
+start date. A card with no start date, or whose start instant has been reached, remains eligible. Future-dated cards are
+skipped without being claimed and do not block a later eligible card; they become eligible automatically on a later normal
+poll. Unlabelled cards are ignored without changing the relative priority of later eligible cards.
 
-`Refinement` takes precedence over implementation labels. A card carrying `Refinement` is refined even when it also carries
-`Feature`, `Improvement`, or `Bug`.
+After the first eligible card is selected, `Refinement` takes precedence over implementation labels for classifying that
+individual card. A card carrying `Refinement` is refined even when it also carries `Feature`, `Improvement`, or `Bug`.
 
 Start dates are compared as absolute instants using `Date.parse`, including timezone offsets. This start-date rule applies
 only while claiming cards from `Ready for Agent`; it does not reorder cards or affect cards already in another workflow list.
