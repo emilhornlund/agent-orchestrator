@@ -1,4 +1,7 @@
+import path from "node:path";
+
 import type { ProjectConfig } from "../config/config.js";
+import { cleanupWorktree } from "../git/cleanup-worktree.js";
 import type { GitClient } from "../git/git-client.js";
 import type {
   GitHubClient,
@@ -233,6 +236,7 @@ export async function reconcileReviewCards(
       } else if (state.pullRequest.state === "CLOSED") {
         await returnClosedReviewCardToBacklog(
           trello,
+          git,
           project,
           state.card,
           state.pullRequest,
@@ -773,10 +777,13 @@ async function completeMergedReviewCard(
       `Failed to remove OpenCode session log: ${getErrorMessage(error)}`,
     );
   }
+
+  await cleanupTerminalReviewWorktree(git, project, card, cardLog, signal);
 }
 
 async function returnClosedReviewCardToBacklog(
   trello: TrelloClient,
+  git: GitClient,
   project: ProjectConfig,
   card: TrelloCard,
   pullRequest: PullRequestState,
@@ -840,6 +847,53 @@ async function returnClosedReviewCardToBacklog(
   } catch (error) {
     cardLog.error(
       `Failed to add closed pull request comment to "${card.name}": ${getErrorMessage(error)}`,
+    );
+  }
+
+  await cleanupTerminalReviewWorktree(git, project, card, cardLog, signal);
+}
+
+async function cleanupTerminalReviewWorktree(
+  git: GitClient,
+  project: ProjectConfig,
+  card: TrelloCard,
+  cardLog: ReturnType<typeof logger.child>,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (signal?.aborted) {
+    return;
+  }
+
+  if (typeof project.repository.worktreeRoot !== "string") {
+    cardLog.warn(
+      `Terminal Human Review workflow completed, but local cleanup was skipped because no worktree root is configured for ${card.id}`,
+    );
+    return;
+  }
+
+  const worktreePath = path.join(project.repository.worktreeRoot, card.id);
+  const branch = `agent/${card.id}`;
+
+  try {
+    await cleanupWorktree({
+      git,
+      project,
+      worktreePath,
+      branch,
+      preserveRecoveryState: true,
+      ...(signal === undefined ? {} : { signal }),
+    });
+
+    if (signal?.aborted) {
+      return;
+    }
+
+    cardLog.info(
+      `Terminal Human Review local cleanup completed for ${worktreePath} and ${branch}`,
+    );
+  } catch (error) {
+    cardLog.warn(
+      `Terminal Human Review workflow completed, but local cleanup was not completed for ${worktreePath} and ${branch}: ${getErrorMessage(error)}`,
     );
   }
 }

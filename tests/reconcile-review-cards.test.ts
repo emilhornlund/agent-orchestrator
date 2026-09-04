@@ -55,6 +55,22 @@ const project = {
 
 const preparedTaskSha = "a".repeat(40);
 const preparedBaseSha = "b".repeat(40);
+const terminalCleanupDirectories: string[] = [];
+
+function createTerminalCleanupProject(): ProjectConfig {
+  const worktreeRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), "agent-orchestrator-terminal-cleanup-"),
+  );
+  terminalCleanupDirectories.push(worktreeRoot);
+
+  return {
+    ...project,
+    repository: {
+      ...project.repository,
+      worktreeRoot,
+    },
+  };
+}
 
 function createPreparedConflictProject(): ProjectConfig {
   return {
@@ -169,6 +185,10 @@ function trelloFor(cardValue: TrelloCard): TrelloClient {
 
 afterEach(() => {
   removeSessionLog(project.id, "card-1");
+
+  for (const directory of terminalCleanupDirectories.splice(0)) {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 describe("reconcileReviewCards", () => {
@@ -661,6 +681,172 @@ describe("reconcileReviewCards", () => {
       dueComplete: true,
     });
     expect(existsSync(sessionLogPath)).toBe(false);
+  });
+
+  it("cleans the expected merged Human Review worktree after completion notification", async () => {
+    const configuredProject = createTerminalCleanupProject();
+    const worktreePath = path.join(
+      configuredProject.repository.worktreeRoot,
+      "card-1",
+    );
+    fs.mkdirSync(worktreePath);
+    const events: string[] = [];
+    const trello = {
+      ...trelloFor(card()),
+      moveCard: vi.fn().mockImplementation(async () => {
+        events.push("card moved to Done");
+        return { ...card(), idList: "done" };
+      }),
+    } as unknown as TrelloClient;
+    const notifier: EmailNotifier = {
+      send: vi.fn().mockImplementation(async () => {
+        events.push("completion notification delivered");
+      }),
+    };
+    const git = {
+      remoteBranchExists: vi.fn().mockResolvedValue(true),
+      deleteRemoteBranch: vi.fn(),
+      getCurrentBranch: vi.fn().mockResolvedValue("agent/card-1"),
+      getRebaseState: vi.fn().mockResolvedValue(null),
+      getConflictedPaths: vi.fn().mockResolvedValue([]),
+      getStatus: vi.fn().mockResolvedValue(""),
+      removeWorktree: vi.fn().mockImplementation(async () => {
+        events.push("local worktree removed");
+      }),
+      pruneWorktrees: vi.fn(),
+      branchExists: vi.fn().mockResolvedValue(true),
+      deleteBranch: vi.fn().mockImplementation(async () => {
+        events.push("local branch deleted");
+      }),
+    } as unknown as GitClient;
+
+    await reconcileReviewCards(
+      trello,
+      git,
+      githubFor("card-1", "merged"),
+      configuredProject,
+      {},
+      notifier,
+    );
+
+    expect(events).toEqual([
+      "card moved to Done",
+      "completion notification delivered",
+      "local worktree removed",
+      "local branch deleted",
+    ]);
+    expect(git.removeWorktree).toHaveBeenCalledWith(
+      configuredProject.repository.path,
+      worktreePath,
+    );
+    expect(git.deleteBranch).toHaveBeenCalledWith(
+      configuredProject.repository.path,
+      "agent/card-1",
+    );
+  });
+
+  it("cleans the expected closed Human Review worktree after the Backlog comment", async () => {
+    const configuredProject = createTerminalCleanupProject();
+    const worktreePath = path.join(
+      configuredProject.repository.worktreeRoot,
+      "card-1",
+    );
+    fs.mkdirSync(worktreePath);
+    const events: string[] = [];
+    const trello = {
+      ...trelloFor(card()),
+      moveCard: vi.fn().mockImplementation(async () => {
+        events.push("card moved to Backlog");
+        return { ...card(), idList: "backlog" };
+      }),
+      addComment: vi.fn().mockImplementation(async () => {
+        events.push("closed PR comment added");
+      }),
+    } as unknown as TrelloClient;
+    const git = {
+      getCurrentBranch: vi.fn().mockResolvedValue("agent/card-1"),
+      getRebaseState: vi.fn().mockResolvedValue(null),
+      getConflictedPaths: vi.fn().mockResolvedValue([]),
+      getStatus: vi.fn().mockResolvedValue(""),
+      removeWorktree: vi.fn().mockImplementation(async () => {
+        events.push("local worktree removed");
+      }),
+      pruneWorktrees: vi.fn(),
+      branchExists: vi.fn().mockResolvedValue(true),
+      deleteBranch: vi.fn().mockImplementation(async () => {
+        events.push("local branch deleted");
+      }),
+    } as unknown as GitClient;
+
+    await reconcileReviewCards(
+      trello,
+      git,
+      githubFor("card-1", "closed"),
+      configuredProject,
+    );
+
+    expect(events).toEqual([
+      "card moved to Backlog",
+      "closed PR comment added",
+      "local worktree removed",
+      "local branch deleted",
+    ]);
+    expect(git.removeWorktree).toHaveBeenCalledWith(
+      configuredProject.repository.path,
+      worktreePath,
+    );
+  });
+
+  it("keeps terminal workflow success when Human Review local cleanup fails", async () => {
+    const configuredProject = createTerminalCleanupProject();
+    fs.mkdirSync(
+      path.join(configuredProject.repository.worktreeRoot, "card-1"),
+    );
+    const notifier: EmailNotifier = {
+      send: vi.fn().mockResolvedValue(undefined),
+    };
+    const warning = vi.spyOn(Logger.prototype, "warn");
+    const trello = trelloFor(card());
+    const cleanupError = new Error("local worktree is locked");
+    const git = {
+      remoteBranchExists: vi.fn().mockResolvedValue(false),
+      deleteRemoteBranch: vi.fn(),
+      getCurrentBranch: vi.fn().mockResolvedValue("agent/card-1"),
+      getRebaseState: vi.fn().mockResolvedValue(null),
+      getConflictedPaths: vi.fn().mockResolvedValue([]),
+      getStatus: vi.fn().mockResolvedValue(""),
+      removeWorktree: vi.fn().mockRejectedValue(cleanupError),
+      pruneWorktrees: vi.fn(),
+      branchExists: vi.fn().mockResolvedValue(true),
+      deleteBranch: vi.fn(),
+    } as unknown as GitClient;
+
+    try {
+      await expect(
+        reconcileReviewCards(
+          trello,
+          git,
+          githubFor("card-1", "merged"),
+          configuredProject,
+          {},
+          notifier,
+        ),
+      ).resolves.toBeNull();
+
+      expect(trello.moveCard).toHaveBeenCalledWith("card-1", "done", {
+        dueComplete: true,
+      });
+      expect(notifier.send).toHaveBeenCalledOnce();
+      expect(git.deleteBranch).not.toHaveBeenCalled();
+      expect(warning).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "Terminal Human Review workflow completed, but local cleanup was not completed",
+        ),
+      );
+      expect(warning).toHaveBeenCalledWith(expect.stringContaining("locked"));
+    } finally {
+      warning.mockRestore();
+    }
   });
 
   it("clears a prepared conflict before cleaning up a merged PR", async () => {

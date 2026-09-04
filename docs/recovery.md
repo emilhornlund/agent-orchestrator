@@ -84,15 +84,15 @@ If more than one recoverable card is in `Working`, the project is blocked. No ca
 
 For each card in `Human Review`, the orchestrator checks the expected `agent/<trello-card-id>` pull request:
 
-| Evidence                                                                          | Reconciliation                                                                                                                                 |
-| --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| Pull request is merged                                                            | Delete the merged remote branch when present, move the card to `Done`, mark it complete, and remove the session log on a best-effort basis     |
-| Pull request is closed without merge                                              | Move the card to `Backlog` and add a Trello comment identifying the closed pull request                                                        |
-| Pull request is open with current-head requested changes                          | Move the card to `Working` and resume feedback implementation                                                                                  |
-| Pull request is open without current-head requested changes                       | Leave the card in `Human Review`; record maintenance state and automatically maintain an eligible clean stale branch                           |
-| Pull request is open with recognized `UNKNOWN` mergeability or merge-state status | Leave the card in `Human Review`; start no maintenance and retry the GitHub state read through the bounded three-attempt reconciliation policy |
-| Prepared-conflict handoff is present                                              | Leave the card in `Human Review`; expose `prepared-conflict` and block project processing until remediation completes or the state is resolved |
-| No expected pull request                                                          | Correct the card to `Backlog`                                                                                                                  |
+| Evidence                                                                          | Reconciliation                                                                                                                                      |
+| --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Pull request is merged                                                            | Delete the merged remote branch when present, move the card to `Done`, mark it complete, remove the session log, and attempt terminal local cleanup |
+| Pull request is closed without merge                                              | Move the card to `Backlog`, add a Trello comment identifying the closed pull request, and attempt terminal local cleanup                            |
+| Pull request is open with current-head requested changes                          | Move the card to `Working` and resume feedback implementation                                                                                       |
+| Pull request is open without current-head requested changes                       | Leave the card in `Human Review`; record maintenance state and automatically maintain an eligible clean stale branch                                |
+| Pull request is open with recognized `UNKNOWN` mergeability or merge-state status | Leave the card in `Human Review`; start no maintenance and retry the GitHub state read through the bounded three-attempt reconciliation policy      |
+| Prepared-conflict handoff is present                                              | Leave the card in `Human Review`; expose `prepared-conflict` and block project processing until remediation completes or the state is resolved      |
+| No expected pull request                                                          | Correct the card to `Backlog`                                                                                                                       |
 
 More than one active card in `Human Review` is an ambiguous project state. The active-state check runs before terminal cards
 are transitioned, so the project is blocked, no active card is selected, and no terminal card is transitioned in that cycle.
@@ -193,6 +193,16 @@ An already-absent `agent/<trello-card-id>` remote branch is a successful merged-
 delete command when the initial check finds no branch, and also accepts Git's missing-remote-ref result when the branch
 disappears between that check and the delete attempt. Other Git or GitHub cleanup failures remain fatal and leave the card
 available for failure diagnostics rather than moving it to `Done`.
+
+After the merged `Done` transition and completion notification handling, or after the closed-PR `Backlog` transition and
+comment attempt, reconciliation makes a separate best-effort attempt to remove only `<worktreeRoot>/<trello-card-id>` and
+`agent/<trello-card-id>`. An absent local worktree or branch is harmless. A cleanup failure is logged as a warning containing
+the project, card, expected paths, and Git error; it does not undo the successful terminal transition or notification state.
+
+Cleanup preserves recovery state when the expected path is symbolic, outside the configured root, nested or unknown, on an
+unexpected branch, dirty, has unmerged paths, or has an active rebase. A prepared-conflict handoff also protects its local
+state until recovery is no longer required. Shutdown cancellation does not delete local state. Inspect and resolve these
+preserved artifacts before any deliberate retry; do not remove arbitrary worktrees or branches.
 
 A closed pull request without merge evidence is treated as a deliberate rejection or cancellation. Reconciliation moves the
 card to `Backlog`, adds a comment stating that the pull request was closed without being merged and including its URL, and does
