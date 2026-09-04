@@ -39,6 +39,7 @@ export interface FindPullRequestOptions {
   cwd: string;
   repository: string;
   headBranch: string;
+  baseBranch?: string;
   project?: ProjectConfig;
 }
 
@@ -48,9 +49,25 @@ export interface PullRequest {
 
 export type PullRequestStatus = "OPEN" | "CLOSED" | "MERGED";
 
+export type PullRequestMergeability = "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
+
+export type PullRequestMergeStateStatus =
+  | "BEHIND"
+  | "BLOCKED"
+  | "CLEAN"
+  | "DIRTY"
+  | "DRAFT"
+  | "HAS_HOOKS"
+  | "UNKNOWN"
+  | "UNSTABLE";
+
 export interface PullRequestState extends PullRequest {
   state: PullRequestStatus;
   mergedAt: string | null;
+  baseRefName?: string;
+  headRefName?: string;
+  mergeable?: PullRequestMergeability;
+  mergeStateStatus?: PullRequestMergeStateStatus;
 }
 
 export interface ChangesRequestedPullRequest extends PullRequest {
@@ -105,7 +122,10 @@ function validatePullRequestList(value: unknown): PullRequestReviewListItem[] {
   });
 }
 
-function validatePullRequestStateList(value: unknown): PullRequestState[] {
+function validatePullRequestStateList(
+  value: unknown,
+  requireMaintenanceFacts = false,
+): PullRequestState[] {
   if (!Array.isArray(value)) {
     throw new Error("GitHub CLI returned an invalid pull request state list");
   }
@@ -120,11 +140,31 @@ function validatePullRequestStateList(value: unknown): PullRequestState[] {
     const url = item.url;
     const state = item.state;
     const mergedAt = item.mergedAt;
+    const baseRefName = item.baseRefName;
+    const headRefName = item.headRefName;
+    const mergeable = item.mergeable;
+    const mergeStateStatus = item.mergeStateStatus;
+    const requiresMaintenanceFacts =
+      requireMaintenanceFacts && state === "OPEN";
 
     if (
       typeof url !== "string" ||
       (state !== "OPEN" && state !== "CLOSED" && state !== "MERGED") ||
-      (typeof mergedAt !== "string" && mergedAt !== null)
+      (typeof mergedAt !== "string" && mergedAt !== null) ||
+      (requiresMaintenanceFacts &&
+        (typeof baseRefName !== "string" ||
+          typeof headRefName !== "string" ||
+          (mergeable !== "MERGEABLE" &&
+            mergeable !== "CONFLICTING" &&
+            mergeable !== "UNKNOWN") ||
+          (mergeStateStatus !== "BEHIND" &&
+            mergeStateStatus !== "BLOCKED" &&
+            mergeStateStatus !== "CLEAN" &&
+            mergeStateStatus !== "DIRTY" &&
+            mergeStateStatus !== "DRAFT" &&
+            mergeStateStatus !== "HAS_HOOKS" &&
+            mergeStateStatus !== "UNKNOWN" &&
+            mergeStateStatus !== "UNSTABLE")))
     ) {
       throw new Error(
         "GitHub CLI returned an invalid pull request state list item",
@@ -135,6 +175,26 @@ function validatePullRequestStateList(value: unknown): PullRequestState[] {
       url: parsePullRequestUrl(url),
       state,
       mergedAt,
+      ...(typeof baseRefName === "string" &&
+      typeof headRefName === "string" &&
+      (mergeable === "MERGEABLE" ||
+        mergeable === "CONFLICTING" ||
+        mergeable === "UNKNOWN") &&
+      (mergeStateStatus === "BEHIND" ||
+        mergeStateStatus === "BLOCKED" ||
+        mergeStateStatus === "CLEAN" ||
+        mergeStateStatus === "DIRTY" ||
+        mergeStateStatus === "DRAFT" ||
+        mergeStateStatus === "HAS_HOOKS" ||
+        mergeStateStatus === "UNKNOWN" ||
+        mergeStateStatus === "UNSTABLE")
+        ? {
+            baseRefName,
+            headRefName,
+            mergeable,
+            mergeStateStatus,
+          }
+        : {}),
     };
   });
 }
@@ -506,10 +566,15 @@ export class GitHubClient {
         options.repository,
         "--head",
         options.headBranch,
+        ...(options.baseBranch === undefined
+          ? []
+          : ["--base", options.baseBranch]),
         "--state",
         "all",
         "--json",
-        "url,state,mergedAt",
+        options.baseBranch === undefined
+          ? "url,state,mergedAt"
+          : "url,state,mergedAt,baseRefName,headRefName,mergeable,mergeStateStatus",
         "--limit",
         "1",
       ],
@@ -535,7 +600,12 @@ export class GitHubClient {
       );
     }
 
-    return validatePullRequestStateList(parsedPullRequests)[0] ?? null;
+    return (
+      validatePullRequestStateList(
+        parsedPullRequests,
+        options.baseBranch !== undefined,
+      )[0] ?? null
+    );
   }
 
   async findChangesRequestedPullRequest(
@@ -551,6 +621,9 @@ export class GitHubClient {
         options.repository,
         "--head",
         options.headBranch,
+        ...(options.baseBranch === undefined
+          ? []
+          : ["--base", options.baseBranch]),
         "--state",
         "open",
         "--json",

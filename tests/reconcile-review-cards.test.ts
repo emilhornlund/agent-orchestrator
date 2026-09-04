@@ -33,6 +33,7 @@ const project = {
   repository: {
     path: "/repo",
     github: "owner/repo",
+    defaultBranch: "main",
   },
   trello: {
     boardId: "board",
@@ -72,13 +73,29 @@ function card(id = "card-1"): TrelloCard {
 
 function githubFor(
   cardId: string,
-  state: "none" | "open" | "requested" | "closed" | "merged",
+  state:
+    | "none"
+    | "open"
+    | "requested"
+    | "closed"
+    | "merged"
+    | "behind"
+    | "conflicted",
 ): GitHubClient {
   const pullRequest = {
     url: `https://github.com/owner/repo/pull/${cardId === "card-1" ? 1 : 2}`,
     state:
       state === "merged" ? "MERGED" : state === "closed" ? "CLOSED" : "OPEN",
     mergedAt: state === "merged" ? "2026-09-01T13:42:03Z" : null,
+    baseRefName: "main",
+    headRefName: `agent/${cardId}`,
+    mergeable: state === "conflicted" ? "CONFLICTING" : "MERGEABLE",
+    mergeStateStatus:
+      state === "behind"
+        ? "BEHIND"
+        : state === "conflicted"
+          ? "DIRTY"
+          : "CLEAN",
   };
 
   return {
@@ -123,6 +140,7 @@ describe("reconcileReviewCards", () => {
       card: card(),
       pullRequestUrl: "https://github.com/owner/repo/pull/1",
       feedback: "Fix this.",
+      maintenanceState: "up-to-date",
     });
 
     expect(trello.moveCard).toHaveBeenCalledWith("card-1", "working");
@@ -157,6 +175,7 @@ describe("reconcileReviewCards", () => {
       card: card(),
       pullRequestUrl: "https://github.com/owner/repo/pull/1",
       feedback: "Fix this.",
+      maintenanceState: "up-to-date",
     });
     expect(moveCard).toHaveBeenCalledTimes(2);
   });
@@ -168,11 +187,80 @@ describe("reconcileReviewCards", () => {
 
     await expect(
       reconcileReviewCards(trello, {} as GitClient, github, project),
-    ).resolves.toEqual({ card: card(), active: true });
+    ).resolves.toEqual({
+      card: card(),
+      active: true,
+      maintenanceState: "up-to-date",
+    });
 
     expect(trello.moveCard).not.toHaveBeenCalled();
     expect(event).not.toHaveBeenCalledWith("Human Review card remains active");
     event.mockRestore();
+  });
+
+  it("reports an up-to-date maintenance state for an open PR", async () => {
+    await expect(
+      reconcileReviewCards(
+        trelloFor(card()),
+        {} as GitClient,
+        githubFor("card-1", "open"),
+        project,
+      ),
+    ).resolves.toMatchObject({
+      card: card(),
+      active: true,
+      maintenanceState: "up-to-date",
+    });
+  });
+
+  it("reports a behind but conflict-free maintenance state", async () => {
+    await expect(
+      reconcileReviewCards(
+        trelloFor(card()),
+        {} as GitClient,
+        githubFor("card-1", "behind"),
+        project,
+      ),
+    ).resolves.toMatchObject({
+      card: card(),
+      active: true,
+      maintenanceState: "behind",
+    });
+  });
+
+  it("reports a conflicted maintenance state instead of up to date", async () => {
+    await expect(
+      reconcileReviewCards(
+        trelloFor(card()),
+        {} as GitClient,
+        githubFor("card-1", "conflicted"),
+        project,
+      ),
+    ).resolves.toMatchObject({
+      card: card(),
+      active: true,
+      maintenanceState: "conflicted",
+    });
+  });
+
+  it("ignores a pull request whose authoritative head is not the owned task branch", async () => {
+    const trello = trelloFor(card());
+    const pullRequest = githubFor("card-1", "open");
+    vi.mocked(pullRequest.findPullRequestState).mockResolvedValue({
+      url: "https://github.com/owner/repo/pull/1",
+      state: "OPEN",
+      mergedAt: null,
+      baseRefName: "main",
+      headRefName: "human/branch",
+      mergeable: "CONFLICTING",
+      mergeStateStatus: "DIRTY",
+    });
+
+    await expect(
+      reconcileReviewCards(trello, {} as GitClient, pullRequest, project),
+    ).resolves.toBeNull();
+
+    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "backlog");
   });
 
   it("uses one authoritative PR-state lookup for Human Review classification", async () => {
@@ -186,6 +274,7 @@ describe("reconcileReviewCards", () => {
       cwd: "/repo",
       repository: "owner/repo",
       headBranch: "agent/card-1",
+      baseBranch: "main",
       project,
     });
     expect(github.findPullRequest).toBeUndefined();
@@ -206,6 +295,10 @@ describe("reconcileReviewCards", () => {
             url: "https://github.com/owner/repo/pull/1",
             state: "OPEN",
             mergedAt: null,
+            baseRefName: "main",
+            headRefName: "agent/card-1",
+            mergeable: "MERGEABLE",
+            mergeStateStatus: "CLEAN",
           },
         ]),
       )
@@ -246,6 +339,7 @@ describe("reconcileReviewCards", () => {
         "Inline review comments:",
         "reviewer: Add a regression test.",
       ].join("\n"),
+      maintenanceState: "up-to-date",
     });
 
     expect(trello.moveCard).toHaveBeenCalledWith("card-1", "working");
@@ -355,6 +449,10 @@ describe("reconcileReviewCards", () => {
           url: "https://github.com/owner/repo/pull/1",
           state: "MERGED",
           mergedAt: "2026-09-01T13:42:03Z",
+          baseRefName: "main",
+          headRefName: "agent/card-1",
+          mergeable: "MERGEABLE",
+          mergeStateStatus: "CLEAN",
         },
       ]),
     );
@@ -651,6 +749,26 @@ describe("reconcileReviewCards", () => {
     ).rejects.toMatchObject({
       category: "Git/GitHub",
       cause: lookupError,
+    });
+
+    expect(trello.moveCard).not.toHaveBeenCalled();
+  });
+
+  it("keeps a Human Review card unchanged when maintenance state is incomplete", async () => {
+    const trello = trelloFor(card());
+    const github = {
+      findPullRequestState: vi.fn().mockResolvedValue({
+        url: "https://github.com/owner/repo/pull/1",
+        state: "OPEN",
+        mergedAt: null,
+      }),
+    } as unknown as GitHubClient;
+
+    await expect(
+      reconcileReviewCards(trello, {} as GitClient, github, project),
+    ).rejects.toMatchObject({
+      category: "Git/GitHub",
+      message: expect.stringContaining("maintenance state"),
     });
 
     expect(trello.moveCard).not.toHaveBeenCalled();
@@ -962,11 +1080,17 @@ describe("reconcileReviewCards", () => {
       addComment: vi.fn(),
     } as unknown as TrelloClient;
     const github = {
-      findPullRequestState: vi.fn().mockResolvedValue({
-        url: "https://github.com/owner/repo/pull/1",
-        state: "OPEN",
-        mergedAt: null,
-      }),
+      findPullRequestState: vi
+        .fn()
+        .mockImplementation(async ({ headBranch }: { headBranch: string }) => ({
+          url: `https://github.com/owner/repo/pull/${headBranch === "agent/card-1" ? 1 : 2}`,
+          state: "OPEN",
+          mergedAt: null,
+          baseRefName: "main",
+          headRefName: headBranch,
+          mergeable: "MERGEABLE",
+          mergeStateStatus: "CLEAN",
+        })),
       findChangesRequestedPullRequest: vi.fn().mockResolvedValue(null),
     } as unknown as GitHubClient;
 
@@ -1006,11 +1130,19 @@ describe("reconcileReviewCards", () => {
                 url: "https://github.com/owner/repo/pull/1",
                 state: "MERGED",
                 mergedAt: null,
+                baseRefName: "main",
+                headRefName: "agent/card-1",
+                mergeable: "MERGEABLE",
+                mergeStateStatus: "CLEAN",
               }
             : {
                 url: "https://github.com/owner/repo/pull/2",
                 state: "OPEN",
                 mergedAt: null,
+                baseRefName: "main",
+                headRefName: "agent/card-2",
+                mergeable: "MERGEABLE",
+                mergeStateStatus: "CLEAN",
               },
         ),
       findChangesRequestedPullRequest: vi.fn().mockResolvedValue(null),
@@ -1018,7 +1150,11 @@ describe("reconcileReviewCards", () => {
 
     await expect(
       reconcileReviewCards(trello, git, github, project),
-    ).resolves.toEqual({ card: activeCard, active: true });
+    ).resolves.toEqual({
+      card: activeCard,
+      active: true,
+      maintenanceState: "up-to-date",
+    });
 
     expect(trello.moveCard).toHaveBeenCalledWith("card-1", "done", {
       dueComplete: true,

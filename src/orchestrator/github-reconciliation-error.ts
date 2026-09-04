@@ -6,7 +6,10 @@ import { WorkflowError } from "./workflow-error.js";
 export const MAX_GITHUB_RECONCILIATION_ATTEMPTS = 3;
 
 export type GitHubReconciliationOperation =
-  "pull request" | "pull request state" | "requested changes";
+  | "pull request"
+  | "pull request state"
+  | "requested changes"
+  | "maintenance state";
 
 export class RetryableGitHubReconciliationError extends WorkflowError {
   readonly operation: GitHubReconciliationOperation;

@@ -41,6 +41,7 @@ describe("pollProject", () => {
         path: "/repo",
         github: "owner/repo",
         worktreeRoot: "/worktrees",
+        defaultBranch: "main",
       },
       trello: {
         readyListId: "ready",
@@ -108,6 +109,7 @@ describe("pollProject", () => {
         path: "/repo",
         github: "owner/repo",
         worktreeRoot: "/worktrees",
+        defaultBranch: "main",
       },
       trello: {
         readyListId: "ready",
@@ -143,6 +145,10 @@ describe("pollProject", () => {
         url: "https://github.com/owner/repo/pull/1",
         state: "OPEN",
         mergedAt: null,
+        baseRefName: "main",
+        headRefName: "agent/card-1",
+        mergeable: "MERGEABLE",
+        mergeStateStatus: "CLEAN",
       }),
       findPullRequest: vi.fn().mockResolvedValue({
         url: "https://github.com/owner/repo/pull/1",
@@ -172,6 +178,7 @@ describe("pollProject", () => {
         path: "/repo",
         github: "owner/repo",
         worktreeRoot: "/worktrees",
+        defaultBranch: "main",
       },
       trello: {
         readyListId: "ready",
@@ -229,6 +236,10 @@ describe("pollProject", () => {
         url: "https://github.com/owner/repo/pull/1",
         state: "OPEN",
         mergedAt: null,
+        baseRefName: "main",
+        headRefName: "agent/review-card",
+        mergeable: "MERGEABLE",
+        mergeStateStatus: "CLEAN",
       }),
       findPullRequest: vi
         .fn()
@@ -286,6 +297,7 @@ describe("pollProject", () => {
         path: "/repo",
         github: "owner/repo",
         worktreeRoot,
+        defaultBranch: "main",
       },
       trello: {
         readyListId: "ready",
@@ -342,6 +354,10 @@ describe("pollProject", () => {
                 url: "https://github.com/owner/repo/pull/2",
                 state: "OPEN",
                 mergedAt: null,
+                baseRefName: "main",
+                headRefName: "agent/review-card",
+                mergeable: "MERGEABLE",
+                mergeStateStatus: "CLEAN",
               }
             : null,
         ),
@@ -1406,6 +1422,10 @@ describe("pollProject", () => {
           url: "https://github.com/example/repository/pull/123",
           state: "OPEN",
           mergedAt: null,
+          baseRefName: "main",
+          headRefName: "agent/card-1",
+          mergeable: "MERGEABLE",
+          mergeStateStatus: "CLEAN",
         }),
         findChangesRequestedPullRequest: vi.fn().mockResolvedValue({
           url: "https://github.com/example/repository/pull/123",

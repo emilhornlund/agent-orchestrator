@@ -454,6 +454,84 @@ describe("GitHubClient", () => {
     ).resolves.toBeNull();
   });
 
+  it("returns current merge state facts when a base branch is requested", async () => {
+    const runGitHub = vi.fn<RunGitHubCommand>().mockResolvedValue(
+      JSON.stringify([
+        {
+          url: "https://github.com/example/repository/pull/123",
+          state: "OPEN",
+          mergedAt: null,
+          baseRefName: "main",
+          headRefName: "agent/card-1",
+          mergeable: "MERGEABLE",
+          mergeStateStatus: "BEHIND",
+        },
+      ]),
+    );
+    const github = new GitHubClient(runGitHub);
+
+    await expect(
+      github.findPullRequestState({
+        cwd: "/repo",
+        repository: "example/repository",
+        headBranch: "agent/card-1",
+        baseBranch: "main",
+      }),
+    ).resolves.toEqual({
+      url: "https://github.com/example/repository/pull/123",
+      state: "OPEN",
+      mergedAt: null,
+      baseRefName: "main",
+      headRefName: "agent/card-1",
+      mergeable: "MERGEABLE",
+      mergeStateStatus: "BEHIND",
+    });
+
+    expect(runGitHub).toHaveBeenCalledWith("/repo", [
+      "pr",
+      "list",
+      "--repo",
+      "example/repository",
+      "--head",
+      "agent/card-1",
+      "--base",
+      "main",
+      "--state",
+      "all",
+      "--json",
+      "url,state,mergedAt,baseRefName,headRefName,mergeable,mergeStateStatus",
+      "--limit",
+      "1",
+    ]);
+  });
+
+  it("rejects malformed merge state facts for an open pull request", async () => {
+    const github = new GitHubClient(
+      vi.fn<RunGitHubCommand>().mockResolvedValue(
+        JSON.stringify([
+          {
+            url: "https://github.com/example/repository/pull/123",
+            state: "OPEN",
+            mergedAt: null,
+            baseRefName: "main",
+            headRefName: "agent/card-1",
+            mergeable: "MAYBE",
+            mergeStateStatus: "CLEAN",
+          },
+        ]),
+      ),
+    );
+
+    await expect(
+      github.findPullRequestState({
+        cwd: "/repo",
+        repository: "example/repository",
+        headBranch: "agent/card-1",
+        baseBranch: "main",
+      }),
+    ).rejects.toThrow("invalid pull request state list item");
+  });
+
   it("rejects a malformed pull request state response", async () => {
     const github = new GitHubClient(
       vi.fn<RunGitHubCommand>().mockResolvedValue(
@@ -505,6 +583,7 @@ describe("GitHubClient", () => {
       cwd: "/repo",
       repository: "example/repository",
       headBranch: "agent/card-1",
+      baseBranch: "main",
     });
 
     expect(result).toEqual({
@@ -524,6 +603,8 @@ describe("GitHubClient", () => {
       "example/repository",
       "--head",
       "agent/card-1",
+      "--base",
+      "main",
       "--state",
       "open",
       "--json",
