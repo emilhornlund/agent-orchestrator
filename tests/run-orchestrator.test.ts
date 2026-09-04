@@ -333,7 +333,8 @@ describe("runOrchestrator", () => {
     let pollCalls = 0;
     let recoveryChecks = 0;
     const git = {
-      getCurrentBranch: vi.fn().mockResolvedValue("agent/card-1"),
+      getCurrentBranch: vi.fn().mockResolvedValue(""),
+      isValidRepository: vi.fn().mockResolvedValue(true),
       getRebaseState: vi.fn().mockImplementation(async () => {
         recoveryChecks += 1;
 
@@ -371,6 +372,7 @@ describe("runOrchestrator", () => {
 
       expect(pollCalls).toBe(MAX_PREPARED_CONFLICT_REMEDIATION_ATTEMPTS);
       expect(recoveryChecks).toBe(2);
+      expect(git.getCurrentBranch).not.toHaveBeenCalled();
       expect(notifier.send).toHaveBeenCalledOnce();
       expect(fs.existsSync(getPreparedConflictPath(project, "card-1"))).toBe(
         true,
@@ -401,6 +403,7 @@ describe("runOrchestrator", () => {
     let pollCalls = 0;
     const git = {
       getCurrentBranch: vi.fn().mockResolvedValue("agent/card-1"),
+      isValidRepository: vi.fn().mockResolvedValue(true),
       getRebaseState: vi.fn().mockResolvedValue(null),
       getConflictedPaths: vi.fn().mockResolvedValue([]),
     } as unknown as GitClient;
@@ -464,6 +467,7 @@ describe("runOrchestrator", () => {
     let pollCalls = 0;
     const git = {
       getCurrentBranch: vi.fn().mockResolvedValue("agent/card-1"),
+      isValidRepository: vi.fn().mockResolvedValue(true),
       getRebaseState: vi.fn().mockResolvedValue(null),
       getConflictedPaths: vi.fn().mockResolvedValue([]),
       getHeadSha: vi.fn().mockResolvedValue("c".repeat(40)),

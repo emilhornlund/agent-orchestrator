@@ -213,6 +213,29 @@ describe("buildConflictRemediationPrompt", () => {
 });
 
 describe("remediatePreparedConflict", () => {
+  it("starts remediation from a matching detached-HEAD rebase and requires the branch after completion", async () => {
+    const scenario = createScenario();
+    const getCurrentBranch = vi.fn().mockResolvedValue("");
+    scenario.git.getCurrentBranch = getCurrentBranch;
+    scenario.runOpenCode.mockImplementation(async () => {
+      getCurrentBranch.mockResolvedValue("agent/card-1");
+
+      return {
+        exitCode: 0,
+        output: "",
+        errorOutput: "",
+      };
+    });
+
+    await remediatePreparedConflict({
+      ...scenario,
+      signal: new AbortController().signal,
+    });
+
+    expect(getCurrentBranch).toHaveBeenCalledOnce();
+    expect(scenario.runOpenCode).toHaveBeenCalledOnce();
+  });
+
   it("completes, validates, publishes with the captured lease, and clears the handoff", async () => {
     const scenario = createScenario();
 

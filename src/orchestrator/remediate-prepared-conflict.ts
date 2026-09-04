@@ -1,7 +1,7 @@
 import path from "node:path";
 
 import type { ProjectConfig } from "../config/config.js";
-import { getExistingWorktree } from "../git/prepare-worktree.js";
+import { getExistingPreparedConflictWorktree } from "../git/prepare-worktree.js";
 import type { GitClient } from "../git/git-client.js";
 import { getSessionLogPath } from "../logging/session-log.js";
 import { buildConflictRemediationPrompt } from "../opencode/build-conflict-remediation-prompt.js";
@@ -124,16 +124,18 @@ export async function remediatePreparedConflict(
       throw new Error("Prepared conflict handoff changed before remediation");
     }
 
-    const worktree = await getExistingWorktree(
+    const worktree = await getExistingPreparedConflictWorktree(
       options.git,
       options.project,
       options.card.id,
+      persistedHandoff.rebase,
     );
 
     if (
       worktree === null ||
       worktree.path !== worktreePath ||
-      worktree.branch !== branch
+      worktree.branch !== branch ||
+      worktree.rebase === null
     ) {
       throw new Error(
         `Expected prepared remediation worktree ${worktreePath} on ${branch} was not found`,
@@ -143,28 +145,6 @@ export async function remediatePreparedConflict(
     if (!(await options.git.isValidRepository(worktree.path))) {
       throw new Error(
         `Prepared remediation worktree ${worktree.path} is not a valid Git worktree`,
-      );
-    }
-
-    const currentRebase = await options.git.getRebaseState(worktree.path);
-
-    if (
-      currentRebase === null ||
-      currentRebase.backend !== persistedHandoff.rebase.backend ||
-      currentRebase.headName !== persistedHandoff.rebase.headName ||
-      currentRebase.onto !== persistedHandoff.rebase.onto ||
-      currentRebase.originalHead !== persistedHandoff.rebase.originalHead
-    ) {
-      throw new Error(
-        "The prepared handoff does not match the active rebase in the task worktree",
-      );
-    }
-
-    const currentBranch = await options.git.getCurrentBranch(worktree.path);
-
-    if (currentBranch !== branch) {
-      throw new Error(
-        `Prepared remediation worktree is on branch "${currentBranch}", expected "${branch}"`,
       );
     }
 

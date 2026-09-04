@@ -5,10 +5,15 @@ import type { ProjectConfig } from "../config/config.js";
 import { logger } from "../logging/logger.js";
 
 import { GitClient } from "./git-client.js";
+import type { GitRebaseState } from "./git-client.js";
 
 export interface PreparedWorktree {
   path: string;
   branch: string;
+}
+
+export interface PreparedConflictWorktree extends PreparedWorktree {
+  rebase: GitRebaseState | null;
 }
 
 export interface PreparedImplementationWorktree extends PreparedWorktree {
@@ -58,6 +63,65 @@ export async function getExistingWorktree(
   return {
     path: worktreePath,
     branch,
+  };
+}
+
+export async function getExistingPreparedConflictWorktree(
+  git: GitClient,
+  project: ProjectConfig,
+  cardId: string,
+  expectedRebase: GitRebaseState,
+): Promise<PreparedConflictWorktree | null> {
+  const worktreePath = getWorktreePath(project, cardId);
+  const branch = `agent/${cardId}`;
+  const expectedHeadName = `refs/heads/${branch}`;
+
+  if (!fs.existsSync(worktreePath)) {
+    return null;
+  }
+
+  const worktreeStat = fs.lstatSync(worktreePath);
+
+  if (worktreeStat.isSymbolicLink() || !worktreeStat.isDirectory()) {
+    return null;
+  }
+
+  if (!(await git.isValidRepository(worktreePath))) {
+    return null;
+  }
+
+  const rebase = await git.getRebaseState(worktreePath);
+
+  if (rebase !== null) {
+    if (
+      rebase.active !== true ||
+      (expectedRebase.headName !== expectedHeadName &&
+        expectedRebase.headName !== branch) ||
+      rebase.headName !== expectedHeadName ||
+      rebase.backend !== expectedRebase.backend ||
+      rebase.onto !== expectedRebase.onto ||
+      rebase.originalHead !== expectedRebase.originalHead ||
+      rebase.currentStep !== expectedRebase.currentStep ||
+      rebase.totalSteps !== expectedRebase.totalSteps
+    ) {
+      return null;
+    }
+
+    return {
+      path: worktreePath,
+      branch,
+      rebase,
+    };
+  }
+
+  if ((await git.getCurrentBranch(worktreePath)) !== branch) {
+    return null;
+  }
+
+  return {
+    path: worktreePath,
+    branch,
+    rebase: null,
   };
 }
 

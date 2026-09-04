@@ -31,8 +31,8 @@ export interface GitRebaseState {
   headName: string;
   onto: string;
   originalHead: string;
-  currentStep?: number;
-  totalSteps?: number;
+  currentStep?: number | undefined;
+  totalSteps?: number | undefined;
 }
 
 export type RunGit = (

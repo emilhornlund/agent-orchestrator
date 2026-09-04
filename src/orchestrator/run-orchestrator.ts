@@ -4,7 +4,10 @@ import {
   contextRetentionIntervalMilliseconds,
 } from "../context/card-context-retention.js";
 import type { GitClient } from "../git/git-client.js";
-import { getExistingWorktree } from "../git/prepare-worktree.js";
+import {
+  getExistingPreparedConflictWorktree,
+  getExistingWorktree,
+} from "../git/prepare-worktree.js";
 import type { GitHubClient } from "../github/github-client.js";
 import { withGitHubOperationProject } from "../github/github-operation-context.js";
 import {
@@ -225,23 +228,40 @@ async function hasPreparedConflictRecovery(
 
   try {
     const handoff = readPreparedConflict(project, blocked.cardId);
-    const worktree = await getExistingWorktree(git, project, blocked.cardId);
 
-    if (worktree === null) {
-      return handoff === null && readPreparedConflicts(project).length === 0;
+    if (handoff === null) {
+      const worktree = await getExistingWorktree(git, project, blocked.cardId);
+
+      if (worktree === null) {
+        return readPreparedConflicts(project).length === 0;
+      }
+
+      // An active rebase or unmerged path means the prepared conflict is still live.
+      if ((await git.getRebaseState(worktree.path)) !== null) {
+        return false;
+      }
+
+      if ((await git.getConflictedPaths(worktree.path)).length > 0) {
+        return false;
+      }
+
+      return readPreparedConflicts(project).length === 0;
     }
 
-    // An active rebase or unmerged path means the prepared conflict is still live.
-    if ((await git.getRebaseState(worktree.path)) !== null) {
+    const worktree = await getExistingPreparedConflictWorktree(
+      git,
+      project,
+      blocked.cardId,
+      handoff.rebase,
+    );
+
+    if (worktree === null || worktree.rebase !== null) {
+      // A matching active rebase or any prepared-state mismatch remains blocked.
       return false;
     }
 
     if ((await git.getConflictedPaths(worktree.path)).length > 0) {
       return false;
-    }
-
-    if (handoff === null) {
-      return readPreparedConflicts(project).length === 0;
     }
 
     const currentHead = await git.getHeadSha(worktree.path);
