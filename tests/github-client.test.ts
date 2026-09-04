@@ -463,7 +463,8 @@ describe("GitHubClient", () => {
           mergedAt: null,
           baseRefName: "main",
           headRefName: "agent/card-1",
-          headRepositoryNameWithOwner: "example/repository",
+          headRepository: { name: "repository" },
+          headRepositoryOwner: { login: "example" },
           mergeable: "MERGEABLE",
           mergeStateStatus: "BEHIND",
         },
@@ -484,7 +485,8 @@ describe("GitHubClient", () => {
       mergedAt: null,
       baseRefName: "main",
       headRefName: "agent/card-1",
-      headRepositoryNameWithOwner: "example/repository",
+      headRepository: { name: "repository" },
+      headRepositoryOwner: { login: "example" },
       mergeable: "MERGEABLE",
       mergeStateStatus: "BEHIND",
     });
@@ -501,7 +503,7 @@ describe("GitHubClient", () => {
       "--state",
       "all",
       "--json",
-      "url,state,mergedAt,baseRefName,headRefName,headRepositoryNameWithOwner,mergeable,mergeStateStatus",
+      "url,state,mergedAt,baseRefName,headRefName,headRepository,headRepositoryOwner,mergeable,mergeStateStatus",
       "--limit",
       "1",
     ]);

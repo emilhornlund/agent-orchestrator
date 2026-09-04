@@ -4,6 +4,7 @@ import type {
   GitHubClient,
   PullRequestState,
 } from "../github/github-client.js";
+import { getPullRequestHeadRepositoryIdentity } from "../github/github-client.js";
 import { logger } from "../logging/logger.js";
 import { removeSessionLog } from "../logging/session-log.js";
 import {
@@ -372,7 +373,8 @@ function isOwnedPullRequest(
   return (
     pullRequest.baseRefName === project.repository.defaultBranch &&
     pullRequest.headRefName === branch &&
-    pullRequest.headRepositoryNameWithOwner === project.repository.github
+    getPullRequestHeadRepositoryIdentity(pullRequest) ===
+      project.repository.github
   );
 }
 
@@ -454,7 +456,10 @@ async function inspectReviewCard(
     return null;
   }
 
-  if (pullRequest.headRepositoryNameWithOwner !== project.repository.github) {
+  if (
+    getPullRequestHeadRepositoryIdentity(pullRequest) !==
+    project.repository.github
+  ) {
     return null;
   }
 

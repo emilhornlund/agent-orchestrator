@@ -6,6 +6,7 @@ import type {
   GitHubClient,
   PullRequestState,
 } from "../github/github-client.js";
+import { getPullRequestHeadRepositoryIdentity } from "../github/github-client.js";
 import { logger, type Logger } from "../logging/logger.js";
 import {
   CommandRunAbortedError,
@@ -67,7 +68,8 @@ function isOwnedOpenBehindPullRequest(
     pullRequest.state === "OPEN" &&
     pullRequest.baseRefName === project.repository.defaultBranch &&
     pullRequest.headRefName === branch &&
-    pullRequest.headRepositoryNameWithOwner === project.repository.github &&
+    getPullRequestHeadRepositoryIdentity(pullRequest) ===
+      project.repository.github &&
     pullRequest.mergeable === "MERGEABLE" &&
     pullRequest.mergeStateStatus === "BEHIND"
   );

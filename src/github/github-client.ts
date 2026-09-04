@@ -61,12 +61,21 @@ export type PullRequestMergeStateStatus =
   | "UNKNOWN"
   | "UNSTABLE";
 
+export interface PullRequestHeadRepository {
+  name: string;
+}
+
+export interface PullRequestHeadRepositoryOwner {
+  login: string;
+}
+
 export interface PullRequestState extends PullRequest {
   state: PullRequestStatus;
   mergedAt: string | null;
   baseRefName?: string;
   headRefName?: string;
-  headRepositoryNameWithOwner?: string;
+  headRepository?: PullRequestHeadRepository | null;
+  headRepositoryOwner?: PullRequestHeadRepositoryOwner | null;
   mergeable?: PullRequestMergeability;
   mergeStateStatus?: PullRequestMergeStateStatus;
 }
@@ -91,6 +100,53 @@ interface RequestedChangesReview {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function parseHeadRepository(
+  value: unknown,
+): PullRequestHeadRepository | null | undefined {
+  if (value === null) {
+    return null;
+  }
+
+  if (!isRecord(value) || typeof value.name !== "string" || value.name === "") {
+    return undefined;
+  }
+
+  return { name: value.name };
+}
+
+function parseHeadRepositoryOwner(
+  value: unknown,
+): PullRequestHeadRepositoryOwner | null | undefined {
+  if (value === null) {
+    return null;
+  }
+
+  if (
+    !isRecord(value) ||
+    typeof value.login !== "string" ||
+    value.login === ""
+  ) {
+    return undefined;
+  }
+
+  return { login: value.login };
+}
+
+export function getPullRequestHeadRepositoryIdentity(
+  pullRequest: Pick<PullRequestState, "headRepository" | "headRepositoryOwner">,
+): string | undefined {
+  if (
+    pullRequest.headRepository === undefined ||
+    pullRequest.headRepository === null ||
+    pullRequest.headRepositoryOwner === undefined ||
+    pullRequest.headRepositoryOwner === null
+  ) {
+    return undefined;
+  }
+
+  return `${pullRequest.headRepositoryOwner.login}/${pullRequest.headRepository.name}`;
 }
 
 function validatePullRequestList(value: unknown): PullRequestReviewListItem[] {
@@ -143,18 +199,25 @@ function validatePullRequestStateList(
     const mergedAt = item.mergedAt;
     const baseRefName = item.baseRefName;
     const headRefName = item.headRefName;
-    const headRepositoryNameWithOwner = item.headRepositoryNameWithOwner;
+    const headRepository = parseHeadRepository(item.headRepository);
+    const headRepositoryOwner = parseHeadRepositoryOwner(
+      item.headRepositoryOwner,
+    );
     const mergeable = item.mergeable;
     const mergeStateStatus = item.mergeStateStatus;
     const requiresMaintenanceFacts =
       requireMaintenanceFacts && state === "OPEN";
+    const hasHeadRepositoryIdentity =
+      headRepository !== undefined &&
+      headRepository !== null &&
+      headRepositoryOwner !== undefined &&
+      headRepositoryOwner !== null;
 
     if (
       typeof url !== "string" ||
       (state !== "OPEN" && state !== "CLOSED" && state !== "MERGED") ||
       (typeof mergedAt !== "string" && mergedAt !== null) ||
-      (requireMaintenanceFacts &&
-        typeof headRepositoryNameWithOwner !== "string") ||
+      (requireMaintenanceFacts && !hasHeadRepositoryIdentity) ||
       (requiresMaintenanceFacts &&
         (typeof baseRefName !== "string" ||
           typeof headRefName !== "string" ||
@@ -179,9 +242,8 @@ function validatePullRequestStateList(
       url: parsePullRequestUrl(url),
       state,
       mergedAt,
-      ...(typeof headRepositoryNameWithOwner === "string"
-        ? { headRepositoryNameWithOwner }
-        : {}),
+      ...(headRepository === undefined ? {} : { headRepository }),
+      ...(headRepositoryOwner === undefined ? {} : { headRepositoryOwner }),
       ...(typeof baseRefName === "string" &&
       typeof headRefName === "string" &&
       (mergeable === "MERGEABLE" ||
@@ -581,7 +643,7 @@ export class GitHubClient {
         "--json",
         options.baseBranch === undefined
           ? "url,state,mergedAt"
-          : "url,state,mergedAt,baseRefName,headRefName,headRepositoryNameWithOwner,mergeable,mergeStateStatus",
+          : "url,state,mergedAt,baseRefName,headRefName,headRepository,headRepositoryOwner,mergeable,mergeStateStatus",
         "--limit",
         "1",
       ],

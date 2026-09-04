@@ -128,7 +128,8 @@ function githubFor(
     mergedAt: state === "merged" ? "2026-09-01T13:42:03Z" : null,
     baseRefName: "main",
     headRefName: `agent/${cardId}`,
-    headRepositoryNameWithOwner: "owner/repo",
+    headRepository: { name: "repo" },
+    headRepositoryOwner: { login: "owner" },
     mergeable: state === "conflicted" ? "CONFLICTING" : "MERGEABLE",
     mergeStateStatus:
       state === "behind"
@@ -303,6 +304,28 @@ describe("reconcileReviewCards", () => {
     expect(trello.moveCard).toHaveBeenCalledWith("card-1", "backlog");
   });
 
+  it("ignores a pull request from a fork even when its branch is the task branch", async () => {
+    const trello = trelloFor(card());
+    const pullRequest = githubFor("card-1", "open");
+    vi.mocked(pullRequest.findPullRequestState).mockResolvedValue({
+      url: "https://github.com/contributor/repo/pull/1",
+      state: "OPEN",
+      mergedAt: null,
+      baseRefName: "main",
+      headRefName: "agent/card-1",
+      headRepository: { name: "repo" },
+      headRepositoryOwner: { login: "contributor" },
+      mergeable: "MERGEABLE",
+      mergeStateStatus: "CLEAN",
+    });
+
+    await expect(
+      reconcileReviewCards(trello, {} as GitClient, pullRequest, project),
+    ).resolves.toBeNull();
+
+    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "backlog");
+  });
+
   it("does not expose a prepared conflict when authoritative PR identity changes", async () => {
     const configuredProject = createPreparedConflictProject();
     const handoffPath = prepareConflict(configuredProject);
@@ -314,7 +337,8 @@ describe("reconcileReviewCards", () => {
       mergedAt: null,
       baseRefName: "main",
       headRefName: "replacement/card-1",
-      headRepositoryNameWithOwner: "owner/repo",
+      headRepository: { name: "repo" },
+      headRepositoryOwner: { login: "owner" },
       mergeable: "MERGEABLE",
       mergeStateStatus: "BEHIND",
     });
@@ -373,7 +397,8 @@ describe("reconcileReviewCards", () => {
             mergedAt: null,
             baseRefName: "main",
             headRefName: "agent/card-1",
-            headRepositoryNameWithOwner: "owner/repo",
+            headRepository: { name: "repo" },
+            headRepositoryOwner: { login: "owner" },
             mergeable: "MERGEABLE",
             mergeStateStatus: "CLEAN",
           },
@@ -434,12 +459,13 @@ describe("reconcileReviewCards", () => {
     ).not.toContain(token);
   });
 
-  it("moves a card with no expected PR to Backlog", async () => {
+  it("moves a Human Review card with no PR to Backlog", async () => {
     const trello = {
       ...trelloFor(card()),
       moveCard: vi.fn().mockResolvedValue({ ...card(), idList: "backlog" }),
     } as unknown as TrelloClient;
-    const github = githubFor("card-1", "none");
+    const runGitHubCommand = vi.fn<RunGitHubCommand>().mockResolvedValue("[]");
+    const github = new GitHubClient(runGitHubCommand);
 
     await expect(
       reconcileReviewCards(trello, {} as GitClient, github, project),
@@ -450,6 +476,22 @@ describe("reconcileReviewCards", () => {
       "card-1",
       expect.stringContaining("no expected pull request"),
     );
+    expect(runGitHubCommand).toHaveBeenCalledWith("/repo", [
+      "pr",
+      "list",
+      "--repo",
+      "owner/repo",
+      "--head",
+      "agent/card-1",
+      "--base",
+      "main",
+      "--state",
+      "all",
+      "--json",
+      "url,state,mergedAt,baseRefName,headRefName,headRepository,headRepositoryOwner,mergeable,mergeStateStatus",
+      "--limit",
+      "1",
+    ]);
   });
 
   it("moves a merged expected PR to Done and removes its remote branch", async () => {
@@ -586,7 +628,8 @@ describe("reconcileReviewCards", () => {
           mergedAt: "2026-09-01T13:42:03Z",
           baseRefName: "main",
           headRefName: "agent/card-1",
-          headRepositoryNameWithOwner: "owner/repo",
+          headRepository: { name: "repo" },
+          headRepositoryOwner: { login: "owner" },
           mergeable: "MERGEABLE",
           mergeStateStatus: "CLEAN",
         },
@@ -714,7 +757,8 @@ describe("reconcileReviewCards", () => {
         url: "https://github.com/owner/repo/pull/1",
         state: "CLOSED",
         mergedAt: "2026-09-01T13:42:03Z",
-        headRepositoryNameWithOwner: "owner/repo",
+        headRepository: { name: "repo" },
+        headRepositoryOwner: { login: "owner" },
       }),
       findChangesRequestedPullRequest: vi.fn(),
     } as unknown as GitHubClient;
@@ -900,7 +944,8 @@ describe("reconcileReviewCards", () => {
         mergedAt: null,
         baseRefName: "main",
         headRefName: "agent/card-1",
-        headRepositoryNameWithOwner: "owner/repo",
+        headRepository: { name: "repo" },
+        headRepositoryOwner: { login: "owner" },
       }),
     } as unknown as GitHubClient;
 
@@ -1228,7 +1273,8 @@ describe("reconcileReviewCards", () => {
           mergedAt: null,
           baseRefName: "main",
           headRefName: headBranch,
-          headRepositoryNameWithOwner: "owner/repo",
+          headRepository: { name: "repo" },
+          headRepositoryOwner: { login: "owner" },
           mergeable: "MERGEABLE",
           mergeStateStatus: "CLEAN",
         })),
@@ -1273,7 +1319,8 @@ describe("reconcileReviewCards", () => {
                 mergedAt: null,
                 baseRefName: "main",
                 headRefName: "agent/card-1",
-                headRepositoryNameWithOwner: "owner/repo",
+                headRepository: { name: "repo" },
+                headRepositoryOwner: { login: "owner" },
                 mergeable: "MERGEABLE",
                 mergeStateStatus: "CLEAN",
               }
@@ -1283,7 +1330,8 @@ describe("reconcileReviewCards", () => {
                 mergedAt: null,
                 baseRefName: "main",
                 headRefName: "agent/card-2",
-                headRepositoryNameWithOwner: "owner/repo",
+                headRepository: { name: "repo" },
+                headRepositoryOwner: { login: "owner" },
                 mergeable: "MERGEABLE",
                 mergeStateStatus: "CLEAN",
               },

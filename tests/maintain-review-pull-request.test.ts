@@ -82,7 +82,8 @@ function createPullRequest(): PullRequestState {
     mergedAt: null,
     baseRefName: "main",
     headRefName: "agent/card-1",
-    headRepositoryNameWithOwner: "owner/repo",
+    headRepository: { name: "repo" },
+    headRepositoryOwner: { login: "owner" },
     mergeable: "MERGEABLE",
     mergeStateStatus: "BEHIND",
   };
@@ -173,7 +174,8 @@ describe("owned Human Review pull-request maintenance", () => {
     const scenario = setup();
     const pullRequest = {
       ...createPullRequest(),
-      headRepositoryNameWithOwner: "contributor/repo",
+      headRepository: { name: "repo" },
+      headRepositoryOwner: { login: "contributor" },
     };
     const git = createGit([taskSha, defaultSha]);
 
@@ -196,7 +198,7 @@ describe("owned Human Review pull-request maintenance", () => {
   it("does not maintain a pull request when its head repository identity is missing", async () => {
     const scenario = setup();
     const pullRequest = createPullRequest();
-    delete pullRequest.headRepositoryNameWithOwner;
+    delete pullRequest.headRepository;
     const git = createGit([taskSha, defaultSha]);
 
     await expect(
