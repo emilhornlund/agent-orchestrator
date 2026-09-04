@@ -1,4 +1,4 @@
-import type { Config } from "../config/config.js";
+import { DEFAULT_CONTEXT_ROOT, type Config } from "../config/config.js";
 import {
   cleanupCardContextRetention,
   contextRetentionIntervalMilliseconds,
@@ -53,6 +53,15 @@ import {
   RetryableTrelloReconciliationError,
 } from "./trello-reconciliation-error.js";
 import { getRetryBackoffDelayMilliseconds } from "./retry-backoff.js";
+import {
+  loadReconciliationBlock,
+  removeReconciliationBlock,
+  type PersistedReconciliationBlock,
+  type ReconciliationBlockOperation,
+  type ReconciliationRecoveryCondition,
+  writeReconciliationBlock,
+} from "./reconciliation-block-storage.js";
+import { WorkflowError } from "./workflow-error.js";
 
 function sleep(milliseconds: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -123,11 +132,16 @@ interface BlockedPreparedConflict {
 
 interface BlockedReconciliation {
   attemptKey: string;
-  operation: string;
+  operation: ReconciliationBlockOperation;
   cardId: string | undefined;
   reconciliationListId: string | undefined;
   failure: Error;
   recoveryCheckFailed: boolean;
+  recoveryCondition: ReconciliationRecoveryCondition;
+  notificationIdentity: string | undefined;
+  failureIdentity: string | undefined;
+  restored: boolean;
+  malformed: boolean;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -143,6 +157,7 @@ async function hasReconciliationRecovery(
   if (
     signal.aborted ||
     blocked.cardId === undefined ||
+    blocked.recoveryCondition !== "card-moved-to-ready" ||
     (blocked.reconciliationListId === undefined &&
       !blocked.operation.startsWith("GitHub "))
   ) {
@@ -186,6 +201,67 @@ async function hasReconciliationRecovery(
   }
 
   return false;
+}
+
+function restoreReconciliationFailure(
+  block: PersistedReconciliationBlock,
+): Error {
+  const failure = new Error(block.failureReason);
+
+  annotateFailure(
+    failure,
+    {
+      projectId: block.projectId,
+      ...(block.cardId === undefined ? {} : { cardId: block.cardId }),
+      ...(block.reconciliationListId === undefined
+        ? {}
+        : { reconciliationListId: block.reconciliationListId }),
+      ...(block.handlingOutcome === undefined
+        ? {}
+        : { handlingOutcome: block.handlingOutcome }),
+      ...(block.sessionLogPaths === undefined
+        ? {}
+        : { sessionLogPaths: block.sessionLogPaths }),
+    },
+    {
+      category: block.failureCategory,
+      reason: block.failureReason,
+    },
+  );
+
+  return failure;
+}
+
+function createPersistedReconciliationBlock(
+  project: PollingProject,
+  blocked: BlockedReconciliation,
+  failureContext: ReturnType<typeof getFailureContext>,
+  sessionLogPaths: string[],
+  failureCategory: PersistedReconciliationBlock["failureCategory"],
+  failureReason: string,
+  notificationIdentity: string,
+  failureIdentity: string,
+): PersistedReconciliationBlock {
+  return {
+    version: 1,
+    projectId: project.id,
+    attemptKey: blocked.attemptKey,
+    attempt: 3,
+    operation: blocked.operation,
+    ...(blocked.cardId === undefined ? {} : { cardId: blocked.cardId }),
+    ...(blocked.reconciliationListId === undefined
+      ? {}
+      : { reconciliationListId: blocked.reconciliationListId }),
+    failureCategory,
+    failureReason,
+    recoveryCondition: blocked.recoveryCondition,
+    notificationIdentity,
+    failureIdentity,
+    ...(failureContext?.handlingOutcome === undefined
+      ? {}
+      : { handlingOutcome: failureContext.handlingOutcome }),
+    ...(sessionLogPaths.length === 0 ? {} : { sessionLogPaths }),
+  };
 }
 
 function isGitSha(value: string): boolean {
@@ -282,7 +358,85 @@ async function runProjectWorker(
   const blockedPreparedConflicts = new Map<string, BlockedPreparedConflict>();
   const blockedReconciliations = new Map<string, BlockedReconciliation>();
   let suppressedFailureIdentity: string | undefined;
+  let restoredFailureIdentity: string | undefined;
   let pendingTrelloValidation = deferredTrelloValidation;
+  const runtimeStorageRoot = project.contextRoot ?? DEFAULT_CONTEXT_ROOT;
+
+  const persistedBlock = loadReconciliationBlock(
+    runtimeStorageRoot,
+    project.id,
+  );
+
+  if (persistedBlock.status === "loaded") {
+    const block = persistedBlock.block;
+    const failure = restoreReconciliationFailure(block);
+
+    blockedReconciliations.set(block.attemptKey, {
+      attemptKey: block.attemptKey,
+      operation: block.operation,
+      cardId: block.cardId,
+      reconciliationListId: block.reconciliationListId,
+      failure,
+      recoveryCheckFailed: false,
+      recoveryCondition: block.recoveryCondition,
+      notificationIdentity: block.notificationIdentity,
+      failureIdentity: block.failureIdentity,
+      restored: true,
+      malformed: false,
+    });
+    suppressedFailureIdentity = block.notificationIdentity;
+    restoredFailureIdentity = block.failureIdentity;
+
+    logger
+      .child({
+        projectId: project.id,
+        ...(block.cardId === undefined ? {} : { cardId: block.cardId }),
+      })
+      .event(
+        `Restored blocked ${block.operation} reconciliation from runtime storage; waiting for ${block.recoveryCondition === "card-moved-to-ready" ? "the affected card to move from its recorded reconciliation list to Ready for Agent" : "explicit operator recovery and worker restart"}`,
+      );
+  } else if (persistedBlock.status === "malformed") {
+    const failure = new WorkflowError(
+      "Workflow",
+      `Persisted reconciliation block is malformed and was retained for investigation: ${persistedBlock.error.message}`,
+      { cause: persistedBlock.error },
+    );
+    const failureDescription = describeFailure(failure);
+    const failureIdentity = failureNotificationIdentity(
+      project.id,
+      failureDescription.category,
+      failureDescription.reason,
+      [],
+      undefined,
+    );
+
+    annotateFailure(failure, { projectId: project.id }, failureDescription);
+    blockedReconciliations.set(`malformed:${project.id}`, {
+      attemptKey: `malformed:${project.id}`,
+      operation: "Trello card operation",
+      cardId: undefined,
+      reconciliationListId: undefined,
+      failure,
+      recoveryCheckFailed: true,
+      recoveryCondition: "worker-restart",
+      notificationIdentity: failureIdentity,
+      failureIdentity,
+      restored: true,
+      malformed: true,
+    });
+
+    const projectLog = logger.child({ projectId: project.id });
+    projectLog.error(formatFailureDiagnostic(failure));
+    await notifyAttentionRequired(
+      emailNotifier,
+      {
+        project,
+        category: failureDescription.category,
+        reason: failureDescription.reason,
+      },
+      projectLog,
+    );
+  }
 
   while (!signal.aborted) {
     const blockedPreparedConflict = blockedPreparedConflicts.get(project.id);
@@ -322,31 +476,74 @@ async function runProjectWorker(
     const blockedReconciliation = blockedReconciliations.values().next().value;
 
     if (blockedReconciliation !== undefined) {
-      const recovered = await hasReconciliationRecovery(
-        trello,
-        project,
-        blockedReconciliation,
-        signal,
-      );
-
-      if (signal.aborted || !recovered) {
+      if (blockedReconciliation.malformed) {
         await sleep(pollIntervalMilliseconds, signal);
         continue;
       }
 
-      blockedReconciliations.delete(blockedReconciliation.attemptKey);
-      githubReconciliationAttempts.delete(blockedReconciliation.attemptKey);
-      trelloTransientAttempts.delete(blockedReconciliation.attemptKey);
-      logger
-        .child({
-          projectId: project.id,
-          ...(blockedReconciliation.cardId === undefined
-            ? {}
-            : { cardId: blockedReconciliation.cardId }),
-        })
-        .event(
-          `Recovered blocked ${blockedReconciliation.operation} reconciliation after the affected card returned to Ready for Agent; resuming normal processing`,
+      if (
+        blockedReconciliation.restored &&
+        blockedReconciliation.recoveryCondition === "worker-restart"
+      ) {
+        try {
+          removeReconciliationBlock(runtimeStorageRoot, project.id);
+        } catch (error) {
+          logger
+            .child({ projectId: project.id })
+            .error(
+              `Could not complete explicit operator recovery for the restored ${blockedReconciliation.operation} block; retaining the persisted block: ${getErrorMessage(error)}`,
+            );
+          await sleep(pollIntervalMilliseconds, signal);
+          continue;
+        }
+
+        blockedReconciliations.delete(blockedReconciliation.attemptKey);
+        githubReconciliationAttempts.delete(blockedReconciliation.attemptKey);
+        trelloTransientAttempts.delete(blockedReconciliation.attemptKey);
+        logger
+          .child({ projectId: project.id })
+          .event(
+            `Recovered blocked ${blockedReconciliation.operation} reconciliation after explicit worker restart; resuming normal processing`,
+          );
+      } else {
+        const recovered = await hasReconciliationRecovery(
+          trello,
+          project,
+          blockedReconciliation,
+          signal,
         );
+
+        if (signal.aborted || !recovered) {
+          await sleep(pollIntervalMilliseconds, signal);
+          continue;
+        }
+
+        try {
+          removeReconciliationBlock(runtimeStorageRoot, project.id);
+        } catch (error) {
+          logger
+            .child({ projectId: project.id })
+            .error(
+              `Could not remove the recovered ${blockedReconciliation.operation} block; retaining the project block and persisted state: ${getErrorMessage(error)}`,
+            );
+          await sleep(pollIntervalMilliseconds, signal);
+          continue;
+        }
+
+        blockedReconciliations.delete(blockedReconciliation.attemptKey);
+        githubReconciliationAttempts.delete(blockedReconciliation.attemptKey);
+        trelloTransientAttempts.delete(blockedReconciliation.attemptKey);
+        logger
+          .child({
+            projectId: project.id,
+            ...(blockedReconciliation.cardId === undefined
+              ? {}
+              : { cardId: blockedReconciliation.cardId }),
+          })
+          .event(
+            `Recovered blocked ${blockedReconciliation.operation} reconciliation after the affected card returned to Ready for Agent; resuming normal processing`,
+          );
+      }
     }
 
     try {
@@ -378,6 +575,7 @@ async function runProjectWorker(
       trelloTransientAttempts.clear();
       preparedConflictAttempts.clear();
       suppressedFailureIdentity = undefined;
+      restoredFailureIdentity = undefined;
     } catch (error) {
       if (
         isShutdownCancellation(error, signal) ||
@@ -387,6 +585,7 @@ async function runProjectWorker(
       }
 
       let failureContext = getFailureContext(error);
+      let newlyBlockedReconciliation: BlockedReconciliation | undefined;
 
       if (error instanceof PreparedConflictRemediationError) {
         const cardId = failureContext?.cardId;
@@ -452,7 +651,13 @@ async function runProjectWorker(
             error.reconciliationListId ?? failureContext?.reconciliationListId,
           failure: error,
           recoveryCheckFailed: false,
+          recoveryCondition: "card-moved-to-ready",
+          notificationIdentity: undefined,
+          failureIdentity: undefined,
+          restored: false,
+          malformed: false,
         });
+        newlyBlockedReconciliation = blockedReconciliations.get(attemptKey);
         annotateFailure(error, {
           projectId: project.id,
           cardId: error.cardId,
@@ -503,7 +708,14 @@ async function runProjectWorker(
             reconciliationListId ?? failureContext?.reconciliationListId,
           failure: error instanceof Error ? error : new Error(String(error)),
           recoveryCheckFailed: false,
+          recoveryCondition:
+            cardId === undefined ? "worker-restart" : "card-moved-to-ready",
+          notificationIdentity: undefined,
+          failureIdentity: undefined,
+          restored: false,
+          malformed: false,
         });
+        newlyBlockedReconciliation = blockedReconciliations.get(attemptKey);
         if (error instanceof Error) {
           annotateFailure(error, {
             projectId: project.id,
@@ -569,15 +781,53 @@ async function runProjectWorker(
         cardIds,
         handlingOutcome,
       );
+      const currentFailureBaseIdentity = failureNotificationIdentity(
+        project.id,
+        failureDescription.category,
+        failureDescription.reason,
+        cardIds,
+        undefined,
+      );
+
+      if (newlyBlockedReconciliation !== undefined) {
+        newlyBlockedReconciliation.notificationIdentity =
+          currentFailureIdentity;
+        newlyBlockedReconciliation.failureIdentity = currentFailureBaseIdentity;
+
+        try {
+          writeReconciliationBlock(
+            runtimeStorageRoot,
+            createPersistedReconciliationBlock(
+              project,
+              newlyBlockedReconciliation,
+              failureContext,
+              sessionLogPaths,
+              failureDescription.category,
+              failureDescription.reason,
+              currentFailureIdentity,
+              currentFailureBaseIdentity,
+            ),
+          );
+        } catch (storageError) {
+          projectLog.error(
+            `Could not persist exhausted reconciliation block; the project remains blocked in memory until restart, but runtime state may require operator investigation: ${getErrorMessage(storageError)}`,
+          );
+        }
+      }
 
       if (cardFailureHandled) {
         suppressedFailureIdentity = undefined;
-      } else if (currentFailureIdentity === suppressedFailureIdentity) {
+        restoredFailureIdentity = undefined;
+      } else if (
+        currentFailureIdentity === suppressedFailureIdentity ||
+        currentFailureBaseIdentity === restoredFailureIdentity
+      ) {
         projectLog.info(
           "Attention-required notification suppressed for unchanged unresolved failure",
         );
       } else {
         suppressedFailureIdentity = currentFailureIdentity;
+        restoredFailureIdentity = undefined;
 
         await notifyAttentionRequired(
           emailNotifier,

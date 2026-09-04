@@ -23,6 +23,11 @@ Do not mark an interrupted card successful or failed just because the process st
   configured; and
 - the per-card session log, when present, at `logs/sessions/<sanitized-project-id>/<sanitized-card-id>.log`.
 
+Each exhausted Trello or GitHub reconciliation is also recorded outside Git at
+`<contextRoot>/<project-id>/reconciliation-block.json`. The record contains the project and affected card identity,
+operation, recorded reconciliation list, failure category and reason, retry key, recovery condition, and notification
+identity. It is runtime state, not card context or repository state, and must remain below the configured `contextRoot`.
+
 Preserve the task worktree, branch, session log, and diagnostic information while investigating. Do not delete an unknown
 worktree or discard agent changes as a first response. Restarting the service runs the normal reconciliation flow.
 
@@ -45,7 +50,8 @@ an intentional or fatal stop:
 
 1. Inspect the Trello transition history, worktree, branch, pull request, and session log for the affected project.
 2. Resolve any Git conflict or external failure in the preserved task artifacts without changing unrelated worktrees.
-3. Restart with `yarn dev` and allow the next polling cycle to reconcile the project.
+3. Restart with `yarn dev` and allow the next polling cycle to reconcile the project. Startup restores an unresolved
+   reconciliation block without launching the exhausted operation or sending another alert for the same failure.
 4. Move a card to `Ready for Agent` only when deliberately retrying it; do not use `Backlog`, `Failed`, or `Done` as an
    automatic retry queue.
 
@@ -177,12 +183,21 @@ missing-card inference, corrective comment, or workflow transition. The same Tre
 transition history, labels, comments, content updates, and attachment metadata/download requests. Each project records the
 attempt in its running worker and logs the project, card when known, operation, attempt number, classification, and safe error
 context. The next project cycle retries the operation; three consecutive failed attempts are the deterministic bound, after
-which the operation is blocked and the existing project-level diagnostic and `Attention Required` escalation is emitted. A
-blocked card operation is not called again during normal polling. After resolving the external failure, move the affected card
-from its recorded reconciliation list to `Ready for Agent`; the worker observes that explicit recovery transition, clears the
+which the operation is blocked, the block is durably written to `<contextRoot>/<project-id>/reconciliation-block.json`, and the
+existing project-level diagnostic and `Attention Required` escalation is emitted. A blocked card operation is not called again
+during normal polling or restored at startup. After resolving the external failure, move the affected card from its recorded
+reconciliation list to `Ready for Agent`; the worker observes that explicit recovery transition, removes the block and clears the
 operation's retry state, and resumes normal processing. A project-level failure with no affected card remains blocked until the
-worker is explicitly restarted after the failure is resolved. Authentication, configuration, malformed-response, not-found,
-and other non-transient failures continue directly to the normal failure diagnostics.
+external problem is resolved and the worker is explicitly restarted; restart is the operator recovery condition for this case,
+not a Trello card transition. Notification identity is restored with the block, so restart does not duplicate an
+`Attention Required` alert for an unchanged failure. Authentication, configuration, malformed-response, not-found, and other
+non-transient failures continue directly to the normal failure diagnostics.
+
+The block file is validated before it is used. Invalid JSON, missing or blank required values, unsupported operation or recovery
+condition values, wrong optional-field types, and project/card identity mismatches fail closed: the project does not poll or
+launch the exhausted operation, the file is retained unchanged, and an actionable `Attention Required` diagnostic is emitted.
+Other project workers continue independently. A failed block write or removal is reported and does not turn an unresolved or
+uncertain external operation into a successful recovery.
 
 If a Trello mutation fails transiently, its requested transition or update is unconfirmed. The orchestrator does not move the
 card to `Failed` merely because the request was unavailable. It preserves the last known workflow state and lets a later

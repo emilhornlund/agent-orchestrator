@@ -5,6 +5,29 @@
 This page is the canonical operator reference for execution isolation, publication boundaries, timing, notifications,
 shutdown, logging, retention, and multi-project operation.
 
+## Reconciliation block storage
+
+When a retryable GitHub or Trello reconciliation reaches the existing three-attempt limit, the project worker writes its
+blocked state to `<contextRoot>/<project-id>/reconciliation-block.json`. This runtime record is below the configured context
+root, separate from the configured source checkout and every task worktree, and is written atomically. It stores the project
+ID, retry key and exhausted attempt, operation, optional card and reconciliation-list IDs, failure category and reason, the
+expected recovery condition, and the notification identities needed to suppress a duplicate alert. Tokens and authenticated
+request data are never stored.
+
+On worker startup, a valid block is restored before normal polling. The exhausted operation is not launched as part of restore.
+A known-card block performs only the existing lightweight Trello list check and is released when that card is deliberately moved
+from its recorded reconciliation list to `Ready for Agent`. Successful recovery removes the block and clears its retry state.
+A cardless project block has no card-based check: the external issue must be resolved and an explicit worker restart is the
+operator recovery action. Restored notification identity prevents a restart from sending another `Attention Required` alert for
+the same unresolved failure. Polling, recovery-check, and notification-delivery failures never remove or overwrite unresolved
+block state.
+
+Block records are validated at the storage boundary, including strict record shape, non-blank values, optional types,
+supported operation and recovery values, and project/card identity consistency. Malformed or mismatched state is retained and
+fails closed with an actionable project diagnostic; it is never treated as recovered and never triggers the exhausted operation.
+Each project loads its own record, so a blocked or malformed record does not stop independent project workers. Operators should
+preserve the file for investigation and repair it only as an explicit runtime-state operation below the configured context root.
+
 ## Card context storage
 
 `workflow.contextRoot` is the workflow-level filesystem boundary for card-specific external context. It defaults to
