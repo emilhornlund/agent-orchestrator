@@ -134,8 +134,7 @@ export async function remediatePreparedConflict(
     if (
       worktree === null ||
       worktree.path !== worktreePath ||
-      worktree.branch !== branch ||
-      worktree.rebase === null
+      worktree.branch !== branch
     ) {
       throw new Error(
         `Expected prepared remediation worktree ${worktreePath} on ${branch} was not found`,
@@ -148,56 +147,66 @@ export async function remediatePreparedConflict(
       );
     }
 
-    const result = await options.opencode.run({
-      cwd: worktree.path,
-      model: options.project.opencode.remediation.model,
-      variant: options.project.opencode.remediation.variant,
-      timeoutMilliseconds: options.project.opencode.timeoutMinutes * 60_000,
-      prompt: buildConflictRemediationPrompt(
-        options.card,
-        persistedHandoff,
-        options.project.repository.validationCommand,
-      ),
-      signal: options.signal,
-      sessionLogPath,
-      sessionLabel: "OpenCode conflict remediation",
-    });
+    if (worktree.rebase !== null) {
+      const result = await options.opencode.run({
+        cwd: worktree.path,
+        model: options.project.opencode.remediation.model,
+        variant: options.project.opencode.remediation.variant,
+        timeoutMilliseconds: options.project.opencode.timeoutMinutes * 60_000,
+        prompt: buildConflictRemediationPrompt(
+          options.card,
+          persistedHandoff,
+          options.project.repository.validationCommand,
+        ),
+        signal: options.signal,
+        sessionLogPath,
+        sessionLabel: "OpenCode conflict remediation",
+      });
 
-    throwIfSignalAborted(options.signal);
+      throwIfSignalAborted(options.signal);
 
-    if (result.exitCode !== 0) {
-      if (hasPermissionDenial(result.output, result.errorOutput)) {
+      if (result.exitCode !== 0) {
+        if (hasPermissionDenial(result.output, result.errorOutput)) {
+          throw fail(
+            options,
+            "OpenCode permissions",
+            "OpenCode conflict remediation",
+            new Error(
+              "OpenCode was denied permission during conflict remediation",
+            ),
+          );
+        }
+
         throw fail(
           options,
-          "OpenCode permissions",
+          "OpenCode",
           "OpenCode conflict remediation",
-          new Error(
-            "OpenCode was denied permission during conflict remediation",
-          ),
+          new Error(`OpenCode exited with code ${result.exitCode}`),
         );
       }
-
-      throw fail(
-        options,
-        "OpenCode",
-        "OpenCode conflict remediation",
-        new Error(`OpenCode exited with code ${result.exitCode}`),
-      );
     }
 
     const remainingRebase = await options.git.getRebaseState(worktree.path);
-    const conflictedPaths = await options.git.getConflictedPaths(worktree.path);
 
-    if (remainingRebase !== null || conflictedPaths.length > 0) {
+    if (remainingRebase !== null) {
       throw fail(
         options,
         "Git/GitHub",
         "verifying completed rebase",
         new Error(
-          remainingRebase === null
-            ? `unmerged paths remain: ${conflictedPaths.join(", ")}`
-            : "Git rebase is still active; all conflict stops must be completed",
+          "Git rebase is still active; all conflict stops must be completed",
         ),
+      );
+    }
+
+    const conflictedPaths = await options.git.getConflictedPaths(worktree.path);
+
+    if (conflictedPaths.length > 0) {
+      throw fail(
+        options,
+        "Git/GitHub",
+        "verifying completed rebase",
+        new Error(`unmerged paths remain: ${conflictedPaths.join(", ")}`),
       );
     }
 

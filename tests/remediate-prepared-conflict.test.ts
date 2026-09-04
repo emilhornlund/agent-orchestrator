@@ -102,6 +102,7 @@ function createHandoff(project: ProjectConfig): PreparedConflictHandoff {
 }
 
 interface ScenarioOptions {
+  initialRebaseState?: GitRebaseState | null;
   rebaseStates?: Array<GitRebaseState | null>;
   conflictedPaths?: string[];
   status?: string;
@@ -124,7 +125,12 @@ function createScenario(options: ScenarioOptions = {}) {
   fs.mkdirSync(worktreePath);
   const handoff = createHandoff(project);
   const activeRebase = handoff.rebase;
-  const rebaseStates = [activeRebase, ...(options.rebaseStates ?? [null])];
+  const rebaseStates = [
+    options.initialRebaseState === undefined
+      ? activeRebase
+      : options.initialRebaseState,
+    ...(options.rebaseStates ?? [null]),
+  ];
   const runOpenCode = vi.fn().mockResolvedValue({
     exitCode: 0,
     output: "",
@@ -268,6 +274,76 @@ describe("remediatePreparedConflict", () => {
     expect(readPreparedConflict(scenario.project, scenario.card.id)).toBeNull();
   });
 
+  it("resumes a completed clean rebase without invoking OpenCode", async () => {
+    const scenario = createScenario({ initialRebaseState: null });
+
+    await remediatePreparedConflict({
+      ...scenario,
+      signal: new AbortController().signal,
+    });
+
+    expect(scenario.runOpenCode).not.toHaveBeenCalled();
+    expect(scenario.runCommand).toHaveBeenCalledOnce();
+    expect(scenario.git.pushWithLease).toHaveBeenCalledWith(
+      scenario.worktreePath,
+      "origin",
+      "agent/card-1",
+      taskSha,
+      scenario.project,
+    );
+    expect(readPreparedConflict(scenario.project, scenario.card.id)).toBeNull();
+  });
+
+  it("blocks publication if a completed rebase becomes active again", async () => {
+    const scenario = createScenario({
+      initialRebaseState: null,
+      rebaseStates: [
+        {
+          active: true,
+          backend: "merge",
+          headName: "refs/heads/agent/card-1",
+          onto: baseSha,
+          originalHead: taskSha,
+          currentStep: 2,
+          totalSteps: 4,
+        },
+      ],
+    });
+
+    await expect(
+      remediatePreparedConflict({
+        ...scenario,
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("still active");
+
+    expect(scenario.runOpenCode).not.toHaveBeenCalled();
+    expect(scenario.git.pushWithLease).not.toHaveBeenCalled();
+    expect(
+      readPreparedConflict(scenario.project, scenario.card.id),
+    ).not.toBeNull();
+  });
+
+  it("preserves a completed handoff until its publication succeeds", async () => {
+    const scenario = createScenario({
+      initialRebaseState: null,
+      pushError: new Error("stale info"),
+    });
+
+    await expect(
+      remediatePreparedConflict({
+        ...scenario,
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("prepared rebase conflict");
+
+    expect(scenario.runOpenCode).not.toHaveBeenCalled();
+    expect(scenario.git.pushWithLease).toHaveBeenCalledOnce();
+    expect(
+      readPreparedConflict(scenario.project, scenario.card.id),
+    ).not.toBeNull();
+  });
+
   it("preserves the handoff when a later rebase stop remains active", async () => {
     const scenario = createScenario({
       rebaseStates: [
@@ -333,6 +409,37 @@ describe("remediatePreparedConflict", () => {
     ).not.toBeNull();
   });
 
+  it.each([
+    ["dirty", { status: " M src/player.ts" }, "uncommitted changes"],
+    [
+      "invalid ancestry",
+      { rebaseTargetIsAncestor: false },
+      "does not contain rebase target",
+    ],
+    ["unchanged HEAD", { headSha: taskSha }, "may have been aborted"],
+  ] as const)(
+    "blocks a completed rebase with %s state",
+    async (_label, options, message) => {
+      const scenario = createScenario({
+        initialRebaseState: null,
+        ...options,
+      });
+
+      await expect(
+        remediatePreparedConflict({
+          ...scenario,
+          signal: new AbortController().signal,
+        }),
+      ).rejects.toThrow(message);
+
+      expect(scenario.runOpenCode).not.toHaveBeenCalled();
+      expect(scenario.git.pushWithLease).not.toHaveBeenCalled();
+      expect(
+        readPreparedConflict(scenario.project, scenario.card.id),
+      ).not.toBeNull();
+    },
+  );
+
   it("does not publish after validation failure", async () => {
     const scenario = createScenario({ validationExitCode: 1 });
 
@@ -369,7 +476,10 @@ describe("remediatePreparedConflict", () => {
   ] as const)(
     "preserves state when the authoritative remote SHA is %s",
     async (_label, remoteSha) => {
-      const scenario = createScenario({ remoteSha });
+      const scenario = createScenario({
+        initialRebaseState: null,
+        remoteSha,
+      });
 
       await expect(
         remediatePreparedConflict({
@@ -382,6 +492,7 @@ describe("remediatePreparedConflict", () => {
       expect(
         readPreparedConflict(scenario.project, scenario.card.id),
       ).not.toBeNull();
+      expect(scenario.runOpenCode).not.toHaveBeenCalled();
     },
   );
 
