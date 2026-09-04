@@ -169,12 +169,26 @@ republished pull request; a disabled project returns it to Human Review. A reque
 feedback applies to the pull request's current head, and it gets its own transient remediation counter. A retry that reuses
 already committed work skips all OpenCode stages, including attachment-dependent prompts, and proceeds directly to publication.
 
-For every owned open pull request on the expected `agent/<trello-card-id>` branch, Human Review reconciliation records one
-detection-only maintenance state: `up-to-date` when the configured default branch is not ahead and GitHub reports no conflict,
-`behind` when the default branch has advanced without a conflict, or `conflicted` when GitHub reports merge conflicts. Pull
-requests on other branches, and closed or merged pull requests, are outside this signal. The result is part of the
-reconciliation data rather than a log-only message. Detection never rebases, merges, pushes, force-pushes, changes a branch or
-worktree, moves a card, or invokes OpenCode.
+For every owned open pull request on the expected `agent/<trello-card-id>` branch, Human Review reconciliation records a
+maintenance state: `up-to-date` when the configured default branch is not ahead and GitHub reports no conflict, `behind` when
+the default branch has advanced without a conflict, or `conflicted` when GitHub reports merge conflicts. Pull requests on
+other branches, and closed or merged pull requests, are outside this state. Unknown or incomplete GitHub evidence blocks
+maintenance rather than being treated as current.
+
+An open, owned, conflict-free `behind` pull request with no actionable requested changes is revalidated immediately before
+maintenance. The orchestrator then resolves the authoritative remote task-branch SHA, prepares or reuses only the expected
+task worktree, fetches `origin/<defaultBranch>`, rebases the task branch, runs the configured `validationCommand` when present,
+and updates the existing branch with the exact force-with-lease helper. The existing pull request remains associated with the
+card, the card remains in `Human Review`, and no OpenCode session, pull-request creation, or Trello transition is performed.
+After a successful update, reconciliation exposes `up-to-date` and logs the resulting commit. If the branch is already current,
+maintenance is a no-op: no worktree preparation, rebase, validation, push, pull-request operation, OpenCode invocation, or
+successful maintenance result occurs.
+
+A lease rejection, missing or invalid remote SHA, fetch or validation failure, or unexpected rebase conflict leaves the pull
+request, card, task branch, and worktree unchanged for diagnosis and later reconciliation. Conflicts are handed to the dedicated
+conflict workflow; the orchestrator does not abort, reset, clean, recreate, or automatically resolve them. A failed validation
+also prevents the remote update. Pull-request evidence that changes during revalidation similarly skips maintenance without
+changing repository or Trello state.
 
 Trello and GitHub operations used by discovery, reconciliation, transition-history checks, card moves, content and label
 updates, comments, and attachment context are retryable when the service returns HTTP 500, 502, 503, or 504, a rate limit, a

@@ -6,6 +6,21 @@ import type { ProjectConfig } from "../config/config.js";
 import type { GitClient } from "./git-client.js";
 import type { PreparedWorktree } from "./prepare-worktree.js";
 
+function getReviewWorktreePath(project: ProjectConfig, cardId: string): string {
+  const worktreePath = path.join(project.repository.worktreeRoot, cardId);
+  const resolvedWorktreeRoot = path.resolve(project.repository.worktreeRoot);
+  const resolvedWorktreePath = path.resolve(worktreePath);
+
+  if (
+    resolvedWorktreePath === resolvedWorktreeRoot ||
+    !resolvedWorktreePath.startsWith(`${resolvedWorktreeRoot}${path.sep}`)
+  ) {
+    throw new Error(`Card ID would escape configured worktree root: ${cardId}`);
+  }
+
+  return worktreePath;
+}
+
 export async function prepareReviewWorktree(
   git: GitClient,
   project: ProjectConfig,
@@ -99,4 +114,68 @@ export async function prepareReviewWorktree(
     path: worktreePath,
     branch,
   };
+}
+
+/**
+ * Prepare the expected worktree without resetting an existing clean checkout.
+ * Maintenance performs its own remote refresh after the final GitHub check.
+ */
+export async function prepareReviewMaintenanceWorktree(
+  git: GitClient,
+  project: ProjectConfig,
+  cardId: string,
+): Promise<PreparedWorktree> {
+  const repositoryPath = project.repository.path;
+  const worktreeRoot = project.repository.worktreeRoot;
+  const branch = `agent/${cardId}`;
+  const remoteBranch = `origin/${branch}`;
+  const worktreePath = getReviewWorktreePath(project, cardId);
+
+  fs.mkdirSync(worktreeRoot, { recursive: true });
+
+  const worktreeStat = fs.lstatSync(worktreePath, { throwIfNoEntry: false });
+
+  if (worktreeStat !== undefined) {
+    if (worktreeStat.isSymbolicLink()) {
+      throw new Error(`Refusing to use symbolic-link worktree ${worktreePath}`);
+    }
+
+    if (!worktreeStat.isDirectory()) {
+      throw new Error(`Refusing to use non-directory worktree ${worktreePath}`);
+    }
+
+    const currentBranch = await git.getCurrentBranch(worktreePath);
+
+    if (currentBranch !== branch) {
+      throw new Error(
+        `Existing worktree ${worktreePath} is on branch "${currentBranch}", expected "${branch}"`,
+      );
+    }
+
+    const status = await git.getStatus(worktreePath);
+
+    if (status.trim().length > 0) {
+      throw new Error(
+        `Cannot maintain ${branch}: expected worktree ${worktreePath} is dirty and was preserved:\n${status}`,
+      );
+    }
+
+    return { path: worktreePath, branch };
+  }
+
+  await git.fetch(repositoryPath, "origin", branch, project);
+  await git.pruneWorktrees(repositoryPath);
+
+  if (await git.branchExists(repositoryPath, branch)) {
+    await git.addWorktree(repositoryPath, worktreePath, branch);
+  } else {
+    await git.addWorktreeWithNewBranch(
+      repositoryPath,
+      worktreePath,
+      branch,
+      remoteBranch,
+    );
+  }
+
+  return { path: worktreePath, branch };
 }

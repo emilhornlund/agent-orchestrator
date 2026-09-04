@@ -182,6 +182,13 @@ Immediately before publication, the task worktree fetches `origin/<defaultBranch
 that fetched ref. Git leaves an already-current branch unchanged. The resulting `HEAD` drives remote comparison, push
 decisions, pull-request publication, notifications, and the Trello summary.
 
+During Human Review reconciliation, the same isolated task worktree is used for automatic maintenance of an eligible stale
+branch. Eligibility requires an open pull request in the configured repository, exact `agent/<trello-card-id>` head and configured
+default base, a conflict-free `behind` state, and no requested changes on the current head. The pull request is revalidated before
+Git maintenance. A current branch is a no-op and is not fetched, rebased, validated, pushed, or reported as a successful
+maintenance update. A successful clean rebase runs `repository.validationCommand` when configured and updates the existing
+branch, retaining the existing pull request and leaving the card in `Human Review`.
+
 The publication rules are:
 
 - A missing remote task branch is pushed with a normal push.
@@ -196,6 +203,10 @@ The publication rules are:
 The task worktree and branch are preserved after fetch, rebase, publication, or merge failures so conflicts and diagnostics
 can be resolved. A human must review and merge the pull request before the card can reach `Done` when `autoMerge` is disabled.
 An enabled project's successful auto-merge is followed by the same `Done` transition and completion handling.
+
+Maintenance failures follow the same preservation boundary but never move the card or create a pull request. A validation failure
+prevents the branch update. A conflict is left in place for dedicated conflict handling without automatic abort, reset, clean,
+worktree removal, recreation, or OpenCode conflict resolution.
 
 ### Rewriting an owned task branch
 
