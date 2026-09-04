@@ -8,6 +8,11 @@ import type { ProjectConfig } from "../src/config/config.js";
 import type { GitClient, GitRebaseState } from "../src/git/git-client.js";
 import type { GitHubClient } from "../src/github/github-client.js";
 import {
+  appendSessionLog,
+  getSessionLogPath,
+  removeSessionLog,
+} from "../src/logging/session-log.js";
+import {
   OpenCodeClient,
   type OpenCodeRunResult,
 } from "../src/opencode/opencode-client.js";
@@ -22,6 +27,7 @@ import {
   writePreparedConflict,
   type PreparedConflictHandoff,
 } from "../src/orchestrator/prepared-conflict-state.js";
+import { getFailureContext } from "../src/orchestrator/failure-diagnostic.js";
 import { remediatePreparedConflict } from "../src/orchestrator/remediate-prepared-conflict.js";
 import type { TrelloCard } from "../src/trello/trello-client.js";
 
@@ -190,6 +196,8 @@ function createScenario(options: ScenarioOptions = {}) {
 }
 
 afterEach(() => {
+  removeSessionLog("project", "card-1");
+
   for (const directory of temporaryDirectories.splice(0)) {
     fs.rmSync(directory, { recursive: true, force: true });
   }
@@ -288,6 +296,11 @@ describe("remediatePreparedConflict", () => {
       expect.objectContaining({
         cwd: scenario.worktreePath,
         command: "yarn validate",
+        sessionLogPath: getSessionLogPath(
+          scenario.project.id,
+          scenario.card.id,
+        ),
+        sessionLabel: "Repository validation after conflict remediation",
       }),
     );
     expect(scenario.git.pushWithLease).toHaveBeenCalledWith(
@@ -497,6 +510,44 @@ describe("remediatePreparedConflict", () => {
       }),
     ).rejects.toThrow("repository validation");
 
+    expect(scenario.git.pushWithLease).not.toHaveBeenCalled();
+    expect(
+      readPreparedConflict(scenario.project, scenario.card.id),
+    ).not.toBeNull();
+  });
+
+  it("retains prepared-conflict validation output and exit status without publishing", async () => {
+    const validationExitCode = 17;
+    const scenario = createScenario({ validationExitCode });
+    scenario.runCommand.mockImplementation(async ({ sessionLogPath }) => {
+      appendSessionLog(
+        sessionLogPath!,
+        "prepared test-suite stdout\nprepared application stderr\n",
+      );
+
+      return { exitCode: validationExitCode };
+    });
+
+    const error = await remediatePreparedConflict({
+      ...scenario,
+      signal: new AbortController().signal,
+    }).catch((failure: unknown) => failure);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain(
+      `Validation command exited with code ${validationExitCode}`,
+    );
+    expect(getFailureContext(error)).toMatchObject({
+      projectId: scenario.project.id,
+      cardId: scenario.card.id,
+      sessionLogPath: getSessionLogPath(scenario.project.id, scenario.card.id),
+    });
+    expect(
+      fs.readFileSync(
+        getSessionLogPath(scenario.project.id, scenario.card.id),
+        "utf8",
+      ),
+    ).toContain("prepared test-suite stdout\nprepared application stderr\n");
     expect(scenario.git.pushWithLease).not.toHaveBeenCalled();
     expect(
       readPreparedConflict(scenario.project, scenario.card.id),

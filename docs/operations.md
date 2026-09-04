@@ -380,9 +380,12 @@ timestamp level context message
 ```
 
 They are written under `logs/orchestrator-YYYY-MM-DD.log`; test runs use the `test-orchestrator-YYYY-MM-DD.log` prefix. Raw
-command and OpenCode output is written to per-card session logs or forwarded to process standard streams, so it is not
-timestamped by the shared logger. Session logs are stored below `logs/sessions/<sanitized-project-id>/<sanitized-card-id>.log`;
-path components are sanitized for filesystem use.
+OpenCode and command output is written to per-card session logs or forwarded to process standard streams, so it is not
+timestamped by the shared logger. Configured repository validation is always captured in the relevant card session log,
+including validation during Human Review branch maintenance and prepared-conflict remediation. Session logs are stored below
+`logs/sessions/<sanitized-project-id>/<sanitized-card-id>.log`; path components are sanitized for filesystem use. Validation
+failures in service logs are concise orchestrator-owned diagnostics with the original exit status and a session-log reference;
+the complete redacted stdout and stderr remain in that per-card log instead of being dumped to the service log.
 
 `workflow.logRetentionDays` defaults to `14`. Retention cleanup runs at startup and once per day while the service is
 running. It applies to managed daily logs and per-card session logs; a file is removed only when its filesystem modification

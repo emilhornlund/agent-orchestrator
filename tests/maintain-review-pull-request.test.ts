@@ -11,12 +11,18 @@ import type {
   PullRequestState,
 } from "../src/github/github-client.js";
 import {
+  appendSessionLog,
+  getSessionLogPath,
+  removeSessionLog,
+} from "../src/logging/session-log.js";
+import {
   CommandRunner,
   type RunCommand,
 } from "../src/process/command-runner.js";
 import { maintainReviewPullRequest } from "../src/orchestrator/maintain-review-pull-request.js";
 import { reconcileReviewCards } from "../src/orchestrator/reconcile-review-cards.js";
 import { getPreparedConflictPath } from "../src/orchestrator/prepared-conflict-state.js";
+import { getFailureContext } from "../src/orchestrator/failure-diagnostic.js";
 import type { TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
 
 const temporaryDirectories: string[] = [];
@@ -89,6 +95,12 @@ function createPullRequest(): PullRequestState {
   };
 }
 
+function getDailyLogPath(): string {
+  const date = new Date().toISOString().slice(0, 10);
+
+  return path.join(process.cwd(), "logs", `test-orchestrator-${date}.log`);
+}
+
 function createTrello(card: TrelloCard): TrelloClient {
   return {
     getCards: vi.fn().mockResolvedValue([card]),
@@ -147,6 +159,8 @@ function createGithub(
 }
 
 afterEach(() => {
+  removeSessionLog("project", "card-1");
+
   for (const directory of temporaryDirectories.splice(0)) {
     fs.rmSync(directory, { recursive: true, force: true });
   }
@@ -251,6 +265,11 @@ describe("owned Human Review pull-request maintenance", () => {
       expect.objectContaining({
         cwd: path.join(scenario.project.repository.worktreeRoot, "card-1"),
         command: "yarn validate",
+        sessionLogPath: getSessionLogPath(
+          scenario.project.id,
+          scenario.card.id,
+        ),
+        sessionLabel: "Repository validation",
       }),
     );
     expect(github.updatePullRequestDescriptionStatus).toHaveBeenNthCalledWith(
@@ -419,6 +438,56 @@ describe("owned Human Review pull-request maintenance", () => {
       expect.objectContaining({ status: "failed" }),
     );
     expect(scenario.trello.moveCard).not.toHaveBeenCalled();
+  });
+
+  it("retains failed validation output in the card session log without service output", async () => {
+    const scenario = setup();
+    const validationExitCode = 23;
+    scenario.runCommand.mockImplementation(async ({ sessionLogPath }) => {
+      appendSessionLog(
+        sessionLogPath!,
+        "representative test-suite stdout\nrepresentative application stderr\n",
+      );
+
+      return { exitCode: validationExitCode };
+    });
+    const git = createGit([taskSha, defaultSha]);
+    const github = createGithub();
+
+    const error = await reconcileReviewCards(
+      scenario.trello,
+      git,
+      github,
+      scenario.project,
+      { maintenance: { commands: scenario.commands } },
+    ).catch((failure: unknown) => failure);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain(
+      `Validation command exited with code ${validationExitCode}`,
+    );
+    expect(getFailureContext(error)).toMatchObject({
+      projectId: scenario.project.id,
+      cardId: scenario.card.id,
+      sessionLogPath: getSessionLogPath(scenario.project.id, scenario.card.id),
+    });
+    expect(
+      fs.readFileSync(
+        getSessionLogPath(scenario.project.id, scenario.card.id),
+        "utf8",
+      ),
+    ).toContain(
+      "representative test-suite stdout\nrepresentative application stderr\n",
+    );
+    const dailyLog = fs.readFileSync(getDailyLogPath(), "utf8");
+
+    expect(dailyLog).toContain("Rebasing agent/card-1 onto origin/main");
+    expect(dailyLog).not.toContain("representative test-suite stdout");
+    expect(dailyLog).not.toContain("representative application stderr");
+    expect(git.pushWithLease).not.toHaveBeenCalled();
+    expect(github.updatePullRequestDescriptionStatus).toHaveBeenLastCalledWith(
+      expect.objectContaining({ status: "failed" }),
+    );
   });
 
   it("uses the normal attention failure path for malformed remote SHA data", async () => {

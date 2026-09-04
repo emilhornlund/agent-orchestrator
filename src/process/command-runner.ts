@@ -161,6 +161,7 @@ const defaultRunCommand: RunCommand = async ({
         }
 
         signalProcessTree(child.pid, "SIGKILL", (signal) => child.kill(signal));
+        flushOutput();
         settle();
 
         reject(
