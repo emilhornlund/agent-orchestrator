@@ -32,6 +32,7 @@ import {
 import type { validateProjectTrello } from "../trello/validate-project-trello.js";
 
 import {
+  annotateFailure,
   describeFailure,
   formatFailureDiagnostic,
   getFailureContext,
@@ -45,7 +46,10 @@ import {
   MAX_PREPARED_CONFLICT_REMEDIATION_ATTEMPTS,
   PreparedConflictRemediationError,
 } from "./remediate-prepared-conflict.js";
-import { MAX_TRELLO_RECONCILIATION_ATTEMPTS } from "./trello-reconciliation-error.js";
+import {
+  MAX_TRELLO_RECONCILIATION_ATTEMPTS,
+  RetryableTrelloReconciliationError,
+} from "./trello-reconciliation-error.js";
 
 function sleep(milliseconds: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -109,6 +113,73 @@ function failureNotificationIdentity(
   });
 }
 
+interface BlockedReconciliation {
+  attemptKey: string;
+  operation: string;
+  cardId: string | undefined;
+  reconciliationListId: string | undefined;
+  failure: Error;
+  recoveryCheckFailed: boolean;
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function hasReconciliationRecovery(
+  trello: TrelloClient,
+  project: PollingProject,
+  blocked: BlockedReconciliation,
+  signal: AbortSignal,
+): Promise<boolean> {
+  if (
+    signal.aborted ||
+    blocked.cardId === undefined ||
+    (blocked.reconciliationListId === undefined &&
+      !blocked.operation.startsWith("GitHub "))
+  ) {
+    return false;
+  }
+
+  const recoveryListIds =
+    blocked.reconciliationListId === project.trello.readyListId
+      ? [
+          project.trello.workingListId,
+          project.trello.reviewListId,
+          project.trello.backlogListId,
+          project.trello.failedListId,
+          project.trello.doneListId,
+        ]
+      : [project.trello.readyListId];
+  let recoveryCheckError: unknown;
+
+  for (const listId of new Set(recoveryListIds)) {
+    try {
+      const cards = await trello.getCards(listId);
+
+      if (cards.some((card) => card.id === blocked.cardId)) {
+        return true;
+      }
+    } catch (error) {
+      recoveryCheckError ??= error;
+    }
+  }
+
+  if (recoveryCheckError !== undefined && !blocked.recoveryCheckFailed) {
+    blocked.recoveryCheckFailed = true;
+    logger
+      .child({
+        projectId: project.id,
+        cardId: blocked.cardId,
+      })
+      .warn(
+        `Could not check the explicit recovery state for blocked ${blocked.operation} reconciliation: ${getErrorMessage(recoveryCheckError)}; retaining the original failure context: ${blocked.failure.message}`,
+      );
+  }
+
+  return false;
+}
+
 async function runProjectWorker(
   trello: TrelloClient,
   git: GitClient,
@@ -125,6 +196,7 @@ async function runProjectWorker(
   const trelloTransientAttempts = new Map<string, number>();
   const preparedConflictAttempts = new Map<string, number>();
   const blockedPreparedConflicts = new Set<string>();
+  const blockedReconciliations = new Map<string, BlockedReconciliation>();
   let suppressedFailureIdentity: string | undefined;
   let pendingTrelloValidation = deferredTrelloValidation;
 
@@ -132,6 +204,36 @@ async function runProjectWorker(
     if (blockedPreparedConflicts.has(project.id)) {
       await sleep(pollIntervalMilliseconds, signal);
       continue;
+    }
+
+    const blockedReconciliation = blockedReconciliations.values().next().value;
+
+    if (blockedReconciliation !== undefined) {
+      const recovered = await hasReconciliationRecovery(
+        trello,
+        project,
+        blockedReconciliation,
+        signal,
+      );
+
+      if (signal.aborted || !recovered) {
+        await sleep(pollIntervalMilliseconds, signal);
+        continue;
+      }
+
+      blockedReconciliations.delete(blockedReconciliation.attemptKey);
+      githubReconciliationAttempts.delete(blockedReconciliation.attemptKey);
+      trelloTransientAttempts.delete(blockedReconciliation.attemptKey);
+      logger
+        .child({
+          projectId: project.id,
+          ...(blockedReconciliation.cardId === undefined
+            ? {}
+            : { cardId: blockedReconciliation.cardId }),
+        })
+        .event(
+          `Recovered blocked ${blockedReconciliation.operation} reconciliation after the affected card returned to Ready for Agent; resuming normal processing`,
+        );
     }
 
     try {
@@ -171,7 +273,7 @@ async function runProjectWorker(
         return;
       }
 
-      const failureContext = getFailureContext(error);
+      let failureContext = getFailureContext(error);
 
       if (error instanceof PreparedConflictRemediationError) {
         const cardId = failureContext?.cardId;
@@ -224,8 +326,25 @@ async function runProjectWorker(
           continue;
         }
 
+        const handlingOutcome = `blocked ${error.operation} reconciliation after ${attempt} failed attempts; resolve the failure and move card ${error.cardId} from its reconciliation list to Ready for Agent to resume`;
+
+        blockedReconciliations.set(attemptKey, {
+          attemptKey,
+          operation: `GitHub ${error.operation}`,
+          cardId: error.cardId,
+          reconciliationListId:
+            error.reconciliationListId ?? failureContext?.reconciliationListId,
+          failure: error,
+          recoveryCheckFailed: false,
+        });
+        annotateFailure(error, {
+          projectId: project.id,
+          cardId: error.cardId,
+          handlingOutcome,
+        });
+        failureContext = getFailureContext(error);
         projectLog.error(
-          `GitHub reconciliation retry threshold exhausted for ${error.operation}; escalating the project failure`,
+          `GitHub reconciliation retry threshold exhausted for ${error.operation}; ${handlingOutcome}`,
         );
       }
 
@@ -251,8 +370,34 @@ async function runProjectWorker(
           continue;
         }
 
+        const handlingOutcome =
+          cardId === undefined
+            ? `blocked Trello ${operation} reconciliation after ${attempt} failed attempts; resolve the failure before restarting the worker`
+            : `blocked Trello ${operation} reconciliation after ${attempt} failed attempts; resolve the failure and move card ${cardId} from its reconciliation list to Ready for Agent to resume`;
+        const reconciliationListId =
+          error instanceof RetryableTrelloReconciliationError
+            ? error.reconciliationListId
+            : undefined;
+
+        blockedReconciliations.set(attemptKey, {
+          attemptKey,
+          operation: `Trello ${operation}`,
+          cardId,
+          reconciliationListId:
+            reconciliationListId ?? failureContext?.reconciliationListId,
+          failure: error instanceof Error ? error : new Error(String(error)),
+          recoveryCheckFailed: false,
+        });
+        if (error instanceof Error) {
+          annotateFailure(error, {
+            projectId: project.id,
+            ...(cardId === undefined ? {} : { cardId }),
+            handlingOutcome,
+          });
+          failureContext = getFailureContext(error);
+        }
         projectLog.error(
-          `Trello retry threshold exhausted for ${operation}; escalating the project failure`,
+          `Trello retry threshold exhausted for ${operation}; ${handlingOutcome}`,
         );
       }
 

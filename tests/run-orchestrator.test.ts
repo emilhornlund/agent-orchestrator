@@ -10,6 +10,7 @@ import type { OpenCodeClient } from "../src/opencode/opencode-client.js";
 import type { CommandRunner } from "../src/process/command-runner.js";
 import {
   TrelloRequestError,
+  type TrelloCard,
   type TrelloClient,
 } from "../src/trello/trello-client.js";
 import * as cardContextRetention from "../src/context/card-context-retention.js";
@@ -514,6 +515,150 @@ describe("runOrchestrator", () => {
     );
   });
 
+  it("blocks an exhausted GitHub reconciliation instead of polling it again", async () => {
+    const controller = new AbortController();
+    const notifier: EmailNotifier = { send: vi.fn() };
+    const failure = githubReconciliationError(
+      "project-a",
+      "card-1",
+      "pull request state",
+      new Error("GitHub API returned HTTP 503"),
+      "reconciliation failed",
+      { reconciliationListId: "review-project-a" },
+    );
+    let pollCalls = 0;
+    const getCards = vi.fn().mockImplementation(async () => {
+      controller.abort();
+      return [] as TrelloCard[];
+    });
+
+    pollProject.mockImplementation(async () => {
+      pollCalls += 1;
+      throw failure;
+    });
+
+    await runOrchestrator(
+      { getCards } as unknown as TrelloClient,
+      {} as GitClient,
+      {} as GitHubClient,
+      {} as OpenCodeClient,
+      {} as CommandRunner,
+      createConfig([createProject("project-a")], 0),
+      controller.signal,
+      notifier,
+    );
+
+    expect(pollCalls).toBe(MAX_GITHUB_RECONCILIATION_ATTEMPTS);
+    expect(getCards).toHaveBeenCalledOnce();
+    expect(notifier.send).toHaveBeenCalledOnce();
+    expect(notifier.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining(
+          "blocked pull request state reconciliation",
+        ),
+      }),
+    );
+  });
+
+  it("keeps an unrelated project polling while another project is blocked", async () => {
+    const controller = new AbortController();
+    const failure = githubReconciliationError(
+      "project-a",
+      "card-a",
+      "pull request",
+      new Error("GitHub API returned HTTP 503"),
+      "reconciliation failed",
+      { reconciliationListId: "review-project-a" },
+    );
+    let projectACalls = 0;
+    let projectBCalls = 0;
+
+    pollProject.mockImplementation(
+      async (_trello, _git, _github, _opencode, _commands, project) => {
+        if (project.id === "project-a") {
+          projectACalls += 1;
+          throw failure;
+        }
+
+        projectBCalls += 1;
+        if (projectBCalls === 4) {
+          controller.abort();
+        }
+      },
+    );
+
+    await runOrchestrator(
+      { getCards: vi.fn().mockResolvedValue([]) } as unknown as TrelloClient,
+      {} as GitClient,
+      {} as GitHubClient,
+      {} as OpenCodeClient,
+      {} as CommandRunner,
+      createConfig([createProject("project-a"), createProject("project-b")], 0),
+      controller.signal,
+    );
+
+    expect(projectACalls).toBe(MAX_GITHUB_RECONCILIATION_ATTEMPTS);
+    expect(projectBCalls).toBe(4);
+  });
+
+  it("clears a reconciliation block after the affected card is moved to Ready for Agent", async () => {
+    const controller = new AbortController();
+    const notifier: EmailNotifier = { send: vi.fn() };
+    const failure = githubReconciliationError(
+      "project-a",
+      "card-1",
+      "requested changes",
+      new Error("GitHub API returned HTTP 503"),
+      "reconciliation failed",
+      { reconciliationListId: "review-project-a" },
+    );
+    let pollCalls = 0;
+    let recoveryChecks = 0;
+    const getCards = vi.fn().mockImplementation(async () => {
+      recoveryChecks += 1;
+
+      if (recoveryChecks === 1) {
+        return [] as TrelloCard[];
+      }
+
+      return [
+        {
+          id: "card-1",
+          name: "Task",
+          desc: "",
+          idList: "ready-project-a",
+          idLabels: [],
+          url: "https://trello.example/card-1",
+        },
+      ] satisfies TrelloCard[];
+    });
+
+    pollProject.mockImplementation(async () => {
+      pollCalls += 1;
+
+      if (pollCalls <= MAX_GITHUB_RECONCILIATION_ATTEMPTS) {
+        throw failure;
+      }
+
+      controller.abort();
+    });
+
+    await runOrchestrator(
+      { getCards } as unknown as TrelloClient,
+      {} as GitClient,
+      {} as GitHubClient,
+      {} as OpenCodeClient,
+      {} as CommandRunner,
+      createConfig([createProject("project-a")], 0),
+      controller.signal,
+      notifier,
+    );
+
+    expect(pollCalls).toBe(MAX_GITHUB_RECONCILIATION_ATTEMPTS + 1);
+    expect(getCards).toHaveBeenCalledTimes(2);
+    expect(notifier.send).toHaveBeenCalledOnce();
+  });
+
   it("resets transient GitHub reconciliation attempts after a successful poll", async () => {
     const controller = new AbortController();
     const notifier: EmailNotifier = { send: vi.fn() };
@@ -673,6 +818,48 @@ describe("runOrchestrator", () => {
         text: expect.stringContaining("Could not move card to Working"),
       }),
     );
+  });
+
+  it("blocks an exhausted Trello reconciliation instead of polling it again", async () => {
+    const controller = new AbortController();
+    const notifier: EmailNotifier = { send: vi.fn() };
+    const failure = trelloReconciliationError(
+      "project-a",
+      "card-1",
+      "card move",
+      new TrelloRequestError(
+        "card move",
+        "Trello request failed: 504 Gateway Timeout",
+        { status: 504, retryable: true },
+      ),
+      "reconciliation failed",
+      { reconciliationListId: "working-project-a" },
+    );
+    let pollCalls = 0;
+    const getCards = vi.fn().mockImplementation(async () => {
+      controller.abort();
+      return [] as TrelloCard[];
+    });
+
+    pollProject.mockImplementation(async () => {
+      pollCalls += 1;
+      throw failure;
+    });
+
+    await runOrchestrator(
+      { getCards } as unknown as TrelloClient,
+      {} as GitClient,
+      {} as GitHubClient,
+      {} as OpenCodeClient,
+      {} as CommandRunner,
+      createConfig([createProject("project-a")], 0),
+      controller.signal,
+      notifier,
+    );
+
+    expect(pollCalls).toBe(MAX_TRELLO_RECONCILIATION_ATTEMPTS);
+    expect(getCards).toHaveBeenCalledOnce();
+    expect(notifier.send).toHaveBeenCalledOnce();
   });
 
   it("skips a disabled Attention Required event without changing project failure handling", async () => {

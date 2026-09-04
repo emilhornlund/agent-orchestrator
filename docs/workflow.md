@@ -221,10 +221,13 @@ updates, comments, and attachment context are retryable when the service returns
 timeout, or a temporary network/connectivity error. A failed authoritative Trello read does not mean that a card is missing,
 misplaced, or invalid. A failed Trello mutation is not confirmed. The card remains in its last known list, and no corrective
 comment, failure transition, or workflow decision is made from incomplete Trello state. The project worker logs each attempt
-and retries on a later polling cycle, up to three consecutive attempts. Recovery clears the counter; exhaustion uses the
-existing project diagnostic and `Attention Required` escalation. Invalid authentication, configuration failures, malformed
-responses, not-found errors, and other non-transient errors retain immediate failure handling. Shutdown cancellation is not
-retryable. Cards already in `Failed` are never automatically retried.
+and retries on a later polling cycle, up to three consecutive attempts. Exhaustion blocks the affected card operation and uses
+the existing project diagnostic and `Attention Required` escalation without calling that operation on subsequent normal polls.
+After the external failure is resolved, moving the affected card from its recorded reconciliation list to `Ready for Agent` is
+the explicit recovery condition; the worker then clears the counter and resumes. Project-level failures without a card identity
+require an explicit worker restart after resolution. Invalid authentication, configuration, malformed responses, not-found
+errors, and other non-transient errors retain immediate failure handling. Shutdown cancellation is not retryable. Cards already
+in `Failed` are never automatically retried.
 
 ## Failures and transitions
 

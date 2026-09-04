@@ -38,6 +38,7 @@ export async function claimNextReadyCard(
       "card lookup",
       error,
       `Could not retrieve Ready for Agent cards: ${error instanceof Error ? error.message : String(error)}`,
+      { reconciliationListId: project.trello.readyListId },
     );
   }
 
@@ -88,6 +89,7 @@ export async function claimNextReadyCard(
         "card move",
         error,
         `Could not move card to Working: ${error instanceof Error ? error.message : String(error)}`,
+        { reconciliationListId: project.trello.readyListId },
       );
     }
 

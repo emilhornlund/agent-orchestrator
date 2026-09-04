@@ -296,15 +296,18 @@ the pull-request URL; it does not send the `failed` event. A failed Backlog move
 while a comment failure after a successful move is logged and leaves the card in `Backlog`.
 
 `Attention Required` is diagnostic only. It does not correct or retry cards, and an ambiguous or otherwise unsafe state stays
-available for operator investigation and the next reconciliation cycle. Trello and GitHub operations classify HTTP 500, 502,
-503, and 504, rate limits, timeouts, and temporary connectivity failures as retryable. The project worker logs each failed
-attempt with project, card when known, operation, classification, safe error context, and a deterministic `1/3`-style count;
-it sends no attention event until three consecutive attempts fail. A successful poll clears the project's transient counters.
-Transient Trello reads never infer that a card is missing or invalid. Transient Trello mutations leave the last known card state
-unchanged or unconfirmed and never move a card to `Failed` solely for the transient error; reconciliation determines whether an
-uncertain move took effect. Authentication, configuration, malformed-response, not-found, and other non-transient failures
-still use immediate diagnostics. This policy does not add automatic retries for cards already in `Failed`. It is not sent for
-shutdown cancellation or for a card failure already moved to `Failed` through the normal card notification path.
+available for operator investigation, but an exhausted reconciliation operation is blocked instead of being retried on every
+poll. Trello and GitHub operations classify HTTP 500, 502, 503, and 504, rate limits, timeouts, and temporary connectivity
+failures as retryable. The project worker logs each failed attempt with project, card when known, operation, classification, safe
+error context, and a deterministic `1/3`-style count; it sends no attention event until three consecutive attempts fail. After
+the external failure is resolved, moving a known affected card from its recorded reconciliation list to `Ready for Agent` is the
+explicit recovery condition; the worker then clears that operation's transient counters and resumes. Project-level failures
+without a card identity require an explicit worker restart after resolution. Transient Trello reads never infer that a card is
+missing or invalid. Transient Trello mutations leave the last known card state unchanged or unconfirmed and never move a card to
+`Failed` solely for the transient error; reconciliation determines whether the uncertain move took effect. Authentication,
+configuration, malformed-response, not-found, and other non-transient errors still use immediate diagnostics. This policy does
+not add automatic retries for cards already in `Failed`. It is not sent for shutdown cancellation or for a card failure already
+moved to `Failed` through the normal card notification path.
 
 Notification delivery is isolated from workflow state. Existing card-transition email is attempted only after its Trello move
 succeeds. A delivery failure is logged with project and card context when available; it does not move a card, replace the

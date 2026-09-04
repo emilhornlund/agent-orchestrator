@@ -20,6 +20,7 @@ export interface FailureContext {
   projectId: string;
   cardId?: string;
   cardIds?: string[];
+  reconciliationListId?: string;
   sessionLogPath?: string;
   sessionLogPaths?: string[];
   cardFailureHandled?: boolean;

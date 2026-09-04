@@ -1,9 +1,13 @@
 import { isRetryableGitHubError } from "../github/github-client.js";
 
-import { annotateCardFailure } from "./failure-diagnostic.js";
+import { annotateCardFailure, annotateFailure } from "./failure-diagnostic.js";
 import { WorkflowError } from "./workflow-error.js";
 
 export const MAX_GITHUB_RECONCILIATION_ATTEMPTS = 3;
+
+export interface GitHubReconciliationErrorOptions {
+  reconciliationListId?: string;
+}
 
 export type GitHubReconciliationOperation =
   | "pull request"
@@ -23,6 +27,7 @@ export class RetryableGitHubReconciliationError extends WorkflowError {
     operation: GitHubReconciliationOperation,
     cause: unknown,
     message: string,
+    options: GitHubReconciliationErrorOptions = {},
   ) {
     super("Git/GitHub", message, { cause });
 
@@ -30,7 +35,10 @@ export class RetryableGitHubReconciliationError extends WorkflowError {
     this.operation = operation;
     this.projectId = projectId;
     this.cardId = cardId;
+    this.reconciliationListId = options.reconciliationListId;
   }
+
+  readonly reconciliationListId: string | undefined;
 }
 
 export function githubReconciliationError(
@@ -39,6 +47,7 @@ export function githubReconciliationError(
   operation: GitHubReconciliationOperation,
   error: unknown,
   terminalMessage: string,
+  options: GitHubReconciliationErrorOptions = {},
 ): WorkflowError {
   const reconciliationError = isRetryableGitHubError(error)
     ? new RetryableGitHubReconciliationError(
@@ -47,9 +56,17 @@ export function githubReconciliationError(
         operation,
         error,
         terminalMessage,
+        options,
       )
     : new WorkflowError("Git/GitHub", terminalMessage, { cause: error });
 
   annotateCardFailure(reconciliationError, projectId, cardId);
+  if (options.reconciliationListId !== undefined) {
+    annotateFailure(reconciliationError, {
+      projectId,
+      cardId,
+      reconciliationListId: options.reconciliationListId,
+    });
+  }
   return reconciliationError;
 }

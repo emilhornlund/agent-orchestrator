@@ -9,6 +9,10 @@ import { WorkflowError } from "./workflow-error.js";
 
 export const MAX_TRELLO_RECONCILIATION_ATTEMPTS = 3;
 
+export interface TrelloReconciliationErrorOptions {
+  reconciliationListId?: string;
+}
+
 export class RetryableTrelloReconciliationError extends WorkflowError {
   readonly operation: TrelloRequestOperation;
   readonly projectId: string;
@@ -20,13 +24,17 @@ export class RetryableTrelloReconciliationError extends WorkflowError {
     operation: TrelloRequestOperation,
     cause: unknown,
     message: string,
+    options: TrelloReconciliationErrorOptions = {},
   ) {
     super("Workflow", message, { cause });
     this.name = "RetryableTrelloReconciliationError";
     this.projectId = projectId;
     this.cardId = cardId;
     this.operation = operation;
+    this.reconciliationListId = options.reconciliationListId;
   }
+
+  readonly reconciliationListId: string | undefined;
 }
 
 export function trelloReconciliationError(
@@ -35,6 +43,7 @@ export function trelloReconciliationError(
   fallbackOperation: TrelloRequestOperation,
   error: unknown,
   message: string,
+  options: TrelloReconciliationErrorOptions = {},
 ): Error {
   const operation = getTrelloRequestOperation(error) ?? fallbackOperation;
   const reconciliationError = isRetryableTrelloError(error)
@@ -44,6 +53,7 @@ export function trelloReconciliationError(
         operation,
         error,
         message,
+        options,
       )
     : new WorkflowError("Workflow", message, { cause: error });
 
@@ -51,6 +61,14 @@ export function trelloReconciliationError(
     annotateFailure(reconciliationError, { projectId });
   } else {
     annotateCardFailure(reconciliationError, projectId, cardId);
+  }
+
+  if (options.reconciliationListId !== undefined) {
+    annotateFailure(reconciliationError, {
+      projectId,
+      ...(cardId === undefined ? {} : { cardId }),
+      reconciliationListId: options.reconciliationListId,
+    });
   }
 
   return reconciliationError;

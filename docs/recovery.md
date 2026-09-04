@@ -149,9 +149,12 @@ missing-card inference, corrective comment, or workflow transition. The same Tre
 transition history, labels, comments, content updates, and attachment metadata/download requests. Each project records the
 attempt in its running worker and logs the project, card when known, operation, attempt number, classification, and safe error
 context. The next project cycle retries the operation; three consecutive failed attempts are the deterministic bound, after
-which the existing project-level diagnostic and `Attention Required` escalation is emitted. A successful poll clears transient
-failure tracking. Authentication, configuration, malformed-response, not-found, and other non-transient failures continue
-directly to the normal failure diagnostics.
+which the operation is blocked and the existing project-level diagnostic and `Attention Required` escalation is emitted. A
+blocked card operation is not called again during normal polling. After resolving the external failure, move the affected card
+from its recorded reconciliation list to `Ready for Agent`; the worker observes that explicit recovery transition, clears the
+operation's retry state, and resumes normal processing. A project-level failure with no affected card remains blocked until the
+worker is explicitly restarted after the failure is resolved. Authentication, configuration, malformed-response, not-found,
+and other non-transient failures continue directly to the normal failure diagnostics.
 
 If a Trello mutation fails transiently, its requested transition or update is unconfirmed. The orchestrator does not move the
 card to `Failed` merely because the request was unavailable. It preserves the last known workflow state and lets a later

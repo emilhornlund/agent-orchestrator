@@ -101,6 +101,7 @@ export async function reconcileReviewCards(
       "card lookup",
       error,
       `Could not retrieve Human Review cards: ${getErrorMessage(error)}`,
+      { reconciliationListId: project.trello.reviewListId },
     );
   }
 
@@ -274,6 +275,7 @@ export async function reconcileReviewCards(
           "card move",
           error,
           `Could not move Human Review card to Working for requested changes: ${message}`,
+          { reconciliationListId: project.trello.reviewListId },
         );
 
         throw reconciliationError;
@@ -534,6 +536,7 @@ function reviewLookupError(
     subject,
     error,
     `Could not reconcile Human Review card "${card.name}" while checking ${subject}: ${getErrorMessage(error)}`,
+    { reconciliationListId: project.trello.reviewListId },
   );
 }
 
@@ -708,6 +711,7 @@ async function completeMergedReviewCard(
       "card move",
       error,
       `Could not complete merged Human Review card: ${message}`,
+      { reconciliationListId: project.trello.reviewListId },
     );
 
     throw reconciliationError;
@@ -784,6 +788,7 @@ async function returnClosedReviewCardToBacklog(
       "card move",
       error,
       `Could not move closed Human Review card to Backlog: ${message}`,
+      { reconciliationListId: project.trello.reviewListId },
     );
 
     throw reconciliationError;

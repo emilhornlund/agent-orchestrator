@@ -97,6 +97,7 @@ export async function reconcileClaimedCard(
         "pull request state",
         error,
         `Could not reconcile claimed Working card while checking pull request state: ${getErrorMessage(error)}`,
+        { reconciliationListId: project.trello.workingListId },
       );
     }
 
@@ -147,6 +148,7 @@ export async function reconcileClaimedCard(
       "pull request",
       error,
       `Could not reconcile claimed Working card: ${getErrorMessage(error)}`,
+      { reconciliationListId: project.trello.workingListId },
     );
   }
 
@@ -176,6 +178,7 @@ export async function reconcileClaimedCard(
         "requested changes",
         error,
         `Could not check requested changes for claimed Working card: ${getErrorMessage(error)}`,
+        { reconciliationListId: project.trello.workingListId },
       );
     }
   }
@@ -254,6 +257,7 @@ export async function reconcileClaimedCard(
       "card move",
       error,
       `Could not move claimed Working card to Human Review: ${getErrorMessage(error)}`,
+      { reconciliationListId: project.trello.workingListId },
     );
   }
 
@@ -330,6 +334,7 @@ export async function reconcileWorkingCards(
       "card lookup",
       error,
       `Could not retrieve Working cards: ${getErrorMessage(error)}`,
+      { reconciliationListId: project.trello.workingListId },
     );
   }
 
@@ -368,6 +373,7 @@ export async function reconcileWorkingCards(
         "transition history",
         error,
         `Could not read Working card transition history: ${getErrorMessage(error)}`,
+        { reconciliationListId: project.trello.workingListId },
       );
     }
 
@@ -751,6 +757,7 @@ async function reconcileReadyWorkingCard(
       "card move",
       error,
       `Could not move Working card to Human Review: ${message}`,
+      { reconciliationListId: project.trello.workingListId },
     );
 
     throw reconciliationError;
@@ -853,6 +860,7 @@ async function reconcileReviewToWorkingCard(
       "pull request",
       error,
       `Could not reconcile Working card moved from Human Review: ${getErrorMessage(error)}`,
+      { reconciliationListId: project.trello.workingListId },
     );
   }
 
@@ -892,6 +900,7 @@ async function reconcileReviewToWorkingCard(
       "requested changes",
       error,
       `Could not check requested changes for Working card moved from Human Review: ${getErrorMessage(error)}`,
+      { reconciliationListId: project.trello.workingListId },
     );
   }
 
