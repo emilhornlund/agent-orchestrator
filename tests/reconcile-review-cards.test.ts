@@ -1,4 +1,6 @@
-import { existsSync } from "node:fs";
+import fs, { existsSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -23,6 +25,10 @@ import {
 import type { EmailNotifier } from "../src/notifications/email-notifier.js";
 import { reconcileReviewCards } from "../src/orchestrator/reconcile-review-cards.js";
 import {
+  getPreparedConflictPath,
+  writePreparedConflict,
+} from "../src/orchestrator/prepared-conflict-state.js";
+import {
   TrelloRequestError,
   type TrelloCard,
   type TrelloClient,
@@ -45,6 +51,39 @@ const project = {
     doneListId: "done",
   },
 } as ProjectConfig;
+
+const preparedTaskSha = "a".repeat(40);
+const preparedBaseSha = "b".repeat(40);
+
+function createPreparedConflictProject(): ProjectConfig {
+  return {
+    ...project,
+    repository: {
+      ...project.repository,
+      worktreeRoot: fs.mkdtempSync(
+        path.join(os.tmpdir(), "agent-orchestrator-review-handoff-"),
+      ),
+    },
+  };
+}
+
+function prepareConflict(projectWithWorktree: ProjectConfig): string {
+  writePreparedConflict(
+    projectWithWorktree,
+    "card-1",
+    preparedTaskSha,
+    ["src/conflicted.ts"],
+    {
+      active: true,
+      backend: "merge",
+      headName: "refs/heads/agent/card-1",
+      onto: preparedBaseSha,
+      originalHead: preparedTaskSha,
+    },
+  );
+
+  return getPreparedConflictPath(projectWithWorktree, "card-1");
+}
 
 function createGithubAppProject(): ProjectConfig {
   return {
@@ -264,6 +303,42 @@ describe("reconcileReviewCards", () => {
     expect(trello.moveCard).toHaveBeenCalledWith("card-1", "backlog");
   });
 
+  it("does not expose a prepared conflict when authoritative PR identity changes", async () => {
+    const configuredProject = createPreparedConflictProject();
+    const handoffPath = prepareConflict(configuredProject);
+    const trello = trelloFor(card());
+    const github = githubFor("card-1", "open");
+    vi.mocked(github.findPullRequestState).mockResolvedValue({
+      url: "https://github.com/owner/repo/pull/1",
+      state: "OPEN",
+      mergedAt: null,
+      baseRefName: "main",
+      headRefName: "replacement/card-1",
+      headRepositoryNameWithOwner: "owner/repo",
+      mergeable: "MERGEABLE",
+      mergeStateStatus: "BEHIND",
+    });
+
+    try {
+      await expect(
+        reconcileReviewCards(
+          trello,
+          {} as GitClient,
+          github,
+          configuredProject,
+        ),
+      ).rejects.toThrow("no longer matches the authoritative pull request");
+
+      expect(trello.moveCard).not.toHaveBeenCalled();
+      expect(existsSync(handoffPath)).toBe(true);
+    } finally {
+      fs.rmSync(configuredProject.repository.worktreeRoot!, {
+        recursive: true,
+        force: true,
+      });
+    }
+  });
+
   it("uses one authoritative PR-state lookup for Human Review classification", async () => {
     const trello = trelloFor(card());
     const github = githubFor("card-1", "open");
@@ -427,6 +502,64 @@ describe("reconcileReviewCards", () => {
       dueComplete: true,
     });
     expect(existsSync(sessionLogPath)).toBe(false);
+  });
+
+  it("clears a prepared conflict before cleaning up a merged PR", async () => {
+    const configuredProject = createPreparedConflictProject();
+    const handoffPath = prepareConflict(configuredProject);
+    const trello = trelloFor(card());
+    const git = {
+      remoteBranchExists: vi.fn().mockResolvedValue(true),
+      deleteRemoteBranch: vi.fn().mockResolvedValue(undefined),
+    } as unknown as GitClient;
+
+    try {
+      await reconcileReviewCards(
+        trello,
+        git,
+        githubFor("card-1", "merged"),
+        configuredProject,
+      );
+
+      expect(git.deleteRemoteBranch).toHaveBeenCalledWith(
+        "/repo",
+        "origin",
+        "agent/card-1",
+        configuredProject,
+      );
+      expect(trello.moveCard).toHaveBeenCalledWith("card-1", "done", {
+        dueComplete: true,
+      });
+      expect(existsSync(handoffPath)).toBe(false);
+    } finally {
+      fs.rmSync(configuredProject.repository.worktreeRoot!, {
+        recursive: true,
+        force: true,
+      });
+    }
+  });
+
+  it("clears a prepared conflict before returning a closed PR to Backlog", async () => {
+    const configuredProject = createPreparedConflictProject();
+    const handoffPath = prepareConflict(configuredProject);
+    const trello = trelloFor(card());
+
+    try {
+      await reconcileReviewCards(
+        trello,
+        {} as GitClient,
+        githubFor("card-1", "closed"),
+        configuredProject,
+      );
+
+      expect(trello.moveCard).toHaveBeenCalledWith("card-1", "backlog");
+      expect(existsSync(handoffPath)).toBe(false);
+    } finally {
+      fs.rmSync(configuredProject.repository.worktreeRoot!, {
+        recursive: true,
+        force: true,
+      });
+    }
   });
 
   it("uses the project GitHub App token for merged branch cleanup", async () => {

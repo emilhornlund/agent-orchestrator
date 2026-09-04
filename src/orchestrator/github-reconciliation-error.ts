@@ -9,7 +9,8 @@ export type GitHubReconciliationOperation =
   | "pull request"
   | "pull request state"
   | "requested changes"
-  | "maintenance state";
+  | "maintenance state"
+  | "prepared conflict handoff";
 
 export class RetryableGitHubReconciliationError extends WorkflowError {
   readonly operation: GitHubReconciliationOperation;

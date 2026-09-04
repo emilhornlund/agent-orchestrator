@@ -23,6 +23,11 @@ import { githubReconciliationError } from "./github-reconciliation-error.js";
 import { trelloReconciliationError } from "./trello-reconciliation-error.js";
 import { WorkflowError } from "./workflow-error.js";
 import { maintainReviewPullRequest } from "./maintain-review-pull-request.js";
+import {
+  clearPreparedConflict,
+  readPreparedConflict,
+  type PreparedConflictHandoff,
+} from "./prepared-conflict-state.js";
 
 export interface ReviewChangeRequest {
   card: TrelloCard;
@@ -32,12 +37,13 @@ export interface ReviewChangeRequest {
 }
 
 export type PullRequestMaintenanceState =
-  "up-to-date" | "behind" | "conflicted";
+  "up-to-date" | "behind" | "conflicted" | "prepared-conflict";
 
 export interface ActiveReviewCard {
   card: TrelloCard;
   active: true;
   maintenanceState: PullRequestMaintenanceState;
+  preparedConflict?: PreparedConflictHandoff;
 }
 
 interface ReviewCardState {
@@ -46,6 +52,7 @@ interface ReviewCardState {
   pullRequest: PullRequestState;
   maintenanceState?: PullRequestMaintenanceState;
   changesRequested?: ReviewChangeRequest;
+  preparedConflict?: PreparedConflictHandoff;
 }
 
 export interface ReconcileReviewCardsOptions {
@@ -170,6 +177,28 @@ export async function reconcileReviewCards(
     throw reconciliationError;
   }
 
+  const preparedConflictState = activeStates.find(
+    (state) => state.preparedConflict !== undefined,
+  );
+
+  if (preparedConflictState !== undefined) {
+    const preparedConflict = preparedConflictState.preparedConflict;
+
+    if (preparedConflict === undefined) {
+      throw new WorkflowError(
+        "Workflow",
+        "Prepared conflict state was not complete during reconciliation",
+      );
+    }
+
+    return {
+      card: preparedConflictState.card,
+      active: true,
+      maintenanceState: "prepared-conflict",
+      preparedConflict,
+    };
+  }
+
   for (const state of states) {
     if (signal?.aborted) {
       return null;
@@ -189,6 +218,7 @@ export async function reconcileReviewCards(
           state.card,
           state.branch,
           state.pullRequest,
+          state.preparedConflict,
           cardLog,
           emailNotifier,
           signal,
@@ -199,6 +229,7 @@ export async function reconcileReviewCards(
           project,
           state.card,
           state.pullRequest,
+          state.preparedConflict,
           cardLog,
           signal,
         );
@@ -265,6 +296,15 @@ export async function reconcileReviewCards(
     return null;
   }
 
+  if (state.preparedConflict !== undefined) {
+    return {
+      card: state.card,
+      active: true,
+      maintenanceState: "prepared-conflict",
+      preparedConflict: state.preparedConflict,
+    };
+  }
+
   let maintenanceState = state.maintenanceState!;
 
   if (options.maintenance !== undefined && maintenanceState === "behind") {
@@ -286,6 +326,24 @@ export async function reconcileReviewCards(
     if (maintenanceResult === "rebased") {
       maintenanceState = "up-to-date";
     }
+
+    if (maintenanceResult === "prepared-conflict") {
+      const preparedConflict = readPreparedConflict(project, state.card.id);
+
+      if (preparedConflict === null) {
+        throw new WorkflowError(
+          "Git/GitHub",
+          "Prepared conflict state disappeared before it could be exposed",
+        );
+      }
+
+      return {
+        card: state.card,
+        active: true,
+        maintenanceState: "prepared-conflict",
+        preparedConflict,
+      };
+    }
   }
 
   return {
@@ -306,6 +364,18 @@ function isMergedPullRequest(pullRequest: PullRequestState): boolean {
   return pullRequest.mergedAt !== null || pullRequest.state === "MERGED";
 }
 
+function isOwnedPullRequest(
+  pullRequest: PullRequestState,
+  project: ProjectConfig,
+  branch: string,
+): boolean {
+  return (
+    pullRequest.baseRefName === project.repository.defaultBranch &&
+    pullRequest.headRefName === branch &&
+    pullRequest.headRepositoryNameWithOwner === project.repository.github
+  );
+}
+
 async function inspectReviewCard(
   github: GitHubClient,
   project: ProjectConfig,
@@ -313,6 +383,14 @@ async function inspectReviewCard(
   signal?: AbortSignal,
 ): Promise<ReviewCardState | null> {
   const branch = `agent/${card.id}`;
+  let preparedConflict: PreparedConflictHandoff | null;
+
+  try {
+    preparedConflict = readPreparedConflict(project, card.id);
+  } catch (error) {
+    throw reviewLookupError(project, card, "prepared conflict handoff", error);
+  }
+
   const options = {
     cwd: project.repository.path,
     repository: project.repository.github,
@@ -334,7 +412,39 @@ async function inspectReviewCard(
   }
 
   if (pullRequest === null) {
+    if (preparedConflict !== null) {
+      throw reviewLookupError(
+        project,
+        card,
+        "prepared conflict handoff",
+        new Error("Prepared conflict has no authoritative pull request"),
+      );
+    }
+
     return null;
+  }
+
+  if (preparedConflict !== null) {
+    if (!isOwnedPullRequest(pullRequest, project, branch)) {
+      throw reviewLookupError(
+        project,
+        card,
+        "prepared conflict handoff",
+        new Error(
+          "Prepared conflict handoff no longer matches the authoritative pull request",
+        ),
+      );
+    }
+
+    if (pullRequest.state === "OPEN" && !isMergedPullRequest(pullRequest)) {
+      return {
+        card,
+        branch,
+        pullRequest,
+        maintenanceState: "prepared-conflict",
+        preparedConflict,
+      };
+    }
   }
 
   if (
@@ -349,7 +459,12 @@ async function inspectReviewCard(
   }
 
   if (isMergedPullRequest(pullRequest) || pullRequest.state === "CLOSED") {
-    return { card, branch, pullRequest };
+    return {
+      card,
+      branch,
+      pullRequest,
+      ...(preparedConflict === null ? {} : { preparedConflict }),
+    };
   }
 
   let maintenanceState: PullRequestMaintenanceState;
@@ -398,7 +513,11 @@ async function inspectReviewCard(
 function reviewLookupError(
   project: ProjectConfig,
   card: TrelloCard,
-  subject: "pull request state" | "requested changes" | "maintenance state",
+  subject:
+    | "pull request state"
+    | "requested changes"
+    | "maintenance state"
+    | "prepared conflict handoff",
   error: unknown,
 ): WorkflowError {
   return githubReconciliationError(
@@ -463,6 +582,7 @@ async function completeMergedReviewCard(
   card: TrelloCard,
   branch: string,
   pullRequest: PullRequestState,
+  preparedConflict: PreparedConflictHandoff | undefined,
   cardLog: ReturnType<typeof logger.child>,
   emailNotifier?: EmailNotifier,
   signal?: AbortSignal,
@@ -474,6 +594,15 @@ async function completeMergedReviewCard(
   cardLog.event(
     `Human Review card has merged pull request: ${pullRequest.url}`,
   );
+
+  if (preparedConflict !== undefined) {
+    clearPreparedConflictForTerminalCard(
+      project,
+      card,
+      preparedConflict,
+      cardLog,
+    );
+  }
 
   try {
     const remoteBranchExists = await git.remoteBranchExists(
@@ -609,6 +738,7 @@ async function returnClosedReviewCardToBacklog(
   project: ProjectConfig,
   card: TrelloCard,
   pullRequest: PullRequestState,
+  preparedConflict: PreparedConflictHandoff | undefined,
   cardLog: ReturnType<typeof logger.child>,
   signal?: AbortSignal,
 ): Promise<void> {
@@ -619,6 +749,15 @@ async function returnClosedReviewCardToBacklog(
   cardLog.event(
     `Human Review card has closed pull request: ${pullRequest.url}`,
   );
+
+  if (preparedConflict !== undefined) {
+    clearPreparedConflictForTerminalCard(
+      project,
+      card,
+      preparedConflict,
+      cardLog,
+    );
+  }
 
   if (signal?.aborted) {
     return;
@@ -659,5 +798,28 @@ async function returnClosedReviewCardToBacklog(
     cardLog.error(
       `Failed to add closed pull request comment to "${card.name}": ${getErrorMessage(error)}`,
     );
+  }
+}
+
+function clearPreparedConflictForTerminalCard(
+  project: ProjectConfig,
+  card: TrelloCard,
+  preparedConflict: PreparedConflictHandoff,
+  cardLog: ReturnType<typeof logger.child>,
+): void {
+  try {
+    clearPreparedConflict(project, card.id);
+    cardLog.info(
+      `Cleared prepared conflict handoff for terminal pull request ${preparedConflict.taskBranch}`,
+    );
+  } catch (error) {
+    const reconciliationError = new WorkflowError(
+      "Git/GitHub",
+      `Could not clear prepared conflict handoff for terminal pull request: ${getErrorMessage(error)}`,
+      { cause: error },
+    );
+
+    annotateCardFailure(reconciliationError, project.id, card.id);
+    throw reconciliationError;
   }
 }

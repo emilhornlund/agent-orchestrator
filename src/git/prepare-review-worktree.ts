@@ -152,6 +152,12 @@ export async function prepareReviewMaintenanceWorktree(
       );
     }
 
+    if ((await git.getRebaseState(worktreePath)) !== null) {
+      throw new Error(
+        `Cannot maintain ${branch}: existing worktree ${worktreePath} has an active rebase`,
+      );
+    }
+
     const status = await git.getStatus(worktreePath);
 
     if (status.trim().length > 0) {

@@ -17,7 +17,8 @@ Do not mark an interrupted card successful or failed just because the process st
 - the expected worktree at `<worktreeRoot>/<trello-card-id>`;
 - the expected local and remote branch `agent/<trello-card-id>`;
 - Git status, commits, and the branch's changes relative to `origin/<defaultBranch>`;
-- the expected GitHub pull request and its review state; and
+- the expected GitHub pull request and its review state;
+- the prepared-conflict handoff at `<worktreeRoot>/.orchestrator/prepared-conflicts/<project-id>/<card-id>.json`, when present;
 - the card context at `<contextRoot>/<project-id>/<card-id>/`, including `attachments.json` and `attachments/`, when
   configured; and
 - the per-card session log, when present, at `logs/sessions/<sanitized-project-id>/<sanitized-card-id>.log`.
@@ -89,6 +90,7 @@ For each card in `Human Review`, the orchestrator checks the expected `agent/<tr
 | Pull request is closed without merge                        | Move the card to `Backlog` and add a Trello comment identifying the closed pull request                                                    |
 | Pull request is open with current-head requested changes    | Move the card to `Working` and resume feedback implementation                                                                              |
 | Pull request is open without current-head requested changes | Leave the card in `Human Review`; record maintenance state and automatically maintain an eligible clean stale branch                       |
+| Prepared-conflict handoff is present                        | Leave the card in `Human Review`; expose `prepared-conflict` and block project processing until remediation completes                      |
 | No expected pull request                                    | Correct the card to `Backlog`                                                                                                              |
 
 More than one active card in `Human Review` is an ambiguous project state. The active-state check runs before terminal cards
@@ -109,9 +111,27 @@ reported as a successful maintenance update.
 
 The lease protects against concurrent remote updates. If the branch changes or disappears after the authoritative lookup, the
 single force-with-lease update is rejected and is not retried with another SHA. Fetch, worktree, rebase, validation, remote lookup,
-or lease failures preserve the card, pull request, branch, and worktree. A non-zero validation command prevents the push. An
-unexpected rebase conflict is preserved in the worktree for the dedicated conflict workflow; reconciliation does not abort, reset,
-clean, remove, recreate, discard, or invoke OpenCode for conflict resolution.
+or lease failures preserve the card, pull request, branch, and worktree. A non-zero validation command prevents the push.
+
+A rebase conflict is prepared only when Git reports both an active rebase and one or more conflicted paths. In that case the
+orchestrator writes a validated handoff at
+`<worktreeRoot>/.orchestrator/prepared-conflicts/<project-id>/<card-id>.json` and exposes the Human Review card as
+`prepared-conflict`. Its fields are `projectId`, `cardId`, `taskBranch`, `defaultBranch`, `expectedRemoteTaskSha`,
+`conflictedPaths`, and `rebase` (`backend`, `headName`, `onto`, `originalHead`, and available step metadata). The task branch
+SHA is captured with authoritative `ls-remote` before the rebase attempt, so it is not inferred from a rebased or local value.
+
+While this record exists, it is the durable active-remediation lock for the project. Reconciliation returns the same state after
+restart, does not start a second rebase, and does not process another Working or Ready card. The card stays in Human Review.
+The conflicted worktree, branch, conflict markers, and Git rebase metadata remain available; no abort, reset, clean, removal,
+recreation, OpenCode session, validation, push, pull-request mutation, or merge is performed by preparation. After the rebase is
+safely complete, the remediation workflow removes the handoff and follows the normal review/publication transition. It must not
+remove the record merely to make polling proceed.
+
+A Git command error alone is not sufficient evidence of a prepared conflict. If active rebase inspection fails, the rebase is
+active without conflicted paths, the handoff cannot be persisted, or remote/PR/worktree setup fails first, normal failure and
+`Attention Required` diagnostics are used and Trello is not advanced. Preserve the worktree and inspect Git state, correct the
+external problem, and retry only through the documented workflow; do not manually reset or clean an unknown or still-uninspected
+conflict.
 
 Trello and GitHub read failures during reconciliation are handled separately from card failures. Trello HTTP 500, 502, 503,
 and 504 responses, rate limits, timeouts, and temporary connectivity errors leave the card in its current list with no
