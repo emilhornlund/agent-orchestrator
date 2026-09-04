@@ -148,8 +148,19 @@ unknown worktrees.
 For an initial claim, the expected worktree is prepared before the Trello card is moved to `Working`. A failed move leaves
 that prepared worktree available for the next attempt. Reconciliation checks existing worktrees but does not create them.
 After a successful implementation publication, cleanup is best effort and a cleanup failure is logged without undoing the
-publication or resulting `Human Review` or `Done` transition. Refinement clears its result and attempts cleanup after moving
-the card to `Backlog`; a refinement cleanup failure follows normal failure handling while preserving diagnostic state.
+publication or resulting `Human Review` or `Done` transition. Terminal Human Review reconciliation also attempts cleanup
+after its successful transition semantics: merged cards are cleaned after remote branch deletion, `Done`, and completion
+notification handling; closed cards are cleaned after `Backlog` and the explanatory comment attempt. This terminal cleanup
+is limited to the expected `<worktreeRoot>/<card-id>` and `agent/<card-id>` artifacts. A failure is an operational warning
+with project and card context and does not throw a new workflow failure. Refinement clears its result and attempts cleanup
+after moving the card to `Backlog`; a refinement cleanup failure follows normal failure handling while preserving diagnostic
+state.
+
+Terminal cleanup is fail-closed. It does not remove symbolic links, paths outside the configured root, nested or unknown
+worktrees, unexpected branches, dirty worktrees, worktrees with unmerged paths, or worktrees with an active rebase. A
+prepared-conflict handoff also protects its worktree until recovery is complete. An already-absent worktree or local branch
+is idempotent. If any safety check or Git removal fails, the remaining artifacts are left for diagnosis where possible;
+shutdown cancellation does not start or continue destructive cleanup.
 
 ## Publication and GitHub boundaries
 

@@ -164,6 +164,18 @@ with `autoMerge: false`; an enabled project merges only its normal implementatio
 | Open pull request without actionable requested changes       | Leave the card in `Human Review`; expose its maintenance state |
 | No expected pull request                                     | Reconcile the card to `Backlog`                                |
 
+After an owned pull request reaches either terminal state, reconciliation attempts to remove only the dedicated
+`<worktreeRoot>/<trello-card-id>` worktree and its local `agent/<trello-card-id>` branch. For a merged pull request this
+attempt happens after remote branch cleanup, the successful `Done` transition, and completion notification handling. For a
+closed pull request it happens after the successful `Backlog` transition and explanatory comment attempt. This cleanup is
+best effort: a warning includes the project, card, paths, and failure, but it never undoes a terminal transition or blocks
+the next reconciliation.
+
+The local cleanup is skipped when the path is outside the configured root, is symbolic or unexpected, is associated with a
+different branch, has unmerged paths or an active rebase, is dirty, or has a prepared-conflict handoff requiring recovery.
+Already-absent worktrees and branches are successful idempotent outcomes. Shutdown cancellation stops before destructive
+cleanup, and preserved worktrees, branches, and prepared-conflict handoffs remain available for diagnosis.
+
 When requested changes are detected, the orchestrator creates a worktree from the existing task branch, supplies the GitHub
 feedback to the implementation session after refreshing the current Trello attachment context, runs the same initial-review and
 bounded remediation loop, and republishes the updated branch and pull request. An enabled project auto-merges the successfully

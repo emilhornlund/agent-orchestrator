@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import type { ProjectConfig } from "../config/config.js";
+import { readPreparedConflict } from "../orchestrator/prepared-conflict-state.js";
 
 import type { GitClient } from "./git-client.js";
 
@@ -10,6 +11,7 @@ export interface CleanupWorktreeOptions {
   project: ProjectConfig;
   worktreePath: string;
   branch: string;
+  preserveRecoveryState?: boolean;
   signal?: AbortSignal;
 }
 
@@ -18,6 +20,7 @@ export async function cleanupWorktree({
   project,
   worktreePath,
   branch,
+  preserveRecoveryState = false,
   signal,
 }: CleanupWorktreeOptions): Promise<void> {
   if (signal?.aborted) {
@@ -41,6 +44,16 @@ export async function cleanupWorktree({
     worktreeRoot,
     resolvedWorktreePath,
   );
+
+  if (
+    relativeWorktreePath.length === 0 ||
+    relativeWorktreePath.includes(path.sep)
+  ) {
+    throw new Error(
+      `Refusing to clean worktree outside expected card path: ${worktreePath}`,
+    );
+  }
+
   const expectedBranch = `agent/${relativeWorktreePath}`;
 
   if (branch !== expectedBranch) {
@@ -49,8 +62,19 @@ export async function cleanupWorktree({
     );
   }
 
-  if (fs.existsSync(worktreePath)) {
-    if (fs.lstatSync(worktreePath).isSymbolicLink()) {
+  if (
+    preserveRecoveryState &&
+    readPreparedConflict(project, relativeWorktreePath) !== null
+  ) {
+    throw new Error(
+      `Refusing to remove worktree ${worktreePath} while its prepared-conflict handoff requires recovery`,
+    );
+  }
+
+  const worktreeStat = fs.lstatSync(worktreePath, { throwIfNoEntry: false });
+
+  if (worktreeStat !== undefined) {
+    if (worktreeStat.isSymbolicLink()) {
       throw new Error(
         `Refusing to clean symbolic-link worktree ${worktreePath}`,
       );
@@ -66,6 +90,32 @@ export async function cleanupWorktree({
       throw new Error(
         `Refusing to clean worktree ${worktreePath} on branch "${currentBranch}", expected "${branch}"`,
       );
+    }
+
+    if (preserveRecoveryState) {
+      const rebaseState = await git.getRebaseState(worktreePath);
+
+      if (signal?.aborted) {
+        return;
+      }
+
+      if (rebaseState !== null) {
+        throw new Error(
+          `Refusing to remove worktree ${worktreePath} with an active rebase`,
+        );
+      }
+
+      const conflictedPaths = await git.getConflictedPaths(worktreePath);
+
+      if (signal?.aborted) {
+        return;
+      }
+
+      if (conflictedPaths.length > 0) {
+        throw new Error(
+          `Refusing to remove worktree ${worktreePath} with unmerged paths: ${conflictedPaths.join(", ")}`,
+        );
+      }
     }
 
     const status = await git.getStatus(worktreePath);
