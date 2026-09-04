@@ -153,6 +153,32 @@ the card to `Backlog`; a refinement cleanup failure follows normal failure handl
 
 ## Publication and GitHub boundaries
 
+### GitHub CLI compatibility
+
+Agent Orchestrator supports GitHub CLI (`gh`) `2.40.0` and later. Startup validates the installed CLI before bootstrapping any
+configured repository or beginning Trello project processing. The validation runs `gh --version`, checks the help surface for
+the commands and options used by the service, and executes a repository-scoped `gh pr list --json` probe for every dynamic pull
+request field used by reconciliation and review handling.
+
+The required command surface is:
+
+| Command         | Required capabilities                                                    |
+| --------------- | ------------------------------------------------------------------------ |
+| `gh repo clone` | Repository cloning                                                       |
+| `gh pr list`    | `--repo`, `--head`, `--base`, `--state`, `--json`, `--jq`, and `--limit` |
+| `gh pr create`  | `--repo`, `--base`, `--head`, `--title`, and `--body`                    |
+| `gh pr merge`   | `--repo`, `--match-head-commit`, `--merge`, and `--delete-branch`        |
+| `gh api`        | `--paginate`, `--slurp`, and `--jq`                                      |
+
+The required `gh pr list --json` fields are `url`, `state`, `mergedAt`, `baseRefName`, `headRefName`, `headRepository`,
+`headRepositoryOwner`, `mergeable`, `mergeStateStatus`, `number`, `reviewDecision`, and `headRefOid`. The service derives a
+head repository's `owner/name` identity from the stable `headRepositoryOwner.login` and `headRepository.name` fields; it does
+not depend on the unsupported `headRepositoryNameWithOwner` convenience field.
+
+Capability validation uses the first configured repository and its project-scoped GitHub credentials. Consequently, the
+configured repository must be reachable with the selected ambient or GitHub App authentication before normal processing can
+begin. Failures identify GitHub CLI compatibility at startup and do not become card-specific reconciliation failures.
+
 GitHub authentication is selected per project at the `repository.githubApp` operation boundary. These are the two supported
 modes:
 

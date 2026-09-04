@@ -11,7 +11,7 @@ Supported tooling is:
 - Node.js 24 or later;
 - Yarn Classic 1.x (the repository uses Yarn 1.22.22);
 - Git;
-- GitHub CLI (`gh`) when working with managed repositories; and
+- GitHub CLI (`gh`) 2.40.0 or later when working with managed repositories; and
 - OpenCode when running the orchestrator locally.
 
 Install dependencies from the repository root:

@@ -35,11 +35,17 @@ export interface StartupDependencies {
 }
 
 export interface StartupOperations {
+  validateGitHubCli: (
+    github: GitHubClient,
+    projects: Config["projects"],
+  ) => Promise<void>;
   validateProjectTrello: typeof validateProjectTrello;
   runOrchestrator: typeof runOrchestrator;
 }
 
 const defaultStartupOperations: StartupOperations = {
+  validateGitHubCli: (github, projects) =>
+    github.validateCliCompatibility(projects),
   validateProjectTrello,
   runOrchestrator,
 };
@@ -60,6 +66,8 @@ export async function runStartup(
 
   const githubCredentials =
     dependencies.githubCredentials ?? new GitHubCredentialProvider();
+
+  await operations.validateGitHubCli(dependencies.github, config.projects);
 
   for (const project of config.projects) {
     if (signal.aborted) {

@@ -13,6 +13,12 @@ import {
   type GitHubCredential,
   type GitHubCredentialEnvironment,
 } from "./github-credential-provider.js";
+import {
+  GITHUB_CLI_PR_MAINTENANCE_JSON_FIELDS,
+  GITHUB_CLI_PR_REVIEW_JSON_FIELDS,
+  GITHUB_CLI_PR_STATE_JSON_FIELDS,
+  validateGitHubCliCompatibility,
+} from "./github-cli-compatibility.js";
 
 const GITHUB_TIMEOUT_MS = 2 * 60 * 1000;
 const GITHUB_TERMINATION_GRACE_MS = 5_000;
@@ -642,8 +648,8 @@ export class GitHubClient {
         "all",
         "--json",
         options.baseBranch === undefined
-          ? "url,state,mergedAt"
-          : "url,state,mergedAt,baseRefName,headRefName,headRepository,headRepositoryOwner,mergeable,mergeStateStatus",
+          ? GITHUB_CLI_PR_STATE_JSON_FIELDS.join(",")
+          : GITHUB_CLI_PR_MAINTENANCE_JSON_FIELDS.join(","),
         "--limit",
         "1",
       ],
@@ -696,7 +702,7 @@ export class GitHubClient {
         "--state",
         "open",
         "--json",
-        "url,number,reviewDecision,headRefOid",
+        GITHUB_CLI_PR_REVIEW_JSON_FIELDS.join(","),
         "--limit",
         "1",
       ],
@@ -832,5 +838,15 @@ export class GitHubClient {
       ],
       credential,
     );
+  }
+
+  async validateCliCompatibility(
+    projects: readonly ProjectConfig[],
+  ): Promise<void> {
+    await validateGitHubCliCompatibility(async (args, project) => {
+      const credential = await this.resolveCredential(project);
+
+      return this.run(process.cwd(), [...args], credential);
+    }, projects);
   }
 }

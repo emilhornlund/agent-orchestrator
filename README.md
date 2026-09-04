@@ -60,9 +60,9 @@ reorganized; current configuration names, states, commands, and safety boundarie
 - Node.js 24 or later
 - Yarn Classic 1.x
 - Git
-- GitHub CLI (`gh`); projects that omit `repository.githubApp` use an authenticated `gh` session or ambient GitHub
-  authentication such as a PAT in `GH_TOKEN` or `GITHUB_TOKEN`, while App-backed projects use their configured installation
-  token
+- GitHub CLI (`gh`) 2.40.0 or later; projects that omit `repository.githubApp` use an authenticated `gh` session or ambient
+  GitHub authentication such as a PAT in `GH_TOKEN` or `GITHUB_TOKEN`, while App-backed projects use their configured
+  installation token
 - OpenCode
 - Trello API credentials
 - An SMTP server when email notifications are enabled

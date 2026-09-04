@@ -20,6 +20,11 @@ The service loads `config.yaml` and then validates the process environment. A mi
 field, blank required value, or invalid value is a startup error. Configuration parsing reports repository-relative field
 paths such as `projects.0.repository.path`.
 
+Before repository bootstrap or project processing begins, startup requires GitHub CLI (`gh`) version `2.40.0` or later and
+validates the command and pull-request JSON capabilities listed in [Operations](operations.md#github-cli-compatibility). A
+missing executable, unsupported version, unavailable command, unsupported JSON field, or failed capability probe is a fatal
+startup/configuration error rather than a later card-specific workflow failure.
+
 ## Environment variables
 
 The following variables are always required:

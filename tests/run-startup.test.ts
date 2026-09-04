@@ -108,6 +108,7 @@ describe("runStartup", () => {
         commands: new CommandRunner(vi.fn<RunCommand>()),
       };
       const operations: StartupOperations = {
+        validateGitHubCli: vi.fn().mockResolvedValue(undefined),
         validateProjectTrello: vi.fn().mockResolvedValue(undefined),
         runOrchestrator: vi.fn().mockResolvedValue(undefined),
       };
@@ -147,6 +148,7 @@ describe("runStartup", () => {
         commands: new CommandRunner(vi.fn<RunCommand>()),
       };
       const operations: StartupOperations = {
+        validateGitHubCli: vi.fn().mockResolvedValue(undefined),
         validateProjectTrello: vi.fn().mockResolvedValue(undefined),
         runOrchestrator: vi.fn().mockResolvedValue(undefined),
       };
@@ -162,6 +164,54 @@ describe("runStartup", () => {
 
       expect(operations.validateProjectTrello).not.toHaveBeenCalled();
       expect(operations.runOrchestrator).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses normal project processing when gh compatibility validation fails", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "agent-orchestrator-"));
+    const repositoryPath = path.join(root, "repository");
+    fs.mkdirSync(repositoryPath);
+
+    try {
+      const githubCompatibilityError = new Error(
+        "GitHub CLI compatibility validation failed: installed gh version 2.39.0 is unsupported",
+      );
+      const runGit = vi.fn<RunGit>().mockResolvedValue("true");
+      const validateGitHubCli = vi
+        .fn()
+        .mockRejectedValue(githubCompatibilityError);
+      const validateProjectTrello = vi.fn().mockResolvedValue(undefined);
+      const runOrchestrator = vi.fn().mockResolvedValue(undefined);
+      const dependencies: StartupDependencies = {
+        trello: {} as TrelloClient,
+        git: new GitClient(runGit),
+        github: {} as GitHubClient,
+        opencode: {} as OpenCodeClient,
+        commands: new CommandRunner(vi.fn<RunCommand>()),
+      };
+
+      await expect(
+        runStartup(
+          createConfig(createProject(repositoryPath)),
+          dependencies,
+          new AbortController().signal,
+          {
+            validateGitHubCli,
+            validateProjectTrello,
+            runOrchestrator,
+          },
+        ),
+      ).rejects.toBe(githubCompatibilityError);
+
+      expect(validateGitHubCli).toHaveBeenCalledWith(
+        dependencies.github,
+        expect.any(Array),
+      );
+      expect(runGit).not.toHaveBeenCalled();
+      expect(validateProjectTrello).not.toHaveBeenCalled();
+      expect(runOrchestrator).not.toHaveBeenCalled();
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -197,7 +247,11 @@ describe("runStartup", () => {
         createConfig(project),
         dependencies,
         new AbortController().signal,
-        { validateProjectTrello, runOrchestrator },
+        {
+          validateGitHubCli: vi.fn().mockResolvedValue(undefined),
+          validateProjectTrello,
+          runOrchestrator,
+        },
       );
 
       expect(runOrchestrator).toHaveBeenCalledOnce();
