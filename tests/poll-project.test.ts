@@ -525,7 +525,7 @@ describe("pollProject", () => {
     }
   });
 
-  it("routes refinement cards through refinement and returns them to Backlog", async () => {
+  it("accepts a complete refinement result and returns the card to Backlog instead of Failed", async () => {
     const events: string[] = [];
 
     const worktreeRoot = fs.mkdtempSync(

@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import { buildRefinementPrompt } from "../src/opencode/build-refinement-prompt.js";
-import { refinementResultRelativePath } from "../src/refinement/refinement-result.js";
+import {
+  refinementResultContract,
+  refinementResultRelativePath,
+} from "../src/refinement/refinement-result.js";
 import type { TrelloCard } from "../src/trello/trello-client.js";
 
 function createCard(overrides: Partial<TrelloCard> = {}): TrelloCard {
@@ -49,7 +52,15 @@ describe("buildRefinementPrompt", () => {
     const prompt = buildRefinementPrompt(createCard());
 
     expect(prompt).toContain(refinementResultRelativePath);
-    expect(prompt).toContain('"type": "feature | improvement | bug"');
+    expect(prompt).toContain(
+      `"type": "${refinementResultContract.type.values.join(" | ")}"`,
+    );
+    expect(prompt).toContain(
+      "Validate the result object against this complete contract before writing it:",
+    );
+    expect(prompt).toContain(
+      'The object must contain exactly these fields: "title", "description", "type".',
+    );
     expect(prompt).toContain(
       "The file must contain valid JSON, not a Markdown code fence.",
     );
