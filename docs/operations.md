@@ -215,6 +215,14 @@ before Git maintenance. A current branch is a no-op and is not fetched, rebased,
 maintenance update. A successful clean rebase runs `repository.validationCommand` when configured and updates the existing
 branch, retaining the existing pull request and leaving the card in `Human Review`.
 
+During this maintenance, the existing pull request description may contain one managed status section bounded by
+`<!-- agent-orchestrator-status:start -->` and `<!-- agent-orchestrator-status:end -->`. The orchestrator updates only the content
+inside that section as it rebases, resolves prepared conflicts, validates, and updates the remote task branch. It removes the
+section after success, or records that maintenance failed and requires human attention when automatic Git work cannot complete.
+Every possible description write is based on a fresh body read; identical updates are skipped. Invalid or duplicate marker pairs
+are left untouched and escalated rather than guessed at. Description operations are presentation-only and their failures do not
+trigger Git cleanup or recovery actions.
+
 The publication rules are:
 
 - A missing remote task branch is pushed with a normal push.

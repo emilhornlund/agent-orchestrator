@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ProjectConfig } from "../src/config/config.js";
 import type { GitClient, GitRebaseState } from "../src/git/git-client.js";
+import type { GitHubClient } from "../src/github/github-client.js";
 import {
   OpenCodeClient,
   type OpenCodeRunResult,
@@ -141,6 +142,9 @@ function createScenario(options: ScenarioOptions = {}) {
     exitCode: options.validationExitCode ?? 0,
   });
   const pushWithLease = vi.fn();
+  const github = {
+    updatePullRequestDescriptionStatus: vi.fn().mockResolvedValue(false),
+  } as unknown as GitHubClient;
 
   if (options.pushError === undefined) {
     pushWithLease.mockResolvedValue(undefined);
@@ -174,9 +178,11 @@ function createScenario(options: ScenarioOptions = {}) {
     card,
     commands: new CommandRunner(runCommand),
     git,
+    github,
     handoff,
     opencode: new OpenCodeClient(runOpenCode),
     project,
+    pullRequestUrl: "https://github.com/owner/repository/pull/1",
     runCommand,
     runOpenCode,
     worktreePath,
@@ -242,6 +248,26 @@ describe("remediatePreparedConflict", () => {
     expect(scenario.runOpenCode).toHaveBeenCalledOnce();
   });
 
+  it("leaves prepared Git state untouched when status presentation fails", async () => {
+    const scenario = createScenario();
+    vi.mocked(
+      scenario.github.updatePullRequestDescriptionStatus,
+    ).mockRejectedValue(new Error("description update failed"));
+
+    await expect(
+      remediatePreparedConflict({
+        ...scenario,
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("managed status");
+
+    expect(scenario.runOpenCode).not.toHaveBeenCalled();
+    expect(scenario.git.pushWithLease).not.toHaveBeenCalled();
+    expect(
+      readPreparedConflict(scenario.project, scenario.card.id),
+    ).not.toBeNull();
+  });
+
   it("completes, validates, publishes with the captured lease, and clears the handoff", async () => {
     const scenario = createScenario();
 
@@ -271,6 +297,27 @@ describe("remediatePreparedConflict", () => {
       taskSha,
       scenario.project,
     );
+    expect(
+      scenario.github.updatePullRequestDescriptionStatus,
+    ).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ status: "resolving-conflicts" }),
+    );
+    expect(
+      scenario.github.updatePullRequestDescriptionStatus,
+    ).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ status: "validating" }),
+    );
+    expect(
+      scenario.github.updatePullRequestDescriptionStatus,
+    ).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({ status: "updating-remote" }),
+    );
+    expect(
+      scenario.github.updatePullRequestDescriptionStatus,
+    ).toHaveBeenNthCalledWith(4, expect.objectContaining({ status: null }));
     expect(readPreparedConflict(scenario.project, scenario.card.id)).toBeNull();
   });
 

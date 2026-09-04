@@ -142,6 +142,7 @@ function createGithub(
       .mockResolvedValue(
         changesRequested ? { url: pullRequest.url, feedback: "Fix" } : null,
       ),
+    updatePullRequestDescriptionStatus: vi.fn().mockResolvedValue(false),
   } as unknown as GitHubClient;
 }
 
@@ -252,6 +253,44 @@ describe("owned Human Review pull-request maintenance", () => {
         command: "yarn validate",
       }),
     );
+    expect(github.updatePullRequestDescriptionStatus).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ status: "rebasing" }),
+    );
+    expect(github.updatePullRequestDescriptionStatus).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ status: "validating" }),
+    );
+    expect(github.updatePullRequestDescriptionStatus).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({ status: "updating-remote" }),
+    );
+    expect(github.updatePullRequestDescriptionStatus).toHaveBeenNthCalledWith(
+      4,
+      expect.objectContaining({ status: null }),
+    );
+    expect(scenario.trello.moveCard).not.toHaveBeenCalled();
+  });
+
+  it("does not touch Git when the initial managed status presentation fails", async () => {
+    const scenario = setup();
+    const git = createGit([taskSha, defaultSha]);
+    const github = createGithub();
+    const presentationError = new Error("description update failed");
+    vi.mocked(github.updatePullRequestDescriptionStatus).mockRejectedValue(
+      presentationError,
+    );
+
+    await expect(
+      reconcileReviewCards(scenario.trello, git, github, scenario.project, {
+        maintenance: { commands: scenario.commands },
+      }),
+    ).rejects.toThrow("managed status");
+
+    expect(git.fetch).not.toHaveBeenCalled();
+    expect(git.resetHardTo).not.toHaveBeenCalled();
+    expect(git.rebase).not.toHaveBeenCalled();
+    expect(git.pushWithLease).not.toHaveBeenCalled();
     expect(scenario.trello.moveCard).not.toHaveBeenCalled();
   });
 
@@ -367,18 +406,18 @@ describe("owned Human Review pull-request maintenance", () => {
     const scenario = setup();
     scenario.runCommand.mockResolvedValue({ exitCode: 1 });
     const git = createGit([taskSha, defaultSha]);
+    const github = createGithub();
 
     await expect(
-      reconcileReviewCards(
-        scenario.trello,
-        git,
-        createGithub(),
-        scenario.project,
-        { maintenance: { commands: scenario.commands } },
-      ),
+      reconcileReviewCards(scenario.trello, git, github, scenario.project, {
+        maintenance: { commands: scenario.commands },
+      }),
     ).rejects.toThrow("repository validation");
 
     expect(git.pushWithLease).not.toHaveBeenCalled();
+    expect(github.updatePullRequestDescriptionStatus).toHaveBeenLastCalledWith(
+      expect.objectContaining({ status: "failed" }),
+    );
     expect(scenario.trello.moveCard).not.toHaveBeenCalled();
   });
 
@@ -476,6 +515,7 @@ describe("owned Human Review pull-request maintenance", () => {
       card: scenario.card,
       active: true,
       maintenanceState: "prepared-conflict",
+      pullRequestUrl: "https://github.com/owner/repo/pull/1",
     });
 
     await expect(

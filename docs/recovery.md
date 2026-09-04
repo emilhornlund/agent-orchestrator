@@ -109,6 +109,19 @@ force-with-lease expectation. The existing pull request is retained and the card
 new pull request, replacement, merge, or Trello transition is involved. A branch already at the current default tip is a no-op and
 is not rebased, validated, pushed, or reported as a successful maintenance update.
 
+Eligible long-running maintenance adds a managed section to the existing pull request description, bounded exactly by
+`<!-- agent-orchestrator-status:start -->` and `<!-- agent-orchestrator-status:end -->`. Its supported phases are rebasing onto the
+latest configured default branch, resolving merge conflicts, running repository validation, and updating the remote task branch,
+represented by `rebasing`, `resolving-conflicts`, `validating`, and `updating-remote`; `failed` requires human attention. The
+section is removed after successful maintenance. If automatic Git maintenance fails, it is replaced with the `failed` status. The
+orchestrator owns only the content inside the markers and preserves all other description text.
+Each update reads the latest description immediately before writing, skips an identical result, and never creates a second section.
+
+Malformed marker structure, including missing, reversed, or duplicate markers, fails closed: the description is left unchanged and
+the pull request and card receive an actionable normal attention diagnostic. A description read or write failure is secondary to
+Git recovery, is logged with the pull request and card, and does not reset, abort, clean, overwrite, or otherwise alter the task
+branch, worktree, handoff, or other Git artifacts. It must not be reported as a successful status update.
+
 The lease protects against concurrent remote updates. If the branch changes or disappears after the authoritative lookup, the
 single force-with-lease update is rejected and is not retried with another SHA. Fetch, worktree, rebase, validation, remote lookup,
 or lease failures preserve the card, pull request, branch, and worktree. A non-zero validation command prevents the push.

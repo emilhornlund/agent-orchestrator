@@ -19,6 +19,10 @@ import {
   GITHUB_CLI_PR_STATE_JSON_FIELDS,
   validateGitHubCliCompatibility,
 } from "./github-cli-compatibility.js";
+import {
+  reconcileManagedPullRequestStatus,
+  type ManagedPullRequestStatus,
+} from "./pull-request-status.js";
 
 const GITHUB_TIMEOUT_MS = 2 * 60 * 1000;
 const GITHUB_TERMINATION_GRACE_MS = 5_000;
@@ -46,6 +50,14 @@ export interface FindPullRequestOptions {
   repository: string;
   headBranch: string;
   baseBranch?: string;
+  project?: ProjectConfig;
+}
+
+export interface PullRequestDescriptionStatusOptions {
+  cwd: string;
+  repository: string;
+  pullRequestUrl: string;
+  status: ManagedPullRequestStatus | null;
   project?: ProjectConfig;
 }
 
@@ -183,6 +195,27 @@ function validatePullRequestList(value: unknown): PullRequestReviewListItem[] {
       headRefOid: item.headRefOid,
     };
   });
+}
+
+function parsePullRequestBody(output: string): string {
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(output);
+  } catch (error) {
+    throw new Error("GitHub CLI returned an invalid pull request body", {
+      cause: error,
+    });
+  }
+
+  if (
+    !isRecord(parsed) ||
+    (typeof parsed.body !== "string" && parsed.body !== null)
+  ) {
+    throw new Error("GitHub CLI returned an invalid pull request body");
+  }
+
+  return parsed.body ?? "";
 }
 
 function validatePullRequestStateList(
@@ -626,6 +659,53 @@ export class GitHubClient {
     return {
       url: parsePullRequestUrl(output),
     };
+  }
+
+  async updatePullRequestDescriptionStatus(
+    options: PullRequestDescriptionStatusOptions,
+  ): Promise<boolean> {
+    const credential = await this.resolveCredential(options.project);
+    const pullRequestUrl = parsePullRequestUrl(options.pullRequestUrl);
+    const output = await this.run(
+      options.cwd,
+      [
+        "pr",
+        "view",
+        pullRequestUrl,
+        "--repo",
+        options.repository,
+        "--json",
+        "body",
+      ],
+      credential,
+    );
+    const currentBody = parsePullRequestBody(output);
+    const nextBody = reconcileManagedPullRequestStatus(
+      currentBody,
+      options.status,
+      options.project?.repository.defaultBranch ?? "main",
+    );
+
+    if (nextBody === currentBody) {
+      return false;
+    }
+
+    // The body read immediately above is intentional: never write a body from an earlier poll.
+    await this.run(
+      options.cwd,
+      [
+        "pr",
+        "edit",
+        pullRequestUrl,
+        "--repo",
+        options.repository,
+        "--body",
+        nextBody,
+      ],
+      credential,
+    );
+
+    return true;
   }
 
   async findPullRequestState(
