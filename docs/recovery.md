@@ -149,8 +149,10 @@ remote change, or lease rejection leaves the handoff, worktree, branch, and pull
 annotated with the existing session log when available and escalated through the normal attention path. Remediation retries are
 bounded; after the worker retry threshold the project remains blocked and does not launch the same session on every poll. While
 blocked, the worker periodically performs only the local handoff and Git conflict-state checks. It keeps the project blocked while
-the handoff or underlying conflict remains unresolved, and emits no repeated attention alert for that unchanged condition. Once the
-handoff is removed or a clean completed rebase is verified, the worker clears the block and resumes without a restart.
+the handoff or underlying conflict remains unresolved, and emits no repeated attention alert for that unchanged condition. Once a
+valid handoff's clean completed rebase is verified, the worker clears only the project block and resumes without a restart. The
+next cycle routes the existing worktree through prepared-conflict remediation; local completion does not remove the handoff or
+establish publication. A missing or invalid handoff remains blocked until the state is repaired or the worker is restarted.
 
 A Git command error alone is not sufficient evidence of a prepared conflict. If active rebase inspection fails, the rebase is
 active without conflicted paths, the handoff cannot be persisted, or remote/PR/worktree setup fails first, normal failure and
