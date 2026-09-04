@@ -206,7 +206,17 @@ An enabled project's successful auto-merge is followed by the same `Done` transi
 
 Maintenance failures follow the same preservation boundary but never move the card or create a pull request. A validation failure
 prevents the branch update. A conflict is left in place for dedicated conflict handling without automatic abort, reset, clean,
-worktree removal, recreation, or OpenCode conflict resolution.
+worktree removal, or recreation. The prepared-conflict handoff then starts a dedicated OpenCode remediation session in the same
+isolated worktree, using the configured remediation model and variant. Its prompt contains the original card intent, updated base
+and rebase target, conflicted paths, and validation command, and limits the agent to resolving and continuing the active rebase,
+including additional conflict stops from later commits.
+
+The remediation worker verifies that the rebase completed, all unmerged paths are gone, the worktree is valid and clean, and the
+configured validation command passes. It resolves the remote task branch SHA again and refuses publication unless it still equals
+the handoff SHA. It then performs one exact `--force-with-lease` update of the existing `agent/<card-id>` branch and clears the
+handoff only after the update succeeds. The existing pull request is retained and the card remains in Human Review. Failures,
+timeouts, permission denials, unresolved conflicts, validation errors, concurrent SHA changes, and lease rejection preserve the
+handoff and worktree, emit normal diagnostics, and use bounded retries followed by Attention Required project blocking.
 
 ### Rewriting an owned task branch
 

@@ -32,6 +32,18 @@ describe("pollProject", () => {
         worktreeRoot: temporaryDirectory,
         defaultBranch: "main",
       },
+      opencode: {
+        refinement: { model: "refinement", variant: "variant" },
+        implementation: { model: "implementation", variant: "variant" },
+        review: { model: "review", variant: "variant" },
+        remediation: {
+          model: "remediation",
+          variant: "variant",
+          maxPasses: 1,
+        },
+        commit: { model: "commit", variant: "variant" },
+        timeoutMinutes: 5,
+      },
       trello: {
         readyListId: "ready",
         workingListId: "working",
@@ -80,12 +92,42 @@ describe("pollProject", () => {
       },
     );
 
+    fs.mkdirSync(path.join(temporaryDirectory, card.id));
+
+    const git = {
+      getCurrentBranch: vi.fn().mockResolvedValue("agent/card-1"),
+      isValidRepository: vi.fn().mockResolvedValue(true),
+      getRebaseState: vi
+        .fn()
+        .mockResolvedValueOnce({
+          active: true,
+          backend: "merge",
+          headName: "refs/heads/agent/card-1",
+          onto: "b".repeat(40),
+          originalHead: "a".repeat(40),
+        })
+        .mockResolvedValueOnce(null),
+      getConflictedPaths: vi.fn().mockResolvedValue([]),
+      getHeadSha: vi.fn().mockResolvedValue("c".repeat(40)),
+      isAncestor: vi.fn().mockResolvedValue(true),
+      getStatus: vi.fn().mockResolvedValue(""),
+      getRemoteBranchSha: vi.fn().mockResolvedValue("a".repeat(40)),
+      pushWithLease: vi.fn().mockResolvedValue(undefined),
+    } as unknown as GitClient;
+    const openCode = new OpenCodeClient(
+      vi.fn().mockResolvedValue({
+        exitCode: 0,
+        output: "",
+        errorOutput: "",
+      }),
+    );
+
     try {
       await pollProject(
         trello,
-        {} as GitClient,
+        git,
         github,
-        {} as OpenCodeClient,
+        openCode,
         {} as CommandRunner,
         project,
         new AbortController().signal,
@@ -97,6 +139,7 @@ describe("pollProject", () => {
     expect(getCards).toHaveBeenCalledTimes(1);
     expect(getCards).toHaveBeenCalledWith("review");
     expect(getLatestListTransition).not.toHaveBeenCalled();
+    expect(git.pushWithLease).toHaveBeenCalledOnce();
   });
 
   it("protects card context while reconciliation is awaiting external state", async () => {

@@ -62,6 +62,7 @@ import {
   toFailureError,
 } from "./failure-diagnostic.js";
 import { failCard } from "./fail-card.js";
+import { remediatePreparedConflict } from "./remediate-prepared-conflict.js";
 import { publishCard } from "./publish-card.js";
 import { PublishedCardStateError } from "./published-card-state-error.js";
 import {
@@ -282,6 +283,25 @@ export async function pollProject(
   }
 
   if (reviewChangeRequest && "active" in reviewChangeRequest) {
+    if (reviewChangeRequest.maintenanceState === "prepared-conflict") {
+      if (reviewChangeRequest.preparedConflict === undefined) {
+        throw new WorkflowError(
+          "Workflow",
+          "Prepared conflict state was not complete before remediation",
+        );
+      }
+
+      await remediatePreparedConflict({
+        git,
+        opencode,
+        commands,
+        project,
+        card: reviewChangeRequest.card,
+        handoff: reviewChangeRequest.preparedConflict,
+        signal,
+      });
+    }
+
     return;
   }
 
