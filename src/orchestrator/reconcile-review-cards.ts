@@ -26,17 +26,23 @@ export interface ReviewChangeRequest {
   card: TrelloCard;
   pullRequestUrl: string;
   feedback: string;
+  maintenanceState?: PullRequestMaintenanceState;
 }
+
+export type PullRequestMaintenanceState =
+  "up-to-date" | "behind" | "conflicted";
 
 export interface ActiveReviewCard {
   card: TrelloCard;
   active: true;
+  maintenanceState: PullRequestMaintenanceState;
 }
 
 interface ReviewCardState {
   card: TrelloCard;
   branch: string;
   pullRequest: PullRequestState;
+  maintenanceState?: PullRequestMaintenanceState;
   changesRequested?: ReviewChangeRequest;
 }
 
@@ -257,6 +263,7 @@ export async function reconcileReviewCards(
   return {
     card: state.card,
     active: true,
+    maintenanceState: state.maintenanceState!,
   };
 }
 
@@ -282,6 +289,7 @@ async function inspectReviewCard(
     cwd: project.repository.path,
     repository: project.repository.github,
     headBranch: branch,
+    baseBranch: project.repository.defaultBranch,
     project,
   };
 
@@ -301,8 +309,27 @@ async function inspectReviewCard(
     return null;
   }
 
+  if (
+    pullRequest.headRefName !== undefined &&
+    pullRequest.headRefName !== branch
+  ) {
+    return null;
+  }
+
   if (isMergedPullRequest(pullRequest) || pullRequest.state === "CLOSED") {
     return { card, branch, pullRequest };
+  }
+
+  let maintenanceState: PullRequestMaintenanceState;
+
+  try {
+    maintenanceState = classifyMaintenanceState(
+      pullRequest,
+      branch,
+      project.repository.defaultBranch,
+    );
+  } catch (error) {
+    throw reviewLookupError(project, card, "maintenance state", error);
   }
 
   let changesRequestedPullRequest;
@@ -322,6 +349,7 @@ async function inspectReviewCard(
     card,
     branch,
     pullRequest,
+    maintenanceState,
     ...(changesRequestedPullRequest === null
       ? {}
       : {
@@ -329,6 +357,7 @@ async function inspectReviewCard(
             card,
             pullRequestUrl: changesRequestedPullRequest.url,
             feedback: changesRequestedPullRequest.feedback,
+            maintenanceState,
           },
         }),
   };
@@ -337,7 +366,7 @@ async function inspectReviewCard(
 function reviewLookupError(
   project: ProjectConfig,
   card: TrelloCard,
-  subject: "pull request state" | "requested changes",
+  subject: "pull request state" | "requested changes" | "maintenance state",
   error: unknown,
 ): WorkflowError {
   return githubReconciliationError(
@@ -346,6 +375,52 @@ function reviewLookupError(
     subject,
     error,
     `Could not reconcile Human Review card "${card.name}" while checking ${subject}: ${getErrorMessage(error)}`,
+  );
+}
+
+function classifyMaintenanceState(
+  pullRequest: PullRequestState,
+  expectedHeadBranch: string,
+  expectedBaseBranch: string,
+): PullRequestMaintenanceState {
+  const { baseRefName, headRefName, mergeable, mergeStateStatus } = pullRequest;
+
+  if (
+    baseRefName !== expectedBaseBranch ||
+    headRefName !== expectedHeadBranch ||
+    mergeable === undefined ||
+    mergeStateStatus === undefined
+  ) {
+    throw new Error(
+      "GitHub returned incomplete or mismatched pull request maintenance state",
+    );
+  }
+
+  if (mergeable === "CONFLICTING" || mergeStateStatus === "DIRTY") {
+    return "conflicted";
+  }
+
+  if (mergeable === "UNKNOWN" || mergeStateStatus === "UNKNOWN") {
+    throw new Error(
+      "GitHub returned an ambiguous pull request maintenance state",
+    );
+  }
+
+  if (mergeStateStatus === "BEHIND") {
+    return "behind";
+  }
+
+  if (
+    mergeStateStatus === "CLEAN" ||
+    mergeStateStatus === "BLOCKED" ||
+    mergeStateStatus === "HAS_HOOKS" ||
+    mergeStateStatus === "UNSTABLE"
+  ) {
+    return "up-to-date";
+  }
+
+  throw new Error(
+    `GitHub returned unsupported pull request merge state ${mergeStateStatus}`,
   );
 }
 

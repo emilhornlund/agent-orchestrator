@@ -420,6 +420,10 @@ function createHarness(options: HarnessOptions = {}) {
       ...pullRequest,
       state: pullRequestState === "merged" ? "MERGED" : "OPEN",
       mergedAt: pullRequestState === "merged" ? "2026-09-01T13:42:03Z" : null,
+      baseRefName: "main",
+      headRefName: "agent/card-1",
+      mergeable: "MERGEABLE",
+      mergeStateStatus: "CLEAN",
     };
   });
   const findChangesRequestedPullRequest = vi.fn(async () => {

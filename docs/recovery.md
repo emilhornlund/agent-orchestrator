@@ -88,12 +88,23 @@ For each card in `Human Review`, the orchestrator checks the expected `agent/<tr
 | Pull request is merged                                      | Delete the merged remote branch when present, move the card to `Done`, mark it complete, and remove the session log on a best-effort basis |
 | Pull request is closed without merge                        | Move the card to `Backlog` and add a Trello comment identifying the closed pull request                                                    |
 | Pull request is open with current-head requested changes    | Move the card to `Working` and resume feedback implementation                                                                              |
-| Pull request is open without current-head requested changes | Leave the card in `Human Review`                                                                                                           |
+| Pull request is open without current-head requested changes | Leave the card in `Human Review` and record `up-to-date`, `behind`, or `conflicted` maintenance state                                      |
 | No expected pull request                                    | Correct the card to `Backlog`                                                                                                              |
 
 More than one active card in `Human Review` is an ambiguous project state. The active-state check runs before terminal cards
 are transitioned, so the project is blocked, no active card is selected, and no terminal card is transitioned in that cycle.
 Merged or closed cards remain available for reconciliation on the next cycle after the ambiguity is resolved.
+
+Maintenance detection is limited to an open pull request in the configured repository whose head is exactly
+`agent/<trello-card-id>` and whose base is the configured default branch. It uses the current authoritative GitHub merge state:
+`up-to-date` means the default branch is not ahead and no conflict is reported, `behind` means the default branch has commits
+not in the task branch but the pull request is conflict-free, and `conflicted` means GitHub reports a merge conflict. Unknown or
+incomplete authoritative data leaves the card in its current state and produces a reconciliation diagnostic; it is never treated
+as `up-to-date`.
+
+This signal is detection-only. Reconciliation does not rebase, merge, push, force-push, modify pull requests, alter branches or
+worktrees, move cards because of maintenance state, or invoke OpenCode. Later workflow work may use the structured state to make
+an explicit maintenance decision.
 
 Trello and GitHub read failures during reconciliation are handled separately from card failures. Trello HTTP 500, 502, 503,
 and 504 responses, rate limits, timeouts, and temporary connectivity errors leave the card in its current list with no

@@ -154,13 +154,13 @@ publication, merge, or card-transition failure does not produce a successful com
 Human review takes place on GitHub when `autoMerge` is disabled. The orchestrator never merges a pull request for a project
 with `autoMerge: false`; an enabled project merges only its normal implementation pull requests after successful publication.
 
-| GitHub state                                                 | Trello result                                                |
-| ------------------------------------------------------------ | ------------------------------------------------------------ |
-| Pull request merged                                          | Move the card to `Done` and mark it complete                 |
-| Pull request closed without merge                            | Move the card to `Backlog` and add the closed-PR comment     |
-| Open pull request with changes requested on its current head | Move the card to `Working` and pass the feedback to OpenCode |
-| Open pull request without actionable requested changes       | Leave the card in `Human Review`                             |
-| No expected pull request                                     | Reconcile the card to `Backlog`                              |
+| GitHub state                                                 | Trello result                                                  |
+| ------------------------------------------------------------ | -------------------------------------------------------------- |
+| Pull request merged                                          | Move the card to `Done` and mark it complete                   |
+| Pull request closed without merge                            | Move the card to `Backlog` and add the closed-PR comment       |
+| Open pull request with changes requested on its current head | Move the card to `Working` and pass the feedback to OpenCode   |
+| Open pull request without actionable requested changes       | Leave the card in `Human Review`; expose its maintenance state |
+| No expected pull request                                     | Reconcile the card to `Backlog`                                |
 
 When requested changes are detected, the orchestrator creates a worktree from the existing task branch, supplies the GitHub
 feedback to the implementation session after refreshing the current Trello attachment context, runs the same initial-review and
@@ -168,6 +168,13 @@ bounded remediation loop, and republishes the updated branch and pull request. A
 republished pull request; a disabled project returns it to Human Review. A requested-changes pass starts only when the review
 feedback applies to the pull request's current head, and it gets its own transient remediation counter. A retry that reuses
 already committed work skips all OpenCode stages, including attachment-dependent prompts, and proceeds directly to publication.
+
+For every owned open pull request on the expected `agent/<trello-card-id>` branch, Human Review reconciliation records one
+detection-only maintenance state: `up-to-date` when the configured default branch is not ahead and GitHub reports no conflict,
+`behind` when the default branch has advanced without a conflict, or `conflicted` when GitHub reports merge conflicts. Pull
+requests on other branches, and closed or merged pull requests, are outside this signal. The result is part of the
+reconciliation data rather than a log-only message. Detection never rebases, merges, pushes, force-pushes, changes a branch or
+worktree, moves a card, or invokes OpenCode.
 
 Trello and GitHub operations used by discovery, reconciliation, transition-history checks, card moves, content and label
 updates, comments, and attachment context are retryable when the service returns HTTP 500, 502, 503, or 504, a rate limit, a
