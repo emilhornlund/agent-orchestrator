@@ -21,6 +21,55 @@ export interface PreparedImplementationWorktree extends PreparedWorktree {
   initialStatus?: string;
 }
 
+function isValidRebaseProgress(value: number | undefined): boolean {
+  return value === undefined || (Number.isSafeInteger(value) && value > 0);
+}
+
+function matchesPreparedRebaseProgress(
+  expectedRebase: GitRebaseState,
+  actualRebase: GitRebaseState,
+): boolean {
+  const expectedCurrentStep = expectedRebase.currentStep;
+  const actualCurrentStep = actualRebase.currentStep;
+  const expectedTotalSteps = expectedRebase.totalSteps;
+  const actualTotalSteps = actualRebase.totalSteps;
+
+  if (
+    !isValidRebaseProgress(expectedCurrentStep) ||
+    !isValidRebaseProgress(actualCurrentStep) ||
+    !isValidRebaseProgress(expectedTotalSteps) ||
+    !isValidRebaseProgress(actualTotalSteps)
+  ) {
+    return false;
+  }
+
+  if (
+    expectedTotalSteps !== undefined &&
+    actualTotalSteps !== undefined &&
+    expectedTotalSteps !== actualTotalSteps
+  ) {
+    return false;
+  }
+
+  if (
+    expectedCurrentStep !== undefined &&
+    actualCurrentStep !== undefined &&
+    actualCurrentStep < expectedCurrentStep
+  ) {
+    return false;
+  }
+
+  const availableTotals = [expectedTotalSteps, actualTotalSteps].filter(
+    (totalSteps): totalSteps is number => totalSteps !== undefined,
+  );
+
+  return [expectedCurrentStep, actualCurrentStep]
+    .filter((currentStep): currentStep is number => currentStep !== undefined)
+    .every((currentStep) =>
+      availableTotals.every((totalSteps) => currentStep <= totalSteps),
+    );
+}
+
 function getWorktreePath(project: ProjectConfig, cardId: string): string {
   const worktreePath = path.join(project.repository.worktreeRoot, cardId);
   const resolvedWorktreeRoot = path.resolve(project.repository.worktreeRoot);
@@ -101,8 +150,7 @@ export async function getExistingPreparedConflictWorktree(
       rebase.backend !== expectedRebase.backend ||
       rebase.onto !== expectedRebase.onto ||
       rebase.originalHead !== expectedRebase.originalHead ||
-      rebase.currentStep !== expectedRebase.currentStep ||
-      rebase.totalSteps !== expectedRebase.totalSteps
+      !matchesPreparedRebaseProgress(expectedRebase, rebase)
     ) {
       return null;
     }

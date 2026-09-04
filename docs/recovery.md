@@ -133,6 +133,12 @@ orchestrator writes a validated handoff at
 `conflictedPaths`, and `rebase` (`backend`, `headName`, `onto`, `originalHead`, and available step metadata). The task branch
 SHA is captured with authoritative `ls-remote` before the rebase attempt, so it is not inferred from a rebased or local value.
 
+Retry validation treats the task branch, expected worktree and repository, backend, `headName`, `onto`, and `originalHead` as
+the prepared rebase identity and keeps them strict. It accepts the recorded conflict step or forward progress to a later
+conflict stop in that same rebase, rejects regressed or out-of-range progress, and requires present `totalSteps` values to agree.
+Missing optional progress metadata remains acceptable. A completed rebase proceeds through the normal completion and publication
+verification path.
+
 While this record exists, it is the durable active-remediation lock for the project. Reconciliation returns the same state after
 restart, does not start a second rebase, and does not process another Working or Ready card. The card stays in Human Review.
 The conflicted worktree, branch, conflict markers, and Git rebase metadata remain available; preparation performs no abort, reset,

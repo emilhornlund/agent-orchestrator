@@ -209,6 +209,11 @@ before rebasing, conflicted paths, and current rebase metadata. The card remains
 push, pull-request operation, or Trello transition is performed. The orchestrator never aborts, resets, cleans, removes,
 recreates, or automatically resolves the conflicted worktree or rebase.
 
+Prepared retries keep strict worktree, task-branch, repository, and rebase identity checks. Rebase progress is not identity:
+the captured conflict step or legitimate forward progress to a later stop is accepted when the progress is positive and within
+the available range. Present `totalSteps` values must agree; unavailable optional progress metadata does not by itself reject
+the same prepared rebase.
+
 A valid prepared-conflict handoff is an active remediation state. Reconciliation is idempotent while it exists and does not start
 another rebase. The project worker does not process Working or Ready cards, ordinary review maintenance, publication, or cleanup
 until dedicated remediation has inspected the worktree. Remediation revalidates the handoff and isolated worktree, starts one

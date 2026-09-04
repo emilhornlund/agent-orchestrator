@@ -352,7 +352,9 @@ describe("existing worktree lookup", () => {
   it.each([
     ["headName", { headName: "refs/heads/agent/other-card" }],
     ["onto", { onto: "c".repeat(40) }],
-    ["current step", { currentStep: 3 }],
+    ["original HEAD", { originalHead: "c".repeat(40) }],
+    ["backend", { backend: "apply" }],
+    ["total steps", { totalSteps: 5 }],
   ] as const)(
     "rejects a prepared rebase with mismatched %s metadata",
     async (_label, change) => {
@@ -379,6 +381,92 @@ describe("existing worktree lookup", () => {
       expect(git.getCurrentBranch).not.toHaveBeenCalled();
     },
   );
+
+  it("accepts a prepared rebase at the captured or a later conflict stop", async () => {
+    const worktreeRoot = createTemporaryDirectory();
+    fs.mkdirSync(path.join(worktreeRoot, "card-123"));
+    const expectedRebase = createRebaseState();
+    const project = createProject(worktreeRoot);
+    const git = {
+      isValidRepository: vi.fn().mockResolvedValue(true),
+      getRebaseState: vi
+        .fn()
+        .mockResolvedValueOnce(expectedRebase)
+        .mockResolvedValueOnce({ ...expectedRebase, currentStep: 4 }),
+      getCurrentBranch: vi.fn(),
+    } as unknown as GitClient;
+
+    await expect(
+      getExistingPreparedConflictWorktree(
+        git,
+        project,
+        "card-123",
+        expectedRebase,
+      ),
+    ).resolves.not.toBeNull();
+    await expect(
+      getExistingPreparedConflictWorktree(
+        git,
+        project,
+        "card-123",
+        expectedRebase,
+      ),
+    ).resolves.not.toBeNull();
+  });
+
+  it.each([
+    ["regressed current step", { currentStep: 1 }],
+    ["current step beyond total", { currentStep: 5 }],
+    ["total below captured current step", { totalSteps: 1 }],
+  ] as const)(
+    "rejects prepared rebase with %s progress metadata",
+    async (_label, change) => {
+      const worktreeRoot = createTemporaryDirectory();
+      fs.mkdirSync(path.join(worktreeRoot, "card-123"));
+      const expectedRebase = createRebaseState();
+      const project = createProject(worktreeRoot);
+      const actualRebase = { ...expectedRebase, ...change };
+      const git = {
+        isValidRepository: vi.fn().mockResolvedValue(true),
+        getRebaseState: vi.fn().mockResolvedValue(actualRebase),
+        getCurrentBranch: vi.fn(),
+      } as unknown as GitClient;
+
+      await expect(
+        getExistingPreparedConflictWorktree(
+          git,
+          project,
+          "card-123",
+          expectedRebase,
+        ),
+      ).resolves.toBeNull();
+    },
+  );
+
+  it("accepts unavailable optional progress metadata", async () => {
+    const worktreeRoot = createTemporaryDirectory();
+    fs.mkdirSync(path.join(worktreeRoot, "card-123"));
+    const expectedRebase = createRebaseState();
+    const project = createProject(worktreeRoot);
+    const git = {
+      isValidRepository: vi.fn().mockResolvedValue(true),
+      getRebaseState: vi.fn().mockResolvedValue({
+        ...expectedRebase,
+        currentStep: undefined,
+        totalSteps: undefined,
+      }),
+      getCurrentBranch: vi.fn(),
+    } as unknown as GitClient;
+
+    await expect(
+      getExistingPreparedConflictWorktree(
+        git,
+        project,
+        "card-123",
+        expectedRebase,
+      ),
+    ).resolves.not.toBeNull();
+  });
 
   it("rejects a prepared conflict when its expected worktree path is missing", async () => {
     const worktreeRoot = createTemporaryDirectory();
