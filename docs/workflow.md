@@ -196,11 +196,15 @@ deterministically rather than being retried.
 An open, owned `behind` or `conflicted` pull request with no actionable requested changes is revalidated immediately before
 maintenance. The orchestrator then resolves the authoritative remote task-branch SHA, prepares or reuses only the expected
 task worktree, fetches `origin/<defaultBranch>`, and attempts to rebase the task branch. A clean rebase runs the configured
-`validationCommand` when present and updates the existing branch with the exact force-with-lease helper. The existing pull request
-remains associated with the card, the card remains in `Human Review`, and no OpenCode session, pull-request creation, or Trello
+`setupCommand`, when needed for the new or changed effective worktree state, before running the configured `validationCommand`.
+Setup and validation state is retained for the expected worktree and repository SHAs, avoiding repeated setup or validation for an
+unchanged prepared worktree. An unchanged deterministic validation failure is retained and suppresses later validation and its
+duplicate attention notification; a changed pull-request head, rebase result, command configuration, or recreated worktree retries
+it. A successful validation updates the existing branch with the exact force-with-lease helper. The existing pull request remains
+associated with the card, the card remains in `Human Review`, and no OpenCode session, pull-request creation, or Trello
 transition is performed. After a successful update, reconciliation exposes `up-to-date` and logs the resulting commit. If the
-branch is already current, maintenance is a no-op: no worktree preparation, rebase, validation, push, pull-request operation,
-OpenCode invocation, or successful maintenance result occurs.
+branch is already current, maintenance is a no-op: no worktree preparation, rebase, setup, validation, push, pull-request
+operation, OpenCode invocation, or successful maintenance result occurs.
 
 When eligible long-running maintenance starts, the existing pull request description receives one hidden managed status section:
 `<!-- agent-orchestrator-status:start -->` through `<!-- agent-orchestrator-status:end -->`. The supported statuses are `rebasing`

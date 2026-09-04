@@ -41,8 +41,8 @@ import { parseReviewResult } from "../opencode/parse-review-result.js";
 import {
   CommandRunAbortedError,
   type CommandRunner,
-  type CommandRunResult,
 } from "../process/command-runner.js";
+import { runRepositorySetup } from "../process/run-setup.js";
 import { clearRefinementResult } from "../refinement/refinement-result.js";
 import { finalizeRefinement } from "../refinement/finalize-refinement.js";
 import { addRefinementCompletionComment } from "../refinement/refinement-completion.js";
@@ -117,35 +117,6 @@ function hasOpenCodePermissionDenial(result: OpenCodeRunResult): boolean {
     output.includes("rejected permission") ||
     output.includes("permission denied")
   );
-}
-
-async function runSetup(
-  commands: CommandRunner,
-  cwd: string,
-  command: string,
-  timeoutMilliseconds: number,
-  signal: AbortSignal,
-  sessionLogPath: string,
-  sessionLabel: string,
-): Promise<CommandRunResult> {
-  try {
-    return await commands.run({
-      cwd,
-      command,
-      timeoutMilliseconds,
-      signal,
-      sessionLogPath,
-      sessionLabel,
-    });
-  } catch (error) {
-    if (error instanceof CommandRunAbortedError) {
-      throw error;
-    }
-
-    const setupError = toFailureError(error);
-
-    throw new WorkflowError("Setup", setupError.message, { cause: error });
-  }
 }
 
 async function detectReusableImplementation(
@@ -857,15 +828,14 @@ async function processCardChanges(
   if (project.repository.setupCommand) {
     cardLog.event("Running repository setup...");
 
-    const setup = await runSetup(
-      commands,
-      worktree.path,
-      project.repository.setupCommand,
-      project.opencode.timeoutMinutes * 60_000,
+    const setup = await runRepositorySetup(commands, {
+      cwd: worktree.path,
+      command: project.repository.setupCommand,
+      timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
       signal,
       sessionLogPath,
-      "Repository setup",
-    );
+      sessionLabel: "Repository setup",
+    });
 
     if (setup.exitCode !== 0) {
       throw new WorkflowError(

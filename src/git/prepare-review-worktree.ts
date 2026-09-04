@@ -124,7 +124,7 @@ export async function prepareReviewMaintenanceWorktree(
   git: GitClient,
   project: ProjectConfig,
   cardId: string,
-): Promise<PreparedWorktree> {
+): Promise<PreparedWorktree & { created: boolean }> {
   const repositoryPath = project.repository.path;
   const worktreeRoot = project.repository.worktreeRoot;
   const branch = `agent/${cardId}`;
@@ -166,7 +166,7 @@ export async function prepareReviewMaintenanceWorktree(
       );
     }
 
-    return { path: worktreePath, branch };
+    return { path: worktreePath, branch, created: false };
   }
 
   await git.fetch(repositoryPath, "origin", branch, project);
@@ -183,5 +183,5 @@ export async function prepareReviewMaintenanceWorktree(
     );
   }
 
-  return { path: worktreePath, branch };
+  return { path: worktreePath, branch, created: true };
 }

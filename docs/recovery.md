@@ -115,10 +115,14 @@ unchanged without a transient retry.
 
 For an eligible branch, reconciliation revalidates the pull request, resolves the authoritative remote task SHA with `ls-remote`,
 and prepares or reuses only `<worktreeRoot>/<trello-card-id>`. It fetches the latest default branch there and attempts a normal
-rebase. A clean rebase runs `repository.validationCommand` when configured and updates the existing branch using an exact
-force-with-lease expectation. The existing pull request is retained and the card stays in `Human Review`; no OpenCode session,
-new pull request, replacement, merge, or Trello transition is involved. A branch already at the current default tip is a no-op and
-is not rebased, validated, pushed, or reported as a successful maintenance update.
+rebase. When the worktree is new, its effective state changes, or setup has not completed for that state, the configured
+`repository.setupCommand` runs before `repository.validationCommand`. Successful setup and validation state is retained with the
+expected worktree and repository SHAs, so an unchanged prepared worktree does not repeat either command. A deterministic
+validation failure is retained with the same state identity; later reconciliation leaves the card in `Human Review` without
+repeating validation or its attention notification. A changed pull-request head, changed rebase result, recreated worktree, or
+changed command configuration invalidates the record and retries. The existing pull request is retained and the card stays in
+`Human Review`; no OpenCode session, new pull request, replacement, merge, or Trello transition is involved. A branch already at
+the current default tip is a no-op and is not rebased, set up, validated, pushed, or reported as a successful maintenance update.
 
 Eligible long-running maintenance adds a managed section to the existing pull request description, bounded exactly by
 `<!-- agent-orchestrator-status:start -->` and `<!-- agent-orchestrator-status:end -->`. Its supported phases are rebasing onto the
@@ -156,10 +160,11 @@ The conflicted worktree, branch, conflict markers, and Git rebase metadata remai
 clean, removal, recreation, validation, push, pull-request mutation, or merge. The project worker starts dedicated remediation in
 that existing worktree using the configured remediation-stage OpenCode model and variant. The prompt is limited to the original
 card intent and active conflicts, and explicitly covers repeated conflict stops, staging resolutions, rebase continuation, and
-validation. After the rebase is safely complete, the worker verifies the Git state, reruns configured validation, confirms that the
-authoritative remote task SHA is still the handoff SHA, and performs one exact force-with-lease update. It removes the handoff only
-after that update succeeds. The existing pull request is retained, the card stays in Human Review, and normal reconciliation can
-observe the updated branch. It must not remove the record merely to make polling proceed.
+validation. After the rebase is safely complete, the worker verifies the Git state, runs setup when the retained preparation state
+does not match, reruns configured validation, confirms that the authoritative remote task SHA is still the handoff SHA, and performs
+one exact force-with-lease update. It removes the handoff only after that update succeeds. The existing pull request is retained, the
+card stays in Human Review, and normal reconciliation can observe the updated branch. It must not remove the record merely to make
+polling proceed.
 
 An OpenCode failure, timeout, permission denial, unresolved rebase, validation failure, malformed or missing remote SHA, concurrent
 remote change, or lease rejection leaves the handoff, worktree, branch, and pull request available for diagnosis. The failure is

@@ -516,6 +516,49 @@ describe("remediatePreparedConflict", () => {
     ).not.toBeNull();
   });
 
+  it("replays an unchanged validation failure so the worker can exhaust retries", async () => {
+    const scenario = createScenario({ validationExitCode: 1 });
+
+    await expect(
+      remediatePreparedConflict({
+        ...scenario,
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("repository validation");
+
+    await expect(
+      remediatePreparedConflict({
+        ...scenario,
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("repository validation");
+
+    expect(scenario.runCommand).toHaveBeenCalledOnce();
+  });
+
+  it("does not reuse a validation failure after the authoritative remote head changes", async () => {
+    const scenario = createScenario({ validationExitCode: 1 });
+    vi.mocked(scenario.git.getRemoteBranchSha)
+      .mockResolvedValueOnce(taskSha)
+      .mockResolvedValueOnce(changedSha);
+
+    await expect(
+      remediatePreparedConflict({
+        ...scenario,
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("repository validation");
+
+    await expect(
+      remediatePreparedConflict({
+        ...scenario,
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("authoritative remote SHA verification");
+
+    expect(scenario.runCommand).toHaveBeenCalledOnce();
+  });
+
   it("retains prepared-conflict validation output and exit status without publishing", async () => {
     const validationExitCode = 17;
     const scenario = createScenario({ validationExitCode });
