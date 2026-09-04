@@ -56,6 +56,7 @@ import {
   MAX_TRELLO_RECONCILIATION_ATTEMPTS,
   RetryableTrelloReconciliationError,
 } from "./trello-reconciliation-error.js";
+import { getRetryBackoffDelayMilliseconds } from "./retry-backoff.js";
 
 function sleep(milliseconds: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -451,7 +452,7 @@ async function runProjectWorker(
         );
 
         if (attempt < MAX_GITHUB_RECONCILIATION_ATTEMPTS) {
-          await sleep(pollIntervalMilliseconds, signal);
+          await sleep(getRetryBackoffDelayMilliseconds(attempt), signal);
           continue;
         }
 
@@ -495,7 +496,7 @@ async function runProjectWorker(
         );
 
         if (attempt < MAX_TRELLO_RECONCILIATION_ATTEMPTS) {
-          await sleep(pollIntervalMilliseconds, signal);
+          await sleep(getRetryBackoffDelayMilliseconds(attempt), signal);
           continue;
         }
 

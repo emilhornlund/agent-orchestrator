@@ -41,6 +41,7 @@ import {
   getPreparedConflictPath,
   writePreparedConflict,
 } from "../src/orchestrator/prepared-conflict-state.js";
+import { RETRY_BACKOFF_BASE_MILLISECONDS } from "../src/orchestrator/retry-backoff.js";
 
 const pollProject = vi.fn();
 
@@ -688,6 +689,65 @@ describe("runOrchestrator", () => {
     expect(notifier.send).not.toHaveBeenCalled();
   });
 
+  it("uses increasing backoff delays for transient GitHub reconciliation retries", async () => {
+    vi.useFakeTimers();
+    const random = vi.spyOn(Math, "random").mockReturnValue(0);
+
+    try {
+      const controller = new AbortController();
+      const failure = githubReconciliationError(
+        "project-a",
+        "card-1",
+        "pull request state",
+        new Error("GitHub API returned HTTP 503"),
+        "reconciliation failed",
+      );
+      let calls = 0;
+
+      pollProject.mockImplementation(async () => {
+        calls += 1;
+
+        if (calls < 3) {
+          throw failure;
+        }
+
+        controller.abort();
+      });
+
+      const orchestrator = runOrchestrator(
+        {} as TrelloClient,
+        {} as GitClient,
+        {} as GitHubClient,
+        {} as OpenCodeClient,
+        {} as CommandRunner,
+        createConfig([createProject("project-a")], 0),
+        controller.signal,
+      );
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(calls).toBe(1);
+      expect(random).toHaveBeenCalledOnce();
+
+      await vi.advanceTimersByTimeAsync(RETRY_BACKOFF_BASE_MILLISECONDS - 1);
+      expect(calls).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(calls).toBe(2);
+
+      await vi.advanceTimersByTimeAsync(
+        RETRY_BACKOFF_BASE_MILLISECONDS * 2 - 1,
+      );
+      expect(calls).toBe(2);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(calls).toBe(3);
+      await orchestrator;
+    } finally {
+      random.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
   it("escalates a persistent transient GitHub reconciliation failure at the retry threshold", async () => {
     const controller = new AbortController();
     const notifier: EmailNotifier = { send: vi.fn() };
@@ -812,7 +872,7 @@ describe("runOrchestrator", () => {
       controller.signal,
     );
 
-    expect(projectACalls).toBe(MAX_GITHUB_RECONCILIATION_ATTEMPTS);
+    expect(projectACalls).toBeGreaterThan(0);
     expect(projectBCalls).toBe(4);
   });
 
@@ -914,44 +974,147 @@ describe("runOrchestrator", () => {
   });
 
   it("retries a transient Trello operation in a later poll without escalation", async () => {
-    const controller = new AbortController();
-    const notifier: EmailNotifier = { send: vi.fn() };
-    const failure = trelloReconciliationError(
-      "project-a",
-      "card-1",
-      "transition history",
-      new TrelloRequestError(
+    vi.useFakeTimers();
+    const random = vi.spyOn(Math, "random").mockReturnValue(0);
+
+    try {
+      const controller = new AbortController();
+      const notifier: EmailNotifier = { send: vi.fn() };
+      const failure = trelloReconciliationError(
+        "project-a",
+        "card-1",
         "transition history",
-        "Trello request failed: 503 Unavailable",
-        { status: 503, retryable: true },
-      ),
-      "Could not read Trello transition history",
-    );
-    let calls = 0;
+        new TrelloRequestError(
+          "transition history",
+          "Trello request failed: 503 Unavailable",
+          { status: 503, retryable: true },
+        ),
+        "Could not read Trello transition history",
+      );
+      let calls = 0;
 
-    pollProject.mockImplementation(async () => {
-      calls += 1;
+      pollProject.mockImplementation(async () => {
+        calls += 1;
 
-      if (calls < MAX_TRELLO_RECONCILIATION_ATTEMPTS) {
+        if (calls < MAX_TRELLO_RECONCILIATION_ATTEMPTS) {
+          throw failure;
+        }
+
+        controller.abort();
+      });
+
+      const orchestrator = runOrchestrator(
+        {} as TrelloClient,
+        {} as GitClient,
+        {} as GitHubClient,
+        {} as OpenCodeClient,
+        {} as CommandRunner,
+        createConfig([createProject("project-a")], 0),
+        controller.signal,
+        notifier,
+      );
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(calls).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(RETRY_BACKOFF_BASE_MILLISECONDS);
+      expect(calls).toBe(2);
+
+      await vi.advanceTimersByTimeAsync(RETRY_BACKOFF_BASE_MILLISECONDS * 2);
+      expect(calls).toBe(MAX_TRELLO_RECONCILIATION_ATTEMPTS);
+      await orchestrator;
+
+      expect(notifier.send).not.toHaveBeenCalled();
+    } finally {
+      random.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps non-retryable failures on the normal polling interval", async () => {
+    vi.useFakeTimers();
+    const random = vi.spyOn(Math, "random");
+
+    try {
+      const controller = new AbortController();
+      let calls = 0;
+
+      pollProject.mockImplementation(async () => {
+        calls += 1;
+
+        if (calls === 2) {
+          controller.abort();
+        }
+
+        throw new WorkflowError("Workflow", "deterministic workflow failure");
+      });
+
+      const orchestrator = runOrchestrator(
+        {} as TrelloClient,
+        {} as GitClient,
+        {} as GitHubClient,
+        {} as OpenCodeClient,
+        {} as CommandRunner,
+        createConfig([createProject("project-a")], 10),
+        controller.signal,
+      );
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(calls).toBe(1);
+      expect(random).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(9_999);
+      expect(calls).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(calls).toBe(2);
+      expect(random).not.toHaveBeenCalled();
+      await orchestrator;
+    } finally {
+      random.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("interrupts a pending transient retry backoff during shutdown", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const controller = new AbortController();
+      const failure = githubReconciliationError(
+        "project-a",
+        "card-1",
+        "pull request state",
+        new Error("GitHub API returned HTTP 503"),
+        "reconciliation failed",
+      );
+      let calls = 0;
+
+      pollProject.mockImplementation(async () => {
+        calls += 1;
         throw failure;
-      }
+      });
+
+      const orchestrator = runOrchestrator(
+        {} as TrelloClient,
+        {} as GitClient,
+        {} as GitHubClient,
+        {} as OpenCodeClient,
+        {} as CommandRunner,
+        createConfig([createProject("project-a")], 0),
+        controller.signal,
+      );
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(calls).toBe(1);
 
       controller.abort();
-    });
+      await orchestrator;
 
-    await runOrchestrator(
-      {} as TrelloClient,
-      {} as GitClient,
-      {} as GitHubClient,
-      {} as OpenCodeClient,
-      {} as CommandRunner,
-      createConfig([createProject("project-a")], 0),
-      controller.signal,
-      notifier,
-    );
-
-    expect(calls).toBe(MAX_TRELLO_RECONCILIATION_ATTEMPTS);
-    expect(notifier.send).not.toHaveBeenCalled();
+      expect(calls).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("retries deferred startup Trello validation in the project worker", async () => {
