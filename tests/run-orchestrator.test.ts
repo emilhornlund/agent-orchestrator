@@ -345,6 +345,96 @@ describe("runOrchestrator", () => {
     expect(trello.moveCard).not.toHaveBeenCalled();
   });
 
+  it("does not repeat an Attention Required alert for the same unresolved failure", async () => {
+    const controller = new AbortController();
+    const notifier: EmailNotifier = { send: vi.fn() };
+    let calls = 0;
+
+    pollProject.mockImplementation(async () => {
+      calls += 1;
+      const failure = new WorkflowError(
+        "Workflow",
+        "Multiple active cards are in Human Review: card-1, card-2",
+      );
+
+      annotateFailure(failure, {
+        projectId: "project-a",
+        cardIds: ["card-1", "card-2"],
+      });
+
+      if (calls === 2) {
+        controller.abort();
+      }
+
+      throw failure;
+    });
+
+    await runOrchestrator(
+      {} as TrelloClient,
+      {} as GitClient,
+      {} as GitHubClient,
+      {} as OpenCodeClient,
+      {} as CommandRunner,
+      createConfig([createProject("project-a")], 0),
+      controller.signal,
+      notifier,
+    );
+
+    expect(calls).toBe(2);
+    expect(notifier.send).toHaveBeenCalledOnce();
+  });
+
+  it("clears an unresolved failure alert after success so a later failure can notify", async () => {
+    const controller = new AbortController();
+    const notifier: EmailNotifier = { send: vi.fn() };
+    let calls = 0;
+
+    pollProject.mockImplementation(async () => {
+      calls += 1;
+
+      if (calls === 2) {
+        return;
+      }
+
+      const failure = new WorkflowError(
+        "Workflow",
+        calls === 1
+          ? "Multiple active cards are in Human Review: card-1, card-2"
+          : "Multiple active cards are in Human Review: card-3, card-4",
+      );
+
+      annotateFailure(failure, {
+        projectId: "project-a",
+        cardIds: calls === 1 ? ["card-1", "card-2"] : ["card-3", "card-4"],
+      });
+
+      if (calls === 3) {
+        controller.abort();
+      }
+      throw failure;
+    });
+
+    await runOrchestrator(
+      {} as TrelloClient,
+      {} as GitClient,
+      {} as GitHubClient,
+      {} as OpenCodeClient,
+      {} as CommandRunner,
+      createConfig([createProject("project-a")], 0),
+      controller.signal,
+      notifier,
+    );
+
+    expect(calls).toBe(3);
+    expect(notifier.send).toHaveBeenCalledTimes(2);
+    expect(notifier.send).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        text: expect.stringContaining("Affected card IDs: card-3, card-4"),
+      }),
+    );
+  });
+
   it("retries a transient GitHub reconciliation failure and recovers without escalation", async () => {
     const controller = new AbortController();
     const notifier: EmailNotifier = { send: vi.fn() };

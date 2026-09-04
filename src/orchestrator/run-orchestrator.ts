@@ -93,6 +93,22 @@ function isShutdownCancellation(error: unknown, signal: AbortSignal): boolean {
   return false;
 }
 
+function failureNotificationIdentity(
+  projectId: string,
+  category: string,
+  reason: string,
+  cardIds: string[],
+  handlingOutcome: string | undefined,
+): string {
+  return JSON.stringify({
+    projectId,
+    cardIds: [...new Set(cardIds)].sort(),
+    category,
+    reason,
+    handlingOutcome: handlingOutcome ?? null,
+  });
+}
+
 async function runProjectWorker(
   trello: TrelloClient,
   git: GitClient,
@@ -109,6 +125,7 @@ async function runProjectWorker(
   const trelloTransientAttempts = new Map<string, number>();
   const preparedConflictAttempts = new Map<string, number>();
   const blockedPreparedConflicts = new Set<string>();
+  let suppressedFailureIdentity: string | undefined;
   let pendingTrelloValidation = deferredTrelloValidation;
 
   while (!signal.aborted) {
@@ -145,6 +162,7 @@ async function runProjectWorker(
       githubReconciliationAttempts.clear();
       trelloTransientAttempts.clear();
       preparedConflictAttempts.clear();
+      suppressedFailureIdentity = undefined;
     } catch (error) {
       if (
         isShutdownCancellation(error, signal) ||
@@ -282,8 +300,23 @@ async function runProjectWorker(
         failureContext?.cardId !== undefined &&
         failureContext.cardFailureHandled === true;
 
-      if (!cardFailureHandled) {
-        const failureDescription = describeFailure(error);
+      const failureDescription = describeFailure(error);
+      const currentFailureIdentity = failureNotificationIdentity(
+        project.id,
+        failureDescription.category,
+        failureDescription.reason,
+        cardIds,
+        handlingOutcome,
+      );
+
+      if (cardFailureHandled) {
+        suppressedFailureIdentity = undefined;
+      } else if (currentFailureIdentity === suppressedFailureIdentity) {
+        projectLog.info(
+          "Attention-required notification suppressed for unchanged unresolved failure",
+        );
+      } else {
+        suppressedFailureIdentity = currentFailureIdentity;
 
         await notifyAttentionRequired(
           emailNotifier,
