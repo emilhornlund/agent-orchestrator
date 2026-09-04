@@ -195,10 +195,24 @@ recreates, or automatically resolves the conflicted worktree or rebase.
 
 A valid prepared-conflict handoff is an active remediation state. Reconciliation is idempotent while it exists and does not start
 another rebase. The project worker does not process Working or Ready cards, ordinary review maintenance, publication, or cleanup
-until dedicated remediation has inspected the worktree. Remediation must verify the handoff, resolve and complete the rebase,
-then remove the handoff only after the task is ready for the documented next transition. A malformed or incomplete handoff, or a
-rebase error without an active conflict and conflicted paths, uses normal failure diagnostics and never reports
-`prepared-conflict`.
+until dedicated remediation has inspected the worktree. Remediation revalidates the handoff and isolated worktree, starts one
+OpenCode session using the configured `opencode.remediation` model and variant, and supplies the card title and description, task
+branch, updated base and rebase target, conflicted paths, active-rebase status, and configured validation command. OpenCode is
+instructed to resolve only the active conflicts, preserve compatible task and upstream changes, stage each resolution, and continue
+every conflict stop until the rebase completes. A malformed or incomplete handoff, or a rebase error without an active conflict and
+conflicted paths, uses normal failure diagnostics and never reports `prepared-conflict`.
+
+After the session, orchestration requires no active rebase, no unmerged paths, a valid worktree on `agent/<card-id>`, and a clean
+publication state. It runs the configured validation command again when present, resolves the authoritative task-branch SHA again,
+and requires it to equal the SHA captured in the handoff. Only then does it update the existing branch with the exact
+force-with-lease helper. A successful lease update clears the handoff last; the existing pull request is retained and the card
+remains in `Human Review` for normal reconciliation. No replacement pull request, merge, unrelated Trello transition, or worktree
+cleanup is performed.
+
+An unsuccessful, timed-out, permission-denied, incomplete, or lease-rejected remediation preserves the handoff and worktree and
+uses the normal failure diagnostic and `Attention Required` path. The worker permits only the existing bounded remediation retry
+count; after exhaustion it blocks the project until the unresolved handoff is corrected and the worker is restarted. Other cards in
+that project cannot start while this state remains active.
 
 Trello and GitHub operations used by discovery, reconciliation, transition-history checks, card moves, content and label
 updates, comments, and attachment context are retryable when the service returns HTTP 500, 502, 503, or 504, a rate limit, a

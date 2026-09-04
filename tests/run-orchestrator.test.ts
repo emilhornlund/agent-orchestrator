@@ -31,6 +31,10 @@ import {
   trelloReconciliationError,
 } from "../src/orchestrator/trello-reconciliation-error.js";
 import { WorkflowError } from "../src/orchestrator/workflow-error.js";
+import {
+  MAX_PREPARED_CONFLICT_REMEDIATION_ATTEMPTS,
+  PreparedConflictRemediationError,
+} from "../src/orchestrator/remediate-prepared-conflict.js";
 
 const pollProject = vi.fn();
 
@@ -246,6 +250,40 @@ describe("runOrchestrator", () => {
 
     expect(projectACalls).toHaveLength(1);
     expect(projectBCalls).toHaveLength(1);
+  });
+
+  it("bounds repeated prepared-conflict remediation attempts and then blocks the project", async () => {
+    const controller = new AbortController();
+    const notifier: EmailNotifier = { send: vi.fn() };
+    let calls = 0;
+    const failure = new PreparedConflictRemediationError(
+      "OpenCode",
+      "conflict remediation did not complete",
+    );
+
+    pollProject.mockImplementation(async () => {
+      calls += 1;
+
+      if (calls === MAX_PREPARED_CONFLICT_REMEDIATION_ATTEMPTS) {
+        controller.abort();
+      }
+
+      throw failure;
+    });
+
+    await runOrchestrator(
+      {} as TrelloClient,
+      {} as GitClient,
+      {} as GitHubClient,
+      {} as OpenCodeClient,
+      {} as CommandRunner,
+      createConfig([createProject("project-a")], 0),
+      controller.signal,
+      notifier,
+    );
+
+    expect(calls).toBe(MAX_PREPARED_CONFLICT_REMEDIATION_ATTEMPTS);
+    expect(notifier.send).toHaveBeenCalledOnce();
   });
 
   it("emails an Attention Required alert for an unreconciled project failure", async () => {

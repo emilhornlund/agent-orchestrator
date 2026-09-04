@@ -41,6 +41,10 @@ import {
   RetryableGitHubReconciliationError,
 } from "./github-reconciliation-error.js";
 import { pollProject, type PollingProject } from "./poll-project.js";
+import {
+  MAX_PREPARED_CONFLICT_REMEDIATION_ATTEMPTS,
+  PreparedConflictRemediationError,
+} from "./remediate-prepared-conflict.js";
 import { MAX_TRELLO_RECONCILIATION_ATTEMPTS } from "./trello-reconciliation-error.js";
 
 function sleep(milliseconds: number, signal: AbortSignal): Promise<void> {
@@ -103,9 +107,16 @@ async function runProjectWorker(
 ): Promise<void> {
   const githubReconciliationAttempts = new Map<string, number>();
   const trelloTransientAttempts = new Map<string, number>();
+  const preparedConflictAttempts = new Map<string, number>();
+  const blockedPreparedConflicts = new Set<string>();
   let pendingTrelloValidation = deferredTrelloValidation;
 
   while (!signal.aborted) {
+    if (blockedPreparedConflicts.has(project.id)) {
+      await sleep(pollIntervalMilliseconds, signal);
+      continue;
+    }
+
     try {
       if (pendingTrelloValidation !== undefined) {
         await pendingTrelloValidation(trello, project);
@@ -133,6 +144,7 @@ async function runProjectWorker(
 
       githubReconciliationAttempts.clear();
       trelloTransientAttempts.clear();
+      preparedConflictAttempts.clear();
     } catch (error) {
       if (
         isShutdownCancellation(error, signal) ||
@@ -142,6 +154,33 @@ async function runProjectWorker(
       }
 
       const failureContext = getFailureContext(error);
+
+      if (error instanceof PreparedConflictRemediationError) {
+        const cardId = failureContext?.cardId;
+        const attemptKey = `${cardId ?? "project"}:prepared-conflict`;
+        const attempt = (preparedConflictAttempts.get(attemptKey) ?? 0) + 1;
+
+        preparedConflictAttempts.set(attemptKey, attempt);
+
+        const projectLog = logger.child({
+          projectId: project.id,
+          ...(cardId === undefined ? {} : { cardId }),
+        });
+
+        projectLog.warn(
+          `Prepared conflict remediation attempt ${attempt}/${MAX_PREPARED_CONFLICT_REMEDIATION_ATTEMPTS} failed: ${error.message}`,
+        );
+
+        if (attempt < MAX_PREPARED_CONFLICT_REMEDIATION_ATTEMPTS) {
+          await sleep(pollIntervalMilliseconds, signal);
+          continue;
+        }
+
+        blockedPreparedConflicts.add(project.id);
+        projectLog.error(
+          "Prepared conflict remediation retry threshold exhausted; blocking this project until the handoff is resolved and the worker is restarted",
+        );
+      }
 
       if (error instanceof RetryableGitHubReconciliationError) {
         const attemptKey = `${error.cardId}:${error.operation}`;

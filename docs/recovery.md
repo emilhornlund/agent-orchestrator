@@ -122,10 +122,20 @@ SHA is captured with authoritative `ls-remote` before the rebase attempt, so it 
 
 While this record exists, it is the durable active-remediation lock for the project. Reconciliation returns the same state after
 restart, does not start a second rebase, and does not process another Working or Ready card. The card stays in Human Review.
-The conflicted worktree, branch, conflict markers, and Git rebase metadata remain available; no abort, reset, clean, removal,
-recreation, OpenCode session, validation, push, pull-request mutation, or merge is performed by preparation. After the rebase is
-safely complete, the remediation workflow removes the handoff and follows the normal review/publication transition. It must not
-remove the record merely to make polling proceed.
+The conflicted worktree, branch, conflict markers, and Git rebase metadata remain available; preparation performs no abort, reset,
+clean, removal, recreation, validation, push, pull-request mutation, or merge. The project worker starts dedicated remediation in
+that existing worktree using the configured remediation-stage OpenCode model and variant. The prompt is limited to the original
+card intent and active conflicts, and explicitly covers repeated conflict stops, staging resolutions, rebase continuation, and
+validation. After the rebase is safely complete, the worker verifies the Git state, reruns configured validation, confirms that the
+authoritative remote task SHA is still the handoff SHA, and performs one exact force-with-lease update. It removes the handoff only
+after that update succeeds. The existing pull request is retained, the card stays in Human Review, and normal reconciliation can
+observe the updated branch. It must not remove the record merely to make polling proceed.
+
+An OpenCode failure, timeout, permission denial, unresolved rebase, validation failure, malformed or missing remote SHA, concurrent
+remote change, or lease rejection leaves the handoff, worktree, branch, and pull request available for diagnosis. The failure is
+annotated with the existing session log when available and escalated through the normal attention path. Remediation retries are
+bounded; after the worker retry threshold the project remains blocked and does not launch the same session on every poll.
+An operator must correct the state and restart the worker before another remediation attempt is made.
 
 A Git command error alone is not sufficient evidence of a prepared conflict. If active rebase inspection fails, the rebase is
 active without conflicted paths, the handoff cannot be persisted, or remote/PR/worktree setup fails first, normal failure and
