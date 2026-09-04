@@ -45,6 +45,7 @@ export interface ActiveReviewCard {
   active: true;
   maintenanceState: PullRequestMaintenanceState;
   preparedConflict?: PreparedConflictHandoff;
+  pullRequestUrl?: string;
 }
 
 interface ReviewCardState {
@@ -198,6 +199,7 @@ export async function reconcileReviewCards(
       active: true,
       maintenanceState: "prepared-conflict",
       preparedConflict,
+      pullRequestUrl: preparedConflictState.pullRequest.url,
     };
   }
 
@@ -305,6 +307,7 @@ export async function reconcileReviewCards(
       active: true,
       maintenanceState: "prepared-conflict",
       preparedConflict: state.preparedConflict,
+      pullRequestUrl: state.pullRequest.url,
     };
   }
 
@@ -348,6 +351,7 @@ export async function reconcileReviewCards(
         active: true,
         maintenanceState: "prepared-conflict",
         preparedConflict,
+        pullRequestUrl: state.pullRequest.url,
       };
     }
   }

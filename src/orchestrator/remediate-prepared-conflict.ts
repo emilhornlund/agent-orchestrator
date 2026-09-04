@@ -4,6 +4,9 @@ import type { ProjectConfig } from "../config/config.js";
 import { getExistingPreparedConflictWorktree } from "../git/prepare-worktree.js";
 import type { GitClient } from "../git/git-client.js";
 import { getSessionLogPath } from "../logging/session-log.js";
+import type { GitHubClient } from "../github/github-client.js";
+import type { ManagedPullRequestStatus } from "../github/pull-request-status.js";
+import { logger } from "../logging/logger.js";
 import { buildConflictRemediationPrompt } from "../opencode/build-conflict-remediation-prompt.js";
 import {
   OpenCodeRunAbortedError,
@@ -17,6 +20,10 @@ import {
 import type { TrelloCard } from "../trello/trello-client.js";
 
 import { annotateCardFailure } from "./failure-diagnostic.js";
+import {
+  PullRequestStatusPresentationError,
+  updateMaintenanceStatus,
+} from "./maintenance-status.js";
 import {
   clearPreparedConflict,
   readPreparedConflict,
@@ -42,12 +49,14 @@ export class PreparedConflictRemediationError extends WorkflowError {
 
 export interface RemediatePreparedConflictOptions {
   git: GitClient;
+  github?: GitHubClient;
   opencode: OpenCodeClient;
   commands: CommandRunner;
   project: ProjectConfig;
   card: TrelloCard;
   handoff: PreparedConflictHandoff;
   signal: AbortSignal;
+  pullRequestUrl?: string;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -108,8 +117,40 @@ export async function remediatePreparedConflict(
     options.card.id,
   );
   const sessionLogPath = getSessionLogPath(options.project.id, options.card.id);
+  const cardLog = logger.child({
+    projectId: options.project.id,
+    cardId: options.card.id,
+  });
+  let statusStarted = false;
+
+  const setStatus = async (
+    status: ManagedPullRequestStatus | null,
+    phase: string,
+  ): Promise<void> => {
+    if (options.pullRequestUrl === undefined) {
+      return;
+    }
+
+    await updateMaintenanceStatus(
+      options.github,
+      options.project,
+      options.card,
+      options.pullRequestUrl,
+      status,
+      phase,
+      cardLog,
+    );
+
+    if (status !== null) {
+      statusStarted = true;
+    }
+  };
 
   try {
+    await setStatus(
+      "resolving-conflicts",
+      "starting prepared conflict remediation",
+    );
     const persistedHandoff = readPreparedConflict(
       options.project,
       options.card.id,
@@ -283,6 +324,10 @@ export async function remediatePreparedConflict(
     const validationCommand = options.project.repository.validationCommand;
 
     if (validationCommand !== undefined) {
+      await setStatus(
+        "validating",
+        "repository validation after conflict remediation",
+      );
       let validation;
 
       try {
@@ -341,6 +386,11 @@ export async function remediatePreparedConflict(
 
     throwIfSignalAborted(options.signal);
 
+    await setStatus(
+      "updating-remote",
+      "updating remote task branch after conflict remediation",
+    );
+
     await options.git.pushWithLease(
       worktree.path,
       "origin",
@@ -349,9 +399,26 @@ export async function remediatePreparedConflict(
       options.project,
     );
 
+    await setStatus(null, "successful prepared conflict remediation");
     clearPreparedConflict(options.project, options.card.id);
   } catch (error) {
     throwIfAborted(error);
+
+    if (
+      statusStarted &&
+      !(error instanceof PullRequestStatusPresentationError) &&
+      !options.signal.aborted
+    ) {
+      try {
+        await setStatus("failed", "failed prepared conflict remediation");
+      } catch {
+        // Keep the remediation failure primary when the failure presentation also fails.
+      }
+    }
+
+    if (error instanceof PullRequestStatusPresentationError) {
+      throw error;
+    }
 
     if (error instanceof PreparedConflictRemediationError) {
       throw error;

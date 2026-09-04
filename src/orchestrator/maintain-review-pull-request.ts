@@ -7,12 +7,17 @@ import type {
   PullRequestState,
 } from "../github/github-client.js";
 import { getPullRequestHeadRepositoryIdentity } from "../github/github-client.js";
+import type { ManagedPullRequestStatus } from "../github/pull-request-status.js";
 import { logger, type Logger } from "../logging/logger.js";
 import {
   CommandRunAbortedError,
   type CommandRunner,
 } from "../process/command-runner.js";
 import { annotateCardFailure } from "./failure-diagnostic.js";
+import {
+  PullRequestStatusPresentationError,
+  updateMaintenanceStatus,
+} from "./maintenance-status.js";
 import {
   readPreparedConflict,
   writePreparedConflict,
@@ -51,7 +56,7 @@ function maintenanceError(
 ): WorkflowError {
   const workflowError = new WorkflowError(
     "Git/GitHub",
-    `Could not maintain Human Review pull request for card "${card.name}" during ${operation}: ${getErrorMessage(error)}. The existing pull request, card, task branch, and worktree were preserved; normal reconciliation can retry it.`,
+    `Could not maintain Human Review pull request for card "${card.name}" during ${operation}: ${getErrorMessage(error)}. No cleanup or unrelated workflow transition was performed; the existing pull request and Git state remain available for diagnosis and retry.`,
     { cause: error },
   );
 
@@ -156,11 +161,60 @@ async function prepareMaintenanceWorktree(
 export async function maintainReviewPullRequest(
   options: ReviewMaintenanceOptions,
 ): Promise<ReviewMaintenanceResult> {
-  const branch = `agent/${options.card.id}`;
-  const defaultBranchRef = `origin/${options.project.repository.defaultBranch}`;
+  let statusStarted = false;
   const cardLog =
     options.cardLog ??
     logger.child({ projectId: options.project.id, cardId: options.card.id });
+
+  const setStatus = async (
+    status: ManagedPullRequestStatus | null,
+    phase: string,
+  ): Promise<void> => {
+    await updateMaintenanceStatus(
+      options.github,
+      options.project,
+      options.card,
+      options.pullRequest.url,
+      status,
+      phase,
+      cardLog,
+    );
+
+    if (status !== null) {
+      statusStarted = true;
+    }
+  };
+
+  try {
+    return await maintainReviewPullRequestCore(options, setStatus, cardLog);
+  } catch (error) {
+    if (
+      statusStarted &&
+      !(error instanceof PullRequestStatusPresentationError) &&
+      !(error instanceof CommandRunAbortedError) &&
+      !options.signal?.aborted
+    ) {
+      try {
+        await setStatus("failed", "failed maintenance");
+      } catch {
+        // The presentation error is logged and the original Git failure remains primary.
+      }
+    }
+
+    throw error;
+  }
+}
+
+async function maintainReviewPullRequestCore(
+  options: ReviewMaintenanceOptions,
+  setStatus: (
+    status: ManagedPullRequestStatus | null,
+    phase: string,
+  ) => Promise<void>,
+  cardLog: Logger,
+): Promise<ReviewMaintenanceResult> {
+  const branch = `agent/${options.card.id}`;
+  const defaultBranchRef = `origin/${options.project.repository.defaultBranch}`;
 
   let existingConflict: PreparedConflictHandoff | null;
 
@@ -238,6 +292,8 @@ export async function maintainReviewPullRequest(
     return "already-current";
   }
 
+  await setStatus("rebasing", "starting branch maintenance");
+
   const worktree = await prepareMaintenanceWorktree(options, branch);
 
   if (options.signal?.aborted) {
@@ -248,6 +304,7 @@ export async function maintainReviewPullRequest(
     cardLog.info(
       `Skipping maintenance for ${branch}: pull-request ownership or review evidence changed before Git maintenance`,
     );
+    await setStatus(null, "maintenance eligibility changed");
     return "not-eligible";
   }
 
@@ -275,6 +332,7 @@ export async function maintainReviewPullRequest(
 
   try {
     if (await options.git.isAncestor(worktree.path, defaultBranchRef, "HEAD")) {
+      await setStatus(null, "already-current branch maintenance");
       return "already-current";
     }
   } catch (error) {
@@ -345,6 +403,7 @@ export async function maintainReviewPullRequest(
         cardLog.event(
           `Prepared ${branch} for dedicated conflict remediation; active rebase and worktree were preserved`,
         );
+        await setStatus("resolving-conflicts", "prepared conflict handoff");
         return "prepared-conflict";
       }
     }
@@ -373,6 +432,7 @@ export async function maintainReviewPullRequest(
   const validationCommand = options.project.repository.validationCommand;
 
   if (validationCommand !== undefined) {
+    await setStatus("validating", "repository validation");
     let validationResult;
 
     try {
@@ -408,6 +468,8 @@ export async function maintainReviewPullRequest(
     }
   }
 
+  await setStatus("updating-remote", "updating remote task branch");
+
   try {
     await options.git.pushWithLease(
       worktree.path,
@@ -424,6 +486,8 @@ export async function maintainReviewPullRequest(
       error,
     );
   }
+
+  await setStatus(null, "successful branch maintenance");
 
   cardLog.event(
     `Maintained existing pull request ${options.pullRequest.url}: rebased ${branch} onto ${defaultBranchRef} and updated it to ${rebasedSha} with force-with-lease`,

@@ -293,12 +293,16 @@ export async function pollProject(
 
       await remediatePreparedConflict({
         git,
+        github,
         opencode,
         commands,
         project,
         card: reviewChangeRequest.card,
         handoff: reviewChangeRequest.preparedConflict,
         signal,
+        ...(reviewChangeRequest.pullRequestUrl === undefined
+          ? {}
+          : { pullRequestUrl: reviewChangeRequest.pullRequestUrl }),
       });
     }
 

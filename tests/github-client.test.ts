@@ -13,6 +13,10 @@ import {
   isRetryableGitHubError,
   type RunGitHubCommand,
 } from "../src/github/github-client.js";
+import {
+  AGENT_ORCHESTRATOR_STATUS_END,
+  AGENT_ORCHESTRATOR_STATUS_START,
+} from "../src/github/pull-request-status.js";
 
 interface FakeChild extends EventEmitter {
   stdout: EventEmitter;
@@ -110,6 +114,71 @@ describe("GitHubClient", () => {
     expect(result).toEqual({
       url: "https://github.com/example/repository/pull/123",
     });
+  });
+
+  it("reads the latest pull request body before updating its managed status", async () => {
+    const runGitHubCommand = vi
+      .fn<RunGitHubCommand>()
+      .mockResolvedValueOnce(JSON.stringify({ body: "Human description" }))
+      .mockResolvedValueOnce("");
+    const github = new GitHubClient(runGitHubCommand);
+
+    await expect(
+      github.updatePullRequestDescriptionStatus({
+        cwd: "/tmp/repository",
+        repository: "example/repository",
+        pullRequestUrl: "https://github.com/example/repository/pull/123",
+        status: "validating",
+      }),
+    ).resolves.toBe(true);
+
+    expect(runGitHubCommand).toHaveBeenNthCalledWith(1, "/tmp/repository", [
+      "pr",
+      "view",
+      "https://github.com/example/repository/pull/123",
+      "--repo",
+      "example/repository",
+      "--json",
+      "body",
+    ]);
+    expect(runGitHubCommand).toHaveBeenNthCalledWith(2, "/tmp/repository", [
+      "pr",
+      "edit",
+      "https://github.com/example/repository/pull/123",
+      "--repo",
+      "example/repository",
+      "--body",
+      [
+        "Human description",
+        "",
+        AGENT_ORCHESTRATOR_STATUS_START,
+        "Agent Orchestrator status: running repository validation before updating the task branch.",
+        AGENT_ORCHESTRATOR_STATUS_END,
+      ].join("\n"),
+    ]);
+  });
+
+  it("avoids writing an identical managed status", async () => {
+    const body = [
+      AGENT_ORCHESTRATOR_STATUS_START,
+      "Agent Orchestrator status: updating the remote task branch.",
+      AGENT_ORCHESTRATOR_STATUS_END,
+    ].join("\n");
+    const runGitHubCommand = vi
+      .fn<RunGitHubCommand>()
+      .mockResolvedValue(JSON.stringify({ body }));
+    const github = new GitHubClient(runGitHubCommand);
+
+    await expect(
+      github.updatePullRequestDescriptionStatus({
+        cwd: "/tmp/repository",
+        repository: "example/repository",
+        pullRequestUrl: "https://github.com/example/repository/pull/123",
+        status: "updating-remote",
+      }),
+    ).resolves.toBe(false);
+
+    expect(runGitHubCommand).toHaveBeenCalledTimes(1);
   });
 
   it("merges a pull request through the injected command runner", async () => {

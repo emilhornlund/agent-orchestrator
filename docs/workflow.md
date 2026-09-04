@@ -186,6 +186,20 @@ transition is performed. After a successful update, reconciliation exposes `up-t
 branch is already current, maintenance is a no-op: no worktree preparation, rebase, validation, push, pull-request operation,
 OpenCode invocation, or successful maintenance result occurs.
 
+When eligible long-running maintenance starts, the existing pull request description receives one hidden managed status section:
+`<!-- agent-orchestrator-status:start -->` through `<!-- agent-orchestrator-status:end -->`. The supported statuses are `rebasing`
+(onto the latest configured default branch), `resolving-conflicts`, `validating`, `updating-remote`, and `failed` (requiring human
+attention). A failed automatic maintenance attempt replaces the section with the `failed` message; it
+never presents that attempt as successful. Successful maintenance removes the section and both markers.
+
+Only the content between this exact marker pair belongs to the orchestrator. All other description content, including human-written
+text and content from other tools, is preserved. Each reconciliation reads the current description immediately before a possible
+write, and an identical status is not written again. Unmatched, reversed, or duplicate markers are malformed: the orchestrator
+does not guess ownership or rewrite the description, and reports the pull request and card through the normal attention path.
+
+Description reads and writes are presentation operations. A presentation failure is logged with the pull request and card and uses
+the normal attention path without resetting, aborting, cleaning, overwriting, or otherwise changing Git maintenance state.
+
 A lease rejection, missing or invalid remote SHA, fetch or validation failure, or non-conflict rebase failure leaves the pull
 request, card, task branch, and worktree unchanged for diagnosis and later reconciliation. When Git confirms an active conflicted
 rebase and reports conflicted paths, reconciliation writes a validated handoff at
