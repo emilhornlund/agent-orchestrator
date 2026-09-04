@@ -151,6 +151,19 @@ describe("refinement result", () => {
     );
   });
 
+  it("rejects a result missing its task type", () => {
+    const worktreePath = createWorktree();
+
+    writeResult(worktreePath, {
+      title: "Task",
+      description: "Description",
+    });
+
+    expect(() => readRefinementResult(worktreePath)).toThrow(
+      "Invalid refinement result",
+    );
+  });
+
   it("rejects blank titles", () => {
     const worktreePath = createWorktree();
 

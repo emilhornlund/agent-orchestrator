@@ -86,6 +86,8 @@ When a refinement card is claimed:
 2. The orchestrator reconciles the current Trello attachments into the card context immediately before the refinement
    session. OpenCode may inspect repository code, tests, documentation, and architecture. It must not modify repository
    implementation files; its only permitted write is the dedicated structured refinement result artifact.
+   The artifact must be a strict JSON object containing only non-blank `title` and `description` strings and a `type` set to
+   exactly `feature`, `improvement`, or `bug`.
 3. The orchestrator validates the structured result and rejects unauthorized repository changes.
 4. It updates the Trello title and description, removes conflicting implementation labels, applies exactly one of
    `Feature`, `Improvement`, or `Bug`, removes `Refinement`, and moves the card to the top of `Backlog`.

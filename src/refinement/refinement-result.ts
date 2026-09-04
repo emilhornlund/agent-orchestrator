@@ -6,16 +6,47 @@ import { z } from "zod";
 export const refinementResultRelativePath =
   ".agent-orchestrator/refinement-result.json";
 
-const refinementResultSchema = z.strictObject({
+export const refinementResultContract = {
+  title: {
+    description: "a required non-blank string",
+  },
+  description: {
+    description: "a required non-blank string",
+  },
+  type: {
+    values: ["feature", "improvement", "bug"],
+  },
+} as const;
+
+const refinementResultSchemaFields = {
   title: z.string().trim().min(1, "Refinement title must not be blank"),
-  type: z.enum(["feature", "improvement", "bug"]),
   description: z
     .string()
     .trim()
     .min(1, "Refinement description must not be blank"),
-});
+  type: z.enum(refinementResultContract.type.values),
+} satisfies {
+  [field in keyof typeof refinementResultContract]: z.ZodType;
+};
+
+const refinementResultSchema = z.strictObject(refinementResultSchemaFields);
 
 export type RefinementResult = z.infer<typeof refinementResultSchema>;
+
+export function buildRefinementResultContractPromptLines(): string[] {
+  const fields = Object.keys(refinementResultContract);
+  const classifications = refinementResultContract.type.values.join(", ");
+
+  return [
+    "Validate the result object against this complete contract before writing it:",
+    `- ${JSON.stringify("title")} is ${refinementResultContract.title.description}.`,
+    `- ${JSON.stringify("description")} is ${refinementResultContract.description.description}.`,
+    `- ${JSON.stringify("type")} is required and must be exactly one of: ${classifications}.`,
+    `The object must contain exactly these fields: ${fields
+      .map((field) => JSON.stringify(field))
+      .join(", ")}.`,
+  ];
+}
 
 export function getRefinementResultPath(worktreePath: string): string {
   return path.join(worktreePath, refinementResultRelativePath);

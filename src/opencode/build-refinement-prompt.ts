@@ -1,5 +1,9 @@
 import type { TrelloCard } from "../trello/trello-client.js";
-import { refinementResultRelativePath } from "../refinement/refinement-result.js";
+import {
+  buildRefinementResultContractPromptLines,
+  refinementResultContract,
+  refinementResultRelativePath,
+} from "../refinement/refinement-result.js";
 import {
   buildCardAttachmentPromptLines,
   type CardAttachmentPromptContext,
@@ -124,9 +128,7 @@ export function buildRefinementPrompt(
     "Do not invent requirements that are unsupported by either the original task or repository evidence.",
     "",
     "Classify the task as exactly one of:",
-    "- feature",
-    "- improvement",
-    "- bug",
+    ...refinementResultContract.type.values.map((type) => `- ${type}`),
     "",
     "Use the corresponding task template provided below for the refined description.",
     "Replace placeholder text with concrete task-specific content.",
@@ -152,12 +154,14 @@ export function buildRefinementPrompt(
     "",
     "Create any parent directory required for that result file.",
     "",
+    ...buildRefinementResultContractPromptLines(),
+    "",
     "Write exactly one JSON object to that file with this shape:",
     "",
     "{",
     '  "title": "<refined Trello card title>",',
-    '  "type": "feature | improvement | bug",',
-    '  "description": "<complete Markdown task description using the selected template>"',
+    '  "description": "<complete Markdown task description using the selected template>",',
+    `  "type": "${refinementResultContract.type.values.join(" | ")}"`,
     "}",
     "",
     "Do not add additional JSON fields.",
