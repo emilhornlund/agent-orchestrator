@@ -13,6 +13,7 @@ import {
 const execFileAsync = promisify(execFile);
 
 const GIT_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+const TASK_BRANCH_PREFIX = "agent/";
 
 export interface GitIdentity {
   name: string;
@@ -73,6 +74,36 @@ const defaultRunGit: RunGit = async (cwd, args, environment) => {
     });
   }
 };
+
+function assertOwnedTaskBranch(branch: string): void {
+  const cardId =
+    typeof branch === "string" && branch.startsWith(TASK_BRANCH_PREFIX)
+      ? branch.slice(TASK_BRANCH_PREFIX.length)
+      : "";
+
+  if (
+    cardId.length === 0 ||
+    cardId === "." ||
+    cardId === ".." ||
+    cardId.includes("/") ||
+    cardId.includes("\\") ||
+    hasControlCharacter(cardId)
+  ) {
+    throw new Error(
+      `Refusing force-with-lease update for non-owned branch "${branch}"; expected an agent/<card-id> branch`,
+    );
+  }
+}
+
+function hasControlCharacter(value: string): boolean {
+  return Array.from(value).some((character) => {
+    const code = character.codePointAt(0);
+
+    return (
+      code !== undefined && (code <= 0x1f || (code >= 0x7f && code <= 0x9f))
+    );
+  });
+}
 
 export class GitClient {
   constructor(
@@ -185,6 +216,37 @@ export class GitClient {
     await this.runAuthenticated(
       repositoryPath,
       ["push", "--set-upstream", remote, branch],
+      project,
+    );
+  }
+
+  async pushWithLease(
+    repositoryPath: string,
+    remote: string,
+    branch: string,
+    expectedRemoteSha: string,
+    project?: ProjectConfig,
+  ): Promise<void> {
+    assertOwnedTaskBranch(branch);
+
+    if (
+      typeof expectedRemoteSha !== "string" ||
+      expectedRemoteSha.trim().length === 0 ||
+      expectedRemoteSha !== expectedRemoteSha.trim()
+    ) {
+      throw new Error(
+        `Refusing force-with-lease update for ${branch}: an authoritative current remote SHA is required`,
+      );
+    }
+
+    await this.runAuthenticated(
+      repositoryPath,
+      [
+        "push",
+        `--force-with-lease=refs/heads/${branch}:${expectedRemoteSha}`,
+        remote,
+        branch,
+      ],
       project,
     );
   }

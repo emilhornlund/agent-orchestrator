@@ -190,12 +190,25 @@ The publication rules are:
   update.
 - Fetch or rebase failure stops before push, pull-request lookup or creation, and the successful `Human Review` transition.
 - An existing open pull request is reused; a new pull request is created only when needed.
-- The orchestrator never force-pushes. It merges a pull request only for a project with `autoMerge: true`, after that project's
-  normal implementation publication succeeds.
+- Normal publication never force-pushes. It merges a pull request only for a project with `autoMerge: true`, after that
+  project's normal implementation publication succeeds.
 
 The task worktree and branch are preserved after fetch, rebase, publication, or merge failures so conflicts and diagnostics
 can be resolved. A human must review and merge the pull request before the card can reach `Done` when `autoMerge` is disabled.
 An enabled project's successful auto-merge is followed by the same `Done` transition and completion handling.
+
+### Rewriting an owned task branch
+
+The `GitClient.pushWithLease` helper is the only supported operation for publishing a caller-rewritten task branch. It may
+be used only for the exact `agent/<card-id>` branch convention. Before calling it, the caller must resolve the authoritative
+current SHA of that remote branch, for example with `git ls-remote`; a local tracking ref is not sufficient. The supplied SHA
+is placed in an exact `refs/heads/<branch>:<sha>` `--force-with-lease` option.
+
+Git performs the lease check at push time. If the branch changed after the authoritative lookup, or disappeared, the push
+fails and does not overwrite remote state. The helper propagates that failure, so callers must not report a successful update
+or advance workflow state after a rejected lease. It uses the same project-scoped GitHub App askpass credentials or ambient
+Git/PAT authentication as normal Git operations, and credentials are never command arguments. Unrestricted `--force` and
+unscoped `--force-with-lease` pushes remain unavailable.
 
 ## Elapsed workflow time
 
@@ -338,7 +351,7 @@ own project; it does not silently advance another project's workflow.
 Operators should expect the orchestrator to refuse or stop rather than guess. It does not:
 
 - merge pull requests for projects whose `autoMerge` setting is `false`;
-- force-push task branches;
+- use unrestricted force-pushes or unscoped force-with-lease pushes;
 - run agent implementation in the configured source checkout;
 - resume a `Working` card without qualifying transition and worktree or pull-request evidence;
 - process an active `Human Review` card without actionable requested changes on its expected pull request;
