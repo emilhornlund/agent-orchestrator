@@ -12,11 +12,16 @@ import {
   type CommandRunner,
 } from "../process/command-runner.js";
 import { annotateCardFailure } from "./failure-diagnostic.js";
+import {
+  readPreparedConflict,
+  writePreparedConflict,
+  type PreparedConflictHandoff,
+} from "./prepared-conflict-state.js";
 import { WorkflowError } from "./workflow-error.js";
 import type { TrelloCard } from "../trello/trello-client.js";
 
 export type ReviewMaintenanceResult =
-  "not-eligible" | "already-current" | "rebased";
+  "not-eligible" | "already-current" | "rebased" | "prepared-conflict";
 
 export interface ReviewMaintenanceOptions {
   git: GitClient;
@@ -31,6 +36,10 @@ export interface ReviewMaintenanceOptions {
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isGitSha(value: string): boolean {
+  return /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(value);
 }
 
 function maintenanceError(
@@ -145,6 +154,26 @@ export async function maintainReviewPullRequest(
     options.cardLog ??
     logger.child({ projectId: options.project.id, cardId: options.card.id });
 
+  let existingConflict: PreparedConflictHandoff | null;
+
+  try {
+    existingConflict = readPreparedConflict(options.project, options.card.id);
+  } catch (error) {
+    throw maintenanceError(
+      options.project,
+      options.card,
+      "prepared-conflict handoff lookup",
+      error,
+    );
+  }
+
+  if (existingConflict !== null) {
+    cardLog.info(
+      `Prepared conflict remains active for ${existingConflict.taskBranch}; skipping normal maintenance`,
+    );
+    return "prepared-conflict";
+  }
+
   if (options.signal?.aborted) {
     return "not-eligible";
   }
@@ -186,6 +215,15 @@ export async function maintainReviewPullRequest(
       `Skipping maintenance for ${branch}: the authoritative remote task or default branch SHA is missing`,
     );
     return "not-eligible";
+  }
+
+  if (!isGitSha(remoteTaskSha) || !isGitSha(remoteDefaultSha)) {
+    throw maintenanceError(
+      options.project,
+      options.card,
+      "authoritative remote SHA validation",
+      new Error("Git returned a malformed authoritative remote SHA"),
+    );
   }
 
   if (remoteTaskSha === remoteDefaultSha) {
@@ -251,6 +289,58 @@ export async function maintainReviewPullRequest(
       options.project.repository.gitIdentity,
     );
   } catch (error) {
+    let rebaseState;
+
+    try {
+      rebaseState = await options.git.getRebaseState(worktree.path);
+    } catch (stateError) {
+      throw maintenanceError(
+        options.project,
+        options.card,
+        `inspecting rebase state after ${branch} rebase failure`,
+        stateError,
+      );
+    }
+
+    if (rebaseState !== null) {
+      let conflictedPaths: string[];
+
+      try {
+        conflictedPaths = await options.git.getConflictedPaths(worktree.path);
+      } catch (pathsError) {
+        throw maintenanceError(
+          options.project,
+          options.card,
+          `collecting conflicted paths after ${branch} rebase failure`,
+          pathsError,
+        );
+      }
+
+      if (conflictedPaths.length > 0) {
+        try {
+          writePreparedConflict(
+            options.project,
+            options.card.id,
+            remoteTaskSha,
+            conflictedPaths,
+            rebaseState,
+          );
+        } catch (handoffError) {
+          throw maintenanceError(
+            options.project,
+            options.card,
+            "recording prepared conflict handoff",
+            handoffError,
+          );
+        }
+
+        cardLog.event(
+          `Prepared ${branch} for dedicated conflict remediation; active rebase and worktree were preserved`,
+        );
+        return "prepared-conflict";
+      }
+    }
+
     throw maintenanceError(
       options.project,
       options.card,

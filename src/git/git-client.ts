@@ -1,4 +1,6 @@
 import { execFile } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
 import { promisify } from "node:util";
 
 import type { ProjectConfig } from "../config/config.js";
@@ -22,6 +24,16 @@ export interface GitIdentity {
 }
 
 export type GitEnvironment = Record<string, string>;
+
+export interface GitRebaseState {
+  active: true;
+  backend: "merge" | "apply";
+  headName: string;
+  onto: string;
+  originalHead: string;
+  currentStep?: number;
+  totalSteps?: number;
+}
 
 export type RunGit = (
   cwd: string,
@@ -186,6 +198,92 @@ export class GitClient {
       ["rebase", baseRef],
       getGitIdentityEnvironment(identity),
     );
+  }
+
+  async getConflictedPaths(repositoryPath: string): Promise<string[]> {
+    const output = await this.runGit(repositoryPath, [
+      "diff",
+      "--name-only",
+      "--diff-filter=U",
+    ]);
+
+    return [
+      ...new Set(
+        output
+          .split(/\r?\n/)
+          .map((entry) => entry.trim())
+          .filter((entry) => entry.length > 0),
+      ),
+    ];
+  }
+
+  async getRebaseState(repositoryPath: string): Promise<GitRebaseState | null> {
+    const mergePath = await this.runGit(repositoryPath, [
+      "rev-parse",
+      "--git-path",
+      "rebase-merge",
+    ]);
+    const applyPath = await this.runGit(repositoryPath, [
+      "rev-parse",
+      "--git-path",
+      "rebase-apply",
+    ]);
+    const rebaseDirectories = [
+      ["merge", mergePath],
+      ["apply", applyPath],
+    ] as const;
+    const activeRebases = rebaseDirectories.filter(([, candidate]) =>
+      fs.existsSync(path.resolve(repositoryPath, candidate)),
+    );
+
+    if (activeRebases.length === 0) {
+      return null;
+    }
+
+    if (activeRebases.length > 1) {
+      throw new Error("Git has multiple active rebase states");
+    }
+
+    const [backend, directory] = activeRebases[0]!;
+    const readRequired = (name: string): string => {
+      const value = fs
+        .readFileSync(path.resolve(repositoryPath, directory, name), "utf8")
+        .trim();
+
+      if (value.length === 0) {
+        throw new Error(`Git rebase state file ${name} is empty`);
+      }
+
+      return value;
+    };
+    const readStep = (name: string): number | undefined => {
+      const candidate = path.resolve(repositoryPath, directory, name);
+
+      if (!fs.existsSync(candidate)) {
+        return undefined;
+      }
+
+      const value = Number(fs.readFileSync(candidate, "utf8").trim());
+
+      if (!Number.isSafeInteger(value) || value <= 0) {
+        throw new Error(`Git rebase state file ${name} is invalid`);
+      }
+
+      return value;
+    };
+
+    const currentStep = readStep(backend === "merge" ? "msgnum" : "next");
+    const totalSteps = readStep(backend === "merge" ? "end" : "last");
+
+    return {
+      active: true,
+      backend,
+      headName: readRequired("head-name"),
+      onto: readRequired("onto"),
+      originalHead: readRequired("orig-head"),
+      ...(currentStep === undefined ? {} : { currentStep }),
+      ...(totalSteps === undefined ? {} : { totalSteps }),
+    };
   }
 
   async isAncestor(

@@ -1,3 +1,7 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
 import type { ProjectConfig } from "../src/config/config.js";
@@ -212,6 +216,58 @@ describe("GitClient", () => {
       "branch",
       "--show-current",
     ]);
+  });
+
+  it("reads an active merge rebase and conflicted paths", async () => {
+    const temporaryDirectory = fs.mkdtempSync(
+      path.join(os.tmpdir(), "agent-orchestrator-git-rebase-"),
+    );
+    const rebaseDirectory = path.join(temporaryDirectory, "rebase-merge");
+    fs.mkdirSync(rebaseDirectory);
+    fs.writeFileSync(
+      path.join(rebaseDirectory, "head-name"),
+      "refs/heads/agent/card-1\n",
+    );
+    fs.writeFileSync(path.join(rebaseDirectory, "onto"), `${"b".repeat(40)}\n`);
+    fs.writeFileSync(
+      path.join(rebaseDirectory, "orig-head"),
+      `${"a".repeat(40)}\n`,
+    );
+    fs.writeFileSync(path.join(rebaseDirectory, "msgnum"), "2\n");
+    fs.writeFileSync(path.join(rebaseDirectory, "end"), "4\n");
+    const runGit = vi.fn<RunGit>(async (_cwd, args) => {
+      if (args[0] === "rev-parse" && args[2] === "rebase-merge") {
+        return rebaseDirectory;
+      }
+
+      if (args[0] === "rev-parse" && args[2] === "rebase-apply") {
+        return path.join(temporaryDirectory, "rebase-apply");
+      }
+
+      if (args[0] === "diff") {
+        return "src/changed.ts\nsrc/other.ts\n";
+      }
+
+      return "";
+    });
+    const git = new GitClient(runGit);
+
+    try {
+      await expect(git.getRebaseState(temporaryDirectory)).resolves.toEqual({
+        active: true,
+        backend: "merge",
+        headName: "refs/heads/agent/card-1",
+        onto: "b".repeat(40),
+        originalHead: "a".repeat(40),
+        currentStep: 2,
+        totalSteps: 4,
+      });
+      await expect(git.getConflictedPaths(temporaryDirectory)).resolves.toEqual(
+        ["src/changed.ts", "src/other.ts"],
+      );
+    } finally {
+      fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+    }
   });
 
   it("gets files changed from a base ref", async () => {

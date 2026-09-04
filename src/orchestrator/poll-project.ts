@@ -68,6 +68,7 @@ import {
   reconcileReviewCards,
   type ReviewChangeRequest,
 } from "./reconcile-review-cards.js";
+import { readPreparedConflicts } from "./prepared-conflict-state.js";
 import {
   reconcileClaimedCard,
   isImplementationWorkingCard,
@@ -187,31 +188,61 @@ export async function pollProject(
   const reconciliation = await withActiveProjectContext(
     project.id,
     async () => {
-      const workingChangeRequest = await reconcileWorkingCards(
-        trello,
-        git,
-        github,
-        project,
-        emailNotifier,
-        signal,
-      );
+      const preparedConflicts = readPreparedConflicts(project);
+      let workingChangeRequest;
+      let reviewChangeRequest;
 
-      if (signal.aborted) {
-        return undefined;
+      if (preparedConflicts.length > 0) {
+        reviewChangeRequest = await reconcileReviewCards(
+          trello,
+          git,
+          github,
+          project,
+          {
+            moveRequestedChanges: false,
+            maintenance: { commands },
+          },
+          emailNotifier,
+          signal,
+        );
+
+        if (!(
+          reviewChangeRequest !== null &&
+          "active" in reviewChangeRequest &&
+          reviewChangeRequest.maintenanceState === "prepared-conflict"
+        )) {
+          throw new WorkflowError(
+            "Workflow",
+            `Prepared conflict state exists for project "${project.id}" but is not represented by an active Human Review card`,
+          );
+        }
+      } else {
+        workingChangeRequest = await reconcileWorkingCards(
+          trello,
+          git,
+          github,
+          project,
+          emailNotifier,
+          signal,
+        );
+
+        if (signal.aborted) {
+          return undefined;
+        }
+
+        reviewChangeRequest = await reconcileReviewCards(
+          trello,
+          git,
+          github,
+          project,
+          {
+            moveRequestedChanges: workingChangeRequest === null,
+            maintenance: { commands },
+          },
+          emailNotifier,
+          signal,
+        );
       }
-
-      const reviewChangeRequest = await reconcileReviewCards(
-        trello,
-        git,
-        github,
-        project,
-        {
-          moveRequestedChanges: workingChangeRequest === null,
-          maintenance: { commands },
-        },
-        emailNotifier,
-        signal,
-      );
 
       if (signal.aborted) {
         return undefined;

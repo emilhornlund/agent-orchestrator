@@ -171,9 +171,9 @@ already committed work skips all OpenCode stages, including attachment-dependent
 
 For every owned open pull request on the expected `agent/<trello-card-id>` branch, Human Review reconciliation records a
 maintenance state: `up-to-date` when the configured default branch is not ahead and GitHub reports no conflict, `behind` when
-the default branch has advanced without a conflict, or `conflicted` when GitHub reports merge conflicts. Pull requests on
-other branches, and closed or merged pull requests, are outside this state. Unknown or incomplete GitHub evidence blocks
-maintenance rather than being treated as current.
+the default branch has advanced without a conflict, or `conflicted` when GitHub reports merge conflicts. A prepared local
+rebase conflict is exposed separately as `prepared-conflict`. Pull requests on other branches, and closed or merged pull
+requests, are outside this state. Unknown or incomplete GitHub evidence blocks maintenance rather than being treated as current.
 
 An open, owned, conflict-free `behind` pull request with no actionable requested changes is revalidated immediately before
 maintenance. The orchestrator then resolves the authoritative remote task-branch SHA, prepares or reuses only the expected
@@ -184,11 +184,21 @@ After a successful update, reconciliation exposes `up-to-date` and logs the resu
 maintenance is a no-op: no worktree preparation, rebase, validation, push, pull-request operation, OpenCode invocation, or
 successful maintenance result occurs.
 
-A lease rejection, missing or invalid remote SHA, fetch or validation failure, or unexpected rebase conflict leaves the pull
-request, card, task branch, and worktree unchanged for diagnosis and later reconciliation. Conflicts are handed to the dedicated
-conflict workflow; the orchestrator does not abort, reset, clean, recreate, or automatically resolve them. A failed validation
-also prevents the remote update. Pull-request evidence that changes during revalidation similarly skips maintenance without
-changing repository or Trello state.
+A lease rejection, missing or invalid remote SHA, fetch or validation failure, or non-conflict rebase failure leaves the pull
+request, card, task branch, and worktree unchanged for diagnosis and later reconciliation. When Git confirms an active conflicted
+rebase and reports conflicted paths, reconciliation writes a validated handoff at
+`<worktreeRoot>/.orchestrator/prepared-conflicts/<project-id>/<card-id>.json` and returns `prepared-conflict`. The handoff
+contains the project and card IDs, `agent/<card-id>`, the configured default branch, the authoritative remote task SHA captured
+before rebasing, conflicted paths, and current rebase metadata. The card remains in `Human Review`; no OpenCode, validation,
+push, pull-request operation, or Trello transition is performed. The orchestrator never aborts, resets, cleans, removes,
+recreates, or automatically resolves the conflicted worktree or rebase.
+
+A valid prepared-conflict handoff is an active remediation state. Reconciliation is idempotent while it exists and does not start
+another rebase. The project worker does not process Working or Ready cards, ordinary review maintenance, publication, or cleanup
+until dedicated remediation has inspected the worktree. Remediation must verify the handoff, resolve and complete the rebase,
+then remove the handoff only after the task is ready for the documented next transition. A malformed or incomplete handoff, or a
+rebase error without an active conflict and conflicted paths, uses normal failure diagnostics and never reports
+`prepared-conflict`.
 
 Trello and GitHub operations used by discovery, reconciliation, transition-history checks, card moves, content and label
 updates, comments, and attachment context are retryable when the service returns HTTP 500, 502, 503, or 504, a rate limit, a

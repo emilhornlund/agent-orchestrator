@@ -5,7 +5,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ProjectConfig } from "../src/config/config.js";
-import { GitClient } from "../src/git/git-client.js";
+import { GitClient, type GitRebaseState } from "../src/git/git-client.js";
 import type {
   GitHubClient,
   PullRequestState,
@@ -16,9 +16,14 @@ import {
 } from "../src/process/command-runner.js";
 import { maintainReviewPullRequest } from "../src/orchestrator/maintain-review-pull-request.js";
 import { reconcileReviewCards } from "../src/orchestrator/reconcile-review-cards.js";
+import { getPreparedConflictPath } from "../src/orchestrator/prepared-conflict-state.js";
 import type { TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
 
 const temporaryDirectories: string[] = [];
+const taskSha = "a".repeat(40);
+const defaultSha = "b".repeat(40);
+const sameSha = "c".repeat(40);
+const changedSha = "d".repeat(40);
 
 function createProject(worktreeRoot: string): ProjectConfig {
   return {
@@ -93,11 +98,16 @@ function createTrello(card: TrelloCard): TrelloClient {
 
 function createGit(
   remoteTaskShas: string[],
-  options: { rebase?: () => Promise<void>; push?: () => Promise<void> } = {},
+  options: {
+    rebase?: () => Promise<void>;
+    push?: () => Promise<void>;
+    rebaseState?: GitRebaseState | null;
+    conflictedPaths?: string[];
+  } = {},
 ): GitClient {
   const getRemoteBranchSha = vi
     .fn()
-    .mockImplementation(async () => remoteTaskShas.shift() ?? "task-sha");
+    .mockImplementation(async () => remoteTaskShas.shift() ?? taskSha);
   const git = {
     fetch: vi.fn(),
     pruneWorktrees: vi.fn(),
@@ -108,6 +118,10 @@ function createGit(
     resetHardTo: vi.fn(),
     isAncestor: vi.fn().mockResolvedValue(false),
     rebase: vi.fn(options.rebase ?? (async () => undefined)),
+    getRebaseState: vi.fn().mockResolvedValue(options.rebaseState ?? null),
+    getConflictedPaths: vi
+      .fn()
+      .mockResolvedValue(options.conflictedPaths ?? []),
     getHeadSha: vi.fn().mockResolvedValue("rebased-sha"),
     getRemoteBranchSha,
     pushWithLease: vi.fn(options.push ?? (async () => undefined)),
@@ -161,7 +175,7 @@ describe("owned Human Review pull-request maintenance", () => {
       ...createPullRequest(),
       headRepositoryNameWithOwner: "contributor/repo",
     };
-    const git = createGit(["task-sha", "default-sha"]);
+    const git = createGit([taskSha, defaultSha]);
 
     await expect(
       maintainReviewPullRequest({
@@ -183,7 +197,7 @@ describe("owned Human Review pull-request maintenance", () => {
     const scenario = setup();
     const pullRequest = createPullRequest();
     delete pullRequest.headRepositoryNameWithOwner;
-    const git = createGit(["task-sha", "default-sha"]);
+    const git = createGit([taskSha, defaultSha]);
 
     await expect(
       maintainReviewPullRequest({
@@ -203,7 +217,7 @@ describe("owned Human Review pull-request maintenance", () => {
 
   it("rebases and updates a clean stale branch while retaining its pull request", async () => {
     const scenario = setup();
-    const git = createGit(["task-sha", "default-sha", "task-sha"]);
+    const git = createGit([taskSha, defaultSha, taskSha]);
     const github = createGithub();
 
     await expect(
@@ -225,7 +239,7 @@ describe("owned Human Review pull-request maintenance", () => {
       path.join(scenario.project.repository.worktreeRoot, "card-1"),
       "origin",
       "agent/card-1",
-      "task-sha",
+      taskSha,
       scenario.project,
     );
     expect(scenario.runCommand).toHaveBeenCalledWith(
@@ -239,7 +253,7 @@ describe("owned Human Review pull-request maintenance", () => {
 
   it("does not touch an already-current branch", async () => {
     const scenario = setup();
-    const git = createGit(["same-sha", "same-sha"]);
+    const git = createGit([sameSha, sameSha]);
 
     await reconcileReviewCards(
       scenario.trello,
@@ -258,7 +272,7 @@ describe("owned Human Review pull-request maintenance", () => {
 
   it("does not overwrite a concurrent remote update", async () => {
     const scenario = setup();
-    const git = createGit(["task-sha", "default-sha", "changed-sha"], {
+    const git = createGit([taskSha, defaultSha, changedSha], {
       push: vi.fn().mockRejectedValue(new Error("stale info")),
     });
 
@@ -285,7 +299,7 @@ describe("owned Human Review pull-request maintenance", () => {
         url: "https://github.com/owner/repo/pull/1",
         feedback: "Fix",
       });
-    const git = createGit(["task-sha", "default-sha"]);
+    const git = createGit([taskSha, defaultSha]);
 
     await reconcileReviewCards(scenario.trello, git, github, scenario.project, {
       maintenance: { commands: scenario.commands },
@@ -301,7 +315,7 @@ describe("owned Human Review pull-request maintenance", () => {
   it("does not push after validation fails", async () => {
     const scenario = setup();
     scenario.runCommand.mockResolvedValue({ exitCode: 1 });
-    const git = createGit(["task-sha", "default-sha"]);
+    const git = createGit([taskSha, defaultSha]);
 
     await expect(
       reconcileReviewCards(
@@ -317,9 +331,27 @@ describe("owned Human Review pull-request maintenance", () => {
     expect(scenario.trello.moveCard).not.toHaveBeenCalled();
   });
 
+  it("uses the normal attention failure path for malformed remote SHA data", async () => {
+    const scenario = setup();
+    const git = createGit(["not-a-sha", defaultSha]);
+
+    await expect(
+      reconcileReviewCards(
+        scenario.trello,
+        git,
+        createGithub(),
+        scenario.project,
+        { maintenance: { commands: scenario.commands } },
+      ),
+    ).rejects.toThrow("malformed authoritative remote SHA");
+
+    expect(git.rebase).not.toHaveBeenCalled();
+    expect(scenario.trello.moveCard).not.toHaveBeenCalled();
+  });
+
   it("preserves a rebase conflict without validation or cleanup", async () => {
     const scenario = setup();
-    const git = createGit(["task-sha", "default-sha"], {
+    const git = createGit([taskSha, defaultSha], {
       rebase: vi.fn().mockRejectedValue(new Error("CONFLICT (content)")),
     });
 
@@ -335,6 +367,95 @@ describe("owned Human Review pull-request maintenance", () => {
 
     expect(scenario.runCommand).not.toHaveBeenCalled();
     expect(git.pushWithLease).not.toHaveBeenCalled();
+    expect(scenario.trello.moveCard).not.toHaveBeenCalled();
+  });
+
+  it("rejects a malformed persisted conflict handoff without touching Git or Trello", async () => {
+    const scenario = setup();
+    const handoffPath = getPreparedConflictPath(
+      scenario.project,
+      scenario.card.id,
+    );
+    fs.mkdirSync(path.dirname(handoffPath), { recursive: true });
+    fs.writeFileSync(handoffPath, "{}");
+    const git = createGit([taskSha, defaultSha]);
+
+    await expect(
+      reconcileReviewCards(
+        scenario.trello,
+        git,
+        createGithub(),
+        scenario.project,
+        { maintenance: { commands: scenario.commands } },
+      ),
+    ).rejects.toThrow("Prepared conflict handoff is invalid");
+
+    expect(git.rebase).not.toHaveBeenCalled();
+    expect(scenario.trello.moveCard).not.toHaveBeenCalled();
+  });
+
+  it("records an active conflicted rebase for dedicated remediation", async () => {
+    const scenario = setup();
+    const rebaseState: GitRebaseState = {
+      active: true,
+      backend: "merge",
+      headName: "refs/heads/agent/card-1",
+      onto: defaultSha,
+      originalHead: taskSha,
+      currentStep: 2,
+      totalSteps: 4,
+    };
+    const git = createGit([taskSha, defaultSha], {
+      rebase: vi.fn().mockRejectedValue(new Error("conflict")),
+      rebaseState,
+      conflictedPaths: ["src/changed.ts", "src/other.ts"],
+    });
+
+    const firstResult = await reconcileReviewCards(
+      scenario.trello,
+      git,
+      createGithub(),
+      scenario.project,
+      {
+        maintenance: { commands: scenario.commands },
+      },
+    );
+
+    await expect(firstResult).toMatchObject({
+      card: scenario.card,
+      active: true,
+      maintenanceState: "prepared-conflict",
+    });
+
+    await expect(
+      reconcileReviewCards(
+        scenario.trello,
+        git,
+        createGithub(),
+        scenario.project,
+        {
+          maintenance: { commands: scenario.commands },
+        },
+      ),
+    ).resolves.toMatchObject({
+      card: scenario.card,
+      active: true,
+      maintenanceState: "prepared-conflict",
+      preparedConflict: {
+        projectId: "project",
+        cardId: "card-1",
+        taskBranch: "agent/card-1",
+        defaultBranch: "main",
+        expectedRemoteTaskSha: taskSha,
+        conflictedPaths: ["src/changed.ts", "src/other.ts"],
+        rebase: rebaseState,
+      },
+    });
+
+    expect(scenario.runCommand).not.toHaveBeenCalled();
+    expect(git.pushWithLease).not.toHaveBeenCalled();
+    expect(git.rebase).toHaveBeenCalledTimes(1);
+    expect(git.getRemoteBranchSha).toHaveBeenCalledTimes(2);
     expect(scenario.trello.moveCard).not.toHaveBeenCalled();
   });
 });

@@ -14,11 +14,91 @@ import {
 } from "../src/opencode/opencode-client.js";
 import { cleanupCardContextRetention } from "../src/context/card-context-retention.js";
 import { pollProject } from "../src/orchestrator/poll-project.js";
+import { writePreparedConflict } from "../src/orchestrator/prepared-conflict-state.js";
 import { CommandRunner } from "../src/process/command-runner.js";
 import { getRefinementResultPath } from "../src/refinement/refinement-result.js";
 import { type TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
 
 describe("pollProject", () => {
+  it("blocks Working and Ready processing while a prepared conflict is active", async () => {
+    const temporaryDirectory = fs.mkdtempSync(
+      path.join(os.tmpdir(), "agent-orchestrator-prepared-conflict-"),
+    );
+    const project = {
+      id: "project-1",
+      repository: {
+        path: "/repo",
+        github: "owner/repo",
+        worktreeRoot: temporaryDirectory,
+        defaultBranch: "main",
+      },
+      trello: {
+        readyListId: "ready",
+        workingListId: "working",
+        reviewListId: "review",
+        backlogListId: "backlog",
+        failedListId: "failed",
+        doneListId: "done",
+      },
+    } as ProjectConfig;
+    const card: TrelloCard = {
+      id: "card-1",
+      name: "Conflicted task",
+      desc: "",
+      idList: "review",
+      idLabels: [],
+      url: "https://trello.com/c/card-1",
+    };
+    const trello = new TrelloClient({ apiKey: "key", token: "token" });
+    const getCards = vi.spyOn(trello, "getCards").mockResolvedValue([card]);
+    const getLatestListTransition = vi.spyOn(trello, "getLatestListTransition");
+    const github = {
+      findPullRequestState: vi.fn().mockResolvedValue({
+        url: "https://github.com/owner/repo/pull/1",
+        state: "OPEN",
+        mergedAt: null,
+        baseRefName: "main",
+        headRefName: "agent/card-1",
+        headRepositoryNameWithOwner: "owner/repo",
+        mergeable: "MERGEABLE",
+        mergeStateStatus: "BEHIND",
+      }),
+      findChangesRequestedPullRequest: vi.fn().mockResolvedValue(null),
+    } as unknown as GitHubClient;
+
+    writePreparedConflict(
+      project,
+      card.id,
+      "a".repeat(40),
+      ["src/conflicted.ts"],
+      {
+        active: true,
+        backend: "merge",
+        headName: "refs/heads/agent/card-1",
+        onto: "b".repeat(40),
+        originalHead: "a".repeat(40),
+      },
+    );
+
+    try {
+      await pollProject(
+        trello,
+        {} as GitClient,
+        github,
+        {} as OpenCodeClient,
+        {} as CommandRunner,
+        project,
+        new AbortController().signal,
+      );
+    } finally {
+      fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+    }
+
+    expect(getCards).toHaveBeenCalledTimes(1);
+    expect(getCards).toHaveBeenCalledWith("review");
+    expect(getLatestListTransition).not.toHaveBeenCalled();
+  });
+
   it("protects card context while reconciliation is awaiting external state", async () => {
     const temporaryDirectory = fs.mkdtempSync(
       path.join(os.tmpdir(), "agent-orchestrator-reconciliation-context-"),
