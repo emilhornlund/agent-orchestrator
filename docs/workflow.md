@@ -175,7 +175,11 @@ For every owned open pull request on the expected `agent/<trello-card-id>` branc
 maintenance state: `up-to-date` when the configured default branch is not ahead and GitHub reports no conflict, `behind` when
 the default branch has advanced without a conflict, or `conflicted` when GitHub reports merge conflicts. A prepared local
 rebase conflict is exposed separately as `prepared-conflict`. Pull requests on other branches, and closed or merged pull
-requests, are outside this state. Unknown or incomplete GitHub evidence blocks maintenance rather than being treated as current.
+requests, are outside this state. A recognized `UNKNOWN` value in either GitHub merge-state field is a temporary unresolved
+condition: the card remains in `Human Review`, no maintenance starts, and the existing card-scoped GitHub reconciliation retry
+path reads the state again with its bounded three-attempt backoff. If it remains unresolved through the threshold, the project is
+blocked and uses the normal `Attention Required` diagnostic. Incomplete, malformed, or unsupported GitHub evidence fails
+deterministically rather than being retried.
 
 An open, owned `behind` or `conflicted` pull request with no actionable requested changes is revalidated immediately before
 maintenance. The orchestrator then resolves the authoritative remote task-branch SHA, prepares or reuses only the expected

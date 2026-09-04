@@ -8,6 +8,7 @@ import type { ProjectConfig } from "../src/config/config.js";
 import { GitClient, type RunGit } from "../src/git/git-client.js";
 import {
   GitHubClient,
+  type PullRequestState,
   type RunGitHubCommand,
 } from "../src/github/github-client.js";
 import { GitHubCredentialProvider } from "../src/github/github-credential-provider.js";
@@ -283,6 +284,122 @@ describe("reconcileReviewCards", () => {
       maintenanceState: "conflicted",
     });
   });
+
+  it.each([
+    ["mergeable", { mergeable: "UNKNOWN", mergeStateStatus: "CLEAN" }],
+    [
+      "mergeStateStatus",
+      { mergeable: "MERGEABLE", mergeStateStatus: "UNKNOWN" },
+    ],
+    ["both fields", { mergeable: "UNKNOWN", mergeStateStatus: "UNKNOWN" }],
+  ] as const)(
+    "treats %s UNKNOWN as a transient unresolved maintenance state",
+    async (_field, mergeState) => {
+      const trello = trelloFor(card());
+      const github = githubFor("card-1", "open");
+      vi.mocked(github.findPullRequestState).mockResolvedValue({
+        url: "https://github.com/owner/repo/pull/1",
+        state: "OPEN",
+        mergedAt: null,
+        baseRefName: "main",
+        headRefName: "agent/card-1",
+        headRepository: { name: "repo" },
+        headRepositoryOwner: { login: "owner" },
+        ...mergeState,
+      });
+
+      await expect(
+        reconcileReviewCards(trello, {} as GitClient, github, project),
+      ).rejects.toMatchObject({
+        name: "RetryableGitHubReconciliationError",
+        cause: expect.objectContaining({
+          name: "GitHubMergeStateUnknownError",
+        }),
+        message: expect.stringContaining("temporary unresolved"),
+      });
+
+      expect(github.findChangesRequestedPullRequest).not.toHaveBeenCalled();
+      expect(trello.moveCard).not.toHaveBeenCalled();
+      expect(trello.addComment).not.toHaveBeenCalled();
+    },
+  );
+
+  it("recovers after a temporary UNKNOWN response without changing the card or branch", async () => {
+    const trello = trelloFor(card());
+    const github = githubFor("card-1", "open");
+    vi.mocked(github.findPullRequestState)
+      .mockResolvedValueOnce({
+        url: "https://github.com/owner/repo/pull/1",
+        state: "OPEN",
+        mergedAt: null,
+        baseRefName: "main",
+        headRefName: "agent/card-1",
+        headRepository: { name: "repo" },
+        headRepositoryOwner: { login: "owner" },
+        mergeable: "MERGEABLE",
+        mergeStateStatus: "UNKNOWN",
+      })
+      .mockResolvedValueOnce({
+        url: "https://github.com/owner/repo/pull/1",
+        state: "OPEN",
+        mergedAt: null,
+        baseRefName: "main",
+        headRefName: "agent/card-1",
+        headRepository: { name: "repo" },
+        headRepositoryOwner: { login: "owner" },
+        mergeable: "MERGEABLE",
+        mergeStateStatus: "CLEAN",
+      });
+
+    await expect(
+      reconcileReviewCards(trello, {} as GitClient, github, project),
+    ).rejects.toMatchObject({
+      name: "RetryableGitHubReconciliationError",
+    });
+
+    await expect(
+      reconcileReviewCards(trello, {} as GitClient, github, project),
+    ).resolves.toMatchObject({
+      card: card(),
+      active: true,
+      maintenanceState: "up-to-date",
+    });
+
+    expect(github.findPullRequestState).toHaveBeenCalledTimes(2);
+    expect(trello.moveCard).not.toHaveBeenCalled();
+    expect(trello.addComment).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["mergeability", { mergeable: "MAYBE", mergeStateStatus: "CLEAN" }],
+    ["merge state", { mergeable: "MERGEABLE", mergeStateStatus: "MAYBE" }],
+  ] as const)(
+    "does not retry an unsupported %s value",
+    async (_field, mergeState) => {
+      const trello = trelloFor(card());
+      const github = githubFor("card-1", "open");
+      vi.mocked(github.findPullRequestState).mockResolvedValue({
+        url: "https://github.com/owner/repo/pull/1",
+        state: "OPEN",
+        mergedAt: null,
+        baseRefName: "main",
+        headRefName: "agent/card-1",
+        headRepository: { name: "repo" },
+        headRepositoryOwner: { login: "owner" },
+        ...mergeState,
+      } as unknown as PullRequestState);
+
+      await expect(
+        reconcileReviewCards(trello, {} as GitClient, github, project),
+      ).rejects.toMatchObject({
+        name: "WorkflowError",
+        message: expect.stringContaining("unsupported pull request"),
+      });
+
+      expect(github.findPullRequestState).toHaveBeenCalledOnce();
+      expect(trello.moveCard).not.toHaveBeenCalled();
+    },
+  );
 
   it("ignores a pull request whose authoritative head is not the owned task branch", async () => {
     const trello = trelloFor(card());

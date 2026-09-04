@@ -6,7 +6,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Config, ProjectConfig } from "../src/config/config.js";
 import type { GitClient } from "../src/git/git-client.js";
-import type { GitHubClient } from "../src/github/github-client.js";
+import {
+  GitHubMergeStateUnknownError,
+  type GitHubClient,
+} from "../src/github/github-client.js";
 import type { OpenCodeClient } from "../src/opencode/opencode-client.js";
 import type { CommandRunner } from "../src/process/command-runner.js";
 import {
@@ -665,14 +668,14 @@ describe("runOrchestrator", () => {
     );
   });
 
-  it("retries a transient GitHub reconciliation failure and recovers without escalation", async () => {
+  it("retries temporary UNKNOWN mergeability and recovers without escalation", async () => {
     const controller = new AbortController();
     const notifier: EmailNotifier = { send: vi.fn() };
     const failure = githubReconciliationError(
       "project-a",
       "card-1",
       "pull request state",
-      new Error("GitHub API returned HTTP 503"),
+      new GitHubMergeStateUnknownError("UNKNOWN", "CLEAN"),
       "reconciliation failed",
     );
     let calls = 0;
@@ -702,7 +705,7 @@ describe("runOrchestrator", () => {
     expect(notifier.send).not.toHaveBeenCalled();
   });
 
-  it("uses increasing backoff delays for transient GitHub reconciliation retries", async () => {
+  it("uses increasing backoff delays for temporary UNKNOWN mergeability retries", async () => {
     vi.useFakeTimers();
     const random = vi.spyOn(Math, "random").mockReturnValue(0);
 
@@ -712,7 +715,7 @@ describe("runOrchestrator", () => {
         "project-a",
         "card-1",
         "pull request state",
-        new Error("GitHub API returned HTTP 503"),
+        new GitHubMergeStateUnknownError("MERGEABLE", "UNKNOWN"),
         "reconciliation failed",
       );
       let calls = 0;
@@ -761,15 +764,15 @@ describe("runOrchestrator", () => {
     }
   });
 
-  it("escalates a persistent transient GitHub reconciliation failure at the retry threshold", async () => {
+  it("escalates persistent UNKNOWN mergeability at the retry threshold", async () => {
     const controller = new AbortController();
     const notifier: EmailNotifier = { send: vi.fn() };
     const failure = githubReconciliationError(
       "project-a",
       "card-1",
       "requested changes",
-      new Error("request timed out"),
-      "reconciliation failed",
+      new GitHubMergeStateUnknownError("UNKNOWN", "UNKNOWN"),
+      "reconciliation failed: GitHub returned a temporary unresolved pull request merge state while recalculating",
     );
     let calls = 0;
 
@@ -798,7 +801,7 @@ describe("runOrchestrator", () => {
     expect(notifier.send).toHaveBeenCalledWith(
       expect.objectContaining({
         subject: "[Agent Orchestrator] Attention Required: project-a",
-        text: expect.stringContaining("reconciliation failed"),
+        text: expect.stringContaining("temporary unresolved"),
       }),
     );
   });

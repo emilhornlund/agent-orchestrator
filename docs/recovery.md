@@ -84,14 +84,15 @@ If more than one recoverable card is in `Working`, the project is blocked. No ca
 
 For each card in `Human Review`, the orchestrator checks the expected `agent/<trello-card-id>` pull request:
 
-| Evidence                                                    | Reconciliation                                                                                                                                 |
-| ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| Pull request is merged                                      | Delete the merged remote branch when present, move the card to `Done`, mark it complete, and remove the session log on a best-effort basis     |
-| Pull request is closed without merge                        | Move the card to `Backlog` and add a Trello comment identifying the closed pull request                                                        |
-| Pull request is open with current-head requested changes    | Move the card to `Working` and resume feedback implementation                                                                                  |
-| Pull request is open without current-head requested changes | Leave the card in `Human Review`; record maintenance state and automatically maintain an eligible clean stale branch                           |
-| Prepared-conflict handoff is present                        | Leave the card in `Human Review`; expose `prepared-conflict` and block project processing until remediation completes or the state is resolved |
-| No expected pull request                                    | Correct the card to `Backlog`                                                                                                                  |
+| Evidence                                                                          | Reconciliation                                                                                                                                 |
+| --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Pull request is merged                                                            | Delete the merged remote branch when present, move the card to `Done`, mark it complete, and remove the session log on a best-effort basis     |
+| Pull request is closed without merge                                              | Move the card to `Backlog` and add a Trello comment identifying the closed pull request                                                        |
+| Pull request is open with current-head requested changes                          | Move the card to `Working` and resume feedback implementation                                                                                  |
+| Pull request is open without current-head requested changes                       | Leave the card in `Human Review`; record maintenance state and automatically maintain an eligible clean stale branch                           |
+| Pull request is open with recognized `UNKNOWN` mergeability or merge-state status | Leave the card in `Human Review`; start no maintenance and retry the GitHub state read through the bounded three-attempt reconciliation policy |
+| Prepared-conflict handoff is present                                              | Leave the card in `Human Review`; expose `prepared-conflict` and block project processing until remediation completes or the state is resolved |
+| No expected pull request                                                          | Correct the card to `Backlog`                                                                                                                  |
 
 More than one active card in `Human Review` is an ambiguous project state. The active-state check runs before terminal cards
 are transitioned, so the project is blocked, no active card is selected, and no terminal card is transitioned in that cycle.
@@ -99,8 +100,12 @@ Merged or closed cards remain available for reconciliation on the next cycle aft
 
 Maintenance applies only to an open pull request in the configured repository whose head is exactly `agent/<trello-card-id>`,
 whose base is the configured default branch, whose state is `behind` or `conflicted`, and which has no actionable requested
-changes on its current head. Unknown or incomplete authoritative data, a changed pull request, a closed or merged pull request,
-an unexpected branch, or current-head requested changes leaves the card and branch unchanged.
+changes on its current head. A recognized `UNKNOWN` mergeability or merge-state status is transient unresolved data: it leaves
+the card and branch unchanged and uses the existing card-scoped GitHub reconciliation retry path, including its three-attempt
+bound and backoff. Recovery before exhaustion resumes normal classification; persistence through exhaustion blocks the project and
+emits the existing `Attention Required` diagnostic. Incomplete, malformed, or unsupported authoritative data, a changed pull
+request, a closed or merged pull request, an unexpected branch, or current-head requested changes leaves the card and branch
+unchanged without a transient retry.
 
 For an eligible branch, reconciliation revalidates the pull request, resolves the authoritative remote task SHA with `ls-remote`,
 and prepares or reuses only `<worktreeRoot>/<trello-card-id>`. It fetches the latest default branch there and attempts a normal

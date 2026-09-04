@@ -4,7 +4,10 @@ import type {
   GitHubClient,
   PullRequestState,
 } from "../github/github-client.js";
-import { getPullRequestHeadRepositoryIdentity } from "../github/github-client.js";
+import {
+  getPullRequestHeadRepositoryIdentity,
+  GitHubMergeStateUnknownError,
+} from "../github/github-client.js";
 import { logger } from "../logging/logger.js";
 import { removeSessionLog } from "../logging/session-log.js";
 import {
@@ -562,14 +565,37 @@ function classifyMaintenanceState(
     );
   }
 
-  if (mergeable === "CONFLICTING" || mergeStateStatus === "DIRTY") {
-    return "conflicted";
+  if (
+    mergeable !== "MERGEABLE" &&
+    mergeable !== "CONFLICTING" &&
+    mergeable !== "UNKNOWN"
+  ) {
+    throw new Error(
+      `GitHub returned unsupported pull request mergeability ${String(mergeable)}`,
+    );
+  }
+
+  if (
+    mergeStateStatus !== "BEHIND" &&
+    mergeStateStatus !== "BLOCKED" &&
+    mergeStateStatus !== "CLEAN" &&
+    mergeStateStatus !== "DIRTY" &&
+    mergeStateStatus !== "DRAFT" &&
+    mergeStateStatus !== "HAS_HOOKS" &&
+    mergeStateStatus !== "UNKNOWN" &&
+    mergeStateStatus !== "UNSTABLE"
+  ) {
+    throw new Error(
+      `GitHub returned unsupported pull request merge state ${String(mergeStateStatus)}`,
+    );
   }
 
   if (mergeable === "UNKNOWN" || mergeStateStatus === "UNKNOWN") {
-    throw new Error(
-      "GitHub returned an ambiguous pull request maintenance state",
-    );
+    throw new GitHubMergeStateUnknownError(mergeable, mergeStateStatus);
+  }
+
+  if (mergeable === "CONFLICTING" || mergeStateStatus === "DIRTY") {
+    return "conflicted";
   }
 
   if (mergeStateStatus === "BEHIND") {
