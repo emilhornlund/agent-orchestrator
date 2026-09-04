@@ -4,10 +4,7 @@ import {
   contextRetentionIntervalMilliseconds,
 } from "../context/card-context-retention.js";
 import type { GitClient } from "../git/git-client.js";
-import {
-  getExistingPreparedConflictWorktree,
-  getExistingWorktree,
-} from "../git/prepare-worktree.js";
+import { getExistingPreparedConflictWorktree } from "../git/prepare-worktree.js";
 import type { GitHubClient } from "../github/github-client.js";
 import { withGitHubOperationProject } from "../github/github-operation-context.js";
 import {
@@ -50,11 +47,7 @@ import {
   MAX_PREPARED_CONFLICT_REMEDIATION_ATTEMPTS,
   PreparedConflictRemediationError,
 } from "./remediate-prepared-conflict.js";
-import {
-  clearPreparedConflict,
-  readPreparedConflict,
-  readPreparedConflicts,
-} from "./prepared-conflict-state.js";
+import { readPreparedConflict } from "./prepared-conflict-state.js";
 import {
   MAX_TRELLO_RECONCILIATION_ATTEMPTS,
   RetryableTrelloReconciliationError,
@@ -210,42 +203,14 @@ async function hasPreparedConflictRecovery(
   }
 
   if (blocked.cardId === undefined) {
-    try {
-      return readPreparedConflicts(project).length === 0;
-    } catch (error) {
-      if (!blocked.recoveryCheckFailed) {
-        blocked.recoveryCheckFailed = true;
-        logger
-          .child({ projectId: project.id })
-          .warn(
-            `Could not inspect blocked prepared-conflict state: ${getErrorMessage(error)}; retaining the original failure context`,
-          );
-      }
-
-      return false;
-    }
+    return false;
   }
 
   try {
     const handoff = readPreparedConflict(project, blocked.cardId);
 
     if (handoff === null) {
-      const worktree = await getExistingWorktree(git, project, blocked.cardId);
-
-      if (worktree === null) {
-        return readPreparedConflicts(project).length === 0;
-      }
-
-      // An active rebase or unmerged path means the prepared conflict is still live.
-      if ((await git.getRebaseState(worktree.path)) !== null) {
-        return false;
-      }
-
-      if ((await git.getConflictedPaths(worktree.path)).length > 0) {
-        return false;
-      }
-
-      return readPreparedConflicts(project).length === 0;
+      return false;
     }
 
     const worktree = await getExistingPreparedConflictWorktree(
@@ -279,8 +244,9 @@ async function hasPreparedConflictRecovery(
       return false;
     }
 
-    clearPreparedConflict(project, blocked.cardId);
-    return readPreparedConflicts(project).length === 0;
+    // Local completion only releases the project block. Publication remediation
+    // owns validation, the lease-protected push, and handoff removal.
+    return true;
   } catch (error) {
     if (!blocked.recoveryCheckFailed) {
       blocked.recoveryCheckFailed = true;
@@ -345,7 +311,7 @@ async function runProjectWorker(
             : { cardId: blockedPreparedConflict.cardId }),
         })
         .event(
-          "Recovered blocked prepared-conflict state after the handoff and underlying conflict were resolved; resuming normal processing",
+          "Recovered blocked prepared-conflict state after local rebase completion; preserving the handoff for publication remediation",
         );
 
       if (signal.aborted) {

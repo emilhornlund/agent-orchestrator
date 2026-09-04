@@ -382,7 +382,7 @@ describe("runOrchestrator", () => {
     }
   });
 
-  it("detects a removed prepared-conflict handoff and resumes without a restart", async () => {
+  it("keeps the project blocked when the prepared-conflict handoff is removed before publication", async () => {
     const controller = new AbortController();
     const notifier: EmailNotifier = { send: vi.fn() };
     const project = createProject("project-a");
@@ -408,6 +408,8 @@ describe("runOrchestrator", () => {
       getConflictedPaths: vi.fn().mockResolvedValue([]),
     } as unknown as GitClient;
 
+    const abortTimer = setTimeout(() => controller.abort(), 25);
+
     pollProject.mockImplementation(async () => {
       pollCalls += 1;
 
@@ -418,8 +420,6 @@ describe("runOrchestrator", () => {
 
         throw failure;
       }
-
-      controller.abort();
     });
 
     try {
@@ -434,19 +434,20 @@ describe("runOrchestrator", () => {
         notifier,
       );
 
-      expect(pollCalls).toBe(MAX_PREPARED_CONFLICT_REMEDIATION_ATTEMPTS + 1);
-      expect(git.getRebaseState).toHaveBeenCalledOnce();
-      expect(git.getConflictedPaths).toHaveBeenCalledOnce();
+      expect(pollCalls).toBe(MAX_PREPARED_CONFLICT_REMEDIATION_ATTEMPTS);
+      expect(git.getRebaseState).not.toHaveBeenCalled();
+      expect(git.getConflictedPaths).not.toHaveBeenCalled();
       expect(notifier.send).toHaveBeenCalledOnce();
       expect(fs.existsSync(getPreparedConflictPath(project, "card-1"))).toBe(
         false,
       );
     } finally {
+      clearTimeout(abortTimer);
       fs.rmSync(worktreeRoot, { recursive: true, force: true });
     }
   });
 
-  it("clears a completed underlying rebase and resumes normal processing", async () => {
+  it("releases a completed local rebase while preserving its handoff for remediation", async () => {
     const controller = new AbortController();
     const notifier: EmailNotifier = { send: vi.fn() };
     const project = createProject("project-a");
@@ -465,12 +466,13 @@ describe("runOrchestrator", () => {
       cardId: "card-1",
     });
     let pollCalls = 0;
+    const resolvedHead = "c".repeat(40);
     const git = {
       getCurrentBranch: vi.fn().mockResolvedValue("agent/card-1"),
       isValidRepository: vi.fn().mockResolvedValue(true),
       getRebaseState: vi.fn().mockResolvedValue(null),
       getConflictedPaths: vi.fn().mockResolvedValue([]),
-      getHeadSha: vi.fn().mockResolvedValue("c".repeat(40)),
+      getHeadSha: vi.fn().mockResolvedValue(resolvedHead),
       isAncestor: vi.fn().mockResolvedValue(true),
       getStatus: vi.fn().mockResolvedValue(""),
     } as unknown as GitClient;
@@ -482,6 +484,9 @@ describe("runOrchestrator", () => {
         throw failure;
       }
 
+      expect(fs.existsSync(getPreparedConflictPath(project, "card-1"))).toBe(
+        true,
+      );
       controller.abort();
     });
 
@@ -498,8 +503,12 @@ describe("runOrchestrator", () => {
       );
 
       expect(pollCalls).toBe(MAX_PREPARED_CONFLICT_REMEDIATION_ATTEMPTS + 1);
+      expect(git.getHeadSha).toHaveBeenCalledWith(
+        path.join(worktreeRoot, "card-1"),
+      );
+      expect(fs.existsSync(path.join(worktreeRoot, "card-1"))).toBe(true);
       expect(fs.existsSync(getPreparedConflictPath(project, "card-1"))).toBe(
-        false,
+        true,
       );
       expect(notifier.send).toHaveBeenCalledOnce();
     } finally {

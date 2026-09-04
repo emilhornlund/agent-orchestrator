@@ -252,7 +252,9 @@ handoff only after the update succeeds. The existing pull request is retained an
 timeouts, permission denials, unresolved conflicts, validation errors, concurrent SHA changes, and lease rejection preserve the
 handoff and worktree, emit normal diagnostics, and use bounded retries followed by Attention Required project blocking.
 A blocked project periodically checks only the handoff and underlying Git conflict state, avoids relaunching remediation, and
-resumes when the condition is resolved without requiring a restart.
+resumes when a valid handoff's local rebase is complete without requiring a restart. This releases only the project block: the
+next cycle routes the existing worktree through prepared-conflict remediation, which owns validation, the exact
+force-with-lease publication, and handoff removal. A missing or invalid handoff remains blocked.
 
 ### Rewriting an owned task branch
 
