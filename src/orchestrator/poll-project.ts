@@ -205,7 +205,10 @@ export async function pollProject(
         git,
         github,
         project,
-        { moveRequestedChanges: workingChangeRequest === null },
+        {
+          moveRequestedChanges: workingChangeRequest === null,
+          maintenance: { commands },
+        },
         emailNotifier,
         signal,
       );

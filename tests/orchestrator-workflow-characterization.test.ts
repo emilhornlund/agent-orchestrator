@@ -422,6 +422,7 @@ function createHarness(options: HarnessOptions = {}) {
       mergedAt: pullRequestState === "merged" ? "2026-09-01T13:42:03Z" : null,
       baseRefName: "main",
       headRefName: "agent/card-1",
+      headRepositoryNameWithOwner: "example/repository",
       mergeable: "MERGEABLE",
       mergeStateStatus: "CLEAN",
     };

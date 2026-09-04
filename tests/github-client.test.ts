@@ -463,6 +463,7 @@ describe("GitHubClient", () => {
           mergedAt: null,
           baseRefName: "main",
           headRefName: "agent/card-1",
+          headRepositoryNameWithOwner: "example/repository",
           mergeable: "MERGEABLE",
           mergeStateStatus: "BEHIND",
         },
@@ -483,6 +484,7 @@ describe("GitHubClient", () => {
       mergedAt: null,
       baseRefName: "main",
       headRefName: "agent/card-1",
+      headRepositoryNameWithOwner: "example/repository",
       mergeable: "MERGEABLE",
       mergeStateStatus: "BEHIND",
     });
@@ -499,7 +501,7 @@ describe("GitHubClient", () => {
       "--state",
       "all",
       "--json",
-      "url,state,mergedAt,baseRefName,headRefName,mergeable,mergeStateStatus",
+      "url,state,mergedAt,baseRefName,headRefName,headRepositoryNameWithOwner,mergeable,mergeStateStatus",
       "--limit",
       "1",
     ]);
@@ -517,6 +519,33 @@ describe("GitHubClient", () => {
             headRefName: "agent/card-1",
             mergeable: "MAYBE",
             mergeStateStatus: "CLEAN",
+          },
+        ]),
+      ),
+    );
+
+    await expect(
+      github.findPullRequestState({
+        cwd: "/repo",
+        repository: "example/repository",
+        headBranch: "agent/card-1",
+        baseBranch: "main",
+      }),
+    ).rejects.toThrow("invalid pull request state list item");
+  });
+
+  it("rejects missing head repository identity for a base-scoped lookup", async () => {
+    const github = new GitHubClient(
+      vi.fn<RunGitHubCommand>().mockResolvedValue(
+        JSON.stringify([
+          {
+            url: "https://github.com/example/repository/pull/123",
+            state: "OPEN",
+            mergedAt: null,
+            baseRefName: "main",
+            headRefName: "agent/card-1",
+            mergeable: "MERGEABLE",
+            mergeStateStatus: "BEHIND",
           },
         ]),
       ),

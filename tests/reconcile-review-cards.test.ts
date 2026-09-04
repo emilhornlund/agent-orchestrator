@@ -89,6 +89,7 @@ function githubFor(
     mergedAt: state === "merged" ? "2026-09-01T13:42:03Z" : null,
     baseRefName: "main",
     headRefName: `agent/${cardId}`,
+    headRepositoryNameWithOwner: "owner/repo",
     mergeable: state === "conflicted" ? "CONFLICTING" : "MERGEABLE",
     mergeStateStatus:
       state === "behind"
@@ -297,6 +298,7 @@ describe("reconcileReviewCards", () => {
             mergedAt: null,
             baseRefName: "main",
             headRefName: "agent/card-1",
+            headRepositoryNameWithOwner: "owner/repo",
             mergeable: "MERGEABLE",
             mergeStateStatus: "CLEAN",
           },
@@ -451,6 +453,7 @@ describe("reconcileReviewCards", () => {
           mergedAt: "2026-09-01T13:42:03Z",
           baseRefName: "main",
           headRefName: "agent/card-1",
+          headRepositoryNameWithOwner: "owner/repo",
           mergeable: "MERGEABLE",
           mergeStateStatus: "CLEAN",
         },
@@ -578,6 +581,7 @@ describe("reconcileReviewCards", () => {
         url: "https://github.com/owner/repo/pull/1",
         state: "CLOSED",
         mergedAt: "2026-09-01T13:42:03Z",
+        headRepositoryNameWithOwner: "owner/repo",
       }),
       findChangesRequestedPullRequest: vi.fn(),
     } as unknown as GitHubClient;
@@ -761,6 +765,9 @@ describe("reconcileReviewCards", () => {
         url: "https://github.com/owner/repo/pull/1",
         state: "OPEN",
         mergedAt: null,
+        baseRefName: "main",
+        headRefName: "agent/card-1",
+        headRepositoryNameWithOwner: "owner/repo",
       }),
     } as unknown as GitHubClient;
 
@@ -1088,6 +1095,7 @@ describe("reconcileReviewCards", () => {
           mergedAt: null,
           baseRefName: "main",
           headRefName: headBranch,
+          headRepositoryNameWithOwner: "owner/repo",
           mergeable: "MERGEABLE",
           mergeStateStatus: "CLEAN",
         })),
@@ -1132,6 +1140,7 @@ describe("reconcileReviewCards", () => {
                 mergedAt: null,
                 baseRefName: "main",
                 headRefName: "agent/card-1",
+                headRepositoryNameWithOwner: "owner/repo",
                 mergeable: "MERGEABLE",
                 mergeStateStatus: "CLEAN",
               }
@@ -1141,6 +1150,7 @@ describe("reconcileReviewCards", () => {
                 mergedAt: null,
                 baseRefName: "main",
                 headRefName: "agent/card-2",
+                headRepositoryNameWithOwner: "owner/repo",
                 mergeable: "MERGEABLE",
                 mergeStateStatus: "CLEAN",
               },

@@ -11,6 +11,7 @@ import {
   type EmailNotifier,
 } from "../notifications/email-notifier.js";
 import type { TrelloCard, TrelloClient } from "../trello/trello-client.js";
+import type { CommandRunner } from "../process/command-runner.js";
 
 import { correctCardToBacklog } from "./correct-card-state.js";
 import {
@@ -21,6 +22,7 @@ import {
 import { githubReconciliationError } from "./github-reconciliation-error.js";
 import { trelloReconciliationError } from "./trello-reconciliation-error.js";
 import { WorkflowError } from "./workflow-error.js";
+import { maintainReviewPullRequest } from "./maintain-review-pull-request.js";
 
 export interface ReviewChangeRequest {
   card: TrelloCard;
@@ -46,8 +48,11 @@ interface ReviewCardState {
   changesRequested?: ReviewChangeRequest;
 }
 
-interface ReconcileReviewCardsOptions {
+export interface ReconcileReviewCardsOptions {
   moveRequestedChanges?: boolean;
+  maintenance?: {
+    commands: CommandRunner;
+  };
 }
 
 function getErrorMessage(error: unknown): string {
@@ -260,10 +265,33 @@ export async function reconcileReviewCards(
     return null;
   }
 
+  let maintenanceState = state.maintenanceState!;
+
+  if (options.maintenance !== undefined && maintenanceState === "behind") {
+    const maintenanceResult = await maintainReviewPullRequest({
+      git,
+      github,
+      commands: options.maintenance.commands,
+      project,
+      card: state.card,
+      pullRequest: state.pullRequest,
+      cardLog,
+      ...(signal === undefined ? {} : { signal }),
+    });
+
+    if (signal?.aborted) {
+      return null;
+    }
+
+    if (maintenanceResult === "rebased") {
+      maintenanceState = "up-to-date";
+    }
+  }
+
   return {
     card: state.card,
     active: true,
-    maintenanceState: state.maintenanceState!,
+    maintenanceState,
   };
 }
 
@@ -313,6 +341,10 @@ async function inspectReviewCard(
     pullRequest.headRefName !== undefined &&
     pullRequest.headRefName !== branch
   ) {
+    return null;
+  }
+
+  if (pullRequest.headRepositoryNameWithOwner !== project.repository.github) {
     return null;
   }
 

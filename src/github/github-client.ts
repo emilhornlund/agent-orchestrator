@@ -66,6 +66,7 @@ export interface PullRequestState extends PullRequest {
   mergedAt: string | null;
   baseRefName?: string;
   headRefName?: string;
+  headRepositoryNameWithOwner?: string;
   mergeable?: PullRequestMergeability;
   mergeStateStatus?: PullRequestMergeStateStatus;
 }
@@ -142,6 +143,7 @@ function validatePullRequestStateList(
     const mergedAt = item.mergedAt;
     const baseRefName = item.baseRefName;
     const headRefName = item.headRefName;
+    const headRepositoryNameWithOwner = item.headRepositoryNameWithOwner;
     const mergeable = item.mergeable;
     const mergeStateStatus = item.mergeStateStatus;
     const requiresMaintenanceFacts =
@@ -151,6 +153,8 @@ function validatePullRequestStateList(
       typeof url !== "string" ||
       (state !== "OPEN" && state !== "CLOSED" && state !== "MERGED") ||
       (typeof mergedAt !== "string" && mergedAt !== null) ||
+      (requireMaintenanceFacts &&
+        typeof headRepositoryNameWithOwner !== "string") ||
       (requiresMaintenanceFacts &&
         (typeof baseRefName !== "string" ||
           typeof headRefName !== "string" ||
@@ -175,6 +179,9 @@ function validatePullRequestStateList(
       url: parsePullRequestUrl(url),
       state,
       mergedAt,
+      ...(typeof headRepositoryNameWithOwner === "string"
+        ? { headRepositoryNameWithOwner }
+        : {}),
       ...(typeof baseRefName === "string" &&
       typeof headRefName === "string" &&
       (mergeable === "MERGEABLE" ||
@@ -574,7 +581,7 @@ export class GitHubClient {
         "--json",
         options.baseBranch === undefined
           ? "url,state,mergedAt"
-          : "url,state,mergedAt,baseRefName,headRefName,mergeable,mergeStateStatus",
+          : "url,state,mergedAt,baseRefName,headRefName,headRepositoryNameWithOwner,mergeable,mergeStateStatus",
         "--limit",
         "1",
       ],
