@@ -217,6 +217,8 @@ the handoff SHA. It then performs one exact `--force-with-lease` update of the e
 handoff only after the update succeeds. The existing pull request is retained and the card remains in Human Review. Failures,
 timeouts, permission denials, unresolved conflicts, validation errors, concurrent SHA changes, and lease rejection preserve the
 handoff and worktree, emit normal diagnostics, and use bounded retries followed by Attention Required project blocking.
+A blocked project periodically checks only the handoff and underlying Git conflict state, avoids relaunching remediation, and
+resumes when the condition is resolved without requiring a restart.
 
 ### Rewriting an owned task branch
 

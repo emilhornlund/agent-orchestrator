@@ -84,14 +84,14 @@ If more than one recoverable card is in `Working`, the project is blocked. No ca
 
 For each card in `Human Review`, the orchestrator checks the expected `agent/<trello-card-id>` pull request:
 
-| Evidence                                                    | Reconciliation                                                                                                                             |
-| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| Pull request is merged                                      | Delete the merged remote branch when present, move the card to `Done`, mark it complete, and remove the session log on a best-effort basis |
-| Pull request is closed without merge                        | Move the card to `Backlog` and add a Trello comment identifying the closed pull request                                                    |
-| Pull request is open with current-head requested changes    | Move the card to `Working` and resume feedback implementation                                                                              |
-| Pull request is open without current-head requested changes | Leave the card in `Human Review`; record maintenance state and automatically maintain an eligible clean stale branch                       |
-| Prepared-conflict handoff is present                        | Leave the card in `Human Review`; expose `prepared-conflict` and block project processing until remediation completes                      |
-| No expected pull request                                    | Correct the card to `Backlog`                                                                                                              |
+| Evidence                                                    | Reconciliation                                                                                                                                 |
+| ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Pull request is merged                                      | Delete the merged remote branch when present, move the card to `Done`, mark it complete, and remove the session log on a best-effort basis     |
+| Pull request is closed without merge                        | Move the card to `Backlog` and add a Trello comment identifying the closed pull request                                                        |
+| Pull request is open with current-head requested changes    | Move the card to `Working` and resume feedback implementation                                                                                  |
+| Pull request is open without current-head requested changes | Leave the card in `Human Review`; record maintenance state and automatically maintain an eligible clean stale branch                           |
+| Prepared-conflict handoff is present                        | Leave the card in `Human Review`; expose `prepared-conflict` and block project processing until remediation completes or the state is resolved |
+| No expected pull request                                    | Correct the card to `Backlog`                                                                                                                  |
 
 More than one active card in `Human Review` is an ambiguous project state. The active-state check runs before terminal cards
 are transitioned, so the project is blocked, no active card is selected, and no terminal card is transitioned in that cycle.
@@ -134,8 +134,10 @@ observe the updated branch. It must not remove the record merely to make polling
 An OpenCode failure, timeout, permission denial, unresolved rebase, validation failure, malformed or missing remote SHA, concurrent
 remote change, or lease rejection leaves the handoff, worktree, branch, and pull request available for diagnosis. The failure is
 annotated with the existing session log when available and escalated through the normal attention path. Remediation retries are
-bounded; after the worker retry threshold the project remains blocked and does not launch the same session on every poll.
-An operator must correct the state and restart the worker before another remediation attempt is made.
+bounded; after the worker retry threshold the project remains blocked and does not launch the same session on every poll. While
+blocked, the worker periodically performs only the local handoff and Git conflict-state checks. It keeps the project blocked while
+the handoff or underlying conflict remains unresolved, and emits no repeated attention alert for that unchanged condition. Once the
+handoff is removed or a clean completed rebase is verified, the worker clears the block and resumes without a restart.
 
 A Git command error alone is not sufficient evidence of a prepared conflict. If active rebase inspection fails, the rebase is
 active without conflicted paths, the handoff cannot be persisted, or remote/PR/worktree setup fails first, normal failure and

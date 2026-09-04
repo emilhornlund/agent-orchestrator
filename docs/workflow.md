@@ -213,8 +213,9 @@ cleanup is performed.
 
 An unsuccessful, timed-out, permission-denied, incomplete, or lease-rejected remediation preserves the handoff and worktree and
 uses the normal failure diagnostic and `Attention Required` path. The worker permits only the existing bounded remediation retry
-count; after exhaustion it blocks the project until the unresolved handoff is corrected and the worker is restarted. Other cards in
-that project cannot start while this state remains active.
+count; after exhaustion it blocks the project and periodically checks the handoff and underlying Git conflict state without
+starting remediation again. Other cards in that project cannot start while this state remains active. Once the handoff is removed
+or a completed underlying rebase is verified, the worker clears the block and resumes normal processing without a restart.
 
 Trello and GitHub operations used by discovery, reconciliation, transition-history checks, card moves, content and label
 updates, comments, and attachment context are retryable when the service returns HTTP 500, 502, 503, or 504, a rate limit, a

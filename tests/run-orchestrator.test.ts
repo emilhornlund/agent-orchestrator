@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -36,6 +37,10 @@ import {
   MAX_PREPARED_CONFLICT_REMEDIATION_ATTEMPTS,
   PreparedConflictRemediationError,
 } from "../src/orchestrator/remediate-prepared-conflict.js";
+import {
+  getPreparedConflictPath,
+  writePreparedConflict,
+} from "../src/orchestrator/prepared-conflict-state.js";
 
 const pollProject = vi.fn();
 
@@ -113,6 +118,25 @@ function createConfig(
     },
     projects,
   };
+}
+
+function prepareConflict(project: ProjectConfig): void {
+  const worktreePath = path.join(project.repository.worktreeRoot, "card-1");
+
+  fs.mkdirSync(worktreePath, { recursive: true });
+  writePreparedConflict(
+    project,
+    "card-1",
+    "a".repeat(40),
+    ["src/conflicted.ts"],
+    {
+      active: true,
+      backend: "merge",
+      headName: "refs/heads/agent/card-1",
+      onto: "b".repeat(40),
+      originalHead: "a".repeat(40),
+    },
+  );
 }
 
 describe("runOrchestrator", () => {
@@ -285,6 +309,197 @@ describe("runOrchestrator", () => {
 
     expect(calls).toBe(MAX_PREPARED_CONFLICT_REMEDIATION_ATTEMPTS);
     expect(notifier.send).toHaveBeenCalledOnce();
+  });
+
+  it("keeps normal processing suspended while an exhausted prepared conflict remains active", async () => {
+    const controller = new AbortController();
+    const notifier: EmailNotifier = { send: vi.fn() };
+    const project = createProject("project-a");
+    const worktreeRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), "agent-orchestrator-blocked-prepared-conflict-"),
+    );
+    project.repository.worktreeRoot = worktreeRoot;
+    prepareConflict(project);
+
+    const failure = new PreparedConflictRemediationError(
+      "OpenCode",
+      "conflict remediation did not complete",
+    );
+    annotateFailure(failure, {
+      projectId: project.id,
+      cardId: "card-1",
+    });
+    let pollCalls = 0;
+    let recoveryChecks = 0;
+    const git = {
+      getCurrentBranch: vi.fn().mockResolvedValue("agent/card-1"),
+      getRebaseState: vi.fn().mockImplementation(async () => {
+        recoveryChecks += 1;
+
+        if (recoveryChecks === 2) {
+          controller.abort();
+        }
+
+        return {
+          active: true,
+          backend: "merge",
+          headName: "refs/heads/agent/card-1",
+          onto: "b".repeat(40),
+          originalHead: "a".repeat(40),
+        };
+      }),
+      getConflictedPaths: vi.fn(),
+    } as unknown as GitClient;
+
+    pollProject.mockImplementation(async () => {
+      pollCalls += 1;
+      throw failure;
+    });
+
+    try {
+      await runOrchestrator(
+        {} as TrelloClient,
+        git,
+        {} as GitHubClient,
+        {} as OpenCodeClient,
+        {} as CommandRunner,
+        createConfig([project], 0),
+        controller.signal,
+        notifier,
+      );
+
+      expect(pollCalls).toBe(MAX_PREPARED_CONFLICT_REMEDIATION_ATTEMPTS);
+      expect(recoveryChecks).toBe(2);
+      expect(notifier.send).toHaveBeenCalledOnce();
+      expect(fs.existsSync(getPreparedConflictPath(project, "card-1"))).toBe(
+        true,
+      );
+    } finally {
+      fs.rmSync(worktreeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("detects a removed prepared-conflict handoff and resumes without a restart", async () => {
+    const controller = new AbortController();
+    const notifier: EmailNotifier = { send: vi.fn() };
+    const project = createProject("project-a");
+    const worktreeRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), "agent-orchestrator-recover-prepared-conflict-"),
+    );
+    project.repository.worktreeRoot = worktreeRoot;
+    prepareConflict(project);
+
+    const failure = new PreparedConflictRemediationError(
+      "OpenCode",
+      "conflict remediation did not complete",
+    );
+    annotateFailure(failure, {
+      projectId: project.id,
+      cardId: "card-1",
+    });
+    let pollCalls = 0;
+    const git = {
+      getCurrentBranch: vi.fn().mockResolvedValue("agent/card-1"),
+      getRebaseState: vi.fn().mockResolvedValue(null),
+      getConflictedPaths: vi.fn().mockResolvedValue([]),
+    } as unknown as GitClient;
+
+    pollProject.mockImplementation(async () => {
+      pollCalls += 1;
+
+      if (pollCalls <= MAX_PREPARED_CONFLICT_REMEDIATION_ATTEMPTS) {
+        if (pollCalls === MAX_PREPARED_CONFLICT_REMEDIATION_ATTEMPTS) {
+          fs.rmSync(getPreparedConflictPath(project, "card-1"));
+        }
+
+        throw failure;
+      }
+
+      controller.abort();
+    });
+
+    try {
+      await runOrchestrator(
+        {} as TrelloClient,
+        git,
+        {} as GitHubClient,
+        {} as OpenCodeClient,
+        {} as CommandRunner,
+        createConfig([project], 0),
+        controller.signal,
+        notifier,
+      );
+
+      expect(pollCalls).toBe(MAX_PREPARED_CONFLICT_REMEDIATION_ATTEMPTS + 1);
+      expect(git.getRebaseState).toHaveBeenCalledOnce();
+      expect(git.getConflictedPaths).toHaveBeenCalledOnce();
+      expect(notifier.send).toHaveBeenCalledOnce();
+      expect(fs.existsSync(getPreparedConflictPath(project, "card-1"))).toBe(
+        false,
+      );
+    } finally {
+      fs.rmSync(worktreeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("clears a completed underlying rebase and resumes normal processing", async () => {
+    const controller = new AbortController();
+    const notifier: EmailNotifier = { send: vi.fn() };
+    const project = createProject("project-a");
+    const worktreeRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), "agent-orchestrator-complete-prepared-conflict-"),
+    );
+    project.repository.worktreeRoot = worktreeRoot;
+    prepareConflict(project);
+
+    const failure = new PreparedConflictRemediationError(
+      "OpenCode",
+      "conflict remediation did not complete",
+    );
+    annotateFailure(failure, {
+      projectId: project.id,
+      cardId: "card-1",
+    });
+    let pollCalls = 0;
+    const git = {
+      getCurrentBranch: vi.fn().mockResolvedValue("agent/card-1"),
+      getRebaseState: vi.fn().mockResolvedValue(null),
+      getConflictedPaths: vi.fn().mockResolvedValue([]),
+      getHeadSha: vi.fn().mockResolvedValue("c".repeat(40)),
+      isAncestor: vi.fn().mockResolvedValue(true),
+      getStatus: vi.fn().mockResolvedValue(""),
+    } as unknown as GitClient;
+
+    pollProject.mockImplementation(async () => {
+      pollCalls += 1;
+
+      if (pollCalls <= MAX_PREPARED_CONFLICT_REMEDIATION_ATTEMPTS) {
+        throw failure;
+      }
+
+      controller.abort();
+    });
+
+    try {
+      await runOrchestrator(
+        {} as TrelloClient,
+        git,
+        {} as GitHubClient,
+        {} as OpenCodeClient,
+        {} as CommandRunner,
+        createConfig([project], 0),
+        controller.signal,
+        notifier,
+      );
+
+      expect(pollCalls).toBe(MAX_PREPARED_CONFLICT_REMEDIATION_ATTEMPTS + 1);
+      expect(fs.existsSync(getPreparedConflictPath(project, "card-1"))).toBe(
+        false,
+      );
+      expect(notifier.send).toHaveBeenCalledOnce();
+    } finally {
+      fs.rmSync(worktreeRoot, { recursive: true, force: true });
+    }
   });
 
   it("emails an Attention Required alert for an unreconciled project failure", async () => {

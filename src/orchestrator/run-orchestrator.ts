@@ -4,6 +4,7 @@ import {
   contextRetentionIntervalMilliseconds,
 } from "../context/card-context-retention.js";
 import type { GitClient } from "../git/git-client.js";
+import { getExistingWorktree } from "../git/prepare-worktree.js";
 import type { GitHubClient } from "../github/github-client.js";
 import { withGitHubOperationProject } from "../github/github-operation-context.js";
 import {
@@ -46,6 +47,11 @@ import {
   MAX_PREPARED_CONFLICT_REMEDIATION_ATTEMPTS,
   PreparedConflictRemediationError,
 } from "./remediate-prepared-conflict.js";
+import {
+  clearPreparedConflict,
+  readPreparedConflict,
+  readPreparedConflicts,
+} from "./prepared-conflict-state.js";
 import {
   MAX_TRELLO_RECONCILIATION_ATTEMPTS,
   RetryableTrelloReconciliationError,
@@ -111,6 +117,11 @@ function failureNotificationIdentity(
     reason,
     handlingOutcome: handlingOutcome ?? null,
   });
+}
+
+interface BlockedPreparedConflict {
+  cardId: string | undefined;
+  recoveryCheckFailed: boolean;
 }
 
 interface BlockedReconciliation {
@@ -180,6 +191,92 @@ async function hasReconciliationRecovery(
   return false;
 }
 
+function isGitSha(value: string): boolean {
+  return /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(value);
+}
+
+async function hasPreparedConflictRecovery(
+  git: GitClient,
+  project: PollingProject,
+  blocked: BlockedPreparedConflict,
+  signal: AbortSignal,
+): Promise<boolean> {
+  if (signal.aborted) {
+    return false;
+  }
+
+  if (blocked.cardId === undefined) {
+    try {
+      return readPreparedConflicts(project).length === 0;
+    } catch (error) {
+      if (!blocked.recoveryCheckFailed) {
+        blocked.recoveryCheckFailed = true;
+        logger
+          .child({ projectId: project.id })
+          .warn(
+            `Could not inspect blocked prepared-conflict state: ${getErrorMessage(error)}; retaining the original failure context`,
+          );
+      }
+
+      return false;
+    }
+  }
+
+  try {
+    const handoff = readPreparedConflict(project, blocked.cardId);
+    const worktree = await getExistingWorktree(git, project, blocked.cardId);
+
+    if (worktree === null) {
+      return handoff === null && readPreparedConflicts(project).length === 0;
+    }
+
+    // An active rebase or unmerged path means the prepared conflict is still live.
+    if ((await git.getRebaseState(worktree.path)) !== null) {
+      return false;
+    }
+
+    if ((await git.getConflictedPaths(worktree.path)).length > 0) {
+      return false;
+    }
+
+    if (handoff === null) {
+      return readPreparedConflicts(project).length === 0;
+    }
+
+    const currentHead = await git.getHeadSha(worktree.path);
+
+    if (
+      !isGitSha(currentHead) ||
+      currentHead === handoff.rebase.originalHead ||
+      !(await git.isAncestor(
+        worktree.path,
+        handoff.rebase.onto,
+        currentHead,
+      )) ||
+      (await git.getStatus(worktree.path)).trim().length > 0
+    ) {
+      return false;
+    }
+
+    clearPreparedConflict(project, blocked.cardId);
+    return readPreparedConflicts(project).length === 0;
+  } catch (error) {
+    if (!blocked.recoveryCheckFailed) {
+      blocked.recoveryCheckFailed = true;
+      logger
+        .child({
+          projectId: project.id,
+          cardId: blocked.cardId,
+        })
+        .warn(
+          `Could not inspect blocked prepared-conflict state: ${getErrorMessage(error)}; retaining the original failure context`,
+        );
+    }
+
+    return false;
+  }
+}
+
 async function runProjectWorker(
   trello: TrelloClient,
   git: GitClient,
@@ -195,15 +292,44 @@ async function runProjectWorker(
   const githubReconciliationAttempts = new Map<string, number>();
   const trelloTransientAttempts = new Map<string, number>();
   const preparedConflictAttempts = new Map<string, number>();
-  const blockedPreparedConflicts = new Set<string>();
+  const blockedPreparedConflicts = new Map<string, BlockedPreparedConflict>();
   const blockedReconciliations = new Map<string, BlockedReconciliation>();
   let suppressedFailureIdentity: string | undefined;
   let pendingTrelloValidation = deferredTrelloValidation;
 
   while (!signal.aborted) {
-    if (blockedPreparedConflicts.has(project.id)) {
-      await sleep(pollIntervalMilliseconds, signal);
-      continue;
+    const blockedPreparedConflict = blockedPreparedConflicts.get(project.id);
+
+    if (blockedPreparedConflict !== undefined) {
+      const recovered = await hasPreparedConflictRecovery(
+        git,
+        project,
+        blockedPreparedConflict,
+        signal,
+      );
+
+      if (signal.aborted || !recovered) {
+        await sleep(pollIntervalMilliseconds, signal);
+        continue;
+      }
+
+      blockedPreparedConflicts.delete(project.id);
+      preparedConflictAttempts.clear();
+      suppressedFailureIdentity = undefined;
+      logger
+        .child({
+          projectId: project.id,
+          ...(blockedPreparedConflict.cardId === undefined
+            ? {}
+            : { cardId: blockedPreparedConflict.cardId }),
+        })
+        .event(
+          "Recovered blocked prepared-conflict state after the handoff and underlying conflict were resolved; resuming normal processing",
+        );
+
+      if (signal.aborted) {
+        continue;
+      }
     }
 
     const blockedReconciliation = blockedReconciliations.values().next().value;
@@ -296,9 +422,12 @@ async function runProjectWorker(
           continue;
         }
 
-        blockedPreparedConflicts.add(project.id);
+        blockedPreparedConflicts.set(project.id, {
+          cardId,
+          recoveryCheckFailed: false,
+        });
         projectLog.error(
-          "Prepared conflict remediation retry threshold exhausted; blocking this project until the handoff is resolved and the worker is restarted",
+          "Prepared conflict remediation retry threshold exhausted; blocking this project until the handoff or underlying conflict state is resolved",
         );
       }
 
