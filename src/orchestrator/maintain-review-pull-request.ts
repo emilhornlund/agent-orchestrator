@@ -14,6 +14,7 @@ import {
   CommandRunAbortedError,
   type CommandRunner,
 } from "../process/command-runner.js";
+import { runRepositorySetup } from "../process/run-setup.js";
 import { annotateCardFailure } from "./failure-diagnostic.js";
 import {
   PullRequestStatusPresentationError,
@@ -26,9 +27,19 @@ import {
 } from "./prepared-conflict-state.js";
 import { WorkflowError } from "./workflow-error.js";
 import type { TrelloCard } from "../trello/trello-client.js";
+import {
+  matchesReviewMaintenanceRepositoryState,
+  readReviewMaintenanceState,
+  writeReviewMaintenanceState,
+  type ReviewMaintenanceState,
+} from "./review-maintenance-state.js";
 
 export type ReviewMaintenanceResult =
-  "not-eligible" | "already-current" | "rebased" | "prepared-conflict";
+  | "not-eligible"
+  | "already-current"
+  | "rebased"
+  | "prepared-conflict"
+  | "validation-failed";
 
 export interface ReviewMaintenanceOptions {
   git: GitClient;
@@ -142,7 +153,7 @@ async function revalidatePullRequest(
 async function prepareMaintenanceWorktree(
   options: ReviewMaintenanceOptions,
   branch: string,
-): Promise<PreparedWorktree> {
+): Promise<PreparedWorktree & { created: boolean }> {
   try {
     return await prepareReviewMaintenanceWorktree(
       options.git,
@@ -154,6 +165,136 @@ async function prepareMaintenanceWorktree(
       options.project,
       options.card,
       `worktree preparation for ${branch}`,
+      error,
+    );
+  }
+}
+
+function setupMaintenanceError(
+  project: ProjectConfig,
+  card: TrelloCard,
+  error: unknown,
+): WorkflowError {
+  const workflowError = new WorkflowError(
+    "Setup",
+    `Could not run repository setup for Human Review card "${card.name}": ${getErrorMessage(error)}. The existing pull request and worktree were preserved.`,
+    { cause: error },
+  );
+
+  annotateCardFailure(workflowError, project.id, card.id);
+  return workflowError;
+}
+
+function createMaintenanceState(
+  project: ProjectConfig,
+  cardId: string,
+  values: {
+    remoteTaskSha: string;
+    remoteDefaultSha: string;
+    effectiveHeadSha: string;
+    setupCommand?: string;
+    setupCompleted: boolean;
+    validationCommand?: string;
+    validation?: ReviewMaintenanceState["validation"];
+  },
+): ReviewMaintenanceState {
+  return {
+    version: 1,
+    kind: "review-maintenance",
+    projectId: project.id,
+    cardId,
+    taskBranch: `agent/${cardId}`,
+    defaultBranch: project.repository.defaultBranch,
+    remoteTaskSha: values.remoteTaskSha,
+    remoteDefaultSha: values.remoteDefaultSha,
+    effectiveHeadSha: values.effectiveHeadSha,
+    ...(values.setupCommand === undefined
+      ? {}
+      : { setupCommand: values.setupCommand }),
+    setupCompleted: values.setupCompleted,
+    ...(values.validationCommand === undefined
+      ? {}
+      : { validationCommand: values.validationCommand }),
+    ...(values.validation === undefined
+      ? {}
+      : { validation: values.validation }),
+  };
+}
+
+function recordValidationFailure(
+  options: ReviewMaintenanceOptions,
+  remoteTaskSha: string,
+  remoteDefaultSha: string,
+  effectiveHeadSha: string,
+  setupCommand: string | undefined,
+  validationCommand: string,
+  setupCompleted: boolean,
+  validationError: Error,
+): void {
+  try {
+    writeReviewMaintenanceState(
+      options.project,
+      options.card.id,
+      createMaintenanceState(options.project, options.card.id, {
+        remoteTaskSha,
+        remoteDefaultSha,
+        effectiveHeadSha,
+        ...(setupCommand === undefined ? {} : { setupCommand }),
+        setupCompleted,
+        validationCommand,
+        validation: {
+          outcome: "failed",
+          reason: validationError.message,
+        },
+      }),
+    );
+  } catch (stateError) {
+    throw maintenanceError(
+      options.project,
+      options.card,
+      "recording repository validation failure",
+      stateError,
+    );
+  }
+}
+
+async function isReusableValidationFailure(
+  options: ReviewMaintenanceOptions,
+  worktree: PreparedWorktree & { created: boolean },
+  state: ReviewMaintenanceState | null,
+  remoteTaskSha: string,
+  remoteDefaultSha: string,
+): Promise<boolean> {
+  if (worktree.created || state?.validation?.outcome !== "failed") {
+    return false;
+  }
+
+  if (
+    !state.setupCompleted ||
+    !matchesReviewMaintenanceRepositoryState(state, {
+      remoteTaskSha,
+      remoteDefaultSha,
+      effectiveHeadSha: state.effectiveHeadSha,
+      ...(options.project.repository.setupCommand === undefined
+        ? {}
+        : { setupCommand: options.project.repository.setupCommand }),
+      ...(options.project.repository.validationCommand === undefined
+        ? {}
+        : { validationCommand: options.project.repository.validationCommand }),
+    })
+  ) {
+    return false;
+  }
+
+  try {
+    return (
+      (await options.git.getHeadSha(worktree.path)) === state.effectiveHeadSha
+    );
+  } catch (error) {
+    throw maintenanceError(
+      options.project,
+      options.card,
+      "checking recorded validation state",
       error,
     );
   }
@@ -298,6 +439,35 @@ async function maintainReviewPullRequestCore(
 
   const worktree = await prepareMaintenanceWorktree(options, branch);
 
+  let recordedState: ReviewMaintenanceState | null;
+
+  try {
+    recordedState = readReviewMaintenanceState(
+      options.project,
+      options.card.id,
+    );
+  } catch (error) {
+    throw maintenanceError(
+      options.project,
+      options.card,
+      "review maintenance state lookup",
+      error,
+    );
+  }
+
+  if (
+    await isReusableValidationFailure(
+      options,
+      worktree,
+      recordedState,
+      remoteTaskSha,
+      remoteDefaultSha,
+    )
+  ) {
+    await setStatus("failed", "unchanged repository validation failure");
+    return "validation-failed";
+  }
+
   if (options.signal?.aborted) {
     return "not-eligible";
   }
@@ -432,43 +602,175 @@ async function maintainReviewPullRequestCore(
   }
 
   const validationCommand = options.project.repository.validationCommand;
+  const setupCommand = options.project.repository.setupCommand;
+  const stateMatches =
+    recordedState !== null &&
+    matchesReviewMaintenanceRepositoryState(recordedState, {
+      remoteTaskSha,
+      remoteDefaultSha,
+      effectiveHeadSha: rebasedSha,
+      ...(setupCommand === undefined ? {} : { setupCommand }),
+      ...(validationCommand === undefined ? {} : { validationCommand }),
+    });
 
-  if (validationCommand !== undefined) {
-    await setStatus("validating", "repository validation");
-    let validationResult;
+  if (
+    setupCommand !== undefined &&
+    (worktree.created ||
+      !stateMatches ||
+      recordedState?.setupCompleted !== true)
+  ) {
+    cardLog.event("Running repository setup before Human Review validation...");
+
+    let setup;
 
     try {
-      validationResult = await options.commands.run({
+      setup = await runRepositorySetup(options.commands, {
         cwd: worktree.path,
-        command: validationCommand,
+        command: setupCommand,
         timeoutMilliseconds:
           (options.project.opencode.timeoutMinutes ?? 360) * 60_000,
         ...(options.signal === undefined ? {} : { signal: options.signal }),
         sessionLogPath,
-        sessionLabel: "Repository validation",
+        sessionLabel: "Repository setup for Human Review",
       });
     } catch (error) {
       if (error instanceof CommandRunAbortedError) {
         throw error;
       }
 
+      throw setupMaintenanceError(options.project, options.card, error);
+    }
+
+    if (setup.exitCode !== 0) {
+      throw setupMaintenanceError(
+        options.project,
+        options.card,
+        new Error(`Repository setup exited with code ${setup.exitCode}`),
+      );
+    }
+
+    try {
+      writeReviewMaintenanceState(
+        options.project,
+        options.card.id,
+        createMaintenanceState(options.project, options.card.id, {
+          remoteTaskSha,
+          remoteDefaultSha,
+          effectiveHeadSha: rebasedSha,
+          setupCommand,
+          setupCompleted: true,
+          ...(validationCommand === undefined ? {} : { validationCommand }),
+        }),
+      );
+      recordedState = readReviewMaintenanceState(
+        options.project,
+        options.card.id,
+      );
+    } catch (error) {
       throw maintenanceError(
         options.project,
         options.card,
-        "repository validation",
+        "recording successful repository setup",
         error,
       );
     }
 
-    if (validationResult.exitCode !== 0) {
-      throw maintenanceError(
-        options.project,
-        options.card,
-        "repository validation",
-        new Error(
-          `Validation command exited with code ${validationResult.exitCode}`,
-        ),
-      );
+    cardLog.event("Repository setup for Human Review passed");
+  }
+
+  if (validationCommand !== undefined) {
+    if (
+      stateMatches &&
+      recordedState?.validation?.outcome === "passed" &&
+      recordedState.setupCompleted
+    ) {
+      cardLog.info("Skipping unchanged successful repository validation");
+    } else {
+      await setStatus("validating", "repository validation");
+      let validationResult;
+
+      try {
+        validationResult = await options.commands.run({
+          cwd: worktree.path,
+          command: validationCommand,
+          timeoutMilliseconds:
+            (options.project.opencode.timeoutMinutes ?? 360) * 60_000,
+          ...(options.signal === undefined ? {} : { signal: options.signal }),
+          sessionLogPath,
+          sessionLabel: "Repository validation",
+        });
+      } catch (error) {
+        if (error instanceof CommandRunAbortedError) {
+          throw error;
+        }
+
+        const validationError = maintenanceError(
+          options.project,
+          options.card,
+          "repository validation",
+          error,
+        );
+
+        recordValidationFailure(
+          options,
+          remoteTaskSha,
+          remoteDefaultSha,
+          rebasedSha,
+          setupCommand,
+          validationCommand,
+          setupCommand === undefined || recordedState?.setupCompleted === true,
+          validationError,
+        );
+        throw validationError;
+      }
+
+      if (validationResult.exitCode !== 0) {
+        const validationError = maintenanceError(
+          options.project,
+          options.card,
+          "repository validation",
+          new Error(
+            `Validation command exited with code ${validationResult.exitCode}`,
+          ),
+        );
+
+        recordValidationFailure(
+          options,
+          remoteTaskSha,
+          remoteDefaultSha,
+          rebasedSha,
+          setupCommand,
+          validationCommand,
+          setupCommand === undefined || recordedState?.setupCompleted === true,
+          validationError,
+        );
+        throw validationError;
+      }
+
+      try {
+        writeReviewMaintenanceState(
+          options.project,
+          options.card.id,
+          createMaintenanceState(options.project, options.card.id, {
+            remoteTaskSha,
+            remoteDefaultSha,
+            effectiveHeadSha: rebasedSha,
+            ...(setupCommand === undefined ? {} : { setupCommand }),
+            setupCompleted:
+              setupCommand === undefined ||
+              recordedState?.setupCompleted === true,
+            validationCommand,
+            validation: { outcome: "passed" },
+          }),
+        );
+      } catch (error) {
+        throw maintenanceError(
+          options.project,
+          options.card,
+          "recording successful repository validation",
+          error,
+        );
+      }
     }
   }
 

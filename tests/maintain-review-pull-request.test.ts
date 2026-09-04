@@ -23,6 +23,7 @@ import { maintainReviewPullRequest } from "../src/orchestrator/maintain-review-p
 import { reconcileReviewCards } from "../src/orchestrator/reconcile-review-cards.js";
 import { getPreparedConflictPath } from "../src/orchestrator/prepared-conflict-state.js";
 import { getFailureContext } from "../src/orchestrator/failure-diagnostic.js";
+import { readReviewMaintenanceState } from "../src/orchestrator/review-maintenance-state.js";
 import type { TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
 
 const temporaryDirectories: string[] = [];
@@ -289,6 +290,190 @@ describe("owned Human Review pull-request maintenance", () => {
       expect.objectContaining({ status: null }),
     );
     expect(scenario.trello.moveCard).not.toHaveBeenCalled();
+  });
+
+  it("runs repository setup before Human Review validation", async () => {
+    const scenario = setup();
+    scenario.project.repository.setupCommand = "repository-setup";
+    const git = createGit([taskSha, defaultSha]);
+    let setupFinished = false;
+    scenario.runCommand.mockImplementation(async ({ command }) => {
+      if (command === "repository-setup") {
+        setupFinished = true;
+        return { exitCode: 0 };
+      }
+
+      expect(setupFinished).toBe(true);
+      return { exitCode: 0 };
+    });
+
+    await reconcileReviewCards(
+      scenario.trello,
+      git,
+      createGithub(),
+      scenario.project,
+      {
+        maintenance: { commands: scenario.commands },
+      },
+    );
+
+    expect(scenario.runCommand).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        command: "repository-setup",
+        sessionLabel: "Repository setup for Human Review",
+      }),
+    );
+    expect(scenario.runCommand).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        command: "yarn validate",
+        sessionLabel: "Repository validation",
+      }),
+    );
+  });
+
+  it("reports setup failure without running validation or pushing", async () => {
+    const scenario = setup();
+    scenario.project.repository.setupCommand = "repository-setup";
+    scenario.runCommand.mockResolvedValue({ exitCode: 2 });
+    const git = createGit([taskSha, defaultSha]);
+
+    await expect(
+      reconcileReviewCards(
+        scenario.trello,
+        git,
+        createGithub(),
+        scenario.project,
+        {
+          maintenance: { commands: scenario.commands },
+        },
+      ),
+    ).rejects.toThrow("Repository setup exited with code 2");
+
+    expect(scenario.runCommand).toHaveBeenCalledOnce();
+    expect(git.pushWithLease).not.toHaveBeenCalled();
+  });
+
+  it("does not rerun setup or validation for an unchanged prepared worktree", async () => {
+    const scenario = setup();
+    scenario.project.repository.setupCommand = "repository-setup";
+    const git = createGit([taskSha, defaultSha, taskSha, defaultSha]);
+    const push = vi.mocked(git.pushWithLease);
+    push.mockRejectedValueOnce(new Error("temporary push failure"));
+
+    await expect(
+      reconcileReviewCards(
+        scenario.trello,
+        git,
+        createGithub(),
+        scenario.project,
+        {
+          maintenance: { commands: scenario.commands },
+        },
+      ),
+    ).rejects.toThrow("force-with-lease update");
+    fs.mkdirSync(path.join(scenario.project.repository.worktreeRoot, "card-1"));
+
+    await expect(
+      reconcileReviewCards(
+        scenario.trello,
+        git,
+        createGithub(),
+        scenario.project,
+        {
+          maintenance: { commands: scenario.commands },
+        },
+      ),
+    ).resolves.toMatchObject({ maintenanceState: "up-to-date" });
+
+    expect(scenario.runCommand).toHaveBeenCalledTimes(2);
+    expect(push).toHaveBeenCalledTimes(2);
+  });
+
+  it("records and suppresses an unchanged deterministic validation failure", async () => {
+    const scenario = setup();
+    const git = createGit([taskSha, defaultSha, taskSha, defaultSha]);
+    scenario.runCommand.mockResolvedValue({ exitCode: 1 });
+
+    await expect(
+      reconcileReviewCards(
+        scenario.trello,
+        git,
+        createGithub(),
+        scenario.project,
+        {
+          maintenance: { commands: scenario.commands },
+        },
+      ),
+    ).rejects.toThrow("repository validation");
+    expect(
+      readReviewMaintenanceState(scenario.project, scenario.card.id),
+    ).toMatchObject({
+      remoteTaskSha: taskSha,
+      remoteDefaultSha: defaultSha,
+      effectiveHeadSha: "rebased-sha",
+      setupCompleted: true,
+      validationCommand: "yarn validate",
+      validation: { outcome: "failed" },
+    });
+    fs.mkdirSync(path.join(scenario.project.repository.worktreeRoot, "card-1"));
+
+    await expect(
+      reconcileReviewCards(
+        scenario.trello,
+        git,
+        createGithub(),
+        scenario.project,
+        {
+          maintenance: { commands: scenario.commands },
+        },
+      ),
+    ).resolves.toMatchObject({
+      card: scenario.card,
+      active: true,
+      maintenanceState: "behind",
+    });
+
+    expect(scenario.runCommand).toHaveBeenCalledTimes(1);
+    expect(git.pushWithLease).not.toHaveBeenCalled();
+  });
+
+  it("retries setup and validation after the pull-request head changes", async () => {
+    const scenario = setup();
+    scenario.project.repository.setupCommand = "repository-setup";
+    const git = createGit([taskSha, defaultSha, changedSha, defaultSha]);
+    scenario.runCommand.mockImplementation(async ({ command }) => ({
+      exitCode: command === "yarn validate" ? 1 : 0,
+    }));
+
+    await expect(
+      reconcileReviewCards(
+        scenario.trello,
+        git,
+        createGithub(),
+        scenario.project,
+        {
+          maintenance: { commands: scenario.commands },
+        },
+      ),
+    ).rejects.toThrow("repository validation");
+    fs.mkdirSync(path.join(scenario.project.repository.worktreeRoot, "card-1"));
+
+    await expect(
+      reconcileReviewCards(
+        scenario.trello,
+        git,
+        createGithub(),
+        scenario.project,
+        {
+          maintenance: { commands: scenario.commands },
+        },
+      ),
+    ).rejects.toThrow("repository validation");
+
+    expect(scenario.runCommand).toHaveBeenCalledTimes(4);
+    expect(git.rebase).toHaveBeenCalledTimes(2);
   });
 
   it("does not touch Git when the initial managed status presentation fails", async () => {

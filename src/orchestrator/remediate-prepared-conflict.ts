@@ -17,6 +17,7 @@ import {
   CommandRunAbortedError,
   type CommandRunner,
 } from "../process/command-runner.js";
+import { runRepositorySetup } from "../process/run-setup.js";
 import type { TrelloCard } from "../trello/trello-client.js";
 
 import { annotateCardFailure } from "./failure-diagnostic.js";
@@ -29,6 +30,12 @@ import {
   readPreparedConflict,
   type PreparedConflictHandoff,
 } from "./prepared-conflict-state.js";
+import {
+  matchesReviewMaintenanceRepositoryState,
+  readReviewMaintenanceState,
+  writeReviewMaintenanceState,
+  type ReviewMaintenanceState,
+} from "./review-maintenance-state.js";
 import {
   WorkflowError,
   type WorkflowFailureCategory,
@@ -106,6 +113,86 @@ function throwIfSignalAborted(signal: AbortSignal): void {
   if (signal.aborted) {
     throw new OpenCodeRunAbortedError();
   }
+}
+
+function createRemediationMaintenanceState(
+  options: RemediatePreparedConflictOptions,
+  handoff: PreparedConflictHandoff,
+  headSha: string,
+  validation: ReviewMaintenanceState["validation"],
+  setupCompleted = options.project.repository.setupCommand === undefined,
+): ReviewMaintenanceState {
+  const setupCommand = options.project.repository.setupCommand;
+  const validationCommand = options.project.repository.validationCommand;
+
+  return {
+    version: 1,
+    kind: "review-maintenance",
+    projectId: options.project.id,
+    cardId: options.card.id,
+    taskBranch: `agent/${options.card.id}`,
+    defaultBranch: options.project.repository.defaultBranch,
+    remoteTaskSha: handoff.expectedRemoteTaskSha,
+    remoteDefaultSha: handoff.rebase.onto,
+    effectiveHeadSha: headSha,
+    ...(setupCommand === undefined ? {} : { setupCommand }),
+    setupCompleted,
+    ...(validationCommand === undefined ? {} : { validationCommand }),
+    ...(validation === undefined ? {} : { validation }),
+  };
+}
+
+async function verifyAuthoritativeRemoteTaskSha(
+  options: RemediatePreparedConflictOptions,
+  worktreePath: string,
+  branch: string,
+  expectedRemoteTaskSha: string,
+  operation: string,
+): Promise<void> {
+  let remoteTaskSha: string | null;
+
+  try {
+    remoteTaskSha = await options.git.getRemoteBranchSha(
+      worktreePath,
+      "origin",
+      branch,
+      options.project,
+    );
+  } catch (error) {
+    throw fail(options, "Git/GitHub", operation, error);
+  }
+
+  if (
+    remoteTaskSha === null ||
+    !isGitSha(remoteTaskSha) ||
+    remoteTaskSha !== expectedRemoteTaskSha
+  ) {
+    throw fail(
+      options,
+      "Git/GitHub",
+      operation,
+      new Error(
+        remoteTaskSha === null
+          ? "The remote task branch is missing"
+          : !isGitSha(remoteTaskSha)
+            ? "Git returned a malformed authoritative remote SHA"
+            : `The remote task branch changed from ${expectedRemoteTaskSha} to ${remoteTaskSha}`,
+      ),
+    );
+  }
+}
+
+function replayValidationFailure(
+  options: RemediatePreparedConflictOptions,
+  state: ReviewMaintenanceState,
+): PreparedConflictRemediationError {
+  const failure = new PreparedConflictRemediationError(
+    "Git/GitHub",
+    state.validation?.reason ?? "The recorded repository validation failed",
+  );
+
+  annotateCardFailure(failure, options.project.id, options.card.id);
+  return failure;
 }
 
 export async function remediatePreparedConflict(
@@ -322,6 +409,98 @@ export async function remediatePreparedConflict(
     }
 
     const validationCommand = options.project.repository.validationCommand;
+    const setupCommand = options.project.repository.setupCommand;
+    let recordedState: ReviewMaintenanceState | null;
+
+    try {
+      recordedState = readReviewMaintenanceState(
+        options.project,
+        options.card.id,
+      );
+    } catch (error) {
+      throw fail(
+        options,
+        "Git/GitHub",
+        "review maintenance state lookup",
+        error,
+      );
+    }
+
+    await verifyAuthoritativeRemoteTaskSha(
+      options,
+      worktree.path,
+      branch,
+      persistedHandoff.expectedRemoteTaskSha,
+      "authoritative remote SHA verification before reusing validation failure",
+    );
+
+    const stateMatches =
+      recordedState !== null &&
+      matchesReviewMaintenanceRepositoryState(recordedState, {
+        remoteTaskSha: persistedHandoff.expectedRemoteTaskSha,
+        remoteDefaultSha: persistedHandoff.rebase.onto,
+        effectiveHeadSha: remediatedHead,
+        ...(setupCommand === undefined ? {} : { setupCommand }),
+        ...(validationCommand === undefined ? {} : { validationCommand }),
+      });
+
+    if (
+      stateMatches &&
+      recordedState?.setupCompleted === true &&
+      recordedState.validation?.outcome === "failed"
+    ) {
+      throw replayValidationFailure(options, recordedState);
+    }
+
+    if (
+      setupCommand !== undefined &&
+      (!stateMatches || recordedState?.setupCompleted !== true)
+    ) {
+      try {
+        const setup = await runRepositorySetup(options.commands, {
+          cwd: worktree.path,
+          command: setupCommand,
+          timeoutMilliseconds: options.project.opencode.timeoutMinutes * 60_000,
+          signal: options.signal,
+          sessionLogPath,
+          sessionLabel: "Repository setup for Human Review",
+        });
+
+        if (setup.exitCode !== 0) {
+          throw new Error(
+            `Repository setup exited with code ${setup.exitCode}`,
+          );
+        }
+      } catch (error) {
+        throwIfAborted(error);
+        throw fail(options, "Setup", "repository setup", error);
+      }
+
+      try {
+        writeReviewMaintenanceState(
+          options.project,
+          options.card.id,
+          createRemediationMaintenanceState(
+            options,
+            persistedHandoff,
+            remediatedHead,
+            undefined,
+            true,
+          ),
+        );
+        recordedState = readReviewMaintenanceState(
+          options.project,
+          options.card.id,
+        );
+      } catch (error) {
+        throw fail(
+          options,
+          "Git/GitHub",
+          "recording successful repository setup",
+          error,
+        );
+      }
+    }
 
     if (validationCommand !== undefined) {
       await setStatus(
@@ -341,11 +520,40 @@ export async function remediatePreparedConflict(
         });
       } catch (error) {
         throwIfAborted(error);
-        throw fail(options, "Git/GitHub", "repository validation", error);
+        const validationError = fail(
+          options,
+          "Git/GitHub",
+          "repository validation",
+          error,
+        );
+
+        try {
+          writeReviewMaintenanceState(
+            options.project,
+            options.card.id,
+            createRemediationMaintenanceState(
+              options,
+              persistedHandoff,
+              remediatedHead,
+              { outcome: "failed", reason: validationError.message },
+              setupCommand === undefined ||
+                recordedState?.setupCompleted === true,
+            ),
+          );
+        } catch (stateError) {
+          throw fail(
+            options,
+            "Git/GitHub",
+            "recording repository validation failure",
+            stateError,
+          );
+        }
+
+        throw validationError;
       }
 
       if (validation.exitCode !== 0) {
-        throw fail(
+        const validationError = fail(
           options,
           "Git/GitHub",
           "repository validation",
@@ -353,36 +561,64 @@ export async function remediatePreparedConflict(
             `Validation command exited with code ${validation.exitCode}`,
           ),
         );
+
+        try {
+          writeReviewMaintenanceState(
+            options.project,
+            options.card.id,
+            createRemediationMaintenanceState(
+              options,
+              persistedHandoff,
+              remediatedHead,
+              { outcome: "failed", reason: validationError.message },
+              setupCommand === undefined ||
+                recordedState?.setupCompleted === true,
+            ),
+          );
+        } catch (stateError) {
+          throw fail(
+            options,
+            "Git/GitHub",
+            "recording repository validation failure",
+            stateError,
+          );
+        }
+
+        throw validationError;
+      }
+
+      try {
+        writeReviewMaintenanceState(
+          options.project,
+          options.card.id,
+          createRemediationMaintenanceState(
+            options,
+            persistedHandoff,
+            remediatedHead,
+            { outcome: "passed" },
+            setupCommand === undefined ||
+              recordedState?.setupCompleted === true,
+          ),
+        );
+      } catch (error) {
+        throw fail(
+          options,
+          "Git/GitHub",
+          "recording successful repository validation",
+          error,
+        );
       }
     }
 
     throwIfSignalAborted(options.signal);
 
-    const remoteTaskSha = await options.git.getRemoteBranchSha(
+    await verifyAuthoritativeRemoteTaskSha(
+      options,
       worktree.path,
-      "origin",
       branch,
-      options.project,
+      persistedHandoff.expectedRemoteTaskSha,
+      "authoritative remote SHA verification",
     );
-
-    if (
-      remoteTaskSha === null ||
-      !isGitSha(remoteTaskSha) ||
-      remoteTaskSha !== persistedHandoff.expectedRemoteTaskSha
-    ) {
-      throw fail(
-        options,
-        "Git/GitHub",
-        "authoritative remote SHA verification",
-        new Error(
-          remoteTaskSha === null
-            ? "The remote task branch is missing"
-            : !isGitSha(remoteTaskSha)
-              ? "Git returned a malformed authoritative remote SHA"
-              : `The remote task branch changed from ${persistedHandoff.expectedRemoteTaskSha} to ${remoteTaskSha}`,
-        ),
-      );
-    }
 
     throwIfSignalAborted(options.signal);
 
