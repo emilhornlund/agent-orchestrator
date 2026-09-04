@@ -1,10 +1,24 @@
 import { describe, expect, it, vi } from "vitest";
 
+import type { ProjectConfig } from "../src/config/config.js";
 import {
   GitClient,
   type GitIdentity,
   type RunGit,
 } from "../src/git/git-client.js";
+import { GitHubCredentialProvider } from "../src/github/github-credential-provider.js";
+
+function project(
+  githubApp?: ProjectConfig["repository"]["githubApp"],
+): ProjectConfig {
+  return {
+    id: "project-a",
+    repository: {
+      github: "owner/repository",
+      githubApp,
+    },
+  } as ProjectConfig;
+}
 
 describe("GitClient", () => {
   it("fetches a branch from a remote", async () => {
@@ -227,6 +241,152 @@ describe("GitClient", () => {
       "origin",
       "agent/example",
     ]);
+  });
+
+  it("updates an owned task branch with an exact force-with-lease", async () => {
+    const runGit = vi.fn<RunGit>().mockResolvedValue("");
+    const git = new GitClient(runGit);
+
+    await git.pushWithLease(
+      "/tmp/repository",
+      "origin",
+      "agent/card-123",
+      "remote-sha",
+    );
+
+    expect(runGit).toHaveBeenCalledWith("/tmp/repository", [
+      "push",
+      "--force-with-lease=refs/heads/agent/card-123:remote-sha",
+      "origin",
+      "agent/card-123",
+    ]);
+    expect(runGit.mock.calls[0]?.[1]).not.toContain("--force");
+  });
+
+  it("propagates a rejected lease without attempting another update", async () => {
+    const runGit = vi
+      .fn<RunGit>()
+      .mockRejectedValue(new Error("stale info: remote branch changed"));
+    const git = new GitClient(runGit);
+
+    await expect(
+      git.pushWithLease(
+        "/tmp/repository",
+        "origin",
+        "agent/card-123",
+        "authoritative-sha",
+      ),
+    ).rejects.toThrow("stale info: remote branch changed");
+
+    expect(runGit).toHaveBeenCalledTimes(1);
+    expect(runGit.mock.calls[0]?.[1]).toEqual([
+      "push",
+      "--force-with-lease=refs/heads/agent/card-123:authoritative-sha",
+      "origin",
+      "agent/card-123",
+    ]);
+  });
+
+  it.each(["main", "feature/other", "agent/", "agent/card/child"])(
+    "rejects a non-owned branch %s before invoking Git",
+    async (branch) => {
+      const runGit = vi.fn<RunGit>().mockResolvedValue("");
+      const git = new GitClient(runGit);
+
+      await expect(
+        git.pushWithLease("/tmp/repository", "origin", branch, "remote-sha"),
+      ).rejects.toThrow("expected an agent/<card-id> branch");
+
+      expect(runGit).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["", " "])(
+    "rejects a missing expected remote SHA (%j) before invoking Git",
+    async (expectedRemoteSha) => {
+      const runGit = vi.fn<RunGit>().mockResolvedValue("");
+      const git = new GitClient(runGit);
+
+      await expect(
+        git.pushWithLease(
+          "/tmp/repository",
+          "origin",
+          "agent/card-123",
+          expectedRemoteSha,
+        ),
+      ).rejects.toThrow("an authoritative current remote SHA is required");
+
+      expect(runGit).not.toHaveBeenCalled();
+    },
+  );
+
+  it("uses GitHub App askpass authentication for a lease update", async () => {
+    const token = "installation-token";
+    const runGit = vi.fn<RunGit>().mockResolvedValue("");
+    const credentials = new GitHubCredentialProvider({
+      authenticator: {
+        getInstallationToken: vi.fn().mockResolvedValue(token),
+      },
+    });
+    const git = new GitClient(runGit, credentials);
+    const configuredProject = project({
+      appId: "app-a",
+      installationId: "installation-a",
+      privateKeyPath: "/secrets/app.pem",
+    });
+
+    await git.pushWithLease(
+      "/tmp/repository",
+      "origin",
+      "agent/card-123",
+      "remote-sha",
+      configuredProject,
+    );
+
+    expect(runGit).toHaveBeenCalledWith(
+      "/tmp/repository",
+      [
+        "-c",
+        "credential.helper=",
+        "push",
+        "--force-with-lease=refs/heads/agent/card-123:remote-sha",
+        "origin",
+        "agent/card-123",
+      ],
+      expect.objectContaining({
+        GH_TOKEN: token,
+        GITHUB_TOKEN: token,
+        GIT_ASKPASS: expect.any(String),
+        GIT_TERMINAL_PROMPT: "0",
+      }),
+    );
+    expect(runGit.mock.calls[0]?.[1]).not.toContain(token);
+  });
+
+  it("preserves ambient or PAT authentication for a lease update", async () => {
+    vi.stubEnv("GH_TOKEN", "ambient-pat");
+
+    try {
+      const runGit = vi.fn<RunGit>().mockResolvedValue("");
+      const git = new GitClient(runGit);
+
+      await git.pushWithLease(
+        "/tmp/repository",
+        "origin",
+        "agent/card-123",
+        "remote-sha",
+        project(),
+      );
+
+      expect(runGit).toHaveBeenCalledWith("/tmp/repository", [
+        "push",
+        "--force-with-lease=refs/heads/agent/card-123:remote-sha",
+        "origin",
+        "agent/card-123",
+      ]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("removes a worktree", async () => {
