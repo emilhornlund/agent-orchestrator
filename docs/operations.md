@@ -213,7 +213,11 @@ branch. Eligibility requires an open pull request in the configured repository, 
 default base, a `behind` or `conflicted` state, and no requested changes on the current head. The pull request is revalidated
 before Git maintenance. A current branch is a no-op and is not fetched, rebased, validated, pushed, or reported as a successful
 maintenance update. A successful clean rebase runs `repository.validationCommand` when configured and updates the existing
-branch, retaining the existing pull request and leaving the card in `Human Review`.
+branch, retaining the existing pull request and leaving the card in `Human Review`. A recognized `UNKNOWN` value in either
+`mergeable` or `mergeStateStatus` is not a maintenance state: the card and branch are left unchanged while the existing
+card-scoped GitHub reconciliation retry policy reads the pull request again, using its three-attempt bound and backoff. A valid
+later response resumes normal handling; persistent unresolved state reaches the same exhausted-retry project block and
+`Attention Required` diagnostic. Unsupported or malformed values remain immediate failures.
 
 During this maintenance, the existing pull request description may contain one managed status section bounded by
 `<!-- agent-orchestrator-status:start -->` and `<!-- agent-orchestrator-status:end -->`. The orchestrator updates only the content
@@ -335,7 +339,9 @@ while a comment failure after a successful move is logged and leaves the card in
 
 `Attention Required` is diagnostic only. It does not correct or retry cards, and an ambiguous or otherwise unsafe state stays
 available for operator investigation, but an exhausted reconciliation operation is blocked instead of being retried on every
-poll. Trello and GitHub operations classify HTTP 500, 502, 503, and 504, rate limits, timeouts, and temporary connectivity
+poll. Recognized GitHub `UNKNOWN` mergeability and merge-state responses are temporary unresolved states during Human Review;
+they use the existing three-attempt card-scoped retry and backoff, with `Attention Required` emitted only after exhaustion.
+Malformed or unsupported merge-state data remains an immediate diagnostic. Trello and GitHub operations classify HTTP 500, 502, 503, 504, rate limits, timeouts, and temporary connectivity
 failures as retryable. The project worker logs each failed attempt with project, card when known, operation, classification, safe
 error context, and a deterministic `1/3`-style count; it sends no attention event until three consecutive attempts fail. After
 the external failure is resolved, moving a known affected card from its recorded reconciliation list to `Ready for Agent` is the

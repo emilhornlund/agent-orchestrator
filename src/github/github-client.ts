@@ -79,6 +79,18 @@ export type PullRequestMergeStateStatus =
   | "UNKNOWN"
   | "UNSTABLE";
 
+export class GitHubMergeStateUnknownError extends Error {
+  constructor(
+    mergeable: PullRequestMergeability,
+    mergeStateStatus: PullRequestMergeStateStatus,
+  ) {
+    super(
+      `GitHub returned a temporary unresolved pull request merge state while recalculating (mergeable: ${mergeable}, mergeStateStatus: ${mergeStateStatus})`,
+    );
+    this.name = "GitHubMergeStateUnknownError";
+  }
+}
+
 export interface PullRequestHeadRepository {
   name: string;
 }
@@ -397,6 +409,14 @@ function hasTransientHttpStatus(error: unknown, message: string): boolean {
 
 /** Returns true only for failures that can reasonably change on a later read. */
 export function isRetryableGitHubError(error: unknown): boolean {
+  if (
+    errorChain(error).some(
+      (entry) => entry instanceof GitHubMergeStateUnknownError,
+    )
+  ) {
+    return true;
+  }
+
   const messages = errorChain(error).map((entry) =>
     entry.message.toLowerCase(),
   );
