@@ -176,6 +176,8 @@ describe("owned Human Review pull-request maintenance", () => {
       ...createPullRequest(),
       headRepository: { name: "repo" },
       headRepositoryOwner: { login: "contributor" },
+      mergeable: "CONFLICTING" as const,
+      mergeStateStatus: "DIRTY" as const,
     };
     const git = createGit([taskSha, defaultSha]);
 
@@ -252,6 +254,53 @@ describe("owned Human Review pull-request maintenance", () => {
     );
     expect(scenario.trello.moveCard).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["CONFLICTING", "CLEAN"],
+    ["MERGEABLE", "DIRTY"],
+  ] as const)(
+    "rebases and updates an owned conflicting branch (%s/%s) without replacing its pull request",
+    async (mergeable, mergeStateStatus) => {
+      const scenario = setup();
+      const pullRequest = {
+        ...createPullRequest(),
+        mergeable,
+        mergeStateStatus,
+      };
+      const git = createGit([taskSha, defaultSha]);
+      const github = createGithub(pullRequest);
+
+      await expect(
+        reconcileReviewCards(scenario.trello, git, github, scenario.project, {
+          maintenance: { commands: scenario.commands },
+        }),
+      ).resolves.toMatchObject({
+        card: scenario.card,
+        active: true,
+        maintenanceState: "up-to-date",
+      });
+
+      expect(git.rebase).toHaveBeenCalledWith(
+        path.join(scenario.project.repository.worktreeRoot, "card-1"),
+        "origin/main",
+        scenario.project.repository.gitIdentity,
+      );
+      expect(git.pushWithLease).toHaveBeenCalledWith(
+        path.join(scenario.project.repository.worktreeRoot, "card-1"),
+        "origin",
+        "agent/card-1",
+        taskSha,
+        scenario.project,
+      );
+      expect(scenario.runCommand).toHaveBeenCalled();
+      expect(scenario.trello.moveCard).not.toHaveBeenCalled();
+      expect(
+        fs.existsSync(
+          getPreparedConflictPath(scenario.project, scenario.card.id),
+        ),
+      ).toBe(false);
+    },
+  );
 
   it("does not touch an already-current branch", async () => {
     const scenario = setup();
@@ -458,6 +507,51 @@ describe("owned Human Review pull-request maintenance", () => {
     expect(git.pushWithLease).not.toHaveBeenCalled();
     expect(git.rebase).toHaveBeenCalledTimes(1);
     expect(git.getRemoteBranchSha).toHaveBeenCalledTimes(2);
+    expect(scenario.trello.moveCard).not.toHaveBeenCalled();
+  });
+
+  it("creates a prepared-conflict handoff when an owned conflicting PR hits real Git conflicts", async () => {
+    const scenario = setup();
+    const pullRequest = {
+      ...createPullRequest(),
+      mergeable: "CONFLICTING" as const,
+      mergeStateStatus: "DIRTY" as const,
+    };
+    const rebaseState: GitRebaseState = {
+      active: true,
+      backend: "merge",
+      headName: "refs/heads/agent/card-1",
+      onto: defaultSha,
+      originalHead: taskSha,
+    };
+    const git = createGit([taskSha, defaultSha], {
+      rebase: vi.fn().mockRejectedValue(new Error("CONFLICT (content)")),
+      rebaseState,
+      conflictedPaths: ["src/conflicted.ts"],
+    });
+
+    await expect(
+      reconcileReviewCards(
+        scenario.trello,
+        git,
+        createGithub(pullRequest),
+        scenario.project,
+        { maintenance: { commands: scenario.commands } },
+      ),
+    ).resolves.toMatchObject({
+      card: scenario.card,
+      active: true,
+      maintenanceState: "prepared-conflict",
+      preparedConflict: {
+        expectedRemoteTaskSha: taskSha,
+        conflictedPaths: ["src/conflicted.ts"],
+        rebase: rebaseState,
+      },
+    });
+
+    expect(scenario.runCommand).not.toHaveBeenCalled();
+    expect(git.pushWithLease).not.toHaveBeenCalled();
+    expect(git.rebase).toHaveBeenCalledOnce();
     expect(scenario.trello.moveCard).not.toHaveBeenCalled();
   });
 });

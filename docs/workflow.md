@@ -177,14 +177,14 @@ the default branch has advanced without a conflict, or `conflicted` when GitHub 
 rebase conflict is exposed separately as `prepared-conflict`. Pull requests on other branches, and closed or merged pull
 requests, are outside this state. Unknown or incomplete GitHub evidence blocks maintenance rather than being treated as current.
 
-An open, owned, conflict-free `behind` pull request with no actionable requested changes is revalidated immediately before
+An open, owned `behind` or `conflicted` pull request with no actionable requested changes is revalidated immediately before
 maintenance. The orchestrator then resolves the authoritative remote task-branch SHA, prepares or reuses only the expected
-task worktree, fetches `origin/<defaultBranch>`, rebases the task branch, runs the configured `validationCommand` when present,
-and updates the existing branch with the exact force-with-lease helper. The existing pull request remains associated with the
-card, the card remains in `Human Review`, and no OpenCode session, pull-request creation, or Trello transition is performed.
-After a successful update, reconciliation exposes `up-to-date` and logs the resulting commit. If the branch is already current,
-maintenance is a no-op: no worktree preparation, rebase, validation, push, pull-request operation, OpenCode invocation, or
-successful maintenance result occurs.
+task worktree, fetches `origin/<defaultBranch>`, and attempts to rebase the task branch. A clean rebase runs the configured
+`validationCommand` when present and updates the existing branch with the exact force-with-lease helper. The existing pull request
+remains associated with the card, the card remains in `Human Review`, and no OpenCode session, pull-request creation, or Trello
+transition is performed. After a successful update, reconciliation exposes `up-to-date` and logs the resulting commit. If the
+branch is already current, maintenance is a no-op: no worktree preparation, rebase, validation, push, pull-request operation,
+OpenCode invocation, or successful maintenance result occurs.
 
 A lease rejection, missing or invalid remote SHA, fetch or validation failure, or non-conflict rebase failure leaves the pull
 request, card, task branch, and worktree unchanged for diagnosis and later reconciliation. When Git confirms an active conflicted

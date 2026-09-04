@@ -14,7 +14,10 @@ import {
 } from "../src/opencode/opencode-client.js";
 import { cleanupCardContextRetention } from "../src/context/card-context-retention.js";
 import { pollProject } from "../src/orchestrator/poll-project.js";
-import { writePreparedConflict } from "../src/orchestrator/prepared-conflict-state.js";
+import {
+  getPreparedConflictPath,
+  writePreparedConflict,
+} from "../src/orchestrator/prepared-conflict-state.js";
 import { CommandRunner } from "../src/process/command-runner.js";
 import { getRefinementResultPath } from "../src/refinement/refinement-result.js";
 import { type TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
@@ -223,6 +226,167 @@ describe("pollProject", () => {
       expect(fs.existsSync(contextDirectory)).toBe(false);
     } finally {
       fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("routes a newly conflicting Human Review PR through dedicated remediation", async () => {
+    const worktreeRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), "agent-orchestrator-conflicting-review-"),
+    );
+    const taskSha = "a".repeat(40);
+    const baseSha = "b".repeat(40);
+    const remediatedSha = "c".repeat(40);
+    const rebaseState = {
+      active: true as const,
+      backend: "merge" as const,
+      headName: "refs/heads/agent/card-1",
+      onto: baseSha,
+      originalHead: taskSha,
+    };
+    const project = {
+      id: "project-1",
+      repository: {
+        path: "/repo",
+        github: "owner/repo",
+        worktreeRoot,
+        defaultBranch: "main",
+        gitIdentity: {
+          name: "Agent Orchestrator",
+          email: "agent@example.com",
+        },
+        validationCommand: "yarn validate",
+      },
+      opencode: {
+        refinement: { model: "refinement", variant: "variant" },
+        implementation: { model: "implementation", variant: "variant" },
+        review: { model: "review", variant: "variant" },
+        remediation: {
+          model: "remediation",
+          variant: "variant",
+          maxPasses: 1,
+        },
+        commit: { model: "commit", variant: "variant" },
+        timeoutMinutes: 5,
+      },
+      trello: {
+        readyListId: "ready",
+        workingListId: "working",
+        reviewListId: "review",
+        backlogListId: "backlog",
+        failedListId: "failed",
+        doneListId: "done",
+      },
+    } as ProjectConfig;
+    const card: TrelloCard = {
+      id: "card-1",
+      name: "Conflicting task",
+      desc: "Resolve this task branch conflict.",
+      idList: "review",
+      idLabels: [],
+      url: "https://trello.com/c/card-1",
+    };
+    const trello = new TrelloClient({ apiKey: "key", token: "token" });
+    const getCards = vi
+      .spyOn(trello, "getCards")
+      .mockImplementation(async (listId) =>
+        listId === project.trello.reviewListId ? [card] : [],
+      );
+    const moveCard = vi.spyOn(trello, "moveCard");
+    const pullRequest = {
+      url: "https://github.com/owner/repo/pull/1",
+      state: "OPEN" as const,
+      mergedAt: null,
+      baseRefName: "main",
+      headRefName: "agent/card-1",
+      headRepository: { name: "repo" },
+      headRepositoryOwner: { login: "owner" },
+      mergeable: "CONFLICTING" as const,
+      mergeStateStatus: "DIRTY" as const,
+    };
+    const github = {
+      findPullRequestState: vi.fn().mockResolvedValue(pullRequest),
+      findChangesRequestedPullRequest: vi.fn().mockResolvedValue(null),
+      createPullRequest: vi.fn(),
+    } as unknown as GitHubClient;
+    const getRebaseState = vi
+      .fn()
+      .mockResolvedValueOnce(rebaseState)
+      .mockResolvedValueOnce(rebaseState)
+      .mockResolvedValueOnce(null);
+    const git = {
+      fetch: vi.fn().mockResolvedValue(undefined),
+      pruneWorktrees: vi.fn().mockResolvedValue(undefined),
+      branchExists: vi.fn().mockResolvedValue(false),
+      addWorktreeWithNewBranch: vi
+        .fn()
+        .mockImplementation(async (_repositoryPath, worktreePath) => {
+          fs.mkdirSync(worktreePath, { recursive: true });
+        }),
+      getCurrentBranch: vi.fn().mockResolvedValue("agent/card-1"),
+      getStatus: vi.fn().mockResolvedValue(""),
+      resetHardTo: vi.fn().mockResolvedValue(undefined),
+      isAncestor: vi
+        .fn()
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(true),
+      rebase: vi.fn().mockRejectedValue(new Error("CONFLICT (content)")),
+      getRebaseState,
+      getConflictedPaths: vi
+        .fn()
+        .mockResolvedValueOnce(["src/conflicted.ts"])
+        .mockResolvedValueOnce([]),
+      getHeadSha: vi.fn().mockResolvedValue(remediatedSha),
+      getRemoteBranchSha: vi
+        .fn()
+        .mockResolvedValueOnce(taskSha)
+        .mockResolvedValueOnce(baseSha)
+        .mockResolvedValue(taskSha),
+      isValidRepository: vi.fn().mockResolvedValue(true),
+      pushWithLease: vi.fn().mockResolvedValue(undefined),
+    } as unknown as GitClient;
+    const runOpenCode = vi.fn().mockResolvedValue({
+      exitCode: 0,
+      output: "",
+      errorOutput: "",
+    });
+    const opencode = new OpenCodeClient(runOpenCode);
+    const runCommand = vi.fn().mockResolvedValue({ exitCode: 0 });
+    const commands = new CommandRunner(runCommand);
+
+    try {
+      await pollProject(
+        trello,
+        git,
+        github,
+        opencode,
+        commands,
+        project,
+        new AbortController().signal,
+      );
+
+      expect(runOpenCode).toHaveBeenCalledOnce();
+      expect(runOpenCode).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cwd: path.join(worktreeRoot, "card-1"),
+          sessionLabel: "OpenCode conflict remediation",
+        }),
+      );
+      expect(git.rebase).toHaveBeenCalledOnce();
+      expect(git.pushWithLease).toHaveBeenCalledWith(
+        path.join(worktreeRoot, "card-1"),
+        "origin",
+        "agent/card-1",
+        taskSha,
+        project,
+      );
+      expect(github.createPullRequest).not.toHaveBeenCalled();
+      expect(moveCard).not.toHaveBeenCalled();
+      expect(fs.existsSync(getPreparedConflictPath(project, card.id))).toBe(
+        false,
+      );
+      expect(getCards).toHaveBeenCalledWith(project.trello.reviewListId);
+    } finally {
+      fs.rmSync(worktreeRoot, { recursive: true, force: true });
     }
   });
 

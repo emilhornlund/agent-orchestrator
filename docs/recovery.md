@@ -98,16 +98,16 @@ are transitioned, so the project is blocked, no active card is selected, and no 
 Merged or closed cards remain available for reconciliation on the next cycle after the ambiguity is resolved.
 
 Maintenance applies only to an open pull request in the configured repository whose head is exactly `agent/<trello-card-id>`,
-whose base is the configured default branch, whose state is `behind` and conflict-free, and which has no actionable requested
+whose base is the configured default branch, whose state is `behind` or `conflicted`, and which has no actionable requested
 changes on its current head. Unknown or incomplete authoritative data, a changed pull request, a closed or merged pull request,
 an unexpected branch, or current-head requested changes leaves the card and branch unchanged.
 
 For an eligible branch, reconciliation revalidates the pull request, resolves the authoritative remote task SHA with `ls-remote`,
-and prepares or reuses only `<worktreeRoot>/<trello-card-id>`. It fetches the latest default branch there, rebases cleanly, runs
-`repository.validationCommand` when configured, and updates the existing branch using an exact force-with-lease expectation. The
-existing pull request is retained and the card stays in `Human Review`; no OpenCode session, new pull request, replacement, merge,
-or Trello transition is involved. A branch already at the current default tip is a no-op and is not rebased, validated, pushed, or
-reported as a successful maintenance update.
+and prepares or reuses only `<worktreeRoot>/<trello-card-id>`. It fetches the latest default branch there and attempts a normal
+rebase. A clean rebase runs `repository.validationCommand` when configured and updates the existing branch using an exact
+force-with-lease expectation. The existing pull request is retained and the card stays in `Human Review`; no OpenCode session,
+new pull request, replacement, merge, or Trello transition is involved. A branch already at the current default tip is a no-op and
+is not rebased, validated, pushed, or reported as a successful maintenance update.
 
 The lease protects against concurrent remote updates. If the branch changes or disappears after the authoritative lookup, the
 single force-with-lease update is rejected and is not retried with another SHA. Fetch, worktree, rebase, validation, remote lookup,

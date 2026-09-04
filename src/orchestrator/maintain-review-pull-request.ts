@@ -59,19 +59,25 @@ function maintenanceError(
   return workflowError;
 }
 
-function isOwnedOpenBehindPullRequest(
+function isOwnedOpenMaintenancePullRequest(
   pullRequest: PullRequestState,
   project: ProjectConfig,
   branch: string,
 ): boolean {
+  const isBehind =
+    pullRequest.mergeable === "MERGEABLE" &&
+    pullRequest.mergeStateStatus === "BEHIND";
+  const isConflicted =
+    pullRequest.mergeable === "CONFLICTING" ||
+    pullRequest.mergeStateStatus === "DIRTY";
+
   return (
     pullRequest.state === "OPEN" &&
     pullRequest.baseRefName === project.repository.defaultBranch &&
     pullRequest.headRefName === branch &&
     getPullRequestHeadRepositoryIdentity(pullRequest) ===
       project.repository.github &&
-    pullRequest.mergeable === "MERGEABLE" &&
-    pullRequest.mergeStateStatus === "BEHIND"
+    (isBehind || isConflicted)
   );
 }
 
@@ -101,7 +107,7 @@ async function revalidatePullRequest(
   if (
     pullRequest === null ||
     pullRequest.url !== options.pullRequest.url ||
-    !isOwnedOpenBehindPullRequest(pullRequest, options.project, branch)
+    !isOwnedOpenMaintenancePullRequest(pullRequest, options.project, branch)
   ) {
     return false;
   }
@@ -182,7 +188,7 @@ export async function maintainReviewPullRequest(
 
   if (!(await revalidatePullRequest(options, branch))) {
     cardLog.info(
-      `Skipping maintenance for ${branch}: the pull request is no longer an owned, open, conflict-free, behind pull request without current-head requested changes`,
+      `Skipping maintenance for ${branch}: the pull request is no longer an owned, open, behind or conflicted pull request without current-head requested changes`,
     );
     return "not-eligible";
   }

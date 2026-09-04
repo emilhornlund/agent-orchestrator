@@ -308,7 +308,10 @@ export async function reconcileReviewCards(
 
   let maintenanceState = state.maintenanceState!;
 
-  if (options.maintenance !== undefined && maintenanceState === "behind") {
+  if (
+    options.maintenance !== undefined &&
+    (maintenanceState === "behind" || maintenanceState === "conflicted")
+  ) {
     const maintenanceResult = await maintainReviewPullRequest({
       git,
       github,

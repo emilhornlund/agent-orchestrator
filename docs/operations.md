@@ -184,8 +184,8 @@ decisions, pull-request publication, notifications, and the Trello summary.
 
 During Human Review reconciliation, the same isolated task worktree is used for automatic maintenance of an eligible stale
 branch. Eligibility requires an open pull request in the configured repository, exact `agent/<trello-card-id>` head and configured
-default base, a conflict-free `behind` state, and no requested changes on the current head. The pull request is revalidated before
-Git maintenance. A current branch is a no-op and is not fetched, rebased, validated, pushed, or reported as a successful
+default base, a `behind` or `conflicted` state, and no requested changes on the current head. The pull request is revalidated
+before Git maintenance. A current branch is a no-op and is not fetched, rebased, validated, pushed, or reported as a successful
 maintenance update. A successful clean rebase runs `repository.validationCommand` when configured and updates the existing
 branch, retaining the existing pull request and leaving the card in `Human Review`.
 
