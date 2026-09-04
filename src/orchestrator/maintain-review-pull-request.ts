@@ -9,6 +9,7 @@ import type {
 import { getPullRequestHeadRepositoryIdentity } from "../github/github-client.js";
 import type { ManagedPullRequestStatus } from "../github/pull-request-status.js";
 import { logger, type Logger } from "../logging/logger.js";
+import { getSessionLogPath } from "../logging/session-log.js";
 import {
   CommandRunAbortedError,
   type CommandRunner,
@@ -215,6 +216,7 @@ async function maintainReviewPullRequestCore(
 ): Promise<ReviewMaintenanceResult> {
   const branch = `agent/${options.card.id}`;
   const defaultBranchRef = `origin/${options.project.repository.defaultBranch}`;
+  const sessionLogPath = getSessionLogPath(options.project.id, options.card.id);
 
   let existingConflict: PreparedConflictHandoff | null;
 
@@ -442,6 +444,8 @@ async function maintainReviewPullRequestCore(
         timeoutMilliseconds:
           (options.project.opencode.timeoutMinutes ?? 360) * 60_000,
         ...(options.signal === undefined ? {} : { signal: options.signal }),
+        sessionLogPath,
+        sessionLabel: "Repository validation",
       });
     } catch (error) {
       if (error instanceof CommandRunAbortedError) {
