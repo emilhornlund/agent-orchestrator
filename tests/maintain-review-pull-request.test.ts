@@ -34,7 +34,7 @@ const changedSha = "d".repeat(40);
 
 function createProject(worktreeRoot: string): ProjectConfig {
   return {
-    id: "project",
+    id: "maintain-review-pull-request-test",
     autoMerge: false,
     repository: {
       path: "/repo",
@@ -160,7 +160,7 @@ function createGithub(
 }
 
 afterEach(() => {
-  removeSessionLog("project", "card-1");
+  removeSessionLog("maintain-review-pull-request-test", "card-1");
 
   for (const directory of temporaryDirectories.splice(0)) {
     fs.rmSync(directory, { recursive: true, force: true });
@@ -787,7 +787,7 @@ describe("owned Human Review pull-request maintenance", () => {
       active: true,
       maintenanceState: "prepared-conflict",
       preparedConflict: {
-        projectId: "project",
+        projectId: "maintain-review-pull-request-test",
         cardId: "card-1",
         taskBranch: "agent/card-1",
         defaultBranch: "main",

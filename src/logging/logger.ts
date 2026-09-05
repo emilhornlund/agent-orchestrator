@@ -60,7 +60,7 @@ function formatConsole(context: LogContext, message: string): string {
   })}`;
 }
 
-function shouldWriteConsole(): boolean {
+export function shouldWriteConsole(): boolean {
   return process.env.VITEST !== "true" || process.env.TEST_LOGS === "true";
 }
 

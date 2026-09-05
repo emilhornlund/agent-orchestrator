@@ -1,4 +1,5 @@
 version: 2
+
 updates:
   - package-ecosystem: npm
     directory: "/"
@@ -7,9 +8,22 @@ updates:
     open-pull-requests-limit: 5
     cooldown:
       default-days: 7
+    groups:
+      minor-and-patch:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+      security-updates:
+        applies-to: security-updates
+        patterns:
+          - "*"
     ignore:
       - dependency-name: "@types/node"
         versions: [">=25.0.0"]
+
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
@@ -17,3 +31,15 @@ updates:
     open-pull-requests-limit: 5
     cooldown:
       default-days: 7
+    groups:
+      minor-and-patch:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+      security-updates:
+        applies-to: security-updates
+        patterns:
+          - "*"

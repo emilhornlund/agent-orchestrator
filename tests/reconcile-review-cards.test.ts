@@ -36,7 +36,7 @@ import {
 } from "../src/trello/trello-client.js";
 
 const project = {
-  id: "project",
+  id: "reconcile-review-cards-test",
   repository: {
     path: "/repo",
     github: "owner/repo",
@@ -1593,7 +1593,7 @@ describe("reconcileReviewCards", () => {
         "Multiple active cards are in Human Review",
       );
       expect(getFailureContext(error)).toMatchObject({
-        projectId: "project",
+        projectId: "reconcile-review-cards-test",
         cardIds: ["card-1", "card-2"],
       });
     }

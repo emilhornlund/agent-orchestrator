@@ -1,4 +1,4 @@
-import { logger } from "../logging/logger.js";
+import { logger, shouldWriteConsole } from "../logging/logger.js";
 
 export type FatalErrorSource =
   "startup failure" | "uncaught exception" | "unhandled promise rejection";
@@ -185,7 +185,9 @@ export class RuntimeLifecycle {
       } catch {
         // The fatal path must still abort if the log destination is unavailable.
         try {
-          console.error(diagnostic);
+          if (shouldWriteConsole()) {
+            console.error(diagnostic);
+          }
         } catch {
           // There is no safe fallback left, but shutdown remains best effort.
         }

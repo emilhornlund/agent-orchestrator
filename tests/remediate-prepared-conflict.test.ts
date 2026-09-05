@@ -38,7 +38,7 @@ const temporaryDirectories: string[] = [];
 
 function createProject(worktreeRoot: string): ProjectConfig {
   return {
-    id: "project",
+    id: "remediate-prepared-conflict-test",
     autoMerge: false,
     repository: {
       path: "/configured/source",
@@ -196,7 +196,7 @@ function createScenario(options: ScenarioOptions = {}) {
 }
 
 afterEach(() => {
-  removeSessionLog("project", "card-1");
+  removeSessionLog("remediate-prepared-conflict-test", "card-1");
 
   for (const directory of temporaryDirectories.splice(0)) {
     fs.rmSync(directory, { recursive: true, force: true });

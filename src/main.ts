@@ -8,7 +8,7 @@ import { parseEnvironment } from "./config/environment.js";
 import { GitClient } from "./git/git-client.js";
 import { GitHubClient } from "./github/github-client.js";
 import { GitHubCredentialProvider } from "./github/github-credential-provider.js";
-import { logger } from "./logging/logger.js";
+import { logger, shouldWriteConsole } from "./logging/logger.js";
 import { createEmailNotifier } from "./notifications/email-notifier.js";
 import { OpenCodeClient } from "./opencode/opencode-client.js";
 import { CommandRunner } from "./process/command-runner.js";
@@ -68,7 +68,9 @@ export async function main(
   logger.event(`Projects: ${config.projects.length}`);
 
   for (const project of config.projects) {
-    console.log("");
+    if (shouldWriteConsole()) {
+      console.log("");
+    }
 
     const projectLog = logger.child({
       projectId: project.id,

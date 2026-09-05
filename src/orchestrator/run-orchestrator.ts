@@ -11,7 +11,7 @@ import {
   cleanupLogRetention,
   logRetentionIntervalMilliseconds,
 } from "../logging/log-retention.js";
-import { logger } from "../logging/logger.js";
+import { logger, shouldWriteConsole } from "../logging/logger.js";
 import {
   notifyAttentionRequired,
   type EmailNotifier,
@@ -880,7 +880,9 @@ export async function runOrchestrator(
     ),
   );
 
-  console.log("");
+  if (shouldWriteConsole()) {
+    console.log("");
+  }
 
   logger.event(
     `Polling every ${config.workflow.pollIntervalSeconds} seconds...`,
