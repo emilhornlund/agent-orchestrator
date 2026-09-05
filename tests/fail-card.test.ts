@@ -14,6 +14,7 @@ import type { EmailNotifier } from "../src/notifications/email-notifier.js";
 import { failCard } from "../src/orchestrator/fail-card.js";
 import { getFailureContext } from "../src/orchestrator/failure-diagnostic.js";
 import { WorkflowError } from "../src/orchestrator/workflow-error.js";
+import { MAX_EXTERNAL_DIAGNOSTIC_LENGTH } from "../src/security/bounded-diagnostic.js";
 import {
   TrelloClient,
   TrelloRequestError,
@@ -42,7 +43,12 @@ function getDailyLogPath(): string {
 }
 
 afterEach(() => {
-  for (const cardId of ["card-1", "card-non-error", "card-session-log"]) {
+  for (const cardId of [
+    "card-1",
+    "card-non-error",
+    "card-session-log",
+    "card-long-diagnostic",
+  ]) {
     removeSessionLog(project.id, cardId);
   }
 });
@@ -243,6 +249,48 @@ describe("failCard", () => {
     expect(fs.readFileSync(sessionLogPath, "utf8")).toBe(
       "OpenCode output remains here",
     );
+  });
+
+  it("bounds long failure comments while retaining the complete session log", async () => {
+    const trello = new TrelloClient({ apiKey: "key", token: "token" });
+    vi.spyOn(trello, "moveCard").mockResolvedValue({
+      ...card("card-long-diagnostic"),
+      idList: "failed",
+    });
+    const addComment = vi.spyOn(trello, "addComment").mockResolvedValue({
+      id: "action-1",
+      type: "commentCard",
+      date: "2026-08-30T09:00:00.000Z",
+    });
+    const fullOutput = "validation output ".repeat(300);
+    const sessionLogPath = getSessionLogPath(
+      project.id,
+      "card-long-diagnostic",
+    );
+
+    appendSessionLog(sessionLogPath, fullOutput);
+
+    const workflowError = new WorkflowError("Setup", fullOutput);
+
+    await expect(
+      failCard(trello, project, "card-long-diagnostic", workflowError),
+    ).rejects.toBe(workflowError);
+
+    const comment = addComment.mock.calls[0]?.[1] ?? "";
+
+    expect(comment).toContain("Category: Setup");
+    expect(comment).toContain("... [truncated]");
+    expect(comment).toContain(
+      "To retry deliberately, move this card to Ready for Agent.",
+    );
+    expect(comment).not.toContain(fullOutput);
+    expect(comment).toContain(
+      fullOutput.slice(
+        0,
+        MAX_EXTERNAL_DIAGNOSTIC_LENGTH - "... [truncated]".length,
+      ),
+    );
+    expect(fs.readFileSync(sessionLogPath, "utf8")).toBe(fullOutput);
   });
 
   it("uses a readable reason for a structured non-Error failure", async () => {

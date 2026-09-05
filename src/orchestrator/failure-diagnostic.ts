@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 
 import { getSessionLogPath } from "../logging/session-log.js";
 import { OpenCodeTimeoutError } from "../opencode/opencode-client.js";
+import { presentExternalDiagnostic } from "../security/bounded-diagnostic.js";
 
 import { PublishedCardStateError } from "./published-card-state-error.js";
 import {
@@ -175,8 +176,8 @@ export function formatFailureDiagnostic(
 ): string {
   const { category, reason } = describeFailure(error);
   const details = [
-    `Category: ${category}`,
-    `Reason: ${reason.replace(/\s+/g, " ").trim() || "No reason provided"}`,
+    `Category: ${presentExternalDiagnostic(category)}`,
+    `Reason: ${presentExternalDiagnostic(reason.replace(/\s+/g, " ").trim() || "No reason provided")}`,
   ];
 
   if (options.sessionLogPath !== undefined) {
@@ -184,7 +185,9 @@ export function formatFailureDiagnostic(
   }
 
   if (options.handlingOutcome !== undefined) {
-    details.push(`Failure handling: ${options.handlingOutcome}`);
+    details.push(
+      `Failure handling: ${presentExternalDiagnostic(options.handlingOutcome)}`,
+    );
   }
 
   return `Task failed. ${details.join("; ")}`;

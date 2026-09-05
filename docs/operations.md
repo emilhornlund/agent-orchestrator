@@ -397,6 +397,12 @@ they do not include the refined description. The corresponding Trello comment is
 Required messages include the project, failure category and reason, affected card IDs when available, session-log paths when
 available, and failure-handling outcome when available.
 
+Failure reasons and failure-handling outcomes in failed-card comments, failed emails, `Attention Required` emails, and project
+failure diagnostics use one fixed 2,000-character maximum per externally derived value. Values above the maximum end with the
+deterministic `... [truncated]` marker; fixed retry or recovery guidance and available session-log references remain present.
+Existing secret redaction occurs before this bound is applied. This limit affects concise presentation surfaces only. The complete
+redacted command and OpenCode output remains in the retained per-card session log for investigation.
+
 Closing an expected pull request without merging moves its Human Review card to `Backlog` and adds a Trello explanation with
 the pull-request URL; it does not send the `failed` event. A failed Backlog move is retained as a reconciliation diagnostic,
 while a comment failure after a successful move is logged and leaves the card in `Backlog`.

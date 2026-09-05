@@ -277,6 +277,11 @@ the failure category, reason, and deliberate retry instruction. A failed move do
 primary error plus failure-handling outcome are preserved for project-level diagnostics. If the move succeeds but the comment
 fails, the card remains in `Failed` and the comment error is logged.
 
+Concise failure reasons and failure-handling outcomes are redacted and then bounded to 2,000 characters, with
+`... [truncated]` marking shortened values. This applies to failure comments, failure and `Attention Required` emails, and
+project-level diagnostics without changing recovery or retry behavior. The retained per-card session log keeps the complete
+redacted command or OpenCode output for local investigation.
+
 If a pull request was published but the move to `Human Review` failed, the card is left in a published `Working` state for
 reconciliation rather than being moved to `Failed` without evidence. If a project poll or reconciliation fails before a
 single card's failure handling completes, the project-level `Attention Required` path can report the affected cards and
