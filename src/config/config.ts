@@ -320,7 +320,17 @@ const configSchema = z
 
     const contextRoot = config.workflow.contextRoot;
 
-    for (const project of config.projects) {
+    for (const [projectIndex, project] of config.projects.entries()) {
+      if (
+        pathsOverlap(project.repository.path, project.repository.worktreeRoot)
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["projects", projectIndex, "repository"],
+          message: `Repository path "${project.repository.path}" overlaps worktree root "${project.repository.worktreeRoot}" for project "${project.id}"`,
+        });
+      }
+
       const configuredPaths = [
         ["repository path", project.repository.path],
         ["worktree root", project.repository.worktreeRoot],

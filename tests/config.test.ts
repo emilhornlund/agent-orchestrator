@@ -794,6 +794,70 @@ workflow:
     expect(() => parseConfig(raw)).toThrow("Context root");
   });
 
+  it.each([
+    ["disjoint directories", "/tmp/other-repository", "/tmp/worktrees"],
+    [
+      "directories with a shared textual prefix",
+      "/tmp/repository-source",
+      "/tmp/repository-worktrees",
+    ],
+  ])(
+    "accepts %s repository and worktree paths",
+    (_label, repository, worktreeRoot) => {
+      const raw = validConfig
+        .replace('path: "/tmp/repository"', `path: "${repository}"`)
+        .replace(
+          'worktreeRoot: "/tmp/worktrees"',
+          `worktreeRoot: "${worktreeRoot}"`,
+        );
+
+      expect(() => parseConfig(raw)).not.toThrow();
+    },
+  );
+
+  it.each([
+    ["equal", "/tmp/repository", "/tmp/repository"],
+    [
+      "repository inside worktree root",
+      "/tmp/worktrees/repository",
+      "/tmp/worktrees",
+    ],
+    [
+      "worktree root inside repository",
+      "/tmp/repository",
+      "/tmp/repository/worktrees",
+    ],
+    [
+      "normalized equal paths",
+      "/tmp/repository/./source/..",
+      "/tmp/worktrees/../repository",
+    ],
+    [
+      "normalized repository inside worktree root",
+      "/tmp/worktrees/./repository",
+      "/tmp/worktrees",
+    ],
+    [
+      "normalized worktree root inside repository",
+      "/tmp/repository",
+      "/tmp/repository/tasks/../worktrees",
+    ],
+  ])(
+    "rejects %s repository and worktree paths",
+    (_label, repository, worktreeRoot) => {
+      const raw = validConfig
+        .replace('path: "/tmp/repository"', `path: "${repository}"`)
+        .replace(
+          'worktreeRoot: "/tmp/worktrees"',
+          `worktreeRoot: "${worktreeRoot}"`,
+        );
+
+      expect(() => parseConfig(raw)).toThrow("Repository path");
+      expect(() => parseConfig(raw)).toThrow("overlaps worktree root");
+      expect(() => parseConfig(raw)).toThrow('for project "project-one"');
+    },
+  );
+
   it("rejects malformed GitHub repository names", () => {
     const raw = validConfig.replace(
       'github: "owner/repository"',
