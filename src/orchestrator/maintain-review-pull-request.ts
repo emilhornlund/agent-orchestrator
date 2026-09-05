@@ -311,6 +311,7 @@ export async function maintainReviewPullRequest(
   const setStatus = async (
     status: ManagedPullRequestStatus | null,
     phase: string,
+    bestEffort = false,
   ): Promise<void> => {
     await updateMaintenanceStatus(
       options.github,
@@ -320,6 +321,7 @@ export async function maintainReviewPullRequest(
       status,
       phase,
       cardLog,
+      { bestEffort },
     );
 
     if (status !== null) {
@@ -352,6 +354,7 @@ async function maintainReviewPullRequestCore(
   setStatus: (
     status: ManagedPullRequestStatus | null,
     phase: string,
+    bestEffort?: boolean,
   ) => Promise<void>,
   cardLog: Logger,
 ): Promise<ReviewMaintenanceResult> {
@@ -793,7 +796,17 @@ async function maintainReviewPullRequestCore(
     );
   }
 
-  await setStatus(null, "successful branch maintenance");
+  try {
+    await setStatus(null, "successful branch maintenance", true);
+  } catch (error) {
+    if (!(error instanceof PullRequestStatusPresentationError)) {
+      throw error;
+    }
+
+    cardLog.warn(
+      `Housekeeping cleanup warning for project "${options.project.id}", card "${options.card.id}": could not remove the managed pull-request status from ${options.pullRequest.url}: ${getErrorMessage(error)}`,
+    );
+  }
 
   cardLog.event(
     `Maintained existing pull request ${options.pullRequest.url}: rebased ${branch} onto ${defaultBranchRef} and updated it to ${rebasedSha} with force-with-lease`,

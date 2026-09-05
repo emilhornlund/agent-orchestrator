@@ -19,7 +19,7 @@ function getFailureReason(error: unknown): string {
 
 function reportFailure(action: string, filePath: string, error: unknown): void {
   try {
-    logger.error(
+    logger.warn(
       `Persisted-state temporary-file cleanup could not ${action} ${filePath}: ${getFailureReason(error)}`,
     );
   } catch {

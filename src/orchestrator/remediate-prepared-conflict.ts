@@ -213,6 +213,7 @@ export async function remediatePreparedConflict(
   const setStatus = async (
     status: ManagedPullRequestStatus | null,
     phase: string,
+    bestEffort = false,
   ): Promise<void> => {
     if (options.pullRequestUrl === undefined) {
       return;
@@ -226,6 +227,7 @@ export async function remediatePreparedConflict(
       status,
       phase,
       cardLog,
+      { bestEffort },
     );
 
     if (status !== null) {
@@ -635,7 +637,18 @@ export async function remediatePreparedConflict(
       options.project,
     );
 
-    await setStatus(null, "successful prepared conflict remediation");
+    try {
+      await setStatus(null, "successful prepared conflict remediation", true);
+    } catch (error) {
+      if (!(error instanceof PullRequestStatusPresentationError)) {
+        throw error;
+      }
+
+      cardLog.warn(
+        `Housekeeping cleanup warning for project "${options.project.id}", card "${options.card.id}": could not remove the managed pull-request status from ${options.pullRequestUrl ?? "the existing pull request"}: ${getErrorMessage(error)}`,
+      );
+    }
+
     clearPreparedConflict(options.project, options.card.id);
   } catch (error) {
     throwIfAborted(error);

@@ -24,12 +24,13 @@ export async function updateMaintenanceStatus(
   status: ManagedPullRequestStatus | null,
   phase: string,
   cardLog: Logger,
+  bestEffortOptions: { bestEffort?: boolean } = {},
 ): Promise<void> {
   if (typeof github?.updatePullRequestDescriptionStatus !== "function") {
     return;
   }
 
-  const options: PullRequestDescriptionStatusOptions = {
+  const presentationOptions: PullRequestDescriptionStatusOptions = {
     cwd: project.repository.path,
     repository: project.repository.github,
     pullRequestUrl,
@@ -38,7 +39,7 @@ export async function updateMaintenanceStatus(
   };
 
   try {
-    await github.updatePullRequestDescriptionStatus(options);
+    await github.updatePullRequestDescriptionStatus(presentationOptions);
   } catch (error) {
     const presentationError = new PullRequestStatusPresentationError(
       `Could not update managed status for pull request ${pullRequestUrl} and card "${card.name}" during ${phase}: ${error instanceof Error ? error.message : String(error)}`,
@@ -46,7 +47,10 @@ export async function updateMaintenanceStatus(
     );
 
     annotateCardFailure(presentationError, project.id, card.id);
-    cardLog.error(presentationError.message);
+    if (bestEffortOptions.bestEffort !== true) {
+      cardLog.error(presentationError.message);
+    }
+
     throw presentationError;
   }
 }

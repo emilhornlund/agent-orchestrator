@@ -16,7 +16,7 @@ function getFailureReason(error: unknown): string {
 
 function reportFailure(action: string, filePath: string, error: unknown): void {
   try {
-    logger.error(
+    logger.warn(
       `Log retention could not ${action} ${filePath}: ${getFailureReason(error)}`,
     );
   } catch {

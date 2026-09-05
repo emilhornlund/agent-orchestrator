@@ -43,7 +43,10 @@ import {
   type CommandRunner,
 } from "../process/command-runner.js";
 import { runRepositorySetup } from "../process/run-setup.js";
-import { clearRefinementResult } from "../refinement/refinement-result.js";
+import {
+  clearRefinementResult,
+  getRefinementResultPath,
+} from "../refinement/refinement-result.js";
 import { finalizeRefinement } from "../refinement/finalize-refinement.js";
 import { addRefinementCompletionComment } from "../refinement/refinement-completion.js";
 import { runRefinement } from "../refinement/run-refinement.js";
@@ -116,6 +119,19 @@ function hasOpenCodePermissionDenial(result: OpenCodeRunResult): boolean {
     output.includes("auto-rejecting") ||
     output.includes("rejected permission") ||
     output.includes("permission denied")
+  );
+}
+
+function reportHousekeepingFailure(
+  cardLog: Logger,
+  project: ProjectConfig,
+  card: TrelloCard,
+  operation: string,
+  artifact: string,
+  error: unknown,
+): void {
+  cardLog.warn(
+    `Housekeeping cleanup warning for project "${project.id}", card "${card.id}": could not ${operation} ${artifact}: ${error instanceof Error ? error.message : String(error)}`,
   );
 }
 
@@ -531,17 +547,40 @@ async function processRefinementCard(
       return;
     }
 
-    clearRefinementResult(worktree.path);
+    try {
+      clearRefinementResult(worktree.path);
+    } catch (cleanupError) {
+      reportHousekeepingFailure(
+        cardLog,
+        project,
+        card,
+        "remove the refinement result artifact",
+        getRefinementResultPath(worktree.path),
+        cleanupError,
+      );
+    }
 
     cardLog.info("Cleaning up refinement worktree...");
 
-    await cleanupWorktree({
-      git,
-      project,
-      worktreePath: worktree.path,
-      branch: worktree.branch,
-      signal,
-    });
+    try {
+      await cleanupWorktree({
+        git,
+        project,
+        worktreePath: worktree.path,
+        branch: worktree.branch,
+        preserveRecoveryState: true,
+        signal,
+      });
+    } catch (cleanupError) {
+      reportHousekeepingFailure(
+        cardLog,
+        project,
+        card,
+        "remove the refinement worktree and local branch",
+        `${worktree.path} and ${worktree.branch}`,
+        cleanupError,
+      );
+    }
 
     if (signal.aborted) {
       return;
@@ -629,6 +668,7 @@ async function processReviewChangeRequest(
         project,
         worktreePath: worktree.path,
         branch: worktree.branch,
+        preserveRecoveryState: true,
         signal,
       });
 
@@ -638,12 +678,13 @@ async function processReviewChangeRequest(
 
       cardLog.info("Review feedback worktree cleaned up");
     } catch (cleanupError) {
-      cardLog.error(
-        `Review feedback published successfully, but local cleanup failed: ${
-          cleanupError instanceof Error
-            ? cleanupError.message
-            : String(cleanupError)
-        }`,
+      reportHousekeepingFailure(
+        cardLog,
+        project,
+        card,
+        "remove the review feedback worktree and local branch",
+        `${worktree.path} and ${worktree.branch}`,
+        cleanupError,
       );
     }
   } catch (error) {
@@ -704,6 +745,7 @@ async function processImplementationCard(
         project,
         worktreePath: worktree.path,
         branch: worktree.branch,
+        preserveRecoveryState: true,
         signal,
       });
 
@@ -713,12 +755,13 @@ async function processImplementationCard(
 
       cardLog.info("Published worktree cleaned up");
     } catch (cleanupError) {
-      cardLog.error(
-        `Published successfully, but local cleanup failed: ${
-          cleanupError instanceof Error
-            ? cleanupError.message
-            : String(cleanupError)
-        }`,
+      reportHousekeepingFailure(
+        cardLog,
+        project,
+        card,
+        "remove the published worktree and local branch",
+        `${worktree.path} and ${worktree.branch}`,
+        cleanupError,
       );
     }
   } catch (error) {

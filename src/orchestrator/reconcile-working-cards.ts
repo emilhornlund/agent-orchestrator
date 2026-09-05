@@ -810,6 +810,7 @@ async function reconcileReadyWorkingCard(
       project,
       worktreePath: path.join(project.repository.worktreeRoot, card.id),
       branch,
+      preserveRecoveryState: true,
       ...(signal === undefined ? {} : { signal }),
     });
 
@@ -819,8 +820,8 @@ async function reconcileReadyWorkingCard(
 
     cardLog.info("Reconciled card local worktree cleaned up");
   } catch (error) {
-    cardLog.error(
-      `Reconciled card moved to Human Review, but local cleanup failed: ${getErrorMessage(error)}`,
+    cardLog.warn(
+      `Housekeeping cleanup warning for project "${project.id}", card "${card.id}": could not remove the reconciled worktree and local branch ${worktreePathForLog(project, card.id)} and agent/${card.id}: ${getErrorMessage(error)}`,
     );
   }
 
@@ -950,6 +951,7 @@ async function cleanupReconciledWorktree(
       project,
       worktreePath: worktreePathForLog(project, card.id),
       branch: `agent/${card.id}`,
+      preserveRecoveryState: true,
       ...(signal === undefined ? {} : { signal }),
     });
 
@@ -959,8 +961,8 @@ async function cleanupReconciledWorktree(
 
     cardLog.info("Reconciled completed card local worktree cleaned up");
   } catch (error) {
-    cardLog.error(
-      `Reconciled completed card, but local cleanup failed: ${getErrorMessage(error)}`,
+    cardLog.warn(
+      `Housekeeping cleanup warning for project "${project.id}", card "${card.id}": could not remove the reconciled worktree and local branch ${worktreePathForLog(project, card.id)} and agent/${card.id}: ${getErrorMessage(error)}`,
     );
   }
 }
