@@ -375,6 +375,10 @@ export class GitClient {
     return this.runGit(repositoryPath, ["rev-parse", "HEAD"]);
   }
 
+  async getCommitMessage(repositoryPath: string): Promise<string> {
+    return this.runGit(repositoryPath, ["log", "-1", "--format=%B"]);
+  }
+
   async getCurrentBranch(repositoryPath: string): Promise<string> {
     return this.runGit(repositoryPath, ["branch", "--show-current"]);
   }

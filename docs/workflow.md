@@ -129,13 +129,23 @@ The implementation pass then:
    separately for each review and is not reused from implementation or remediation.
 8. Runs a separate OpenCode commit session with the configured Git identity. The session must create a commit and leave a
    clean worktree.
-9. Publishes or reuses the task pull request. With `autoMerge: false`, the card moves to `Human Review`; with `autoMerge: true`,
-   the pull request is merged and the card moves directly to `Done`.
+9. Runs a separate post-commit OpenCode pull-request-description session using the configured `opencode.commit` model and
+   variant. It receives the Trello task and URL, final changed files, commit SHA and message, and known validation results.
+   It must return exactly one JSON object with the `summary`, `changes`, and `validation` fields.
+10. Publishes or reuses the task pull request. With `autoMerge: false`, the card moves to `Human Review`; with `autoMerge: true`,
+    the pull request is merged and the card moves directly to `Done`.
 
-An OpenCode stage that exits unsuccessfully, produces no expected changes, fails to create a commit, or leaves changes after
-the commit stage fails the workflow. Publication details and non-force-push boundaries are in [Operations](operations.md).
+An OpenCode stage that exits unsuccessfully, produces no expected changes, fails to create a commit, leaves changes after the
+commit stage, or returns invalid description JSON fails the workflow. Description-generation failure occurs before publication;
+the committed task worktree and branch are preserved, and the original diagnostic is retained for deliberate retry. Publication
+details and non-force-push boundaries are in [Operations](operations.md).
 
-Implementation, each review, each remediation pass, and commit use separate OpenCode sessions. Each session can be found in
+The description result contract is strict: `summary` is a non-blank string, while `changes` and `validation` are arrays whose
+entries are non-blank strings. Empty arrays are allowed, including an empty `validation` array when no validation or test result
+is known. JSON wrapped in Markdown, missing fields, wrong types, and extra fields are rejected. The result is generated after
+publication rebasing and rendered into the body of a newly created pull request.
+
+Implementation, each review, each remediation pass, commit, and description generation use separate OpenCode sessions. Each session can be found in
 the card's session log while it is retained. The pass counter is transient to this automated workflow execution; it is not
 inferred from or persisted to Trello card data.
 

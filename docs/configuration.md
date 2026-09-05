@@ -270,10 +270,16 @@ Each stage requires a non-blank `model` and `variant`:
 | `implementation` | Initial implementation and implementation of human review feedback |
 | `review`         | Independent review pass                                            |
 | `remediation`    | Addressing review findings; includes the automatic pass limit      |
-| `commit`         | Final commit session                                               |
+| `commit`         | Final commit and post-commit pull-request-description sessions     |
 
 `projects[].opencode.timeoutMinutes` is the positive maximum runtime in minutes for an individual OpenCode execution at any
 stage. It defaults to `360` when omitted.
+
+The post-commit pull-request-description session reuses the configured `commit` model and variant. There is no separate
+description-model configuration. The orchestrator supplies the card title, description and URL, final changed files, commit
+information, and known validation or test results. The description result is strict JSON with `summary`, `changes`, and
+`validation` fields; invalid or incomplete output blocks publication. The result is generated after publication rebasing and is
+rendered into the body of a newly created pull request.
 
 The `remediation` stage also accepts the optional `maxPasses` setting:
 
