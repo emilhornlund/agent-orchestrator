@@ -18,6 +18,7 @@ import {
 import { validateProjectTrello } from "../trello/validate-project-trello.js";
 
 import { runOrchestrator } from "../orchestrator/run-orchestrator.js";
+import { cleanupPersistedStateTemporaryFiles } from "../orchestrator/persisted-state-temporary-files.js";
 
 type DeferredTrelloValidation = (
   trello: TrelloClient,
@@ -62,6 +63,10 @@ export async function runStartup(
     config.workflow.contextRetentionDays,
     new Date(),
     config.projects.map((project) => project.id),
+  );
+  cleanupPersistedStateTemporaryFiles(
+    config.projects,
+    config.workflow.contextRoot,
   );
 
   const githubCredentials =
