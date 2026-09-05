@@ -236,7 +236,9 @@ invalid App credentials, failed JWT generation, or failed installation-token exc
 other ambient fallback. Startup clone failures stop startup; workflow failures preserve the card's existing failure/reconciliation
 behavior and preserve recoverable worktrees and agent changes. Operators must correct the App configuration or external GitHub
 access and retry through the normal workflow; the service does not persist tokens or expiration data. A missing, blank, or invalid
-`expires_at` makes the exchange fail and is not cached.
+`expires_at` makes the exchange fail and is not cached. An exchanged token is usable only when its parsed `expires_at` is
+strictly later than the current time plus the five-minute refresh window; expired, nearly expired, and exact-boundary
+responses therefore fail through the safe App exchange error path without being returned or cached.
 
 Immediately before publication, the task worktree fetches `origin/<defaultBranch>` and rebases `agent/<trello-card-id>` onto
 that fetched ref. Git leaves an already-current branch unchanged. The resulting `HEAD` drives remote comparison, push
