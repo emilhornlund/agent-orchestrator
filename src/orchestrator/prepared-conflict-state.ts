@@ -79,6 +79,12 @@ export function getPreparedConflictPath(
   return statePath(project, cardId);
 }
 
+export function getPreparedConflictStateDirectory(
+  project: ProjectConfig,
+): string {
+  return path.dirname(statePath(project, "placeholder"));
+}
+
 export function readPreparedConflict(
   project: ProjectConfig,
   cardId: string,

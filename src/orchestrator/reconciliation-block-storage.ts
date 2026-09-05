@@ -306,6 +306,13 @@ export function getReconciliationBlockPath(
   return blockPath(contextRoot, projectId);
 }
 
+export function getReconciliationBlockStateDirectory(
+  contextRoot: string,
+  projectId: string,
+): string {
+  return projectDirectoryPath(contextRoot, projectId);
+}
+
 export function loadReconciliationBlock(
   contextRoot: string,
   projectId: string,

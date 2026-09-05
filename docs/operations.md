@@ -22,6 +22,21 @@ operator recovery action. Restored notification identity prevents a restart from
 the same unresolved failure. Polling, recovery-check, and notification-delivery failures never remove or overwrite unresolved
 block state.
 
+Before repository bootstrap and project reconciliation at startup, the service removes stale atomic-write temporary files for
+each configured project. The recognized scope is limited to these writer-generated names:
+
+```text
+<worktreeRoot>/.orchestrator/review-maintenance/<project-id>/<card-id>.json.<process-id>.tmp
+<worktreeRoot>/.orchestrator/prepared-conflicts/<project-id>/<card-id>.json.<process-id>.tmp
+<contextRoot>/<project-id>/.reconciliation-block.json.<process-id>.<unique-suffix>
+```
+
+Only regular files whose writer process is no longer running are removed. Missing directories and candidates that disappear
+concurrently are harmless. Authoritative state files, malformed authoritative state, directories, symbolic links, unknown
+entries, and files from other subsystems are preserved. The cleanup does not scan for arbitrary `.tmp`, dot, JSON, log,
+attachment, source-checkout, or worktree files. Inspection or removal failures include the affected path and reason in a
+diagnostic and do not stop independent project startup.
+
 Block records are validated at the storage boundary, including strict record shape, non-blank values, optional types,
 supported operation and recovery values, and project/card identity consistency. Malformed or mismatched state is retained and
 fails closed with an actionable project diagnostic; it is never treated as recovered and never triggers the exhausted operation.

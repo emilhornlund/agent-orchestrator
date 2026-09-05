@@ -13,6 +13,7 @@ import {
   type RunCommand,
 } from "../src/process/command-runner.js";
 import * as cardContextRetention from "../src/context/card-context-retention.js";
+import * as persistedStateTemporaryFiles from "../src/orchestrator/persisted-state-temporary-files.js";
 import {
   runStartup,
   type StartupDependencies,
@@ -127,6 +128,51 @@ describe("runStartup", () => {
         ["test-project"],
       );
     } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("runs persisted-state temporary-file cleanup before startup operations", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "agent-orchestrator-"));
+    const repositoryPath = path.join(root, "repository");
+    fs.mkdirSync(repositoryPath);
+    const cleanup = vi.spyOn(
+      persistedStateTemporaryFiles,
+      "cleanupPersistedStateTemporaryFiles",
+    );
+
+    try {
+      const config = createConfig(createProject(repositoryPath));
+      const validateGitHubCli = vi.fn().mockResolvedValue(undefined);
+      const dependencies: StartupDependencies = {
+        trello: {} as TrelloClient,
+        git: new GitClient(vi.fn<RunGit>().mockResolvedValue("true")),
+        github: {} as GitHubClient,
+        opencode: {} as OpenCodeClient,
+        commands: new CommandRunner(vi.fn<RunCommand>()),
+      };
+      const operations: StartupOperations = {
+        validateGitHubCli,
+        validateProjectTrello: vi.fn().mockResolvedValue(undefined),
+        runOrchestrator: vi.fn().mockResolvedValue(undefined),
+      };
+
+      await runStartup(
+        config,
+        dependencies,
+        new AbortController().signal,
+        operations,
+      );
+
+      expect(cleanup).toHaveBeenCalledWith(
+        config.projects,
+        config.workflow.contextRoot,
+      );
+      expect(cleanup.mock.invocationCallOrder[0]).toBeLessThan(
+        validateGitHubCli.mock.invocationCallOrder[0]!,
+      );
+    } finally {
+      cleanup.mockRestore();
       fs.rmSync(root, { recursive: true, force: true });
     }
   });

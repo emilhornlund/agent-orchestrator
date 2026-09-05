@@ -28,6 +28,15 @@ Each exhausted Trello or GitHub reconciliation is also recorded outside Git at
 operation, recorded reconciliation list, failure category and reason, retry key, recovery condition, and notification
 identity. It is runtime state, not card context or repository state, and must remain below the configured `contextRoot`.
 
+Before normal startup reconciliation, the service cleans only stale temporary files from the three persisted-state writers. It
+recognizes `<worktreeRoot>/.orchestrator/review-maintenance/<project-id>/<card-id>.json.<process-id>.tmp`,
+`<worktreeRoot>/.orchestrator/prepared-conflicts/<project-id>/<card-id>.json.<process-id>.tmp`, and
+`<contextRoot>/<project-id>/.reconciliation-block.json.<process-id>.<unique-suffix>`. A candidate is removed only when it is a
+regular file and its recorded writer process has stopped; a file from an active writer is retained. Missing directories and
+concurrent disappearance are harmless. Authoritative state, including malformed state retained for diagnosis, directories,
+symbolic links, unknown files, logs, card attachments, repositories, worktrees, and other temporary files are never removed by
+this cleanup. Failures are logged with the path and reason while other configured projects continue startup.
+
 Preserve the task worktree, branch, session log, and diagnostic information while investigating. Do not delete an unknown
 worktree or discard agent changes as a first response. Restarting the service runs the normal reconciliation flow.
 

@@ -70,6 +70,19 @@ function getStatePath(project: ProjectConfig, cardId: string): string {
   );
 }
 
+export function getReviewMaintenanceStateDirectory(
+  project: ProjectConfig,
+): string {
+  return path.dirname(getStatePath(project, "placeholder"));
+}
+
+export function getReviewMaintenanceStatePath(
+  project: ProjectConfig,
+  cardId: string,
+): string {
+  return getStatePath(project, cardId);
+}
+
 export function readReviewMaintenanceState(
   project: ProjectConfig,
   cardId: string,
