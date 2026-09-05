@@ -200,7 +200,10 @@ The configured list and label names do not matter to the service. The IDs are wh
 | `githubApp`         | Optional GitHub App identity used for all authenticated GitHub operations for this project                                  |
 
 `path`, `worktreeRoot`, and an optional `gitIdentity.signingKey` must be absolute paths. Parsed absolute paths are resolved
-before use. `gitIdentity` contains:
+before use. A project's normalized `path` and `worktreeRoot` must be disjoint: neither may equal, contain, or be contained
+by the other. This prevents generated worktrees such as `<worktreeRoot>/<trello-card-id>` from entering the normal checkout
+or its directory tree. Sibling directories and names that merely share a textual prefix remain valid. This boundary is
+checked during configuration loading, before repository bootstrap or project processing begins. `gitIdentity` contains:
 
 | Key          | Meaning and validation                                                                                     |
 | ------------ | ---------------------------------------------------------------------------------------------------------- |
@@ -288,8 +291,9 @@ The counter exists only for the current workflow execution and is not stored on 
 ## Validation rules
 
 In addition to the field rules above, startup rejects duplicate project IDs, GitHub repositories, repository paths,
-worktree roots, and Trello board IDs. The YAML object structure is strict, so unsupported top-level, project, repository,
-OpenCode, Trello, notification, SMTP, or event keys are rejected.
+worktree roots, and Trello board IDs. It also rejects any normalized overlap between a project's repository path and
+worktree root, including equivalent paths written with `.` or `..`. The YAML object structure is strict, so unsupported
+top-level, project, repository, OpenCode, Trello, notification, SMTP, or event keys are rejected.
 
 Startup also verifies the configured repositories and Trello resources. An existing repository path must be a valid Git
 repository; a missing path may be cloned from the configured GitHub repository with `gh`. Projects without `githubApp` must
