@@ -322,6 +322,88 @@ describe("GitHubAppAuthenticator", () => {
     expect(request).toHaveBeenCalledTimes(2);
   });
 
+  it.each([
+    ["an already expired expiration", -1],
+    ["an expiration inside the refresh window", 5 * 60 * 1_000 - 1],
+    ["an expiration at the refresh-window boundary", 5 * 60 * 1_000],
+  ])(
+    "rejects %s without caching the unusable token",
+    async (_label, offsetMilliseconds) => {
+      const nowMilliseconds = 1_700_000_000_000;
+      const unusableExpiration = new Date(
+        nowMilliseconds + offsetMilliseconds,
+      ).toISOString();
+      const replacementExpiration = new Date(
+        nowMilliseconds + 10 * 60 * 1_000,
+      ).toISOString();
+      const request = vi
+        .fn()
+        .mockResolvedValueOnce(
+          tokenResponse("unusable-installation-token", unusableExpiration),
+        )
+        .mockResolvedValueOnce(
+          tokenResponse(
+            "replacement-installation-token",
+            replacementExpiration,
+          ),
+        );
+      const authenticator = new GitHubAppAuthenticator({
+        readPrivateKey: vi.fn().mockResolvedValue(privateKeyPem),
+        request,
+        now: () => nowMilliseconds,
+      });
+
+      const error = await authenticator
+        .getInstallationToken(githubApp, repository)
+        .catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(GitHubAppApiError);
+      expect(error).toMatchObject({
+        name: "GitHubAppApiError",
+        operation: "installation token exchange",
+      });
+      expect(error).not.toHaveProperty(
+        "message",
+        expect.stringContaining("unusable-installation-token"),
+      );
+      expect(error).not.toHaveProperty(
+        "message",
+        expect.stringContaining(unusableExpiration),
+      );
+
+      await expect(
+        authenticator.getInstallationToken(githubApp, repository),
+      ).resolves.toBe("replacement-installation-token");
+      expect(request).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it("caches and reuses an installation token beyond the refresh window", async () => {
+    const nowMilliseconds = 1_700_000_000_000;
+    const request = vi
+      .fn()
+      .mockResolvedValue(
+        tokenResponse(
+          "usable-installation-token",
+          new Date(nowMilliseconds + 10 * 60 * 1_000).toISOString(),
+        ),
+      );
+    const authenticator = new GitHubAppAuthenticator({
+      readPrivateKey: vi.fn().mockResolvedValue(privateKeyPem),
+      request,
+      now: () => nowMilliseconds,
+    });
+
+    await expect(
+      authenticator.getInstallationToken(githubApp, repository),
+    ).resolves.toBe("usable-installation-token");
+    await expect(
+      authenticator.getInstallationToken(githubApp, repository),
+    ).resolves.toBe("usable-installation-token");
+
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
   it("does not read a key until token generation is requested", () => {
     const readPrivateKey = vi.fn().mockResolvedValue(privateKeyPem);
 

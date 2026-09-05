@@ -239,6 +239,8 @@ access token. The exchange request includes only the configured repository name 
 `{"repositories":["repository"]}` for the configured `owner/repository` repository. A successful token and its `expires_at` value are retained only in process memory;
 the token is reused until five minutes before expiration, then refreshed. Cache entries include the App ID, installation ID,
 private-key path, and repository scope, and are not shared across different App configurations, installations, or repositories.
+An exchanged token is usable only when its parsed `expires_at` is strictly later than the current time plus the five-minute
+refresh window; expired, nearly expired, and exact-boundary responses fail without being returned or cached.
 The private key, JWT, token,
 and expiration data are not logged, persisted, or included in configuration. The resolved token is supplied only through a
 child-process environment for the bounded operation that needs it: `gh repo clone`, other

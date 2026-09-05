@@ -325,6 +325,16 @@ export class GitHubAppAuthenticator {
       );
     }
 
+    if (
+      tokenResponse.expiresAtMilliseconds <=
+      nowMilliseconds + INSTALLATION_TOKEN_REFRESH_WINDOW_MILLISECONDS
+    ) {
+      throw new GitHubAppApiError(
+        "GitHub App installation token exchange returned an invalid token response",
+        response.status,
+      );
+    }
+
     this.installationTokens.set(cacheKey, {
       token: tokenResponse.token,
       expiresAtMilliseconds: tokenResponse.expiresAtMilliseconds,
