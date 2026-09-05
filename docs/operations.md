@@ -43,6 +43,18 @@ fails closed with an actionable project diagnostic; it is never treated as recov
 Each project loads its own record, so a blocked or malformed record does not stop independent project workers. Operators should
 preserve the file for investigation and repair it only as an explicit runtime-state operation below the configured context root.
 
+### Persisted-state size guard
+
+The reconciliation block, prepared-conflict handoff, and review-maintenance record are authoritative JSON state files. Each is
+limited by the same fixed 1 MiB upper bound; this is an implementation safety limit, not a configuration option. The service
+checks the filesystem byte size before reading a file for JSON parsing. A file above the limit is rejected as malformed state, and
+the diagnostic identifies the affected path and size-limit failure without logging its contents.
+
+Oversized files are retained unchanged for diagnosis. A reconciliation block follows the existing malformed-state project-blocking
+path. An oversized prepared-conflict or review-maintenance record follows its existing recovery or maintenance error path. Missing
+files and ordinary malformed or schema-invalid files behave as before, and no workflow state advances because persisted state was
+rejected.
+
 ## Card context storage
 
 `workflow.contextRoot` is the workflow-level filesystem boundary for card-specific external context. It defaults to

@@ -213,6 +213,13 @@ launch the exhausted operation, the file is retained unchanged, and an actionabl
 Other project workers continue independently. A failed block write or removal is reported and does not turn an unresolved or
 uncertain external operation into a successful recovery.
 
+The three authoritative orchestrator JSON stores, including the reconciliation block above, prepared-conflict handoffs, and
+review-maintenance records, have the same fixed 1 MiB file-size guard. The service checks the file size before reading or parsing
+its contents. An oversized file is treated as malformed persisted state: the affected path and size-limit failure are included in
+the concise diagnostic, but persisted contents are not. The original file is preserved for investigation. Reconciliation keeps
+its malformed project-blocking path, while prepared-conflict and review-maintenance records keep their existing recovery and
+maintenance error paths; missing or ordinarily malformed files retain their existing behavior and no workflow state advances.
+
 If a Trello mutation fails transiently, its requested transition or update is unconfirmed. The orchestrator does not move the
 card to `Failed` merely because the request was unavailable. It preserves the last known workflow state and lets a later
 reconciliation read Trello transition history and card state before retrying an uncertain move or resuming work. Shutdown
