@@ -254,13 +254,20 @@ const configSchema = z
   })
   .superRefine((config, ctx) => {
     const projectIds = config.projects.map((project) => project.id);
+    const projectIdCounts = new Map<string, number>();
 
-    if (new Set(projectIds).size !== projectIds.length) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["projects"],
-        message: "Project IDs must be unique",
-      });
+    for (const projectId of projectIds) {
+      projectIdCounts.set(projectId, (projectIdCounts.get(projectId) ?? 0) + 1);
+    }
+
+    for (const [projectId, count] of projectIdCounts) {
+      if (count > 1) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["projects"],
+          message: `Duplicate project ID "${projectId}"`,
+        });
+      }
     }
 
     const githubRepositories = config.projects.map(

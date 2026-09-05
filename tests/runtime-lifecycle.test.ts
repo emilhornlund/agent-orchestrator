@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { bootstrap } from "../src/main.js";
+import * as startup from "../src/startup/run-startup.js";
 import {
   installProcessHandlers,
   type ProcessEventSource,
@@ -83,6 +84,34 @@ describe("RuntimeLifecycle", () => {
     );
     expect(testLogger.error.mock.calls[0]?.[0]).toContain(
       "Invalid configuration",
+    );
+  });
+
+  it("rejects duplicate project IDs before starting project workers", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "runtime-lifecycle-"));
+    const config = fs
+      .readFileSync(new URL("../config.example.yaml", import.meta.url), "utf8")
+      .replace('id: "project"', 'id: "duplicate-project"')
+      .replace('id: "another-project"', 'id: "duplicate-project"');
+    fs.writeFileSync(path.join(root, "config.yaml"), config);
+
+    const cwd = vi.spyOn(process, "cwd").mockReturnValue(root);
+    const runStartup = vi.spyOn(startup, "runStartup");
+    const testLogger = createLogger();
+    const lifecycle = new RuntimeLifecycle({ logger: testLogger });
+    const { processObject } = createProcessEventSource();
+
+    try {
+      await expect(bootstrap(lifecycle, processObject)).resolves.toBe(1);
+      expect(runStartup).not.toHaveBeenCalled();
+    } finally {
+      runStartup.mockRestore();
+      cwd.mockRestore();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+
+    expect(testLogger.error.mock.calls[0]?.[0]).toContain(
+      'Duplicate project ID "duplicate-project"',
     );
   });
 
