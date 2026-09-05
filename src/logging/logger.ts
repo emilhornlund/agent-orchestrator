@@ -60,6 +60,10 @@ function formatConsole(context: LogContext, message: string): string {
   })}`;
 }
 
+function shouldWriteConsole(): boolean {
+  return process.env.VITEST !== "true" || process.env.TEST_LOGS === "true";
+}
+
 export class Logger {
   constructor(private readonly context: LogContext = {}) {}
 
@@ -80,17 +84,26 @@ export class Logger {
 
   event(message: string): void {
     writeToFile("INFO", this.context, message);
-    console.log(formatConsole(this.context, message));
+
+    if (shouldWriteConsole()) {
+      console.log(formatConsole(this.context, message));
+    }
   }
 
   warn(message: string): void {
     writeToFile("WARN", this.context, message);
-    console.warn(formatConsole(this.context, message));
+
+    if (shouldWriteConsole()) {
+      console.warn(formatConsole(this.context, message));
+    }
   }
 
   error(message: string): void {
     writeToFile("ERROR", this.context, message);
-    console.error(formatConsole(this.context, message));
+
+    if (shouldWriteConsole()) {
+      console.error(formatConsole(this.context, message));
+    }
   }
 }
 

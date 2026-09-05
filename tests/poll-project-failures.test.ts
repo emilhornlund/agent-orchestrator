@@ -1263,42 +1263,41 @@ describe("pollProject failure boundaries", () => {
   });
 
   it("logs the current remediation pass and configured limit", async () => {
-    const consoleLog = vi
-      .spyOn(console, "log")
-      .mockImplementation(() => undefined);
+    await withScenario(
+      {
+        maxPasses: 3,
+        statusOutputs: [" M src/example.ts", " M src/example.ts", ""],
+        openCodeResults: [
+          { exitCode: 0, output: "" },
+          { exitCode: 0, output: "REVIEW_FAIL" },
+          { exitCode: 0, output: "" },
+          { exitCode: 0, output: "REVIEW_PASS" },
+          { exitCode: 0, output: "" },
+        ],
+      },
+      async (scenario) => {
+        await pollProject(
+          scenario.trello,
+          scenario.git,
+          scenario.github,
+          scenario.openCode,
+          scenario.commands,
+          scenario.project,
+          scenario.signal,
+        );
 
-    try {
-      await withScenario(
-        {
-          maxPasses: 3,
-          statusOutputs: [" M src/example.ts", " M src/example.ts", ""],
-          openCodeResults: [
-            { exitCode: 0, output: "" },
-            { exitCode: 0, output: "REVIEW_FAIL" },
-            { exitCode: 0, output: "" },
-            { exitCode: 0, output: "REVIEW_PASS" },
-            { exitCode: 0, output: "" },
-          ],
-        },
-        async (scenario) => {
-          await pollProject(
-            scenario.trello,
-            scenario.git,
-            scenario.github,
-            scenario.openCode,
-            scenario.commands,
-            scenario.project,
-            scenario.signal,
-          );
+        const date = new Date().toISOString().slice(0, 10);
+        const logPath = path.join(
+          process.cwd(),
+          "logs",
+          `test-orchestrator-${date}.log`,
+        );
 
-          expect(consoleLog).toHaveBeenCalledWith(
-            expect.stringContaining("Starting remediation pass 1 of 3"),
-          );
-        },
-      );
-    } finally {
-      consoleLog.mockRestore();
-    }
+        expect(fs.readFileSync(logPath, "utf8")).toContain(
+          "Starting remediation pass 1 of 3",
+        );
+      },
+    );
   });
 
   it("does not publish when an intermediate review process fails", async () => {

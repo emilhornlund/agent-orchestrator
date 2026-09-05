@@ -21,6 +21,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date(timestamp));
   vi.stubEnv("VITEST", "true");
+  vi.stubEnv("TEST_LOGS", "false");
 });
 
 afterEach(() => {
@@ -47,15 +48,12 @@ function getDailyLogPath(): string {
 }
 
 describe("Logger", () => {
-  it("prefixes root event output and preserves the daily log format", () => {
+  it("suppresses event console output while preserving the test daily log", () => {
     const logger = new Logger();
 
     logger.event("Agent Orchestrator started");
 
-    expect(console.log).toHaveBeenCalledOnce();
-    expect(console.log).toHaveBeenCalledWith(
-      `${timestamp} Agent Orchestrator started`,
-    );
+    expect(console.log).not.toHaveBeenCalled();
     expect(console.warn).not.toHaveBeenCalled();
     expect(console.error).not.toHaveBeenCalled();
     expect(fs.readFileSync(getDailyLogPath(), "utf8")).toBe(
@@ -63,44 +61,73 @@ describe("Logger", () => {
     );
   });
 
-  it("prefixes warning output with a child logger context on stderr", () => {
+  it("suppresses warning output while preserving the test daily log", () => {
     const logger = new Logger({ projectId: "project-1" }).child({
       cardId: "card-1",
     });
 
     logger.warn("Task warning");
 
-    expect(console.warn).toHaveBeenCalledOnce();
-    expect(console.warn).toHaveBeenCalledWith(
-      `${timestamp} [project-1] [card:card-1] Task warning`,
-    );
+    expect(console.warn).not.toHaveBeenCalled();
     expect(console.log).not.toHaveBeenCalled();
     expect(console.error).not.toHaveBeenCalled();
+    expect(fs.readFileSync(getDailyLogPath(), "utf8")).toBe(
+      `${timestamp} WARN  [project-1] [card:card-1] Task warning\n`,
+    );
   });
 
-  it("prefixes error output with a child logger context on stderr", () => {
+  it("suppresses error output while preserving the test daily log", () => {
     const logger = new Logger({ projectId: "project-1" }).child({
       cardId: "card-1",
     });
 
     logger.error("Task failed");
 
-    expect(console.error).toHaveBeenCalledOnce();
-    expect(console.error).toHaveBeenCalledWith(
-      `${timestamp} [project-1] [card:card-1] Task failed`,
-    );
+    expect(console.error).not.toHaveBeenCalled();
     expect(console.log).not.toHaveBeenCalled();
     expect(console.warn).not.toHaveBeenCalled();
+    expect(fs.readFileSync(getDailyLogPath(), "utf8")).toBe(
+      `${timestamp} ERROR [project-1] [card:card-1] Task failed\n`,
+    );
   });
 
-  it("prefixes every physical line of a multiline message", () => {
+  it("restores console output and formatting when test logs are enabled", () => {
+    vi.stubEnv("TEST_LOGS", "true");
     const logger = new Logger({ projectId: "project-1" });
-    const message = "first line\nsecond line\r\nthird line\rfourth line";
+    const message = "first line\nsecond line";
 
     logger.event(message);
+    logger.warn("Task warning");
+    logger.error("Task failed");
 
     expect(console.log).toHaveBeenCalledWith(
-      `${timestamp} [project-1] first line\n${timestamp} [project-1] second line\r\n${timestamp} [project-1] third line\r${timestamp} [project-1] fourth line`,
+      `${timestamp} [project-1] first line\n${timestamp} [project-1] second line`,
+    );
+    expect(console.warn).toHaveBeenCalledWith(
+      `${timestamp} [project-1] Task warning`,
+    );
+    expect(console.error).toHaveBeenCalledWith(
+      `${timestamp} [project-1] Task failed`,
+    );
+  });
+
+  it("preserves console output outside Vitest regardless of the opt-in", () => {
+    vi.stubEnv("VITEST", "false");
+    vi.stubEnv("TEST_LOGS", "true");
+    const logger = new Logger({ projectId: "project-1" });
+
+    logger.event("Agent Orchestrator started");
+    logger.warn("Task warning");
+    logger.error("Task failed");
+
+    expect(console.log).toHaveBeenCalledWith(
+      `${timestamp} [project-1] Agent Orchestrator started`,
+    );
+    expect(console.warn).toHaveBeenCalledWith(
+      `${timestamp} [project-1] Task warning`,
+    );
+    expect(console.error).toHaveBeenCalledWith(
+      `${timestamp} [project-1] Task failed`,
     );
   });
 
