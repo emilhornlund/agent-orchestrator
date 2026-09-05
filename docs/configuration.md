@@ -153,7 +153,8 @@ The optional `events` map controls the existing notification types. Its accepted
 
 ### `projects[].id`
 
-Non-blank identifier used to distinguish projects in configuration and logs. It must be unique.
+Non-blank identifier used to distinguish projects in configuration and logs. It must be unique; duplicate IDs are rejected
+during startup before repository or Trello bootstrap.
 
 ### `projects[].autoMerge`
 

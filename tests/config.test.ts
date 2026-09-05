@@ -50,6 +50,71 @@ workflow:
   pollIntervalSeconds: 15
 `;
 
+function appendProject(raw: string, id: string, suffix: string): string {
+  return raw.replace(
+    "\nworkflow:",
+    `
+  - id: "${id}"
+
+    trello:
+      boardId: "board-${suffix}"
+      backlogListId: "backlog-${suffix}"
+      readyListId: "ready-${suffix}"
+      workingListId: "working-${suffix}"
+      reviewListId: "review-${suffix}"
+      failedListId: "failed-${suffix}"
+      doneListId: "done-${suffix}"
+      refinementLabelId: "refinement-${suffix}"
+      featureLabelId: "feature-${suffix}"
+      improvementLabelId: "improvement-${suffix}"
+      bugLabelId: "bug-${suffix}"
+
+    repository:
+      path: "/tmp/repository-${suffix}"
+      github: "owner/repository-${suffix}"
+      defaultBranch: "main"
+      worktreeRoot: "/tmp/worktrees-${suffix}"
+      gitIdentity:
+        name: "Agent Orchestrator"
+        email: "agent-orchestrator@users.noreply.github.com"
+
+    opencode:
+      timeoutMinutes: 360
+      refinement:
+        model: "openai/refinement-model"
+        variant: "xhigh"
+      implementation:
+        model: "openai/implementation-model"
+        variant: "xhigh"
+      review:
+        model: "openai/review-model"
+        variant: "high"
+      remediation:
+        model: "openai/remediation-model"
+        variant: "xhigh"
+      commit:
+        model: "openai/commit-model"
+        variant: "low"
+
+workflow:`,
+  );
+}
+
+function configWithProjectIds(projectIds: readonly string[]): string {
+  const firstProjectId = projectIds[0];
+
+  if (firstProjectId === undefined) {
+    throw new Error("At least one project ID is required");
+  }
+
+  return projectIds
+    .slice(1)
+    .reduce(
+      (raw, projectId, index) => appendProject(raw, projectId, `${index + 2}`),
+      validConfig.replace('id: "project-one"', `id: "${firstProjectId}"`),
+    );
+}
+
 const githubAppValues = {
   appId: '"123456"',
   installationId: '"987654"',
@@ -771,6 +836,17 @@ workflow:
     );
   });
 
+  it("accepts multiple projects with unique IDs", () => {
+    const config = parseConfig(
+      configWithProjectIds(["project-one", "project-two"]),
+    );
+
+    expect(config.projects.map((project) => project.id)).toEqual([
+      "project-one",
+      "project-two",
+    ]);
+  });
+
   it("rejects duplicate project IDs", () => {
     const raw = validConfig.replace(
       "\nworkflow:",
@@ -821,7 +897,17 @@ workflow:
 workflow:`,
     );
 
-    expect(() => parseConfig(raw)).toThrow("Project IDs must be unique");
+    expect(() => parseConfig(raw)).toThrow(
+      'Duplicate project ID "project-one"',
+    );
+  });
+
+  it("rejects a project ID that occurs more than twice", () => {
+    expect(() =>
+      parseConfig(
+        configWithProjectIds(["project-one", "project-one", "project-one"]),
+      ),
+    ).toThrow('Duplicate project ID "project-one"');
   });
 
   it("rejects duplicate GitHub repositories", () => {
