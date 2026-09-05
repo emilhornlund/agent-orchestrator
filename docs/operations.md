@@ -429,6 +429,9 @@ including validation during Human Review branch maintenance and prepared-conflic
 failures in service logs are concise orchestrator-owned diagnostics with the original exit status and a session-log reference;
 the complete redacted stdout and stderr remain in that per-card log instead of being dumped to the service log.
 
+Vitest suppresses shared logger console output by default while retaining the daily test log. Temporarily enable application
+logger output for a debugging run with `TEST_LOGS=true yarn test`.
+
 `workflow.logRetentionDays` defaults to `14`. Retention cleanup runs at startup and once per day while the service is
 running. It applies to managed daily logs and per-card session logs; a file is removed only when its filesystem modification
 time is strictly older than the retention cutoff. Missing log directories are ignored. Unrelated files and directories,
