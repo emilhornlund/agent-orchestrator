@@ -23,6 +23,7 @@ import {
   getSessionLogPath,
   removeSessionLog,
 } from "../src/logging/session-log.js";
+import * as sessionLog from "../src/logging/session-log.js";
 import type { EmailNotifier } from "../src/notifications/email-notifier.js";
 import { reconcileReviewCards } from "../src/orchestrator/reconcile-review-cards.js";
 import {
@@ -884,6 +885,36 @@ describe("reconcileReviewCards", () => {
     }
   });
 
+  it("retains a prepared conflict when merged remote cleanup is unconfirmed", async () => {
+    const configuredProject = createPreparedConflictProject();
+    const handoffPath = prepareConflict(configuredProject);
+    const deleteError = new Error("remote deletion permission denied");
+    const trello = trelloFor(card());
+    const git = {
+      remoteBranchExists: vi.fn().mockResolvedValue(true),
+      deleteRemoteBranch: vi.fn().mockRejectedValue(deleteError),
+    } as unknown as GitClient;
+
+    try {
+      await expect(
+        reconcileReviewCards(
+          trello,
+          git,
+          githubFor("card-1", "merged"),
+          configuredProject,
+        ),
+      ).rejects.toMatchObject({ cause: deleteError });
+
+      expect(trello.moveCard).not.toHaveBeenCalled();
+      expect(existsSync(handoffPath)).toBe(true);
+    } finally {
+      fs.rmSync(configuredProject.repository.worktreeRoot!, {
+        recursive: true,
+        force: true,
+      });
+    }
+  });
+
   it("clears a prepared conflict before returning a closed PR to Backlog", async () => {
     const configuredProject = createPreparedConflictProject();
     const handoffPath = prepareConflict(configuredProject);
@@ -1433,6 +1464,40 @@ describe("reconcileReviewCards", () => {
     });
     expect(notifier.send).toHaveBeenCalledTimes(1);
     expect(existsSync(sessionLogPath)).toBe(false);
+  });
+
+  it("keeps the Done state when session-log cleanup fails", async () => {
+    const sessionLogPath = getSessionLogPath(project.id, "card-1");
+    appendSessionLog(sessionLogPath, "OpenCode output");
+    const removalError = new Error("session log is locked");
+    const warning = vi.spyOn(Logger.prototype, "warn");
+    const remove = vi
+      .spyOn(sessionLog, "removeSessionLog")
+      .mockImplementation(() => {
+        throw removalError;
+      });
+
+    try {
+      await expect(
+        reconcileReviewCards(
+          trelloFor(card()),
+          {
+            remoteBranchExists: vi.fn().mockResolvedValue(false),
+            deleteRemoteBranch: vi.fn(),
+          } as unknown as GitClient,
+          githubFor("card-1", "merged"),
+          project,
+        ),
+      ).resolves.toBeNull();
+
+      expect(existsSync(sessionLogPath)).toBe(true);
+      expect(warning).toHaveBeenCalledWith(
+        expect.stringContaining("session log is locked"),
+      );
+    } finally {
+      remove.mockRestore();
+      warning.mockRestore();
+    }
   });
 
   it("moves a closed unmerged expected PR to Backlog and comments", async () => {

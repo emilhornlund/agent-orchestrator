@@ -20,7 +20,7 @@ function getFailureReason(error: unknown): string {
 
 function reportFailure(action: string, filePath: string, error: unknown): void {
   try {
-    logger.error(
+    logger.warn(
       `Card context retention could not ${action} ${filePath}: ${getFailureReason(error)}`,
     );
   } catch {

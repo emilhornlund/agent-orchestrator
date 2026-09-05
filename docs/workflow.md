@@ -94,7 +94,9 @@ When a refinement card is claimed:
 5. After the move succeeds, it attempts the optional refinement-completion email and adds one concise Trello comment containing
    the classification, refined title, and, when reliable transition history is available, elapsed workflow time. The comment
    does not repeat the refined task description.
-6. The successful refinement result artifact is cleared and the refinement worktree is cleaned up.
+6. The successful refinement result artifact is cleared and the refinement worktree is cleaned up on a best-effort basis. A
+   failure identifies the project, card, operation, and artifact in a warning and preserves the artifact when it cannot be
+   removed; it does not change the confirmed `Backlog` result.
 
 Email and comment failures are logged independently and do not undo the successful `Backlog` transition. If refinement
 fails, produces an invalid result, or modifies unauthorized repository files, the card is sent through normal failure
@@ -217,8 +219,10 @@ text and content from other tools, is preserved. Each reconciliation reads the c
 write, and an identical status is not written again. Unmatched, reversed, or duplicate markers are malformed: the orchestrator
 does not guess ownership or rewrite the description, and reports the pull request and card through the normal attention path.
 
-Description reads and writes are presentation operations. A presentation failure is logged with the pull request and card and uses
-the normal attention path without resetting, aborting, cleaning, overwriting, or otherwise changing Git maintenance state.
+Description reads and writes are presentation operations. A presentation failure before or during recovery-critical Git work is
+logged with the pull request and card and uses the normal attention path without resetting, aborting, cleaning, overwriting, or
+otherwise changing Git maintenance state. After a successful branch update, removal of the managed status section is housekeeping:
+its failure is a warning, the pull request content is retained, and the maintenance result remains successful.
 
 A lease rejection, missing or invalid remote SHA, fetch or validation failure, or non-conflict rebase failure leaves the pull
 request, card, task branch, and worktree unchanged for diagnosis and later reconciliation. When Git confirms an active conflicted

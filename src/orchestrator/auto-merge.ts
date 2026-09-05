@@ -1,6 +1,6 @@
 import type { ProjectConfig } from "../config/config.js";
 import type { GitHubClient } from "../github/github-client.js";
-import { removeSessionLog } from "../logging/session-log.js";
+import { getSessionLogPath, removeSessionLog } from "../logging/session-log.js";
 import type { Logger } from "../logging/logger.js";
 import {
   notifyCompletion,
@@ -156,7 +156,7 @@ export async function completeAutoMergedCard({
     cardLog.info("OpenCode session log removed");
   } catch (error) {
     cardLog.warn(
-      `Failed to remove OpenCode session log: ${getErrorMessage(error)}`,
+      `Housekeeping cleanup warning for project "${project.id}", card "${card.id}": could not remove OpenCode session log ${getSessionLogPath(project.id, card.id)}: ${getErrorMessage(error)}`,
     );
   }
 }

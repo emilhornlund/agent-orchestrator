@@ -12,7 +12,7 @@ import {
   GitHubMergeStateUnknownError,
 } from "../github/github-client.js";
 import { logger } from "../logging/logger.js";
-import { removeSessionLog } from "../logging/session-log.js";
+import { getSessionLogPath, removeSessionLog } from "../logging/session-log.js";
 import {
   notifyCompletion,
   type EmailNotifier,
@@ -640,15 +640,6 @@ async function completeMergedReviewCard(
     `Human Review card has merged pull request: ${pullRequest.url}`,
   );
 
-  if (preparedConflict !== undefined) {
-    clearPreparedConflictForTerminalCard(
-      project,
-      card,
-      preparedConflict,
-      cardLog,
-    );
-  }
-
   try {
     const remoteBranchExists = await git.remoteBranchExists(
       project.repository.path,
@@ -727,6 +718,15 @@ async function completeMergedReviewCard(
     return;
   }
 
+  if (preparedConflict !== undefined) {
+    clearPreparedConflictForTerminalCard(
+      project,
+      card,
+      preparedConflict,
+      cardLog,
+    );
+  }
+
   try {
     await trello.moveCard(card.id, project.trello.doneListId, {
       dueComplete: true,
@@ -774,7 +774,7 @@ async function completeMergedReviewCard(
     cardLog.info("OpenCode session log removed");
   } catch (error) {
     cardLog.warn(
-      `Failed to remove OpenCode session log: ${getErrorMessage(error)}`,
+      `Housekeeping cleanup warning for project "${project.id}", card "${card.id}": could not remove OpenCode session log ${getSessionLogPath(project.id, card.id)}: ${getErrorMessage(error)}`,
     );
   }
 

@@ -202,9 +202,10 @@ publication or resulting `Human Review` or `Done` transition. Terminal Human Rev
 after its successful transition semantics: merged cards are cleaned after remote branch deletion, `Done`, and completion
 notification handling; closed cards are cleaned after `Backlog` and the explanatory comment attempt. This terminal cleanup
 is limited to the expected `<worktreeRoot>/<card-id>` and `agent/<card-id>` artifacts. A failure is an operational warning
-with project and card context and does not throw a new workflow failure. Refinement clears its result and attempts cleanup
-after moving the card to `Backlog`; a refinement cleanup failure follows normal failure handling while preserving diagnostic
-state.
+with project and card context and does not throw a new workflow failure. Refinement clears its result and attempts local cleanup
+after moving the card to `Backlog`. Result-file, worktree, and local-branch cleanup are housekeeping: failures are warning-level
+diagnostics containing the project, card, operation, and affected path, and do not undo the confirmed `Backlog` transition. Failed
+or unsafe removals preserve the remaining artifact for diagnosis.
 
 Terminal cleanup is fail-closed. It does not remove symbolic links, paths outside the configured root, nested or unknown
 worktrees, unexpected branches, dirty worktrees, worktrees with unmerged paths, or worktrees with an active rebase. A

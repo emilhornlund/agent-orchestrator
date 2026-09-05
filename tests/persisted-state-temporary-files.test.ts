@@ -271,9 +271,7 @@ describe("persisted state temporary-file cleanup", () => {
       path.dirname(fixture.blockPath),
       `.${RECONCILIATION_BLOCK_FILENAME}.${staleProcessId}.interrupted`,
     );
-    const report = vi
-      .spyOn(logger, "error")
-      .mockImplementation(() => undefined);
+    const report = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
     const originalUnlink = fs.unlinkSync;
 
     for (const filePath of [

@@ -51,22 +51,45 @@ const defaultStartupOperations: StartupOperations = {
   runOrchestrator,
 };
 
+function runBestEffortStartupCleanup(
+  operation: string,
+  cleanup: () => void,
+): void {
+  try {
+    cleanup();
+  } catch (error) {
+    try {
+      logger.warn(
+        `Startup housekeeping cleanup warning during ${operation}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    } catch {
+      // Cleanup and logging failures must not prevent independent startup work.
+    }
+  }
+}
+
 export async function runStartup(
   config: Config,
   dependencies: StartupDependencies,
   signal: AbortSignal,
   operations: StartupOperations = defaultStartupOperations,
 ): Promise<void> {
-  cleanupLogRetention(config.workflow.logRetentionDays);
-  cleanupCardContextRetention(
-    config.workflow.contextRoot,
-    config.workflow.contextRetentionDays,
-    new Date(),
-    config.projects.map((project) => project.id),
+  runBestEffortStartupCleanup("log retention", () =>
+    cleanupLogRetention(config.workflow.logRetentionDays),
   );
-  cleanupPersistedStateTemporaryFiles(
-    config.projects,
-    config.workflow.contextRoot,
+  runBestEffortStartupCleanup("card context retention", () =>
+    cleanupCardContextRetention(
+      config.workflow.contextRoot,
+      config.workflow.contextRetentionDays,
+      new Date(),
+      config.projects.map((project) => project.id),
+    ),
+  );
+  runBestEffortStartupCleanup("persisted-state temporary files", () =>
+    cleanupPersistedStateTemporaryFiles(
+      config.projects,
+      config.workflow.contextRoot,
+    ),
   );
 
   const githubCredentials =

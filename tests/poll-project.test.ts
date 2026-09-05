@@ -693,7 +693,7 @@ describe("pollProject", () => {
     }
   });
 
-  it("accepts a complete refinement result and returns the card to Backlog instead of Failed", async () => {
+  it("keeps a completed refinement successful when result cleanup fails", async () => {
     const events: string[] = [];
 
     const worktreeRoot = fs.mkdtempSync(
@@ -766,6 +766,19 @@ describe("pollProject", () => {
     fs.mkdirSync(worktreePath);
 
     try {
+      const originalRemove = fs.rmSync;
+      vi.spyOn(fs, "rmSync").mockImplementation((target, options) => {
+        if (
+          path.resolve(String(target)) ===
+            getRefinementResultPath(worktreePath) &&
+          fs.existsSync(String(target))
+        ) {
+          throw new Error("refinement result is locked");
+        }
+
+        return originalRemove(target, options);
+      });
+
       const trello = new TrelloClient({
         apiKey: "test-key",
         token: "test-token",
@@ -833,6 +846,22 @@ describe("pollProject", () => {
       const runGit = vi.fn(async (_cwd: string, args: string[]) => {
         if (args[0] === "branch" && args[1] === "--show-current") {
           return "agent/card-1";
+        }
+
+        if (
+          args[0] === "rev-parse" &&
+          args[1] === "--git-path" &&
+          (args[2] === "rebase-merge" || args[2] === "rebase-apply")
+        ) {
+          return args[2];
+        }
+
+        if (
+          args[0] === "diff" &&
+          args[1] === "--name-only" &&
+          args[2] === "--diff-filter=U"
+        ) {
+          return "";
         }
 
         if (args[0] === "status") {
@@ -949,7 +978,17 @@ describe("pollProject", () => {
         "cleanup-worktree",
       ]);
 
-      expect(fs.existsSync(getRefinementResultPath(worktreePath))).toBe(false);
+      expect(fs.existsSync(getRefinementResultPath(worktreePath))).toBe(true);
+      expect(
+        fs.readFileSync(
+          path.join(
+            process.cwd(),
+            "logs",
+            `test-orchestrator-${new Date().toISOString().slice(0, 10)}.log`,
+          ),
+          "utf8",
+        ),
+      ).toContain("refinement result is locked");
     } finally {
       fs.rmSync(worktreeRoot, {
         recursive: true,
@@ -1700,12 +1739,16 @@ describe("pollProject", () => {
         fetch: vi.fn().mockResolvedValue(undefined),
         rebase: vi.fn().mockResolvedValue(undefined),
         getCurrentBranch: vi.fn().mockResolvedValue("agent/card-1"),
+        getRebaseState: vi.fn().mockResolvedValue(null),
+        getConflictedPaths: vi.fn().mockResolvedValue([]),
         resetHardTo: vi.fn().mockResolvedValue(undefined),
         cleanUntracked: vi.fn().mockResolvedValue(undefined),
         getStatus,
         getHeadSha,
         push: vi.fn().mockResolvedValue(undefined),
-        removeWorktree: vi.fn().mockResolvedValue(undefined),
+        removeWorktree: vi
+          .fn()
+          .mockRejectedValue(new Error("review worktree is locked")),
         pruneWorktrees: vi.fn().mockResolvedValue(undefined),
         branchExists: vi.fn().mockResolvedValue(true),
         deleteBranch: vi.fn().mockResolvedValue(undefined),
@@ -1821,6 +1864,16 @@ describe("pollProject", () => {
         project.repository.path,
         worktreePath,
       );
+      expect(
+        fs.readFileSync(
+          path.join(
+            process.cwd(),
+            "logs",
+            `test-orchestrator-${new Date().toISOString().slice(0, 10)}.log`,
+          ),
+          "utf8",
+        ),
+      ).toContain("review worktree is locked");
     } finally {
       fs.rmSync(worktreeRoot, {
         recursive: true,

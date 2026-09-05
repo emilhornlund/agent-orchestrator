@@ -148,6 +148,20 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function runBestEffortRetention(operation: string, cleanup: () => void): void {
+  try {
+    cleanup();
+  } catch (error) {
+    try {
+      logger.warn(
+        `Scheduled housekeeping cleanup warning during ${operation}: ${getErrorMessage(error)}`,
+      );
+    } catch {
+      // A cleanup or logging failure must not stop the worker timer.
+    }
+  }
+}
+
 async function hasReconciliationRecovery(
   trello: TrelloClient,
   project: PollingProject,
@@ -866,12 +880,16 @@ export async function runOrchestrator(
         return;
       }
 
-      cleanupLogRetention(config.workflow.logRetentionDays);
-      cleanupCardContextRetention(
-        config.workflow.contextRoot,
-        config.workflow.contextRetentionDays,
-        new Date(),
-        config.projects.map((project) => project.id),
+      runBestEffortRetention("log retention", () =>
+        cleanupLogRetention(config.workflow.logRetentionDays),
+      );
+      runBestEffortRetention("card context retention", () =>
+        cleanupCardContextRetention(
+          config.workflow.contextRoot,
+          config.workflow.contextRetentionDays,
+          new Date(),
+          config.projects.map((project) => project.id),
+        ),
       );
     },
     Math.max(

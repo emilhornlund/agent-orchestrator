@@ -15,6 +15,7 @@ import {
   getSessionLogPath,
   removeSessionLog,
 } from "../src/logging/session-log.js";
+import { Logger } from "../src/logging/logger.js";
 import {
   CommandRunner,
   type RunCommand,
@@ -331,6 +332,44 @@ describe("owned Human Review pull-request maintenance", () => {
         sessionLabel: "Repository validation",
       }),
     );
+  });
+
+  it("keeps successful branch maintenance when managed status removal fails", async () => {
+    const scenario = setup();
+    const git = createGit([taskSha, defaultSha]);
+    const github = createGithub();
+    const statusRemovalError = new Error("description cleanup failed");
+    const warning = vi.spyOn(Logger.prototype, "warn");
+
+    vi.mocked(github.updatePullRequestDescriptionStatus).mockImplementation(
+      async ({ status }) => {
+        if (status === null) {
+          throw statusRemovalError;
+        }
+
+        return false;
+      },
+    );
+
+    try {
+      await expect(
+        maintainReviewPullRequest({
+          git,
+          github,
+          commands: scenario.commands,
+          project: scenario.project,
+          card: scenario.card,
+          pullRequest: createPullRequest(),
+        }),
+      ).resolves.toBe("rebased");
+
+      expect(git.pushWithLease).toHaveBeenCalledOnce();
+      expect(warning).toHaveBeenCalledWith(
+        expect.stringContaining("description cleanup failed"),
+      );
+    } finally {
+      warning.mockRestore();
+    }
   });
 
   it("reports setup failure without running validation or pushing", async () => {

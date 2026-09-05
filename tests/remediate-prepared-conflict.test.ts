@@ -12,6 +12,7 @@ import {
   getSessionLogPath,
   removeSessionLog,
 } from "../src/logging/session-log.js";
+import { Logger } from "../src/logging/logger.js";
 import {
   OpenCodeClient,
   type OpenCodeRunResult,
@@ -332,6 +333,41 @@ describe("remediatePreparedConflict", () => {
       scenario.github.updatePullRequestDescriptionStatus,
     ).toHaveBeenNthCalledWith(4, expect.objectContaining({ status: null }));
     expect(readPreparedConflict(scenario.project, scenario.card.id)).toBeNull();
+  });
+
+  it("keeps successful remediation when managed status removal fails", async () => {
+    const scenario = createScenario();
+    const statusRemovalError = new Error("status cleanup failed");
+    const warning = vi.spyOn(Logger.prototype, "warn");
+
+    vi.mocked(
+      scenario.github.updatePullRequestDescriptionStatus,
+    ).mockImplementation(async ({ status }) => {
+      if (status === null) {
+        throw statusRemovalError;
+      }
+
+      return false;
+    });
+
+    try {
+      await expect(
+        remediatePreparedConflict({
+          ...scenario,
+          signal: new AbortController().signal,
+        }),
+      ).resolves.toBeUndefined();
+
+      expect(scenario.git.pushWithLease).toHaveBeenCalledOnce();
+      expect(
+        readPreparedConflict(scenario.project, scenario.card.id),
+      ).toBeNull();
+      expect(warning).toHaveBeenCalledWith(
+        expect.stringContaining("status cleanup failed"),
+      );
+    } finally {
+      warning.mockRestore();
+    }
   });
 
   it("resumes a completed clean rebase without invoking OpenCode", async () => {
