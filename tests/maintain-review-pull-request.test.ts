@@ -355,7 +355,7 @@ describe("owned Human Review pull-request maintenance", () => {
     expect(git.pushWithLease).not.toHaveBeenCalled();
   });
 
-  it("does not rerun setup or validation for an unchanged prepared worktree", async () => {
+  it("reloads successful maintenance state across a fresh invocation", async () => {
     const scenario = setup();
     scenario.project.repository.setupCommand = "repository-setup";
     const git = createGit([taskSha, defaultSha, taskSha, defaultSha]);
@@ -375,23 +375,37 @@ describe("owned Human Review pull-request maintenance", () => {
     ).rejects.toThrow("force-with-lease update");
     fs.mkdirSync(path.join(scenario.project.repository.worktreeRoot, "card-1"));
 
+    const restartedRunCommand = vi.fn<RunCommand>().mockResolvedValue({
+      exitCode: 0,
+    });
+    const restartedGit = createGit([taskSha, defaultSha]);
+    const restartedTrello = createTrello(scenario.card);
+
     await expect(
       reconcileReviewCards(
-        scenario.trello,
-        git,
+        restartedTrello,
+        restartedGit,
         createGithub(),
         scenario.project,
         {
-          maintenance: { commands: scenario.commands },
+          maintenance: {
+            commands: new CommandRunner(restartedRunCommand),
+          },
         },
       ),
-    ).resolves.toMatchObject({ maintenanceState: "up-to-date" });
+    ).resolves.toMatchObject({
+      card: scenario.card,
+      active: true,
+      maintenanceState: "up-to-date",
+    });
 
     expect(scenario.runCommand).toHaveBeenCalledTimes(2);
-    expect(push).toHaveBeenCalledTimes(2);
+    expect(restartedRunCommand).not.toHaveBeenCalled();
+    expect(push).toHaveBeenCalledOnce();
+    expect(restartedGit.pushWithLease).toHaveBeenCalledOnce();
   });
 
-  it("records and suppresses an unchanged deterministic validation failure", async () => {
+  it("reloads an unchanged deterministic validation failure across a fresh invocation", async () => {
     const scenario = setup();
     const git = createGit([taskSha, defaultSha, taskSha, defaultSha]);
     scenario.runCommand.mockResolvedValue({ exitCode: 1 });
@@ -419,14 +433,22 @@ describe("owned Human Review pull-request maintenance", () => {
     });
     fs.mkdirSync(path.join(scenario.project.repository.worktreeRoot, "card-1"));
 
+    const restartedRunCommand = vi.fn<RunCommand>().mockResolvedValue({
+      exitCode: 0,
+    });
+    const restartedGit = createGit([taskSha, defaultSha]);
+    const restartedTrello = createTrello(scenario.card);
+
     await expect(
       reconcileReviewCards(
-        scenario.trello,
-        git,
+        restartedTrello,
+        restartedGit,
         createGithub(),
         scenario.project,
         {
-          maintenance: { commands: scenario.commands },
+          maintenance: {
+            commands: new CommandRunner(restartedRunCommand),
+          },
         },
       ),
     ).resolves.toMatchObject({
@@ -436,6 +458,10 @@ describe("owned Human Review pull-request maintenance", () => {
     });
 
     expect(scenario.runCommand).toHaveBeenCalledTimes(1);
+    expect(restartedRunCommand).not.toHaveBeenCalled();
+    expect(restartedGit.rebase).not.toHaveBeenCalled();
+    expect(restartedGit.pushWithLease).not.toHaveBeenCalled();
+    expect(restartedTrello.moveCard).not.toHaveBeenCalled();
     expect(git.pushWithLease).not.toHaveBeenCalled();
   });
 
@@ -738,7 +764,7 @@ describe("owned Human Review pull-request maintenance", () => {
     expect(scenario.trello.moveCard).not.toHaveBeenCalled();
   });
 
-  it("records an active conflicted rebase for dedicated remediation", async () => {
+  it("reloads a prepared-conflict handoff across a fresh reconciliation invocation", async () => {
     const scenario = setup();
     const rebaseState: GitRebaseState = {
       active: true,
@@ -772,14 +798,19 @@ describe("owned Human Review pull-request maintenance", () => {
       pullRequestUrl: "https://github.com/owner/repo/pull/1",
     });
 
+    const restartedGit = createGit([taskSha, defaultSha]);
+    const restartedTrello = createTrello(scenario.card);
+
     await expect(
       reconcileReviewCards(
-        scenario.trello,
-        git,
+        restartedTrello,
+        restartedGit,
         createGithub(),
         scenario.project,
         {
-          maintenance: { commands: scenario.commands },
+          maintenance: {
+            commands: new CommandRunner(vi.fn<RunCommand>()),
+          },
         },
       ),
     ).resolves.toMatchObject({
@@ -800,8 +831,13 @@ describe("owned Human Review pull-request maintenance", () => {
     expect(scenario.runCommand).not.toHaveBeenCalled();
     expect(git.pushWithLease).not.toHaveBeenCalled();
     expect(git.rebase).toHaveBeenCalledTimes(1);
-    expect(git.getRemoteBranchSha).toHaveBeenCalledTimes(2);
-    expect(scenario.trello.moveCard).not.toHaveBeenCalled();
+    expect(restartedGit.rebase).not.toHaveBeenCalled();
+    expect(restartedGit.getRemoteBranchSha).not.toHaveBeenCalled();
+    expect(restartedTrello.moveCard).not.toHaveBeenCalled();
+    expect(
+      fs.existsSync(getPreparedConflictPath(scenario.project, "card-1")),
+    ).toBe(true);
+    expect(scenario.card.idList).toBe("review");
   });
 
   it("creates a prepared-conflict handoff when an owned conflicting PR hits real Git conflicts", async () => {

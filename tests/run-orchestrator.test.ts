@@ -865,6 +865,14 @@ describe("runOrchestrator", () => {
     const firstController = new AbortController();
     const notifier: EmailNotifier = { send: vi.fn() };
     const project = createProject("project-a");
+    const card: TrelloCard = {
+      id: "card-1",
+      name: "Task",
+      desc: "",
+      idList: project.trello.reviewListId,
+      idLabels: [],
+      url: "https://trello.example/card-1",
+    };
     const failure = githubReconciliationError(
       project.id,
       "card-1",
@@ -901,9 +909,10 @@ describe("runOrchestrator", () => {
     expect(calls).toBe(MAX_GITHUB_RECONCILIATION_ATTEMPTS);
 
     const secondController = new AbortController();
-    const getCards = vi.fn().mockImplementation(async () => {
+    const getCards = vi.fn().mockImplementation(async (listId: string) => {
       secondController.abort();
-      return [] as TrelloCard[];
+
+      return listId === project.trello.reviewListId ? [card] : [];
     });
     pollProject.mockReset();
 
@@ -920,7 +929,12 @@ describe("runOrchestrator", () => {
 
     expect(pollProject).not.toHaveBeenCalled();
     expect(getCards).toHaveBeenCalledOnce();
+    expect(getCards).toHaveBeenCalledWith(project.trello.readyListId);
+    expect(card.idList).toBe(project.trello.reviewListId);
     expect(notifier.send).toHaveBeenCalledOnce();
+    expect(
+      fs.existsSync(getReconciliationBlockPath(runtimeStorageRoot, project.id)),
+    ).toBe(true);
   });
 
   it("keeps an unrelated project polling while another project is blocked", async () => {
