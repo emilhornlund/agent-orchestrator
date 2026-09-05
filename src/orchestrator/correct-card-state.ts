@@ -1,6 +1,7 @@
 import type { ProjectConfig } from "../config/config.js";
 import { logger } from "../logging/logger.js";
 import type { TrelloCard, TrelloClient } from "../trello/trello-client.js";
+import { presentExternalDiagnostic } from "../security/bounded-diagnostic.js";
 
 import { annotateCardFailure } from "./failure-diagnostic.js";
 import { WorkflowError } from "./workflow-error.js";
@@ -56,7 +57,7 @@ export async function correctCardToBacklog(
       [
         "Agent Orchestrator corrected this card's Trello state.",
         "",
-        `Reason: ${reason}`,
+        `Reason: ${presentExternalDiagnostic(reason)}`,
         "The card was moved to Backlog without starting or resuming agent work.",
         "To deliberately retry it, move the card to Ready for Agent.",
       ].join("\n"),

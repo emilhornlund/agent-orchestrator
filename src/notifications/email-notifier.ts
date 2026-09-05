@@ -6,6 +6,7 @@ import type {
   ProjectConfig,
 } from "../config/config.js";
 import type { RefinementResult } from "../refinement/refinement-result.js";
+import { presentExternalDiagnostic } from "../security/bounded-diagnostic.js";
 import { SmtpEmailNotifier } from "./smtp-email-notifier.js";
 
 export interface EmailMessage {
@@ -101,8 +102,8 @@ export function buildFailedEmail(
       `Project: ${details.project.id}`,
       `Card: ${details.card.name}`,
       `Trello card URL: ${details.card.url}`,
-      `Failure category: ${details.category}`,
-      `Failure reason: ${details.reason}`,
+      `Failure category: ${presentExternalDiagnostic(details.category)}`,
+      `Failure reason: ${presentExternalDiagnostic(details.reason)}`,
       "",
       "To retry deliberately, move this card to Ready for Agent.",
     ].join("\n"),
@@ -117,8 +118,8 @@ export function buildAttentionRequiredEmail(
     text: [
       "Event: Attention Required",
       `Project: ${details.project.id}`,
-      `Failure category: ${details.category}`,
-      `Failure reason: ${details.reason}`,
+      `Failure category: ${presentExternalDiagnostic(details.category)}`,
+      `Failure reason: ${presentExternalDiagnostic(details.reason)}`,
       ...(details.cardIds === undefined || details.cardIds.length === 0
         ? []
         : [`Affected card IDs: ${details.cardIds.join(", ")}`]),
@@ -133,7 +134,9 @@ export function buildAttentionRequiredEmail(
           ]),
       ...(details.handlingOutcome === undefined
         ? []
-        : [`Failure handling: ${details.handlingOutcome}`]),
+        : [
+            `Failure handling: ${presentExternalDiagnostic(details.handlingOutcome)}`,
+          ]),
       "",
       "Project processing cannot safely continue until the failure is resolved.",
     ].join("\n"),

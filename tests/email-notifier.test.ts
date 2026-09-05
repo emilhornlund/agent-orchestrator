@@ -17,6 +17,7 @@ import {
   type EmailNotifier,
 } from "../src/notifications/email-notifier.js";
 import type { TrelloCard } from "../src/trello/trello-client.js";
+import { MAX_EXTERNAL_DIAGNOSTIC_LENGTH } from "../src/security/bounded-diagnostic.js";
 
 const project = { id: "project-one" } as ProjectConfig;
 const card: TrelloCard = {
@@ -204,6 +205,43 @@ describe("email notifications", () => {
         "Project processing cannot safely continue until the failure is resolved.",
       ].join("\n"),
     });
+  });
+
+  it("bounds failed and Attention Required diagnostic values independently", () => {
+    const reason = "failure output ".repeat(300);
+    const handlingOutcome = "recovery outcome ".repeat(300);
+
+    const failed = buildFailedEmail({
+      project,
+      card,
+      category: "Workflow",
+      reason,
+    });
+    const attention = buildAttentionRequiredEmail({
+      project,
+      category: "Workflow",
+      reason,
+      handlingOutcome,
+    });
+
+    expect(failed.text).toContain(
+      `Failure reason: ${"failure output ".repeat(
+        Math.floor(
+          (MAX_EXTERNAL_DIAGNOSTIC_LENGTH - "... [truncated]".length) /
+            "failure output ".length,
+        ),
+      )}`,
+    );
+    expect(failed.text).toContain("... [truncated]");
+    expect(failed.text).toContain(
+      "To retry deliberately, move this card to Ready for Agent.",
+    );
+    expect(attention.text).toContain("Failure reason: ");
+    expect(attention.text).toContain("Failure handling: ");
+    expect(attention.text.match(/\.\.\. \[truncated\]/g)).toHaveLength(2);
+    expect(attention.text).toContain(
+      "Project processing cannot safely continue until the failure is resolved.",
+    );
   });
 
   it("does not attempt Attention Required delivery without a notifier", async () => {

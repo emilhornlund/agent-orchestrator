@@ -9,6 +9,7 @@ import {
   type TrelloCard,
   type TrelloClient,
 } from "../trello/trello-client.js";
+import { presentExternalDiagnostic } from "../security/bounded-diagnostic.js";
 
 import {
   annotateFailure,
@@ -127,7 +128,7 @@ export async function failCard(
         "Agent Orchestrator failed.",
         "",
         `Category: ${failureDescription.category}`,
-        `Reason: ${failureDescription.reason}`,
+        `Reason: ${presentExternalDiagnostic(failureDescription.reason)}`,
         "",
         "To retry deliberately, move this card to Ready for Agent.",
       ].join("\n"),
