@@ -3,6 +3,7 @@ import path from "node:path";
 import { z } from "zod";
 
 import type { FailureCategory } from "./failure-diagnostic.js";
+import { readPersistedStateJson } from "./persisted-state-reader.js";
 
 export const RECONCILIATION_BLOCK_VERSION = 1;
 export const RECONCILIATION_BLOCK_FILENAME = "reconciliation-block.json";
@@ -336,7 +337,7 @@ export function loadReconciliationBlock(
   }
 
   try {
-    const parsed: unknown = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    const parsed = readPersistedStateJson(filePath);
     const block = validatePersistedBlock(parsed, projectId);
 
     return {

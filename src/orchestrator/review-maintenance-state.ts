@@ -3,6 +3,10 @@ import path from "node:path";
 import { z } from "zod";
 
 import type { ProjectConfig } from "../config/config.js";
+import {
+  PersistedStateFileTooLargeError,
+  readPersistedStateJson,
+} from "./persisted-state-reader.js";
 
 const gitSha = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/);
 const command = z.string().min(1);
@@ -96,8 +100,12 @@ export function readReviewMaintenanceState(
   let parsed: unknown;
 
   try {
-    parsed = JSON.parse(fs.readFileSync(statePath, "utf8"));
+    parsed = readPersistedStateJson(statePath);
   } catch (error) {
+    if (error instanceof PersistedStateFileTooLargeError) {
+      throw new Error(error.message, { cause: error });
+    }
+
     throw new Error(
       `Review maintenance state is not valid JSON: ${statePath}`,
       {

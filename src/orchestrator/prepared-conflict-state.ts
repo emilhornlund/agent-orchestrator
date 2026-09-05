@@ -4,6 +4,10 @@ import { z } from "zod";
 
 import type { ProjectConfig } from "../config/config.js";
 import type { GitRebaseState } from "../git/git-client.js";
+import {
+  PersistedStateFileTooLargeError,
+  readPersistedStateJson,
+} from "./persisted-state-reader.js";
 
 const gitSha = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/);
 
@@ -102,8 +106,12 @@ export function readPreparedConflict(
   let parsed: unknown;
 
   try {
-    parsed = JSON.parse(fs.readFileSync(handoffPath, "utf8"));
+    parsed = readPersistedStateJson(handoffPath);
   } catch (error) {
+    if (error instanceof PersistedStateFileTooLargeError) {
+      throw new Error(error.message, { cause: error });
+    }
+
     throw new Error(
       `Prepared conflict handoff is not valid JSON: ${handoffPath}`,
       {
