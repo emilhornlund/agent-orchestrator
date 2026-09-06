@@ -191,14 +191,30 @@ describe("GitHub credential command wiring", () => {
         ]),
       )
       .mockResolvedValueOnce(
-        JSON.stringify({
-          id: 2,
-          body: "Fix this",
-          commitId: "head",
-          author: "reviewer",
-        }),
+        JSON.stringify([
+          [
+            {
+              id: 2,
+              body: "Fix this",
+              commit_id: "head",
+              state: "CHANGES_REQUESTED",
+              submitted_at: "2026-01-01T10:00:00Z",
+              user: { login: "reviewer" },
+            },
+          ],
+        ]),
       )
-      .mockResolvedValueOnce("reviewer: Fix this inline");
+      .mockResolvedValueOnce(
+        JSON.stringify([
+          [
+            {
+              pull_request_review_id: 2,
+              body: "reviewer: Fix this inline",
+              user: { login: "reviewer" },
+            },
+          ],
+        ]),
+      );
     const provider = new GitHubCredentialProvider({
       authenticator: {
         getInstallationToken: vi.fn().mockResolvedValue("token-a"),
@@ -324,14 +340,20 @@ describe("GitHub credential command wiring", () => {
         ]),
       )
       .mockResolvedValueOnce(
-        JSON.stringify({
-          id: 2,
-          body: "token-a must not reach feedback",
-          commitId: "head",
-          author: "reviewer",
-        }),
+        JSON.stringify([
+          [
+            {
+              id: 2,
+              body: "token-a must not reach feedback",
+              commit_id: "head",
+              state: "CHANGES_REQUESTED",
+              submitted_at: "2026-01-01T10:00:00Z",
+              user: { login: "reviewer" },
+            },
+          ],
+        ]),
       )
-      .mockResolvedValueOnce("");
+      .mockResolvedValueOnce("[[]]");
     const provider = new GitHubCredentialProvider({
       authenticator: {
         getInstallationToken: vi.fn().mockResolvedValue("token-a"),

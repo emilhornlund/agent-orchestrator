@@ -553,14 +553,30 @@ describe("reconcileReviewCards", () => {
         ]),
       )
       .mockResolvedValueOnce(
-        JSON.stringify({
-          id: 2,
-          body: "Please fix this.",
-          commitId: "head-sha",
-          author: "reviewer",
-        }),
+        JSON.stringify([
+          [
+            {
+              id: 2,
+              body: "Please fix this.",
+              commit_id: "head-sha",
+              state: "CHANGES_REQUESTED",
+              submitted_at: "2026-01-01T10:00:00Z",
+              user: { login: "reviewer" },
+            },
+          ],
+        ]),
       )
-      .mockResolvedValueOnce("reviewer: Add a regression test.");
+      .mockResolvedValueOnce(
+        JSON.stringify([
+          [
+            {
+              pull_request_review_id: 2,
+              body: "Add a regression test.",
+              user: { login: "reviewer" },
+            },
+          ],
+        ]),
+      );
     const trello = trelloFor(card());
 
     await expect(
