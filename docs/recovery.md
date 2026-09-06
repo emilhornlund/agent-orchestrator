@@ -122,6 +122,14 @@ emits the existing `Attention Required` diagnostic. Incomplete, malformed, or un
 request, a closed or merged pull request, an unexpected branch, or current-head requested changes leaves the card and branch
 unchanged without a transient retry.
 
+An immediate deterministic Human Review reconciliation failure is tracked as an active incident for the project and affected card.
+Its identity includes the reconciliation operation, failure category, and whitespace-normalized reason. The first occurrence uses
+the normal full `Task failed` diagnostic and `Attention Required` notification; later polls suppress both while that identity and
+the card's Human Review state remain unchanged. A concise suppression event may still be logged. A successful reconciliation, a
+card leaving Human Review, or a changed card, operation, category, reason, or other meaningful reconciliation state clears or
+replaces the incident, making a later failure reportable again. This failure-only suppression does not move the card or alter the
+pull request, worktree, handoff, session log, or recoverable agent changes.
+
 For an eligible branch, reconciliation revalidates the pull request, resolves the authoritative remote task SHA with `ls-remote`,
 and prepares or reuses only `<worktreeRoot>/<trello-card-id>`. It fetches the latest default branch there and attempts a normal
 rebase. When the worktree is new, its effective state changes, or setup has not completed for that state, the configured

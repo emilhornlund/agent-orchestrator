@@ -61,12 +61,13 @@ export function githubReconciliationError(
     : new WorkflowError("Git/GitHub", terminalMessage, { cause: error });
 
   annotateCardFailure(reconciliationError, projectId, cardId);
-  if (options.reconciliationListId !== undefined) {
-    annotateFailure(reconciliationError, {
-      projectId,
-      cardId,
-      reconciliationListId: options.reconciliationListId,
-    });
-  }
+  annotateFailure(reconciliationError, {
+    projectId,
+    cardId,
+    reconciliationOperation: `GitHub ${operation}`,
+    ...(options.reconciliationListId === undefined
+      ? {}
+      : { reconciliationListId: options.reconciliationListId }),
+  });
   return reconciliationError;
 }

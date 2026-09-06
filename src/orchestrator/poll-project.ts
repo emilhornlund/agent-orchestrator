@@ -168,6 +168,8 @@ export async function pollProject(
   project: PollingProject,
   signal: AbortSignal,
   emailNotifier?: EmailNotifier,
+  onHumanReviewCardsObserved?: (cardIds: string[]) => void,
+  onHumanReviewCardLeft?: (cardId: string) => void,
 ): Promise<void> {
   if (signal.aborted) {
     return;
@@ -189,6 +191,12 @@ export async function pollProject(
           {
             moveRequestedChanges: false,
             maintenance: { commands },
+            ...(onHumanReviewCardsObserved === undefined
+              ? {}
+              : { onHumanReviewCardsObserved }),
+            ...(onHumanReviewCardLeft === undefined
+              ? {}
+              : { onHumanReviewCardLeft }),
           },
           emailNotifier,
           signal,
@@ -226,6 +234,12 @@ export async function pollProject(
           {
             moveRequestedChanges: workingChangeRequest === null,
             maintenance: { commands },
+            ...(onHumanReviewCardsObserved === undefined
+              ? {}
+              : { onHumanReviewCardsObserved }),
+            ...(onHumanReviewCardLeft === undefined
+              ? {}
+              : { onHumanReviewCardLeft }),
           },
           emailNotifier,
           signal,

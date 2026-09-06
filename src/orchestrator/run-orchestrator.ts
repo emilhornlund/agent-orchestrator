@@ -111,6 +111,7 @@ function isShutdownCancellation(error: unknown, signal: AbortSignal): boolean {
 
 function failureNotificationIdentity(
   projectId: string,
+  reconciliationOperation: string | undefined,
   category: string,
   reason: string,
   cardIds: string[],
@@ -118,11 +119,51 @@ function failureNotificationIdentity(
 ): string {
   return JSON.stringify({
     projectId,
+    reconciliationOperation: reconciliationOperation ?? null,
     cardIds: [...new Set(cardIds)].sort(),
     category,
-    reason,
+    reason: reason.replace(/\s+/g, " ").trim() || "No reason provided",
     handlingOutcome: handlingOutcome ?? null,
   });
+}
+
+function humanReviewCardKey(cardIds: string[]): string {
+  return JSON.stringify([...new Set(cardIds)].sort());
+}
+
+function getHumanReviewCardIds(key: string): string[] {
+  const value: unknown = JSON.parse(key);
+
+  return Array.isArray(value) &&
+    value.every((cardId): cardId is string => typeof cardId === "string")
+    ? value
+    : [];
+}
+
+function clearHumanReviewFailureForMissingCards(
+  identities: Map<string, string>,
+  cardIds: string[],
+): void {
+  const observedCardIds = new Set(cardIds);
+
+  for (const key of identities.keys()) {
+    if (
+      getHumanReviewCardIds(key).some((cardId) => !observedCardIds.has(cardId))
+    ) {
+      identities.delete(key);
+    }
+  }
+}
+
+function clearHumanReviewFailureForCard(
+  identities: Map<string, string>,
+  cardId: string,
+): void {
+  for (const key of identities.keys()) {
+    if (getHumanReviewCardIds(key).includes(cardId)) {
+      identities.delete(key);
+    }
+  }
 }
 
 interface BlockedPreparedConflict {
@@ -227,6 +268,7 @@ function restoreReconciliationFailure(
     {
       projectId: block.projectId,
       ...(block.cardId === undefined ? {} : { cardId: block.cardId }),
+      reconciliationOperation: block.operation,
       ...(block.reconciliationListId === undefined
         ? {}
         : { reconciliationListId: block.reconciliationListId }),
@@ -371,6 +413,16 @@ async function runProjectWorker(
   const preparedConflictAttempts = new Map<string, number>();
   const blockedPreparedConflicts = new Map<string, BlockedPreparedConflict>();
   const blockedReconciliations = new Map<string, BlockedReconciliation>();
+  const activeHumanReviewFailureIdentities = new Map<string, string>();
+  const onHumanReviewCardsObserved = (cardIds: string[]): void => {
+    clearHumanReviewFailureForMissingCards(
+      activeHumanReviewFailureIdentities,
+      cardIds,
+    );
+  };
+  const onHumanReviewCardLeft = (cardId: string): void => {
+    clearHumanReviewFailureForCard(activeHumanReviewFailureIdentities, cardId);
+  };
   let suppressedFailureIdentity: string | undefined;
   let restoredFailureIdentity: string | undefined;
   let pendingTrelloValidation = deferredTrelloValidation;
@@ -418,6 +470,7 @@ async function runProjectWorker(
     const failureDescription = describeFailure(failure);
     const failureIdentity = failureNotificationIdentity(
       project.id,
+      undefined,
       failureDescription.category,
       failureDescription.reason,
       [],
@@ -568,7 +621,18 @@ async function runProjectWorker(
 
       if (emailNotifier === undefined) {
         await withGitHubOperationProject(project, () =>
-          pollProject(trello, git, github, opencode, commands, project, signal),
+          pollProject(
+            trello,
+            git,
+            github,
+            opencode,
+            commands,
+            project,
+            signal,
+            undefined,
+            onHumanReviewCardsObserved,
+            onHumanReviewCardLeft,
+          ),
         );
       } else {
         await withGitHubOperationProject(project, () =>
@@ -581,6 +645,8 @@ async function runProjectWorker(
             project,
             signal,
             emailNotifier,
+            onHumanReviewCardsObserved,
+            onHumanReviewCardLeft,
           ),
         );
       }
@@ -590,6 +656,7 @@ async function runProjectWorker(
       preparedConflictAttempts.clear();
       suppressedFailureIdentity = undefined;
       restoredFailureIdentity = undefined;
+      activeHumanReviewFailureIdentities.clear();
     } catch (error) {
       if (
         isShutdownCancellation(error, signal) ||
@@ -750,22 +817,6 @@ async function runProjectWorker(
           : { cardId: failureContext.cardId }),
       });
 
-      projectLog.error(
-        formatFailureDiagnostic(
-          error,
-          failureContext === undefined
-            ? {}
-            : {
-                ...(failureContext.sessionLogPath === undefined
-                  ? {}
-                  : { sessionLogPath: failureContext.sessionLogPath }),
-                ...(failureContext.handlingOutcome === undefined
-                  ? {}
-                  : { handlingOutcome: failureContext.handlingOutcome }),
-              },
-        ),
-      );
-
       const cardIds = [
         ...(failureContext?.cardIds ?? []),
         ...(failureContext?.cardId === undefined
@@ -790,6 +841,7 @@ async function runProjectWorker(
       const failureDescription = describeFailure(error);
       const currentFailureIdentity = failureNotificationIdentity(
         project.id,
+        failureContext?.reconciliationOperation,
         failureDescription.category,
         failureDescription.reason,
         cardIds,
@@ -797,11 +849,49 @@ async function runProjectWorker(
       );
       const currentFailureBaseIdentity = failureNotificationIdentity(
         project.id,
+        failureContext?.reconciliationOperation,
         failureDescription.category,
         failureDescription.reason,
         cardIds,
         undefined,
       );
+
+      const suppressUnchangedHumanReviewFailure =
+        failureContext?.reconciliationListId === project.trello.reviewListId &&
+        failureContext?.reconciliationOperation !== undefined &&
+        cardIds.length > 0 &&
+        !cardFailureHandled &&
+        activeHumanReviewFailureIdentities.get(humanReviewCardKey(cardIds)) ===
+          currentFailureBaseIdentity;
+
+      const humanReviewFailureKey =
+        failureContext?.reconciliationListId === project.trello.reviewListId &&
+        failureContext?.reconciliationOperation !== undefined &&
+        cardIds.length > 0
+          ? humanReviewCardKey(cardIds)
+          : undefined;
+
+      if (suppressUnchangedHumanReviewFailure) {
+        projectLog.info(
+          "Human Review reconciliation failure diagnostic suppressed for unchanged failure",
+        );
+      } else {
+        projectLog.error(
+          formatFailureDiagnostic(
+            error,
+            failureContext === undefined
+              ? {}
+              : {
+                  ...(failureContext.sessionLogPath === undefined
+                    ? {}
+                    : { sessionLogPath: failureContext.sessionLogPath }),
+                  ...(failureContext.handlingOutcome === undefined
+                    ? {}
+                    : { handlingOutcome: failureContext.handlingOutcome }),
+                },
+          ),
+        );
+      }
 
       if (newlyBlockedReconciliation !== undefined) {
         newlyBlockedReconciliation.notificationIdentity =
@@ -830,16 +920,27 @@ async function runProjectWorker(
       }
 
       if (cardFailureHandled) {
+        if (humanReviewFailureKey !== undefined) {
+          activeHumanReviewFailureIdentities.delete(humanReviewFailureKey);
+        }
         suppressedFailureIdentity = undefined;
         restoredFailureIdentity = undefined;
       } else if (
-        currentFailureIdentity === suppressedFailureIdentity ||
-        currentFailureBaseIdentity === restoredFailureIdentity
+        humanReviewFailureKey !== undefined
+          ? suppressUnchangedHumanReviewFailure
+          : currentFailureIdentity === suppressedFailureIdentity ||
+            currentFailureBaseIdentity === restoredFailureIdentity
       ) {
         projectLog.info(
           "Attention-required notification suppressed for unchanged unresolved failure",
         );
       } else {
+        if (humanReviewFailureKey !== undefined) {
+          activeHumanReviewFailureIdentities.set(
+            humanReviewFailureKey,
+            currentFailureBaseIdentity,
+          );
+        }
         suppressedFailureIdentity = currentFailureIdentity;
         restoredFailureIdentity = undefined;
 

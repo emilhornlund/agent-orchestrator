@@ -12,6 +12,7 @@ import {
 } from "../src/github/github-client.js";
 import type { OpenCodeClient } from "../src/opencode/opencode-client.js";
 import type { CommandRunner } from "../src/process/command-runner.js";
+import { Logger } from "../src/logging/logger.js";
 import {
   TrelloRequestError,
   type TrelloCard,
@@ -202,6 +203,9 @@ describe("runOrchestrator", () => {
       expect.anything(),
       expect.objectContaining({ id: "project-a" }),
       expect.anything(),
+      undefined,
+      expect.anything(),
+      expect.anything(),
     );
 
     expect(pollProject).toHaveBeenCalledWith(
@@ -211,6 +215,9 @@ describe("runOrchestrator", () => {
       expect.anything(),
       expect.anything(),
       expect.objectContaining({ id: "project-b" }),
+      expect.anything(),
+      undefined,
+      expect.anything(),
       expect.anything(),
     );
   });
@@ -625,6 +632,213 @@ describe("runOrchestrator", () => {
 
     expect(calls).toBe(2);
     expect(notifier.send).toHaveBeenCalledOnce();
+  });
+
+  it("suppresses repeated Human Review failure diagnostics and attention alerts", async () => {
+    const controller = new AbortController();
+    const notifier: EmailNotifier = { send: vi.fn() };
+    const project = createProject("project-a");
+    const failure = githubReconciliationError(
+      project.id,
+      "card-1",
+      "requested changes",
+      new Error("stable requested-change detection failure"),
+      "Could not reconcile Human Review card while checking requested changes: stable requested-change detection failure",
+      { reconciliationListId: project.trello.reviewListId },
+    );
+    let calls = 0;
+    const errorLog = vi.spyOn(Logger.prototype, "error");
+
+    pollProject.mockImplementation(async () => {
+      calls += 1;
+
+      if (calls === 2) {
+        controller.abort();
+      }
+
+      throw failure;
+    });
+
+    try {
+      await runOrchestrator(
+        {} as TrelloClient,
+        {} as GitClient,
+        {} as GitHubClient,
+        {} as OpenCodeClient,
+        {} as CommandRunner,
+        createConfig([project], 0),
+        controller.signal,
+        notifier,
+      );
+
+      expect(
+        errorLog.mock.calls.filter(([message]) =>
+          message.startsWith("Task failed."),
+        ),
+      ).toHaveLength(1);
+      expect(notifier.send).toHaveBeenCalledOnce();
+    } finally {
+      errorLog.mockRestore();
+    }
+  });
+
+  it("reports a Human Review failure again after reconciliation succeeds", async () => {
+    const controller = new AbortController();
+    const notifier: EmailNotifier = { send: vi.fn() };
+    const project = createProject("project-a");
+    let calls = 0;
+    const errorLog = vi.spyOn(Logger.prototype, "error");
+
+    pollProject.mockImplementation(async () => {
+      calls += 1;
+
+      if (calls === 2) {
+        return;
+      }
+
+      const failure = githubReconciliationError(
+        project.id,
+        "card-1",
+        "requested changes",
+        new Error("stable requested-change detection failure"),
+        "Could not reconcile Human Review card while checking requested changes: stable requested-change detection failure",
+        { reconciliationListId: project.trello.reviewListId },
+      );
+
+      if (calls === 3) {
+        controller.abort();
+      }
+
+      throw failure;
+    });
+
+    try {
+      await runOrchestrator(
+        {} as TrelloClient,
+        {} as GitClient,
+        {} as GitHubClient,
+        {} as OpenCodeClient,
+        {} as CommandRunner,
+        createConfig([project], 0),
+        controller.signal,
+        notifier,
+      );
+
+      expect(
+        errorLog.mock.calls.filter(([message]) =>
+          message.startsWith("Task failed."),
+        ),
+      ).toHaveLength(2);
+      expect(notifier.send).toHaveBeenCalledTimes(2);
+    } finally {
+      errorLog.mockRestore();
+    }
+  });
+
+  it("reports a changed Human Review failure operation as a new incident", async () => {
+    const controller = new AbortController();
+    const notifier: EmailNotifier = { send: vi.fn() };
+    const project = createProject("project-a");
+    let calls = 0;
+    const errorLog = vi.spyOn(Logger.prototype, "error");
+
+    pollProject.mockImplementation(async () => {
+      calls += 1;
+      const operation = calls === 1 ? "requested changes" : "maintenance state";
+      const failure = githubReconciliationError(
+        project.id,
+        "card-1",
+        operation,
+        new Error("stable reconciliation failure"),
+        `Could not reconcile Human Review card while checking ${operation}: stable reconciliation failure`,
+        { reconciliationListId: project.trello.reviewListId },
+      );
+
+      if (calls === 2) {
+        controller.abort();
+      }
+
+      throw failure;
+    });
+
+    try {
+      await runOrchestrator(
+        {} as TrelloClient,
+        {} as GitClient,
+        {} as GitHubClient,
+        {} as OpenCodeClient,
+        {} as CommandRunner,
+        createConfig([project], 0),
+        controller.signal,
+        notifier,
+      );
+
+      expect(
+        errorLog.mock.calls.filter(([message]) =>
+          message.startsWith("Task failed."),
+        ),
+      ).toHaveLength(2);
+      expect(notifier.send).toHaveBeenCalledTimes(2);
+    } finally {
+      errorLog.mockRestore();
+    }
+  });
+
+  it("clears Human Review suppression when a card leaves before a later poll failure", async () => {
+    const controller = new AbortController();
+    const notifier: EmailNotifier = { send: vi.fn() };
+    const project = createProject("project-a");
+    let calls = 0;
+    const errorLog = vi.spyOn(Logger.prototype, "error");
+
+    pollProject.mockImplementation(async (...args) => {
+      calls += 1;
+
+      if (calls === 2) {
+        const onHumanReviewCardsObserved = args[8] as (
+          cardIds: string[],
+        ) => void;
+
+        onHumanReviewCardsObserved(["card-2"]);
+        throw new WorkflowError("Workflow", "unrelated poll failure");
+      }
+
+      const failure = githubReconciliationError(
+        project.id,
+        "card-1",
+        "requested changes",
+        new Error("stable requested-change detection failure"),
+        "Could not reconcile Human Review card while checking requested changes: stable requested-change detection failure",
+        { reconciliationListId: project.trello.reviewListId },
+      );
+
+      if (calls === 3) {
+        controller.abort();
+      }
+
+      throw failure;
+    });
+
+    try {
+      await runOrchestrator(
+        {} as TrelloClient,
+        {} as GitClient,
+        {} as GitHubClient,
+        {} as OpenCodeClient,
+        {} as CommandRunner,
+        createConfig([project], 0),
+        controller.signal,
+        notifier,
+      );
+
+      expect(
+        errorLog.mock.calls.filter(([message]) =>
+          message.includes("stable requested-change detection failure"),
+        ),
+      ).toHaveLength(2);
+    } finally {
+      errorLog.mockRestore();
+    }
   });
 
   it("clears an unresolved failure alert after success so a later failure can notify", async () => {
@@ -1529,6 +1743,8 @@ describe("runOrchestrator", () => {
       expect.anything(),
       expect.anything(),
       expect.objectContaining({ id: "project-b" }),
+      expect.anything(),
+      expect.anything(),
       expect.anything(),
       expect.anything(),
     );
