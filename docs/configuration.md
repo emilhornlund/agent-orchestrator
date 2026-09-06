@@ -278,11 +278,15 @@ stage. It defaults to `360` when omitted.
 The post-commit pull-request-description session reuses the configured `commit` model and variant. There is no separate
 description-model configuration. The orchestrator supplies the card title, description and URL, final changed files, commit
 information, and known validation or test results. The description result is strict JSON with `summary`, `changes`, and
-`validation` fields; invalid or incomplete output blocks publication. The result is generated after publication rebasing. A
-standalone deterministic renderer defines the Markdown contract: fixed `Summary`, `Changes`, `Validation`, and `Task`
-sections, an application-owned Trello card link and attribution footer, and one reserved status-marker pair. Publication wiring
-uses this renderer for newly created pull requests; configuring the `commit` model does not allow it to choose headings, links,
-footer text, or status markers. Existing open pull requests are reused without description updates.
+`validation` fields. Missing or invalid output, OpenCode execution failure, or Markdown rendering failure is logged as a
+non-critical description-generation failure and falls back to the deterministic body containing the Trello card URL followed by
+the Agent Orchestrator attribution footer; it does not block branch publication, pull-request creation, reuse, or card
+transitions. A valid empty `validation` array is allowed and does not claim that validation or tests passed. The result is
+generated after publication rebasing. A standalone deterministic renderer defines the Markdown contract: fixed `Summary`,
+`Changes`, `Validation`, and `Task` sections, an application-owned Trello card link and attribution footer, and one reserved
+status-marker pair. Publication wiring uses this renderer for newly created pull requests; configuring the `commit` model does not
+allow it to choose headings, links, footer text, or status markers. Existing open pull requests are reused without description
+updates.
 
 The `remediation` stage also accepts the optional `maxPasses` setting:
 

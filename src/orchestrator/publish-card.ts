@@ -53,13 +53,21 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function hasOpenCodePermissionDenial(result: OpenCodeRunResult): boolean {
-  const output = `${result.output}\n${result.errorOutput}`.toLowerCase();
+function renderDeterministicPullRequestBody(card: TrelloCard): string {
+  return [
+    `Trello: ${card.url}`,
+    "",
+    "Implemented automatically by Agent Orchestrator.",
+  ].join("\n");
+}
 
-  return (
-    output.includes("auto-rejecting") ||
-    output.includes("rejected permission") ||
-    output.includes("permission denied")
+function logDescriptionFallback(
+  cardLog: ReturnType<typeof logger.child>,
+  stage: string,
+  error: unknown,
+): void {
+  cardLog.warn(
+    `Pull request description generation failed during ${stage}: ${getErrorMessage(error)}. Using deterministic fallback pull request body.`,
   );
 }
 
@@ -75,7 +83,7 @@ async function generatePullRequestDescription(options: {
   signal: AbortSignal;
   sessionLogPath?: string;
   cardLog: ReturnType<typeof logger.child>;
-}): Promise<PullRequestDescription> {
+}): Promise<PullRequestDescription | undefined> {
   const {
     git,
     opencode,
@@ -100,11 +108,12 @@ async function generatePullRequestDescription(options: {
     );
     commitMessage = await git.getCommitMessage(worktreePath);
   } catch (error) {
-    throw new WorkflowError(
-      "Git/GitHub",
-      `Could not collect final commit context for pull request description: ${getErrorMessage(error)}. The committed task worktree and branch were preserved; resolve the context failure and retry publication.`,
-      { cause: error },
-    );
+    if (signal.aborted) {
+      throw new TrelloRequestAbortedError();
+    }
+
+    logDescriptionFallback(cardLog, "final commit context collection", error);
+    return undefined;
   }
 
   const validationResults = [
@@ -136,26 +145,28 @@ async function generatePullRequestDescription(options: {
       sessionLabel: "OpenCode pull request description",
     });
   } catch (error) {
-    throw new WorkflowError(
-      "OpenCode",
-      `Could not generate pull request description: ${getErrorMessage(error)}. The committed task worktree and branch were preserved; resolve the generation failure and retry publication.`,
-      { cause: error },
-    );
+    if (signal.aborted) {
+      throw new TrelloRequestAbortedError();
+    }
+
+    logDescriptionFallback(cardLog, "OpenCode execution", error);
+    return undefined;
   }
 
   if (result.exitCode !== 0) {
-    if (hasOpenCodePermissionDenial(result)) {
-      throw new WorkflowError(
-        "OpenCode permissions",
-        "OpenCode was denied permission during pull request description generation. The committed task worktree and branch were preserved; resolve the permission failure and retry publication.",
-      );
+    if (signal.aborted) {
+      throw new TrelloRequestAbortedError();
     }
 
-    throw new WorkflowError(
-      "OpenCode",
-      `OpenCode pull request description generation exited with code ${result.exitCode}${result.errorOutput.trim().length > 0 ? `: ${result.errorOutput.trim()}` : ""}. The committed task worktree and branch were preserved; resolve the generation failure and retry publication.`,
-      { cause: result },
+    logDescriptionFallback(
+      cardLog,
+      "OpenCode execution",
+      new Error(
+        `OpenCode exited with code ${result.exitCode}${result.errorOutput.trim().length > 0 ? `: ${result.errorOutput.trim()}` : ""}`,
+      ),
     );
+
+    return undefined;
   }
 
   try {
@@ -165,11 +176,16 @@ async function generatePullRequestDescription(options: {
 
     return description;
   } catch (error) {
-    throw new WorkflowError(
-      "OpenCode",
-      `OpenCode pull request description returned an invalid structured result: ${getErrorMessage(error)}. The committed task worktree and branch were preserved; correct the generation output and retry publication.`,
-      { cause: error },
+    if (signal.aborted) {
+      throw new TrelloRequestAbortedError();
+    }
+
+    logDescriptionFallback(
+      cardLog,
+      "structured output parsing and validation",
+      error,
     );
+    return undefined;
   }
 }
 
@@ -276,6 +292,10 @@ export async function publishCard({
       });
     }
 
+    if (signal?.aborted) {
+      throw new TrelloRequestAbortedError();
+    }
+
     const remoteCommitSha =
       typeof git.getRemoteBranchSha === "function"
         ? await git.getRemoteBranchSha(worktreePath, "origin", branch, project)
@@ -333,20 +353,26 @@ export async function publishCard({
 
       cardLog.event("Creating pull request...");
 
+      let body = renderDeterministicPullRequestBody(card);
+
+      if (finalPullRequestDescription !== undefined) {
+        try {
+          body = renderPullRequestDescription(
+            finalPullRequestDescription,
+            card,
+          );
+        } catch (error) {
+          logDescriptionFallback(cardLog, "Markdown rendering", error);
+        }
+      }
+
       pullRequest = await github.createPullRequest({
         cwd: worktreePath,
         repository: project.repository.github,
         baseBranch: project.repository.defaultBranch,
         headBranch: branch,
         title: card.name,
-        body:
-          finalPullRequestDescription === undefined
-            ? [
-                `Trello: ${card.url}`,
-                "",
-                "Implemented automatically by Agent Orchestrator.",
-              ].join("\n")
-            : renderPullRequestDescription(finalPullRequestDescription, card),
+        body,
         project,
       });
 

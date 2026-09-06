@@ -87,6 +87,11 @@ describe("parsePullRequestDescription", () => {
     ["Markdown-wrapped JSON", "```json\n{}\n```", "not valid JSON"],
     ["missing fields", '{"summary":"A summary"}', "missing required field"],
     [
+      "missing validation information",
+      '{"summary":"A summary","changes":[]}',
+      'missing required field "validation"',
+    ],
+    [
       "blank summary",
       '{"summary":" ","changes":[],"validation":[]}',
       "summary must not be blank",
