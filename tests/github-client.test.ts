@@ -668,14 +668,65 @@ describe("GitHubClient", () => {
         ]),
       )
       .mockResolvedValueOnce(
-        JSON.stringify({
-          id: 456,
-          body: "Please handle the null case.",
-          commitId: "current-head-sha",
-          author: "reviewer-one",
-        }),
+        JSON.stringify([
+          [
+            {
+              id: 321,
+              body: null,
+              commit_id: null,
+              state: "PENDING",
+              submitted_at: null,
+              user: { login: "reviewer-one" },
+            },
+            {
+              id: 123,
+              body: "Already approved.",
+              commit_id: "current-head-sha",
+              state: "APPROVED",
+              submitted_at: "2026-01-01T10:00:00Z",
+              user: { login: "reviewer-one" },
+            },
+          ],
+          [
+            {
+              id: 456,
+              body: "Please handle the null case.",
+              commit_id: "current-head-sha",
+              state: "CHANGES_REQUESTED",
+              submitted_at: "2026-01-02T10:00:00Z",
+              user: { login: "reviewer-one" },
+            },
+          ],
+        ]),
       )
-      .mockResolvedValueOnce("reviewer-one: Please add a regression test.");
+      .mockResolvedValueOnce(
+        JSON.stringify([
+          [
+            {
+              pull_request_review_id: 999,
+              body: "Ignore this review.",
+              user: { login: "reviewer-two" },
+            },
+            {
+              pull_request_review_id: 456,
+              body: "Please add a regression test.",
+              user: { login: "reviewer-one" },
+            },
+          ],
+          [
+            {
+              pull_request_review_id: 456,
+              body: "And cover the empty value.",
+              user: { login: "reviewer-one" },
+            },
+            {
+              pull_request_review_id: 456,
+              body: null,
+              user: { login: "reviewer-one" },
+            },
+          ],
+        ]),
+      );
 
     const github = new GitHubClient(runGitHub);
 
@@ -693,6 +744,7 @@ describe("GitHubClient", () => {
         "",
         "Inline review comments:",
         "reviewer-one: Please add a regression test.",
+        "reviewer-one: And cover the empty value.",
       ].join("\n"),
     });
 
@@ -718,8 +770,6 @@ describe("GitHubClient", () => {
       "repos/example/repository/pulls/123/reviews",
       "--paginate",
       "--slurp",
-      "--jq",
-      'flatten | map(select(.state == "CHANGES_REQUESTED")) | sort_by(.submitted_at) | last | {id, body, commitId: .commit_id, author: .user.login}',
     ]);
 
     expect(runGitHub).toHaveBeenNthCalledWith(3, "/repo", [
@@ -727,8 +777,6 @@ describe("GitHubClient", () => {
       "repos/example/repository/pulls/123/comments",
       "--paginate",
       "--slurp",
-      "--jq",
-      'flatten | map(select(.pull_request_review_id == 456 and .body != null and .body != "")) | .[] | "\\(.user.login): \\(.body)"',
     ]);
   });
 
@@ -785,12 +833,18 @@ describe("GitHubClient", () => {
         ]),
       )
       .mockResolvedValueOnce(
-        JSON.stringify({
-          id: 456,
-          body: 123,
-          commitId: "current-head-sha",
-          author: "reviewer-one",
-        }),
+        JSON.stringify([
+          [
+            {
+              id: 456,
+              body: 123,
+              commit_id: "current-head-sha",
+              state: "CHANGES_REQUESTED",
+              submitted_at: "2026-01-01T10:00:00Z",
+              user: { login: "reviewer-one" },
+            },
+          ],
+        ]),
       );
 
     const github = new GitHubClient(runGitHub);
@@ -818,12 +872,18 @@ describe("GitHubClient", () => {
         ]),
       )
       .mockResolvedValueOnce(
-        JSON.stringify({
-          id: 456,
-          body: "Please handle the null case.",
-          commitId: "old-reviewed-head-sha",
-          author: "reviewer-one",
-        }),
+        JSON.stringify([
+          [
+            {
+              id: 456,
+              body: "Please handle the null case.",
+              commit_id: "old-reviewed-head-sha",
+              state: "CHANGES_REQUESTED",
+              submitted_at: "2026-01-01T10:00:00Z",
+              user: { login: "reviewer-one" },
+            },
+          ],
+        ]),
       );
 
     const github = new GitHubClient(runGitHub);
@@ -858,14 +918,20 @@ describe("GitHubClient", () => {
         ]),
       )
       .mockResolvedValueOnce(
-        JSON.stringify({
-          id: 789,
-          body: "One more change is required.",
-          commitId: "second-review-head-sha",
-          author: "reviewer-two",
-        }),
+        JSON.stringify([
+          [
+            {
+              id: 789,
+              body: "One more change is required.",
+              commit_id: "second-review-head-sha",
+              state: "CHANGES_REQUESTED",
+              submitted_at: "2026-01-01T10:00:00Z",
+              user: { login: "reviewer-two" },
+            },
+          ],
+        ]),
       )
-      .mockResolvedValueOnce("");
+      .mockResolvedValueOnce("[[]]");
 
     const github = new GitHubClient(runGitHub);
 
@@ -896,7 +962,7 @@ describe("GitHubClient", () => {
           },
         ]),
       )
-      .mockResolvedValueOnce("null");
+      .mockResolvedValueOnce("[[]]");
 
     const github = new GitHubClient(runGitHub);
 
@@ -909,6 +975,203 @@ describe("GitHubClient", () => {
     ).resolves.toBeNull();
 
     expect(runGitHub).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses the latest requested-changes review across paginated results", async () => {
+    const runGitHub = vi
+      .fn<RunGitHubCommand>()
+      .mockResolvedValueOnce(
+        JSON.stringify([
+          {
+            url: "https://github.com/example/repository/pull/123",
+            number: 123,
+            reviewDecision: "CHANGES_REQUESTED",
+            headRefOid: "current-head-sha",
+          },
+        ]),
+      )
+      .mockResolvedValueOnce(
+        JSON.stringify([
+          [
+            {
+              id: 456,
+              body: "Older feedback.",
+              commit_id: "current-head-sha",
+              state: "CHANGES_REQUESTED",
+              submitted_at: "2026-01-02T10:00:00Z",
+              user: { login: "reviewer-one" },
+            },
+          ],
+          [
+            {
+              id: 789,
+              body: "Latest feedback.",
+              commit_id: "current-head-sha",
+              state: "CHANGES_REQUESTED",
+              submitted_at: "2026-01-03T10:00:00Z",
+              user: { login: "reviewer-two" },
+            },
+          ],
+        ]),
+      )
+      .mockResolvedValueOnce(
+        JSON.stringify([
+          [
+            {
+              pull_request_review_id: 456,
+              body: "Older inline feedback.",
+              user: { login: "reviewer-one" },
+            },
+          ],
+          [
+            {
+              pull_request_review_id: 789,
+              body: "Latest inline feedback.",
+              user: { login: "reviewer-two" },
+            },
+          ],
+        ]),
+      );
+
+    await expect(
+      new GitHubClient(runGitHub).findChangesRequestedPullRequest({
+        cwd: "/repo",
+        repository: "example/repository",
+        headBranch: "agent/card-1",
+      }),
+    ).resolves.toEqual({
+      url: "https://github.com/example/repository/pull/123",
+      feedback: [
+        "reviewer-two: Latest feedback.",
+        "",
+        "Inline review comments:",
+        "reviewer-two: Latest inline feedback.",
+      ].join("\n"),
+    });
+  });
+
+  it("rejects malformed paginated review JSON", async () => {
+    const runGitHub = vi
+      .fn<RunGitHubCommand>()
+      .mockResolvedValueOnce(
+        JSON.stringify([
+          {
+            url: "https://github.com/example/repository/pull/123",
+            number: 123,
+            reviewDecision: "CHANGES_REQUESTED",
+            headRefOid: "current-head-sha",
+          },
+        ]),
+      )
+      .mockResolvedValueOnce("not JSON");
+
+    await expect(
+      new GitHubClient(runGitHub).findChangesRequestedPullRequest({
+        cwd: "/repo",
+        repository: "example/repository",
+        headBranch: "agent/card-1",
+      }),
+    ).rejects.toThrow("invalid paginated requested changes review response");
+  });
+
+  it("rejects malformed paginated inline comment JSON", async () => {
+    const runGitHub = vi
+      .fn<RunGitHubCommand>()
+      .mockResolvedValueOnce(
+        JSON.stringify([
+          {
+            url: "https://github.com/example/repository/pull/123",
+            number: 123,
+            reviewDecision: "CHANGES_REQUESTED",
+            headRefOid: "current-head-sha",
+          },
+        ]),
+      )
+      .mockResolvedValueOnce(
+        JSON.stringify([
+          [
+            {
+              id: 456,
+              body: "Please fix this.",
+              commit_id: "current-head-sha",
+              state: "CHANGES_REQUESTED",
+              submitted_at: "2026-01-01T10:00:00Z",
+              user: { login: "reviewer-one" },
+            },
+          ],
+        ]),
+      )
+      .mockResolvedValueOnce(
+        JSON.stringify([
+          [
+            {
+              pull_request_review_id: 456,
+              body: 123,
+              user: { login: "reviewer-one" },
+            },
+          ],
+        ]),
+      );
+
+    await expect(
+      new GitHubClient(runGitHub).findChangesRequestedPullRequest({
+        cwd: "/repo",
+        repository: "example/repository",
+        headBranch: "agent/card-1",
+      }),
+    ).rejects.toThrow("invalid inline review comment");
+  });
+
+  it("preserves the fallback when the selected review has no written feedback", async () => {
+    const runGitHub = vi
+      .fn<RunGitHubCommand>()
+      .mockResolvedValueOnce(
+        JSON.stringify([
+          {
+            url: "https://github.com/example/repository/pull/123",
+            number: 123,
+            reviewDecision: "CHANGES_REQUESTED",
+            headRefOid: "current-head-sha",
+          },
+        ]),
+      )
+      .mockResolvedValueOnce(
+        JSON.stringify([
+          [
+            {
+              id: 456,
+              body: "",
+              commit_id: "current-head-sha",
+              state: "CHANGES_REQUESTED",
+              submitted_at: "2026-01-01T10:00:00Z",
+              user: { login: "reviewer-one" },
+            },
+          ],
+        ]),
+      )
+      .mockResolvedValueOnce(
+        JSON.stringify([
+          [
+            {
+              pull_request_review_id: 456,
+              body: "",
+              user: { login: "reviewer-one" },
+            },
+          ],
+        ]),
+      );
+
+    await expect(
+      new GitHubClient(runGitHub).findChangesRequestedPullRequest({
+        cwd: "/repo",
+        repository: "example/repository",
+        headBranch: "agent/card-1",
+      }),
+    ).resolves.toEqual({
+      url: "https://github.com/example/repository/pull/123",
+      feedback:
+        "Changes were requested on GitHub, but no written review feedback was returned.",
+    });
   });
 
   it("does not write GitHub CLI output directly to the console", async () => {

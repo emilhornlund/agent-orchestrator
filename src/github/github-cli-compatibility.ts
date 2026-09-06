@@ -102,7 +102,7 @@ export const GITHUB_CLI_COMMAND_CAPABILITIES: readonly GitHubCliCommandCapabilit
     {
       name: "gh api",
       args: ["api", "--help"],
-      requiredHelpOptions: ["--paginate", "--slurp", "--jq"],
+      requiredHelpOptions: ["--paginate", "--slurp"],
     },
   ];
 

@@ -126,6 +126,14 @@ interface RequestedChangesReview {
   body: string | null;
   commitId: string;
   author: string | null;
+  state: string;
+  submittedAt: string;
+}
+
+interface InlineReviewComment {
+  reviewId: number | null;
+  body: string | null;
+  author: string | null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -328,8 +336,18 @@ function validateRequestedChangesReview(
 
   const id = value.id;
   const body = value.body;
-  const commitId = value.commitId;
-  const author = value.author;
+  const commitId = value.commit_id;
+  const state = value.state;
+  const submittedAt = value.submitted_at;
+  const user = value.user;
+  const author =
+    user === null
+      ? null
+      : isRecord(user) &&
+          typeof user.login === "string" &&
+          user.login.length > 0
+        ? user.login
+        : undefined;
 
   if (
     typeof id !== "number" ||
@@ -338,7 +356,11 @@ function validateRequestedChangesReview(
     (typeof body !== "string" && body !== null) ||
     typeof commitId !== "string" ||
     commitId.length === 0 ||
-    (typeof author !== "string" && author !== null)
+    typeof state !== "string" ||
+    state.length === 0 ||
+    typeof submittedAt !== "string" ||
+    submittedAt.length === 0 ||
+    author === undefined
   ) {
     throw new Error("GitHub CLI returned an invalid requested changes review");
   }
@@ -347,6 +369,64 @@ function validateRequestedChangesReview(
     id,
     body,
     commitId,
+    author,
+    state,
+    submittedAt,
+  };
+}
+
+function parsePaginatedGitHubResponse(
+  output: string,
+  description: string,
+): unknown[] {
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(output);
+  } catch (error) {
+    throw new Error(`GitHub CLI returned an invalid ${description}`, {
+      cause: error,
+    });
+  }
+
+  if (!Array.isArray(parsed) || !parsed.every((page) => Array.isArray(page))) {
+    throw new Error(`GitHub CLI returned an invalid ${description}`);
+  }
+
+  return parsed.flat();
+}
+
+function validateInlineReviewComment(value: unknown): InlineReviewComment {
+  if (!isRecord(value)) {
+    throw new Error("GitHub CLI returned an invalid inline review comment");
+  }
+
+  const reviewId = value.pull_request_review_id;
+  const body = value.body;
+  const user = value.user;
+  const author =
+    user === null
+      ? null
+      : isRecord(user) &&
+          typeof user.login === "string" &&
+          user.login.length > 0
+        ? user.login
+        : undefined;
+
+  if (
+    (reviewId !== null &&
+      (typeof reviewId !== "number" ||
+        !Number.isSafeInteger(reviewId) ||
+        reviewId <= 0)) ||
+    (typeof body !== "string" && body !== null) ||
+    author === undefined
+  ) {
+    throw new Error("GitHub CLI returned an invalid inline review comment");
+  }
+
+  return {
+    reviewId,
+    body,
     author,
   };
 }
@@ -830,41 +910,61 @@ export class GitHubClient {
         `repos/${options.repository}/pulls/${pullRequest.number}/reviews`,
         "--paginate",
         "--slurp",
-        "--jq",
-        'flatten | map(select(.state == "CHANGES_REQUESTED")) | sort_by(.submitted_at) | last | {id, body, commitId: .commit_id, author: .user.login}',
       ],
       credential,
     );
 
     const requestedChangesOutput = reviewOutput.trim();
 
-    if (
-      requestedChangesOutput.length === 0 ||
-      requestedChangesOutput === "null"
-    ) {
+    const reviews = parsePaginatedGitHubResponse(
+      requestedChangesOutput,
+      "paginated requested changes review response",
+    )
+      .filter(
+        (review) => isRecord(review) && review.state === "CHANGES_REQUESTED",
+      )
+      .map(validateRequestedChangesReview)
+      .sort((left, right) =>
+        left.submittedAt < right.submittedAt
+          ? -1
+          : left.submittedAt > right.submittedAt
+            ? 1
+            : 0,
+      );
+    const review = reviews[reviews.length - 1];
+
+    if (review === undefined) {
       return null;
     }
-
-    const review = validateRequestedChangesReview(
-      JSON.parse(requestedChangesOutput),
-    );
 
     if (review.commitId !== pullRequest.headRefOid) {
       return null;
     }
 
-    const inlineComments = await this.run(
+    const inlineCommentsOutput = await this.run(
       options.cwd,
       [
         "api",
         `repos/${options.repository}/pulls/${pullRequest.number}/comments`,
         "--paginate",
         "--slurp",
-        "--jq",
-        `flatten | map(select(.pull_request_review_id == ${review.id} and .body != null and .body != "")) | .[] | "\\(.user.login): \\(.body)"`,
       ],
       credential,
     );
+
+    const inlineComments = parsePaginatedGitHubResponse(
+      inlineCommentsOutput.trim(),
+      "paginated inline review comment response",
+    )
+      .map(validateInlineReviewComment)
+      .filter(
+        (comment) =>
+          comment.reviewId === review.id &&
+          comment.body !== null &&
+          comment.body.length > 0,
+      )
+      .map((comment) => `${comment.author ?? "reviewer"}: ${comment.body}`)
+      .join("\n");
 
     const feedbackParts: string[] = [];
 

@@ -230,7 +230,7 @@ The required command surface is:
 | `gh pr list`    | `--repo`, `--head`, `--base`, `--state`, `--json`, `--jq`, and `--limit` |
 | `gh pr create`  | `--repo`, `--base`, `--head`, `--title`, and `--body`                    |
 | `gh pr merge`   | `--repo`, `--match-head-commit`, `--merge`, and `--delete-branch`        |
-| `gh api`        | `--paginate`, `--slurp`, and `--jq`                                      |
+| `gh api`        | `--paginate` and `--slurp`                                               |
 
 The required `gh pr list --json` fields are `url`, `state`, `mergedAt`, `baseRefName`, `headRefName`, `headRepository`,
 `headRepositoryOwner`, `mergeable`, `mergeStateStatus`, `number`, `reviewDecision`, and `headRefOid`. The service derives a
