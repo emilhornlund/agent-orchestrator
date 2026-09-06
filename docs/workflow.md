@@ -143,7 +143,12 @@ details and non-force-push boundaries are in [Operations](operations.md).
 The description result contract is strict: `summary` is a non-blank string, while `changes` and `validation` are arrays whose
 entries are non-blank strings. Empty arrays are allowed, including an empty `validation` array when no validation or test result
 is known. JSON wrapped in Markdown, missing fields, wrong types, and extra fields are rejected. The result is generated after
-publication rebasing and rendered into the body of a newly created pull request.
+publication rebasing. The standalone application renderer for this contract uses the fixed `Summary`, `Changes`, `Validation`,
+and `Task` sections, places the application-provided Trello card link in `Task`, adds the fixed Agent Orchestrator attribution,
+and reserves exactly one `<!-- agent-orchestrator-status:start -->` / `<!-- agent-orchestrator-status:end -->` region. Empty
+`changes` render as `No changes were provided.` and empty `validation` renders as `No validation or test results were provided.`;
+neither claims success. Generated values are rendered as single-line content so they cannot add headings, footer text, or status
+markers. Connecting this renderer to pull-request publication remains deferred; the existing publication path is unchanged.
 
 Implementation, each review, each remediation pass, commit, and description generation use separate OpenCode sessions. Each session can be found in
 the card's session log while it is retained. The pass counter is transient to this automated workflow execution; it is not
