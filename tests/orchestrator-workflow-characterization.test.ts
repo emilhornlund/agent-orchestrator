@@ -494,6 +494,8 @@ function createHarness(options: HarnessOptions = {}) {
         dirty = false;
         headSha = "implementation-commit";
         events.push("opencode:commit");
+      } else if (label === "OpenCode pull request description") {
+        events.push("opencode:pull-request-description");
       } else {
         throw new Error(`Unexpected OpenCode session ${label ?? "unknown"}`);
       }
@@ -503,7 +505,13 @@ function createHarness(options: HarnessOptions = {}) {
         output:
           label === "OpenCode review"
             ? (reviewResults.shift() ?? "REVIEW_PASS")
-            : "",
+            : label === "OpenCode pull request description"
+              ? JSON.stringify({
+                  summary: "Completed the example task.",
+                  changes: ["Updated the example implementation."],
+                  validation: [],
+                })
+              : "",
         errorOutput: "",
       };
     },
@@ -887,7 +895,7 @@ describe("orchestrator workflow characterization", () => {
       );
 
       expect(harness.card.idList).toBe(listIds.done);
-      expect(harness.runOpenCode).toHaveBeenCalledTimes(3);
+      expect(harness.runOpenCode).toHaveBeenCalledTimes(4);
       expect(harness.mergePullRequest).toHaveBeenCalledWith({
         cwd: harness.worktreePath,
         repository: "example/repository",
@@ -992,12 +1000,26 @@ describe("orchestrator workflow characterization", () => {
       );
 
       expect(harness.card.idList).toBe(listIds.review);
-      expect(harness.runOpenCode).toHaveBeenCalledTimes(3);
+      expect(harness.runOpenCode).toHaveBeenCalledTimes(4);
       expect(harness.runOpenCode.mock.calls.map(([run]) => run.cwd)).toEqual([
         harness.worktreePath,
         harness.worktreePath,
         harness.worktreePath,
+        harness.worktreePath,
       ]);
+      expect(
+        harness.runOpenCode.mock.calls.find(
+          ([run]) => run.sessionLabel === "OpenCode pull request description",
+        )?.[0],
+      ).toMatchObject({
+        model: "commit-model",
+        variant: "low",
+      });
+      expect(
+        harness.runOpenCode.mock.calls.find(
+          ([run]) => run.sessionLabel === "OpenCode pull request description",
+        )?.[0].prompt,
+      ).toContain("Resulting commit SHA: implementation-commit");
       expect(harness.events).toEqual(
         expect.arrayContaining([
           "git:prepare-worktree",
@@ -1005,6 +1027,7 @@ describe("orchestrator workflow characterization", () => {
           "opencode:implementation",
           "opencode:review",
           "opencode:commit",
+          "opencode:pull-request-description",
           "git:push",
           "github:create-pr",
           "trello:move:review-list",
@@ -1016,6 +1039,9 @@ describe("orchestrator workflow characterization", () => {
       expect(harness.events.indexOf("opencode:commit")).toBeLessThan(
         harness.events.indexOf("git:push"),
       );
+      expect(
+        harness.events.indexOf("opencode:pull-request-description"),
+      ).toBeLessThan(harness.events.indexOf("git:push"));
       expect(harness.events.indexOf("git:push")).toBeLessThan(
         harness.events.indexOf("github:create-pr"),
       );
@@ -1306,7 +1332,7 @@ describe("orchestrator workflow characterization", () => {
       );
 
       expect(harness.card.idList).toBe(listIds.review);
-      expect(harness.runOpenCode).toHaveBeenCalledTimes(3);
+      expect(harness.runOpenCode).toHaveBeenCalledTimes(4);
       expect(harness.runOpenCode.mock.calls[0]?.[0]).toMatchObject({
         cwd: harness.worktreePath,
         model: "implementation-model",
@@ -1397,6 +1423,7 @@ describe("orchestrator workflow characterization", () => {
         "OpenCode review",
         "OpenCode remediation",
         "OpenCode commit",
+        "OpenCode pull request description",
       ]);
       expect(harness.card.idList).toBe(listIds.review);
       const requirementsPath = path.join(
@@ -1447,7 +1474,7 @@ describe("orchestrator workflow characterization", () => {
       ).rejects.toThrow("pull request creation failed");
 
       expect(harness.card.idList).toBe(listIds.failed);
-      expect(harness.runOpenCode).toHaveBeenCalledTimes(3);
+      expect(harness.runOpenCode).toHaveBeenCalledTimes(4);
       expect(harness.createPullRequest).toHaveBeenCalledTimes(1);
       expect(harness.addComment).toHaveBeenCalledWith(
         harness.card.id,
@@ -1473,7 +1500,7 @@ describe("orchestrator workflow characterization", () => {
       );
 
       expect(harness.card.idList).toBe(listIds.failed);
-      expect(harness.runOpenCode).toHaveBeenCalledTimes(3);
+      expect(harness.runOpenCode).toHaveBeenCalledTimes(4);
       expect(harness.createPullRequest).toHaveBeenCalledTimes(1);
       expect(harness.events).toHaveLength(eventsBeforePollingFailed);
 
@@ -1490,7 +1517,7 @@ describe("orchestrator workflow characterization", () => {
       );
 
       expect(harness.card.idList).toBe(listIds.review);
-      expect(harness.runOpenCode).toHaveBeenCalledTimes(3);
+      expect(harness.runOpenCode).toHaveBeenCalledTimes(5);
       expect(harness.getChangedFiles).toHaveBeenCalledWith(
         harness.worktreePath,
         "origin/main",

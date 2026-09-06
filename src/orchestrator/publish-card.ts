@@ -11,6 +11,15 @@ import {
   type TrelloCard,
   type TrelloClient,
 } from "../trello/trello-client.js";
+import { buildPullRequestDescriptionPrompt } from "../opencode/build-pull-request-description-prompt.js";
+import {
+  type OpenCodeClient,
+  type OpenCodeRunResult,
+} from "../opencode/opencode-client.js";
+import {
+  parsePullRequestDescription,
+  type PullRequestDescription,
+} from "../opencode/pull-request-description.js";
 
 import { toFailureError } from "./failure-diagnostic.js";
 import {
@@ -25,6 +34,7 @@ export interface PublishCardOptions {
   trello: TrelloClient;
   git: GitClient;
   github: GitHubClient;
+  opencode?: OpenCodeClient;
   project: ProjectConfig;
   card: TrelloCard;
   worktreePath: string;
@@ -32,6 +42,8 @@ export interface PublishCardOptions {
   commitSha: string;
   reviewResult: string;
   remediationResult: string;
+  pullRequestDescription?: PullRequestDescription;
+  sessionLogPath?: string;
   emailNotifier?: EmailNotifier;
   signal?: AbortSignal;
 }
@@ -40,16 +52,164 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function hasOpenCodePermissionDenial(result: OpenCodeRunResult): boolean {
+  const output = `${result.output}\n${result.errorOutput}`.toLowerCase();
+
+  return (
+    output.includes("auto-rejecting") ||
+    output.includes("rejected permission") ||
+    output.includes("permission denied")
+  );
+}
+
+function renderPullRequestBody(
+  card: TrelloCard,
+  description: PullRequestDescription | undefined,
+): string {
+  if (description === undefined) {
+    return [
+      `Trello: ${card.url}`,
+      "",
+      "Implemented automatically by Agent Orchestrator.",
+    ].join("\n");
+  }
+
+  return [
+    `Trello: ${card.url}`,
+    "",
+    description.summary,
+    "",
+    "## Changes",
+    ...description.changes.map((change) => `- ${change}`),
+    "",
+    "## Validation",
+    ...(description.validation.length === 0
+      ? ["- No validation or test results were provided."]
+      : description.validation.map((result) => `- ${result}`)),
+    "",
+    "Implemented automatically by Agent Orchestrator.",
+  ].join("\n");
+}
+
+async function generatePullRequestDescription(options: {
+  git: GitClient;
+  opencode: OpenCodeClient;
+  project: ProjectConfig;
+  card: TrelloCard;
+  worktreePath: string;
+  commitSha: string;
+  reviewResult: string;
+  remediationResult: string;
+  signal: AbortSignal;
+  sessionLogPath?: string;
+  cardLog: ReturnType<typeof logger.child>;
+}): Promise<PullRequestDescription> {
+  const {
+    git,
+    opencode,
+    project,
+    card,
+    worktreePath,
+    commitSha,
+    reviewResult,
+    remediationResult,
+    signal,
+    sessionLogPath,
+    cardLog,
+  } = options;
+
+  let changedFiles: string;
+  let commitMessage: string;
+
+  try {
+    changedFiles =
+      typeof git.getChangedFiles === "function"
+        ? await git.getChangedFiles(
+            worktreePath,
+            `origin/${project.repository.defaultBranch}`,
+          )
+        : "";
+    commitMessage =
+      typeof git.getCommitMessage === "function"
+        ? await git.getCommitMessage(worktreePath)
+        : "";
+  } catch (error) {
+    throw new WorkflowError(
+      "Git/GitHub",
+      `Could not collect final commit context for pull request description: ${getErrorMessage(error)}`,
+      { cause: error },
+    );
+  }
+
+  const validationResults = [
+    project.repository.validationCommand === undefined
+      ? "No validation command was configured; validation/test result is unavailable."
+      : `Configured validation command \`${project.repository.validationCommand}\` was supplied to modifying OpenCode sessions, but the orchestrator did not execute it; its result is unavailable.`,
+    `Automated review result: ${reviewResult}.`,
+    `Automated remediation result: ${remediationResult}.`,
+  ];
+
+  cardLog.event("Starting OpenCode pull request description generation...");
+
+  const result = await opencode.run({
+    cwd: worktreePath,
+    model: project.opencode.commit.model,
+    variant: project.opencode.commit.variant,
+    timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
+    prompt: buildPullRequestDescriptionPrompt(card, {
+      changedFiles,
+      commitSha,
+      commitMessage,
+      validationResults,
+    }),
+    signal,
+    ...(sessionLogPath === undefined ? {} : { sessionLogPath }),
+    sessionLabel: "OpenCode pull request description",
+  });
+
+  if (result.exitCode !== 0) {
+    if (hasOpenCodePermissionDenial(result)) {
+      throw new WorkflowError(
+        "OpenCode permissions",
+        "OpenCode was denied permission during pull request description generation",
+      );
+    }
+
+    throw new WorkflowError(
+      "OpenCode",
+      `OpenCode pull request description generation exited with code ${result.exitCode}${result.errorOutput.trim().length > 0 ? `: ${result.errorOutput.trim()}` : ""}`,
+      { cause: result },
+    );
+  }
+
+  try {
+    const description = parsePullRequestDescription(result.output);
+
+    cardLog.event("OpenCode pull request description generated");
+
+    return description;
+  } catch (error) {
+    throw new WorkflowError(
+      "OpenCode",
+      `OpenCode pull request description returned an invalid structured result: ${getErrorMessage(error)}`,
+      { cause: error },
+    );
+  }
+}
+
 export async function publishCard({
   trello,
   git,
   github,
+  opencode,
   project,
   card,
   worktreePath,
   branch,
   reviewResult,
   remediationResult,
+  pullRequestDescription,
+  sessionLogPath,
   emailNotifier,
   signal,
 }: PublishCardOptions): Promise<void> {
@@ -60,6 +220,7 @@ export async function publishCard({
 
   let pullRequest;
   let publishedCommitSha: string;
+  let finalPullRequestDescription = pullRequestDescription;
 
   try {
     if (signal?.aborted) {
@@ -122,6 +283,22 @@ export async function publishCard({
     publishedCommitSha = await git.getHeadSha(worktreePath);
 
     cardLog.event(`Publication commit is ${publishedCommitSha}`);
+
+    if (opencode !== undefined) {
+      finalPullRequestDescription = await generatePullRequestDescription({
+        git,
+        opencode,
+        project,
+        card,
+        worktreePath,
+        commitSha: publishedCommitSha,
+        reviewResult,
+        remediationResult,
+        signal: signal ?? new AbortController().signal,
+        cardLog,
+        ...(sessionLogPath === undefined ? {} : { sessionLogPath }),
+      });
+    }
 
     const remoteCommitSha =
       typeof git.getRemoteBranchSha === "function"
@@ -186,11 +363,7 @@ export async function publishCard({
         baseBranch: project.repository.defaultBranch,
         headBranch: branch,
         title: card.name,
-        body: [
-          `Trello: ${card.url}`,
-          "",
-          "Implemented automatically by Agent Orchestrator.",
-        ].join("\n"),
+        body: renderPullRequestBody(card, finalPullRequestDescription),
         project,
       });
 

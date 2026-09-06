@@ -44,6 +44,7 @@ interface ScenarioOptions {
   pullRequestErrors?: Array<Error | undefined>;
   humanReviewError?: unknown;
   failureMoveError?: unknown;
+  descriptionOutput?: string;
 }
 
 type TestOpenCodeRunResult = Omit<OpenCodeRunResult, "errorOutput"> & {
@@ -258,6 +259,20 @@ function createScenario(options: ScenarioOptions = {}): Scenario {
   const runOpenCode = vi.fn<RunOpenCode>(async (runOptions) => {
     openCodeCall += 1;
     events.push(`opencode:${openCodeCall}`);
+
+    if (runOptions.sessionLabel === "OpenCode pull request description") {
+      return {
+        exitCode: 0,
+        output:
+          options.descriptionOutput ??
+          JSON.stringify({
+            summary: "Completed the implementation.",
+            changes: ["Updated the task implementation."],
+            validation: [],
+          }),
+        errorOutput: "",
+      };
+    }
 
     if (options.writeRefinementResult === true) {
       const resultPath = getRefinementResultPath(runOptions.cwd);
@@ -496,6 +511,7 @@ describe("pollProject failure boundaries", () => {
           "opencode:1",
           "opencode:2",
           "opencode:3",
+          "opencode:4",
           "push",
           "pr",
           "move:review-list",
@@ -539,6 +555,7 @@ describe("pollProject failure boundaries", () => {
           "opencode:1",
           "opencode:2",
           "opencode:3",
+          "opencode:4",
           "push",
           "pr",
           "move:review-list",
@@ -1092,7 +1109,7 @@ describe("pollProject failure boundaries", () => {
           scenario.signal,
         );
 
-        expect(scenario.runOpenCode).toHaveBeenCalledTimes(5);
+        expect(scenario.runOpenCode).toHaveBeenCalledTimes(6);
         expect(
           scenario.runOpenCode.mock.calls.map(([run]) => run.sessionLabel),
         ).toEqual([
@@ -1101,6 +1118,7 @@ describe("pollProject failure boundaries", () => {
           "OpenCode remediation",
           "OpenCode review",
           "OpenCode commit",
+          "OpenCode pull request description",
         ]);
 
         const remediationPrompt =
@@ -1148,7 +1166,7 @@ describe("pollProject failure boundaries", () => {
           scenario.signal,
         );
 
-        expect(scenario.runOpenCode).toHaveBeenCalledTimes(4);
+        expect(scenario.runOpenCode).toHaveBeenCalledTimes(5);
         expect(
           scenario.runOpenCode.mock.calls.map(([run]) => run.sessionLabel),
         ).toEqual([
@@ -1156,6 +1174,7 @@ describe("pollProject failure boundaries", () => {
           "OpenCode review",
           "OpenCode remediation",
           "OpenCode commit",
+          "OpenCode pull request description",
         ]);
 
         expect(scenario.trello.moveCard).toHaveBeenCalledWith(
@@ -1196,13 +1215,14 @@ describe("pollProject failure boundaries", () => {
           scenario.signal,
         );
 
-        expect(scenario.runOpenCode).toHaveBeenCalledTimes(3);
+        expect(scenario.runOpenCode).toHaveBeenCalledTimes(4);
         expect(
           scenario.runOpenCode.mock.calls.map(([run]) => run.sessionLabel),
         ).toEqual([
           "OpenCode implementation",
           "OpenCode review",
           "OpenCode commit",
+          "OpenCode pull request description",
         ]);
         expect(scenario.events).toContain("push");
         expect(scenario.events).toContain("pr");
@@ -1243,7 +1263,7 @@ describe("pollProject failure boundaries", () => {
           scenario.signal,
         );
 
-        expect(scenario.runOpenCode).toHaveBeenCalledTimes(6);
+        expect(scenario.runOpenCode).toHaveBeenCalledTimes(7);
         expect(
           scenario.runOpenCode.mock.calls.map(([run]) => run.sessionLabel),
         ).toEqual([
@@ -1253,6 +1273,7 @@ describe("pollProject failure boundaries", () => {
           "OpenCode review",
           "OpenCode remediation",
           "OpenCode commit",
+          "OpenCode pull request description",
         ]);
         expect(scenario.events).not.toContain("move:failed-list");
         expect(scenario.events).toContain("move:review-list");
@@ -1420,6 +1441,32 @@ describe("pollProject failure boundaries", () => {
     );
   });
 
+  it("blocks publication and preserves the committed worktree for invalid description output", async () => {
+    await withScenario(
+      {
+        descriptionOutput: '{"summary":"","changes":[],"validation":[]}',
+      },
+      async (scenario) => {
+        await expect(
+          pollProject(
+            scenario.trello,
+            scenario.git,
+            scenario.github,
+            scenario.openCode,
+            scenario.commands,
+            scenario.project,
+            scenario.signal,
+          ),
+        ).rejects.toThrow("summary must not be blank");
+
+        expect(scenario.events).not.toContain("push");
+        expect(scenario.events).not.toContain("pr");
+        expect(scenario.events).toContain("move:failed-list");
+        expect(fs.existsSync(scenario.worktreePath)).toBe(true);
+      },
+    );
+  });
+
   it("does not create a PR or move the card when push fails", async () => {
     await withScenario(
       {
@@ -1468,7 +1515,7 @@ describe("pollProject failure boundaries", () => {
   it("reuses a committed implementation after a push failure", async () => {
     await withScenario(
       {
-        changedFilesOutputs: ["", "src/example.ts"],
+        changedFilesOutputs: ["", "src/example.ts", "src/example.ts"],
         headOutputs: [
           "before-commit",
           "after-commit",
@@ -1502,15 +1549,17 @@ describe("pollProject failure boundaries", () => {
           scenario.signal,
         );
 
-        expect(scenario.runOpenCode).toHaveBeenCalledTimes(3);
+        expect(scenario.runOpenCode).toHaveBeenCalledTimes(5);
         expect(scenario.events).toEqual([
           "move:working-list",
           "opencode:1",
           "opencode:2",
           "opencode:3",
+          "opencode:4",
           "push",
           "move:failed-list",
           "move:working-list",
+          "opencode:5",
           "push",
           "pr",
           "move:review-list",
@@ -1552,7 +1601,7 @@ describe("pollProject failure boundaries", () => {
   it("retries PR creation after a successful push without duplicating implementation", async () => {
     await withScenario(
       {
-        changedFilesOutputs: ["", "src/example.ts"],
+        changedFilesOutputs: ["", "src/example.ts", "src/example.ts"],
         headOutputs: [
           "before-commit",
           "after-commit",
@@ -1586,16 +1635,18 @@ describe("pollProject failure boundaries", () => {
           scenario.signal,
         );
 
-        expect(scenario.runOpenCode).toHaveBeenCalledTimes(3);
+        expect(scenario.runOpenCode).toHaveBeenCalledTimes(5);
         expect(scenario.events).toEqual([
           "move:working-list",
           "opencode:1",
           "opencode:2",
           "opencode:3",
+          "opencode:4",
           "push",
           "pr",
           "move:failed-list",
           "move:working-list",
+          "opencode:5",
           "pr",
           "move:review-list",
         ]);
@@ -1643,7 +1694,7 @@ describe("pollProject failure boundaries", () => {
           scenario.signal,
         );
 
-        expect(scenario.runOpenCode).toHaveBeenCalledTimes(4);
+        expect(scenario.runOpenCode).toHaveBeenCalledTimes(5);
         expect(scenario.runOpenCode.mock.calls[1]?.[0].model).toBe(
           "implementation-model",
         );
@@ -1678,6 +1729,7 @@ describe("pollProject failure boundaries", () => {
           "opencode:1",
           "opencode:2",
           "opencode:3",
+          "opencode:4",
           "push",
           "pr",
           "move:review-list",
@@ -1750,6 +1802,7 @@ describe("pollProject failure boundaries", () => {
           "opencode:1",
           "opencode:2",
           "opencode:3",
+          "opencode:4",
           "push",
           "pr",
           "move:review-list",

@@ -854,6 +854,7 @@ async function processCardChanges(
       trello,
       git,
       github,
+      opencode,
       project,
       card,
       worktreePath: worktree.path,
@@ -861,6 +862,7 @@ async function processCardChanges(
       commitSha,
       reviewResult,
       remediationResult,
+      sessionLogPath,
       signal,
       ...(emailNotifier === undefined ? {} : { emailNotifier }),
     });
@@ -1146,6 +1148,7 @@ async function processCardChanges(
     trello,
     git,
     github,
+    opencode,
     project,
     card,
     worktreePath: worktree.path,
@@ -1153,6 +1156,7 @@ async function processCardChanges(
     commitSha: headAfterCommit,
     reviewResult,
     remediationResult,
+    sessionLogPath,
     signal,
     ...(emailNotifier === undefined ? {} : { emailNotifier }),
   });

@@ -8,6 +8,7 @@ import {
 } from "../src/github/github-client.js";
 import { GitHubCredentialProvider } from "../src/github/github-credential-provider.js";
 import type { EmailNotifier } from "../src/notifications/email-notifier.js";
+import type { OpenCodeClient } from "../src/opencode/opencode-client.js";
 import { formatFailureDiagnostic } from "../src/orchestrator/failure-diagnostic.js";
 import { publishCard } from "../src/orchestrator/publish-card.js";
 import { WorkflowError } from "../src/orchestrator/workflow-error.js";
@@ -713,6 +714,81 @@ describe("publishCard", () => {
     expect(trello.addComment).not.toHaveBeenCalledWith(
       "card-1",
       expect.stringContaining("Commit: stale-commit"),
+    );
+  });
+
+  it("generates the PR description from the post-rebase commit and renders it", async () => {
+    const events: string[] = [];
+    const runDescription = vi.fn(async () => {
+      events.push("description");
+
+      return {
+        exitCode: 0,
+        output: JSON.stringify({
+          summary: "Described the published implementation.",
+          changes: ["Added structured PR content."],
+          validation: ["Automated review passed."],
+        }),
+        errorOutput: "",
+      };
+    });
+    const git = createPublicationGit({
+      rebase: vi.fn(async () => {
+        events.push("rebase");
+      }),
+      getHeadSha: vi.fn().mockResolvedValue("post-rebase-sha"),
+      getChangedFiles: vi.fn().mockResolvedValue("src/description.ts"),
+      getCommitMessage: vi.fn().mockResolvedValue("describe implementation"),
+      push: vi.fn(async () => {
+        events.push("push");
+      }),
+    });
+    const trello = {
+      moveCard: vi.fn().mockResolvedValue(createCard()),
+      getListTransitions: vi.fn().mockResolvedValue([]),
+      addComment: vi.fn().mockResolvedValue(undefined),
+    } as unknown as TrelloClient;
+    const createPullRequest = vi.fn().mockResolvedValue({
+      url: "https://github.com/example/repository/pull/123",
+    });
+    const github = {
+      findPullRequest: vi.fn().mockResolvedValue(null),
+      createPullRequest,
+    } as unknown as GitHubClient;
+
+    await publishCard({
+      trello,
+      git,
+      github,
+      opencode: { run: runDescription } as unknown as OpenCodeClient,
+      project: createProject(),
+      card: createCard(),
+      worktreePath: "/worktree",
+      branch: "agent/card-1",
+      commitSha: "stale-sha",
+      reviewResult: "Passed",
+      remediationResult: "Not required",
+    });
+
+    expect(events.slice(0, 3)).toEqual(["rebase", "description", "push"]);
+    expect(runDescription).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: expect.stringContaining(
+          "Resulting commit SHA: post-rebase-sha",
+        ),
+      }),
+    );
+    expect(createPullRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.stringContaining(
+          "Described the published implementation.",
+        ),
+      }),
+    );
+    expect(createPullRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.stringContaining("- Added structured PR content."),
+      }),
     );
   });
 

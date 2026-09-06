@@ -1178,6 +1178,20 @@ describe("pollProject", () => {
           };
         }
 
+        if (options.sessionLabel === "OpenCode pull request description") {
+          events.push("pull-request-description");
+
+          return {
+            exitCode: 0,
+            output: JSON.stringify({
+              summary: "Completed the implementation.",
+              changes: ["Updated the task implementation."],
+              validation: [],
+            }),
+            errorOutput: "",
+          };
+        }
+
         events.push("commit");
 
         return {
@@ -1219,12 +1233,13 @@ describe("pollProject", () => {
         "implementation",
         "review",
         "commit",
+        "pull-request-description",
         "push",
         "pr",
         "human-review",
       ]);
 
-      expect(openCodeRuns).toHaveLength(3);
+      expect(openCodeRuns).toHaveLength(4);
 
       expect(openCodeRuns[0]?.environment).toBeUndefined();
       expect(openCodeRuns[1]?.environment).toBeUndefined();
@@ -1443,6 +1458,20 @@ describe("pollProject", () => {
           };
         }
 
+        if (openCodeCall === 5) {
+          events.push("pull-request-description");
+
+          return {
+            exitCode: 0,
+            output: JSON.stringify({
+              summary: "Completed the implementation.",
+              changes: ["Updated the task implementation."],
+              validation: [],
+            }),
+            errorOutput: "",
+          };
+        }
+
         throw new Error(`Unexpected OpenCode call ${openCodeCall}`);
       });
 
@@ -1477,6 +1506,7 @@ describe("pollProject", () => {
         "review-fail",
         "remediation",
         "commit",
+        "pull-request-description",
         "push",
         "pr",
         "human-review",
@@ -1789,6 +1819,14 @@ describe("pollProject", () => {
         .mockResolvedValueOnce({
           exitCode: 0,
           output: "",
+        })
+        .mockResolvedValueOnce({
+          exitCode: 0,
+          output: JSON.stringify({
+            summary: "Completed the implementation.",
+            changes: ["Updated the task implementation."],
+            validation: [],
+          }),
         });
 
       const opencode = new OpenCodeClient(runOpenCode);
@@ -1833,7 +1871,7 @@ describe("pollProject", () => {
         "origin/agent/card-1",
       );
 
-      expect(runOpenCode).toHaveBeenCalledTimes(3);
+      expect(runOpenCode).toHaveBeenCalledTimes(4);
 
       expect(runOpenCode.mock.calls[0]?.[0].prompt).toContain(
         "Human review feedback:\nPlease add a regression test.",
@@ -2032,6 +2070,14 @@ describe("pollProject", () => {
         .mockResolvedValueOnce({
           exitCode: 0,
           output: "",
+        })
+        .mockResolvedValueOnce({
+          exitCode: 0,
+          output: JSON.stringify({
+            summary: "Completed the implementation.",
+            changes: ["Updated the task implementation."],
+            validation: [],
+          }),
         });
 
       const opencode = new OpenCodeClient(runOpenCode);
@@ -2059,7 +2105,7 @@ describe("pollProject", () => {
         project,
       });
 
-      expect(runOpenCode).toHaveBeenCalledTimes(3);
+      expect(runOpenCode).toHaveBeenCalledTimes(4);
 
       expect(runOpenCode.mock.calls[0]?.[0].prompt).toContain(
         "Human review feedback:\nPlease fix the regression.",
