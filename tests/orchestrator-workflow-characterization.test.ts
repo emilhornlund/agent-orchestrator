@@ -355,6 +355,7 @@ function createHarness(options: HarnessOptions = {}) {
 
     return "src/example.ts";
   });
+  const getCommitMessage = vi.fn(async () => "Implement the example task");
   const getRemoteBranchSha = vi.fn(async () => remoteSha);
   const rebase = vi.fn(async () => undefined);
   const push = vi.fn(async () => {
@@ -386,6 +387,7 @@ function createHarness(options: HarnessOptions = {}) {
     getStatus,
     getHeadSha,
     getChangedFiles,
+    getCommitMessage,
     getRemoteBranchSha,
     rebase,
     isAncestor: vi.fn(async () => true),

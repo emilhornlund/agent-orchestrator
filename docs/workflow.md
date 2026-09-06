@@ -148,7 +148,8 @@ and `Task` sections, places the application-provided Trello card link in `Task`,
 and reserves exactly one `<!-- agent-orchestrator-status:start -->` / `<!-- agent-orchestrator-status:end -->` region. Empty
 `changes` render as `No changes were provided.` and empty `validation` renders as `No validation or test results were provided.`;
 neither claims success. Generated values are rendered as single-line content so they cannot add headings, footer text, or status
-markers. Connecting this renderer to pull-request publication remains deferred; the existing publication path is unchanged.
+markers. The rendered result is passed to pull-request creation. An existing open pull request is reused without rewriting its
+description.
 
 Implementation, each review, each remediation pass, commit, and description generation use separate OpenCode sessions. Each session can be found in
 the card's session log while it is retained. The pass counter is transient to this automated workflow execution; it is not

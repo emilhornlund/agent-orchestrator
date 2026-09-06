@@ -1775,6 +1775,10 @@ describe("pollProject", () => {
         cleanUntracked: vi.fn().mockResolvedValue(undefined),
         getStatus,
         getHeadSha,
+        getChangedFiles: vi.fn().mockResolvedValue("src/example.ts"),
+        getCommitMessage: vi
+          .fn()
+          .mockResolvedValue("Implement the example task"),
         push: vi.fn().mockResolvedValue(undefined),
         removeWorktree: vi
           .fn()
@@ -2038,6 +2042,10 @@ describe("pollProject", () => {
         cleanUntracked: vi.fn().mockResolvedValue(undefined),
         getStatus,
         getHeadSha,
+        getChangedFiles: vi.fn().mockResolvedValue("src/example.ts"),
+        getCommitMessage: vi
+          .fn()
+          .mockResolvedValue("Implement the example task"),
         rebase: vi.fn().mockResolvedValue(undefined),
         push: vi.fn().mockResolvedValue(undefined),
         removeWorktree: vi.fn().mockResolvedValue(undefined),

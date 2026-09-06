@@ -279,10 +279,10 @@ The post-commit pull-request-description session reuses the configured `commit` 
 description-model configuration. The orchestrator supplies the card title, description and URL, final changed files, commit
 information, and known validation or test results. The description result is strict JSON with `summary`, `changes`, and
 `validation` fields; invalid or incomplete output blocks publication. The result is generated after publication rebasing. A
-standalone deterministic renderer defines the eventual Markdown contract: fixed `Summary`, `Changes`, `Validation`, and `Task`
+standalone deterministic renderer defines the Markdown contract: fixed `Summary`, `Changes`, `Validation`, and `Task`
 sections, an application-owned Trello card link and attribution footer, and one reserved status-marker pair. Publication wiring
-for this renderer is deferred; configuring the `commit` model does not allow it to choose headings, links, footer text, or status
-markers.
+uses this renderer for newly created pull requests; configuring the `commit` model does not allow it to choose headings, links,
+footer text, or status markers. Existing open pull requests are reused without description updates.
 
 The `remediation` stage also accepts the optional `maxPasses` setting:
 
