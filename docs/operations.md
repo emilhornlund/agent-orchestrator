@@ -272,10 +272,12 @@ Immediately before publication, the task worktree fetches `origin/<defaultBranch
 that fetched ref. Git leaves an already-current branch unchanged. The resulting `HEAD` drives remote comparison, push
 decisions, pull-request publication, notifications, and the Trello summary.
 
-The post-commit AI pull-request-description step is presentation-only. Its context collection, OpenCode execution, structured
-output parsing or validation, and Markdown rendering failures are logged with the failed stage and do not block publication.
-New pull requests use the deterministic fallback body, consisting of the Trello card URL followed by the Agent Orchestrator
-attribution footer. Existing open pull requests are reused without description updates, as usual.
+The post-commit AI pull-request-description step is presentation-only. Its strict structured output accepts a summary of at most
+1,000 characters, at most 20 `changes` entries and 20 `validation` entries, and at most 500 characters per entry. Empty arrays
+remain valid, including `validation` when no result is known. Its context collection, OpenCode execution, structured output
+parsing or validation, and Markdown rendering failures, including oversized output, are logged with the failed stage and do not
+block publication. New pull requests use the deterministic fallback body, consisting of the Trello card URL followed by the
+Agent Orchestrator attribution footer. Existing open pull requests are reused without description updates, as usual.
 
 During Human Review reconciliation, the same isolated task worktree is used for automatic maintenance of an eligible stale
 branch. Eligibility requires an open pull request in the configured repository, exact `agent/<trello-card-id>` head and configured
