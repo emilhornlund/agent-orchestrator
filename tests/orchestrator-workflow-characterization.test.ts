@@ -48,6 +48,7 @@ interface HarnessOptions {
   initialWorktree?: boolean;
   pullRequestState?: PullRequestState;
   feedback?: string;
+  requestedChangesHeadSha?: string;
   initialRemoteSha?: string | null;
   listTransitionHistory?: boolean;
   createPullRequestError?: Error;
@@ -431,7 +432,11 @@ function createHarness(options: HarnessOptions = {}) {
     };
   });
   const findChangesRequestedPullRequest = vi.fn(async () => {
-    if (pullRequestState !== "requested") {
+    if (
+      pullRequestState !== "requested" ||
+      (options.requestedChangesHeadSha !== undefined &&
+        options.requestedChangesHeadSha !== remoteSha)
+    ) {
       return null;
     }
 
@@ -1389,6 +1394,98 @@ describe("orchestrator workflow characterization", () => {
       );
       expect(harness.mergePullRequest).not.toHaveBeenCalled();
       expect(harness.forcePush).not.toHaveBeenCalled();
+    } finally {
+      harness.cleanup();
+    }
+  });
+
+  it("recovers current-head requested changes after a restart", async () => {
+    const harness = createHarness({
+      initialList: "review",
+      pullRequestState: "open",
+      initialRemoteSha: "current-head-sha",
+      requestedChangesHeadSha: "current-head-sha",
+      feedback: "Please add a regression test.",
+    });
+
+    try {
+      await pollProject(
+        harness.trello,
+        harness.git,
+        harness.github,
+        harness.openCode,
+        harness.commands,
+        harness.project,
+        new AbortController().signal,
+      );
+
+      expect(harness.card.idList).toBe(listIds.review);
+      expect(harness.runOpenCode).not.toHaveBeenCalled();
+
+      const restartEventOffset = harness.events.length;
+      harness.setPullRequestState("requested");
+
+      await pollProject(
+        harness.trello,
+        harness.git,
+        harness.github,
+        new OpenCodeClient(harness.runOpenCode),
+        new CommandRunner(harness.runCommand),
+        harness.project,
+        new AbortController().signal,
+      );
+
+      const restartEvents = harness.events.slice(restartEventOffset);
+      const feedbackImplementationEvent = restartEvents.indexOf(
+        "opencode:review-feedback-implementation",
+      );
+
+      expect(harness.card.idList).toBe(listIds.review);
+      expect(harness.findPullRequestState).toHaveBeenCalledTimes(2);
+      expect(harness.findChangesRequestedPullRequest).toHaveBeenCalledTimes(2);
+      expect(harness.findChangesRequestedPullRequest).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          headBranch: "agent/card-1",
+          baseBranch: "main",
+        }),
+      );
+      expect(harness.runOpenCode.mock.calls[0]?.[0]).toMatchObject({
+        cwd: harness.worktreePath,
+        sessionLabel: "OpenCode review feedback implementation",
+      });
+      expect(harness.runOpenCode.mock.calls[0]?.[0].prompt).toContain(
+        "Human review feedback:\nPlease add a regression test.",
+      );
+      expect(harness.push).toHaveBeenCalledWith(
+        harness.worktreePath,
+        "origin",
+        "agent/card-1",
+        harness.project,
+      );
+      expect(harness.findPullRequest).toHaveBeenCalledWith(
+        expect.objectContaining({
+          headBranch: "agent/card-1",
+          repository: "example/repository",
+        }),
+      );
+      expect(harness.createPullRequest).not.toHaveBeenCalled();
+      expect(harness.moveCard).toHaveBeenNthCalledWith(
+        1,
+        harness.card.id,
+        listIds.working,
+      );
+      expect(harness.moveCard).toHaveBeenNthCalledWith(
+        2,
+        harness.card.id,
+        listIds.review,
+      );
+      expect(restartEvents.indexOf("trello:move:working-list")).toBeLessThan(
+        feedbackImplementationEvent,
+      );
+      expect(restartEvents.indexOf("git:push")).toBeGreaterThan(
+        feedbackImplementationEvent,
+      );
+      expect(harness.events).not.toContain("github:create-pr");
     } finally {
       harness.cleanup();
     }
