@@ -207,7 +207,7 @@ checked during configuration loading, before repository bootstrap or project pro
 
 | Key          | Meaning and validation                                                                                     |
 | ------------ | ---------------------------------------------------------------------------------------------------------- |
-| `name`       | Non-blank commit author and committer name                                                                 |
+| `name`       | Non-blank commit author, committer, and pull-request attribution name                                      |
 | `email`      | Valid commit author and committer email address                                                            |
 | `signingKey` | Optional absolute path to the SSH signing key; it must be available where the service runs when configured |
 
@@ -280,10 +280,10 @@ description-model configuration. The orchestrator supplies the card title, descr
 information, and known validation or test results. The description result is strict JSON with `summary`, `changes`, and
 `validation` fields. Missing or invalid output, OpenCode execution failure, or Markdown rendering failure is logged as a
 non-critical description-generation failure and falls back to the deterministic body containing the Trello card URL followed by
-the Agent Orchestrator attribution footer; it does not block branch publication, pull-request creation, reuse, or card
+the configured attribution footer `Implemented automatically by <projects[].repository.gitIdentity.name>.`; it does not block branch publication, pull-request creation, reuse, or card
 transitions. A valid empty `validation` array is allowed and does not claim that validation or tests passed. The result is
 generated after publication rebasing. A standalone deterministic renderer defines the Markdown contract: fixed `Summary`,
-`Changes`, `Validation`, and `Task` sections, an application-owned Trello card link and attribution footer, and one reserved
+`Changes`, `Validation`, and `Task` sections, an application-owned Trello card link and the same configured attribution footer, and one reserved
 status-marker pair. Publication wiring uses this renderer for newly created pull requests; configuring the `commit` model does not
 allow it to choose headings, links, footer text, or status markers. Existing open pull requests are reused without description
 updates.

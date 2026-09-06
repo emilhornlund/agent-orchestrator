@@ -277,7 +277,8 @@ The post-commit AI pull-request-description step is presentation-only. Its stric
 remain valid, including `validation` when no result is known. Its context collection, OpenCode execution, structured output
 parsing or validation, and Markdown rendering failures, including oversized output, are logged with the failed stage and do not
 block publication. New pull requests use the deterministic fallback body, consisting of the Trello card URL followed by the
-Agent Orchestrator attribution footer. Existing open pull requests are reused without description updates, as usual.
+footer `Implemented automatically by <projects[].repository.gitIdentity.name>.`; generated descriptions use that same footer.
+Existing open pull requests are reused without description updates, as usual.
 
 During Human Review reconciliation, the same isolated task worktree is used for automatic maintenance of an eligible stale
 branch. Eligibility requires an open pull request in the configured repository, exact `agent/<trello-card-id>` head and configured

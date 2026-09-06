@@ -1,6 +1,7 @@
 import type { ProjectConfig } from "../config/config.js";
 import type { GitClient } from "../git/git-client.js";
 import type { GitHubClient } from "../github/github-client.js";
+import { buildPullRequestAttributionFooter } from "../github/pull-request-attribution.js";
 import { logger } from "../logging/logger.js";
 import {
   notifyHumanReview,
@@ -53,11 +54,14 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function renderDeterministicPullRequestBody(card: TrelloCard): string {
+function renderDeterministicPullRequestBody(
+  card: TrelloCard,
+  gitIdentityName: string,
+): string {
   return [
     `Trello: ${card.url}`,
     "",
-    "Implemented automatically by Agent Orchestrator.",
+    buildPullRequestAttributionFooter(gitIdentityName),
   ].join("\n");
 }
 
@@ -353,13 +357,17 @@ export async function publishCard({
 
       cardLog.event("Creating pull request...");
 
-      let body = renderDeterministicPullRequestBody(card);
+      let body = renderDeterministicPullRequestBody(
+        card,
+        project.repository.gitIdentity.name,
+      );
 
       if (finalPullRequestDescription !== undefined) {
         try {
           body = renderPullRequestDescription(
             finalPullRequestDescription,
             card,
+            project.repository.gitIdentity.name,
           );
         } catch (error) {
           logDescriptionFallback(cardLog, "Markdown rendering", error);
