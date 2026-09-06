@@ -38,7 +38,7 @@ function createProject(): ProjectConfig {
       defaultBranch: "main",
       worktreeRoot: "/tmp/example-worktrees",
       gitIdentity: {
-        name: "Agent Orchestrator",
+        name: "Configured Git Author",
         email: "agent-orchestrator@users.noreply.github.com",
       },
     },
@@ -547,9 +547,9 @@ describe("publishCard", () => {
       "/tmp/example-worktrees/card-1",
       ["rebase", "origin/main"],
       {
-        GIT_AUTHOR_NAME: "Agent Orchestrator",
+        GIT_AUTHOR_NAME: "Configured Git Author",
         GIT_AUTHOR_EMAIL: "agent-orchestrator@users.noreply.github.com",
-        GIT_COMMITTER_NAME: "Agent Orchestrator",
+        GIT_COMMITTER_NAME: "Configured Git Author",
         GIT_COMMITTER_EMAIL: "agent-orchestrator@users.noreply.github.com",
       },
     );
@@ -618,7 +618,7 @@ describe("publishCard", () => {
         [
           "Trello: https://trello.com/c/card-1",
           "",
-          "Implemented automatically by Agent Orchestrator.",
+          "Implemented automatically by Configured Git Author.",
         ].join("\n"),
       ],
     );
@@ -820,7 +820,7 @@ describe("publishCard", () => {
           "## Task",
           "[Trello card: Example task](https://trello.com/c/card-1)",
           "",
-          "Implemented automatically by Agent Orchestrator.",
+          "Implemented automatically by Configured Git Author.",
           "",
           "<!-- agent-orchestrator-status:start -->",
           "<!-- agent-orchestrator-status:end -->",
@@ -871,7 +871,7 @@ describe("publishCard", () => {
         body: [
           "Trello: https://trello.com/c/card-1",
           "",
-          "Implemented automatically by Agent Orchestrator.",
+          "Implemented automatically by Configured Git Author.",
         ].join("\n"),
       }),
     );
@@ -921,7 +921,7 @@ describe("publishCard", () => {
         body: [
           "Trello: https://trello.com/c/card-1",
           "",
-          "Implemented automatically by Agent Orchestrator.",
+          "Implemented automatically by Configured Git Author.",
         ].join("\n"),
       }),
     );
@@ -983,7 +983,7 @@ describe("publishCard", () => {
         body: [
           "Trello: https://trello.com/c/card-1",
           "",
-          "Implemented automatically by Agent Orchestrator.",
+          "Implemented automatically by Configured Git Author.",
         ].join("\n"),
       }),
     );
@@ -1034,7 +1034,7 @@ describe("publishCard", () => {
         body: [
           "Trello: https://trello.com/c/card-1",
           "",
-          "Implemented automatically by Agent Orchestrator.",
+          "Implemented automatically by Configured Git Author.",
         ].join("\n"),
       }),
     );
@@ -1082,7 +1082,7 @@ describe("publishCard", () => {
         body: [
           "Trello: https://trello.com/c/card-1",
           "",
-          "Implemented automatically by Agent Orchestrator.",
+          "Implemented automatically by Configured Git Author.",
         ].join("\n"),
       }),
     );

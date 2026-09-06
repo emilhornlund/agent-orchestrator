@@ -140,7 +140,8 @@ The implementation pass then:
 An OpenCode stage that exits unsuccessfully, produces no expected changes, fails to create a commit, or leaves changes after the
 commit stage fails the workflow. Description-generation failures are non-critical presentation failures: the committed task
 worktree and branch are preserved, a diagnostic identifies the failed stage and the deterministic fallback, and publication
-continues. The fallback body is the Trello card URL followed by the fixed Agent Orchestrator attribution footer; partial,
+continues. The fallback body is the Trello card URL followed by the deterministic attribution footer
+`Implemented automatically by <projects[].repository.gitIdentity.name>.`; partial,
 malformed, or unvalidated generated content is never published. Publication details and non-force-push boundaries are in
 [Operations](operations.md).
 
@@ -149,8 +150,9 @@ The description result contract is strict: `summary` is a non-blank string of at
 allowed, including an empty `validation` array when no validation or test result is known. JSON wrapped in Markdown, missing
 fields, wrong types, extra fields, and values beyond these fixed bounds are rejected. The result is generated after publication
 rebasing. The standalone application renderer for this contract uses the fixed `Summary`, `Changes`, `Validation`,
-and `Task` sections, places the application-provided Trello card link in `Task`, adds the fixed Agent Orchestrator attribution,
-and reserves exactly one `<!-- agent-orchestrator-status:start -->` / `<!-- agent-orchestrator-status:end -->` region. Empty
+and `Task` sections, places the application-provided Trello card link in `Task`, adds the same attribution footer using
+`projects[].repository.gitIdentity.name`, and reserves exactly one `<!-- agent-orchestrator-status:start -->` /
+`<!-- agent-orchestrator-status:end -->` region. Empty
 `changes` render as `No changes were provided.` and empty `validation` renders as `No validation or test results were provided.`;
 neither claims success. Generated values are rendered as single-line content so they cannot add headings, footer text, or status
 markers. The rendered result is passed to pull-request creation. An existing open pull request is reused without rewriting its

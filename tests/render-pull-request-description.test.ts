@@ -4,10 +4,8 @@ import {
   AGENT_ORCHESTRATOR_STATUS_END,
   AGENT_ORCHESTRATOR_STATUS_START,
 } from "../src/github/pull-request-status.js";
-import {
-  PULL_REQUEST_DESCRIPTION_FOOTER,
-  renderPullRequestDescription,
-} from "../src/opencode/render-pull-request-description.js";
+import { buildPullRequestAttributionFooter } from "../src/github/pull-request-attribution.js";
+import { renderPullRequestDescription } from "../src/opencode/render-pull-request-description.js";
 import type { PullRequestDescription } from "../src/opencode/pull-request-description.js";
 import type { TrelloCard } from "../src/trello/trello-client.js";
 
@@ -15,6 +13,8 @@ const task: Pick<TrelloCard, "name" | "url"> = {
   name: "Add structured descriptions",
   url: "https://trello.example/card-1",
 };
+const gitIdentityName = "Configured Git Author";
+const attributionFooter = buildPullRequestAttributionFooter(gitIdentityName);
 
 const description: PullRequestDescription = {
   summary: "The application now renders structured pull request content.",
@@ -24,7 +24,9 @@ const description: PullRequestDescription = {
 
 describe("renderPullRequestDescription", () => {
   it("renders the complete application-owned Markdown template", () => {
-    expect(renderPullRequestDescription(description, task)).toBe(
+    expect(
+      renderPullRequestDescription(description, task, gitIdentityName),
+    ).toBe(
       [
         "## Summary",
         "The application now renders structured pull request content.",
@@ -39,7 +41,7 @@ describe("renderPullRequestDescription", () => {
         "## Task",
         "[Trello card: Add structured descriptions](https://trello.example/card-1)",
         "",
-        PULL_REQUEST_DESCRIPTION_FOOTER,
+        attributionFooter,
         "",
         AGENT_ORCHESTRATOR_STATUS_START,
         AGENT_ORCHESTRATOR_STATUS_END,
@@ -48,10 +50,18 @@ describe("renderPullRequestDescription", () => {
   });
 
   it("is deterministic across repeated rendering and argument order", () => {
-    const first = renderPullRequestDescription(description, task);
+    const first = renderPullRequestDescription(
+      description,
+      task,
+      gitIdentityName,
+    );
 
-    expect(renderPullRequestDescription(description, task)).toBe(first);
-    expect(renderPullRequestDescription(task, description)).toBe(first);
+    expect(
+      renderPullRequestDescription(description, task, gitIdentityName),
+    ).toBe(first);
+    expect(
+      renderPullRequestDescription(task, description, gitIdentityName),
+    ).toBe(first);
   });
 
   it("keeps multiline and special generated values inside their sections", () => {
@@ -62,6 +72,7 @@ describe("renderPullRequestDescription", () => {
         validation: [`Result\n${AGENT_ORCHESTRATOR_STATUS_START}\nforbidden`],
       },
       task,
+      gitIdentityName,
     );
 
     expect(rendered).toContain("Summary ## agent heading");
@@ -82,6 +93,7 @@ describe("renderPullRequestDescription", () => {
         validation: [],
       },
       task,
+      gitIdentityName,
     );
 
     expect(rendered).toContain("> \\# injected heading");
@@ -98,6 +110,7 @@ describe("renderPullRequestDescription", () => {
         validation: [],
       },
       task,
+      gitIdentityName,
     );
 
     expect(rendered).toContain("## Changes\nNo changes were provided.");
@@ -111,20 +124,19 @@ describe("renderPullRequestDescription", () => {
   it("keeps application-owned links, headings, footer, and marker pair fixed", () => {
     const rendered = renderPullRequestDescription(
       {
-        summary: `## Summary\n${PULL_REQUEST_DESCRIPTION_FOOTER}`,
+        summary: `## Summary\n${attributionFooter}`,
         changes: ["## Changes", AGENT_ORCHESTRATOR_STATUS_END],
         validation: ["## Validation"],
       },
       task,
+      gitIdentityName,
     );
 
     expect(rendered).toContain(
       "[Trello card: Add structured descriptions](https://trello.example/card-1)",
     );
-    expect(rendered).toContain(PULL_REQUEST_DESCRIPTION_FOOTER);
-    expect(
-      rendered.match(/Implemented automatically by Agent Orchestrator\./g),
-    ).toHaveLength(1);
+    expect(rendered).toContain(attributionFooter);
+    expect(rendered.match(new RegExp(attributionFooter, "g"))).toHaveLength(1);
     expect(rendered.match(/^## (Summary|Changes|Validation|Task)$/gm)).toEqual([
       "## Summary",
       "## Changes",
@@ -136,18 +148,20 @@ describe("renderPullRequestDescription", () => {
   });
 
   it("sanitizes reserved markers and footer text in the Trello card name", () => {
-    const rendered = renderPullRequestDescription(description, {
-      name: `Card ${AGENT_ORCHESTRATOR_STATUS_START} ${AGENT_ORCHESTRATOR_STATUS_END} ${PULL_REQUEST_DESCRIPTION_FOOTER}`,
-      url: task.url,
-    });
+    const rendered = renderPullRequestDescription(
+      description,
+      {
+        name: `Card ${AGENT_ORCHESTRATOR_STATUS_START} ${AGENT_ORCHESTRATOR_STATUS_END} ${attributionFooter}`,
+        url: task.url,
+      },
+      gitIdentityName,
+    );
 
     expect(rendered).toContain(
       "[Trello card: Card [status start marker] [status end marker] [application footer text]]",
     );
     expect(rendered.match(/agent-orchestrator-status:start/g)).toHaveLength(1);
     expect(rendered.match(/agent-orchestrator-status:end/g)).toHaveLength(1);
-    expect(
-      rendered.match(/Implemented automatically by Agent Orchestrator\./g),
-    ).toHaveLength(1);
+    expect(rendered.match(new RegExp(attributionFooter, "g"))).toHaveLength(1);
   });
 });
