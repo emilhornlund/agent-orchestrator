@@ -20,6 +20,7 @@ import {
   parsePullRequestDescription,
   type PullRequestDescription,
 } from "../opencode/pull-request-description.js";
+import { renderPullRequestDescription } from "../opencode/render-pull-request-description.js";
 
 import { toFailureError } from "./failure-diagnostic.js";
 import {
@@ -62,35 +63,6 @@ function hasOpenCodePermissionDenial(result: OpenCodeRunResult): boolean {
   );
 }
 
-function renderPullRequestBody(
-  card: TrelloCard,
-  description: PullRequestDescription | undefined,
-): string {
-  if (description === undefined) {
-    return [
-      `Trello: ${card.url}`,
-      "",
-      "Implemented automatically by Agent Orchestrator.",
-    ].join("\n");
-  }
-
-  return [
-    `Trello: ${card.url}`,
-    "",
-    description.summary,
-    "",
-    "## Changes",
-    ...description.changes.map((change) => `- ${change}`),
-    "",
-    "## Validation",
-    ...(description.validation.length === 0
-      ? ["- No validation or test results were provided."]
-      : description.validation.map((result) => `- ${result}`)),
-    "",
-    "Implemented automatically by Agent Orchestrator.",
-  ].join("\n");
-}
-
 async function generatePullRequestDescription(options: {
   git: GitClient;
   opencode: OpenCodeClient;
@@ -122,21 +94,15 @@ async function generatePullRequestDescription(options: {
   let commitMessage: string;
 
   try {
-    changedFiles =
-      typeof git.getChangedFiles === "function"
-        ? await git.getChangedFiles(
-            worktreePath,
-            `origin/${project.repository.defaultBranch}`,
-          )
-        : "";
-    commitMessage =
-      typeof git.getCommitMessage === "function"
-        ? await git.getCommitMessage(worktreePath)
-        : "";
+    changedFiles = await git.getChangedFiles(
+      worktreePath,
+      `origin/${project.repository.defaultBranch}`,
+    );
+    commitMessage = await git.getCommitMessage(worktreePath);
   } catch (error) {
     throw new WorkflowError(
       "Git/GitHub",
-      `Could not collect final commit context for pull request description: ${getErrorMessage(error)}`,
+      `Could not collect final commit context for pull request description: ${getErrorMessage(error)}. The committed task worktree and branch were preserved; resolve the context failure and retry publication.`,
       { cause: error },
     );
   }
@@ -151,33 +117,43 @@ async function generatePullRequestDescription(options: {
 
   cardLog.event("Starting OpenCode pull request description generation...");
 
-  const result = await opencode.run({
-    cwd: worktreePath,
-    model: project.opencode.commit.model,
-    variant: project.opencode.commit.variant,
-    timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
-    prompt: buildPullRequestDescriptionPrompt(card, {
-      changedFiles,
-      commitSha,
-      commitMessage,
-      validationResults,
-    }),
-    signal,
-    ...(sessionLogPath === undefined ? {} : { sessionLogPath }),
-    sessionLabel: "OpenCode pull request description",
-  });
+  let result: OpenCodeRunResult;
+
+  try {
+    result = await opencode.run({
+      cwd: worktreePath,
+      model: project.opencode.commit.model,
+      variant: project.opencode.commit.variant,
+      timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
+      prompt: buildPullRequestDescriptionPrompt(card, {
+        changedFiles,
+        commitSha,
+        commitMessage,
+        validationResults,
+      }),
+      signal,
+      ...(sessionLogPath === undefined ? {} : { sessionLogPath }),
+      sessionLabel: "OpenCode pull request description",
+    });
+  } catch (error) {
+    throw new WorkflowError(
+      "OpenCode",
+      `Could not generate pull request description: ${getErrorMessage(error)}. The committed task worktree and branch were preserved; resolve the generation failure and retry publication.`,
+      { cause: error },
+    );
+  }
 
   if (result.exitCode !== 0) {
     if (hasOpenCodePermissionDenial(result)) {
       throw new WorkflowError(
         "OpenCode permissions",
-        "OpenCode was denied permission during pull request description generation",
+        "OpenCode was denied permission during pull request description generation. The committed task worktree and branch were preserved; resolve the permission failure and retry publication.",
       );
     }
 
     throw new WorkflowError(
       "OpenCode",
-      `OpenCode pull request description generation exited with code ${result.exitCode}${result.errorOutput.trim().length > 0 ? `: ${result.errorOutput.trim()}` : ""}`,
+      `OpenCode pull request description generation exited with code ${result.exitCode}${result.errorOutput.trim().length > 0 ? `: ${result.errorOutput.trim()}` : ""}. The committed task worktree and branch were preserved; resolve the generation failure and retry publication.`,
       { cause: result },
     );
   }
@@ -191,7 +167,7 @@ async function generatePullRequestDescription(options: {
   } catch (error) {
     throw new WorkflowError(
       "OpenCode",
-      `OpenCode pull request description returned an invalid structured result: ${getErrorMessage(error)}`,
+      `OpenCode pull request description returned an invalid structured result: ${getErrorMessage(error)}. The committed task worktree and branch were preserved; correct the generation output and retry publication.`,
       { cause: error },
     );
   }
@@ -363,7 +339,14 @@ export async function publishCard({
         baseBranch: project.repository.defaultBranch,
         headBranch: branch,
         title: card.name,
-        body: renderPullRequestBody(card, finalPullRequestDescription),
+        body:
+          finalPullRequestDescription === undefined
+            ? [
+                `Trello: ${card.url}`,
+                "",
+                "Implemented automatically by Agent Orchestrator.",
+              ].join("\n")
+            : renderPullRequestDescription(finalPullRequestDescription, card),
         project,
       });
 

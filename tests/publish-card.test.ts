@@ -773,23 +773,137 @@ describe("publishCard", () => {
     expect(events.slice(0, 3)).toEqual(["rebase", "description", "push"]);
     expect(runDescription).toHaveBeenCalledWith(
       expect.objectContaining({
+        model: "commit-model",
+        variant: "commit-variant",
         prompt: expect.stringContaining(
           "Resulting commit SHA: post-rebase-sha",
         ),
       }),
     );
-    expect(createPullRequest).toHaveBeenCalledWith(
+    expect(runDescription).toHaveBeenCalledWith(
       expect.objectContaining({
-        body: expect.stringContaining(
-          "Described the published implementation.",
+        prompt: expect.stringContaining("src/description.ts"),
+      }),
+    );
+    expect(runDescription).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: expect.stringContaining(
+          "Commit message:\ndescribe implementation",
+        ),
+      }),
+    );
+    expect(runDescription).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: expect.stringContaining("Automated review result: Passed."),
+      }),
+    );
+    expect(runDescription).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: expect.stringContaining(
+          "Automated remediation result: Not required.",
         ),
       }),
     );
     expect(createPullRequest).toHaveBeenCalledWith(
       expect.objectContaining({
-        body: expect.stringContaining("- Added structured PR content."),
+        body: [
+          "## Summary",
+          "Described the published implementation.",
+          "",
+          "## Changes",
+          "- Added structured PR content.",
+          "",
+          "## Validation",
+          "- Automated review passed.",
+          "",
+          "## Task",
+          "[Trello card: Example task](https://trello.com/c/card-1)",
+          "",
+          "Implemented automatically by Agent Orchestrator.",
+          "",
+          "<!-- agent-orchestrator-status:start -->",
+          "<!-- agent-orchestrator-status:end -->",
+        ].join("\n"),
       }),
     );
+  });
+
+  it("preserves publication artifacts when final description context collection fails", async () => {
+    const contextError = new Error("could not read final changed files");
+    const git = createPublicationGit({
+      getChangedFiles: vi.fn().mockRejectedValue(contextError),
+      push: vi.fn(),
+    });
+    const opencode = { run: vi.fn() } as unknown as OpenCodeClient;
+    const trello = {
+      moveCard: vi.fn(),
+    } as unknown as TrelloClient;
+    const github = {
+      findPullRequest: vi.fn(),
+      createPullRequest: vi.fn(),
+    } as unknown as GitHubClient;
+
+    await expect(
+      publishCard({
+        trello,
+        git,
+        github,
+        opencode,
+        project: createProject(),
+        card: createCard(),
+        worktreePath: "/worktree",
+        branch: "agent/card-1",
+        commitSha: "stale-sha",
+        reviewResult: "Passed",
+        remediationResult: "Not required",
+      }),
+    ).rejects.toThrow("could not read final changed files");
+
+    expect(git.push).not.toHaveBeenCalled();
+    expect(opencode.run).not.toHaveBeenCalled();
+    expect(github.findPullRequest).not.toHaveBeenCalled();
+    expect(github.createPullRequest).not.toHaveBeenCalled();
+    expect(trello.moveCard).not.toHaveBeenCalled();
+  });
+
+  it("preserves publication artifacts when description generation fails", async () => {
+    const generationError = new Error("description model unavailable");
+    const git = createPublicationGit({
+      getChangedFiles: vi.fn().mockResolvedValue("src/example.ts"),
+      getCommitMessage: vi.fn().mockResolvedValue("implement example"),
+      push: vi.fn(),
+    });
+    const opencode = {
+      run: vi.fn().mockRejectedValue(generationError),
+    } as unknown as OpenCodeClient;
+    const trello = {
+      moveCard: vi.fn(),
+    } as unknown as TrelloClient;
+    const github = {
+      findPullRequest: vi.fn(),
+      createPullRequest: vi.fn(),
+    } as unknown as GitHubClient;
+
+    await expect(
+      publishCard({
+        trello,
+        git,
+        github,
+        opencode,
+        project: createProject(),
+        card: createCard(),
+        worktreePath: "/worktree",
+        branch: "agent/card-1",
+        commitSha: "stale-sha",
+        reviewResult: "Passed",
+        remediationResult: "Not required",
+      }),
+    ).rejects.toThrow("description model unavailable");
+
+    expect(git.push).not.toHaveBeenCalled();
+    expect(github.findPullRequest).not.toHaveBeenCalled();
+    expect(github.createPullRequest).not.toHaveBeenCalled();
+    expect(trello.moveCard).not.toHaveBeenCalled();
   });
 
   it("does not push when rebasing an already-current branch leaves HEAD unchanged", async () => {
