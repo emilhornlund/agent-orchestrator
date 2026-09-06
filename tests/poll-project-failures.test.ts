@@ -1441,28 +1441,26 @@ describe("pollProject failure boundaries", () => {
     );
   });
 
-  it("blocks publication and preserves the committed worktree for invalid description output", async () => {
+  it("continues publication with the fallback for invalid description output", async () => {
     await withScenario(
       {
         descriptionOutput: '{"summary":"","changes":[],"validation":[]}',
       },
       async (scenario) => {
-        await expect(
-          pollProject(
-            scenario.trello,
-            scenario.git,
-            scenario.github,
-            scenario.openCode,
-            scenario.commands,
-            scenario.project,
-            scenario.signal,
-          ),
-        ).rejects.toThrow("summary must not be blank");
+        await pollProject(
+          scenario.trello,
+          scenario.git,
+          scenario.github,
+          scenario.openCode,
+          scenario.commands,
+          scenario.project,
+          scenario.signal,
+        );
 
-        expect(scenario.events).not.toContain("push");
-        expect(scenario.events).not.toContain("pr");
-        expect(scenario.events).toContain("move:failed-list");
-        expect(fs.existsSync(scenario.worktreePath)).toBe(true);
+        expect(scenario.events).toContain("push");
+        expect(scenario.events).toContain("pr");
+        expect(scenario.events).toContain("move:review-list");
+        expect(scenario.events).not.toContain("move:failed-list");
       },
     );
   });

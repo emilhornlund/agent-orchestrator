@@ -131,14 +131,18 @@ The implementation pass then:
    clean worktree.
 9. Runs a separate post-commit OpenCode pull-request-description session using the configured `opencode.commit` model and
    variant. It receives the Trello task and URL, final changed files, commit SHA and message, and known validation results.
-   It must return exactly one JSON object with the `summary`, `changes`, and `validation` fields.
+   It must return exactly one JSON object with the `summary`, `changes`, and `validation` fields. This optional presentation step
+   does not block publication: if its context collection, OpenCode execution, structured-output parsing or validation, or Markdown
+   rendering fails, the workflow logs the stage and uses the deterministic pull-request body instead.
 10. Publishes or reuses the task pull request. With `autoMerge: false`, the card moves to `Human Review`; with `autoMerge: true`,
     the pull request is merged and the card moves directly to `Done`.
 
-An OpenCode stage that exits unsuccessfully, produces no expected changes, fails to create a commit, leaves changes after the
-commit stage, or returns invalid description JSON fails the workflow. Description-generation failure occurs before publication;
-the committed task worktree and branch are preserved, and the original diagnostic is retained for deliberate retry. Publication
-details and non-force-push boundaries are in [Operations](operations.md).
+An OpenCode stage that exits unsuccessfully, produces no expected changes, fails to create a commit, or leaves changes after the
+commit stage fails the workflow. Description-generation failures are non-critical presentation failures: the committed task
+worktree and branch are preserved, a diagnostic identifies the failed stage and the deterministic fallback, and publication
+continues. The fallback body is the Trello card URL followed by the fixed Agent Orchestrator attribution footer; partial,
+malformed, or unvalidated generated content is never published. Publication details and non-force-push boundaries are in
+[Operations](operations.md).
 
 The description result contract is strict: `summary` is a non-blank string, while `changes` and `validation` are arrays whose
 entries are non-blank strings. Empty arrays are allowed, including an empty `validation` array when no validation or test result

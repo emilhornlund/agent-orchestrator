@@ -828,82 +828,256 @@ describe("publishCard", () => {
     );
   });
 
-  it("preserves publication artifacts when final description context collection fails", async () => {
+  it("uses the deterministic body when final description context collection fails", async () => {
     const contextError = new Error("could not read final changed files");
     const git = createPublicationGit({
       getChangedFiles: vi.fn().mockRejectedValue(contextError),
-      push: vi.fn(),
+      push: vi.fn().mockResolvedValue(undefined),
     });
     const opencode = { run: vi.fn() } as unknown as OpenCodeClient;
     const trello = {
-      moveCard: vi.fn(),
+      moveCard: vi.fn().mockResolvedValue(createCard()),
+      getListTransitions: vi.fn().mockResolvedValue([]),
+      addComment: vi.fn().mockResolvedValue(undefined),
     } as unknown as TrelloClient;
+    const createPullRequest = vi.fn().mockResolvedValue({
+      url: "https://github.com/example/repository/pull/123",
+    });
     const github = {
-      findPullRequest: vi.fn(),
-      createPullRequest: vi.fn(),
+      findPullRequest: vi.fn().mockResolvedValue(null),
+      createPullRequest,
     } as unknown as GitHubClient;
 
-    await expect(
-      publishCard({
-        trello,
-        git,
-        github,
-        opencode,
-        project: createProject(),
-        card: createCard(),
-        worktreePath: "/worktree",
-        branch: "agent/card-1",
-        commitSha: "stale-sha",
-        reviewResult: "Passed",
-        remediationResult: "Not required",
-      }),
-    ).rejects.toThrow("could not read final changed files");
+    await publishCard({
+      trello,
+      git,
+      github,
+      opencode,
+      project: createProject(),
+      card: createCard(),
+      worktreePath: "/worktree",
+      branch: "agent/card-1",
+      commitSha: "stale-sha",
+      reviewResult: "Passed",
+      remediationResult: "Not required",
+    });
 
-    expect(git.push).not.toHaveBeenCalled();
+    expect(git.push).toHaveBeenCalled();
     expect(opencode.run).not.toHaveBeenCalled();
-    expect(github.findPullRequest).not.toHaveBeenCalled();
-    expect(github.createPullRequest).not.toHaveBeenCalled();
-    expect(trello.moveCard).not.toHaveBeenCalled();
+    expect(github.findPullRequest).toHaveBeenCalled();
+    expect(createPullRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: [
+          "Trello: https://trello.com/c/card-1",
+          "",
+          "Implemented automatically by Agent Orchestrator.",
+        ].join("\n"),
+      }),
+    );
+    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "review-list");
   });
 
-  it("preserves publication artifacts when description generation fails", async () => {
+  it("uses the deterministic body when description generation fails", async () => {
     const generationError = new Error("description model unavailable");
     const git = createPublicationGit({
       getChangedFiles: vi.fn().mockResolvedValue("src/example.ts"),
       getCommitMessage: vi.fn().mockResolvedValue("implement example"),
-      push: vi.fn(),
+      push: vi.fn().mockResolvedValue(undefined),
     });
     const opencode = {
       run: vi.fn().mockRejectedValue(generationError),
     } as unknown as OpenCodeClient;
     const trello = {
-      moveCard: vi.fn(),
+      moveCard: vi.fn().mockResolvedValue(createCard()),
+      getListTransitions: vi.fn().mockResolvedValue([]),
+      addComment: vi.fn().mockResolvedValue(undefined),
     } as unknown as TrelloClient;
+    const createPullRequest = vi.fn().mockResolvedValue({
+      url: "https://github.com/example/repository/pull/123",
+    });
     const github = {
-      findPullRequest: vi.fn(),
-      createPullRequest: vi.fn(),
+      findPullRequest: vi.fn().mockResolvedValue(null),
+      createPullRequest,
     } as unknown as GitHubClient;
 
-    await expect(
-      publishCard({
-        trello,
-        git,
-        github,
-        opencode,
-        project: createProject(),
-        card: createCard(),
-        worktreePath: "/worktree",
-        branch: "agent/card-1",
-        commitSha: "stale-sha",
-        reviewResult: "Passed",
-        remediationResult: "Not required",
-      }),
-    ).rejects.toThrow("description model unavailable");
+    await publishCard({
+      trello,
+      git,
+      github,
+      opencode,
+      project: createProject(),
+      card: createCard(),
+      worktreePath: "/worktree",
+      branch: "agent/card-1",
+      commitSha: "stale-sha",
+      reviewResult: "Passed",
+      remediationResult: "Not required",
+    });
 
-    expect(git.push).not.toHaveBeenCalled();
-    expect(github.findPullRequest).not.toHaveBeenCalled();
-    expect(github.createPullRequest).not.toHaveBeenCalled();
-    expect(trello.moveCard).not.toHaveBeenCalled();
+    expect(git.push).toHaveBeenCalled();
+    expect(createPullRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: [
+          "Trello: https://trello.com/c/card-1",
+          "",
+          "Implemented automatically by Agent Orchestrator.",
+        ].join("\n"),
+      }),
+    );
+    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "review-list");
+  });
+
+  it.each([
+    ["malformed JSON", "not JSON"],
+    ["missing required fields", JSON.stringify({ summary: "A summary" })],
+  ])("uses the deterministic body for %s", async (_failure, output) => {
+    const git = createPublicationGit({
+      getChangedFiles: vi.fn().mockResolvedValue("src/example.ts"),
+      getCommitMessage: vi.fn().mockResolvedValue("implement example"),
+    });
+    const opencode = {
+      run: vi.fn().mockResolvedValue({
+        exitCode: 0,
+        output,
+        errorOutput: "",
+      }),
+    } as unknown as OpenCodeClient;
+    const trello = {
+      moveCard: vi.fn().mockResolvedValue(createCard()),
+      getListTransitions: vi.fn().mockResolvedValue([]),
+      addComment: vi.fn().mockResolvedValue(undefined),
+    } as unknown as TrelloClient;
+    const createPullRequest = vi.fn().mockResolvedValue({
+      url: "https://github.com/example/repository/pull/123",
+    });
+    const github = {
+      findPullRequest: vi.fn().mockResolvedValue(null),
+      createPullRequest,
+    } as unknown as GitHubClient;
+
+    await publishCard({
+      trello,
+      git,
+      github,
+      opencode,
+      project: createProject(),
+      card: createCard(),
+      worktreePath: "/worktree",
+      branch: "agent/card-1",
+      commitSha: "stale-sha",
+      reviewResult: "Passed",
+      remediationResult: "Not required",
+    });
+
+    expect(createPullRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: [
+          "Trello: https://trello.com/c/card-1",
+          "",
+          "Implemented automatically by Agent Orchestrator.",
+        ].join("\n"),
+      }),
+    );
+    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "review-list");
+  });
+
+  it("uses the deterministic body for a non-successful description result", async () => {
+    const git = createPublicationGit({
+      getChangedFiles: vi.fn().mockResolvedValue("src/example.ts"),
+      getCommitMessage: vi.fn().mockResolvedValue("implement example"),
+    });
+    const opencode = {
+      run: vi.fn().mockResolvedValue({
+        exitCode: 1,
+        output: "",
+        errorOutput: "model failed",
+      }),
+    } as unknown as OpenCodeClient;
+    const trello = {
+      moveCard: vi.fn().mockResolvedValue(createCard()),
+      getListTransitions: vi.fn().mockResolvedValue([]),
+      addComment: vi.fn().mockResolvedValue(undefined),
+    } as unknown as TrelloClient;
+    const createPullRequest = vi.fn().mockResolvedValue({
+      url: "https://github.com/example/repository/pull/123",
+    });
+    const github = {
+      findPullRequest: vi.fn().mockResolvedValue(null),
+      createPullRequest,
+    } as unknown as GitHubClient;
+
+    await publishCard({
+      trello,
+      git,
+      github,
+      opencode,
+      project: createProject(),
+      card: createCard(),
+      worktreePath: "/worktree",
+      branch: "agent/card-1",
+      commitSha: "stale-sha",
+      reviewResult: "Passed",
+      remediationResult: "Not required",
+    });
+
+    expect(createPullRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: [
+          "Trello: https://trello.com/c/card-1",
+          "",
+          "Implemented automatically by Agent Orchestrator.",
+        ].join("\n"),
+      }),
+    );
+    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "review-list");
+  });
+
+  it("uses the deterministic body when Markdown rendering fails", async () => {
+    const git = createPublicationGit();
+    const trello = {
+      moveCard: vi.fn().mockResolvedValue(createCard()),
+      getListTransitions: vi.fn().mockResolvedValue([]),
+      addComment: vi.fn().mockResolvedValue(undefined),
+    } as unknown as TrelloClient;
+    const createPullRequest = vi.fn().mockResolvedValue({
+      url: "https://github.com/example/repository/pull/123",
+    });
+    const github = {
+      findPullRequest: vi.fn().mockResolvedValue(null),
+      createPullRequest,
+    } as unknown as GitHubClient;
+
+    await publishCard({
+      trello,
+      git,
+      github,
+      project: createProject(),
+      card: {
+        ...createCard(),
+        name: 42 as unknown as string,
+      },
+      worktreePath: "/worktree",
+      branch: "agent/card-1",
+      commitSha: "stale-sha",
+      reviewResult: "Passed",
+      remediationResult: "Not required",
+      pullRequestDescription: {
+        summary: "A summary",
+        changes: [],
+        validation: [],
+      },
+    });
+
+    expect(createPullRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: [
+          "Trello: https://trello.com/c/card-1",
+          "",
+          "Implemented automatically by Agent Orchestrator.",
+        ].join("\n"),
+      }),
+    );
+    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "review-list");
   });
 
   it("does not push when rebasing an already-current branch leaves HEAD unchanged", async () => {
