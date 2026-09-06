@@ -58,9 +58,17 @@ export function trelloReconciliationError(
     : new WorkflowError("Workflow", message, { cause: error });
 
   if (cardId === undefined) {
-    annotateFailure(reconciliationError, { projectId });
+    annotateFailure(reconciliationError, {
+      projectId,
+      reconciliationOperation: `Trello ${operation}`,
+    });
   } else {
     annotateCardFailure(reconciliationError, projectId, cardId);
+    annotateFailure(reconciliationError, {
+      projectId,
+      cardId,
+      reconciliationOperation: `Trello ${operation}`,
+    });
   }
 
   if (options.reconciliationListId !== undefined) {

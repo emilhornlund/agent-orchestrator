@@ -196,9 +196,14 @@ describe("reconcileReviewCards", () => {
   it("returns requested changes from Human Review", async () => {
     const trello = trelloFor(card());
     const github = githubFor("card-1", "requested");
+    const onHumanReviewCardsObserved = vi.fn();
+    const onHumanReviewCardLeft = vi.fn();
 
     await expect(
-      reconcileReviewCards(trello, {} as GitClient, github, project),
+      reconcileReviewCards(trello, {} as GitClient, github, project, {
+        onHumanReviewCardsObserved,
+        onHumanReviewCardLeft,
+      }),
     ).resolves.toEqual({
       card: card(),
       pullRequestUrl: "https://github.com/owner/repo/pull/1",
@@ -207,6 +212,8 @@ describe("reconcileReviewCards", () => {
     });
 
     expect(trello.moveCard).toHaveBeenCalledWith("card-1", "working");
+    expect(onHumanReviewCardsObserved).toHaveBeenCalledWith(["card-1"]);
+    expect(onHumanReviewCardLeft).toHaveBeenCalledWith("card-1");
   });
 
   it("leaves a card in Human Review when a requested-changes move is uncertain and retries later", async () => {

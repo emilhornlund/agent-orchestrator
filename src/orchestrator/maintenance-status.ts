@@ -4,7 +4,7 @@ import type {
   PullRequestDescriptionStatusOptions,
 } from "../github/github-client.js";
 import { type ManagedPullRequestStatus } from "../github/pull-request-status.js";
-import { annotateCardFailure } from "./failure-diagnostic.js";
+import { annotateCardFailure, annotateFailure } from "./failure-diagnostic.js";
 import { WorkflowError } from "./workflow-error.js";
 import type { TrelloCard } from "../trello/trello-client.js";
 import type { Logger } from "../logging/logger.js";
@@ -47,6 +47,12 @@ export async function updateMaintenanceStatus(
     );
 
     annotateCardFailure(presentationError, project.id, card.id);
+    annotateFailure(presentationError, {
+      projectId: project.id,
+      cardId: card.id,
+      reconciliationOperation: `Human Review status presentation: ${phase}`,
+      reconciliationListId: project.trello.reviewListId,
+    });
     if (bestEffortOptions.bestEffort !== true) {
       cardLog.error(presentationError.message);
     }

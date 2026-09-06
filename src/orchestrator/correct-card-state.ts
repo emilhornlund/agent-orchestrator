@@ -3,7 +3,7 @@ import { logger } from "../logging/logger.js";
 import type { TrelloCard, TrelloClient } from "../trello/trello-client.js";
 import { presentExternalDiagnostic } from "../security/bounded-diagnostic.js";
 
-import { annotateCardFailure } from "./failure-diagnostic.js";
+import { annotateCardFailure, annotateFailure } from "./failure-diagnostic.js";
 import { WorkflowError } from "./workflow-error.js";
 
 export async function correctCardToBacklog(
@@ -12,6 +12,13 @@ export async function correctCardToBacklog(
   card: TrelloCard,
   reason: string,
   signal?: AbortSignal,
+  reconciliationContext: {
+    reconciliationOperation: string;
+    reconciliationListId: string;
+  } = {
+    reconciliationOperation: "Card state correction",
+    reconciliationListId: project.trello.workingListId,
+  },
 ): Promise<void> {
   if (signal?.aborted) {
     return;
@@ -38,6 +45,11 @@ export async function correctCardToBacklog(
     );
 
     annotateCardFailure(correctionError, project.id, card.id);
+    annotateFailure(correctionError, {
+      projectId: project.id,
+      cardId: card.id,
+      ...reconciliationContext,
+    });
     throw correctionError;
   }
 

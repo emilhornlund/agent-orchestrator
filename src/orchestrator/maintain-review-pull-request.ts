@@ -15,7 +15,7 @@ import {
   type CommandRunner,
 } from "../process/command-runner.js";
 import { runRepositorySetup } from "../process/run-setup.js";
-import { annotateCardFailure } from "./failure-diagnostic.js";
+import { annotateCardFailure, annotateFailure } from "./failure-diagnostic.js";
 import {
   PullRequestStatusPresentationError,
   updateMaintenanceStatus,
@@ -73,6 +73,12 @@ function maintenanceError(
   );
 
   annotateCardFailure(workflowError, project.id, card.id);
+  annotateFailure(workflowError, {
+    projectId: project.id,
+    cardId: card.id,
+    reconciliationOperation: `Human Review maintenance: ${operation}`,
+    reconciliationListId: project.trello.reviewListId,
+  });
   return workflowError;
 }
 
@@ -182,6 +188,12 @@ function setupMaintenanceError(
   );
 
   annotateCardFailure(workflowError, project.id, card.id);
+  annotateFailure(workflowError, {
+    projectId: project.id,
+    cardId: card.id,
+    reconciliationOperation: "Human Review repository setup",
+    reconciliationListId: project.trello.reviewListId,
+  });
   return workflowError;
 }
 

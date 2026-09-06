@@ -68,6 +68,8 @@ export interface ReconcileReviewCardsOptions {
   maintenance?: {
     commands: CommandRunner;
   };
+  onHumanReviewCardsObserved?: (cardIds: string[]) => void;
+  onHumanReviewCardLeft?: (cardId: string) => void;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -116,6 +118,8 @@ export async function reconcileReviewCards(
     return null;
   }
 
+  options.onHumanReviewCardsObserved?.(cards.map((card) => card.id));
+
   if (cards.length === 0) {
     return null;
   }
@@ -142,7 +146,13 @@ export async function reconcileReviewCards(
         card,
         `Human Review card has no expected pull request for agent/${card.id}`,
         signal,
+        {
+          reconciliationOperation: "Human Review card correction",
+          reconciliationListId: project.trello.reviewListId,
+        },
       );
+
+      options.onHumanReviewCardLeft?.(card.id);
 
       if (signal?.aborted) {
         return null;
@@ -175,6 +185,8 @@ export async function reconcileReviewCards(
     annotateFailure(reconciliationError, {
       projectId: project.id,
       cardIds: activeStates.map((state) => state.card.id),
+      reconciliationOperation: "Human Review card reconciliation",
+      reconciliationListId: project.trello.reviewListId,
       sessionLogPaths: activeStates
         .map((state) => getExistingSessionLogPath(project.id, state.card.id))
         .filter(
@@ -232,6 +244,7 @@ export async function reconcileReviewCards(
           cardLog,
           emailNotifier,
           signal,
+          options.onHumanReviewCardLeft,
         );
       } else if (state.pullRequest.state === "CLOSED") {
         await returnClosedReviewCardToBacklog(
@@ -243,6 +256,7 @@ export async function reconcileReviewCards(
           state.preparedConflict,
           cardLog,
           signal,
+          options.onHumanReviewCardLeft,
         );
       }
 
@@ -294,6 +308,7 @@ export async function reconcileReviewCards(
         return null;
       }
 
+      options.onHumanReviewCardLeft?.(state.card.id);
       cardLog.event("Card with requested changes moved to Working");
     } else {
       cardLog.event(
@@ -347,10 +362,18 @@ export async function reconcileReviewCards(
       const preparedConflict = readPreparedConflict(project, state.card.id);
 
       if (preparedConflict === null) {
-        throw new WorkflowError(
+        const reconciliationError = new WorkflowError(
           "Git/GitHub",
           "Prepared conflict state disappeared before it could be exposed",
         );
+
+        annotateFailure(reconciliationError, {
+          projectId: project.id,
+          cardId: state.card.id,
+          reconciliationOperation: "Human Review prepared conflict handoff",
+          reconciliationListId: project.trello.reviewListId,
+        });
+        throw reconciliationError;
       }
 
       return {
@@ -631,6 +654,7 @@ async function completeMergedReviewCard(
   cardLog: ReturnType<typeof logger.child>,
   emailNotifier?: EmailNotifier,
   signal?: AbortSignal,
+  onHumanReviewCardLeft?: (cardId: string) => void,
 ): Promise<void> {
   if (signal?.aborted) {
     return;
@@ -711,6 +735,12 @@ async function completeMergedReviewCard(
     );
 
     annotateCardFailure(reconciliationError, project.id, card.id);
+    annotateFailure(reconciliationError, {
+      projectId: project.id,
+      cardId: card.id,
+      reconciliationOperation: "Human Review merged branch cleanup",
+      reconciliationListId: project.trello.reviewListId,
+    });
     throw reconciliationError;
   }
 
@@ -732,6 +762,7 @@ async function completeMergedReviewCard(
       dueComplete: true,
     });
 
+    onHumanReviewCardLeft?.(card.id);
     cardLog.event("Merged card moved to Done");
   } catch (error) {
     const message = getErrorMessage(error);
@@ -790,6 +821,7 @@ async function returnClosedReviewCardToBacklog(
   preparedConflict: PreparedConflictHandoff | undefined,
   cardLog: ReturnType<typeof logger.child>,
   signal?: AbortSignal,
+  onHumanReviewCardLeft?: (cardId: string) => void,
 ): Promise<void> {
   if (signal?.aborted) {
     return;
@@ -814,6 +846,7 @@ async function returnClosedReviewCardToBacklog(
 
   try {
     await trello.moveCard(card.id, project.trello.backlogListId);
+    onHumanReviewCardLeft?.(card.id);
     cardLog.event("Card with closed pull request moved to Backlog");
   } catch (error) {
     const message = getErrorMessage(error);
@@ -917,6 +950,12 @@ function clearPreparedConflictForTerminalCard(
     );
 
     annotateCardFailure(reconciliationError, project.id, card.id);
+    annotateFailure(reconciliationError, {
+      projectId: project.id,
+      cardId: card.id,
+      reconciliationOperation: "Human Review prepared conflict cleanup",
+      reconciliationListId: project.trello.reviewListId,
+    });
     throw reconciliationError;
   }
 }
