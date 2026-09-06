@@ -30,6 +30,7 @@ Cards with the `Refinement` label are refined before implementation. Other eligi
 classification label: `Feature`, `Improvement`, or `Bug`. The orchestrator creates pull requests and responds to review
 feedback. Human approval is required unless the project's `autoMerge` setting is explicitly enabled. See the [workflow
 reference](docs/workflow.md) for the complete lifecycle, lists, labels, and transitions.
+Pull request descriptions may be generated automatically from the final implementation result.
 
 ## Documentation
 
