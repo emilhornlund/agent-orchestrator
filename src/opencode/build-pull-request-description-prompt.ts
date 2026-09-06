@@ -1,5 +1,12 @@
 import type { TrelloCard } from "../trello/trello-client.js";
 
+import {
+  MAX_PULL_REQUEST_DESCRIPTION_CHANGES,
+  MAX_PULL_REQUEST_DESCRIPTION_ITEM_LENGTH,
+  MAX_PULL_REQUEST_DESCRIPTION_SUMMARY_LENGTH,
+  MAX_PULL_REQUEST_DESCRIPTION_VALIDATION,
+} from "./pull-request-description.js";
+
 export interface PullRequestDescriptionPromptContext {
   changedFiles: string;
   commitSha: string;
@@ -46,6 +53,7 @@ export function buildPullRequestDescriptionPrompt(
     '- "summary": a non-blank string describing the completed implementation,',
     '- "changes": an array of non-blank strings describing the actual changes,',
     '- "validation": an array of non-blank strings describing known validation or test results.',
+    `The summary must be at most ${MAX_PULL_REQUEST_DESCRIPTION_SUMMARY_LENGTH} characters; changes and validation may each contain at most ${MAX_PULL_REQUEST_DESCRIPTION_CHANGES} and ${MAX_PULL_REQUEST_DESCRIPTION_VALIDATION} items respectively, and every item must be at most ${MAX_PULL_REQUEST_DESCRIPTION_ITEM_LENGTH} characters.`,
     "Use an empty validation array when no validation or test result is known.",
   ].join("\n");
 }

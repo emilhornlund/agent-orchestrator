@@ -4,7 +4,13 @@ import {
   buildPullRequestDescriptionPrompt,
   type PullRequestDescriptionPromptContext,
 } from "../src/opencode/build-pull-request-description-prompt.js";
-import { parsePullRequestDescription } from "../src/opencode/pull-request-description.js";
+import {
+  MAX_PULL_REQUEST_DESCRIPTION_CHANGES,
+  MAX_PULL_REQUEST_DESCRIPTION_ITEM_LENGTH,
+  MAX_PULL_REQUEST_DESCRIPTION_SUMMARY_LENGTH,
+  MAX_PULL_REQUEST_DESCRIPTION_VALIDATION,
+  parsePullRequestDescription,
+} from "../src/opencode/pull-request-description.js";
 import type { TrelloCard } from "../src/trello/trello-client.js";
 
 const card: TrelloCard = {
@@ -39,6 +45,9 @@ describe("buildPullRequestDescriptionPrompt", () => {
     );
     expect(prompt).toContain("- yarn validate: passed");
     expect(prompt).toContain("Return exactly one JSON object");
+    expect(prompt).toContain(
+      "The summary must be at most 1000 characters; changes and validation may each contain at most 20 and 20 items respectively, and every item must be at most 500 characters.",
+    );
   });
 
   it("makes unavailable validation information explicit", () => {
@@ -82,6 +91,50 @@ describe("parsePullRequestDescription", () => {
     ).toEqual([]);
   });
 
+  it("accepts empty changes and validation arrays", () => {
+    expect(
+      parsePullRequestDescription(
+        JSON.stringify({
+          summary: "No generated details are available.",
+          changes: [],
+          validation: [],
+        }),
+      ),
+    ).toEqual({
+      summary: "No generated details are available.",
+      changes: [],
+      validation: [],
+    });
+  });
+
+  it("accepts values exactly at every configured boundary", () => {
+    expect(
+      parsePullRequestDescription(
+        JSON.stringify({
+          summary: "s".repeat(MAX_PULL_REQUEST_DESCRIPTION_SUMMARY_LENGTH),
+          changes: Array.from(
+            { length: MAX_PULL_REQUEST_DESCRIPTION_CHANGES },
+            () => "c".repeat(MAX_PULL_REQUEST_DESCRIPTION_ITEM_LENGTH),
+          ),
+          validation: Array.from(
+            { length: MAX_PULL_REQUEST_DESCRIPTION_VALIDATION },
+            () => "v".repeat(MAX_PULL_REQUEST_DESCRIPTION_ITEM_LENGTH),
+          ),
+        }),
+      ),
+    ).toEqual({
+      summary: "s".repeat(MAX_PULL_REQUEST_DESCRIPTION_SUMMARY_LENGTH),
+      changes: Array.from(
+        { length: MAX_PULL_REQUEST_DESCRIPTION_CHANGES },
+        () => "c".repeat(MAX_PULL_REQUEST_DESCRIPTION_ITEM_LENGTH),
+      ),
+      validation: Array.from(
+        { length: MAX_PULL_REQUEST_DESCRIPTION_VALIDATION },
+        () => "v".repeat(MAX_PULL_REQUEST_DESCRIPTION_ITEM_LENGTH),
+      ),
+    });
+  });
+
   it.each([
     ["plain text", "not JSON", "not valid JSON"],
     ["Markdown-wrapped JSON", "```json\n{}\n```", "not valid JSON"],
@@ -105,6 +158,57 @@ describe("parsePullRequestDescription", () => {
       "unexpected fields",
       '{"summary":"A summary","changes":[],"validation":[],"extra":true}',
       "unexpected field(s): extra",
+    ],
+    [
+      "oversized summary",
+      JSON.stringify({
+        summary: "s".repeat(MAX_PULL_REQUEST_DESCRIPTION_SUMMARY_LENGTH + 1),
+        changes: [],
+        validation: [],
+      }),
+      `summary must not exceed ${MAX_PULL_REQUEST_DESCRIPTION_SUMMARY_LENGTH} characters`,
+    ],
+    [
+      "too many changes",
+      JSON.stringify({
+        summary: "A summary",
+        changes: Array.from(
+          { length: MAX_PULL_REQUEST_DESCRIPTION_CHANGES + 1 },
+          () => "A change",
+        ),
+        validation: [],
+      }),
+      `changes must not contain more than ${MAX_PULL_REQUEST_DESCRIPTION_CHANGES} items`,
+    ],
+    [
+      "too many validation entries",
+      JSON.stringify({
+        summary: "A summary",
+        changes: [],
+        validation: Array.from(
+          { length: MAX_PULL_REQUEST_DESCRIPTION_VALIDATION + 1 },
+          () => "A result",
+        ),
+      }),
+      `validation must not contain more than ${MAX_PULL_REQUEST_DESCRIPTION_VALIDATION} items`,
+    ],
+    [
+      "oversized change item",
+      JSON.stringify({
+        summary: "A summary",
+        changes: ["c".repeat(MAX_PULL_REQUEST_DESCRIPTION_ITEM_LENGTH + 1)],
+        validation: [],
+      }),
+      `changes[0] must not exceed ${MAX_PULL_REQUEST_DESCRIPTION_ITEM_LENGTH} characters`,
+    ],
+    [
+      "oversized validation item",
+      JSON.stringify({
+        summary: "A summary",
+        changes: [],
+        validation: ["v".repeat(MAX_PULL_REQUEST_DESCRIPTION_ITEM_LENGTH + 1)],
+      }),
+      `validation[0] must not exceed ${MAX_PULL_REQUEST_DESCRIPTION_ITEM_LENGTH} characters`,
     ],
   ])("rejects %s", (_name, output, diagnostic) => {
     expect(() => parsePullRequestDescription(output)).toThrow(diagnostic);

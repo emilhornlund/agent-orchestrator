@@ -144,10 +144,11 @@ continues. The fallback body is the Trello card URL followed by the fixed Agent 
 malformed, or unvalidated generated content is never published. Publication details and non-force-push boundaries are in
 [Operations](operations.md).
 
-The description result contract is strict: `summary` is a non-blank string, while `changes` and `validation` are arrays whose
-entries are non-blank strings. Empty arrays are allowed, including an empty `validation` array when no validation or test result
-is known. JSON wrapped in Markdown, missing fields, wrong types, and extra fields are rejected. The result is generated after
-publication rebasing. The standalone application renderer for this contract uses the fixed `Summary`, `Changes`, `Validation`,
+The description result contract is strict: `summary` is a non-blank string of at most 1,000 characters, while `changes` and
+`validation` are arrays of at most 20 non-blank strings each, with every entry limited to 500 characters. Empty arrays are
+allowed, including an empty `validation` array when no validation or test result is known. JSON wrapped in Markdown, missing
+fields, wrong types, extra fields, and values beyond these fixed bounds are rejected. The result is generated after publication
+rebasing. The standalone application renderer for this contract uses the fixed `Summary`, `Changes`, `Validation`,
 and `Task` sections, places the application-provided Trello card link in `Task`, adds the fixed Agent Orchestrator attribution,
 and reserves exactly one `<!-- agent-orchestrator-status:start -->` / `<!-- agent-orchestrator-status:end -->` region. Empty
 `changes` render as `No changes were provided.` and empty `validation` renders as `No validation or test results were provided.`;

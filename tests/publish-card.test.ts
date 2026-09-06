@@ -9,6 +9,7 @@ import {
 import { GitHubCredentialProvider } from "../src/github/github-credential-provider.js";
 import type { EmailNotifier } from "../src/notifications/email-notifier.js";
 import type { OpenCodeClient } from "../src/opencode/opencode-client.js";
+import { MAX_PULL_REQUEST_DESCRIPTION_SUMMARY_LENGTH } from "../src/opencode/pull-request-description.js";
 import { formatFailureDiagnostic } from "../src/orchestrator/failure-diagnostic.js";
 import { publishCard } from "../src/orchestrator/publish-card.js";
 import { WorkflowError } from "../src/orchestrator/workflow-error.js";
@@ -930,6 +931,14 @@ describe("publishCard", () => {
   it.each([
     ["malformed JSON", "not JSON"],
     ["missing required fields", JSON.stringify({ summary: "A summary" })],
+    [
+      "oversized generated summary",
+      JSON.stringify({
+        summary: "s".repeat(MAX_PULL_REQUEST_DESCRIPTION_SUMMARY_LENGTH + 1),
+        changes: [],
+        validation: [],
+      }),
+    ],
   ])("uses the deterministic body for %s", async (_failure, output) => {
     const git = createPublicationGit({
       getChangedFiles: vi.fn().mockResolvedValue("src/example.ts"),
