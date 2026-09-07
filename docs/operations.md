@@ -310,6 +310,14 @@ The publication rules are:
 - Normal publication never force-pushes. It merges a pull request only for a project with `autoMerge: true`, after that
   project's normal implementation publication succeeds.
 
+Requested-change no-ops are handled before publication. When OpenCode successfully determines that current review feedback is already
+satisfied, stale, or no longer applicable and leaves the worktree clean, the orchestrator writes a card-scoped no-op identity and
+returns the card to `Human Review`. It retains the existing PR URL and remote task branch, skips the commit session, push, PR
+creation/replacement, merge, and `Done` transition. The Trello diagnostic includes bounded PR head and attributed feedback context,
+does not call the feedback resolved, and is best effort after the confirmed Human Review transition. Repeated polls suppress the same
+URL/head/feedback identity; a reviewer dismissal or update, or a new PR head, makes the card eligible again. This exception applies
+only to requested-change feedback; initial implementation and ordinary review-remediation sessions still require repository changes.
+
 The task worktree and branch are preserved after fetch, rebase, publication, or merge failures so conflicts and diagnostics
 can be resolved. A human must review and merge the pull request before the card can reach `Done` when `autoMerge` is disabled.
 An enabled project's successful auto-merge is followed by the same `Done` transition and completion handling.

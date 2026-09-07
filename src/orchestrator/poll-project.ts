@@ -83,6 +83,12 @@ import {
 } from "./reconcile-working-cards.js";
 import { WorkflowError } from "./workflow-error.js";
 import { getElapsedRefinementWorkflowTime } from "./workflow-duration.js";
+import {
+  buildRequestedChangeNoOpComment,
+  writeRequestedChangeNoOpState,
+  type RequestedChangeNoOpInput,
+} from "./requested-change-no-op-state.js";
+import { trelloReconciliationError } from "./trello-reconciliation-error.js";
 
 export type PollingProject = ProjectConfig & {
   contextRoot?: string;
@@ -655,7 +661,7 @@ async function processReviewChangeRequest(
   cardLog.event(`Processing requested changes for: ${card.name}`);
 
   try {
-    const worktree = await processCardChanges(
+    const result = await processCardChanges(
       trello,
       git,
       github,
@@ -666,11 +672,25 @@ async function processReviewChangeRequest(
       signal,
       {
         pullRequestUrl: reviewChangeRequest.pullRequestUrl,
+        headSha: reviewChangeRequest.headSha,
         feedback: reviewChangeRequest.feedback,
       },
       undefined,
       emailNotifier,
     );
+
+    if (result.requestedChangeNoOp !== undefined) {
+      await preserveRequestedChangeNoOp(
+        trello,
+        project,
+        card,
+        result.requestedChangeNoOp,
+        cardLog,
+        signal,
+      );
+    }
+
+    const worktree = result.worktree;
 
     if (signal.aborted) {
       cardLog.event("Review change workflow stopped before worktree cleanup");
@@ -735,7 +755,7 @@ async function processImplementationCard(
   });
 
   try {
-    const worktree = await processCardChanges(
+    const result = await processCardChanges(
       trello,
       git,
       github,
@@ -748,6 +768,8 @@ async function processImplementationCard(
       preparedWorktree,
       emailNotifier,
     );
+
+    const worktree = result.worktree;
 
     if (signal.aborted) {
       cardLog.event("Card workflow stopped before worktree cleanup");
@@ -812,7 +834,58 @@ async function processImplementationCard(
 
 interface ReviewIterationOptions {
   pullRequestUrl: string;
+  headSha: string;
   feedback: PullRequestReviewFeedback;
+}
+
+type RequestedChangeNoOpResult = RequestedChangeNoOpInput;
+
+interface ProcessCardChangesResult {
+  worktree: {
+    path: string;
+    branch: string;
+  };
+  requestedChangeNoOp?: RequestedChangeNoOpResult;
+}
+
+async function preserveRequestedChangeNoOp(
+  trello: TrelloClient,
+  project: ProjectConfig,
+  card: TrelloCard,
+  input: RequestedChangeNoOpInput,
+  cardLog: Logger,
+  signal: AbortSignal,
+): Promise<void> {
+  writeRequestedChangeNoOpState(project, card.id, input);
+
+  if (signal.aborted) {
+    return;
+  }
+
+  try {
+    await trello.moveCard(card.id, project.trello.reviewListId);
+  } catch (error) {
+    throw trelloReconciliationError(
+      project.id,
+      card.id,
+      "card move",
+      error,
+      `Could not return requested-change no-op card to Human Review: ${error instanceof Error ? error.message : String(error)}`,
+      { reconciliationListId: project.trello.workingListId },
+    );
+  }
+
+  cardLog.event(
+    `Requested-change remediation made no repository changes; card remains in Human Review for ${input.pullRequestUrl} at head ${input.headSha}`,
+  );
+
+  try {
+    await trello.addComment(card.id, buildRequestedChangeNoOpComment(input));
+  } catch (error) {
+    cardLog.warn(
+      `Requested-change no-op was recorded and the card returned to Human Review, but the diagnostic comment could not be added: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
 
 async function processCardChanges(
@@ -827,10 +900,7 @@ async function processCardChanges(
   reviewIteration?: ReviewIterationOptions,
   preparedWorktree?: PreparedImplementationWorktree,
   emailNotifier?: EmailNotifier,
-): Promise<{
-  path: string;
-  branch: string;
-}> {
+): Promise<ProcessCardChangesResult> {
   const worktree = reviewIteration
     ? await prepareReviewWorktree(git, project, card.id)
     : (preparedWorktree ?? (await prepareWorktree(git, project, card.id)));
@@ -884,7 +954,7 @@ async function processCardChanges(
       ...(emailNotifier === undefined ? {} : { emailNotifier }),
     });
 
-    return worktree;
+    return { worktree };
   }
 
   if (project.repository.setupCommand) {
@@ -972,6 +1042,17 @@ async function processCardChanges(
   const status = await git.getStatus(worktree.path);
 
   if (status.length === 0) {
+    if (reviewIteration !== undefined) {
+      return {
+        worktree,
+        requestedChangeNoOp: {
+          pullRequestUrl: reviewIteration.pullRequestUrl,
+          headSha: reviewIteration.headSha,
+          feedback: reviewIteration.feedback,
+        },
+      };
+    }
+
     throw new WorkflowError(
       "OpenCode",
       "OpenCode completed without repository changes",
@@ -1178,7 +1259,7 @@ async function processCardChanges(
     ...(emailNotifier === undefined ? {} : { emailNotifier }),
   });
 
-  return worktree;
+  return { worktree };
 }
 
 async function prepareCardContext(

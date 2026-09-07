@@ -36,10 +36,16 @@ import {
   readPreparedConflict,
   type PreparedConflictHandoff,
 } from "./prepared-conflict-state.js";
+import {
+  matchesRequestedChangeNoOp,
+  readRequestedChangeNoOpState,
+  type RequestedChangeNoOpState,
+} from "./requested-change-no-op-state.js";
 
 export interface ReviewChangeRequest {
   card: TrelloCard;
   pullRequestUrl: string;
+  headSha: string;
   feedback: PullRequestReviewFeedback;
   maintenanceState?: PullRequestMaintenanceState;
 }
@@ -53,6 +59,7 @@ export interface ActiveReviewCard {
   maintenanceState: PullRequestMaintenanceState;
   preparedConflict?: PreparedConflictHandoff;
   pullRequestUrl?: string;
+  requestedChangeNoOp?: RequestedChangeNoOpState;
 }
 
 interface ReviewCardState {
@@ -62,6 +69,7 @@ interface ReviewCardState {
   maintenanceState?: PullRequestMaintenanceState;
   changesRequested?: ReviewChangeRequest;
   requestedChangesHeadChanged?: boolean;
+  requestedChangeNoOp?: RequestedChangeNoOpState;
   preparedConflict?: PreparedConflictHandoff;
 }
 
@@ -319,6 +327,20 @@ export async function reconcileReviewCards(
     }
 
     return state.changesRequested;
+  }
+
+  if (state.requestedChangeNoOp !== undefined) {
+    cardLog.event(
+      `Suppressing unchanged requested-change no-op for pull request ${state.requestedChangeNoOp.pullRequestUrl} at head ${state.requestedChangeNoOp.headSha}; the card remains in Human Review for reviewer action`,
+    );
+
+    return {
+      card: state.card,
+      active: true,
+      maintenanceState: state.maintenanceState!,
+      requestedChangeNoOp: state.requestedChangeNoOp,
+      pullRequestUrl: state.requestedChangeNoOp.pullRequestUrl,
+    };
   }
 
   if (state.requestedChangesHeadChanged === true) {
@@ -607,6 +629,33 @@ async function inspectReviewCard(
         requestedChangesHeadChanged: true,
       };
     }
+
+    if (typeof project.repository.worktreeRoot === "string") {
+      let noOpState: RequestedChangeNoOpState | null;
+
+      try {
+        noOpState = readRequestedChangeNoOpState(project, card.id);
+      } catch (error) {
+        throw reviewLookupError(project, card, "requested changes", error);
+      }
+
+      if (
+        noOpState !== null &&
+        matchesRequestedChangeNoOp(noOpState, {
+          pullRequestUrl: changesRequestedPullRequest.url,
+          headSha: changesRequestedPullRequest.headSha,
+          feedback: changesRequestedPullRequest.feedback,
+        })
+      ) {
+        return {
+          card,
+          branch,
+          pullRequest,
+          maintenanceState,
+          requestedChangeNoOp: noOpState,
+        };
+      }
+    }
   }
 
   return {
@@ -620,6 +669,7 @@ async function inspectReviewCard(
           changesRequested: {
             card,
             pullRequestUrl: changesRequestedPullRequest.url,
+            headSha: changesRequestedPullRequest.headSha,
             feedback: changesRequestedPullRequest.feedback,
             maintenanceState,
           },

@@ -13,8 +13,13 @@ import {
   reconcileClaimedCard,
   reconcileWorkingCards,
 } from "../src/orchestrator/reconcile-working-cards.js";
+import { writeRequestedChangeNoOpState } from "../src/orchestrator/requested-change-no-op-state.js";
 import type { EmailNotifier } from "../src/notifications/email-notifier.js";
-import type { TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
+import {
+  TrelloRequestError,
+  type TrelloCard,
+  type TrelloClient,
+} from "../src/trello/trello-client.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -374,6 +379,63 @@ describe("reconcileWorkingCards", () => {
     });
 
     expect(trello.moveCard).not.toHaveBeenCalled();
+  });
+
+  it("suppresses a persisted no-op while Working and retries only the move to Human Review", async () => {
+    const worktreeRoot = createWorktreeRoot();
+    const configuredProject = {
+      ...project,
+      repository: { ...project.repository, worktreeRoot },
+    } as ProjectConfig;
+    const trello = {
+      getCards: vi.fn().mockResolvedValue([card()]),
+      getLatestListTransition: vi.fn().mockResolvedValue(transition("review")),
+      moveCard: vi
+        .fn()
+        .mockRejectedValueOnce(
+          new TrelloRequestError(
+            "card move",
+            "Trello request failed: 503 Unavailable",
+            { status: 503, retryable: true },
+          ),
+        )
+        .mockResolvedValueOnce({ ...card(), idList: "review" }),
+      addComment: vi.fn().mockResolvedValue(undefined),
+    } as unknown as TrelloClient;
+    const github = {
+      findPullRequest: vi.fn().mockResolvedValue({
+        url: "https://github.com/owner/repo/pull/1",
+      }),
+      findChangesRequestedPullRequest: vi.fn().mockResolvedValue({
+        url: "https://github.com/owner/repo/pull/1",
+        headSha: "head-sha",
+        feedback: "Fix the regression.",
+      }),
+    } as unknown as GitHubClient;
+
+    writeRequestedChangeNoOpState(configuredProject, "card-1", {
+      pullRequestUrl: "https://github.com/owner/repo/pull/1",
+      headSha: "head-sha",
+      feedback: "Fix the regression.",
+    });
+
+    await expect(
+      reconcileWorkingCards(trello, {} as GitClient, github, configuredProject),
+    ).rejects.toMatchObject({
+      name: "RetryableTrelloReconciliationError",
+      operation: "card move",
+    });
+
+    await expect(
+      reconcileWorkingCards(trello, {} as GitClient, github, configuredProject),
+    ).resolves.toBeNull();
+
+    expect(github.findChangesRequestedPullRequest).toHaveBeenCalledTimes(2);
+    expect(trello.moveCard).toHaveBeenCalledTimes(2);
+    expect(trello.addComment).toHaveBeenCalledWith(
+      "card-1",
+      expect.stringContaining("no repository changes"),
+    );
   });
 
   it("leaves a Working card unchanged when its requested-changes lookup times out", async () => {
