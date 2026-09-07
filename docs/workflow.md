@@ -212,12 +212,14 @@ SHAs before retrying on the next poll. A retry that reuses already committed wor
 attachment-dependent prompts, and proceeds directly to publication.
 
 Requested-changes remediation feedback includes a separate, attributed section for every submitted `CHANGES_REQUESTED` review
-targeting the pull request's current head. Each section preserves the review ID, reviewer, submission timestamp, review body,
-and only the inline comments belonging to that review. Review bodies are treated as general pull-request-level feedback and have
-no file, line, or diff location. Inline comments retain each location field GitHub supplies, including a path, current line,
-original line, or diff hunk. Fully scoped inline comments retain all of their supplied location and diff context. Partially scoped
-comments remain actionable; unavailable location fields are omitted rather than inferred or replaced with placeholders. Reviews
-targeting older pull-request heads are excluded. This applies to review-body-only, inline-only, and mixed feedback.
+targeting the pull request's current head. Once that current-head review state makes a remediation round eligible, unresolved
+inline threads from earlier heads are also included when GitHub explicitly reports them as unresolved and not outdated. Earlier
+thread sections are marked as carried-forward unresolved inline feedback and contain no earlier review body. Each section
+preserves the review or thread identity, reviewer, submission timestamp, and only the inline comments belonging to that review.
+Review bodies are treated as general pull-request-level feedback and have no file, line, or diff location. Inline comments retain
+each location field GitHub supplies, including a path, current line, original line, or diff hunk. Resolved, outdated, and
+incompletely described threads are excluded or fail reconciliation rather than being inferred. This applies to review-body-only,
+inline-only, and mixed feedback.
 
 If the requested-change OpenCode session exits successfully but leaves the repository clean, it is a requested-change no-op, not a
 workflow failure. The existing pull request and remote `agent/<trello-card-id>` branch are retained, no commit, push, pull-request

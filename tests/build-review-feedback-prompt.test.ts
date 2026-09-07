@@ -176,4 +176,46 @@ describe("buildReviewFeedbackPrompt", () => {
     );
     expect(prompt).toContain("Please document the behavior.");
   });
+
+  it("labels carried-forward inline feedback separately from current-head feedback", () => {
+    const prompt = buildReviewFeedbackPrompt(
+      {
+        id: "card-1",
+        name: "Fix the parser",
+        desc: "Handle malformed input.",
+        idList: "working",
+        idLabels: [],
+        url: "https://trello.com/c/card-1",
+      },
+      "https://github.com/example/repository/pull/123",
+      {
+        reviews: [
+          {
+            id: 12,
+            body: null,
+            author: "reviewer",
+            submittedAt: "2026-01-01T10:00:00Z",
+            source: "carried-forward",
+            inlineComments: [
+              {
+                body: "Still fix this.",
+                author: "reviewer",
+                threadId: "thread-1",
+                source: "carried-forward",
+                path: "src/parser.ts",
+                line: 10,
+              },
+            ],
+          },
+        ],
+      },
+    );
+
+    expect(prompt).toContain(
+      "Review 1 (ID: 12; reviewer: reviewer; submitted: 2026-01-01T10:00:00Z; source: carried-forward unresolved inline feedback)",
+    );
+    expect(prompt).toContain(
+      "reviewer [src/parser.ts, line 10]: Still fix this.",
+    );
+  });
 });

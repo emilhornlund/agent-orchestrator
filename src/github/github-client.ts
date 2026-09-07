@@ -126,6 +126,7 @@ export interface PullRequestReview {
   author: string | null;
   submittedAt: string;
   inlineComments: InlineReviewComment[];
+  source?: "current-head" | "carried-forward";
 }
 
 interface PullRequestReviewListItem {
@@ -145,6 +146,7 @@ interface RequestedChangesReview {
 }
 
 interface ValidatedInlineReviewComment {
+  id?: number;
   reviewId: number | null;
   body: string | null;
   author: string | null;
@@ -154,6 +156,25 @@ interface ValidatedInlineReviewComment {
   diffHunk?: string;
 }
 
+interface ValidatedReviewThreadComment {
+  id: number;
+  threadId: string;
+  reviewId: number;
+  body: string;
+  author: string | null;
+  path?: string;
+  line?: number;
+  originalLine?: number;
+  diffHunk?: string;
+}
+
+interface ValidatedReviewThread {
+  id: string;
+  isResolved: boolean;
+  isOutdated: boolean;
+  comments: ValidatedReviewThreadComment[];
+}
+
 export interface InlineReviewComment {
   body: string;
   author: string | null;
@@ -161,6 +182,8 @@ export interface InlineReviewComment {
   line?: number;
   originalLine?: number;
   diffHunk?: string;
+  threadId?: string;
+  source?: "current-head" | "carried-forward";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -434,6 +457,7 @@ function validateInlineReviewComment(
     throw new Error("GitHub CLI returned an invalid inline review comment");
   }
 
+  const id = value.id;
   const reviewId = value.pull_request_review_id;
   const body = value.body;
   const user = value.user;
@@ -451,6 +475,8 @@ function validateInlineReviewComment(
         : undefined;
 
   if (
+    (id !== undefined &&
+      (typeof id !== "number" || !Number.isSafeInteger(id) || id <= 0)) ||
     (reviewId !== null &&
       (typeof reviewId !== "number" ||
         !Number.isSafeInteger(reviewId) ||
@@ -476,6 +502,7 @@ function validateInlineReviewComment(
   }
 
   return {
+    ...(typeof id === "number" ? { id } : {}),
     reviewId,
     body,
     author,
@@ -484,6 +511,168 @@ function validateInlineReviewComment(
     ...(typeof originalLine === "number" ? { originalLine } : {}),
     ...(typeof diffHunk === "string" ? { diffHunk } : {}),
   };
+}
+
+const REVIEW_THREADS_QUERY = `
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100) {
+        nodes {
+          id
+          isResolved
+          isOutdated
+          comments(first: 100) {
+            nodes {
+              databaseId
+              body
+              author { login }
+              path
+              line
+              originalLine
+              diffHunk
+              pullRequestReview {
+                databaseId
+              }
+            }
+            pageInfo {
+              hasNextPage
+            }
+          }
+        }
+        pageInfo {
+          hasNextPage
+        }
+      }
+    }
+  }
+}`;
+
+function validateReviewThreadComment(
+  value: unknown,
+  threadId: string,
+): ValidatedReviewThreadComment {
+  if (!isRecord(value)) {
+    throw new Error("GitHub CLI returned an invalid review thread comment");
+  }
+
+  const id = value.databaseId;
+  const body = value.body;
+  const authorValue = value.author;
+  const author =
+    authorValue === null
+      ? null
+      : isRecord(authorValue) &&
+          typeof authorValue.login === "string" &&
+          authorValue.login.length > 0
+        ? authorValue.login
+        : undefined;
+  const path = value.path;
+  const line = value.line;
+  const originalLine = value.originalLine;
+  const diffHunk = value.diffHunk;
+  const reviewValue = value.pullRequestReview;
+  const reviewId =
+    isRecord(reviewValue) && reviewValue.databaseId !== null
+      ? reviewValue.databaseId
+      : undefined;
+
+  if (
+    typeof id !== "number" ||
+    !Number.isSafeInteger(id) ||
+    id <= 0 ||
+    typeof body !== "string" ||
+    body.length === 0 ||
+    author === undefined ||
+    typeof reviewId !== "number" ||
+    !Number.isSafeInteger(reviewId) ||
+    reviewId <= 0 ||
+    (path !== null && typeof path !== "string") ||
+    (line !== null &&
+      (typeof line !== "number" || !Number.isSafeInteger(line) || line <= 0)) ||
+    (originalLine !== null &&
+      (typeof originalLine !== "number" ||
+        !Number.isSafeInteger(originalLine) ||
+        originalLine <= 0)) ||
+    (diffHunk !== null && typeof diffHunk !== "string")
+  ) {
+    throw new Error("GitHub CLI returned an invalid review thread comment");
+  }
+
+  return {
+    id,
+    threadId,
+    reviewId,
+    body,
+    author,
+    ...(typeof path === "string" ? { path } : {}),
+    ...(typeof line === "number" ? { line } : {}),
+    ...(typeof originalLine === "number" ? { originalLine } : {}),
+    ...(typeof diffHunk === "string" ? { diffHunk } : {}),
+  };
+}
+
+function validateReviewThreadsResponse(
+  value: unknown,
+): ValidatedReviewThread[] {
+  if (
+    !isRecord(value) ||
+    (value.errors !== undefined &&
+      (!Array.isArray(value.errors) || value.errors.length > 0)) ||
+    !isRecord(value.data)
+  ) {
+    throw new Error("GitHub CLI returned an invalid review thread response");
+  }
+
+  const repository = value.data.repository;
+  const pullRequest = isRecord(repository) ? repository.pullRequest : undefined;
+  const reviewThreads = isRecord(pullRequest)
+    ? pullRequest.reviewThreads
+    : undefined;
+
+  if (!isRecord(reviewThreads)) {
+    throw new Error("GitHub CLI returned an invalid review thread response");
+  }
+
+  const nodes = reviewThreads.nodes;
+  const pageInfo = reviewThreads.pageInfo;
+
+  if (
+    !Array.isArray(nodes) ||
+    !isRecord(pageInfo) ||
+    typeof pageInfo.hasNextPage !== "boolean" ||
+    pageInfo.hasNextPage
+  ) {
+    throw new Error("GitHub CLI returned an incomplete review thread response");
+  }
+
+  return nodes.map((value) => {
+    if (
+      !isRecord(value) ||
+      typeof value.id !== "string" ||
+      value.id.length === 0 ||
+      typeof value.isResolved !== "boolean" ||
+      typeof value.isOutdated !== "boolean" ||
+      !isRecord(value.comments) ||
+      !Array.isArray(value.comments.nodes) ||
+      !isRecord(value.comments.pageInfo) ||
+      typeof value.comments.pageInfo.hasNextPage !== "boolean" ||
+      value.comments.pageInfo.hasNextPage
+    ) {
+      throw new Error("GitHub CLI returned an invalid review thread");
+    }
+
+    const threadId = value.id;
+
+    return {
+      id: threadId,
+      isResolved: value.isResolved,
+      isOutdated: value.isOutdated,
+      comments: value.comments.nodes.map((comment) =>
+        validateReviewThreadComment(comment, threadId),
+      ),
+    };
+  });
 }
 
 export type RunGitHubCommand = (
@@ -782,6 +971,52 @@ export class GitHubClient {
     return this.credentials.resolve(operationProject);
   }
 
+  private async findReviewThreads(
+    options: FindPullRequestOptions,
+    pullRequestNumber: number,
+    credential: GitHubCredential,
+  ): Promise<ValidatedReviewThread[]> {
+    const repositoryParts = options.repository.split("/");
+
+    if (
+      repositoryParts.length !== 2 ||
+      repositoryParts.some((part) => part.length === 0)
+    ) {
+      throw new Error(
+        "Cannot reconcile review threads because the GitHub repository is invalid",
+      );
+    }
+
+    const output = await this.run(
+      options.cwd,
+      [
+        "api",
+        "graphql",
+        "-f",
+        `query=${REVIEW_THREADS_QUERY}`,
+        "-F",
+        `owner=${repositoryParts[0]}`,
+        "-F",
+        `name=${repositoryParts[1]}`,
+        "-F",
+        `number=${pullRequestNumber}`,
+      ],
+      credential,
+    );
+
+    let parsed: unknown;
+
+    try {
+      parsed = JSON.parse(output);
+    } catch (error) {
+      throw new Error("GitHub CLI returned an invalid review thread response", {
+        cause: error,
+      });
+    }
+
+    return validateReviewThreadsResponse(parsed);
+  }
+
   async findPullRequest(
     options: FindPullRequestOptions,
   ): Promise<PullRequest | null> {
@@ -979,7 +1214,6 @@ export class GitHubClient {
         (review) => isRecord(review) && review.state === "CHANGES_REQUESTED",
       )
       .map(validateRequestedChangesReview)
-      .filter((review) => review.commitId === pullRequest.headRefOid)
       .sort((left, right) =>
         left.submittedAt < right.submittedAt
           ? -1
@@ -988,6 +1222,16 @@ export class GitHubClient {
             : 0,
       );
     if (reviews.length === 0) {
+      return null;
+    }
+
+    const currentHeadReviews = reviews.filter(
+      (review) => review.commitId === pullRequest.headRefOid,
+    );
+
+    // Older reviews may carry inline threads forward, but cannot make the PR
+    // actionable without a current-head requested-changes review.
+    if (currentHeadReviews.length === 0) {
       return null;
     }
 
@@ -1014,20 +1258,96 @@ export class GitHubClient {
           comment.body.length > 0,
       );
 
-    return {
-      url: parsePullRequestUrl(pullRequest.url),
-      headSha: pullRequest.headRefOid,
-      feedback: {
-        reviews: reviews.map((review) => ({
-          id: review.id,
-          body: review.body,
-          author: review.author,
-          submittedAt: review.submittedAt,
-          inlineComments: inlineComments
-            .filter((comment) => comment.reviewId === review.id)
-            .map((comment): InlineReviewComment => ({
+    const earlierReviewIds = new Set(
+      reviews
+        .filter((review) => review.commitId !== pullRequest.headRefOid)
+        .map((review) => review.id),
+    );
+    const carriedCommentsByReview = new Map<
+      number,
+      ValidatedReviewThreadComment[]
+    >();
+    const threadIdByCommentId = new Map<number, string>();
+
+    if (
+      earlierReviewIds.size > 0 ||
+      inlineComments.some((comment) => comment.id !== undefined)
+    ) {
+      const reviewThreads = await this.findReviewThreads(
+        options,
+        pullRequest.number,
+        credential,
+      );
+
+      for (const thread of reviewThreads) {
+        for (const comment of thread.comments) {
+          threadIdByCommentId.set(comment.id, thread.id);
+
+          if (thread.isResolved || thread.isOutdated) {
+            continue;
+          }
+
+          if (!earlierReviewIds.has(comment.reviewId)) {
+            continue;
+          }
+
+          const comments = carriedCommentsByReview.get(comment.reviewId) ?? [];
+          comments.push(comment);
+          carriedCommentsByReview.set(comment.reviewId, comments);
+        }
+      }
+    }
+
+    const currentReviewFeedback = currentHeadReviews.map((review) => ({
+      id: review.id,
+      body: review.body,
+      author: review.author,
+      submittedAt: review.submittedAt,
+      inlineComments: inlineComments
+        .filter((comment) => comment.reviewId === review.id)
+        .map((comment): InlineReviewComment => {
+          const threadId =
+            comment.id === undefined
+              ? undefined
+              : threadIdByCommentId.get(comment.id);
+
+          return {
+            body: comment.body,
+            author: comment.author,
+            ...(threadId === undefined ? {} : { threadId }),
+            ...(comment.path === undefined ? {} : { path: comment.path }),
+            ...(comment.line === undefined ? {} : { line: comment.line }),
+            ...(comment.originalLine === undefined
+              ? {}
+              : { originalLine: comment.originalLine }),
+            ...(comment.diffHunk === undefined
+              ? {}
+              : { diffHunk: comment.diffHunk }),
+          };
+        }),
+    }));
+
+    const carriedReviewFeedback = reviews
+      .filter((review) => review.commitId !== pullRequest.headRefOid)
+      .flatMap((review) => {
+        const comments = carriedCommentsByReview.get(review.id) ?? [];
+
+        if (comments.length === 0) {
+          return [];
+        }
+
+        return [
+          {
+            id: review.id,
+            body: null,
+            author: review.author,
+            submittedAt: review.submittedAt,
+            source: "carried-forward" as const,
+            inlineComments: comments.map((comment): InlineReviewComment => ({
               body: comment.body,
               author: comment.author,
+              threadId: comment.threadId,
+              source: "carried-forward",
               ...(comment.path === undefined ? {} : { path: comment.path }),
               ...(comment.line === undefined ? {} : { line: comment.line }),
               ...(comment.originalLine === undefined
@@ -1037,7 +1357,15 @@ export class GitHubClient {
                 ? {}
                 : { diffHunk: comment.diffHunk }),
             })),
-        })),
+          },
+        ];
+      });
+
+    return {
+      url: parsePullRequestUrl(pullRequest.url),
+      headSha: pullRequest.headRefOid,
+      feedback: {
+        reviews: [...currentReviewFeedback, ...carriedReviewFeedback],
       },
     };
   }
