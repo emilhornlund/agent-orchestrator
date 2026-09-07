@@ -102,6 +102,7 @@ export interface PullRequestHeadRepositoryOwner {
 export interface PullRequestState extends PullRequest {
   state: PullRequestStatus;
   mergedAt: string | null;
+  headRefOid?: string;
   baseRefName?: string;
   headRefName?: string;
   headRepository?: PullRequestHeadRepository | null;
@@ -111,6 +112,7 @@ export interface PullRequestState extends PullRequest {
 }
 
 export interface ChangesRequestedPullRequest extends PullRequest {
+  headSha: string;
   feedback: PullRequestReviewFeedback;
 }
 
@@ -289,6 +291,7 @@ function validatePullRequestStateList(
     );
     const mergeable = item.mergeable;
     const mergeStateStatus = item.mergeStateStatus;
+    const headRefOid = item.headRefOid;
     const requiresMaintenanceFacts =
       requireMaintenanceFacts && state === "OPEN";
     const hasHeadRepositoryIdentity =
@@ -303,7 +306,9 @@ function validatePullRequestStateList(
       (typeof mergedAt !== "string" && mergedAt !== null) ||
       (requireMaintenanceFacts && !hasHeadRepositoryIdentity) ||
       (requiresMaintenanceFacts &&
-        (typeof baseRefName !== "string" ||
+        (typeof headRefOid !== "string" ||
+          headRefOid.length === 0 ||
+          typeof baseRefName !== "string" ||
           typeof headRefName !== "string" ||
           (mergeable !== "MERGEABLE" &&
             mergeable !== "CONFLICTING" &&
@@ -326,6 +331,7 @@ function validatePullRequestStateList(
       url: parsePullRequestUrl(url),
       state,
       mergedAt,
+      ...(typeof headRefOid === "string" ? { headRefOid } : {}),
       ...(headRepository === undefined ? {} : { headRepository }),
       ...(headRepositoryOwner === undefined ? {} : { headRepositoryOwner }),
       ...(typeof baseRefName === "string" &&
@@ -1010,6 +1016,7 @@ export class GitHubClient {
 
     return {
       url: parsePullRequestUrl(pullRequest.url),
+      headSha: pullRequest.headRefOid,
       feedback: {
         reviews: reviews.map((review) => ({
           id: review.id,

@@ -61,6 +61,7 @@ interface ReviewCardState {
   pullRequest: PullRequestState;
   maintenanceState?: PullRequestMaintenanceState;
   changesRequested?: ReviewChangeRequest;
+  requestedChangesHeadChanged?: boolean;
   preparedConflict?: PreparedConflictHandoff;
 }
 
@@ -320,6 +321,14 @@ export async function reconcileReviewCards(
     return state.changesRequested;
   }
 
+  if (state.requestedChangesHeadChanged === true) {
+    return {
+      card: state.card,
+      active: true,
+      maintenanceState: state.maintenanceState!,
+    };
+  }
+
   if (signal?.aborted) {
     return null;
   }
@@ -535,6 +544,69 @@ async function inspectReviewCard(
     }
   } catch (error) {
     throw reviewLookupError(project, card, "requested changes", error);
+  }
+
+  if (changesRequestedPullRequest !== null) {
+    let authoritativePullRequest: PullRequestState | null;
+
+    try {
+      authoritativePullRequest = await github.findPullRequestState(options);
+
+      if (signal?.aborted) {
+        return null;
+      }
+    } catch (error) {
+      throw reviewLookupError(project, card, "requested changes", error);
+    }
+
+    if (
+      authoritativePullRequest === null ||
+      authoritativePullRequest.state !== "OPEN"
+    ) {
+      logger
+        .child({ projectId: project.id, cardId: card.id })
+        .event(
+          `Discarding requested-change feedback for pull request ${changesRequestedPullRequest.url}: the expected open pull request head could not be revalidated after feedback collection; the card remains in Human Review for retry`,
+        );
+
+      return {
+        card,
+        branch,
+        pullRequest,
+        maintenanceState,
+        requestedChangesHeadChanged: true,
+      };
+    }
+
+    if (authoritativePullRequest.headRefOid === undefined) {
+      throw reviewLookupError(
+        project,
+        card,
+        "requested changes",
+        new Error(
+          "GitHub returned no authoritative head SHA for the open pull request",
+        ),
+      );
+    }
+
+    if (
+      authoritativePullRequest.headRefOid !==
+      changesRequestedPullRequest.headSha
+    ) {
+      logger
+        .child({ projectId: project.id, cardId: card.id })
+        .event(
+          `Discarding requested-change feedback for pull request ${changesRequestedPullRequest.url}: PR head changed from ${changesRequestedPullRequest.headSha} to ${authoritativePullRequest.headRefOid} during reconciliation; the card remains in Human Review for retry`,
+        );
+
+      return {
+        card,
+        branch,
+        pullRequest,
+        maintenanceState,
+        requestedChangesHeadChanged: true,
+      };
+    }
   }
 
   return {

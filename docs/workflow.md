@@ -204,9 +204,12 @@ cleanup, and preserved worktrees, branches, and prepared-conflict handoffs remai
 When requested changes are detected, the orchestrator creates a worktree from the existing task branch, supplies the GitHub
 review feedback to the implementation session after refreshing the current Trello attachment context, runs the same initial-review and
 bounded remediation loop, and republishes the updated branch and pull request. An enabled project auto-merges the successfully
-republished pull request; a disabled project returns it to Human Review. A requested-changes pass starts only when the review
-feedback applies to the pull request's current head, and it gets its own transient remediation counter. A retry that reuses
-already committed work skips all OpenCode stages, including attachment-dependent prompts, and proceeds directly to publication.
+republished pull request; a disabled project returns it to Human Review. A requested-changes pass captures the authoritative PR head
+SHA used to select the feedback and re-reads the expected open PR head after review bodies and inline comments have been collected.
+Only a stable, commit-exact snapshot can move the card to Working or reach OpenCode. If the head changes, the complete snapshot is
+discarded, the card remains in Human Review with its existing PR and branch, and reconciliation logs the project, card, PR, and both
+SHAs before retrying on the next poll. A retry that reuses already committed work skips all OpenCode stages, including
+attachment-dependent prompts, and proceeds directly to publication.
 
 Requested-changes remediation feedback includes a separate, attributed section for every submitted `CHANGES_REQUESTED` review
 targeting the pull request's current head. Each section preserves the review ID, reviewer, submission timestamp, review body,

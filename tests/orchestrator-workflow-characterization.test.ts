@@ -49,6 +49,7 @@ interface HarnessOptions {
   pullRequestState?: PullRequestState;
   feedback?: string;
   requestedChangesHeadSha?: string;
+  revalidatedHeadSha?: string;
   initialRemoteSha?: string | null;
   listTransitionHistory?: boolean;
   createPullRequestError?: Error;
@@ -170,6 +171,7 @@ function createHarness(options: HarnessOptions = {}) {
   let remoteSha =
     options.initialRemoteSha ??
     (pullRequestState === "none" ? null : "previous-commit");
+  let pullRequestStateLookups = 0;
 
   const card: TrelloCard = {
     id: cardId,
@@ -414,6 +416,7 @@ function createHarness(options: HarnessOptions = {}) {
   });
   const findPullRequestState = vi.fn(async () => {
     events.push("github:find-pr-state");
+    pullRequestStateLookups += 1;
 
     if (pullRequestState === "none") {
       return null;
@@ -425,6 +428,10 @@ function createHarness(options: HarnessOptions = {}) {
       mergedAt: pullRequestState === "merged" ? "2026-09-01T13:42:03Z" : null,
       baseRefName: "main",
       headRefName: "agent/card-1",
+      headRefOid:
+        options.revalidatedHeadSha !== undefined && pullRequestStateLookups > 1
+          ? options.revalidatedHeadSha
+          : (remoteSha ?? headSha),
       headRepository: { name: "repository" },
       headRepositoryOwner: { login: "example" },
       mergeable: "MERGEABLE",
@@ -442,6 +449,7 @@ function createHarness(options: HarnessOptions = {}) {
 
     return {
       ...pullRequest,
+      headSha: remoteSha ?? headSha,
       feedback: options.feedback ?? "Please fix the regression.",
     };
   });
@@ -1399,6 +1407,36 @@ describe("orchestrator workflow characterization", () => {
     }
   });
 
+  it("does not send stale requested-change feedback to OpenCode after a head race", async () => {
+    const harness = createHarness({
+      initialList: "review",
+      pullRequestState: "requested",
+      feedback: "Feedback from the old head must not be used.",
+      revalidatedHeadSha: "new-head-after-collection",
+    });
+
+    try {
+      await pollProject(
+        harness.trello,
+        harness.git,
+        harness.github,
+        harness.openCode,
+        harness.commands,
+        harness.project,
+        new AbortController().signal,
+      );
+
+      expect(harness.card.idList).toBe(listIds.review);
+      expect(harness.moveCard).not.toHaveBeenCalled();
+      expect(harness.runOpenCode).not.toHaveBeenCalled();
+      expect(
+        harness.runOpenCode.mock.calls.map(([run]) => run.prompt),
+      ).not.toContain(expect.stringContaining("old head"));
+    } finally {
+      harness.cleanup();
+    }
+  });
+
   it("recovers current-head requested changes after a restart", async () => {
     const harness = createHarness({
       initialList: "review",
@@ -1441,7 +1479,7 @@ describe("orchestrator workflow characterization", () => {
       );
 
       expect(harness.card.idList).toBe(listIds.review);
-      expect(harness.findPullRequestState).toHaveBeenCalledTimes(2);
+      expect(harness.findPullRequestState).toHaveBeenCalledTimes(3);
       expect(harness.findChangesRequestedPullRequest).toHaveBeenCalledTimes(2);
       expect(harness.findChangesRequestedPullRequest).toHaveBeenLastCalledWith(
         expect.objectContaining({
