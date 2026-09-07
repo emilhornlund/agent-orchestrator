@@ -55,8 +55,13 @@ export function buildReviewFeedbackPrompt(
 }
 
 function formatReview(review: PullRequestReview, index: number): string[] {
+  const source =
+    review.source === "carried-forward"
+      ? "; source: carried-forward unresolved inline feedback"
+      : "";
+
   return [
-    `Review ${index + 1} (ID: ${review.id}; reviewer: ${review.author ?? "reviewer"}; submitted: ${review.submittedAt})`,
+    `Review ${index + 1} (ID: ${review.id}; reviewer: ${review.author ?? "reviewer"}; submitted: ${review.submittedAt}${source})`,
     "Review body:",
     review.body?.trim() || "No review body was returned.",
     "",

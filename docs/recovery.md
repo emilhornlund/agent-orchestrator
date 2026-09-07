@@ -114,12 +114,16 @@ More than one active card in `Human Review` is an ambiguous project state. The a
 are transitioned, so the project is blocked, no active card is selected, and no terminal card is transitioned in that cycle.
 Merged or closed cards remain available for reconciliation on the next cycle after the ambiguity is resolved.
 
-Requested-change reconciliation retains the exact PR head SHA used to select requested-change review bodies and inline comments. After
-all feedback is collected, it reads the expected open PR head again before moving the card to `Working`. If the SHA changed, the full
-feedback snapshot is discarded, no Trello transition or OpenCode remediation is started, and the card remains in `Human Review` with
-its existing pull request and branch. The race is logged with the project, card, pull request, and old and new SHAs; the next poll
-collects a new snapshot for the new head without creating an attention failure. A failure reading the authoritative head is an actual GitHub reconciliation failure and keeps
-the existing diagnostics and retry behavior.
+Requested-change reconciliation retains the exact PR head SHA used to select requested-change review bodies and inline comments. A
+current-head `CHANGES_REQUESTED` review is still required before any remediation round can start; an older review cannot start one by
+itself. Once eligible, unresolved inline threads from earlier heads are carried forward only when GitHub reports both resolution and
+outdated state, and the carried feedback retains its stable thread identity and location context. Resolved, outdated, or incomplete
+thread state is not replayed. After all feedback is collected, it reads the expected open PR head again before moving the card to
+`Working`. If the SHA changed, the full feedback snapshot is discarded, no Trello transition or OpenCode remediation is started, and
+the card remains in `Human Review` with its existing pull request and branch. The race is logged with the project, card, pull request,
+and old and new SHAs; the next poll collects a new snapshot for the new head without creating an attention failure. A failure reading
+the authoritative head or review-thread state is an actual GitHub reconciliation failure and keeps the existing diagnostics and retry
+behavior.
 
 A successful requested-change OpenCode session that leaves no repository changes is recorded as a deterministic no-op. Its identity
 includes the pull-request URL, current head SHA, and submitted feedback hash, with review IDs retained for diagnosis. The card is

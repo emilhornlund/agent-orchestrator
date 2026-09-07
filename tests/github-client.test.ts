@@ -1332,6 +1332,41 @@ describe("GitHubClient", () => {
             },
           ],
         ]),
+      )
+      .mockResolvedValueOnce(
+        JSON.stringify({
+          data: {
+            repository: {
+              pullRequest: {
+                reviewThreads: {
+                  nodes: [
+                    {
+                      id: "thread-stale",
+                      isResolved: false,
+                      isOutdated: true,
+                      comments: {
+                        nodes: [
+                          {
+                            databaseId: 1111,
+                            body: "Stale inline feedback.",
+                            author: { login: "reviewer-one" },
+                            path: "src/stale.ts",
+                            line: null,
+                            originalLine: 4,
+                            diffHunk: "@@ -4,1 +4,0 @@",
+                            pullRequestReview: { databaseId: 111 },
+                          },
+                        ],
+                        pageInfo: { hasNextPage: false },
+                      },
+                    },
+                  ],
+                  pageInfo: { hasNextPage: false },
+                },
+              },
+            },
+          },
+        }),
       );
 
     await expect(
@@ -1375,6 +1410,380 @@ describe("GitHubClient", () => {
         ],
       },
     });
+  });
+
+  it("carries unresolved applicable inline threads forward alongside new feedback", async () => {
+    const runGitHub = vi
+      .fn<RunGitHubCommand>()
+      .mockResolvedValueOnce(
+        JSON.stringify([
+          {
+            url: "https://github.com/example/repository/pull/123",
+            number: 123,
+            reviewDecision: "CHANGES_REQUESTED",
+            headRefOid: "remediation-head-sha",
+          },
+        ]),
+      )
+      .mockResolvedValueOnce(
+        JSON.stringify([
+          [
+            {
+              id: 101,
+              body: "Please fix the parser.",
+              commit_id: "initial-head-sha",
+              state: "CHANGES_REQUESTED",
+              submitted_at: "2026-01-01T10:00:00Z",
+              user: { login: "reviewer-one" },
+            },
+            {
+              id: 202,
+              body: "Please add coverage for the new branch.",
+              commit_id: "remediation-head-sha",
+              state: "CHANGES_REQUESTED",
+              submitted_at: "2026-01-02T10:00:00Z",
+              user: { login: "reviewer-two" },
+            },
+          ],
+        ]),
+      )
+      .mockResolvedValueOnce(
+        JSON.stringify([
+          [
+            {
+              id: 2002,
+              pull_request_review_id: 202,
+              body: "Add the regression test.",
+              path: "tests/parser.test.ts",
+              line: 42,
+              user: { login: "reviewer-two" },
+            },
+          ],
+        ]),
+      )
+      .mockResolvedValueOnce(
+        JSON.stringify({
+          data: {
+            repository: {
+              pullRequest: {
+                reviewThreads: {
+                  nodes: [
+                    {
+                      id: "thread-current",
+                      isResolved: false,
+                      isOutdated: false,
+                      comments: {
+                        nodes: [
+                          {
+                            databaseId: 2002,
+                            body: "Add the regression test.",
+                            author: { login: "reviewer-two" },
+                            path: "tests/parser.test.ts",
+                            line: 42,
+                            originalLine: null,
+                            diffHunk: null,
+                            pullRequestReview: { databaseId: 202 },
+                          },
+                        ],
+                        pageInfo: { hasNextPage: false },
+                      },
+                    },
+                    {
+                      id: "thread-unresolved",
+                      isResolved: false,
+                      isOutdated: false,
+                      comments: {
+                        nodes: [
+                          {
+                            databaseId: 1001,
+                            body: "Handle the null parser input.",
+                            author: { login: "reviewer-one" },
+                            path: "src/parser.ts",
+                            line: 18,
+                            originalLine: 18,
+                            diffHunk:
+                              "@@ -18,2 +18,2 @@\n- return value\n+ return parsed",
+                            pullRequestReview: { databaseId: 101 },
+                          },
+                        ],
+                        pageInfo: { hasNextPage: false },
+                      },
+                    },
+                    {
+                      id: "thread-resolved",
+                      isResolved: true,
+                      isOutdated: false,
+                      comments: {
+                        nodes: [
+                          {
+                            databaseId: 1002,
+                            body: "Already resolved.",
+                            author: { login: "reviewer-one" },
+                            path: "src/parser.ts",
+                            line: 12,
+                            originalLine: 12,
+                            diffHunk: "@@ -12,1 +12,1 @@",
+                            pullRequestReview: { databaseId: 101 },
+                          },
+                        ],
+                        pageInfo: { hasNextPage: false },
+                      },
+                    },
+                    {
+                      id: "thread-outdated",
+                      isResolved: false,
+                      isOutdated: true,
+                      comments: {
+                        nodes: [
+                          {
+                            databaseId: 1003,
+                            body: "The removed location is stale.",
+                            author: { login: "reviewer-one" },
+                            path: "src/removed.ts",
+                            line: null,
+                            originalLine: 7,
+                            diffHunk: "@@ -7,1 +7,0 @@",
+                            pullRequestReview: { databaseId: 101 },
+                          },
+                        ],
+                        pageInfo: { hasNextPage: false },
+                      },
+                    },
+                  ],
+                  pageInfo: { hasNextPage: false },
+                },
+              },
+            },
+          },
+        }),
+      );
+
+    await expect(
+      new GitHubClient(runGitHub).findChangesRequestedPullRequest({
+        cwd: "/repo",
+        repository: "example/repository",
+        headBranch: "agent/card-1",
+      }),
+    ).resolves.toEqual({
+      url: "https://github.com/example/repository/pull/123",
+      headSha: "remediation-head-sha",
+      feedback: {
+        reviews: [
+          {
+            id: 202,
+            body: "Please add coverage for the new branch.",
+            author: "reviewer-two",
+            submittedAt: "2026-01-02T10:00:00Z",
+            inlineComments: [
+              {
+                author: "reviewer-two",
+                body: "Add the regression test.",
+                threadId: "thread-current",
+                path: "tests/parser.test.ts",
+                line: 42,
+              },
+            ],
+          },
+          {
+            id: 101,
+            body: null,
+            author: "reviewer-one",
+            submittedAt: "2026-01-01T10:00:00Z",
+            source: "carried-forward",
+            inlineComments: [
+              {
+                author: "reviewer-one",
+                body: "Handle the null parser input.",
+                threadId: "thread-unresolved",
+                source: "carried-forward",
+                path: "src/parser.ts",
+                line: 18,
+                originalLine: 18,
+                diffHunk: "@@ -18,2 +18,2 @@\n- return value\n+ return parsed",
+              },
+            ],
+          },
+        ],
+      },
+    });
+  });
+
+  it("does not replay a carried thread after GitHub marks it resolved", async () => {
+    const reviewList = (headSha: string) =>
+      JSON.stringify([
+        {
+          url: "https://github.com/example/repository/pull/123",
+          number: 123,
+          reviewDecision: "CHANGES_REQUESTED",
+          headRefOid: headSha,
+        },
+      ]);
+    const reviews = (headSha: string, reviewId: number) =>
+      JSON.stringify([
+        [
+          {
+            id: 101,
+            body: "Original inline request.",
+            commit_id: "initial-head-sha",
+            state: "CHANGES_REQUESTED",
+            submitted_at: "2026-01-01T10:00:00Z",
+            user: { login: "reviewer-one" },
+          },
+          {
+            id: reviewId,
+            body: "Follow-up review.",
+            commit_id: headSha,
+            state: "CHANGES_REQUESTED",
+            submitted_at: `2026-01-0${reviewId === 202 ? "2" : "3"}T10:00:00Z`,
+            user: { login: "reviewer-one" },
+          },
+        ],
+      ]);
+    const currentComments = JSON.stringify([[]]);
+    const threadState = (isResolved: boolean) =>
+      JSON.stringify({
+        data: {
+          repository: {
+            pullRequest: {
+              reviewThreads: {
+                nodes: [
+                  {
+                    id: "thread-original",
+                    isResolved,
+                    isOutdated: false,
+                    comments: {
+                      nodes: [
+                        {
+                          databaseId: 1001,
+                          body: "Original inline request.",
+                          author: { login: "reviewer-one" },
+                          path: "src/parser.ts",
+                          line: 20,
+                          originalLine: 20,
+                          diffHunk: "@@ -20,1 +20,1 @@",
+                          pullRequestReview: { databaseId: 101 },
+                        },
+                      ],
+                      pageInfo: { hasNextPage: false },
+                    },
+                  },
+                ],
+                pageInfo: { hasNextPage: false },
+              },
+            },
+          },
+        },
+      });
+    const runGitHub = vi
+      .fn<RunGitHubCommand>()
+      .mockResolvedValueOnce(reviewList("remediation-head-sha"))
+      .mockResolvedValueOnce(reviews("remediation-head-sha", 202))
+      .mockResolvedValueOnce(currentComments)
+      .mockResolvedValueOnce(threadState(false))
+      .mockResolvedValueOnce(reviewList("second-remediation-head-sha"))
+      .mockResolvedValueOnce(reviews("second-remediation-head-sha", 303))
+      .mockResolvedValueOnce(currentComments)
+      .mockResolvedValueOnce(threadState(true));
+    const github = new GitHubClient(runGitHub);
+    const options = {
+      cwd: "/repo",
+      repository: "example/repository",
+      headBranch: "agent/card-1",
+    };
+
+    await expect(
+      github.findChangesRequestedPullRequest(options),
+    ).resolves.toMatchObject({
+      feedback: {
+        reviews: [
+          expect.objectContaining({ id: 202 }),
+          expect.objectContaining({
+            id: 101,
+            source: "carried-forward",
+            inlineComments: [
+              expect.objectContaining({ threadId: "thread-original" }),
+            ],
+          }),
+        ],
+      },
+    });
+    await expect(
+      github.findChangesRequestedPullRequest(options),
+    ).resolves.toEqual({
+      url: "https://github.com/example/repository/pull/123",
+      headSha: "second-remediation-head-sha",
+      feedback: {
+        reviews: [
+          {
+            id: 303,
+            body: "Follow-up review.",
+            author: "reviewer-one",
+            submittedAt: "2026-01-03T10:00:00Z",
+            inlineComments: [],
+          },
+        ],
+      },
+    });
+  });
+
+  it("rejects incomplete GitHub thread state instead of guessing applicability", async () => {
+    const runGitHub = vi
+      .fn<RunGitHubCommand>()
+      .mockResolvedValueOnce(
+        JSON.stringify([
+          {
+            url: "https://github.com/example/repository/pull/123",
+            number: 123,
+            reviewDecision: "CHANGES_REQUESTED",
+            headRefOid: "current-head-sha",
+          },
+        ]),
+      )
+      .mockResolvedValueOnce(
+        JSON.stringify([
+          [
+            {
+              id: 101,
+              body: "Original feedback.",
+              commit_id: "old-head-sha",
+              state: "CHANGES_REQUESTED",
+              submitted_at: "2026-01-01T10:00:00Z",
+              user: { login: "reviewer" },
+            },
+            {
+              id: 202,
+              body: "Follow-up feedback.",
+              commit_id: "current-head-sha",
+              state: "CHANGES_REQUESTED",
+              submitted_at: "2026-01-02T10:00:00Z",
+              user: { login: "reviewer" },
+            },
+          ],
+        ]),
+      )
+      .mockResolvedValueOnce("[[]]")
+      .mockResolvedValueOnce(
+        JSON.stringify({
+          data: {
+            repository: {
+              pullRequest: {
+                reviewThreads: {
+                  nodes: [],
+                  pageInfo: { hasNextPage: true },
+                },
+              },
+            },
+          },
+        }),
+      );
+
+    await expect(
+      new GitHubClient(runGitHub).findChangesRequestedPullRequest({
+        cwd: "/repo",
+        repository: "example/repository",
+        headBranch: "agent/card-1",
+      }),
+    ).rejects.toThrow("incomplete review thread response");
   });
 
   it("rejects malformed paginated review JSON", async () => {

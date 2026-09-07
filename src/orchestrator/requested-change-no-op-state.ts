@@ -103,6 +103,7 @@ function canonicalReview(review: PullRequestReview): Record<string, unknown> {
     body: review.body,
     author: review.author,
     submittedAt: review.submittedAt,
+    source: review.source ?? null,
     inlineComments: review.inlineComments.map((comment) => ({
       body: comment.body,
       author: comment.author,
@@ -110,6 +111,8 @@ function canonicalReview(review: PullRequestReview): Record<string, unknown> {
       line: comment.line ?? null,
       originalLine: comment.originalLine ?? null,
       diffHunk: comment.diffHunk ?? null,
+      threadId: comment.threadId ?? null,
+      source: comment.source ?? null,
     })),
   };
 }
