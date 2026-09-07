@@ -202,7 +202,7 @@ Already-absent worktrees and branches are successful idempotent outcomes. Shutdo
 cleanup, and preserved worktrees, branches, and prepared-conflict handoffs remain available for diagnosis.
 
 When requested changes are detected, the orchestrator creates a worktree from the existing task branch, supplies the GitHub
-feedback to the implementation session after refreshing the current Trello attachment context, runs the same initial-review and
+review feedback, including inline comment locations and available diff context, to the implementation session after refreshing the current Trello attachment context, runs the same initial-review and
 bounded remediation loop, and republishes the updated branch and pull request. An enabled project auto-merges the successfully
 republished pull request; a disabled project returns it to Human Review. A requested-changes pass starts only when the review
 feedback applies to the pull request's current head, and it gets its own transient remediation counter. A retry that reuses

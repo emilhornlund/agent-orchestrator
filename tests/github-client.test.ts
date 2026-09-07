@@ -705,11 +705,18 @@ describe("GitHubClient", () => {
             {
               pull_request_review_id: 999,
               body: "Ignore this review.",
+              path: "src/ignored.ts",
+              line: 9,
+              diff_hunk: "@@ -9,1 +9,1 @@",
               user: { login: "reviewer-two" },
             },
             {
               pull_request_review_id: 456,
               body: "Please add a regression test.",
+              path: "src/parser.ts",
+              line: 42,
+              original_line: 40,
+              diff_hunk: "@@ -40,3 +40,3 @@\n- old\n+ new",
               user: { login: "reviewer-one" },
             },
           ],
@@ -717,6 +724,9 @@ describe("GitHubClient", () => {
             {
               pull_request_review_id: 456,
               body: "And cover the empty value.",
+              path: "tests/parser.test.ts",
+              line: 17,
+              diff_hunk: "@@ -17,1 +17,1 @@",
               user: { login: "reviewer-one" },
             },
             {
@@ -743,8 +753,12 @@ describe("GitHubClient", () => {
         "reviewer-one: Please handle the null case.",
         "",
         "Inline review comments:",
-        "reviewer-one: Please add a regression test.",
-        "reviewer-one: And cover the empty value.",
+        "reviewer-one [src/parser.ts, line 42, original line 40]: Please add a regression test.",
+        "Diff context:",
+        "@@ -40,3 +40,3 @@\n- old\n+ new",
+        "reviewer-one [tests/parser.test.ts, line 17]: And cover the empty value.",
+        "Diff context:",
+        "@@ -17,1 +17,1 @@",
       ].join("\n"),
     });
 
@@ -778,6 +792,66 @@ describe("GitHubClient", () => {
       "--paginate",
       "--slurp",
     ]);
+  });
+
+  it("preserves an inline comment with only original-line information", async () => {
+    const runGitHub = vi
+      .fn<RunGitHubCommand>()
+      .mockResolvedValueOnce(
+        JSON.stringify([
+          {
+            url: "https://github.com/example/repository/pull/123",
+            number: 123,
+            reviewDecision: "CHANGES_REQUESTED",
+            headRefOid: "current-head-sha",
+          },
+        ]),
+      )
+      .mockResolvedValueOnce(
+        JSON.stringify([
+          [
+            {
+              id: 456,
+              body: null,
+              commit_id: "current-head-sha",
+              state: "CHANGES_REQUESTED",
+              submitted_at: "2026-01-01T10:00:00Z",
+              user: { login: "reviewer-one" },
+            },
+          ],
+        ]),
+      )
+      .mockResolvedValueOnce(
+        JSON.stringify([
+          [
+            {
+              pull_request_review_id: 456,
+              body: "Please update this moved code.",
+              path: "src/parser.ts",
+              line: null,
+              original_line: 27,
+              diff_hunk: "@@ -27,1 +27,0 @@\n- old code",
+              user: { login: "reviewer-one" },
+            },
+          ],
+        ]),
+      );
+
+    await expect(
+      new GitHubClient(runGitHub).findChangesRequestedPullRequest({
+        cwd: "/repo",
+        repository: "example/repository",
+        headBranch: "agent/card-1",
+      }),
+    ).resolves.toEqual({
+      url: "https://github.com/example/repository/pull/123",
+      feedback: [
+        "Inline review comments:",
+        "reviewer-one [src/parser.ts, original line 27]: Please update this moved code.",
+        "Diff context:",
+        "@@ -27,1 +27,0 @@\n- old code",
+      ].join("\n"),
+    });
   });
 
   it("returns null when the open pull request does not have requested changes", async () => {
@@ -1107,6 +1181,56 @@ describe("GitHubClient", () => {
             {
               pull_request_review_id: 456,
               body: 123,
+              user: { login: "reviewer-one" },
+            },
+          ],
+        ]),
+      );
+
+    await expect(
+      new GitHubClient(runGitHub).findChangesRequestedPullRequest({
+        cwd: "/repo",
+        repository: "example/repository",
+        headBranch: "agent/card-1",
+      }),
+    ).rejects.toThrow("invalid inline review comment");
+  });
+
+  it("rejects malformed inline comment location metadata", async () => {
+    const runGitHub = vi
+      .fn<RunGitHubCommand>()
+      .mockResolvedValueOnce(
+        JSON.stringify([
+          {
+            url: "https://github.com/example/repository/pull/123",
+            number: 123,
+            reviewDecision: "CHANGES_REQUESTED",
+            headRefOid: "current-head-sha",
+          },
+        ]),
+      )
+      .mockResolvedValueOnce(
+        JSON.stringify([
+          [
+            {
+              id: 456,
+              body: "Please fix this.",
+              commit_id: "current-head-sha",
+              state: "CHANGES_REQUESTED",
+              submitted_at: "2026-01-01T10:00:00Z",
+              user: { login: "reviewer-one" },
+            },
+          ],
+        ]),
+      )
+      .mockResolvedValueOnce(
+        JSON.stringify([
+          [
+            {
+              pull_request_review_id: 456,
+              body: "Please fix this.",
+              path: "src/parser.ts",
+              line: "42",
               user: { login: "reviewer-one" },
             },
           ],

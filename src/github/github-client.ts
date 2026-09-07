@@ -134,6 +134,10 @@ interface InlineReviewComment {
   reviewId: number | null;
   body: string | null;
   author: string | null;
+  path: string | null;
+  line: number | null;
+  originalLine: number | null;
+  diffHunk: string | null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -404,6 +408,10 @@ function validateInlineReviewComment(value: unknown): InlineReviewComment {
   const reviewId = value.pull_request_review_id;
   const body = value.body;
   const user = value.user;
+  const path = value.path;
+  const line = value.line;
+  const originalLine = value.original_line;
+  const diffHunk = value.diff_hunk;
   const author =
     user === null
       ? null
@@ -419,7 +427,21 @@ function validateInlineReviewComment(value: unknown): InlineReviewComment {
         !Number.isSafeInteger(reviewId) ||
         reviewId <= 0)) ||
     (typeof body !== "string" && body !== null) ||
-    author === undefined
+    author === undefined ||
+    (path !== undefined &&
+      path !== null &&
+      (typeof path !== "string" || path.length === 0)) ||
+    (line !== undefined &&
+      line !== null &&
+      (typeof line !== "number" || !Number.isSafeInteger(line) || line <= 0)) ||
+    (originalLine !== undefined &&
+      originalLine !== null &&
+      (typeof originalLine !== "number" ||
+        !Number.isSafeInteger(originalLine) ||
+        originalLine <= 0)) ||
+    (diffHunk !== undefined &&
+      diffHunk !== null &&
+      typeof diffHunk !== "string")
   ) {
     throw new Error("GitHub CLI returned an invalid inline review comment");
   }
@@ -428,7 +450,37 @@ function validateInlineReviewComment(value: unknown): InlineReviewComment {
     reviewId,
     body,
     author,
+    path: path === undefined ? null : path,
+    line: line === undefined ? null : line,
+    originalLine: originalLine === undefined ? null : originalLine,
+    diffHunk: diffHunk === undefined ? null : diffHunk,
   };
+}
+
+function formatInlineReviewComment(comment: InlineReviewComment): string {
+  const locationParts: string[] = [];
+
+  if (comment.path !== null) {
+    locationParts.push(comment.path);
+  }
+
+  if (comment.line !== null) {
+    locationParts.push(`line ${comment.line}`);
+  }
+
+  if (comment.originalLine !== null) {
+    locationParts.push(`original line ${comment.originalLine}`);
+  }
+
+  const location =
+    locationParts.length > 0 ? ` [${locationParts.join(", ")}]` : "";
+  const lines = [`${comment.author ?? "reviewer"}${location}: ${comment.body}`];
+
+  if (comment.diffHunk !== null && comment.diffHunk.length > 0) {
+    lines.push(`Diff context:\n${comment.diffHunk}`);
+  }
+
+  return lines.join("\n");
 }
 
 export type RunGitHubCommand = (
@@ -963,7 +1015,7 @@ export class GitHubClient {
           comment.body !== null &&
           comment.body.length > 0,
       )
-      .map((comment) => `${comment.author ?? "reviewer"}: ${comment.body}`)
+      .map(formatInlineReviewComment)
       .join("\n");
 
     const feedbackParts: string[] = [];
