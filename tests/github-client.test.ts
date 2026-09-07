@@ -749,17 +749,26 @@ describe("GitHubClient", () => {
 
     expect(result).toEqual({
       url: "https://github.com/example/repository/pull/123",
-      feedback: [
-        "reviewer-one: Please handle the null case.",
-        "",
-        "Inline review comments:",
-        "reviewer-one [src/parser.ts, line 42, original line 40]: Please add a regression test.",
-        "Diff context:",
-        "@@ -40,3 +40,3 @@\n- old\n+ new",
-        "reviewer-one [tests/parser.test.ts, line 17]: And cover the empty value.",
-        "Diff context:",
-        "@@ -17,1 +17,1 @@",
-      ].join("\n"),
+      feedback: {
+        general: "reviewer-one: Please handle the null case.",
+        inlineComments: [
+          {
+            author: "reviewer-one",
+            body: "Please add a regression test.",
+            path: "src/parser.ts",
+            line: 42,
+            originalLine: 40,
+            diffHunk: "@@ -40,3 +40,3 @@\n- old\n+ new",
+          },
+          {
+            author: "reviewer-one",
+            body: "And cover the empty value.",
+            path: "tests/parser.test.ts",
+            line: 17,
+            diffHunk: "@@ -17,1 +17,1 @@",
+          },
+        ],
+      },
     });
 
     expect(runGitHub).toHaveBeenNthCalledWith(1, "/repo", [
@@ -845,12 +854,81 @@ describe("GitHubClient", () => {
       }),
     ).resolves.toEqual({
       url: "https://github.com/example/repository/pull/123",
-      feedback: [
-        "Inline review comments:",
-        "reviewer-one [src/parser.ts, original line 27]: Please update this moved code.",
-        "Diff context:",
-        "@@ -27,1 +27,0 @@\n- old code",
-      ].join("\n"),
+      feedback: {
+        general: null,
+        inlineComments: [
+          {
+            author: "reviewer-one",
+            body: "Please update this moved code.",
+            path: "src/parser.ts",
+            originalLine: 27,
+            diffHunk: "@@ -27,1 +27,0 @@\n- old code",
+          },
+        ],
+      },
+    });
+  });
+
+  it("preserves an inline comment without remaining location metadata", async () => {
+    const runGitHub = vi
+      .fn<RunGitHubCommand>()
+      .mockResolvedValueOnce(
+        JSON.stringify([
+          {
+            url: "https://github.com/example/repository/pull/123",
+            number: 123,
+            reviewDecision: "CHANGES_REQUESTED",
+            headRefOid: "current-head-sha",
+          },
+        ]),
+      )
+      .mockResolvedValueOnce(
+        JSON.stringify([
+          [
+            {
+              id: 456,
+              body: "Please revisit this feedback.",
+              commit_id: "current-head-sha",
+              state: "CHANGES_REQUESTED",
+              submitted_at: "2026-01-01T10:00:00Z",
+              user: { login: "reviewer-one" },
+            },
+          ],
+        ]),
+      )
+      .mockResolvedValueOnce(
+        JSON.stringify([
+          [
+            {
+              pull_request_review_id: 456,
+              body: "This comment no longer has a location.",
+              path: null,
+              line: null,
+              original_line: null,
+              diff_hunk: null,
+              user: { login: "reviewer-one" },
+            },
+          ],
+        ]),
+      );
+
+    await expect(
+      new GitHubClient(runGitHub).findChangesRequestedPullRequest({
+        cwd: "/repo",
+        repository: "example/repository",
+        headBranch: "agent/card-1",
+      }),
+    ).resolves.toEqual({
+      url: "https://github.com/example/repository/pull/123",
+      feedback: {
+        general: "reviewer-one: Please revisit this feedback.",
+        inlineComments: [
+          {
+            author: "reviewer-one",
+            body: "This comment no longer has a location.",
+          },
+        ],
+      },
     });
   });
 
@@ -1017,7 +1095,10 @@ describe("GitHubClient", () => {
       }),
     ).resolves.toEqual({
       url: "https://github.com/example/repository/pull/123",
-      feedback: "reviewer-two: One more change is required.",
+      feedback: {
+        general: "reviewer-two: One more change is required.",
+        inlineComments: [],
+      },
     });
 
     expect(runGitHub).toHaveBeenCalledTimes(3);
@@ -1115,12 +1196,15 @@ describe("GitHubClient", () => {
       }),
     ).resolves.toEqual({
       url: "https://github.com/example/repository/pull/123",
-      feedback: [
-        "reviewer-two: Latest feedback.",
-        "",
-        "Inline review comments:",
-        "reviewer-two: Latest inline feedback.",
-      ].join("\n"),
+      feedback: {
+        general: "reviewer-two: Latest feedback.",
+        inlineComments: [
+          {
+            author: "reviewer-two",
+            body: "Latest inline feedback.",
+          },
+        ],
+      },
     });
   });
 
@@ -1293,8 +1377,10 @@ describe("GitHubClient", () => {
       }),
     ).resolves.toEqual({
       url: "https://github.com/example/repository/pull/123",
-      feedback:
-        "Changes were requested on GitHub, but no written review feedback was returned.",
+      feedback: {
+        general: null,
+        inlineComments: [],
+      },
     });
   });
 

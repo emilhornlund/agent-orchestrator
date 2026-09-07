@@ -202,11 +202,17 @@ Already-absent worktrees and branches are successful idempotent outcomes. Shutdo
 cleanup, and preserved worktrees, branches, and prepared-conflict handoffs remain available for diagnosis.
 
 When requested changes are detected, the orchestrator creates a worktree from the existing task branch, supplies the GitHub
-review feedback, including inline comment locations and available diff context, to the implementation session after refreshing the current Trello attachment context, runs the same initial-review and
+review feedback to the implementation session after refreshing the current Trello attachment context, runs the same initial-review and
 bounded remediation loop, and republishes the updated branch and pull request. An enabled project auto-merges the successfully
 republished pull request; a disabled project returns it to Human Review. A requested-changes pass starts only when the review
 feedback applies to the pull request's current head, and it gets its own transient remediation counter. A retry that reuses
 already committed work skips all OpenCode stages, including attachment-dependent prompts, and proceeds directly to publication.
+
+Requested-changes remediation feedback has separate sections for the selected review body and inline code comments. The review
+body is treated as general pull-request-level feedback and has no file, line, or diff location. Inline comments retain each
+location field GitHub supplies, including a path, current line, original line, or diff hunk. Fully scoped inline comments retain
+all of their supplied location and diff context. Partially scoped comments remain actionable; unavailable location fields are
+omitted rather than inferred or replaced with placeholders. This applies to review-body-only, inline-only, and mixed feedback.
 
 For every owned open pull request on the expected `agent/<trello-card-id>` branch, Human Review reconciliation records a
 maintenance state: `up-to-date` when the configured default branch is not ahead and GitHub reports no conflict, `behind` when

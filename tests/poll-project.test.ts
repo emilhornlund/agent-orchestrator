@@ -1878,7 +1878,7 @@ describe("pollProject", () => {
       expect(runOpenCode).toHaveBeenCalledTimes(4);
 
       expect(runOpenCode.mock.calls[0]?.[0].prompt).toContain(
-        "Human review feedback:\nPlease add a regression test.",
+        "Human review feedback:\nGeneral PR-level feedback:\nPlease add a regression test.",
       );
 
       expect(runOpenCode.mock.calls[0]?.[0]).toMatchObject({
@@ -2116,7 +2116,7 @@ describe("pollProject", () => {
       expect(runOpenCode).toHaveBeenCalledTimes(4);
 
       expect(runOpenCode.mock.calls[0]?.[0].prompt).toContain(
-        "Human review feedback:\nPlease fix the regression.",
+        "Human review feedback:\nGeneral PR-level feedback:\nPlease fix the regression.",
       );
 
       expect(trello.moveCard).toHaveBeenCalledTimes(1);

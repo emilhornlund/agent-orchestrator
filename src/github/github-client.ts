@@ -111,7 +111,12 @@ export interface PullRequestState extends PullRequest {
 }
 
 export interface ChangesRequestedPullRequest extends PullRequest {
-  feedback: string;
+  feedback: PullRequestReviewFeedback;
+}
+
+export interface PullRequestReviewFeedback {
+  general: string | null;
+  inlineComments: InlineReviewComment[];
 }
 
 interface PullRequestReviewListItem {
@@ -130,14 +135,23 @@ interface RequestedChangesReview {
   submittedAt: string;
 }
 
-interface InlineReviewComment {
+interface ValidatedInlineReviewComment {
   reviewId: number | null;
   body: string | null;
   author: string | null;
-  path: string | null;
-  line: number | null;
-  originalLine: number | null;
-  diffHunk: string | null;
+  path?: string;
+  line?: number;
+  originalLine?: number;
+  diffHunk?: string;
+}
+
+export interface InlineReviewComment {
+  body: string;
+  author: string | null;
+  path?: string;
+  line?: number;
+  originalLine?: number;
+  diffHunk?: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -400,7 +414,9 @@ function parsePaginatedGitHubResponse(
   return parsed.flat();
 }
 
-function validateInlineReviewComment(value: unknown): InlineReviewComment {
+function validateInlineReviewComment(
+  value: unknown,
+): ValidatedInlineReviewComment {
   if (!isRecord(value)) {
     throw new Error("GitHub CLI returned an invalid inline review comment");
   }
@@ -450,37 +466,11 @@ function validateInlineReviewComment(value: unknown): InlineReviewComment {
     reviewId,
     body,
     author,
-    path: path === undefined ? null : path,
-    line: line === undefined ? null : line,
-    originalLine: originalLine === undefined ? null : originalLine,
-    diffHunk: diffHunk === undefined ? null : diffHunk,
+    ...(typeof path === "string" ? { path } : {}),
+    ...(typeof line === "number" ? { line } : {}),
+    ...(typeof originalLine === "number" ? { originalLine } : {}),
+    ...(typeof diffHunk === "string" ? { diffHunk } : {}),
   };
-}
-
-function formatInlineReviewComment(comment: InlineReviewComment): string {
-  const locationParts: string[] = [];
-
-  if (comment.path !== null) {
-    locationParts.push(comment.path);
-  }
-
-  if (comment.line !== null) {
-    locationParts.push(`line ${comment.line}`);
-  }
-
-  if (comment.originalLine !== null) {
-    locationParts.push(`original line ${comment.originalLine}`);
-  }
-
-  const location =
-    locationParts.length > 0 ? ` [${locationParts.join(", ")}]` : "";
-  const lines = [`${comment.author ?? "reviewer"}${location}: ${comment.body}`];
-
-  if (comment.diffHunk !== null && comment.diffHunk.length > 0) {
-    lines.push(`Diff context:\n${comment.diffHunk}`);
-  }
-
-  return lines.join("\n");
 }
 
 export type RunGitHubCommand = (
@@ -1010,34 +1000,34 @@ export class GitHubClient {
     )
       .map(validateInlineReviewComment)
       .filter(
-        (comment) =>
+        (comment): comment is ValidatedInlineReviewComment & { body: string } =>
           comment.reviewId === review.id &&
           comment.body !== null &&
           comment.body.length > 0,
       )
-      .map(formatInlineReviewComment)
-      .join("\n");
+      .map((comment): InlineReviewComment => ({
+        body: comment.body,
+        author: comment.author,
+        ...(comment.path === undefined ? {} : { path: comment.path }),
+        ...(comment.line === undefined ? {} : { line: comment.line }),
+        ...(comment.originalLine === undefined
+          ? {}
+          : { originalLine: comment.originalLine }),
+        ...(comment.diffHunk === undefined
+          ? {}
+          : { diffHunk: comment.diffHunk }),
+      }));
 
-    const feedbackParts: string[] = [];
-
-    if (review.body?.trim()) {
-      const author = review.author ?? "reviewer";
-
-      feedbackParts.push(`${author}: ${review.body.trim()}`);
-    }
-
-    if (inlineComments.length > 0) {
-      feedbackParts.push(`Inline review comments:\n${inlineComments}`);
-    }
-
-    const feedback =
-      feedbackParts.length > 0
-        ? feedbackParts.join("\n\n")
-        : "Changes were requested on GitHub, but no written review feedback was returned.";
+    const general = review.body?.trim()
+      ? `${review.author ?? "reviewer"}: ${review.body.trim()}`
+      : null;
 
     return {
       url: parsePullRequestUrl(pullRequest.url),
-      feedback,
+      feedback: {
+        general,
+        inlineComments,
+      },
     };
   }
 

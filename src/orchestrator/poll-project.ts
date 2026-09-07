@@ -20,7 +20,10 @@ import {
   prepareWorktree,
   type PreparedImplementationWorktree,
 } from "../git/prepare-worktree.js";
-import type { GitHubClient } from "../github/github-client.js";
+import type {
+  GitHubClient,
+  PullRequestReviewFeedback,
+} from "../github/github-client.js";
 import { logger, type Logger } from "../logging/logger.js";
 import { getSessionLogPath } from "../logging/session-log.js";
 import {
@@ -809,7 +812,7 @@ async function processImplementationCard(
 
 interface ReviewIterationOptions {
   pullRequestUrl: string;
-  feedback: string;
+  feedback: PullRequestReviewFeedback;
 }
 
 async function processCardChanges(

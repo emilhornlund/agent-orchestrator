@@ -14,7 +14,10 @@ describe("buildReviewFeedbackPrompt", () => {
         url: "https://trello.com/c/card-1",
       },
       "https://github.com/example/repository/pull/123",
-      "Please add a regression test.",
+      {
+        general: "reviewer: Please add a regression test.",
+        inlineComments: [],
+      },
       "yarn validate",
     );
 
@@ -25,7 +28,10 @@ describe("buildReviewFeedbackPrompt", () => {
     );
 
     expect(prompt).toContain(
-      "Human review feedback:\nPlease add a regression test.",
+      "Human review feedback:\nGeneral PR-level feedback:\nreviewer: Please add a regression test.",
+    );
+    expect(prompt).toContain(
+      "Inline code comments:\nNo inline code comments were returned.",
     );
     expect(prompt).toContain(
       "Run the configured repository validation command: `yarn validate` before finishing.",
@@ -49,7 +55,10 @@ describe("buildReviewFeedbackPrompt", () => {
         url: "https://trello.com/c/card-1",
       },
       "https://github.com/example/repository/pull/123",
-      "Please add a regression test.",
+      {
+        general: "reviewer: Please add a regression test.",
+        inlineComments: [],
+      },
     );
 
     expect(prompt).toContain(
@@ -58,5 +67,43 @@ describe("buildReviewFeedbackPrompt", () => {
     expect(prompt).toContain(
       "Leave the repository validation passing before finishing.",
     );
+  });
+
+  it("keeps inline comments separate and omits unavailable location context", () => {
+    const prompt = buildReviewFeedbackPrompt(
+      {
+        id: "card-1",
+        name: "Fix the parser",
+        desc: "Handle malformed input.",
+        idList: "working",
+        idLabels: [],
+        url: "https://trello.com/c/card-1",
+      },
+      "https://github.com/example/repository/pull/123",
+      {
+        general: null,
+        inlineComments: [
+          {
+            author: "reviewer",
+            body: "Please update this moved code.",
+            originalLine: 27,
+          },
+          {
+            author: "reviewer",
+            body: "Please inspect this comment.",
+          },
+        ],
+      },
+    );
+
+    expect(prompt).toContain(
+      "General PR-level feedback:\nNo general PR-level feedback was returned.",
+    );
+    expect(prompt).toContain(
+      "Inline code comments:\nreviewer [original line 27]: Please update this moved code.\nreviewer: Please inspect this comment.",
+    );
+    expect(prompt).not.toContain("line undefined");
+    expect(prompt).not.toContain("Diff context:");
+    expect(prompt).not.toContain("[file");
   });
 });

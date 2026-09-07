@@ -596,12 +596,12 @@ describe("reconcileReviewCards", () => {
     ).resolves.toEqual({
       card: card(),
       pullRequestUrl: "https://github.com/owner/repo/pull/1",
-      feedback: [
-        "reviewer: Please fix this.",
-        "",
-        "Inline review comments:",
-        "reviewer: Add a regression test.",
-      ].join("\n"),
+      feedback: {
+        general: "reviewer: Please fix this.",
+        inlineComments: [
+          { author: "reviewer", body: "Add a regression test." },
+        ],
+      },
       maintenanceState: "up-to-date",
     });
 
