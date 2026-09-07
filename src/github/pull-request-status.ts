@@ -8,6 +8,10 @@ export type ManagedPullRequestStatus =
   | "resolving-conflicts"
   | "validating"
   | "updating-remote"
+  | "addressing-review-feedback"
+  | "validating-review-changes"
+  | "publishing-review-changes"
+  | "attention-required"
   | "failed";
 
 export class MalformedManagedPullRequestStatusError extends Error {
@@ -73,8 +77,16 @@ function statusMessage(
       return "Agent Orchestrator status: running repository validation before updating the task branch.";
     case "updating-remote":
       return "Agent Orchestrator status: updating the remote task branch.";
+    case "addressing-review-feedback":
+      return "Agent Orchestrator status: addressing requested review feedback; remediation is in progress and the review is not yet resolved.";
+    case "validating-review-changes":
+      return "Agent Orchestrator status: validating requested review changes; remediation is in progress and the review is not yet resolved.";
+    case "publishing-review-changes":
+      return "Agent Orchestrator status: publishing requested review changes; remediation is in progress and the review is not yet resolved.";
+    case "attention-required":
+      return "Agent Orchestrator status: requested review changes remain unresolved. Human attention is required; do not assume the review was resolved.";
     case "failed":
-      return "Agent Orchestrator status: branch maintenance failed. Human attention is required; do not assume the branch is maintained.";
+      return "Agent Orchestrator status: branch maintenance failed or requested-change remediation failed. Human attention is required; do not assume the requested changes were resolved.";
   }
 }
 

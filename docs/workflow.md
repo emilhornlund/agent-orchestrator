@@ -259,6 +259,13 @@ When eligible long-running maintenance starts, the existing pull request descrip
 attention). A failed automatic maintenance attempt replaces the section with the `failed` message; it
 never presents that attempt as successful. Successful maintenance removes the section and both markers.
 
+When a stable current-head requested-change snapshot starts remediation, the same section uses `addressing-review-feedback` while
+feedback changes are implemented, `validating-review-changes` while the updated branch is reviewed, and
+`publishing-review-changes` while the corrected branch and existing pull request are published. Each message states that
+remediation is in progress and that the review is not yet resolved. A requested-change failure uses `failed`; a successful no-op uses
+`attention-required` because the feedback remains unresolved. The section is removed only after successful publication and the
+existing workflow has completed its return to `Human Review` (or its existing auto-merge completion path).
+
 Only the content between this exact marker pair belongs to the orchestrator. All other description content, including human-written
 text and content from other tools, is preserved. Each reconciliation reads the current description immediately before a possible
 write, and an identical status is not written again. Unmatched, reversed, or duplicate markers are malformed: the orchestrator
@@ -268,6 +275,8 @@ Description reads and writes are presentation operations. A presentation failure
 logged with the pull request and card and uses the normal attention path without resetting, aborting, cleaning, overwriting, or
 otherwise changing Git maintenance state. After a successful branch update, removal of the managed status section is housekeeping:
 its failure is a warning, the pull request content is retained, and the maintenance result remains successful.
+The same rule applies to requested-change publication: a status presentation failure never turns a successfully published corrected
+branch into an unsuccessful publication, and preserved branch, worktree, and pull-request content remain available for diagnosis.
 
 A lease rejection, missing or invalid remote SHA, fetch or validation failure, or non-conflict rebase failure leaves the pull
 request, card, task branch, and worktree unchanged for diagnosis and later reconciliation. When Git confirms an active conflicted

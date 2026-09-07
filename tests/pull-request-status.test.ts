@@ -72,6 +72,38 @@ describe("reconcileManagedPullRequestStatus", () => {
   });
 
   it.each([
+    ["addressing-review-feedback", "addressing requested review feedback"],
+    ["validating-review-changes", "validating requested review changes"],
+    ["publishing-review-changes", "publishing requested review changes"],
+    ["attention-required", "requested review changes remain unresolved"],
+  ] as const)("renders requested-change status %s safely", (status, text) => {
+    const result = reconcileManagedPullRequestStatus(
+      "Description",
+      status,
+      "main",
+    );
+
+    expect(result).toContain(text);
+    expect(result).toMatch(/not yet resolved|remain unresolved/);
+  });
+
+  it("does not rewrite an identical requested-change status", () => {
+    const body = reconcileManagedPullRequestStatus(
+      "Description",
+      "addressing-review-feedback",
+      "main",
+    );
+
+    expect(
+      reconcileManagedPullRequestStatus(
+        body,
+        "addressing-review-feedback",
+        "main",
+      ),
+    ).toBe(body);
+  });
+
+  it.each([
     `${AGENT_ORCHESTRATOR_STATUS_START}\none\n${AGENT_ORCHESTRATOR_STATUS_START}\ntwo\n${AGENT_ORCHESTRATOR_STATUS_END}`,
     `${AGENT_ORCHESTRATOR_STATUS_END}\n${AGENT_ORCHESTRATOR_STATUS_START}`,
     `${AGENT_ORCHESTRATOR_STATUS_START}\nmissing end`,
