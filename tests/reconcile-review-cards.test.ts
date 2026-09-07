@@ -146,6 +146,7 @@ function githubFor(
     mergedAt: state === "merged" ? "2026-09-01T13:42:03Z" : null,
     baseRefName: "main",
     headRefName: `agent/${cardId}`,
+    headRefOid: "head-sha",
     headRepository: { name: "repo" },
     headRepositoryOwner: { login: "owner" },
     mergeable: state === "conflicted" ? "CONFLICTING" : "MERGEABLE",
@@ -165,7 +166,7 @@ function githubFor(
       .fn()
       .mockResolvedValue(
         state === "requested"
-          ? { ...pullRequest, feedback: "Fix this." }
+          ? { ...pullRequest, headSha: "head-sha", feedback: "Fix this." }
           : null,
       ),
   } as unknown as GitHubClient;
@@ -214,6 +215,188 @@ describe("reconcileReviewCards", () => {
     expect(trello.moveCard).toHaveBeenCalledWith("card-1", "working");
     expect(onHumanReviewCardsObserved).toHaveBeenCalledWith(["card-1"]);
     expect(onHumanReviewCardLeft).toHaveBeenCalledWith("card-1");
+  });
+
+  it("keeps the card in Human Review when the PR head changes after feedback collection", async () => {
+    const trello = trelloFor(card());
+    const github = githubFor("card-1", "requested");
+    const oldHead = "head-sha";
+    const newHead = "new-head-sha";
+    const logEvent = vi.spyOn(Logger.prototype, "event");
+    const state = {
+      url: "https://github.com/owner/repo/pull/1",
+      state: "OPEN" as const,
+      mergedAt: null,
+      baseRefName: "main",
+      headRefName: "agent/card-1",
+      headRepository: { name: "repo" },
+      headRepositoryOwner: { login: "owner" },
+      mergeable: "MERGEABLE" as const,
+      mergeStateStatus: "CLEAN" as const,
+    };
+
+    vi.mocked(github.findPullRequestState)
+      .mockResolvedValueOnce({ ...state, headRefOid: oldHead })
+      .mockResolvedValueOnce({ ...state, headRefOid: newHead });
+
+    await expect(
+      reconcileReviewCards(trello, {} as GitClient, github, project),
+    ).resolves.toEqual({
+      card: card(),
+      active: true,
+      maintenanceState: "up-to-date",
+    });
+
+    expect(trello.moveCard).not.toHaveBeenCalled();
+    expect(logEvent).toHaveBeenCalledWith(
+      expect.stringContaining(`PR head changed from ${oldHead} to ${newHead}`),
+    );
+    logEvent.mockRestore();
+  });
+
+  it("revalidates after inline-comment lookup before accepting feedback", async () => {
+    let stateLookups = 0;
+    const oldHead = "old-head-sha";
+    const newHead = "new-head-sha";
+    const runGitHub = vi
+      .fn<RunGitHubCommand>()
+      .mockImplementation(async (_cwd, args) => {
+        if (
+          args[0] === "pr" &&
+          args[1] === "list" &&
+          args[args.indexOf("--json") + 1]?.startsWith("url,state")
+        ) {
+          stateLookups += 1;
+
+          return JSON.stringify([
+            {
+              url: "https://github.com/owner/repo/pull/1",
+              state: "OPEN",
+              mergedAt: null,
+              headRefOid: stateLookups === 1 ? oldHead : newHead,
+              baseRefName: "main",
+              headRefName: "agent/card-1",
+              headRepository: { name: "repo" },
+              headRepositoryOwner: { login: "owner" },
+              mergeable: "MERGEABLE",
+              mergeStateStatus: "CLEAN",
+            },
+          ]);
+        }
+
+        if (args[0] === "pr" && args[1] === "list") {
+          return JSON.stringify([
+            {
+              url: "https://github.com/owner/repo/pull/1",
+              number: 1,
+              reviewDecision: "CHANGES_REQUESTED",
+              headRefOid: oldHead,
+            },
+          ]);
+        }
+
+        if (args[0] === "api" && args[1]?.endsWith("/reviews")) {
+          return JSON.stringify([
+            [
+              {
+                id: 1,
+                body: "Old review body",
+                commit_id: oldHead,
+                state: "CHANGES_REQUESTED",
+                submitted_at: "2026-09-01T10:00:00Z",
+                user: { login: "reviewer" },
+              },
+            ],
+          ]);
+        }
+
+        return JSON.stringify([
+          [
+            {
+              pull_request_review_id: 1,
+              body: "Old inline comment",
+              path: "src/old.ts",
+              line: 10,
+              user: { login: "reviewer" },
+            },
+          ],
+        ]);
+      });
+    const trello = trelloFor(card());
+
+    await expect(
+      reconcileReviewCards(
+        trello,
+        {} as GitClient,
+        new GitHubClient(runGitHub),
+        project,
+      ),
+    ).resolves.toMatchObject({ active: true });
+
+    expect(trello.moveCard).not.toHaveBeenCalled();
+    expect(runGitHub.mock.calls[3]?.[1][0]).toBe("api");
+    expect(runGitHub.mock.calls[4]?.[1][0]).toBe("pr");
+    expect(stateLookups).toBe(2);
+  });
+
+  it("retries requested-change reconciliation against the new PR head", async () => {
+    const trello = trelloFor(card());
+    const github = githubFor("card-1", "requested");
+    const initialState = {
+      url: "https://github.com/owner/repo/pull/1",
+      state: "OPEN" as const,
+      mergedAt: null,
+      baseRefName: "main",
+      headRefName: "agent/card-1",
+      headRepository: { name: "repo" },
+      headRepositoryOwner: { login: "owner" },
+      mergeable: "MERGEABLE" as const,
+      mergeStateStatus: "CLEAN" as const,
+      headRefOid: "old-head-sha",
+    };
+    const newState = { ...initialState, headRefOid: "new-head-sha" };
+
+    vi.mocked(github.findPullRequestState)
+      .mockResolvedValueOnce(initialState)
+      .mockResolvedValueOnce(newState)
+      .mockResolvedValueOnce(newState)
+      .mockResolvedValueOnce(newState);
+    vi.mocked(github.findChangesRequestedPullRequest)
+      .mockResolvedValueOnce({
+        url: initialState.url,
+        headSha: "old-head-sha",
+        feedback: { reviews: [] },
+      })
+      .mockResolvedValueOnce({
+        url: initialState.url,
+        headSha: "new-head-sha",
+        feedback: {
+          reviews: [
+            {
+              id: 2,
+              body: "New-head feedback",
+              author: "reviewer",
+              submittedAt: "2026-09-01T10:00:00Z",
+              inlineComments: [],
+            },
+          ],
+        },
+      });
+
+    await expect(
+      reconcileReviewCards(trello, {} as GitClient, github, project),
+    ).resolves.toMatchObject({ active: true });
+    expect(trello.moveCard).not.toHaveBeenCalled();
+
+    await expect(
+      reconcileReviewCards(trello, {} as GitClient, github, project),
+    ).resolves.toMatchObject({
+      pullRequestUrl: initialState.url,
+      feedback: {
+        reviews: [expect.objectContaining({ body: "New-head feedback" })],
+      },
+    });
+    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "working");
   });
 
   it("leaves a card in Human Review when a requested-changes move is uncertain and retries later", async () => {
@@ -540,6 +723,7 @@ describe("reconcileReviewCards", () => {
             url: "https://github.com/owner/repo/pull/1",
             state: "OPEN",
             mergedAt: null,
+            headRefOid: "head-sha",
             baseRefName: "main",
             headRefName: "agent/card-1",
             headRepository: { name: "repo" },
@@ -583,6 +767,22 @@ describe("reconcileReviewCards", () => {
             },
           ],
         ]),
+      )
+      .mockResolvedValueOnce(
+        JSON.stringify([
+          {
+            url: "https://github.com/owner/repo/pull/1",
+            state: "OPEN",
+            mergedAt: null,
+            headRefOid: "head-sha",
+            baseRefName: "main",
+            headRefName: "agent/card-1",
+            headRepository: { name: "repo" },
+            headRepositoryOwner: { login: "owner" },
+            mergeable: "MERGEABLE",
+            mergeStateStatus: "CLEAN",
+          },
+        ]),
       );
     const trello = trelloFor(card());
 
@@ -613,7 +813,7 @@ describe("reconcileReviewCards", () => {
     });
 
     expect(trello.moveCard).toHaveBeenCalledWith("card-1", "working");
-    expect(getInstallationToken).toHaveBeenCalledTimes(2);
+    expect(getInstallationToken).toHaveBeenCalledTimes(3);
     for (const call of getInstallationToken.mock.calls) {
       expect(call[0]).toBe(configuredProject.repository.githubApp);
     }
@@ -656,7 +856,7 @@ describe("reconcileReviewCards", () => {
       "--state",
       "all",
       "--json",
-      "url,state,mergedAt,baseRefName,headRefName,headRepository,headRepositoryOwner,mergeable,mergeStateStatus",
+      "url,state,mergedAt,headRefOid,baseRefName,headRefName,headRepository,headRepositoryOwner,mergeable,mergeStateStatus",
       "--limit",
       "1",
     ]);
@@ -1296,6 +1496,35 @@ describe("reconcileReviewCards", () => {
       cause: lookupError,
     });
 
+    expect(trello.moveCard).not.toHaveBeenCalled();
+  });
+
+  it("retains reconciliation diagnostics when the final PR-head read fails", async () => {
+    const lookupError = new Error("GitHub head read unavailable");
+    const trello = trelloFor(card());
+    const github = githubFor("card-1", "requested");
+    vi.mocked(github.findPullRequestState)
+      .mockResolvedValueOnce({
+        url: "https://github.com/owner/repo/pull/1",
+        state: "OPEN",
+        mergedAt: null,
+        baseRefName: "main",
+        headRefName: "agent/card-1",
+        headRefOid: "head-sha",
+        headRepository: { name: "repo" },
+        headRepositoryOwner: { login: "owner" },
+        mergeable: "MERGEABLE",
+        mergeStateStatus: "CLEAN",
+      })
+      .mockRejectedValueOnce(lookupError);
+
+    await expect(
+      reconcileReviewCards(trello, {} as GitClient, github, project),
+    ).rejects.toMatchObject({
+      category: "Git/GitHub",
+      cause: lookupError,
+      message: expect.stringContaining("requested changes"),
+    });
     expect(trello.moveCard).not.toHaveBeenCalled();
   });
 

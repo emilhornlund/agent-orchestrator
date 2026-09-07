@@ -656,6 +656,7 @@ describe("owned Human Review pull-request maintenance", () => {
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce({
         url: "https://github.com/owner/repo/pull/1",
+        headSha: taskSha,
         feedback: {
           reviews: [
             {

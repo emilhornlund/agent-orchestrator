@@ -113,6 +113,13 @@ More than one active card in `Human Review` is an ambiguous project state. The a
 are transitioned, so the project is blocked, no active card is selected, and no terminal card is transitioned in that cycle.
 Merged or closed cards remain available for reconciliation on the next cycle after the ambiguity is resolved.
 
+Requested-change reconciliation retains the exact PR head SHA used to select requested-change review bodies and inline comments. After
+all feedback is collected, it reads the expected open PR head again before moving the card to `Working`. If the SHA changed, the full
+feedback snapshot is discarded, no Trello transition or OpenCode remediation is started, and the card remains in `Human Review` with
+its existing pull request and branch. The race is logged with the project, card, pull request, and old and new SHAs; the next poll
+collects a new snapshot for the new head without creating an attention failure. A failure reading the authoritative head is an actual GitHub reconciliation failure and keeps
+the existing diagnostics and retry behavior.
+
 Maintenance applies only to an open pull request in the configured repository whose head is exactly `agent/<trello-card-id>`,
 whose base is the configured default branch, whose state is `behind` or `conflicted`, and which has no actionable requested
 changes on its current head. A recognized `UNKNOWN` mergeability or merge-state status is transient unresolved data: it leaves

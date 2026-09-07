@@ -530,6 +530,7 @@ describe("GitHubClient", () => {
           url: "https://github.com/example/repository/pull/123",
           state: "OPEN",
           mergedAt: null,
+          headRefOid: "current-head-sha",
           baseRefName: "main",
           headRefName: "agent/card-1",
           headRepository: { name: "repository" },
@@ -552,6 +553,7 @@ describe("GitHubClient", () => {
       url: "https://github.com/example/repository/pull/123",
       state: "OPEN",
       mergedAt: null,
+      headRefOid: "current-head-sha",
       baseRefName: "main",
       headRefName: "agent/card-1",
       headRepository: { name: "repository" },
@@ -572,7 +574,7 @@ describe("GitHubClient", () => {
       "--state",
       "all",
       "--json",
-      "url,state,mergedAt,baseRefName,headRefName,headRepository,headRepositoryOwner,mergeable,mergeStateStatus",
+      "url,state,mergedAt,headRefOid,baseRefName,headRefName,headRepository,headRepositoryOwner,mergeable,mergeStateStatus",
       "--limit",
       "1",
     ]);
@@ -749,6 +751,7 @@ describe("GitHubClient", () => {
 
     expect(result).toEqual({
       url: "https://github.com/example/repository/pull/123",
+      headSha: "current-head-sha",
       feedback: {
         reviews: [
           {
@@ -861,6 +864,7 @@ describe("GitHubClient", () => {
       }),
     ).resolves.toEqual({
       url: "https://github.com/example/repository/pull/123",
+      headSha: "current-head-sha",
       feedback: {
         reviews: [
           {
@@ -934,6 +938,7 @@ describe("GitHubClient", () => {
       }),
     ).resolves.toEqual({
       url: "https://github.com/example/repository/pull/123",
+      headSha: "current-head-sha",
       feedback: {
         reviews: [
           {
@@ -1116,6 +1121,7 @@ describe("GitHubClient", () => {
       }),
     ).resolves.toEqual({
       url: "https://github.com/example/repository/pull/123",
+      headSha: "second-review-head-sha",
       feedback: {
         reviews: [
           {
@@ -1224,6 +1230,7 @@ describe("GitHubClient", () => {
       }),
     ).resolves.toEqual({
       url: "https://github.com/example/repository/pull/123",
+      headSha: "current-head-sha",
       feedback: {
         reviews: [
           {
@@ -1335,6 +1342,7 @@ describe("GitHubClient", () => {
       }),
     ).resolves.toEqual({
       url: "https://github.com/example/repository/pull/123",
+      headSha: "current-head-sha",
       feedback: {
         reviews: [
           {
@@ -1538,6 +1546,7 @@ describe("GitHubClient", () => {
       }),
     ).resolves.toEqual({
       url: "https://github.com/example/repository/pull/123",
+      headSha: "current-head-sha",
       feedback: {
         reviews: [
           {

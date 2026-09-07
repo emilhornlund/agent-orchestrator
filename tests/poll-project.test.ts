@@ -646,6 +646,7 @@ describe("pollProject", () => {
                 url: "https://github.com/owner/repo/pull/2",
                 state: "OPEN",
                 mergedAt: null,
+                headRefOid: "review-head-sha",
                 baseRefName: "main",
                 headRefName: "agent/review-card",
                 headRepository: { name: "repo" },
@@ -668,6 +669,7 @@ describe("pollProject", () => {
           headBranch === "agent/review-card"
             ? {
                 url: "https://github.com/owner/repo/pull/2",
+                headSha: "review-head-sha",
                 feedback: "Fix this.",
               }
             : null,
@@ -1793,6 +1795,7 @@ describe("pollProject", () => {
           url: "https://github.com/example/repository/pull/123",
           state: "OPEN",
           mergedAt: null,
+          headRefOid: "review-head-sha",
           baseRefName: "main",
           headRefName: "agent/card-1",
           headRepository: { name: "repository" },
@@ -1802,6 +1805,7 @@ describe("pollProject", () => {
         }),
         findChangesRequestedPullRequest: vi.fn().mockResolvedValue({
           url: "https://github.com/example/repository/pull/123",
+          headSha: "review-head-sha",
           feedback: "Please add a regression test.",
         }),
         findPullRequest: vi.fn().mockResolvedValue({
