@@ -169,10 +169,22 @@ section is removed after successful maintenance. If automatic Git maintenance fa
 orchestrator owns only the content inside the markers and preserves all other description text.
 Each update reads the latest description immediately before writing, skips an identical result, and never creates a second section.
 
+Requested-change remediation uses that same section and markers. After a stable current-head requested-change snapshot is accepted,
+`addressing-review-feedback` covers feedback implementation, `validating-review-changes` covers review-change validation, and
+`publishing-review-changes` covers publication of the corrected task branch. These statuses explicitly say remediation is in progress
+and do not claim that the review is resolved. A remediation, validation, or publication failure leaves `failed` in the section when
+possible. A successful remediation with no repository changes leaves `attention-required`, records the existing no-op state, and does
+not remove the status as if feedback had been resolved. Only successful publication followed by the existing return to `Human Review`
+(or auto-merge completion) removes the section.
+
 Malformed marker structure, including missing, reversed, or duplicate markers, fails closed: the description is left unchanged and
 the pull request and card receive an actionable normal attention diagnostic. A description read or write failure is secondary to
 Git recovery, is logged with the pull request and card, and does not reset, abort, clean, overwrite, or otherwise alter the task
 branch, worktree, handoff, or other Git artifacts. It must not be reported as a successful status update.
+For requested-change publication, a presentation failure is also non-authoritative: publication continues when the status update
+cannot be displayed, and a later successful publication is not reported as failed because status cleanup could not be completed.
+On restart, an existing requested-change section is read and updated in place; no duplicate section is created, and cleanup still
+requires the same successful-publication condition.
 
 The lease protects against concurrent remote updates. If the branch changes or disappears after the authoritative lookup, the
 single force-with-lease update is rejected and is not retried with another SHA. Fetch, worktree, rebase, validation, remote lookup,

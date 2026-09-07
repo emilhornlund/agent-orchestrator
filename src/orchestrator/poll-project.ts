@@ -83,6 +83,11 @@ import {
 } from "./reconcile-working-cards.js";
 import { WorkflowError } from "./workflow-error.js";
 import { getElapsedRefinementWorkflowTime } from "./workflow-duration.js";
+import type { ManagedPullRequestStatus } from "../github/pull-request-status.js";
+import {
+  PullRequestStatusPresentationError,
+  updateMaintenanceStatus,
+} from "./maintenance-status.js";
 import {
   buildRequestedChangeNoOpComment,
   writeRequestedChangeNoOpState,
@@ -658,9 +663,31 @@ async function processReviewChangeRequest(
     cardId: card.id,
   });
 
+  const setReviewStatus = async (
+    status: ManagedPullRequestStatus | null,
+    phase: string,
+    bestEffort = false,
+  ): Promise<void> => {
+    await updateMaintenanceStatus(
+      github,
+      project,
+      card,
+      reviewChangeRequest.pullRequestUrl,
+      status,
+      phase,
+      cardLog,
+      { bestEffort },
+    );
+  };
+
   cardLog.event(`Processing requested changes for: ${card.name}`);
 
   try {
+    await setReviewStatus(
+      "addressing-review-feedback",
+      "starting requested-change remediation",
+    );
+
     const result = await processCardChanges(
       trello,
       git,
@@ -677,9 +704,15 @@ async function processReviewChangeRequest(
       },
       undefined,
       emailNotifier,
+      setReviewStatus,
     );
 
     if (result.requestedChangeNoOp !== undefined) {
+      await setReviewStatus(
+        "attention-required",
+        "requested-change remediation made no changes",
+      );
+
       await preserveRequestedChangeNoOp(
         trello,
         project,
@@ -731,6 +764,20 @@ async function processReviewChangeRequest(
       );
 
       return;
+    }
+
+    try {
+      await setReviewStatus(
+        "failed",
+        "requested-change remediation failed",
+        true,
+      );
+    } catch (statusError) {
+      if (!(statusError instanceof PullRequestStatusPresentationError)) {
+        cardLog.warn(
+          `Could not present requested-change failure status: ${statusError instanceof Error ? statusError.message : String(statusError)}`,
+        );
+      }
     }
 
     await failCard(trello, project, card.id, error, emailNotifier, card);
@@ -848,6 +895,12 @@ interface ProcessCardChangesResult {
   requestedChangeNoOp?: RequestedChangeNoOpResult;
 }
 
+type ReviewStatusUpdater = (
+  status: ManagedPullRequestStatus | null,
+  phase: string,
+  bestEffort?: boolean,
+) => Promise<void>;
+
 async function preserveRequestedChangeNoOp(
   trello: TrelloClient,
   project: ProjectConfig,
@@ -900,6 +953,7 @@ async function processCardChanges(
   reviewIteration?: ReviewIterationOptions,
   preparedWorktree?: PreparedImplementationWorktree,
   emailNotifier?: EmailNotifier,
+  setReviewStatus?: ReviewStatusUpdater,
 ): Promise<ProcessCardChangesResult> {
   const worktree = reviewIteration
     ? await prepareReviewWorktree(git, project, card.id)
@@ -1069,6 +1123,11 @@ async function processCardChanges(
     output: string;
     result: ReturnType<typeof parseReviewResult>;
   }> {
+    await setReviewStatus?.(
+      "validating-review-changes",
+      "review-change validation",
+    );
+
     const reviewManifest = await prepareCardContext(
       trello,
       project,
@@ -1120,6 +1179,11 @@ async function processCardChanges(
     while (remediationPasses < maxRemediationPasses) {
       remediationPasses += 1;
       remediationResult = "Applied";
+
+      await setReviewStatus?.(
+        "addressing-review-feedback",
+        "implementing requested review changes",
+      );
 
       cardLog.event(
         `Starting remediation pass ${remediationPasses} of ${maxRemediationPasses}`,
@@ -1242,6 +1306,18 @@ async function processCardChanges(
 
   cardLog.event(`OpenCode commit created: ${headAfterCommit}`);
 
+  if (setReviewStatus !== undefined) {
+    await setReviewStatus(
+      "publishing-review-changes",
+      "publishing corrected review changes",
+      true,
+    ).catch((error: unknown) => {
+      cardLog.warn(
+        `Could not present requested-change publication status; continuing publication: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
+  }
+
   await publishCard({
     trello,
     git,
@@ -1258,6 +1334,20 @@ async function processCardChanges(
     signal,
     ...(emailNotifier === undefined ? {} : { emailNotifier }),
   });
+
+  if (setReviewStatus !== undefined) {
+    await setReviewStatus(
+      parsedReviewResult === "fail" ? "attention-required" : null,
+      parsedReviewResult === "fail"
+        ? "requested-change publication completed with unresolved review findings"
+        : "successful requested-change publication",
+      true,
+    ).catch((error: unknown) => {
+      cardLog.warn(
+        `Could not remove the managed requested-change status after successful publication: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
+  }
 
   return { worktree };
 }

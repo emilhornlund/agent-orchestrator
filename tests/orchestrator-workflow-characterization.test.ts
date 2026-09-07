@@ -58,6 +58,7 @@ interface HarnessOptions {
   backlogMoveError?: Error;
   doneMoveError?: Error;
   reviewMoveError?: Error;
+  pushError?: Error;
   refinementCommentError?: Error;
   reviewResults?: Array<"REVIEW_PASS" | "REVIEW_FAIL">;
 }
@@ -166,6 +167,7 @@ function createHarness(options: HarnessOptions = {}) {
   let backlogMoveError = options.backlogMoveError;
   let doneMoveError = options.doneMoveError;
   let reviewMoveError = options.reviewMoveError;
+  let pushError = options.pushError;
   let refinementCommentError = options.refinementCommentError;
   const reviewResults = [...(options.reviewResults ?? [])];
   let feedback = options.feedback ?? "Please fix the regression.";
@@ -373,6 +375,12 @@ function createHarness(options: HarnessOptions = {}) {
   const getRemoteBranchSha = vi.fn(async () => remoteSha);
   const rebase = vi.fn(async () => undefined);
   const push = vi.fn(async () => {
+    if (pushError !== undefined) {
+      const error = pushError;
+      pushError = undefined;
+      throw error;
+    }
+
     remoteSha = headSha;
     events.push("git:push");
   });
@@ -481,12 +489,16 @@ function createHarness(options: HarnessOptions = {}) {
     pullRequestState = "merged";
     events.push("github:merge-pr");
   });
+  const updatePullRequestDescriptionStatus = vi
+    .fn<(options: { status: string | null }) => Promise<boolean>>()
+    .mockResolvedValue(false);
   const github = {
     findPullRequest,
     findPullRequestState,
     findChangesRequestedPullRequest,
     createPullRequest,
     mergePullRequest,
+    updatePullRequestDescriptionStatus,
   } as unknown as GitHubClient;
 
   const runOpenCode = vi.fn<RunOpenCode>(
@@ -598,6 +610,7 @@ function createHarness(options: HarnessOptions = {}) {
     setFeedback,
     setRemoteSha,
     trello,
+    updatePullRequestDescriptionStatus,
     git,
     worktreePath,
     contextRoot,
@@ -1423,6 +1436,93 @@ describe("orchestrator workflow characterization", () => {
       );
       expect(harness.mergePullRequest).not.toHaveBeenCalled();
       expect(harness.forcePush).not.toHaveBeenCalled();
+      expect(
+        harness.updatePullRequestDescriptionStatus.mock.calls.map(
+          ([status]) => status.status,
+        ),
+      ).toEqual([
+        "addressing-review-feedback",
+        "validating-review-changes",
+        "publishing-review-changes",
+        null,
+      ]);
+    } finally {
+      harness.cleanup();
+    }
+  });
+
+  it("leaves a failed requested-change publication status without discarding the worktree", async () => {
+    const harness = createHarness({
+      initialList: "review",
+      pullRequestState: "requested",
+      feedback: "Please add a regression test.",
+      pushError: new Error("remote publication failed"),
+    });
+
+    try {
+      await expect(
+        pollProject(
+          harness.trello,
+          harness.git,
+          harness.github,
+          harness.openCode,
+          harness.commands,
+          harness.project,
+          new AbortController().signal,
+        ),
+      ).rejects.toThrow("remote publication failed");
+
+      expect(harness.card.idList).toBe(listIds.failed);
+      expect(harness.removeWorktree).not.toHaveBeenCalled();
+      expect(
+        harness.updatePullRequestDescriptionStatus.mock.calls.map(
+          ([status]) => status.status,
+        ),
+      ).toEqual([
+        "addressing-review-feedback",
+        "validating-review-changes",
+        "publishing-review-changes",
+        "failed",
+      ]);
+    } finally {
+      harness.cleanup();
+    }
+  });
+
+  it("continues successful requested-change publication when status presentation fails", async () => {
+    const harness = createHarness({
+      initialList: "review",
+      pullRequestState: "requested",
+      feedback: "Please add a regression test.",
+    });
+    harness.updatePullRequestDescriptionStatus.mockImplementation(
+      async ({ status }) => {
+        if (status === "publishing-review-changes") {
+          throw new Error("status presentation failed");
+        }
+
+        return false;
+      },
+    );
+
+    try {
+      await expect(
+        pollProject(
+          harness.trello,
+          harness.git,
+          harness.github,
+          harness.openCode,
+          harness.commands,
+          harness.project,
+          new AbortController().signal,
+        ),
+      ).resolves.toBeUndefined();
+
+      expect(harness.card.idList).toBe(listIds.review);
+      expect(harness.push).toHaveBeenCalledOnce();
+      expect(
+        harness.updatePullRequestDescriptionStatus,
+      ).toHaveBeenLastCalledWith(expect.objectContaining({ status: null }));
     } finally {
       harness.cleanup();
     }
@@ -1465,6 +1565,11 @@ describe("orchestrator workflow characterization", () => {
           harness.card.id,
           expect.stringContaining("no repository changes"),
         );
+        expect(
+          harness.updatePullRequestDescriptionStatus.mock.calls.map(
+            ([status]) => status.status,
+          ),
+        ).toEqual(["addressing-review-feedback", "attention-required"]);
 
         await pollProject(
           harness.trello,
@@ -1683,6 +1788,16 @@ describe("orchestrator workflow characterization", () => {
         feedbackImplementationEvent,
       );
       expect(harness.events).not.toContain("github:create-pr");
+      expect(
+        harness.updatePullRequestDescriptionStatus.mock.calls.map(
+          ([status]) => status.status,
+        ),
+      ).toEqual([
+        "addressing-review-feedback",
+        "validating-review-changes",
+        "publishing-review-changes",
+        null,
+      ]);
     } finally {
       harness.cleanup();
     }
@@ -1745,6 +1860,19 @@ describe("orchestrator workflow characterization", () => {
         "agent/card-1",
         harness.project,
       );
+      expect(
+        harness.updatePullRequestDescriptionStatus.mock.calls.map(
+          ([status]) => status.status,
+        ),
+      ).toEqual([
+        "addressing-review-feedback",
+        "validating-review-changes",
+        "addressing-review-feedback",
+        "validating-review-changes",
+        "addressing-review-feedback",
+        "publishing-review-changes",
+        "attention-required",
+      ]);
     } finally {
       harness.cleanup();
     }
