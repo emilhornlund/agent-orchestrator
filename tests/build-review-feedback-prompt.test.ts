@@ -15,8 +15,15 @@ describe("buildReviewFeedbackPrompt", () => {
       },
       "https://github.com/example/repository/pull/123",
       {
-        general: "reviewer: Please add a regression test.",
-        inlineComments: [],
+        reviews: [
+          {
+            id: 1,
+            body: "Please add a regression test.",
+            author: "reviewer",
+            submittedAt: "2026-01-01T10:00:00Z",
+            inlineComments: [],
+          },
+        ],
       },
       "yarn validate",
     );
@@ -28,7 +35,7 @@ describe("buildReviewFeedbackPrompt", () => {
     );
 
     expect(prompt).toContain(
-      "Human review feedback:\nGeneral PR-level feedback:\nreviewer: Please add a regression test.",
+      "Human review feedback:\nReview 1 (ID: 1; reviewer: reviewer; submitted: 2026-01-01T10:00:00Z)\nReview body:\nPlease add a regression test.",
     );
     expect(prompt).toContain(
       "Inline code comments:\nNo inline code comments were returned.",
@@ -56,8 +63,15 @@ describe("buildReviewFeedbackPrompt", () => {
       },
       "https://github.com/example/repository/pull/123",
       {
-        general: "reviewer: Please add a regression test.",
-        inlineComments: [],
+        reviews: [
+          {
+            id: 1,
+            body: "Please add a regression test.",
+            author: "reviewer",
+            submittedAt: "2026-01-01T10:00:00Z",
+            inlineComments: [],
+          },
+        ],
       },
     );
 
@@ -81,29 +95,85 @@ describe("buildReviewFeedbackPrompt", () => {
       },
       "https://github.com/example/repository/pull/123",
       {
-        general: null,
-        inlineComments: [
+        reviews: [
           {
+            id: 1,
+            body: null,
             author: "reviewer",
-            body: "Please update this moved code.",
-            originalLine: 27,
-          },
-          {
-            author: "reviewer",
-            body: "Please inspect this comment.",
+            submittedAt: "2026-01-01T10:00:00Z",
+            inlineComments: [
+              {
+                author: "reviewer",
+                body: "Please update this moved code.",
+                originalLine: 27,
+              },
+              {
+                author: "reviewer",
+                body: "Please inspect this comment.",
+              },
+            ],
           },
         ],
       },
     );
 
-    expect(prompt).toContain(
-      "General PR-level feedback:\nNo general PR-level feedback was returned.",
-    );
+    expect(prompt).toContain("Review body:\nNo review body was returned.");
     expect(prompt).toContain(
       "Inline code comments:\nreviewer [original line 27]: Please update this moved code.\nreviewer: Please inspect this comment.",
     );
     expect(prompt).not.toContain("line undefined");
     expect(prompt).not.toContain("Diff context:");
     expect(prompt).not.toContain("[file");
+  });
+
+  it("renders every review with attribution and clear boundaries", () => {
+    const prompt = buildReviewFeedbackPrompt(
+      {
+        id: "card-1",
+        name: "Fix the parser",
+        desc: "Handle malformed input.",
+        idList: "working",
+        idLabels: [],
+        url: "https://trello.com/c/card-1",
+      },
+      "https://github.com/example/repository/pull/123",
+      {
+        reviews: [
+          {
+            id: 12,
+            body: "Please handle null values.",
+            author: "reviewer-one",
+            submittedAt: "2026-01-01T10:00:00Z",
+            inlineComments: [
+              {
+                author: "reviewer-one",
+                body: "Cover this branch.",
+                path: "src/parser.ts",
+                line: 10,
+              },
+            ],
+          },
+          {
+            id: 34,
+            body: "Please document the behavior.",
+            author: "reviewer-two",
+            submittedAt: "2026-01-02T10:00:00Z",
+            inlineComments: [],
+          },
+        ],
+      },
+    );
+
+    expect(prompt).toContain(
+      "Review 1 (ID: 12; reviewer: reviewer-one; submitted: 2026-01-01T10:00:00Z)",
+    );
+    expect(prompt).toContain("Please handle null values.");
+    expect(prompt).toContain(
+      "reviewer-one [src/parser.ts, line 10]: Cover this branch.",
+    );
+    expect(prompt).toContain(
+      "Review 2 (ID: 34; reviewer: reviewer-two; submitted: 2026-01-02T10:00:00Z)",
+    );
+    expect(prompt).toContain("Please document the behavior.");
   });
 });
