@@ -19,10 +19,11 @@ import {
 } from "../src/process/command-runner.js";
 import { getRefinementResultPath } from "../src/refinement/refinement-result.js";
 import type { EmailNotifier } from "../src/notifications/email-notifier.js";
-import type {
-  TrelloAttachment,
-  TrelloCard,
-  TrelloClient,
+import {
+  TrelloRequestError,
+  type TrelloAttachment,
+  type TrelloCard,
+  type TrelloClient,
 } from "../src/trello/trello-client.js";
 
 const listIds = {
@@ -48,6 +49,7 @@ interface HarnessOptions {
   initialWorktree?: boolean;
   pullRequestState?: PullRequestState;
   feedback?: string;
+  reviewFeedbackMakesChanges?: boolean;
   requestedChangesHeadSha?: string;
   revalidatedHeadSha?: string;
   initialRemoteSha?: string | null;
@@ -55,6 +57,7 @@ interface HarnessOptions {
   createPullRequestError?: Error;
   backlogMoveError?: Error;
   doneMoveError?: Error;
+  reviewMoveError?: Error;
   refinementCommentError?: Error;
   reviewResults?: Array<"REVIEW_PASS" | "REVIEW_FAIL">;
 }
@@ -162,8 +165,10 @@ function createHarness(options: HarnessOptions = {}) {
   let createPullRequestError = options.createPullRequestError;
   let backlogMoveError = options.backlogMoveError;
   let doneMoveError = options.doneMoveError;
+  let reviewMoveError = options.reviewMoveError;
   let refinementCommentError = options.refinementCommentError;
   const reviewResults = [...(options.reviewResults ?? [])];
+  let feedback = options.feedback ?? "Please fix the regression.";
   let branchExists =
     options.initialWorktree === true || currentList === "review";
   let dirty = false;
@@ -245,6 +250,12 @@ function createHarness(options: HarnessOptions = {}) {
       if (listId === listIds.done && doneMoveError !== undefined) {
         const error = doneMoveError;
         doneMoveError = undefined;
+        throw error;
+      }
+
+      if (listId === listIds.review && reviewMoveError !== undefined) {
+        const error = reviewMoveError;
+        reviewMoveError = undefined;
         throw error;
       }
 
@@ -450,7 +461,7 @@ function createHarness(options: HarnessOptions = {}) {
     return {
       ...pullRequest,
       headSha: remoteSha ?? headSha,
-      feedback: options.feedback ?? "Please fix the regression.",
+      feedback,
     };
   });
   const createPullRequest = vi.fn(async () => {
@@ -498,7 +509,7 @@ function createHarness(options: HarnessOptions = {}) {
         dirty = true;
         events.push("opencode:implementation");
       } else if (label === "OpenCode review feedback implementation") {
-        dirty = true;
+        dirty = options.reviewFeedbackMakesChanges !== false;
         events.push("opencode:review-feedback-implementation");
       } else if (label === "OpenCode review") {
         events.push("opencode:review");
@@ -546,6 +557,14 @@ function createHarness(options: HarnessOptions = {}) {
     pullRequestState = state;
   }
 
+  function setFeedback(nextFeedback: string): void {
+    feedback = nextFeedback;
+  }
+
+  function setRemoteSha(nextRemoteSha: string): void {
+    remoteSha = nextRemoteSha;
+  }
+
   return {
     card,
     commands,
@@ -576,6 +595,8 @@ function createHarness(options: HarnessOptions = {}) {
     runCommand,
     runOpenCode,
     setPullRequestState,
+    setFeedback,
+    setRemoteSha,
     trello,
     git,
     worktreePath,
@@ -1402,6 +1423,144 @@ describe("orchestrator workflow characterization", () => {
       );
       expect(harness.mergePullRequest).not.toHaveBeenCalled();
       expect(harness.forcePush).not.toHaveBeenCalled();
+    } finally {
+      harness.cleanup();
+    }
+  });
+
+  it.each([
+    "This feedback is already satisfied.",
+    "The referenced code no longer exists.",
+  ])(
+    "keeps an unchanged requested-change session recoverable without retrying it: %s",
+    async (feedback) => {
+      const harness = createHarness({
+        initialList: "review",
+        pullRequestState: "requested",
+        feedback,
+        reviewFeedbackMakesChanges: false,
+      });
+
+      try {
+        await pollProject(
+          harness.trello,
+          harness.git,
+          harness.github,
+          harness.openCode,
+          harness.commands,
+          harness.project,
+          new AbortController().signal,
+        );
+
+        const firstRunCount = harness.runOpenCode.mock.calls.length;
+        const firstRunEvents = [...harness.events];
+
+        expect(harness.card.idList).toBe(listIds.review);
+        expect(
+          harness.runOpenCode.mock.calls.map(([run]) => run.sessionLabel),
+        ).toEqual(["OpenCode review feedback implementation"]);
+        expect(harness.push).not.toHaveBeenCalled();
+        expect(harness.createPullRequest).not.toHaveBeenCalled();
+        expect(harness.addComment).toHaveBeenCalledWith(
+          harness.card.id,
+          expect.stringContaining("no repository changes"),
+        );
+
+        await pollProject(
+          harness.trello,
+          harness.git,
+          harness.github,
+          harness.openCode,
+          harness.commands,
+          harness.project,
+          new AbortController().signal,
+        );
+
+        expect(harness.runOpenCode).toHaveBeenCalledTimes(firstRunCount);
+        expect(harness.events).toEqual(expect.arrayContaining(firstRunEvents));
+        expect(harness.card.idList).toBe(listIds.review);
+        expect(harness.moveCard).toHaveBeenCalledTimes(2);
+
+        harness.setRemoteSha("new-head");
+
+        await pollProject(
+          harness.trello,
+          harness.git,
+          harness.github,
+          harness.openCode,
+          harness.commands,
+          harness.project,
+          new AbortController().signal,
+        );
+
+        expect(harness.runOpenCode).toHaveBeenCalledTimes(firstRunCount + 1);
+        expect(harness.moveCard).toHaveBeenCalledTimes(4);
+
+        harness.setFeedback("Please clarify the requested behavior.");
+
+        await pollProject(
+          harness.trello,
+          harness.git,
+          harness.github,
+          harness.openCode,
+          harness.commands,
+          harness.project,
+          new AbortController().signal,
+        );
+
+        expect(harness.runOpenCode).toHaveBeenCalledTimes(firstRunCount + 2);
+        expect(harness.card.idList).toBe(listIds.review);
+        expect(harness.moveCard).toHaveBeenCalledTimes(6);
+      } finally {
+        harness.cleanup();
+      }
+    },
+  );
+
+  it("does not rerun no-op remediation when returning the card to Human Review initially fails", async () => {
+    const harness = createHarness({
+      initialList: "review",
+      pullRequestState: "requested",
+      reviewFeedbackMakesChanges: false,
+      reviewMoveError: new TrelloRequestError(
+        "card move",
+        "Trello request failed: 503 Unavailable",
+        { status: 503, retryable: true },
+      ),
+    });
+
+    try {
+      await expect(
+        pollProject(
+          harness.trello,
+          harness.git,
+          harness.github,
+          harness.openCode,
+          harness.commands,
+          harness.project,
+          new AbortController().signal,
+        ),
+      ).rejects.toMatchObject({
+        name: "RetryableTrelloReconciliationError",
+        operation: "card move",
+      });
+
+      expect(harness.card.idList).toBe(listIds.working);
+      expect(harness.runOpenCode).toHaveBeenCalledTimes(1);
+
+      await pollProject(
+        harness.trello,
+        harness.git,
+        harness.github,
+        harness.openCode,
+        harness.commands,
+        harness.project,
+        new AbortController().signal,
+      );
+
+      expect(harness.card.idList).toBe(listIds.review);
+      expect(harness.runOpenCode).toHaveBeenCalledTimes(1);
+      expect(harness.moveCard).toHaveBeenCalledTimes(3);
     } finally {
       harness.cleanup();
     }

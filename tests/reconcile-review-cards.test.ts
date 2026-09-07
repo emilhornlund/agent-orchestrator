@@ -208,6 +208,7 @@ describe("reconcileReviewCards", () => {
     ).resolves.toEqual({
       card: card(),
       pullRequestUrl: "https://github.com/owner/repo/pull/1",
+      headSha: "head-sha",
       feedback: "Fix this.",
       maintenanceState: "up-to-date",
     });
@@ -427,6 +428,7 @@ describe("reconcileReviewCards", () => {
     ).resolves.toEqual({
       card: card(),
       pullRequestUrl: "https://github.com/owner/repo/pull/1",
+      headSha: "head-sha",
       feedback: "Fix this.",
       maintenanceState: "up-to-date",
     });
@@ -796,6 +798,7 @@ describe("reconcileReviewCards", () => {
     ).resolves.toEqual({
       card: card(),
       pullRequestUrl: "https://github.com/owner/repo/pull/1",
+      headSha: "head-sha",
       feedback: {
         reviews: [
           {

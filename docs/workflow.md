@@ -219,6 +219,15 @@ original line, or diff hunk. Fully scoped inline comments retain all of their su
 comments remain actionable; unavailable location fields are omitted rather than inferred or replaced with placeholders. Reviews
 targeting older pull-request heads are excluded. This applies to review-body-only, inline-only, and mixed feedback.
 
+If the requested-change OpenCode session exits successfully but leaves the repository clean, it is a requested-change no-op, not a
+workflow failure. The existing pull request and remote `agent/<trello-card-id>` branch are retained, no commit, push, pull-request
+rewrite, merge, or `Done` transition is performed, and the card is returned to `Human Review` even when `autoMerge` is enabled. The
+outcome explicitly says that no reviewer feedback was resolved. It records a bounded Trello diagnostic with the pull-request URL,
+head, review identity and feedback context when available, and asks a human to dismiss or update the review or provide clearer
+feedback. The no-op identity is scoped to the pull-request URL, current head, and submitted feedback, so unchanged feedback is not
+retried on later polls; a new head or newly submitted feedback is eligible again. Initial implementations and ordinary in-workflow
+review remediation remain strict and still fail when they leave no repository changes.
+
 For every owned open pull request on the expected `agent/<trello-card-id>` branch, Human Review reconciliation records a
 maintenance state: `up-to-date` when the configured default branch is not ahead and GitHub reports no conflict, `behind` when
 the default branch has advanced without a conflict, or `conflicted` when GitHub reports merge conflicts. A prepared local

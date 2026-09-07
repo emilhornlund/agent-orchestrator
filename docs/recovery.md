@@ -104,6 +104,7 @@ For each card in `Human Review`, the orchestrator checks the expected `agent/<tr
 | Pull request is merged                                                            | Delete the merged remote branch when present, move the card to `Done`, mark it complete, remove the session log, and attempt terminal local cleanup |
 | Pull request is closed without merge                                              | Move the card to `Backlog`, add a Trello comment identifying the closed pull request, and attempt terminal local cleanup                            |
 | Pull request is open with current-head requested changes                          | Move the card to `Working` and resume feedback implementation                                                                                       |
+| The same current-head requested-change no-op was already recorded                 | Leave the card in `Human Review`; retain the existing pull request and branch and wait for reviewer action                                          |
 | Pull request is open without current-head requested changes                       | Leave the card in `Human Review`; record maintenance state and automatically maintain an eligible clean stale branch                                |
 | Pull request is open with recognized `UNKNOWN` mergeability or merge-state status | Leave the card in `Human Review`; start no maintenance and retry the GitHub state read through the bounded three-attempt reconciliation policy      |
 | Prepared-conflict handoff is present                                              | Leave the card in `Human Review`; expose `prepared-conflict` and block project processing until remediation completes or the state is resolved      |
@@ -119,6 +120,14 @@ feedback snapshot is discarded, no Trello transition or OpenCode remediation is 
 its existing pull request and branch. The race is logged with the project, card, pull request, and old and new SHAs; the next poll
 collects a new snapshot for the new head without creating an attention failure. A failure reading the authoritative head is an actual GitHub reconciliation failure and keeps
 the existing diagnostics and retry behavior.
+
+A successful requested-change OpenCode session that leaves no repository changes is recorded as a deterministic no-op. Its identity
+includes the pull-request URL, current head SHA, and submitted feedback hash, with review IDs retained for diagnosis. The card is
+returned to `Human Review`; the existing pull request and remote `agent/<trello-card-id>` branch are not rewritten, and no commit,
+push, merge, or `Done` transition occurs. A bounded Trello diagnostic explains that the feedback was not resolved and points the
+reviewer toward dismissing or updating it, or providing clearer instructions. A failed OpenCode/setup/validation session is not a
+no-op and keeps its existing failure handling. A changed head or newly submitted feedback does not match the recorded identity and
+can start a new requested-change attempt.
 
 Maintenance applies only to an open pull request in the configured repository whose head is exactly `agent/<trello-card-id>`,
 whose base is the configured default branch, whose state is `behind` or `conflicted`, and which has no actionable requested

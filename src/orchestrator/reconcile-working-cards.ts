@@ -31,6 +31,13 @@ import {
 } from "./failure-diagnostic.js";
 import { githubReconciliationError } from "./github-reconciliation-error.js";
 import type { ReviewChangeRequest } from "./reconcile-review-cards.js";
+import {
+  buildRequestedChangeNoOpComment,
+  matchesRequestedChangeNoOp,
+  readRequestedChangeNoOpState,
+  type RequestedChangeNoOpInput,
+  type RequestedChangeNoOpState,
+} from "./requested-change-no-op-state.js";
 import { trelloReconciliationError } from "./trello-reconciliation-error.js";
 import { getElapsedWorkflowTime } from "./workflow-duration.js";
 import { getWorkflowKind, type WorkflowKind } from "./workflow-kind.js";
@@ -55,6 +62,80 @@ function isReviewChangeRequest(
 
 function isMergedPullRequest(pullRequest: PullRequestState): boolean {
   return pullRequest.mergedAt !== null || pullRequest.state === "MERGED";
+}
+
+function getMatchingRequestedChangeNoOp(
+  project: ProjectConfig,
+  card: TrelloCard,
+  input: RequestedChangeNoOpInput,
+): RequestedChangeNoOpState | null {
+  if (typeof project.repository.worktreeRoot !== "string") {
+    return null;
+  }
+
+  try {
+    const state = readRequestedChangeNoOpState(project, card.id);
+
+    return state !== null && matchesRequestedChangeNoOp(state, input)
+      ? state
+      : null;
+  } catch (error) {
+    const reconciliationError = new WorkflowError(
+      "Workflow",
+      `Could not read requested-change no-op state for Working card: ${getErrorMessage(error)}`,
+      { cause: error },
+    );
+    annotateCardFailure(reconciliationError, project.id, card.id);
+    throw reconciliationError;
+  }
+}
+
+async function restoreRequestedChangeNoOpCard(
+  trello: TrelloClient,
+  project: ProjectConfig,
+  card: TrelloCard,
+  state: RequestedChangeNoOpState,
+  cardLog: ReturnType<typeof logger.child>,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (signal?.aborted) {
+    return;
+  }
+
+  try {
+    await trello.moveCard(card.id, project.trello.reviewListId);
+  } catch (error) {
+    throw trelloReconciliationError(
+      project.id,
+      card.id,
+      "card move",
+      error,
+      `Could not return requested-change no-op card to Human Review: ${getErrorMessage(error)}`,
+      { reconciliationListId: project.trello.workingListId },
+    );
+  }
+
+  cardLog.event(
+    `Requested-change no-op was restored to Human Review for ${state.pullRequestUrl} at head ${state.headSha}`,
+  );
+
+  try {
+    await trello.addComment(
+      card.id,
+      buildRequestedChangeNoOpComment({
+        pullRequestUrl: state.pullRequestUrl,
+        headSha: state.headSha,
+        feedback:
+          state.reviewIds.length > 0
+            ? `Previously recorded review IDs: ${state.reviewIds.join(", ")}`
+            : "Previously recorded feedback did not include review IDs.",
+      }),
+    );
+  } catch (error) {
+    cardLog.warn(
+      `Requested-change no-op was restored to Human Review, but the diagnostic comment could not be added: ${getErrorMessage(error)}`,
+    );
+  }
 }
 
 export async function reconcileClaimedCard(
@@ -681,11 +762,33 @@ async function reconcileReadyWorkingCard(
   }
 
   if (changesRequestedPullRequest) {
+    const requestedChangeNoOp = getMatchingRequestedChangeNoOp(project, card, {
+      pullRequestUrl: changesRequestedPullRequest.url,
+      headSha: changesRequestedPullRequest.headSha,
+      feedback: changesRequestedPullRequest.feedback,
+    });
+
+    if (requestedChangeNoOp !== null) {
+      cardLog.event(
+        `Suppressing repeated requested-change no-op for pull request ${requestedChangeNoOp.pullRequestUrl} at head ${requestedChangeNoOp.headSha}`,
+      );
+      await restoreRequestedChangeNoOpCard(
+        trello,
+        project,
+        card,
+        requestedChangeNoOp,
+        cardLog,
+        signal,
+      );
+      return null;
+    }
+
     cardLog.event("Working card has actionable requested changes");
 
     return {
       card,
       pullRequestUrl: changesRequestedPullRequest.url,
+      headSha: changesRequestedPullRequest.headSha,
       feedback: changesRequestedPullRequest.feedback,
     };
   }
@@ -921,11 +1024,33 @@ async function reconcileReviewToWorkingCard(
     return null;
   }
 
+  const requestedChangeNoOp = getMatchingRequestedChangeNoOp(project, card, {
+    pullRequestUrl: changesRequestedPullRequest.url,
+    headSha: changesRequestedPullRequest.headSha,
+    feedback: changesRequestedPullRequest.feedback,
+  });
+
+  if (requestedChangeNoOp !== null) {
+    cardLog.event(
+      `Suppressing repeated requested-change no-op for pull request ${requestedChangeNoOp.pullRequestUrl} at head ${requestedChangeNoOp.headSha}`,
+    );
+    await restoreRequestedChangeNoOpCard(
+      trello,
+      project,
+      card,
+      requestedChangeNoOp,
+      cardLog,
+      signal,
+    );
+    return null;
+  }
+
   cardLog.event("Working card has actionable requested changes");
 
   return {
     card,
     pullRequestUrl: changesRequestedPullRequest.url,
+    headSha: changesRequestedPullRequest.headSha,
     feedback: changesRequestedPullRequest.feedback,
   };
 }
