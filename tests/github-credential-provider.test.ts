@@ -372,8 +372,8 @@ describe("GitHub credential command wiring", () => {
       }),
     });
 
-    expect(result?.feedback).not.toContain("token-a");
-    expect(result?.feedback).toContain("[REDACTED]");
+    expect(result?.feedback.general).not.toContain("token-a");
+    expect(result?.feedback.general).toContain("[REDACTED]");
   });
 
   it("preserves ambient GH_TOKEN without passing an environment override", async () => {

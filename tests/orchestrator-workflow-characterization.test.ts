@@ -1346,7 +1346,7 @@ describe("orchestrator workflow characterization", () => {
         sessionLabel: "OpenCode review feedback implementation",
       });
       expect(harness.runOpenCode.mock.calls[0]?.[0].prompt).toContain(
-        "Human review feedback:\nPlease add a regression test.",
+        "Human review feedback:\nGeneral PR-level feedback:\nPlease add a regression test.",
       );
       expect(harness.runOpenCode.mock.calls[0]?.[0].prompt).toContain(
         `- requirements.md (text/markdown): local file: ${path.join(
@@ -1454,7 +1454,7 @@ describe("orchestrator workflow characterization", () => {
         sessionLabel: "OpenCode review feedback implementation",
       });
       expect(harness.runOpenCode.mock.calls[0]?.[0].prompt).toContain(
-        "Human review feedback:\nPlease add a regression test.",
+        "Human review feedback:\nGeneral PR-level feedback:\nPlease add a regression test.",
       );
       expect(harness.push).toHaveBeenCalledWith(
         harness.worktreePath,

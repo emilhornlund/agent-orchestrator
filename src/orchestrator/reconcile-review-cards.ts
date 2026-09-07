@@ -5,6 +5,7 @@ import { cleanupWorktree } from "../git/cleanup-worktree.js";
 import type { GitClient } from "../git/git-client.js";
 import type {
   GitHubClient,
+  PullRequestReviewFeedback,
   PullRequestState,
 } from "../github/github-client.js";
 import {
@@ -39,7 +40,7 @@ import {
 export interface ReviewChangeRequest {
   card: TrelloCard;
   pullRequestUrl: string;
-  feedback: string;
+  feedback: PullRequestReviewFeedback;
   maintenanceState?: PullRequestMaintenanceState;
 }
 
