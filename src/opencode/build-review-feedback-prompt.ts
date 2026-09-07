@@ -1,6 +1,7 @@
 import type { TrelloCard } from "../trello/trello-client.js";
 import type {
   InlineReviewComment,
+  PullRequestReview,
   PullRequestReviewFeedback,
 } from "../github/github-client.js";
 import {
@@ -15,10 +16,9 @@ export function buildReviewFeedbackPrompt(
   validationCommand?: string,
   attachmentContext?: CardAttachmentPromptContext,
 ): string {
-  const reviewFeedback: PullRequestReviewFeedback =
-    typeof feedback === "string"
-      ? { general: feedback.trim(), inlineComments: [] }
-      : feedback;
+  const reviewFeedback: PullRequestReviewFeedback | null =
+    typeof feedback === "string" ? null : feedback;
+  const legacyFeedback = typeof feedback === "string" ? feedback.trim() : "";
 
   return [
     "Apply the human review feedback for the existing pull request.",
@@ -27,16 +27,15 @@ export function buildReviewFeedbackPrompt(
     `Pull request: ${pullRequestUrl}`,
     "",
     "Human review feedback:",
-    "General PR-level feedback:",
-    reviewFeedback.general ??
-      (reviewFeedback.inlineComments.length === 0
-        ? "Changes were requested on GitHub, but no written review feedback was returned."
-        : "No general PR-level feedback was returned."),
-    "",
-    "Inline code comments:",
-    ...(reviewFeedback.inlineComments.length > 0
-      ? reviewFeedback.inlineComments.flatMap(formatInlineReviewComment)
-      : ["No inline code comments were returned."]),
+    ...(reviewFeedback === null
+      ? [
+          "General PR-level feedback:",
+          legacyFeedback,
+          "",
+          "Inline code comments:",
+          "No inline code comments were returned.",
+        ]
+      : reviewFeedback.reviews.flatMap(formatReview)),
     ...buildCardAttachmentPromptLines(attachmentContext),
     "",
     "Inspect the current repository and existing implementation before editing.",
@@ -53,6 +52,20 @@ export function buildReviewFeedbackPrompt(
     "Do not push anything.",
     "Do not open pull requests.",
   ].join("\n");
+}
+
+function formatReview(review: PullRequestReview, index: number): string[] {
+  return [
+    `Review ${index + 1} (ID: ${review.id}; reviewer: ${review.author ?? "reviewer"}; submitted: ${review.submittedAt})`,
+    "Review body:",
+    review.body?.trim() || "No review body was returned.",
+    "",
+    "Inline code comments:",
+    ...(review.inlineComments.length > 0
+      ? review.inlineComments.flatMap(formatInlineReviewComment)
+      : ["No inline code comments were returned."]),
+    "",
+  ];
 }
 
 function formatInlineReviewComment(comment: InlineReviewComment): string[] {

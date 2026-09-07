@@ -656,7 +656,17 @@ describe("owned Human Review pull-request maintenance", () => {
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce({
         url: "https://github.com/owner/repo/pull/1",
-        feedback: { general: "Fix", inlineComments: [] },
+        feedback: {
+          reviews: [
+            {
+              id: 1,
+              body: "Fix",
+              author: "reviewer",
+              submittedAt: "2026-01-01T10:00:00Z",
+              inlineComments: [],
+            },
+          ],
+        },
       });
     const git = createGit([taskSha, defaultSha]);
 

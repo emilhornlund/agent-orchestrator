@@ -208,11 +208,13 @@ republished pull request; a disabled project returns it to Human Review. A reque
 feedback applies to the pull request's current head, and it gets its own transient remediation counter. A retry that reuses
 already committed work skips all OpenCode stages, including attachment-dependent prompts, and proceeds directly to publication.
 
-Requested-changes remediation feedback has separate sections for the selected review body and inline code comments. The review
-body is treated as general pull-request-level feedback and has no file, line, or diff location. Inline comments retain each
-location field GitHub supplies, including a path, current line, original line, or diff hunk. Fully scoped inline comments retain
-all of their supplied location and diff context. Partially scoped comments remain actionable; unavailable location fields are
-omitted rather than inferred or replaced with placeholders. This applies to review-body-only, inline-only, and mixed feedback.
+Requested-changes remediation feedback includes a separate, attributed section for every submitted `CHANGES_REQUESTED` review
+targeting the pull request's current head. Each section preserves the review ID, reviewer, submission timestamp, review body,
+and only the inline comments belonging to that review. Review bodies are treated as general pull-request-level feedback and have
+no file, line, or diff location. Inline comments retain each location field GitHub supplies, including a path, current line,
+original line, or diff hunk. Fully scoped inline comments retain all of their supplied location and diff context. Partially scoped
+comments remain actionable; unavailable location fields are omitted rather than inferred or replaced with placeholders. Reviews
+targeting older pull-request heads are excluded. This applies to review-body-only, inline-only, and mixed feedback.
 
 For every owned open pull request on the expected `agent/<trello-card-id>` branch, Human Review reconciliation records a
 maintenance state: `up-to-date` when the configured default branch is not ahead and GitHub reports no conflict, `behind` when

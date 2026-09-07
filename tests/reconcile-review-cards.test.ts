@@ -597,9 +597,16 @@ describe("reconcileReviewCards", () => {
       card: card(),
       pullRequestUrl: "https://github.com/owner/repo/pull/1",
       feedback: {
-        general: "reviewer: Please fix this.",
-        inlineComments: [
-          { author: "reviewer", body: "Add a regression test." },
+        reviews: [
+          {
+            id: 2,
+            body: "Please fix this.",
+            author: "reviewer",
+            submittedAt: "2026-01-01T10:00:00Z",
+            inlineComments: [
+              { author: "reviewer", body: "Add a regression test." },
+            ],
+          },
         ],
       },
       maintenanceState: "up-to-date",

@@ -115,7 +115,14 @@ export interface ChangesRequestedPullRequest extends PullRequest {
 }
 
 export interface PullRequestReviewFeedback {
-  general: string | null;
+  reviews: PullRequestReview[];
+}
+
+export interface PullRequestReview {
+  id: number;
+  body: string | null;
+  author: string | null;
+  submittedAt: string;
   inlineComments: InlineReviewComment[];
 }
 
@@ -966,6 +973,7 @@ export class GitHubClient {
         (review) => isRecord(review) && review.state === "CHANGES_REQUESTED",
       )
       .map(validateRequestedChangesReview)
+      .filter((review) => review.commitId === pullRequest.headRefOid)
       .sort((left, right) =>
         left.submittedAt < right.submittedAt
           ? -1
@@ -973,13 +981,7 @@ export class GitHubClient {
             ? 1
             : 0,
       );
-    const review = reviews[reviews.length - 1];
-
-    if (review === undefined) {
-      return null;
-    }
-
-    if (review.commitId !== pullRequest.headRefOid) {
+    if (reviews.length === 0) {
       return null;
     }
 
@@ -1001,32 +1003,34 @@ export class GitHubClient {
       .map(validateInlineReviewComment)
       .filter(
         (comment): comment is ValidatedInlineReviewComment & { body: string } =>
-          comment.reviewId === review.id &&
+          reviews.some((review) => comment.reviewId === review.id) &&
           comment.body !== null &&
           comment.body.length > 0,
-      )
-      .map((comment): InlineReviewComment => ({
-        body: comment.body,
-        author: comment.author,
-        ...(comment.path === undefined ? {} : { path: comment.path }),
-        ...(comment.line === undefined ? {} : { line: comment.line }),
-        ...(comment.originalLine === undefined
-          ? {}
-          : { originalLine: comment.originalLine }),
-        ...(comment.diffHunk === undefined
-          ? {}
-          : { diffHunk: comment.diffHunk }),
-      }));
-
-    const general = review.body?.trim()
-      ? `${review.author ?? "reviewer"}: ${review.body.trim()}`
-      : null;
+      );
 
     return {
       url: parsePullRequestUrl(pullRequest.url),
       feedback: {
-        general,
-        inlineComments,
+        reviews: reviews.map((review) => ({
+          id: review.id,
+          body: review.body,
+          author: review.author,
+          submittedAt: review.submittedAt,
+          inlineComments: inlineComments
+            .filter((comment) => comment.reviewId === review.id)
+            .map((comment): InlineReviewComment => ({
+              body: comment.body,
+              author: comment.author,
+              ...(comment.path === undefined ? {} : { path: comment.path }),
+              ...(comment.line === undefined ? {} : { line: comment.line }),
+              ...(comment.originalLine === undefined
+                ? {}
+                : { originalLine: comment.originalLine }),
+              ...(comment.diffHunk === undefined
+                ? {}
+                : { diffHunk: comment.diffHunk }),
+            })),
+        })),
       },
     };
   }
