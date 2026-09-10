@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import type { ProjectConfig } from "../config/config.js";
 import {
   withActiveCardContext,
@@ -134,6 +136,87 @@ function hasOpenCodePermissionDenial(result: OpenCodeRunResult): boolean {
     output.includes("rejected permission") ||
     output.includes("permission denied")
   );
+}
+
+function getChangedPaths(status: string): Set<string> {
+  const paths = new Set<string>();
+
+  for (const line of status.split(/\r?\n/)) {
+    if (line.length < 4 || line.trim().length === 0) {
+      continue;
+    }
+
+    const pathText = line.slice(3).trim();
+
+    for (const changedPath of pathText.split(" -> ")) {
+      if (changedPath.length > 0) {
+        paths.add(changedPath);
+      }
+    }
+  }
+
+  return paths;
+}
+
+function normalizeStatus(status: string): string {
+  return status
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter((line) => line.trim().length > 0)
+    .sort()
+    .join("\n");
+}
+
+type ChangedPathContent =
+  { kind: "missing" } | { kind: "content"; value: Buffer };
+
+function getChangedPathContent(
+  worktreePath: string,
+  changedPath: string,
+): ChangedPathContent {
+  const filePath = path.resolve(worktreePath, changedPath);
+
+  try {
+    return { kind: "content", value: fs.readFileSync(filePath) };
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return { kind: "missing" };
+    }
+
+    throw error;
+  }
+}
+
+function preservesOriginalContent(
+  original: ChangedPathContent,
+  current: ChangedPathContent,
+): boolean {
+  if (original.kind === "missing" || current.kind === "missing") {
+    return original.kind === current.kind;
+  }
+
+  if (original.value.equals(current.value)) {
+    return true;
+  }
+
+  if (original.value.includes(0) || current.value.includes(0)) {
+    return false;
+  }
+
+  const originalLines = original.value.toString("utf8").split(/\r?\n/);
+  let originalLine = 0;
+
+  for (const currentLine of current.value.toString("utf8").split(/\r?\n/)) {
+    if (currentLine === originalLines[originalLine]) {
+      originalLine += 1;
+
+      if (originalLine === originalLines.length) {
+        return true;
+      }
+    }
+  }
+
+  return false;
 }
 
 function reportHousekeepingFailure(
@@ -1113,6 +1196,15 @@ async function processCardChanges(
     );
   }
 
+  const implementationStatus = normalizeStatus(status);
+  const implementationPaths = getChangedPaths(status);
+  const implementationContent = new Map(
+    [...implementationPaths].map((changedPath) => [
+      changedPath,
+      getChangedPathContent(worktree.path, changedPath),
+    ]),
+  );
+
   cardLog.info("Repository changes detected:");
 
   for (const line of status.split("\n")) {
@@ -1228,12 +1320,49 @@ async function processCardChanges(
       cardLog.event("OpenCode remediation completed");
 
       const remediatedStatus = await git.getStatus(worktree.path);
+      const remediatedPaths = getChangedPaths(remediatedStatus);
+      const removedImplementationPaths = [...implementationPaths].filter(
+        (changedPath) => !remediatedPaths.has(changedPath),
+      );
 
-      if (remediatedStatus.length === 0) {
+      if (removedImplementationPaths.length > 0) {
         throw new WorkflowError(
           "OpenCode",
-          "OpenCode remediation left no repository changes",
+          `OpenCode remediation removed required implementation changes: ${removedImplementationPaths.join(", ")}`,
         );
+      }
+
+      const changedImplementationPaths = [...implementationPaths].filter(
+        (changedPath) => {
+          const originalContent = implementationContent.get(changedPath);
+
+          return (
+            originalContent === undefined ||
+            !preservesOriginalContent(
+              originalContent,
+              getChangedPathContent(worktree.path, changedPath),
+            )
+          );
+        },
+      );
+
+      if (changedImplementationPaths.length > 0) {
+        throw new WorkflowError(
+          "OpenCode",
+          `OpenCode remediation changed required implementation content: ${changedImplementationPaths.join(", ")}`,
+        );
+      }
+
+      if (normalizeStatus(remediatedStatus) === implementationStatus) {
+        cardLog.event(
+          "OpenCode remediation produced no additional repository changes; preserving implementation changes",
+        );
+      } else {
+        cardLog.info("Repository changes after remediation:");
+
+        for (const line of remediatedStatus.split("\n")) {
+          cardLog.info(line);
+        }
       }
 
       if (remediationPasses >= maxRemediationPasses) {

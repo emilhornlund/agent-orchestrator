@@ -120,10 +120,10 @@ The implementation pass then:
    separate OpenCode review session with compact attachment metadata and usable locations. This review is always run and
    does not consume a remediation pass.
 6. If a review reports findings and `projects[].opencode.remediation.maxPasses` has remaining capacity, refreshes the card
-   context immediately before each separate remediation session and checks that it left repository changes. The pass number
-   and configured limit are logged with the project and card context. A new review runs only when another remediation pass
-   remains. The default limit is `1`; a value of `0` skips remediation and any follow-up review while continuing through the
-   normal post-review flow.
+   context immediately before each separate remediation session and checks that the original implementation content remains
+   present. A remediation pass may therefore produce no additional repository changes. The pass number and configured limit
+   are logged with the project and card context. A new review runs only when another remediation pass remains. The default
+   limit is `1`; a value of `0` skips remediation and any follow-up review while continuing through the normal post-review flow.
 7. Stops immediately when the initial or an intermediate review passes. After the final allowed remediation pass, the workflow
    continues directly to the normal post-review flow without another automated review. Review attachment context is refreshed
    separately for each review and is not reused from implementation or remediation.
@@ -227,8 +227,9 @@ rewrite, merge, or `Done` transition is performed, and the card is returned to `
 outcome explicitly says that no reviewer feedback was resolved. It records a bounded Trello diagnostic with the pull-request URL,
 head, review identity and feedback context when available, and asks a human to dismiss or update the review or provide clearer
 feedback. The no-op identity is scoped to the pull-request URL, current head, and submitted feedback, so unchanged feedback is not
-retried on later polls; a new head or newly submitted feedback is eligible again. Initial implementations and ordinary in-workflow
-review remediation remain strict and still fail when they leave no repository changes.
+retried on later polls; a new head or newly submitted feedback is eligible again. Initial implementations still require repository
+changes. Ordinary in-workflow review remediation remains strict about preserving the original implementation content, but a
+successful no-op remediation continues through the normal post-review flow.
 
 For every owned open pull request on the expected `agent/<trello-card-id>` branch, Human Review reconciliation records a
 maintenance state: `up-to-date` when the configured default branch is not ahead and GitHub reports no conflict, `behind` when
