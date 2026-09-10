@@ -19,6 +19,7 @@ import {
 } from "../opencode/opencode-client.js";
 import {
   parsePullRequestDescription,
+  PullRequestDescriptionParseError,
   type PullRequestDescription,
 } from "../opencode/pull-request-description.js";
 import { renderPullRequestDescription } from "../opencode/render-pull-request-description.js";
@@ -69,9 +70,16 @@ function logDescriptionFallback(
   cardLog: ReturnType<typeof logger.child>,
   stage: string,
   error: unknown,
+  attempt?: "initial attempt" | "corrective retry",
 ): void {
+  const failureType =
+    error instanceof PullRequestDescriptionParseError
+      ? ` (${error.failureType})`
+      : "";
+  const attemptText = attempt === undefined ? "" : ` on ${attempt}`;
+
   cardLog.warn(
-    `Pull request description generation failed during ${stage}: ${getErrorMessage(error)}. Using deterministic fallback pull request body.`,
+    `Pull request description generation failed${attemptText} during ${stage}${failureType}: ${getErrorMessage(error)}. Using deterministic fallback pull request body.`,
   );
 }
 
@@ -140,6 +148,7 @@ async function generatePullRequestDescription(options: {
   const runDescription = async (
     prompt: string,
     failureStage: string,
+    attempt: "initial attempt" | "corrective retry",
   ): Promise<OpenCodeRunResult | undefined> => {
     let result: OpenCodeRunResult;
 
@@ -159,7 +168,7 @@ async function generatePullRequestDescription(options: {
         throw new TrelloRequestAbortedError();
       }
 
-      logDescriptionFallback(cardLog, failureStage, error);
+      logDescriptionFallback(cardLog, failureStage, error, attempt);
       return undefined;
     }
 
@@ -174,6 +183,7 @@ async function generatePullRequestDescription(options: {
         new Error(
           `OpenCode exited with code ${result.exitCode}${result.errorOutput.trim().length > 0 ? `: ${result.errorOutput.trim()}` : ""}`,
         ),
+        attempt,
       );
 
       return undefined;
@@ -182,7 +192,11 @@ async function generatePullRequestDescription(options: {
     return result;
   };
 
-  const result = await runDescription(descriptionPrompt, "OpenCode execution");
+  const result = await runDescription(
+    descriptionPrompt,
+    "OpenCode execution",
+    "initial attempt",
+  );
 
   if (result === undefined) {
     return undefined;
@@ -200,7 +214,7 @@ async function generatePullRequestDescription(options: {
     }
 
     cardLog.warn(
-      `OpenCode pull request description response was invalid: ${getErrorMessage(error)}. Requesting one corrective retry.`,
+      `Pull request description generation failed on initial attempt during structured output parsing${error instanceof PullRequestDescriptionParseError ? ` (${error.failureType})` : ""}: ${getErrorMessage(error)}. Requesting one corrective retry.`,
     );
 
     const correctiveResult = await runDescription(
@@ -213,6 +227,7 @@ async function generatePullRequestDescription(options: {
         "The response must start with { and end with }.",
       ].join("\n"),
       "corrective structured output execution",
+      "corrective retry",
     );
 
     if (correctiveResult === undefined) {
@@ -234,6 +249,7 @@ async function generatePullRequestDescription(options: {
         cardLog,
         "corrective structured output parsing and validation",
         retryError,
+        "corrective retry",
       );
       return undefined;
     }

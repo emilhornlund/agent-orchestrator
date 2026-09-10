@@ -9,6 +9,20 @@ export const MAX_PULL_REQUEST_DESCRIPTION_CHANGES = 20;
 export const MAX_PULL_REQUEST_DESCRIPTION_VALIDATION = 20;
 export const MAX_PULL_REQUEST_DESCRIPTION_ITEM_LENGTH = 500;
 
+export type PullRequestDescriptionFailureType =
+  "JSON parsing" | "schema validation";
+
+export class PullRequestDescriptionParseError extends Error {
+  constructor(
+    readonly failureType: PullRequestDescriptionFailureType,
+    message: string,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = "PullRequestDescriptionParseError";
+  }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -61,22 +75,33 @@ function validateStringArray(
   return null;
 }
 
+function normalizePullRequestDescriptionOutput(output: string): string {
+  const trimmedOutput = output.trim();
+  const fencedOutput = /^```(?:json)?\r?\n([\s\S]*)\r?\n```$/.exec(
+    trimmedOutput,
+  );
+
+  return fencedOutput?.[1]?.trim() ?? trimmedOutput;
+}
+
 export function parsePullRequestDescription(
   output: string,
 ): PullRequestDescription {
   let parsed: unknown;
 
   try {
-    parsed = JSON.parse(output.trim());
+    parsed = JSON.parse(normalizePullRequestDescriptionOutput(output));
   } catch (error) {
-    throw new Error(
+    throw new PullRequestDescriptionParseError(
+      "JSON parsing",
       `OpenCode pull request description was not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
       { cause: error },
     );
   }
 
   if (!isRecord(parsed)) {
-    throw new Error(
+    throw new PullRequestDescriptionParseError(
+      "schema validation",
       "OpenCode pull request description must be exactly one JSON object",
     );
   }
@@ -87,14 +112,16 @@ export function parsePullRequestDescription(
   );
 
   if (unexpectedFields.length > 0) {
-    throw new Error(
+    throw new PullRequestDescriptionParseError(
+      "schema validation",
       `OpenCode pull request description contains unexpected field(s): ${unexpectedFields.join(", ")}`,
     );
   }
 
   for (const field of expectedFields) {
     if (!(field in parsed)) {
-      throw new Error(
+      throw new PullRequestDescriptionParseError(
+        "schema validation",
         `OpenCode pull request description is missing required field "${field}"`,
       );
     }
@@ -107,7 +134,10 @@ export function parsePullRequestDescription(
   );
 
   if (summaryError !== null) {
-    throw new Error(`Invalid pull request description: ${summaryError}`);
+    throw new PullRequestDescriptionParseError(
+      "schema validation",
+      `Invalid pull request description: ${summaryError}`,
+    );
   }
 
   const changesError = validateStringArray(
@@ -117,7 +147,10 @@ export function parsePullRequestDescription(
   );
 
   if (changesError !== null) {
-    throw new Error(`Invalid pull request description: ${changesError}`);
+    throw new PullRequestDescriptionParseError(
+      "schema validation",
+      `Invalid pull request description: ${changesError}`,
+    );
   }
 
   const validationError = validateStringArray(
@@ -127,7 +160,10 @@ export function parsePullRequestDescription(
   );
 
   if (validationError !== null) {
-    throw new Error(`Invalid pull request description: ${validationError}`);
+    throw new PullRequestDescriptionParseError(
+      "schema validation",
+      `Invalid pull request description: ${validationError}`,
+    );
   }
 
   return {

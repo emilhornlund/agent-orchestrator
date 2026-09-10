@@ -83,6 +83,26 @@ describe("parsePullRequestDescription", () => {
     });
   });
 
+  it("parses valid JSON wrapped in one JSON Markdown fence", () => {
+    expect(
+      parsePullRequestDescription(
+        [
+          "```json",
+          JSON.stringify({
+            summary: "Added structured pull request descriptions.",
+            changes: ["Added the generation stage."],
+            validation: ["yarn validate passed."],
+          }),
+          "```",
+        ].join("\n"),
+      ),
+    ).toEqual({
+      summary: "Added structured pull request descriptions.",
+      changes: ["Added the generation stage."],
+      validation: ["yarn validate passed."],
+    });
+  });
+
   it("accepts an empty validation array", () => {
     expect(
       parsePullRequestDescription(
@@ -141,7 +161,17 @@ describe("parsePullRequestDescription", () => {
 
   it.each([
     ["plain text", "not JSON", "not valid JSON"],
-    ["Markdown-wrapped JSON", "```json\n{}\n```", "not valid JSON"],
+    [
+      "conversational prose containing JSON",
+      'I\'ll inspect this first... {"summary":"A summary","changes":[],"validation":[]}',
+      "not valid JSON",
+    ],
+    ["malformed fenced JSON", '```json\n{"summary":\n```', "not valid JSON"],
+    [
+      "fenced JSON with missing fields",
+      "```json\n{}\n```",
+      "missing required field",
+    ],
     ["missing fields", '{"summary":"A summary"}', "missing required field"],
     [
       "missing validation information",
