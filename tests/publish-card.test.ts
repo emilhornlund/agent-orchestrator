@@ -772,6 +772,7 @@ describe("publishCard", () => {
     });
 
     expect(events.slice(0, 3)).toEqual(["rebase", "description", "push"]);
+    expect(runDescription).toHaveBeenCalledTimes(1);
     expect(runDescription).toHaveBeenCalledWith(
       expect.objectContaining({
         model: "commit-model",
@@ -825,6 +826,72 @@ describe("publishCard", () => {
           "<!-- agent-orchestrator-status:start -->",
           "<!-- agent-orchestrator-status:end -->",
         ].join("\n"),
+      }),
+    );
+  });
+
+  it("retries conversational description output once with a corrective prompt", async () => {
+    const runDescription = vi
+      .fn()
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        output: "Here is the pull request description:",
+        errorOutput: "",
+      })
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        output: JSON.stringify({
+          summary: "Described the published implementation.",
+          changes: ["Added structured PR content."],
+          validation: [],
+        }),
+        errorOutput: "",
+      });
+    const git = createPublicationGit({
+      getChangedFiles: vi.fn().mockResolvedValue("src/description.ts"),
+      getCommitMessage: vi.fn().mockResolvedValue("describe implementation"),
+    });
+    const trello = {
+      moveCard: vi.fn().mockResolvedValue(createCard()),
+      getListTransitions: vi.fn().mockResolvedValue([]),
+      addComment: vi.fn().mockResolvedValue(undefined),
+    } as unknown as TrelloClient;
+    const createPullRequest = vi.fn().mockResolvedValue({
+      url: "https://github.com/example/repository/pull/123",
+    });
+    const github = {
+      findPullRequest: vi.fn().mockResolvedValue(null),
+      createPullRequest,
+    } as unknown as GitHubClient;
+
+    await publishCard({
+      trello,
+      git,
+      github,
+      opencode: { run: runDescription } as unknown as OpenCodeClient,
+      project: createProject(),
+      card: createCard(),
+      worktreePath: "/worktree",
+      branch: "agent/card-1",
+      commitSha: "stale-sha",
+      reviewResult: "Passed",
+      remediationResult: "Not required",
+    });
+
+    expect(runDescription).toHaveBeenCalledTimes(2);
+    expect(runDescription.mock.calls[1]?.[0].prompt).toEqual(
+      expect.stringContaining("The previous response was invalid."),
+    );
+    expect(runDescription.mock.calls[1]?.[0].prompt).toEqual(
+      expect.stringContaining(
+        "only one valid JSON object matching exactly the required schema",
+      ),
+    );
+    expect(createPullRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.stringContaining(
+          "Described the published implementation.",
+        ),
       }),
     );
   });
@@ -916,6 +983,7 @@ describe("publishCard", () => {
     });
 
     expect(git.push).toHaveBeenCalled();
+    expect(opencode.run).toHaveBeenCalledTimes(1);
     expect(createPullRequest).toHaveBeenCalledWith(
       expect.objectContaining({
         body: [
@@ -944,12 +1012,13 @@ describe("publishCard", () => {
       getChangedFiles: vi.fn().mockResolvedValue("src/example.ts"),
       getCommitMessage: vi.fn().mockResolvedValue("implement example"),
     });
+    const runDescription = vi.fn().mockResolvedValue({
+      exitCode: 0,
+      output,
+      errorOutput: "",
+    });
     const opencode = {
-      run: vi.fn().mockResolvedValue({
-        exitCode: 0,
-        output,
-        errorOutput: "",
-      }),
+      run: runDescription,
     } as unknown as OpenCodeClient;
     const trello = {
       moveCard: vi.fn().mockResolvedValue(createCard()),
@@ -986,6 +1055,10 @@ describe("publishCard", () => {
           "Implemented automatically by Configured Git Author.",
         ].join("\n"),
       }),
+    );
+    expect(runDescription).toHaveBeenCalledTimes(2);
+    expect(runDescription.mock.calls[1]?.[0].prompt).toEqual(
+      expect.stringContaining("The previous response was invalid."),
     );
     expect(trello.moveCard).toHaveBeenCalledWith("card-1", "review-list");
   });
@@ -1038,6 +1111,7 @@ describe("publishCard", () => {
         ].join("\n"),
       }),
     );
+    expect(opencode.run).toHaveBeenCalledTimes(1);
     expect(trello.moveCard).toHaveBeenCalledWith("card-1", "review-list");
   });
 

@@ -44,7 +44,11 @@ describe("buildPullRequestDescriptionPrompt", () => {
       "Commit message:\nfeat(workflow): describe completed changes",
     );
     expect(prompt).toContain("- yarn validate: passed");
-    expect(prompt).toContain("Return exactly one JSON object");
+    expect(prompt).toContain("Return exactly one JSON object.");
+    expect(prompt).toContain(
+      "Do not include an introduction, explanation, Markdown, code fences, or any text before or after the JSON object.",
+    );
+    expect(prompt).toContain("The response must start with { and end with }.");
     expect(prompt).toContain(
       "The summary must be at most 1000 characters; changes and validation may each contain at most 20 and 20 items respectively, and every item must be at most 500 characters.",
     );
