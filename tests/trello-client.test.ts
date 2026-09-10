@@ -1080,7 +1080,7 @@ describe("TrelloClient", () => {
     });
   });
 
-  it("adds a comment to a card", async () => {
+  it("adds a comment to a card using the documented query parameter", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({

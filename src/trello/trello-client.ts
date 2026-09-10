@@ -638,6 +638,8 @@ export class TrelloClient {
   }
 
   addComment(cardId: string, text: string): Promise<TrelloCommentAction> {
+    // Trello documents comment text as a query parameter; this endpoint does
+    // not document the JSON request-body alternative supported by card PUTs.
     return this.post(
       `/cards/${cardId}/actions/comments`,
       { text },
@@ -710,7 +712,7 @@ export class TrelloClient {
 
   private async postWithoutResponse(
     path: string,
-    parameters: Record<string, string>,
+    queryParameters: Record<string, string>,
     operation: TrelloRequestOperation,
   ): Promise<void> {
     this.throwIfAborted();
@@ -720,7 +722,7 @@ export class TrelloClient {
     url.searchParams.set("key", this.options.apiKey);
     url.searchParams.set("token", this.options.token);
 
-    for (const [name, value] of Object.entries(parameters)) {
+    for (const [name, value] of Object.entries(queryParameters)) {
       url.searchParams.set(name, value);
     }
 
@@ -737,7 +739,7 @@ export class TrelloClient {
 
   private async post<T>(
     path: string,
-    parameters: Record<string, string>,
+    queryParameters: Record<string, string>,
     schema: z.ZodType<T>,
     operation: TrelloRequestOperation,
   ): Promise<T> {
@@ -748,7 +750,7 @@ export class TrelloClient {
     url.searchParams.set("key", this.options.apiKey);
     url.searchParams.set("token", this.options.token);
 
-    for (const [name, value] of Object.entries(parameters)) {
+    for (const [name, value] of Object.entries(queryParameters)) {
       url.searchParams.set(name, value);
     }
 
