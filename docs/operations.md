@@ -317,7 +317,8 @@ creation/replacement, merge, and `Done` transition. The Trello diagnostic includ
 does not call the feedback resolved, and is best effort after the confirmed Human Review transition. Repeated polls suppress the same
 URL/head/feedback identity; a reviewer dismissal or update, or a new PR head, makes the card eligible again. This exception applies
 only to requested-change feedback; initial implementation still requires repository changes, while ordinary review remediation
-must preserve the original implementation content and may otherwise be a no-op.
+may edit, replace, or remove the initial implementation as needed. It must leave repository changes in the worktree and may
+otherwise be a no-op.
 
 The task worktree and branch are preserved after fetch, rebase, publication, or merge failures so conflicts and diagnostics
 can be resolved. A human must review and merge the pull request before the card can reach `Done` when `autoMerge` is disabled.

@@ -37,6 +37,8 @@ interface ScenarioOptions {
   remoteBranchShaOutputs?: string[];
   openCodeResults?: TestOpenCodeRunResult[];
   remediationFileContent?: string;
+  remediationFilePath?: string;
+  remediationRemovedFilePath?: string;
   writeRefinementResult?: boolean;
   refinementResult?: unknown;
   pushError?: Error;
@@ -298,10 +300,22 @@ function createScenario(options: ScenarioOptions = {}): Scenario {
       runOptions.sessionLabel === "OpenCode remediation" &&
       options.remediationFileContent !== undefined
     ) {
-      fs.writeFileSync(
-        path.join(runOptions.cwd, "src/example.ts"),
-        options.remediationFileContent,
+      const remediationFilePath = path.join(
+        runOptions.cwd,
+        options.remediationFilePath ?? "src/example.ts",
       );
+
+      fs.mkdirSync(path.dirname(remediationFilePath), { recursive: true });
+      fs.writeFileSync(remediationFilePath, options.remediationFileContent);
+    }
+
+    if (
+      runOptions.sessionLabel === "OpenCode remediation" &&
+      options.remediationRemovedFilePath !== undefined
+    ) {
+      fs.rmSync(path.join(runOptions.cwd, options.remediationRemovedFilePath), {
+        force: true,
+      });
     }
 
     const result = openCodeResults.shift();
@@ -1084,9 +1098,7 @@ describe("pollProject failure boundaries", () => {
             scenario.project,
             scenario.signal,
           ),
-        ).rejects.toThrow(
-          "OpenCode remediation removed required implementation changes",
-        );
+        ).rejects.toThrow("OpenCode remediation left no repository changes");
 
         expect(scenario.runOpenCode).toHaveBeenCalledTimes(3);
         expectNothingPublished(scenario);
@@ -1094,7 +1106,7 @@ describe("pollProject failure boundaries", () => {
     );
   });
 
-  it("stops when remediation reverts implementation content on a retained path", async () => {
+  it("allows remediation to replace implementation content on a retained path", async () => {
     await withScenario(
       {
         statusOutputs: [" M src/example.ts", " M src/example.ts", ""],
@@ -1102,6 +1114,7 @@ describe("pollProject failure boundaries", () => {
         openCodeResults: [
           { exitCode: 0, output: "" },
           { exitCode: 0, output: "REVIEW_FAIL" },
+          { exitCode: 0, output: "" },
           { exitCode: 0, output: "" },
         ],
       },
@@ -1112,22 +1125,74 @@ describe("pollProject failure boundaries", () => {
           "implementation change\n",
         );
 
-        await expect(
-          pollProject(
-            scenario.trello,
-            scenario.git,
-            scenario.github,
-            scenario.openCode,
-            scenario.commands,
-            scenario.project,
-            scenario.signal,
-          ),
-        ).rejects.toThrow(
-          "OpenCode remediation changed required implementation content",
+        await pollProject(
+          scenario.trello,
+          scenario.git,
+          scenario.github,
+          scenario.openCode,
+          scenario.commands,
+          scenario.project,
+          scenario.signal,
         );
 
-        expect(scenario.runOpenCode).toHaveBeenCalledTimes(3);
-        expectNothingPublished(scenario);
+        expect(scenario.runOpenCode).toHaveBeenCalledTimes(5);
+        expect(scenario.events).toContain("push");
+        expect(scenario.events).toContain("pr");
+        expect(scenario.trello.moveCard).toHaveBeenCalledWith(
+          scenario.card.id,
+          scenario.project.trello.reviewListId,
+        );
+      },
+    );
+  });
+
+  it("allows remediation to remove and replace an implementation file", async () => {
+    await withScenario(
+      {
+        statusOutputs: [
+          " M src/example.ts",
+          " D src/example.ts\n?? src/replacement.ts",
+          "",
+        ],
+        remediationFileContent: "replacement implementation\n",
+        remediationFilePath: "src/replacement.ts",
+        remediationRemovedFilePath: "src/example.ts",
+        openCodeResults: [
+          { exitCode: 0, output: "" },
+          { exitCode: 0, output: "REVIEW_FAIL" },
+          { exitCode: 0, output: "" },
+          { exitCode: 0, output: "" },
+        ],
+      },
+      async (scenario) => {
+        fs.mkdirSync(path.join(scenario.worktreePath, "src"));
+        fs.writeFileSync(
+          path.join(scenario.worktreePath, "src/example.ts"),
+          "implementation change\n",
+        );
+
+        await pollProject(
+          scenario.trello,
+          scenario.git,
+          scenario.github,
+          scenario.openCode,
+          scenario.commands,
+          scenario.project,
+          scenario.signal,
+        );
+
+        expect(
+          fs.existsSync(path.join(scenario.worktreePath, "src/example.ts")),
+        ).toBe(false);
+        expect(
+          fs.readFileSync(
+            path.join(scenario.worktreePath, "src/replacement.ts"),
+            "utf8",
+          ),
+        ).toBe("replacement implementation\n");
+        expect(scenario.runOpenCode).toHaveBeenCalledTimes(5);
+        expect(scenario.events).toContain("push");
+        expect(scenario.events).toContain("pr");
       },
     );
   });
