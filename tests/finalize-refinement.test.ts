@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { ProjectConfig } from "../src/config/config.js";
 import { finalizeRefinement } from "../src/refinement/finalize-refinement.js";
 import type { RefinementResult } from "../src/refinement/refinement-result.js";
-import type { TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
+import { TrelloClient, type TrelloCard } from "../src/trello/trello-client.js";
 
 function createProject(): ProjectConfig {
   return {
@@ -227,5 +227,65 @@ describe("finalizeRefinement", () => {
     expect(trello.addLabel).not.toHaveBeenCalled();
     expect(trello.removeLabel).not.toHaveBeenCalled();
     expect(trello.moveCard).not.toHaveBeenCalled();
+  });
+
+  it("saves a large refined description without failing the card", async () => {
+    const description = `# Refined task\n\n${"Detailed requirement. ".repeat(500)}`;
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async (input, init) => {
+        const url = new URL(String(input));
+
+        if (url.toString().length >= 8_000) {
+          return new Response(null, {
+            status: 414,
+            statusText: "Request-URI Too Large",
+          });
+        }
+
+        if (init?.method === "DELETE" || init?.method === "POST") {
+          return new Response(null, { status: 200 });
+        }
+
+        const body = JSON.parse(String(init?.body)) as {
+          desc?: string;
+          idList?: string;
+        };
+
+        return new Response(
+          JSON.stringify({
+            id: "card-123",
+            name: body.desc === undefined ? "Original task" : "Refined task",
+            desc: body.desc ?? "Original description",
+            idList: body.idList ?? "working",
+            idLabels: ["refinement", "feature"],
+            url: "https://trello.example/card-123",
+          }),
+          { status: 200 },
+        );
+      });
+
+    const trello = new TrelloClient({
+      apiKey: "test-key",
+      token: "test-token",
+    });
+
+    await expect(
+      finalizeRefinement(trello, createProject(), createCard(), {
+        title: "Refined task",
+        type: "feature",
+        description,
+      }),
+    ).resolves.toBeUndefined();
+
+    const [requestUrl, requestOptions] = fetchMock.mock.calls[0] ?? [];
+    expect(String(requestUrl).length).toBeLessThan(8_000);
+    expect(JSON.parse(String(requestOptions?.body))).toEqual({
+      name: "Refined task",
+      desc: description,
+    });
+    expect(
+      fetchMock.mock.calls.some(([input]) => String(input).includes("failed")),
+    ).toBe(false);
   });
 });

@@ -590,13 +590,13 @@ export class TrelloClient {
       dueComplete?: boolean;
     } = {},
   ): Promise<TrelloCard> {
-    const parameters: Record<string, string> = {
+    const parameters: Record<string, string | boolean> = {
       idList: listId,
       pos: "top",
     };
 
     if (options.dueComplete !== undefined) {
-      parameters.dueComplete = String(options.dueComplete);
+      parameters.dueComplete = options.dueComplete;
     }
 
     return this.put(
@@ -680,7 +680,7 @@ export class TrelloClient {
 
   private async put<T>(
     path: string,
-    parameters: Record<string, string>,
+    parameters: Record<string, string | boolean>,
     schema: z.ZodType<T>,
     operation: TrelloRequestOperation,
   ): Promise<T> {
@@ -691,13 +691,13 @@ export class TrelloClient {
     url.searchParams.set("key", this.options.apiKey);
     url.searchParams.set("token", this.options.token);
 
-    for (const [name, value] of Object.entries(parameters)) {
-      url.searchParams.set(name, value);
-    }
-
     const signal = this.getRequestSignal();
     const response = await this.request(url, operation, {
       method: "PUT",
+      body: JSON.stringify(parameters),
+      headers: {
+        "Content-Type": "application/json",
+      },
       ...(signal === undefined ? {} : { signal }),
     });
 

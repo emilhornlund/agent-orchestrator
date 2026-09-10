@@ -863,10 +863,14 @@ describe("TrelloClient", () => {
     const [requestUrl, requestOptions] = fetchMock.mock.calls[0] ?? [];
 
     expect(String(requestUrl)).toContain("/cards/card-1");
-    expect(String(requestUrl)).toContain("idList=working-list");
-    expect(String(requestUrl)).toContain("pos=top");
+    expect(String(requestUrl)).not.toContain("idList=working-list");
+    expect(String(requestUrl)).not.toContain("pos=top");
     expect(requestOptions).toEqual({
       method: "PUT",
+      body: JSON.stringify({ idList: "working-list", pos: "top" }),
+      headers: {
+        "Content-Type": "application/json",
+      },
     });
   });
 
@@ -905,12 +909,20 @@ describe("TrelloClient", () => {
     const url = new URL(String(requestUrl));
 
     expect(url.pathname).toBe("/1/cards/card-1");
-    expect(url.searchParams.get("idList")).toBe("done-list");
-    expect(url.searchParams.get("pos")).toBe("top");
-    expect(url.searchParams.get("dueComplete")).toBe("true");
+    expect(url.searchParams.get("idList")).toBeNull();
+    expect(url.searchParams.get("pos")).toBeNull();
+    expect(url.searchParams.get("dueComplete")).toBeNull();
 
     expect(requestOptions).toEqual({
       method: "PUT",
+      body: JSON.stringify({
+        idList: "done-list",
+        pos: "top",
+        dueComplete: true,
+      }),
+      headers: {
+        "Content-Type": "application/json",
+      },
     });
   });
 
@@ -956,14 +968,59 @@ describe("TrelloClient", () => {
     const url = new URL(String(requestUrl));
 
     expect(url.pathname).toBe("/1/cards/card-1");
-    expect(url.searchParams.get("name")).toBe("Add inventory support");
-    expect(url.searchParams.get("desc")).toBe(
-      "# Add inventory support\n\n## Description\n\nAdd inventory support.",
-    );
+    expect(url.searchParams.get("name")).toBeNull();
+    expect(url.searchParams.get("desc")).toBeNull();
 
     expect(requestOptions).toEqual({
       method: "PUT",
+      body: JSON.stringify({
+        name: "Add inventory support",
+        desc: "# Add inventory support\n\n## Description\n\nAdd inventory support.",
+      }),
+      headers: {
+        "Content-Type": "application/json",
+      },
     });
+  });
+
+  it("sends a large card description in the request body", async () => {
+    const description = `# Refined task\n\n${"Detailed requirement. ".repeat(500)}`;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: "card-1",
+          name: "Refined task",
+          desc: description,
+          idList: "working-list",
+          idLabels: ["refinement-label"],
+          url: "https://trello.com/c/example",
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      ),
+    );
+
+    const client = new TrelloClient({
+      apiKey: "test-key",
+      token: "test-token",
+    });
+
+    await expect(
+      client.updateCardContent("card-1", "Refined task", description),
+    ).resolves.toMatchObject({ desc: description });
+
+    const [requestUrl, requestOptions] = fetchMock.mock.calls[0] ?? [];
+    const url = new URL(String(requestUrl));
+
+    expect(String(requestUrl).length).toBeLessThan(8_000);
+    expect(url.searchParams.get("desc")).toBeNull();
+    expect(requestOptions?.body).toBe(
+      JSON.stringify({ name: "Refined task", desc: description }),
+    );
   });
 
   it("adds an existing label to a card", async () => {
