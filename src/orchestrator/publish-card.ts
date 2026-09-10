@@ -130,46 +130,61 @@ async function generatePullRequestDescription(options: {
 
   cardLog.event("Starting OpenCode pull request description generation...");
 
-  let result: OpenCodeRunResult;
+  const descriptionPrompt = buildPullRequestDescriptionPrompt(card, {
+    changedFiles,
+    commitSha,
+    commitMessage,
+    validationResults,
+  });
 
-  try {
-    result = await opencode.run({
-      cwd: worktreePath,
-      model: project.opencode.commit.model,
-      variant: project.opencode.commit.variant,
-      timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
-      prompt: buildPullRequestDescriptionPrompt(card, {
-        changedFiles,
-        commitSha,
-        commitMessage,
-        validationResults,
-      }),
-      signal,
-      ...(sessionLogPath === undefined ? {} : { sessionLogPath }),
-      sessionLabel: "OpenCode pull request description",
-    });
-  } catch (error) {
-    if (signal.aborted) {
-      throw new TrelloRequestAbortedError();
+  const runDescription = async (
+    prompt: string,
+    failureStage: string,
+  ): Promise<OpenCodeRunResult | undefined> => {
+    let result: OpenCodeRunResult;
+
+    try {
+      result = await opencode.run({
+        cwd: worktreePath,
+        model: project.opencode.commit.model,
+        variant: project.opencode.commit.variant,
+        timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
+        prompt,
+        signal,
+        ...(sessionLogPath === undefined ? {} : { sessionLogPath }),
+        sessionLabel: "OpenCode pull request description",
+      });
+    } catch (error) {
+      if (signal.aborted) {
+        throw new TrelloRequestAbortedError();
+      }
+
+      logDescriptionFallback(cardLog, failureStage, error);
+      return undefined;
     }
 
-    logDescriptionFallback(cardLog, "OpenCode execution", error);
-    return undefined;
-  }
+    if (result.exitCode !== 0) {
+      if (signal.aborted) {
+        throw new TrelloRequestAbortedError();
+      }
 
-  if (result.exitCode !== 0) {
-    if (signal.aborted) {
-      throw new TrelloRequestAbortedError();
+      logDescriptionFallback(
+        cardLog,
+        failureStage,
+        new Error(
+          `OpenCode exited with code ${result.exitCode}${result.errorOutput.trim().length > 0 ? `: ${result.errorOutput.trim()}` : ""}`,
+        ),
+      );
+
+      return undefined;
     }
 
-    logDescriptionFallback(
-      cardLog,
-      "OpenCode execution",
-      new Error(
-        `OpenCode exited with code ${result.exitCode}${result.errorOutput.trim().length > 0 ? `: ${result.errorOutput.trim()}` : ""}`,
-      ),
-    );
+    return result;
+  };
 
+  const result = await runDescription(descriptionPrompt, "OpenCode execution");
+
+  if (result === undefined) {
     return undefined;
   }
 
@@ -184,12 +199,44 @@ async function generatePullRequestDescription(options: {
       throw new TrelloRequestAbortedError();
     }
 
-    logDescriptionFallback(
-      cardLog,
-      "structured output parsing and validation",
-      error,
+    cardLog.warn(
+      `OpenCode pull request description response was invalid: ${getErrorMessage(error)}. Requesting one corrective retry.`,
     );
-    return undefined;
+
+    const correctiveResult = await runDescription(
+      [
+        descriptionPrompt,
+        "",
+        "The previous response was invalid.",
+        'Respond now with only one valid JSON object matching exactly the required schema: an object with the "summary", "changes", and "validation" fields.',
+        "Do not include an introduction, explanation, Markdown, code fences, or any text before or after the JSON object.",
+        "The response must start with { and end with }.",
+      ].join("\n"),
+      "corrective structured output execution",
+    );
+
+    if (correctiveResult === undefined) {
+      return undefined;
+    }
+
+    try {
+      const description = parsePullRequestDescription(correctiveResult.output);
+
+      cardLog.event("OpenCode pull request description generated");
+
+      return description;
+    } catch (retryError) {
+      if (signal.aborted) {
+        throw new TrelloRequestAbortedError();
+      }
+
+      logDescriptionFallback(
+        cardLog,
+        "corrective structured output parsing and validation",
+        retryError,
+      );
+      return undefined;
+    }
   }
 }
 
