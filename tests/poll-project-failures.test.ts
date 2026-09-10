@@ -36,6 +36,7 @@ interface ScenarioOptions {
   changedFilesOutputs?: string[];
   remoteBranchShaOutputs?: string[];
   openCodeResults?: TestOpenCodeRunResult[];
+  remediationFileContent?: string;
   writeRefinementResult?: boolean;
   refinementResult?: unknown;
   pushError?: Error;
@@ -290,6 +291,16 @@ function createScenario(options: ScenarioOptions = {}): Scenario {
             description: "# Refined task\n\n## Description\n\nRefined.",
           },
         ),
+      );
+    }
+
+    if (
+      runOptions.sessionLabel === "OpenCode remediation" &&
+      options.remediationFileContent !== undefined
+    ) {
+      fs.writeFileSync(
+        path.join(runOptions.cwd, "src/example.ts"),
+        options.remediationFileContent,
       );
     }
 
@@ -1052,7 +1063,7 @@ describe("pollProject failure boundaries", () => {
     );
   });
 
-  it("stops when remediation leaves no repository changes", async () => {
+  it("stops when remediation removes all implementation changes", async () => {
     await withScenario(
       {
         statusOutputs: [" M src/example.ts", ""],
@@ -1073,7 +1084,47 @@ describe("pollProject failure boundaries", () => {
             scenario.project,
             scenario.signal,
           ),
-        ).rejects.toThrow("OpenCode remediation left no repository changes");
+        ).rejects.toThrow(
+          "OpenCode remediation removed required implementation changes",
+        );
+
+        expect(scenario.runOpenCode).toHaveBeenCalledTimes(3);
+        expectNothingPublished(scenario);
+      },
+    );
+  });
+
+  it("stops when remediation reverts implementation content on a retained path", async () => {
+    await withScenario(
+      {
+        statusOutputs: [" M src/example.ts", " M src/example.ts", ""],
+        remediationFileContent: "unrelated change\n",
+        openCodeResults: [
+          { exitCode: 0, output: "" },
+          { exitCode: 0, output: "REVIEW_FAIL" },
+          { exitCode: 0, output: "" },
+        ],
+      },
+      async (scenario) => {
+        fs.mkdirSync(path.join(scenario.worktreePath, "src"));
+        fs.writeFileSync(
+          path.join(scenario.worktreePath, "src/example.ts"),
+          "implementation change\n",
+        );
+
+        await expect(
+          pollProject(
+            scenario.trello,
+            scenario.git,
+            scenario.github,
+            scenario.openCode,
+            scenario.commands,
+            scenario.project,
+            scenario.signal,
+          ),
+        ).rejects.toThrow(
+          "OpenCode remediation changed required implementation content",
+        );
 
         expect(scenario.runOpenCode).toHaveBeenCalledTimes(3);
         expectNothingPublished(scenario);
@@ -1085,7 +1136,11 @@ describe("pollProject failure boundaries", () => {
     await withScenario(
       {
         maxPasses: 2,
-        statusOutputs: [" M src/example.ts", " M src/example.ts", ""],
+        statusOutputs: [
+          " M src/example.ts",
+          " M src/example.ts\n M src/additional.ts",
+          "",
+        ],
         headOutputs: ["before-commit", "after-commit"],
         openCodeResults: [
           { exitCode: 0, output: "" },
@@ -1164,6 +1219,16 @@ describe("pollProject failure boundaries", () => {
           scenario.commands,
           scenario.project,
           scenario.signal,
+        );
+
+        const logPath = path.join(
+          process.cwd(),
+          "logs",
+          `test-orchestrator-${new Date().toISOString().slice(0, 10)}.log`,
+        );
+
+        expect(fs.readFileSync(logPath, "utf8")).toContain(
+          "OpenCode remediation produced no additional repository changes; preserving implementation changes",
         );
 
         expect(scenario.runOpenCode).toHaveBeenCalledTimes(5);
