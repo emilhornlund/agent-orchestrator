@@ -344,6 +344,29 @@ describe("remediatePreparedConflict", () => {
     },
   );
 
+  it("runs setup through CommandRunner while validation stays with conflict-remediation OpenCode", async () => {
+    const scenario = createScenario({ validationCommand: "yarn validate" });
+    scenario.project.repository.setupCommand = "yarn install";
+
+    await remediatePreparedConflict({
+      ...scenario,
+      signal: new AbortController().signal,
+    });
+
+    expect(scenario.runCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: "yarn install",
+        sessionLabel: "Repository setup for Human Review",
+      }),
+    );
+    expect(scenario.runCommand).not.toHaveBeenCalledWith(
+      expect.objectContaining({ command: "yarn validate" }),
+    );
+    expect(scenario.runOpenCode.mock.calls[0]?.[0].prompt).toContain(
+      "Run the configured repository validation command: `yarn validate` before finishing.",
+    );
+  });
+
   it("keeps successful remediation when managed status removal fails", async () => {
     const scenario = createScenario();
     const statusRemovalError = new Error("status cleanup failed");

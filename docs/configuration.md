@@ -188,16 +188,16 @@ The configured list and label names do not matter to the service. The IDs are wh
 
 ### `projects[].repository`
 
-| Key                 | Meaning and validation                                                                                                      |
-| ------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `path`              | Absolute path to the normal local checkout; repository paths must be unique across projects                                 |
-| `github`            | GitHub repository in `owner/repository` format; repositories must be unique across projects                                 |
-| `defaultBranch`     | Non-blank base branch for task branches and pull requests                                                                   |
-| `worktreeRoot`      | Absolute directory for isolated task worktrees; roots must be unique across projects                                        |
-| `setupCommand`      | Optional non-blank command run in the card worktree before implementation                                                   |
-| `validationCommand` | Optional non-blank command supplied to OpenCode sessions that modify implementation files; the orchestrator does not run it |
-| `gitIdentity`       | Required identity used by the commit session                                                                                |
-| `githubApp`         | Optional GitHub App identity used for all authenticated GitHub operations for this project                                  |
+| Key                 | Meaning and validation                                                                                                 |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `path`              | Absolute path to the normal local checkout; repository paths must be unique across projects                            |
+| `github`            | GitHub repository in `owner/repository` format; repositories must be unique across projects                            |
+| `defaultBranch`     | Non-blank base branch for task branches and pull requests                                                              |
+| `worktreeRoot`      | Absolute directory for isolated task worktrees; roots must be unique across projects                                   |
+| `setupCommand`      | Optional non-blank command executed by the orchestrator in the card worktree before agent work                         |
+| `validationCommand` | Optional non-blank command supplied to implementation-mutating OpenCode sessions; the orchestrator does not execute it |
+| `gitIdentity`       | Required identity used by the commit session                                                                           |
+| `githubApp`         | Optional GitHub App identity used for all authenticated GitHub operations for this project                             |
 
 `path`, `worktreeRoot`, and an optional `gitIdentity.signingKey` must be absolute paths. Parsed absolute paths are resolved
 before use. A project's normalized `path` and `worktreeRoot` must be disjoint: neither may equal, contain, or be contained
@@ -211,9 +211,11 @@ checked during configuration loading, before repository bootstrap or project pro
 | `email`      | Valid commit author and committer email address                                                            |
 | `signingKey` | Optional absolute path to the SSH signing key; it must be available where the service runs when configured |
 
-If `setupCommand` is configured, it runs in the task worktree before the OpenCode implementation session. If
-`validationCommand` is configured, it is passed to the relevant OpenCode prompts; those agents run it before finishing and
-fix failures caused by their changes.
+`setupCommand` and `validationCommand` are separate workflow contracts and may be configured together. `setupCommand` is owned
+by the orchestrator: it runs through the command runner in the task worktree before agent work, and a failure remains a `Setup`
+workflow failure. `validationCommand` is owned by implementation-mutating OpenCode sessions: it is included in their prompts,
+those sessions run it before finishing, and they fix failures caused by their changes. The orchestrator never runs
+`validationCommand` through the command runner.
 
 #### GitHub authentication modes
 

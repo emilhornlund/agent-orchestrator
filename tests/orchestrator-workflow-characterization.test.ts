@@ -745,6 +745,53 @@ describe("orchestrator workflow characterization", () => {
     },
   );
 
+  it("keeps simultaneously configured setup and validation commands in their owned lifecycles", async () => {
+    const harness = createHarness({
+      setupCommand: "yarn install",
+      validationCommand: "yarn validate",
+    });
+    harness.runCommand.mockImplementation(async ({ command }) => {
+      harness.events.push("setup");
+
+      return {
+        exitCode: command === "yarn install" ? 0 : 1,
+      };
+    });
+
+    try {
+      await pollProject(
+        harness.trello,
+        harness.git,
+        harness.github,
+        harness.openCode,
+        harness.commands,
+        harness.project,
+        new AbortController().signal,
+      );
+
+      const implementation = harness.runOpenCode.mock.calls.find(
+        ([run]) => run.sessionLabel === "OpenCode implementation",
+      );
+
+      expect(harness.runCommand).toHaveBeenCalledOnce();
+      expect(harness.runCommand).toHaveBeenCalledWith(
+        expect.objectContaining({ command: "yarn install" }),
+      );
+      expect(harness.runCommand).not.toHaveBeenCalledWith(
+        expect.objectContaining({ command: "yarn validate" }),
+      );
+      expect(implementation?.[0].prompt).toContain(
+        "Run the configured repository validation command: `yarn validate` before finishing.",
+      );
+      expect(implementation?.[0].prompt).not.toContain("yarn install");
+      expect(harness.events.indexOf("setup")).toBeLessThan(
+        harness.events.indexOf("opencode:implementation"),
+      );
+    } finally {
+      harness.cleanup();
+    }
+  });
+
   it("materializes card context before OpenCode and omits an empty section", async () => {
     const harness = createHarness({ cardContext: true });
 
@@ -1824,6 +1871,8 @@ describe("orchestrator workflow characterization", () => {
       initialRemoteSha: "current-head-sha",
       requestedChangesHeadSha: "current-head-sha",
       feedback: "Please add a regression test.",
+      setupCommand: "yarn install",
+      validationCommand: "yarn validate",
     });
 
     try {
@@ -1873,6 +1922,16 @@ describe("orchestrator workflow characterization", () => {
       });
       expect(harness.runOpenCode.mock.calls[0]?.[0].prompt).toContain(
         "Human review feedback:\nGeneral PR-level feedback:\nPlease add a regression test.",
+      );
+      expect(harness.runOpenCode.mock.calls[0]?.[0].prompt).toContain(
+        "Run the configured repository validation command: `yarn validate` before finishing.",
+      );
+      expect(harness.runCommand).toHaveBeenCalledOnce();
+      expect(harness.runCommand).toHaveBeenCalledWith(
+        expect.objectContaining({ command: "yarn install" }),
+      );
+      expect(harness.runCommand).not.toHaveBeenCalledWith(
+        expect.objectContaining({ command: "yarn validate" }),
       );
       expect(harness.push).toHaveBeenCalledWith(
         harness.worktreePath,

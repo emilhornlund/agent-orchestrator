@@ -596,6 +596,12 @@ describe("pollProject failure boundaries", () => {
         setupExitCodes: [1],
       },
       async (scenario) => {
+        vi.spyOn(scenario.trello, "addComment").mockResolvedValue({
+          id: "action-1",
+          type: "commentCard",
+          date: "2026-08-22T09:00:00.000Z",
+        });
+
         await expect(
           pollProject(
             scenario.trello,
@@ -610,6 +616,10 @@ describe("pollProject failure boundaries", () => {
 
         expect(scenario.runCommand).toHaveBeenCalledTimes(1);
         expect(scenario.runOpenCode).not.toHaveBeenCalled();
+        expect(scenario.trello.addComment).toHaveBeenCalledWith(
+          scenario.card.id,
+          expect.stringContaining("Category: Setup"),
+        );
         expectNothingPublished(scenario);
       },
     );

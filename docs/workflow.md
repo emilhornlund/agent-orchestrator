@@ -303,11 +303,11 @@ every conflict stop until the rebase completes. A malformed or incomplete handof
 conflicted paths, uses normal failure diagnostics and never reports `prepared-conflict`.
 
 After the session, orchestration requires no active rebase, no unmerged paths, a valid worktree on `agent/<card-id>`, and a clean
-publication state. It runs the configured validation command again when present, resolves the authoritative task-branch SHA again,
-and requires it to equal the SHA captured in the handoff. Only then does it update the existing branch with the exact
-force-with-lease helper. A successful lease update clears the handoff last; the existing pull request is retained and the card
-remains in `Human Review` for normal reconciliation. No replacement pull request, merge, unrelated Trello transition, or worktree
-cleanup is performed.
+publication state. The OpenCode conflict-remediation session owns running the configured `validationCommand` and fixing failures;
+the orchestrator does not execute that command. The orchestrator resolves the authoritative task-branch SHA again and requires it
+to equal the SHA captured in the handoff. Only then does it update the existing branch with the exact force-with-lease helper. A
+successful lease update clears the handoff last; the existing pull request is retained and the card remains in `Human Review`
+for normal reconciliation. No replacement pull request, merge, unrelated Trello transition, or worktree cleanup is performed.
 
 An unsuccessful, timed-out, permission-denied, incomplete, or lease-rejected remediation preserves the handoff and worktree and
 uses the normal failure diagnostic and `Attention Required` path. The worker permits only the existing bounded remediation retry
