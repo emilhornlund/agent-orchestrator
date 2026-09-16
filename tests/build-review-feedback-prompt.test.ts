@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { buildValidationPromptLines } from "../src/opencode/build-validation-prompt.js";
 import { buildReviewFeedbackPrompt } from "../src/opencode/build-review-feedback-prompt.js";
 
 describe("buildReviewFeedbackPrompt", () => {
@@ -40,12 +41,9 @@ describe("buildReviewFeedbackPrompt", () => {
     expect(prompt).toContain(
       "Inline code comments:\nNo inline code comments were returned.",
     );
-    expect(prompt).toContain(
-      "Run the configured repository validation command: `yarn validate` before finishing.",
-    );
-    expect(prompt).toContain(
-      "Leave the repository validation passing before finishing.",
-    );
+    for (const line of buildValidationPromptLines("yarn validate")) {
+      expect(prompt).toContain(line);
+    }
 
     expect(prompt).toContain("Do not create commits.");
     expect(prompt).toContain("Do not push anything.");
@@ -75,12 +73,9 @@ describe("buildReviewFeedbackPrompt", () => {
       },
     );
 
-    expect(prompt).toContain(
-      "Run the repository's appropriate validation checks.",
-    );
-    expect(prompt).toContain(
-      "Leave the repository validation passing before finishing.",
-    );
+    for (const line of buildValidationPromptLines()) {
+      expect(prompt).toContain(line);
+    }
   });
 
   it("keeps inline comments separate and omits unavailable location context", () => {

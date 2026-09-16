@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { buildValidationPromptLines } from "../src/opencode/build-validation-prompt.js";
 import { buildTaskPrompt } from "../src/opencode/build-task-prompt.js";
 import type { TrelloCard } from "../src/trello/trello-client.js";
 
@@ -18,12 +19,9 @@ describe("buildTaskPrompt", () => {
 
     expect(prompt).toContain("Task: Add player inventory");
     expect(prompt).toContain("Create an inventory component for the player.");
-    expect(prompt).toContain(
-      "Run the configured repository validation command: `yarn validate` before finishing.",
-    );
-    expect(prompt).toContain(
-      "Leave the repository validation passing before finishing.",
-    );
+    for (const line of buildValidationPromptLines("yarn validate")) {
+      expect(prompt).toContain(line);
+    }
     expect(prompt).toContain(
       "Do not create commits, push branches, or open pull requests.",
     );
@@ -42,11 +40,8 @@ describe("buildTaskPrompt", () => {
     const prompt = buildTaskPrompt(card);
 
     expect(prompt).toContain("No additional task description was provided.");
-    expect(prompt).toContain(
-      "Run the repository's appropriate validation checks.",
-    );
-    expect(prompt).toContain(
-      "Leave the repository validation passing before finishing.",
-    );
+    for (const line of buildValidationPromptLines()) {
+      expect(prompt).toContain(line);
+    }
   });
 });
