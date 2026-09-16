@@ -14,6 +14,7 @@ import {
   type OpenCodeRunResult,
 } from "../src/opencode/opencode-client.js";
 import { buildConflictRemediationPrompt } from "../src/opencode/build-conflict-remediation-prompt.js";
+import { buildValidationPromptLines } from "../src/opencode/build-validation-prompt.js";
 import {
   CommandRunner,
   type RunCommand,
@@ -232,9 +233,9 @@ describe("buildConflictRemediationPrompt", () => {
     expect(prompt).toContain("- src/player.ts");
     expect(prompt).toContain("a rebase is currently in progress");
     expect(prompt).toContain("more than once");
-    expect(prompt).toContain(
-      "Run the configured repository validation command: `yarn validate` before finishing remediation.",
-    );
+    for (const line of buildValidationPromptLines("yarn validate")) {
+      expect(prompt).toContain(line);
+    }
     expect(prompt).toContain(
       "If validation fails because of your changes, fix those failures before finishing remediation.",
     );
@@ -286,19 +287,11 @@ describe("remediatePreparedConflict", () => {
   });
 
   it.each([
-    [
-      "configured command",
-      "yarn validate",
-      "Run the configured repository validation command: `yarn validate` before finishing remediation.",
-    ],
-    [
-      "no configured command",
-      undefined,
-      "Run the repository's appropriate validation checks before finishing.",
-    ],
+    ["configured command", "yarn validate"],
+    ["no configured command", undefined],
   ] as const)(
     "keeps prepared-conflict validation in the OpenCode session: %s",
-    async (_label, validationCommand, validationInstruction) => {
+    async (_label, validationCommand) => {
       const scenario = createScenario({ validationCommand });
 
       await remediatePreparedConflict({
@@ -312,9 +305,16 @@ describe("remediatePreparedConflict", () => {
           model: "remediation-model",
           variant: "xhigh",
           sessionLabel: "OpenCode conflict remediation",
-          prompt: expect.stringContaining(validationInstruction),
+          prompt: expect.stringContaining(
+            buildValidationPromptLines(validationCommand)[0] ?? "",
+          ),
         }),
       );
+      const prompt = scenario.runOpenCode.mock.calls[0]?.[0]?.prompt;
+
+      for (const line of buildValidationPromptLines(validationCommand)) {
+        expect(prompt).toContain(line);
+      }
       expect(scenario.runCommand).not.toHaveBeenCalled();
       expect(scenario.git.pushWithLease).toHaveBeenCalledWith(
         scenario.worktreePath,

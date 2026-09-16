@@ -3,6 +3,7 @@ import {
   buildCardAttachmentPromptLines,
   type CardAttachmentPromptContext,
 } from "../context/card-attachment-prompt.js";
+import { buildValidationPromptLines } from "./build-validation-prompt.js";
 
 export function buildRemediationPrompt(
   card: TrelloCard,
@@ -21,12 +22,7 @@ export function buildRemediationPrompt(
     "",
     "Inspect the repository and current changes before editing.",
     "Address the review findings completely.",
-    ...(validationCommand
-      ? [
-          `Run the configured repository validation command: \`${validationCommand}\` before finishing.`,
-        ]
-      : ["Run the repository's appropriate validation checks."]),
-    "Leave the repository validation passing before finishing.",
+    ...buildValidationPromptLines(validationCommand),
     "Do not create commits.",
     "Do not push anything.",
     "Do not open pull requests.",

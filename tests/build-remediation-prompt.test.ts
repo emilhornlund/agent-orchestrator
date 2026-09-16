@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { buildValidationPromptLines } from "../src/opencode/build-validation-prompt.js";
 import { buildRemediationPrompt } from "../src/opencode/build-remediation-prompt.js";
 import type { TrelloCard } from "../src/trello/trello-client.js";
 
@@ -22,12 +23,9 @@ describe("buildRemediationPrompt", () => {
 
     expect(prompt).toContain("Task: Fix player movement");
     expect(prompt).toContain("Movement can exceed the configured speed.");
-    expect(prompt).toContain(
-      "Run the configured repository validation command: `yarn validate` before finishing.",
-    );
-    expect(prompt).toContain(
-      "Leave the repository validation passing before finishing.",
-    );
+    for (const line of buildValidationPromptLines("yarn validate")) {
+      expect(prompt).toContain(line);
+    }
     expect(prompt).toContain("Do not create commits.");
   });
 
@@ -44,11 +42,8 @@ describe("buildRemediationPrompt", () => {
       "Movement can exceed the configured speed.",
     );
 
-    expect(prompt).toContain(
-      "Run the repository's appropriate validation checks.",
-    );
-    expect(prompt).toContain(
-      "Leave the repository validation passing before finishing.",
-    );
+    for (const line of buildValidationPromptLines()) {
+      expect(prompt).toContain(line);
+    }
   });
 });
