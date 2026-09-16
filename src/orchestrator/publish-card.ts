@@ -66,6 +66,23 @@ function renderDeterministicPullRequestBody(
   ].join("\n");
 }
 
+function replaceUnverifiedValidation(
+  description: PullRequestDescription,
+  validationCommand?: string,
+): PullRequestDescription {
+  return {
+    ...description,
+    validation:
+      validationCommand === undefined
+        ? [
+            "No validation command was configured; no validation or test result is available.",
+          ]
+        : [
+            `Configured validation command \`${validationCommand}\` was supplied to modifying OpenCode sessions, but the orchestrator did not execute it; its result is unavailable.`,
+          ],
+  };
+}
+
 function logDescriptionFallback(
   cardLog: ReturnType<typeof logger.child>,
   stage: string,
@@ -128,21 +145,19 @@ async function generatePullRequestDescription(options: {
     return undefined;
   }
 
-  const validationResults = [
-    project.repository.validationCommand === undefined
-      ? "No validation command was configured; validation/test result is unavailable."
-      : `Configured validation command \`${project.repository.validationCommand}\` was supplied to modifying OpenCode sessions, but the orchestrator did not execute it; its result is unavailable.`,
-    `Automated review result: ${reviewResult}.`,
-    `Automated remediation result: ${remediationResult}.`,
-  ];
-
   cardLog.event("Starting OpenCode pull request description generation...");
 
   const descriptionPrompt = buildPullRequestDescriptionPrompt(card, {
     changedFiles,
     commitSha,
     commitMessage,
-    validationResults,
+    ...(project.repository.validationCommand === undefined
+      ? {}
+      : { validationCommand: project.repository.validationCommand }),
+    workflowResults: [
+      `Automated review result: ${reviewResult}.`,
+      `Automated remediation result: ${remediationResult}.`,
+    ],
   });
 
   const runDescription = async (
@@ -207,7 +222,10 @@ async function generatePullRequestDescription(options: {
 
     cardLog.event("OpenCode pull request description generated");
 
-    return description;
+    return replaceUnverifiedValidation(
+      description,
+      project.repository.validationCommand,
+    );
   } catch (error) {
     if (signal.aborted) {
       throw new TrelloRequestAbortedError();
@@ -239,7 +257,10 @@ async function generatePullRequestDescription(options: {
 
       cardLog.event("OpenCode pull request description generated");
 
-      return description;
+      return replaceUnverifiedValidation(
+        description,
+        project.repository.validationCommand,
+      );
     } catch (retryError) {
       if (signal.aborted) {
         throw new TrelloRequestAbortedError();
@@ -428,7 +449,10 @@ export async function publishCard({
       if (finalPullRequestDescription !== undefined) {
         try {
           body = renderPullRequestDescription(
-            finalPullRequestDescription,
+            replaceUnverifiedValidation(
+              finalPullRequestDescription,
+              project.repository.validationCommand,
+            ),
             card,
             project.repository.gitIdentity.name,
           );
