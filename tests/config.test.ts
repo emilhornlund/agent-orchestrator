@@ -595,7 +595,7 @@ workflow:`,
     expect(config.workflow.logRetentionDays).toBe(30);
   });
 
-  it("accepts a repository setup command", () => {
+  it("accepts setup and validation commands as separate configuration", () => {
     const raw = validConfig.replace(
       '      validationCommand: "yarn validate"',
       '      setupCommand: "yarn install"\n      validationCommand: "yarn validate"',
@@ -604,6 +604,9 @@ workflow:`,
     const config = parseConfig(raw);
 
     expect(config.projects[0]?.repository.setupCommand).toBe("yarn install");
+    expect(config.projects[0]?.repository.validationCommand).toBe(
+      "yarn validate",
+    );
   });
 
   it("rejects a missing OpenCode refinement stage", () => {

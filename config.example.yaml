@@ -21,7 +21,10 @@ projects:
       github: "owner/repository"
       defaultBranch: "main"
       worktreeRoot: "/absolute/path/to/worktrees/repository"
+      # Orchestrator-owned preparation, run through CommandRunner in the task worktree.
       setupCommand: "yarn install"
+      # OpenCode-owned validation for sessions that modify implementation files.
+      # The orchestrator supplies this command to those sessions but never runs it.
       validationCommand: "yarn test"
       gitIdentity:
         name: "Agent Orchestrator"
@@ -78,7 +81,10 @@ projects:
       github: "owner/another-repository"
       defaultBranch: "main"
       worktreeRoot: "/absolute/path/to/worktrees/another-repository"
+      # Orchestrator-owned preparation, run through CommandRunner in the task worktree.
       setupCommand: "yarn install"
+      # OpenCode-owned validation for sessions that modify implementation files.
+      # The orchestrator supplies this command to those sessions but never runs it.
       validationCommand: "yarn test"
       gitIdentity:
         name: "Agent Orchestrator"
