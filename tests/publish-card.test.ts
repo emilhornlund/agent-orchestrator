@@ -15,7 +15,7 @@ import { publishCard } from "../src/orchestrator/publish-card.js";
 import { WorkflowError } from "../src/orchestrator/workflow-error.js";
 import { type TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
 
-function createProject(): ProjectConfig {
+function createProject(validationCommand?: string): ProjectConfig {
   return {
     id: "example",
     autoMerge: false,
@@ -37,6 +37,7 @@ function createProject(): ProjectConfig {
       github: "example/repository",
       defaultBranch: "main",
       worktreeRoot: "/tmp/example-worktrees",
+      ...(validationCommand === undefined ? {} : { validationCommand }),
       gitIdentity: {
         name: "Configured Git Author",
         email: "agent-orchestrator@users.noreply.github.com",
@@ -728,7 +729,7 @@ describe("publishCard", () => {
         output: JSON.stringify({
           summary: "Described the published implementation.",
           changes: ["Added structured PR content."],
-          validation: ["Automated review passed."],
+          validation: ["yarn validate passed."],
         }),
         errorOutput: "",
       };
@@ -762,7 +763,7 @@ describe("publishCard", () => {
       git,
       github,
       opencode: { run: runDescription } as unknown as OpenCodeClient,
-      project: createProject(),
+      project: createProject("yarn validate"),
       card: createCard(),
       worktreePath: "/worktree",
       branch: "agent/card-1",
@@ -816,7 +817,7 @@ describe("publishCard", () => {
           "- Added structured PR content.",
           "",
           "## Validation",
-          "- Automated review passed.",
+          "- Configured validation command `yarn validate` was supplied to modifying OpenCode sessions, but the orchestrator did not execute it; its result is unavailable.",
           "",
           "## Task",
           "[Trello card: Example task](https://trello.com/c/card-1)",
@@ -826,6 +827,52 @@ describe("publishCard", () => {
           "<!-- agent-orchestrator-status:start -->",
           "<!-- agent-orchestrator-status:end -->",
         ].join("\n"),
+      }),
+    );
+  });
+
+  it("does not publish an agent-provided validation claim without orchestrator evidence", async () => {
+    const trello = {
+      moveCard: vi.fn().mockResolvedValue(createCard()),
+      getListTransitions: vi.fn().mockResolvedValue([]),
+      addComment: vi.fn().mockResolvedValue(undefined),
+    } as unknown as TrelloClient;
+    const createPullRequest = vi.fn().mockResolvedValue({
+      url: "https://github.com/example/repository/pull/123",
+    });
+    const github = {
+      findPullRequest: vi.fn().mockResolvedValue(null),
+      createPullRequest,
+    } as unknown as GitHubClient;
+
+    await publishCard({
+      trello,
+      git: createPublicationGit(),
+      github,
+      project: createProject(),
+      card: createCard(),
+      worktreePath: "/worktree",
+      branch: "agent/card-1",
+      commitSha: "abc123",
+      reviewResult: "Passed",
+      remediationResult: "Not required",
+      pullRequestDescription: {
+        summary: "Completed the implementation.",
+        changes: ["Updated the implementation."],
+        validation: ["yarn validate passed."],
+      },
+    });
+
+    expect(createPullRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.stringContaining(
+          "No validation command was configured; no validation or test result is available.",
+        ),
+      }),
+    );
+    expect(createPullRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.not.stringContaining("yarn validate passed."),
       }),
     );
   });

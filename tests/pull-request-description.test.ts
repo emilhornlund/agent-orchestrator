@@ -26,7 +26,8 @@ const context: PullRequestDescriptionPromptContext = {
   changedFiles: "src/description.ts\ntests/description.test.ts",
   commitSha: "abc123",
   commitMessage: "feat(workflow): describe completed changes",
-  validationResults: ["yarn validate: passed", "Automated review: passed"],
+  validationCommand: "yarn validate",
+  workflowResults: ["Automated review result: Passed."],
 };
 
 describe("buildPullRequestDescriptionPrompt", () => {
@@ -43,7 +44,15 @@ describe("buildPullRequestDescriptionPrompt", () => {
     expect(prompt).toContain(
       "Commit message:\nfeat(workflow): describe completed changes",
     );
-    expect(prompt).toContain("- yarn validate: passed");
+    expect(prompt).toContain(
+      "Validation evidence captured by the orchestrator:\n- None; validation execution was delegated to modifying OpenCode sessions, and the orchestrator did not observe its result. Do not infer or claim success.",
+    );
+    expect(prompt).toContain(
+      "Validation command supplied to modifying OpenCode sessions:\n- Configured validation command `yarn validate` was supplied to modifying OpenCode sessions, but the orchestrator did not execute it; its result is unavailable. This does not establish that validation passed.",
+    );
+    expect(prompt).toContain(
+      "Workflow outcomes (separate from validation evidence):\n- Automated review result: Passed.",
+    );
     expect(prompt).toContain("Return exactly one JSON object.");
     expect(prompt).toContain(
       "Do not include an introduction, explanation, Markdown, code fences, or any text before or after the JSON object.",
@@ -56,12 +65,38 @@ describe("buildPullRequestDescriptionPrompt", () => {
 
   it("makes unavailable validation information explicit", () => {
     const prompt = buildPullRequestDescriptionPrompt(card, {
-      ...context,
-      validationResults: [],
+      changedFiles: context.changedFiles,
+      commitSha: context.commitSha,
+      commitMessage: context.commitMessage,
+      workflowResults: [],
     });
 
     expect(prompt).toContain(
-      "No validation or test results are available; do not infer or claim success.",
+      "- None; validation execution was delegated to modifying OpenCode sessions, and the orchestrator did not observe its result. Do not infer or claim success.",
+    );
+    expect(prompt).toContain(
+      "Validation command supplied to modifying OpenCode sessions:\n- No validation command was configured.",
+    );
+    expect(prompt).not.toContain("validation passed");
+  });
+
+  it("keeps remediation outcomes separate from validation evidence", () => {
+    const prompt = buildPullRequestDescriptionPrompt(card, {
+      changedFiles: "src/description.ts",
+      commitSha: "abc123",
+      commitMessage: "fix(workflow): remediate implementation",
+      validationCommand: "yarn validate",
+      workflowResults: ["Automated remediation result: Applied."],
+    });
+
+    expect(prompt).toContain(
+      "Validation evidence captured by the orchestrator:\n- None;",
+    );
+    expect(prompt).toContain(
+      "Workflow outcomes (separate from validation evidence):\n- Automated remediation result: Applied.",
+    );
+    expect(prompt).not.toContain(
+      "Known validation or test results:\n- Automated remediation result: Applied.",
     );
   });
 });
