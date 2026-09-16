@@ -7,11 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProjectConfig } from "../src/config/config.js";
 import type { GitClient, GitRebaseState } from "../src/git/git-client.js";
 import type { GitHubClient } from "../src/github/github-client.js";
-import {
-  appendSessionLog,
-  getSessionLogPath,
-  removeSessionLog,
-} from "../src/logging/session-log.js";
+import { removeSessionLog } from "../src/logging/session-log.js";
 import { Logger } from "../src/logging/logger.js";
 import {
   OpenCodeClient,
@@ -28,7 +24,6 @@ import {
   writePreparedConflict,
   type PreparedConflictHandoff,
 } from "../src/orchestrator/prepared-conflict-state.js";
-import { getFailureContext } from "../src/orchestrator/failure-diagnostic.js";
 import { remediatePreparedConflict } from "../src/orchestrator/remediate-prepared-conflict.js";
 import type { TrelloCard } from "../src/trello/trello-client.js";
 
@@ -118,7 +113,6 @@ interface ScenarioOptions {
   rebaseTargetIsAncestor?: boolean;
   remoteSha?: string | null;
   pushError?: Error;
-  validationExitCode?: number;
   openCodeResult?: Partial<OpenCodeRunResult>;
 }
 
@@ -146,7 +140,7 @@ function createScenario(options: ScenarioOptions = {}) {
     ...options.openCodeResult,
   });
   const runCommand = vi.fn<RunCommand>().mockResolvedValue({
-    exitCode: options.validationExitCode ?? 0,
+    exitCode: 0,
   });
   const pushWithLease = vi.fn();
   const github = {
@@ -229,7 +223,12 @@ describe("buildConflictRemediationPrompt", () => {
     expect(prompt).toContain("- src/player.ts");
     expect(prompt).toContain("a rebase is currently in progress");
     expect(prompt).toContain("more than once");
-    expect(prompt).toContain("`yarn validate`");
+    expect(prompt).toContain(
+      "Run the configured repository validation command: `yarn validate` before finishing remediation.",
+    );
+    expect(prompt).toContain(
+      "If validation fails because of your changes, fix those failures before finishing remediation.",
+    );
   });
 });
 
@@ -277,7 +276,7 @@ describe("remediatePreparedConflict", () => {
     ).not.toBeNull();
   });
 
-  it("completes, validates, publishes with the captured lease, and clears the handoff", async () => {
+  it("passes validation to OpenCode, publishes with the captured lease, and clears the handoff", async () => {
     const scenario = createScenario();
 
     await remediatePreparedConflict({
@@ -291,19 +290,12 @@ describe("remediatePreparedConflict", () => {
         model: "remediation-model",
         variant: "xhigh",
         sessionLabel: "OpenCode conflict remediation",
-      }),
-    );
-    expect(scenario.runCommand).toHaveBeenCalledWith(
-      expect.objectContaining({
-        cwd: scenario.worktreePath,
-        command: "yarn validate",
-        sessionLogPath: getSessionLogPath(
-          scenario.project.id,
-          scenario.card.id,
+        prompt: expect.stringContaining(
+          "Run the configured repository validation command: `yarn validate` before finishing remediation.",
         ),
-        sessionLabel: "Repository validation after conflict remediation",
       }),
     );
+    expect(scenario.runCommand).not.toHaveBeenCalled();
     expect(scenario.git.pushWithLease).toHaveBeenCalledWith(
       scenario.worktreePath,
       "origin",
@@ -321,17 +313,11 @@ describe("remediatePreparedConflict", () => {
       scenario.github.updatePullRequestDescriptionStatus,
     ).toHaveBeenNthCalledWith(
       2,
-      expect.objectContaining({ status: "validating" }),
-    );
-    expect(
-      scenario.github.updatePullRequestDescriptionStatus,
-    ).toHaveBeenNthCalledWith(
-      3,
       expect.objectContaining({ status: "updating-remote" }),
     );
     expect(
       scenario.github.updatePullRequestDescriptionStatus,
-    ).toHaveBeenNthCalledWith(4, expect.objectContaining({ status: null }));
+    ).toHaveBeenNthCalledWith(3, expect.objectContaining({ status: null }));
     expect(readPreparedConflict(scenario.project, scenario.card.id)).toBeNull();
   });
 
@@ -379,7 +365,7 @@ describe("remediatePreparedConflict", () => {
     });
 
     expect(scenario.runOpenCode).not.toHaveBeenCalled();
-    expect(scenario.runCommand).toHaveBeenCalledOnce();
+    expect(scenario.runCommand).not.toHaveBeenCalled();
     expect(scenario.git.pushWithLease).toHaveBeenCalledWith(
       scenario.worktreePath,
       "origin",
@@ -535,103 +521,6 @@ describe("remediatePreparedConflict", () => {
       ).not.toBeNull();
     },
   );
-
-  it("does not publish after validation failure", async () => {
-    const scenario = createScenario({ validationExitCode: 1 });
-
-    await expect(
-      remediatePreparedConflict({
-        ...scenario,
-        signal: new AbortController().signal,
-      }),
-    ).rejects.toThrow("repository validation");
-
-    expect(scenario.git.pushWithLease).not.toHaveBeenCalled();
-    expect(
-      readPreparedConflict(scenario.project, scenario.card.id),
-    ).not.toBeNull();
-  });
-
-  it("replays an unchanged validation failure so the worker can exhaust retries", async () => {
-    const scenario = createScenario({ validationExitCode: 1 });
-
-    await expect(
-      remediatePreparedConflict({
-        ...scenario,
-        signal: new AbortController().signal,
-      }),
-    ).rejects.toThrow("repository validation");
-
-    await expect(
-      remediatePreparedConflict({
-        ...scenario,
-        signal: new AbortController().signal,
-      }),
-    ).rejects.toThrow("repository validation");
-
-    expect(scenario.runCommand).toHaveBeenCalledOnce();
-  });
-
-  it("does not reuse a validation failure after the authoritative remote head changes", async () => {
-    const scenario = createScenario({ validationExitCode: 1 });
-    vi.mocked(scenario.git.getRemoteBranchSha)
-      .mockResolvedValueOnce(taskSha)
-      .mockResolvedValueOnce(changedSha);
-
-    await expect(
-      remediatePreparedConflict({
-        ...scenario,
-        signal: new AbortController().signal,
-      }),
-    ).rejects.toThrow("repository validation");
-
-    await expect(
-      remediatePreparedConflict({
-        ...scenario,
-        signal: new AbortController().signal,
-      }),
-    ).rejects.toThrow("authoritative remote SHA verification");
-
-    expect(scenario.runCommand).toHaveBeenCalledOnce();
-  });
-
-  it("retains prepared-conflict validation output and exit status without publishing", async () => {
-    const validationExitCode = 17;
-    const scenario = createScenario({ validationExitCode });
-    scenario.runCommand.mockImplementation(async ({ sessionLogPath }) => {
-      appendSessionLog(
-        sessionLogPath!,
-        "prepared test-suite stdout\nprepared application stderr\n",
-      );
-
-      return { exitCode: validationExitCode };
-    });
-
-    const error = await remediatePreparedConflict({
-      ...scenario,
-      signal: new AbortController().signal,
-    }).catch((failure: unknown) => failure);
-
-    expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).toContain(
-      `Validation command exited with code ${validationExitCode}`,
-    );
-    expect(getFailureContext(error)).toMatchObject({
-      projectId: scenario.project.id,
-      cardId: scenario.card.id,
-      sessionLogPath: getSessionLogPath(scenario.project.id, scenario.card.id),
-    });
-    expect(
-      fs.readFileSync(
-        getSessionLogPath(scenario.project.id, scenario.card.id),
-        "utf8",
-      ),
-    ).toContain("prepared test-suite stdout\nprepared application stderr\n");
-    expect(scenario.git.pushWithLease).not.toHaveBeenCalled();
-    expect(
-      readPreparedConflict(scenario.project, scenario.card.id),
-    ).not.toBeNull();
-  });
 
   it("does not publish when the agent exits successfully with unresolved paths", async () => {
     const scenario = createScenario({ conflictedPaths: ["src/player.ts"] });
