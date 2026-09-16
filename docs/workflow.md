@@ -246,20 +246,18 @@ deterministically rather than being retried.
 An open, owned `behind` or `conflicted` pull request with no actionable requested changes is revalidated immediately before
 maintenance. The orchestrator then resolves the authoritative remote task-branch SHA, prepares or reuses only the expected
 task worktree, fetches `origin/<defaultBranch>`, and attempts to rebase the task branch. A clean rebase runs the configured
-`setupCommand`, when needed for the new or changed effective worktree state, before running the configured `validationCommand`.
-Setup and validation state is retained for the expected worktree and repository SHAs, avoiding repeated setup or validation for an
-unchanged prepared worktree. An unchanged deterministic validation failure is retained and suppresses later validation and its
-duplicate attention notification; a changed pull-request head, rebase result, command configuration, or recreated worktree retries
-it. A successful validation updates the existing branch with the exact force-with-lease helper. The existing pull request remains
-associated with the card, the card remains in `Human Review`, and no OpenCode session, pull-request creation, or Trello
-transition is performed. After a successful update, reconciliation exposes `up-to-date` and logs the resulting commit. If the
-branch is already current, maintenance is a no-op: no worktree preparation, rebase, setup, validation, push, pull-request
-operation, OpenCode invocation, or successful maintenance result occurs.
+`setupCommand` when needed for the new or changed effective worktree state. Setup state is retained for the expected worktree and
+repository SHAs, avoiding repeated setup for an unchanged prepared worktree. Clean branch maintenance does not run
+`validationCommand`; it remains available to OpenCode sessions that modify implementation files. The existing pull request is
+updated with the exact force-with-lease helper, remains associated with the card, and the card remains in `Human Review`; no
+OpenCode session, pull-request creation, or Trello transition is performed. After a successful update, reconciliation exposes
+`up-to-date` and logs the resulting commit. If the branch is already current, maintenance is a no-op: no worktree preparation,
+rebase, setup, push, pull-request operation, OpenCode invocation, or successful maintenance result occurs.
 
 When eligible long-running maintenance starts, the existing pull request description receives one hidden managed status section:
 `<!-- agent-orchestrator-status:start -->` through `<!-- agent-orchestrator-status:end -->`. The supported statuses are `rebasing`
-(onto the latest configured default branch), `resolving-conflicts`, `validating`, `updating-remote`, and `failed` (requiring human
-attention). A failed automatic maintenance attempt replaces the section with the `failed` message; it
+(onto the latest configured default branch), `resolving-conflicts`, `updating-remote`, and `failed` (requiring human attention).
+Prepared-conflict remediation may also use `validating`. A failed automatic maintenance attempt replaces the section with the `failed` message; it
 never presents that attempt as successful. Successful maintenance removes the section and both markers.
 
 When a stable current-head requested-change snapshot starts remediation, the same section uses `addressing-review-feedback` while
@@ -281,7 +279,7 @@ its failure is a warning, the pull request content is retained, and the maintena
 The same rule applies to requested-change publication: a status presentation failure never turns a successfully published corrected
 branch into an unsuccessful publication, and preserved branch, worktree, and pull-request content remain available for diagnosis.
 
-A lease rejection, missing or invalid remote SHA, fetch or validation failure, or non-conflict rebase failure leaves the pull
+A lease rejection, missing or invalid remote SHA, fetch or non-conflict rebase failure leaves the pull
 request, card, task branch, and worktree unchanged for diagnosis and later reconciliation. When Git confirms an active conflicted
 rebase and reports conflicted paths, reconciliation writes a validated handoff at
 `<worktreeRoot>/.orchestrator/prepared-conflicts/<project-id>/<card-id>.json` and returns `prepared-conflict`. The handoff

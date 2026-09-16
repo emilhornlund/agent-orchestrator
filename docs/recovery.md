@@ -153,18 +153,19 @@ pull request, worktree, handoff, session log, or recoverable agent changes.
 For an eligible branch, reconciliation revalidates the pull request, resolves the authoritative remote task SHA with `ls-remote`,
 and prepares or reuses only `<worktreeRoot>/<trello-card-id>`. It fetches the latest default branch there and attempts a normal
 rebase. When the worktree is new, its effective state changes, or setup has not completed for that state, the configured
-`repository.setupCommand` runs before `repository.validationCommand`. Successful setup and validation state is retained with the
-expected worktree and repository SHAs, so an unchanged prepared worktree does not repeat either command. A deterministic
-validation failure is retained with the same state identity; later reconciliation leaves the card in `Human Review` without
-repeating validation or its attention notification. A changed pull-request head, changed rebase result, recreated worktree, or
-changed command configuration invalidates the record and retries. The existing pull request is retained and the card stays in
-`Human Review`; no OpenCode session, new pull request, replacement, merge, or Trello transition is involved. A branch already at
-the current default tip is a no-op and is not rebased, set up, validated, pushed, or reported as a successful maintenance update.
+`repository.setupCommand` runs before clean branch maintenance when needed for the effective worktree state. Setup state is retained
+with the expected worktree and repository SHAs, so an unchanged prepared worktree does not repeat setup. Clean maintenance does not
+run `repository.validationCommand`; that command remains owned by OpenCode sessions. A changed pull-request head, changed rebase
+result, recreated worktree, or changed setup command configuration invalidates the record and retries. The existing pull request is
+retained and the card stays in `Human Review`; no OpenCode session, new pull request, replacement, merge, or Trello transition is
+involved. A branch already at the current default tip is a no-op and is not rebased, set up, pushed, or reported as a successful
+maintenance update.
 
 Eligible long-running maintenance adds a managed section to the existing pull request description, bounded exactly by
 `<!-- agent-orchestrator-status:start -->` and `<!-- agent-orchestrator-status:end -->`. Its supported phases are rebasing onto the
-latest configured default branch, resolving merge conflicts, running repository validation, and updating the remote task branch,
-represented by `rebasing`, `resolving-conflicts`, `validating`, and `updating-remote`; `failed` requires human attention. The
+latest configured default branch, resolving merge conflicts, and updating the remote task branch, represented by `rebasing`,
+`resolving-conflicts`, and `updating-remote`; `failed` requires human attention. Prepared-conflict remediation may also use
+`validating`. The
 section is removed after successful maintenance. If automatic Git maintenance fails, it is replaced with the `failed` status. The
 orchestrator owns only the content inside the markers and preserves all other description text.
 Each update reads the latest description immediately before writing, skips an identical result, and never creates a second section.
@@ -187,8 +188,9 @@ On restart, an existing requested-change section is read and updated in place; n
 requires the same successful-publication condition.
 
 The lease protects against concurrent remote updates. If the branch changes or disappears after the authoritative lookup, the
-single force-with-lease update is rejected and is not retried with another SHA. Fetch, worktree, rebase, validation, remote lookup,
-or lease failures preserve the card, pull request, branch, and worktree. A non-zero validation command prevents the push.
+single force-with-lease update is rejected and is not retried with another SHA. Fetch, worktree, rebase, remote lookup, or lease
+failures preserve the card, pull request, branch, and worktree. Prepared-conflict remediation separately validates the completed
+agent rebase before publishing.
 
 A rebase conflict is prepared only when Git reports both an active rebase and one or more conflicted paths. In that case the
 orchestrator writes a validated handoff at

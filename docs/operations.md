@@ -283,9 +283,9 @@ Existing open pull requests are reused without description updates, as usual.
 During Human Review reconciliation, the same isolated task worktree is used for automatic maintenance of an eligible stale
 branch. Eligibility requires an open pull request in the configured repository, exact `agent/<trello-card-id>` head and configured
 default base, a `behind` or `conflicted` state, and no requested changes on the current head. The pull request is revalidated
-before Git maintenance. A current branch is a no-op and is not fetched, rebased, validated, pushed, or reported as a successful
-maintenance update. A successful clean rebase runs `repository.validationCommand` when configured and updates the existing
-branch, retaining the existing pull request and leaving the card in `Human Review`. A recognized `UNKNOWN` value in either
+before Git maintenance. A current branch is a no-op and is not fetched, rebased, set up, pushed, or reported as a successful
+maintenance update. A successful clean rebase updates the existing branch without running `repository.validationCommand`, retaining
+the existing pull request and leaving the card in `Human Review`. A recognized `UNKNOWN` value in either
 `mergeable` or `mergeStateStatus` is not a maintenance state: the card and branch are left unchanged while the existing
 card-scoped GitHub reconciliation retry policy reads the pull request again, using its three-attempt bound and backoff. A valid
 later response resumes normal handling; persistent unresolved state reaches the same exhausted-retry project block and
@@ -293,7 +293,7 @@ later response resumes normal handling; persistent unresolved state reaches the 
 
 During this maintenance, the existing pull request description may contain one managed status section bounded by
 `<!-- agent-orchestrator-status:start -->` and `<!-- agent-orchestrator-status:end -->`. The orchestrator updates only the content
-inside that section as it rebases, resolves prepared conflicts, validates, and updates the remote task branch. It removes the
+inside that section as it rebases, resolves prepared conflicts, and updates the remote task branch. It removes the
 section after success, or records that maintenance failed and requires human attention when automatic Git work cannot complete.
 Every possible description write is based on a fresh body read; identical updates are skipped. Invalid or duplicate marker pairs
 are left untouched and escalated rather than guessed at. Description operations are presentation-only and their failures do not
@@ -324,8 +324,8 @@ The task worktree and branch are preserved after fetch, rebase, publication, or 
 can be resolved. A human must review and merge the pull request before the card can reach `Done` when `autoMerge` is disabled.
 An enabled project's successful auto-merge is followed by the same `Done` transition and completion handling.
 
-Maintenance failures follow the same preservation boundary but never move the card or create a pull request. A validation failure
-prevents the branch update. A conflict is left in place for dedicated conflict handling without automatic abort, reset, clean,
+Maintenance failures follow the same preservation boundary but never move the card or create a pull request. A conflict is left in
+place for dedicated conflict handling without automatic abort, reset, clean,
 worktree removal, or recreation. The prepared-conflict handoff then starts a dedicated OpenCode remediation session in the same
 isolated worktree, using the configured remediation model and variant. Its prompt contains the original card intent, updated base
 and rebase target, conflicted paths, and validation command, and limits the agent to resolving and continuing the active rebase,
@@ -477,8 +477,9 @@ timestamp level context message
 
 They are written under `logs/orchestrator-YYYY-MM-DD.log`; test runs use the `test-orchestrator-YYYY-MM-DD.log` prefix. Raw
 OpenCode and command output is written to per-card session logs or forwarded to process standard streams, so it is not
-timestamped by the shared logger. Configured repository validation is always captured in the relevant card session log,
-including validation during Human Review branch maintenance and prepared-conflict remediation. Session logs are stored below
+timestamped by the shared logger. Configured repository validation is always captured in the relevant card session log, including
+validation during prepared-conflict remediation. Clean Human Review branch maintenance does not run the configured validation
+command. Session logs are stored below
 `logs/sessions/<sanitized-project-id>/<sanitized-card-id>.log`; path components are sanitized for filesystem use. Validation
 failures in service logs are concise orchestrator-owned diagnostics with the original exit status and a session-log reference;
 the complete redacted stdout and stderr remain in that per-card log instead of being dumped to the service log.

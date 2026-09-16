@@ -35,11 +35,7 @@ import {
 } from "./review-maintenance-state.js";
 
 export type ReviewMaintenanceResult =
-  | "not-eligible"
-  | "already-current"
-  | "rebased"
-  | "prepared-conflict"
-  | "validation-failed";
+  "not-eligible" | "already-current" | "rebased" | "prepared-conflict";
 
 export interface ReviewMaintenanceOptions {
   git: GitClient;
@@ -206,8 +202,6 @@ function createMaintenanceState(
     effectiveHeadSha: string;
     setupCommand?: string;
     setupCompleted: boolean;
-    validationCommand?: string;
-    validation?: ReviewMaintenanceState["validation"];
   },
 ): ReviewMaintenanceState {
   return {
@@ -224,92 +218,7 @@ function createMaintenanceState(
       ? {}
       : { setupCommand: values.setupCommand }),
     setupCompleted: values.setupCompleted,
-    ...(values.validationCommand === undefined
-      ? {}
-      : { validationCommand: values.validationCommand }),
-    ...(values.validation === undefined
-      ? {}
-      : { validation: values.validation }),
   };
-}
-
-function recordValidationFailure(
-  options: ReviewMaintenanceOptions,
-  remoteTaskSha: string,
-  remoteDefaultSha: string,
-  effectiveHeadSha: string,
-  setupCommand: string | undefined,
-  validationCommand: string,
-  setupCompleted: boolean,
-  validationError: Error,
-): void {
-  try {
-    writeReviewMaintenanceState(
-      options.project,
-      options.card.id,
-      createMaintenanceState(options.project, options.card.id, {
-        remoteTaskSha,
-        remoteDefaultSha,
-        effectiveHeadSha,
-        ...(setupCommand === undefined ? {} : { setupCommand }),
-        setupCompleted,
-        validationCommand,
-        validation: {
-          outcome: "failed",
-          reason: validationError.message,
-        },
-      }),
-    );
-  } catch (stateError) {
-    throw maintenanceError(
-      options.project,
-      options.card,
-      "recording repository validation failure",
-      stateError,
-    );
-  }
-}
-
-async function isReusableValidationFailure(
-  options: ReviewMaintenanceOptions,
-  worktree: PreparedWorktree & { created: boolean },
-  state: ReviewMaintenanceState | null,
-  remoteTaskSha: string,
-  remoteDefaultSha: string,
-): Promise<boolean> {
-  if (worktree.created || state?.validation?.outcome !== "failed") {
-    return false;
-  }
-
-  if (
-    !state.setupCompleted ||
-    !matchesReviewMaintenanceRepositoryState(state, {
-      remoteTaskSha,
-      remoteDefaultSha,
-      effectiveHeadSha: state.effectiveHeadSha,
-      ...(options.project.repository.setupCommand === undefined
-        ? {}
-        : { setupCommand: options.project.repository.setupCommand }),
-      ...(options.project.repository.validationCommand === undefined
-        ? {}
-        : { validationCommand: options.project.repository.validationCommand }),
-    })
-  ) {
-    return false;
-  }
-
-  try {
-    return (
-      (await options.git.getHeadSha(worktree.path)) === state.effectiveHeadSha
-    );
-  } catch (error) {
-    throw maintenanceError(
-      options.project,
-      options.card,
-      "checking recorded validation state",
-      error,
-    );
-  }
 }
 
 export async function maintainReviewPullRequest(
@@ -470,19 +379,6 @@ async function maintainReviewPullRequestCore(
     );
   }
 
-  if (
-    await isReusableValidationFailure(
-      options,
-      worktree,
-      recordedState,
-      remoteTaskSha,
-      remoteDefaultSha,
-    )
-  ) {
-    await setStatus("failed", "unchanged repository validation failure");
-    return "validation-failed";
-  }
-
   if (options.signal?.aborted) {
     return "not-eligible";
   }
@@ -616,7 +512,6 @@ async function maintainReviewPullRequestCore(
     );
   }
 
-  const validationCommand = options.project.repository.validationCommand;
   const setupCommand = options.project.repository.setupCommand;
   const stateMatches =
     recordedState !== null &&
@@ -625,7 +520,6 @@ async function maintainReviewPullRequestCore(
       remoteDefaultSha,
       effectiveHeadSha: rebasedSha,
       ...(setupCommand === undefined ? {} : { setupCommand }),
-      ...(validationCommand === undefined ? {} : { validationCommand }),
     });
 
   if (
@@ -634,7 +528,9 @@ async function maintainReviewPullRequestCore(
       !stateMatches ||
       recordedState?.setupCompleted !== true)
   ) {
-    cardLog.event("Running repository setup before Human Review validation...");
+    cardLog.event(
+      "Running repository setup before Human Review maintenance...",
+    );
 
     let setup;
 
@@ -674,7 +570,6 @@ async function maintainReviewPullRequestCore(
           effectiveHeadSha: rebasedSha,
           setupCommand,
           setupCompleted: true,
-          ...(validationCommand === undefined ? {} : { validationCommand }),
         }),
       );
       recordedState = readReviewMaintenanceState(
@@ -691,102 +586,6 @@ async function maintainReviewPullRequestCore(
     }
 
     cardLog.event("Repository setup for Human Review passed");
-  }
-
-  if (validationCommand !== undefined) {
-    if (
-      stateMatches &&
-      recordedState?.validation?.outcome === "passed" &&
-      recordedState.setupCompleted
-    ) {
-      cardLog.info("Skipping unchanged successful repository validation");
-    } else {
-      await setStatus("validating", "repository validation");
-      let validationResult;
-
-      try {
-        validationResult = await options.commands.run({
-          cwd: worktree.path,
-          command: validationCommand,
-          timeoutMilliseconds:
-            (options.project.opencode.timeoutMinutes ?? 360) * 60_000,
-          ...(options.signal === undefined ? {} : { signal: options.signal }),
-          sessionLogPath,
-          sessionLabel: "Repository validation",
-        });
-      } catch (error) {
-        if (error instanceof CommandRunAbortedError) {
-          throw error;
-        }
-
-        const validationError = maintenanceError(
-          options.project,
-          options.card,
-          "repository validation",
-          error,
-        );
-
-        recordValidationFailure(
-          options,
-          remoteTaskSha,
-          remoteDefaultSha,
-          rebasedSha,
-          setupCommand,
-          validationCommand,
-          setupCommand === undefined || recordedState?.setupCompleted === true,
-          validationError,
-        );
-        throw validationError;
-      }
-
-      if (validationResult.exitCode !== 0) {
-        const validationError = maintenanceError(
-          options.project,
-          options.card,
-          "repository validation",
-          new Error(
-            `Validation command exited with code ${validationResult.exitCode}`,
-          ),
-        );
-
-        recordValidationFailure(
-          options,
-          remoteTaskSha,
-          remoteDefaultSha,
-          rebasedSha,
-          setupCommand,
-          validationCommand,
-          setupCommand === undefined || recordedState?.setupCompleted === true,
-          validationError,
-        );
-        throw validationError;
-      }
-
-      try {
-        writeReviewMaintenanceState(
-          options.project,
-          options.card.id,
-          createMaintenanceState(options.project, options.card.id, {
-            remoteTaskSha,
-            remoteDefaultSha,
-            effectiveHeadSha: rebasedSha,
-            ...(setupCommand === undefined ? {} : { setupCommand }),
-            setupCompleted:
-              setupCommand === undefined ||
-              recordedState?.setupCompleted === true,
-            validationCommand,
-            validation: { outcome: "passed" },
-          }),
-        );
-      } catch (error) {
-        throw maintenanceError(
-          options.project,
-          options.card,
-          "recording successful repository validation",
-          error,
-        );
-      }
-    }
   }
 
   await setStatus("updating-remote", "updating remote task branch");

@@ -10,11 +10,7 @@ import type {
   GitHubClient,
   PullRequestState,
 } from "../src/github/github-client.js";
-import {
-  appendSessionLog,
-  getSessionLogPath,
-  removeSessionLog,
-} from "../src/logging/session-log.js";
+import { removeSessionLog } from "../src/logging/session-log.js";
 import { Logger } from "../src/logging/logger.js";
 import {
   CommandRunner,
@@ -23,8 +19,6 @@ import {
 import { maintainReviewPullRequest } from "../src/orchestrator/maintain-review-pull-request.js";
 import { reconcileReviewCards } from "../src/orchestrator/reconcile-review-cards.js";
 import { getPreparedConflictPath } from "../src/orchestrator/prepared-conflict-state.js";
-import { getFailureContext } from "../src/orchestrator/failure-diagnostic.js";
-import { readReviewMaintenanceState } from "../src/orchestrator/review-maintenance-state.js";
 import type { TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
 
 const temporaryDirectories: string[] = [];
@@ -95,12 +89,6 @@ function createPullRequest(): PullRequestState {
     mergeable: "MERGEABLE",
     mergeStateStatus: "BEHIND",
   };
-}
-
-function getDailyLogPath(): string {
-  const date = new Date().toISOString().slice(0, 10);
-
-  return path.join(process.cwd(), "logs", `test-orchestrator-${date}.log`);
 }
 
 function createTrello(card: TrelloCard): TrelloClient {
@@ -263,50 +251,26 @@ describe("owned Human Review pull-request maintenance", () => {
       taskSha,
       scenario.project,
     );
-    expect(scenario.runCommand).toHaveBeenCalledWith(
-      expect.objectContaining({
-        cwd: path.join(scenario.project.repository.worktreeRoot, "card-1"),
-        command: "yarn validate",
-        sessionLogPath: getSessionLogPath(
-          scenario.project.id,
-          scenario.card.id,
-        ),
-        sessionLabel: "Repository validation",
-      }),
-    );
+    expect(scenario.runCommand).not.toHaveBeenCalled();
     expect(github.updatePullRequestDescriptionStatus).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({ status: "rebasing" }),
     );
     expect(github.updatePullRequestDescriptionStatus).toHaveBeenNthCalledWith(
       2,
-      expect.objectContaining({ status: "validating" }),
-    );
-    expect(github.updatePullRequestDescriptionStatus).toHaveBeenNthCalledWith(
-      3,
       expect.objectContaining({ status: "updating-remote" }),
     );
     expect(github.updatePullRequestDescriptionStatus).toHaveBeenNthCalledWith(
-      4,
+      3,
       expect.objectContaining({ status: null }),
     );
     expect(scenario.trello.moveCard).not.toHaveBeenCalled();
   });
 
-  it("runs repository setup before Human Review validation", async () => {
+  it("runs repository setup before Human Review branch maintenance", async () => {
     const scenario = setup();
     scenario.project.repository.setupCommand = "repository-setup";
     const git = createGit([taskSha, defaultSha]);
-    let setupFinished = false;
-    scenario.runCommand.mockImplementation(async ({ command }) => {
-      if (command === "repository-setup") {
-        setupFinished = true;
-        return { exitCode: 0 };
-      }
-
-      expect(setupFinished).toBe(true);
-      return { exitCode: 0 };
-    });
 
     await reconcileReviewCards(
       scenario.trello,
@@ -325,13 +289,8 @@ describe("owned Human Review pull-request maintenance", () => {
         sessionLabel: "Repository setup for Human Review",
       }),
     );
-    expect(scenario.runCommand).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({
-        command: "yarn validate",
-        sessionLabel: "Repository validation",
-      }),
-    );
+    expect(scenario.runCommand).toHaveBeenCalledOnce();
+    expect(git.pushWithLease).toHaveBeenCalledOnce();
   });
 
   it("keeps successful branch maintenance when managed status removal fails", async () => {
@@ -438,16 +397,16 @@ describe("owned Human Review pull-request maintenance", () => {
       maintenanceState: "up-to-date",
     });
 
-    expect(scenario.runCommand).toHaveBeenCalledTimes(2);
+    expect(scenario.runCommand).toHaveBeenCalledOnce();
     expect(restartedRunCommand).not.toHaveBeenCalled();
     expect(push).toHaveBeenCalledOnce();
     expect(restartedGit.pushWithLease).toHaveBeenCalledOnce();
   });
 
-  it("reloads an unchanged deterministic validation failure across a fresh invocation", async () => {
+  it("does not invoke validation during maintenance", async () => {
     const scenario = setup();
-    const git = createGit([taskSha, defaultSha, taskSha, defaultSha]);
-    scenario.runCommand.mockResolvedValue({ exitCode: 1 });
+    scenario.runCommand.mockRejectedValue(new Error("validation must not run"));
+    const git = createGit([taskSha, defaultSha]);
 
     await expect(
       reconcileReviewCards(
@@ -457,87 +416,46 @@ describe("owned Human Review pull-request maintenance", () => {
         scenario.project,
         {
           maintenance: { commands: scenario.commands },
-        },
-      ),
-    ).rejects.toThrow("repository validation");
-    expect(
-      readReviewMaintenanceState(scenario.project, scenario.card.id),
-    ).toMatchObject({
-      remoteTaskSha: taskSha,
-      remoteDefaultSha: defaultSha,
-      effectiveHeadSha: "rebased-sha",
-      setupCompleted: true,
-      validationCommand: "yarn validate",
-      validation: { outcome: "failed" },
-    });
-    fs.mkdirSync(path.join(scenario.project.repository.worktreeRoot, "card-1"));
-
-    const restartedRunCommand = vi.fn<RunCommand>().mockResolvedValue({
-      exitCode: 0,
-    });
-    const restartedGit = createGit([taskSha, defaultSha]);
-    const restartedTrello = createTrello(scenario.card);
-
-    await expect(
-      reconcileReviewCards(
-        restartedTrello,
-        restartedGit,
-        createGithub(),
-        scenario.project,
-        {
-          maintenance: {
-            commands: new CommandRunner(restartedRunCommand),
-          },
         },
       ),
     ).resolves.toMatchObject({
       card: scenario.card,
       active: true,
-      maintenanceState: "behind",
+      maintenanceState: "up-to-date",
     });
 
-    expect(scenario.runCommand).toHaveBeenCalledTimes(1);
-    expect(restartedRunCommand).not.toHaveBeenCalled();
-    expect(restartedGit.rebase).not.toHaveBeenCalled();
-    expect(restartedGit.pushWithLease).not.toHaveBeenCalled();
-    expect(restartedTrello.moveCard).not.toHaveBeenCalled();
-    expect(git.pushWithLease).not.toHaveBeenCalled();
+    expect(scenario.runCommand).not.toHaveBeenCalled();
+    expect(git.rebase).toHaveBeenCalledOnce();
+    expect(git.pushWithLease).toHaveBeenCalledOnce();
   });
 
-  it("retries setup and validation after the pull-request head changes", async () => {
+  it("retries setup after the pull-request head changes", async () => {
     const scenario = setup();
     scenario.project.repository.setupCommand = "repository-setup";
     const git = createGit([taskSha, defaultSha, changedSha, defaultSha]);
-    scenario.runCommand.mockImplementation(async ({ command }) => ({
-      exitCode: command === "yarn validate" ? 1 : 0,
-    }));
 
-    await expect(
-      reconcileReviewCards(
-        scenario.trello,
-        git,
-        createGithub(),
-        scenario.project,
-        {
-          maintenance: { commands: scenario.commands },
-        },
-      ),
-    ).rejects.toThrow("repository validation");
+    await reconcileReviewCards(
+      scenario.trello,
+      git,
+      createGithub(),
+      scenario.project,
+      {
+        maintenance: { commands: scenario.commands },
+      },
+    );
     fs.mkdirSync(path.join(scenario.project.repository.worktreeRoot, "card-1"));
 
-    await expect(
-      reconcileReviewCards(
-        scenario.trello,
-        git,
-        createGithub(),
-        scenario.project,
-        {
-          maintenance: { commands: scenario.commands },
-        },
-      ),
-    ).rejects.toThrow("repository validation");
+    await reconcileReviewCards(
+      scenario.trello,
+      git,
+      createGithub(),
+      scenario.project,
+      {
+        maintenance: { commands: scenario.commands },
+      },
+    );
 
-    expect(scenario.runCommand).toHaveBeenCalledTimes(4);
+    expect(scenario.runCommand).toHaveBeenCalledTimes(2);
     expect(git.rebase).toHaveBeenCalledTimes(2);
   });
 
@@ -600,7 +518,7 @@ describe("owned Human Review pull-request maintenance", () => {
         taskSha,
         scenario.project,
       );
-      expect(scenario.runCommand).toHaveBeenCalled();
+      expect(scenario.runCommand).not.toHaveBeenCalled();
       expect(scenario.trello.moveCard).not.toHaveBeenCalled();
       expect(
         fs.existsSync(
@@ -680,75 +598,6 @@ describe("owned Human Review pull-request maintenance", () => {
     expect(git.pushWithLease).not.toHaveBeenCalled();
     expect(scenario.runCommand).not.toHaveBeenCalled();
     expect(scenario.trello.moveCard).not.toHaveBeenCalled();
-  });
-
-  it("does not push after validation fails", async () => {
-    const scenario = setup();
-    scenario.runCommand.mockResolvedValue({ exitCode: 1 });
-    const git = createGit([taskSha, defaultSha]);
-    const github = createGithub();
-
-    await expect(
-      reconcileReviewCards(scenario.trello, git, github, scenario.project, {
-        maintenance: { commands: scenario.commands },
-      }),
-    ).rejects.toThrow("repository validation");
-
-    expect(git.pushWithLease).not.toHaveBeenCalled();
-    expect(github.updatePullRequestDescriptionStatus).toHaveBeenLastCalledWith(
-      expect.objectContaining({ status: "failed" }),
-    );
-    expect(scenario.trello.moveCard).not.toHaveBeenCalled();
-  });
-
-  it("retains failed validation output in the card session log without service output", async () => {
-    const scenario = setup();
-    const validationExitCode = 23;
-    scenario.runCommand.mockImplementation(async ({ sessionLogPath }) => {
-      appendSessionLog(
-        sessionLogPath!,
-        "representative test-suite stdout\nrepresentative application stderr\n",
-      );
-
-      return { exitCode: validationExitCode };
-    });
-    const git = createGit([taskSha, defaultSha]);
-    const github = createGithub();
-
-    const error = await reconcileReviewCards(
-      scenario.trello,
-      git,
-      github,
-      scenario.project,
-      { maintenance: { commands: scenario.commands } },
-    ).catch((failure: unknown) => failure);
-
-    expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).toContain(
-      `Validation command exited with code ${validationExitCode}`,
-    );
-    expect(getFailureContext(error)).toMatchObject({
-      projectId: scenario.project.id,
-      cardId: scenario.card.id,
-      sessionLogPath: getSessionLogPath(scenario.project.id, scenario.card.id),
-    });
-    expect(
-      fs.readFileSync(
-        getSessionLogPath(scenario.project.id, scenario.card.id),
-        "utf8",
-      ),
-    ).toContain(
-      "representative test-suite stdout\nrepresentative application stderr\n",
-    );
-    const dailyLog = fs.readFileSync(getDailyLogPath(), "utf8");
-
-    expect(dailyLog).toContain("Rebasing agent/card-1 onto origin/main");
-    expect(dailyLog).not.toContain("representative test-suite stdout");
-    expect(dailyLog).not.toContain("representative application stderr");
-    expect(git.pushWithLease).not.toHaveBeenCalled();
-    expect(github.updatePullRequestDescriptionStatus).toHaveBeenLastCalledWith(
-      expect.objectContaining({ status: "failed" }),
-    );
   });
 
   it("uses the normal attention failure path for malformed remote SHA data", async () => {
