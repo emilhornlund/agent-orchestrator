@@ -44,6 +44,7 @@ interface HarnessOptions {
   autoMerge?: boolean;
   maxPasses?: number;
   setupCommand?: string;
+  validationCommand?: string;
   initialList?: ListName;
   cardLabels?: readonly string[];
   initialWorktree?: boolean;
@@ -70,6 +71,7 @@ function createProject(
   autoMerge = false,
   maxPasses = 1,
   setupCommand?: string,
+  validationCommand?: string,
 ): ProjectConfig {
   return {
     id: "characterization-project",
@@ -93,6 +95,7 @@ function createProject(
       defaultBranch: "main",
       worktreeRoot,
       ...(setupCommand === undefined ? {} : { setupCommand }),
+      ...(validationCommand === undefined ? {} : { validationCommand }),
       gitIdentity: {
         name: "Agent Orchestrator",
         email: "agent-orchestrator@users.noreply.github.com",
@@ -156,6 +159,7 @@ function createHarness(options: HarnessOptions = {}) {
       options.autoMerge,
       options.maxPasses,
       options.setupCommand,
+      options.validationCommand,
     ),
     ...(contextRoot === undefined ? {} : { contextRoot }),
   };
@@ -629,6 +633,118 @@ afterEach(() => {
 });
 
 describe("orchestrator workflow characterization", () => {
+  const implementationMutatingValidationCases: Array<{
+    workflow: string;
+    options: HarnessOptions;
+    sessionLabel: string;
+    validationCommand?: string;
+    validationInstruction: string;
+  }> = [
+    {
+      workflow: "initial implementation",
+      options: {},
+      sessionLabel: "OpenCode implementation",
+      validationCommand: "yarn validate",
+      validationInstruction:
+        "Run the configured repository validation command: `yarn validate` before finishing.",
+    },
+    {
+      workflow: "initial implementation without a configured command",
+      options: {},
+      sessionLabel: "OpenCode implementation",
+      validationInstruction:
+        "Run the repository's appropriate validation checks.",
+    },
+    {
+      workflow: "automatic review remediation",
+      options: { reviewResults: ["REVIEW_FAIL"] },
+      sessionLabel: "OpenCode remediation",
+      validationCommand: "yarn validate",
+      validationInstruction:
+        "Run the configured repository validation command: `yarn validate` before finishing.",
+    },
+    {
+      workflow: "automatic review remediation without a configured command",
+      options: { reviewResults: ["REVIEW_FAIL"] },
+      sessionLabel: "OpenCode remediation",
+      validationInstruction:
+        "Run the repository's appropriate validation checks.",
+    },
+    {
+      workflow: "human requested-change remediation",
+      options: {
+        initialList: "review",
+        pullRequestState: "requested",
+        feedback: "Please add a regression test.",
+      },
+      sessionLabel: "OpenCode review feedback implementation",
+      validationCommand: "yarn validate",
+      validationInstruction:
+        "Run the configured repository validation command: `yarn validate` before finishing.",
+    },
+    {
+      workflow:
+        "human requested-change remediation without a configured command",
+      options: {
+        initialList: "review",
+        pullRequestState: "requested",
+        feedback: "Please add a regression test.",
+      },
+      sessionLabel: "OpenCode review feedback implementation",
+      validationInstruction:
+        "Run the repository's appropriate validation checks.",
+    },
+  ];
+
+  it.each(implementationMutatingValidationCases)(
+    "keeps validation command ownership in the modifying OpenCode session: $workflow",
+    async ({
+      options,
+      sessionLabel,
+      validationCommand,
+      validationInstruction,
+    }) => {
+      const harness = createHarness({
+        ...options,
+        ...(validationCommand === undefined ? {} : { validationCommand }),
+      });
+
+      try {
+        await pollProject(
+          harness.trello,
+          harness.git,
+          harness.github,
+          harness.openCode,
+          harness.commands,
+          harness.project,
+          new AbortController().signal,
+        );
+
+        const modifyingRun = harness.runOpenCode.mock.calls.find(
+          ([run]) => run.sessionLabel === sessionLabel,
+        );
+
+        expect(harness.card.idList).toBe(listIds.review);
+        expect(modifyingRun).toBeDefined();
+        expect(modifyingRun?.[0].prompt).toContain(validationInstruction);
+        expect(modifyingRun?.[0].prompt).toContain(
+          "Leave the repository validation passing before finishing.",
+        );
+        expect(harness.runCommand).not.toHaveBeenCalled();
+
+        if (validationCommand === undefined) {
+          expect(modifyingRun?.[0].prompt).not.toContain(
+            "configured repository validation command",
+          );
+        } else {
+          expect(modifyingRun?.[0].prompt).toContain(validationCommand);
+        }
+      } finally {
+        harness.cleanup();
+      }
+    },
+  );
+
   it("materializes card context before OpenCode and omits an empty section", async () => {
     const harness = createHarness({ cardContext: true });
 
