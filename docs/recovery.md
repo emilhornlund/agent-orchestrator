@@ -164,8 +164,7 @@ maintenance update.
 Eligible long-running maintenance adds a managed section to the existing pull request description, bounded exactly by
 `<!-- agent-orchestrator-status:start -->` and `<!-- agent-orchestrator-status:end -->`. Its supported phases are rebasing onto the
 latest configured default branch, resolving merge conflicts, and updating the remote task branch, represented by `rebasing`,
-`resolving-conflicts`, and `updating-remote`; `failed` requires human attention. Prepared-conflict remediation may also use
-`validating`. The
+`resolving-conflicts`, and `updating-remote`; `failed` requires human attention. The
 section is removed after successful maintenance. If automatic Git maintenance fails, it is replaced with the `failed` status. The
 orchestrator owns only the content inside the markers and preserves all other description text.
 Each update reads the latest description immediately before writing, skips an identical result, and never creates a second section.
@@ -211,13 +210,13 @@ The conflicted worktree, branch, conflict markers, and Git rebase metadata remai
 clean, removal, recreation, validation, push, pull-request mutation, or merge. The project worker starts dedicated remediation in
 that existing worktree using the configured remediation-stage OpenCode model and variant. The prompt is limited to the original
 card intent and active conflicts, and explicitly covers repeated conflict stops, staging resolutions, rebase continuation, and
-validation. After the rebase is safely complete, the worker verifies the Git state, runs setup when the retained preparation state
-does not match, reruns configured validation, confirms that the authoritative remote task SHA is still the handoff SHA, and performs
-one exact force-with-lease update. It removes the handoff only after that update succeeds. The existing pull request is retained, the
-card stays in Human Review, and normal reconciliation can observe the updated branch. It must not remove the record merely to make
-polling proceed.
+validation. The agent owns configured repository validation. After the rebase is safely complete, the worker verifies the Git state,
+runs setup when the retained preparation state does not match, confirms that the authoritative remote task SHA is still the handoff
+SHA, and performs one exact force-with-lease update. It removes the handoff only after that update succeeds. The existing pull
+request is retained, the card stays in Human Review, and normal reconciliation can observe the updated branch. It must not remove
+the record merely to make polling proceed.
 
-An OpenCode failure, timeout, permission denial, unresolved rebase, validation failure, malformed or missing remote SHA, concurrent
+An OpenCode failure, timeout, permission denial, agent validation failure, unresolved rebase, malformed or missing remote SHA, concurrent
 remote change, or lease rejection leaves the handoff, worktree, branch, and pull request available for diagnosis. The failure is
 annotated with the existing session log when available and escalated through the normal attention path. Remediation retries are
 bounded; after the worker retry threshold the project remains blocked and does not launch the same session on every poll. While
