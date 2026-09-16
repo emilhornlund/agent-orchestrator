@@ -376,8 +376,9 @@ async function hasPreparedConflictRecovery(
       return false;
     }
 
-    // Local completion only releases the project block. Publication remediation
-    // owns validation, the lease-protected push, and handoff removal.
+    // Local completion only releases the project block. The OpenCode remediation
+    // session owns repository validation; the worker owns the lease-protected
+    // push and handoff removal.
     return true;
   } catch (error) {
     if (!blocked.recoveryCheckFailed) {

@@ -128,7 +128,7 @@ describe("GitHubClient", () => {
         cwd: "/tmp/repository",
         repository: "example/repository",
         pullRequestUrl: "https://github.com/example/repository/pull/123",
-        status: "validating",
+        status: "resolving-conflicts",
       }),
     ).resolves.toBe(true);
 
@@ -152,7 +152,7 @@ describe("GitHubClient", () => {
         "Human description",
         "",
         AGENT_ORCHESTRATOR_STATUS_START,
-        "Agent Orchestrator status: running repository validation before updating the task branch.",
+        "Agent Orchestrator status: resolving merge conflicts; human attention may be required if automatic remediation cannot complete.",
         AGENT_ORCHESTRATOR_STATUS_END,
       ].join("\n"),
     ]);

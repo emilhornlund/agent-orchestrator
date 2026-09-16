@@ -25,19 +25,19 @@ describe("reconcileManagedPullRequestStatus", () => {
     );
   });
 
-  it("updates an existing section while preserving arbitrary surrounding content", () => {
+  it("updates an existing maintenance section while preserving arbitrary surrounding content", () => {
     const before = "Intro\n\n";
     const after = "\n\nFooter\n<!-- unrelated marker -->";
     const body = `${before}${block("old status")}${after}`;
 
     const result = reconcileManagedPullRequestStatus(
       body,
-      "validating",
+      "resolving-conflicts",
       "main",
     );
 
     expect(result).toBe(
-      `${before}${block("Agent Orchestrator status: running repository validation before updating the task branch.")}${after}`,
+      `${before}${block("Agent Orchestrator status: resolving merge conflicts; human attention may be required if automatic remediation cannot complete.")}${after}`,
     );
   });
 

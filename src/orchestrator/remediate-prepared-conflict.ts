@@ -122,7 +122,6 @@ function createRemediationMaintenanceState(
   setupCompleted = options.project.repository.setupCommand === undefined,
 ): ReviewMaintenanceState {
   const setupCommand = options.project.repository.setupCommand;
-  const validationCommand = options.project.repository.validationCommand;
 
   return {
     version: 1,
@@ -136,7 +135,6 @@ function createRemediationMaintenanceState(
     effectiveHeadSha: headSha,
     ...(setupCommand === undefined ? {} : { setupCommand }),
     setupCompleted,
-    ...(validationCommand === undefined ? {} : { validationCommand }),
   };
 }
 
@@ -395,7 +393,6 @@ export async function remediatePreparedConflict(
       );
     }
 
-    const validationCommand = options.project.repository.validationCommand;
     const setupCommand = options.project.repository.setupCommand;
     let recordedState: ReviewMaintenanceState | null;
 
@@ -428,7 +425,6 @@ export async function remediatePreparedConflict(
         remoteDefaultSha: persistedHandoff.rebase.onto,
         effectiveHeadSha: remediatedHead,
         ...(setupCommand === undefined ? {} : { setupCommand }),
-        ...(validationCommand === undefined ? {} : { validationCommand }),
       });
 
     if (

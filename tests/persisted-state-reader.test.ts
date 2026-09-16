@@ -130,6 +130,21 @@ describe("persisted state size protection", () => {
     ).toMatchObject({ cardId: "card-one" });
   });
 
+  it("loads legacy review-maintenance state without retaining validation fields", () => {
+    const fixture = createFixture();
+    const state = JSON.parse(fs.readFileSync(fixture.reviewPath, "utf8")) as {
+      [key: string]: unknown;
+    };
+    state.validationCommand = "yarn validate";
+    state.validation = { outcome: "failed", reason: "old failure" };
+    fs.writeFileSync(fixture.reviewPath, JSON.stringify(state), "utf8");
+
+    const loaded = readReviewMaintenanceState(fixture.project, "card-one");
+
+    expect(loaded).not.toHaveProperty("validationCommand");
+    expect(loaded).not.toHaveProperty("validation");
+  });
+
   it("preserves ordinary malformed-state handling for every store", () => {
     const fixture = createFixture();
 

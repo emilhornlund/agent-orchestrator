@@ -328,19 +328,20 @@ Maintenance failures follow the same preservation boundary but never move the ca
 place for dedicated conflict handling without automatic abort, reset, clean,
 worktree removal, or recreation. The prepared-conflict handoff then starts a dedicated OpenCode remediation session in the same
 isolated worktree, using the configured remediation model and variant. Its prompt contains the original card intent, updated base
-and rebase target, conflicted paths, and validation command, and limits the agent to resolving and continuing the active rebase,
-including additional conflict stops from later commits.
+and rebase target, conflicted paths, and configured validation command, and limits the agent to resolving and continuing the active
+rebase, including additional conflict stops from later commits.
 
-The remediation worker verifies that the rebase completed, all unmerged paths are gone, the worktree is valid and clean, and the
-configured validation command passes. It resolves the remote task branch SHA again and refuses publication unless it still equals
-the handoff SHA. It then performs one exact `--force-with-lease` update of the existing `agent/<card-id>` branch and clears the
-handoff only after the update succeeds. The existing pull request is retained and the card remains in Human Review. Failures,
-timeouts, permission denials, unresolved conflicts, validation errors, concurrent SHA changes, and lease rejection preserve the
-handoff and worktree, emit normal diagnostics, and use bounded retries followed by Attention Required project blocking.
+The remediation worker verifies that the rebase completed, all unmerged paths are gone, and the worktree is valid and clean. The
+OpenCode agent owns configured repository validation before finishing. The worker resolves the remote task branch SHA again and
+refuses publication unless it still equals the handoff SHA. It then performs one exact `--force-with-lease` update of the existing
+`agent/<card-id>` branch and clears the handoff only after the update succeeds. The existing pull request is retained and the card
+remains in Human Review. Failures, timeouts, permission denials, unresolved conflicts, agent validation failures, concurrent SHA
+changes, and lease rejection preserve the handoff and worktree, emit normal diagnostics, and use bounded retries followed by
+Attention Required project blocking.
 A blocked project periodically checks only the handoff and underlying Git conflict state, avoids relaunching remediation, and
 resumes when a valid handoff's local rebase is complete without requiring a restart. This releases only the project block: the
-next cycle routes the existing worktree through prepared-conflict remediation, which owns validation, the exact
-force-with-lease publication, and handoff removal. A missing or invalid handoff remains blocked.
+next cycle routes the existing worktree through prepared-conflict remediation, where the OpenCode session owns validation and the
+worker owns the exact force-with-lease publication and handoff removal. A missing or invalid handoff remains blocked.
 
 ### Rewriting an owned task branch
 
@@ -477,12 +478,11 @@ timestamp level context message
 
 They are written under `logs/orchestrator-YYYY-MM-DD.log`; test runs use the `test-orchestrator-YYYY-MM-DD.log` prefix. Raw
 OpenCode and command output is written to per-card session logs or forwarded to process standard streams, so it is not
-timestamped by the shared logger. Configured repository validation is always captured in the relevant card session log, including
-validation during prepared-conflict remediation. Clean Human Review branch maintenance does not run the configured validation
-command. Session logs are stored below
+timestamped by the shared logger. Configured repository validation is captured in the relevant OpenCode card session log. Clean
+Human Review branch maintenance does not run the configured validation command. Session logs are stored below
 `logs/sessions/<sanitized-project-id>/<sanitized-card-id>.log`; path components are sanitized for filesystem use. Validation
-failures in service logs are concise orchestrator-owned diagnostics with the original exit status and a session-log reference;
-the complete redacted stdout and stderr remain in that per-card log instead of being dumped to the service log.
+failures reported by an agent are concise diagnostics with a session-log reference; the complete redacted stdout and stderr remain
+in that per-card log instead of being dumped to the service log.
 
 Vitest suppresses shared logger console output by default while retaining the daily test log. Temporarily enable application
 logger output for a debugging run with `TEST_LOGS=true yarn test`.

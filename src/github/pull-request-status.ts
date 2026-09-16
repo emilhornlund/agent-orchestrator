@@ -6,7 +6,6 @@ export const AGENT_ORCHESTRATOR_STATUS_END =
 export type ManagedPullRequestStatus =
   | "rebasing"
   | "resolving-conflicts"
-  | "validating"
   | "updating-remote"
   | "addressing-review-feedback"
   | "validating-review-changes"
@@ -73,8 +72,6 @@ function statusMessage(
       return `Agent Orchestrator status: rebasing onto the latest configured default branch (${defaultBranch}).`;
     case "resolving-conflicts":
       return "Agent Orchestrator status: resolving merge conflicts; human attention may be required if automatic remediation cannot complete.";
-    case "validating":
-      return "Agent Orchestrator status: running repository validation before updating the task branch.";
     case "updating-remote":
       return "Agent Orchestrator status: updating the remote task branch.";
     case "addressing-review-feedback":

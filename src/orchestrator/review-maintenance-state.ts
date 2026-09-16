@@ -11,28 +11,36 @@ import {
 const gitSha = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/);
 const command = z.string().min(1);
 
-const reviewMaintenanceStateSchema = z.strictObject({
-  version: z.literal(1),
-  kind: z.literal("review-maintenance"),
-  projectId: z.string().min(1),
-  cardId: z.string().min(1),
-  taskBranch: z.string().min(1),
-  defaultBranch: z.string().min(1),
-  remoteTaskSha: gitSha,
-  remoteDefaultSha: gitSha,
-  // Kept non-blank for compatibility with Git adapters that do not validate
-  // the local HEAD representation themselves.
-  effectiveHeadSha: z.string().min(1),
-  setupCommand: command.optional(),
-  setupCompleted: z.boolean(),
-  validationCommand: command.optional(),
-  validation: z
-    .strictObject({
-      outcome: z.enum(["passed", "failed"]),
-      reason: command.optional(),
-    })
-    .optional(),
-});
+function stripLegacyValidationFields(value: unknown): unknown {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return value;
+  }
+
+  return Object.fromEntries(
+    Object.entries(value).filter(
+      ([key]) => key !== "validationCommand" && key !== "validation",
+    ),
+  );
+}
+
+const reviewMaintenanceStateSchema = z.preprocess(
+  stripLegacyValidationFields,
+  z.strictObject({
+    version: z.literal(1),
+    kind: z.literal("review-maintenance"),
+    projectId: z.string().min(1),
+    cardId: z.string().min(1),
+    taskBranch: z.string().min(1),
+    defaultBranch: z.string().min(1),
+    remoteTaskSha: gitSha,
+    remoteDefaultSha: gitSha,
+    // Kept non-blank for compatibility with Git adapters that do not validate
+    // the local HEAD representation themselves.
+    effectiveHeadSha: z.string().min(1),
+    setupCommand: command.optional(),
+    setupCompleted: z.boolean(),
+  }),
+);
 
 export type ReviewMaintenanceState = z.infer<
   typeof reviewMaintenanceStateSchema
@@ -194,14 +202,12 @@ export function matchesReviewMaintenanceRepositoryState(
     remoteDefaultSha: string;
     effectiveHeadSha: string;
     setupCommand?: string;
-    validationCommand?: string;
   },
 ): boolean {
   return (
     state.remoteTaskSha === values.remoteTaskSha &&
     state.remoteDefaultSha === values.remoteDefaultSha &&
     state.effectiveHeadSha === values.effectiveHeadSha &&
-    state.setupCommand === values.setupCommand &&
-    state.validationCommand === values.validationCommand
+    state.setupCommand === values.setupCommand
   );
 }
