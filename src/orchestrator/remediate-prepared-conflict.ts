@@ -119,7 +119,6 @@ function createRemediationMaintenanceState(
   options: RemediatePreparedConflictOptions,
   handoff: PreparedConflictHandoff,
   headSha: string,
-  validation: ReviewMaintenanceState["validation"],
   setupCompleted = options.project.repository.setupCommand === undefined,
 ): ReviewMaintenanceState {
   const setupCommand = options.project.repository.setupCommand;
@@ -138,7 +137,6 @@ function createRemediationMaintenanceState(
     ...(setupCommand === undefined ? {} : { setupCommand }),
     setupCompleted,
     ...(validationCommand === undefined ? {} : { validationCommand }),
-    ...(validation === undefined ? {} : { validation }),
   };
 }
 
@@ -180,19 +178,6 @@ async function verifyAuthoritativeRemoteTaskSha(
       ),
     );
   }
-}
-
-function replayValidationFailure(
-  options: RemediatePreparedConflictOptions,
-  state: ReviewMaintenanceState,
-): PreparedConflictRemediationError {
-  const failure = new PreparedConflictRemediationError(
-    "Git/GitHub",
-    state.validation?.reason ?? "The recorded repository validation failed",
-  );
-
-  annotateCardFailure(failure, options.project.id, options.card.id);
-  return failure;
 }
 
 export async function remediatePreparedConflict(
@@ -433,7 +418,7 @@ export async function remediatePreparedConflict(
       worktree.path,
       branch,
       persistedHandoff.expectedRemoteTaskSha,
-      "authoritative remote SHA verification before reusing validation failure",
+      "authoritative remote SHA verification before setup reuse",
     );
 
     const stateMatches =
@@ -445,14 +430,6 @@ export async function remediatePreparedConflict(
         ...(setupCommand === undefined ? {} : { setupCommand }),
         ...(validationCommand === undefined ? {} : { validationCommand }),
       });
-
-    if (
-      stateMatches &&
-      recordedState?.setupCompleted === true &&
-      recordedState.validation?.outcome === "failed"
-    ) {
-      throw replayValidationFailure(options, recordedState);
-    }
 
     if (
       setupCommand !== undefined &&
@@ -486,7 +463,6 @@ export async function remediatePreparedConflict(
             options,
             persistedHandoff,
             remediatedHead,
-            undefined,
             true,
           ),
         );
@@ -499,114 +475,6 @@ export async function remediatePreparedConflict(
           options,
           "Git/GitHub",
           "recording successful repository setup",
-          error,
-        );
-      }
-    }
-
-    if (validationCommand !== undefined) {
-      await setStatus(
-        "validating",
-        "repository validation after conflict remediation",
-      );
-      let validation;
-
-      try {
-        validation = await options.commands.run({
-          cwd: worktree.path,
-          command: validationCommand,
-          timeoutMilliseconds: options.project.opencode.timeoutMinutes * 60_000,
-          signal: options.signal,
-          sessionLogPath,
-          sessionLabel: "Repository validation after conflict remediation",
-        });
-      } catch (error) {
-        throwIfAborted(error);
-        const validationError = fail(
-          options,
-          "Git/GitHub",
-          "repository validation",
-          error,
-        );
-
-        try {
-          writeReviewMaintenanceState(
-            options.project,
-            options.card.id,
-            createRemediationMaintenanceState(
-              options,
-              persistedHandoff,
-              remediatedHead,
-              { outcome: "failed", reason: validationError.message },
-              setupCommand === undefined ||
-                recordedState?.setupCompleted === true,
-            ),
-          );
-        } catch (stateError) {
-          throw fail(
-            options,
-            "Git/GitHub",
-            "recording repository validation failure",
-            stateError,
-          );
-        }
-
-        throw validationError;
-      }
-
-      if (validation.exitCode !== 0) {
-        const validationError = fail(
-          options,
-          "Git/GitHub",
-          "repository validation",
-          new Error(
-            `Validation command exited with code ${validation.exitCode}`,
-          ),
-        );
-
-        try {
-          writeReviewMaintenanceState(
-            options.project,
-            options.card.id,
-            createRemediationMaintenanceState(
-              options,
-              persistedHandoff,
-              remediatedHead,
-              { outcome: "failed", reason: validationError.message },
-              setupCommand === undefined ||
-                recordedState?.setupCompleted === true,
-            ),
-          );
-        } catch (stateError) {
-          throw fail(
-            options,
-            "Git/GitHub",
-            "recording repository validation failure",
-            stateError,
-          );
-        }
-
-        throw validationError;
-      }
-
-      try {
-        writeReviewMaintenanceState(
-          options.project,
-          options.card.id,
-          createRemediationMaintenanceState(
-            options,
-            persistedHandoff,
-            remediatedHead,
-            { outcome: "passed" },
-            setupCommand === undefined ||
-              recordedState?.setupCompleted === true,
-          ),
-        );
-      } catch (error) {
-        throw fail(
-          options,
-          "Git/GitHub",
-          "recording successful repository validation",
           error,
         );
       }

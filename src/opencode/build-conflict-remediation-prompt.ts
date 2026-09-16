@@ -34,11 +34,13 @@ export function buildConflictRemediationPrompt(
     "A rebase can stop for conflicts more than once when multiple commits are being replayed. Re-inspect and resolve each stop, stage its resolutions, and continue until no rebase remains active.",
     ...(validationCommand
       ? [
-          `Run the configured repository validation command: \`${validationCommand}\` before finishing.`,
+          `Run the configured repository validation command: \`${validationCommand}\` before finishing remediation.`,
+          "If validation fails because of your changes, fix those failures before finishing remediation.",
         ]
       : [
           "Run the repository's appropriate validation checks before finishing.",
         ]),
+    "Leave the repository validation passing before finishing remediation.",
     "Leave the worktree with a completed rebase and no unresolved or unstaged changes.",
     "Do not create unrelated commits.",
     "Do not push anything.",
