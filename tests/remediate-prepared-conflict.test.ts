@@ -32,7 +32,10 @@ const baseSha = "b".repeat(40);
 const changedSha = "c".repeat(40);
 const temporaryDirectories: string[] = [];
 
-function createProject(worktreeRoot: string): ProjectConfig {
+function createProject(
+  worktreeRoot: string,
+  validationCommand?: string,
+): ProjectConfig {
   return {
     id: "remediate-prepared-conflict-test",
     autoMerge: false,
@@ -41,7 +44,7 @@ function createProject(worktreeRoot: string): ProjectConfig {
       github: "owner/repository",
       defaultBranch: "main",
       worktreeRoot,
-      validationCommand: "yarn validate",
+      ...(validationCommand === undefined ? {} : { validationCommand }),
       gitIdentity: {
         name: "Agent Orchestrator",
         email: "agent@example.com",
@@ -105,6 +108,7 @@ function createHandoff(project: ProjectConfig): PreparedConflictHandoff {
 }
 
 interface ScenarioOptions {
+  validationCommand?: string | undefined;
   initialRebaseState?: GitRebaseState | null;
   rebaseStates?: Array<GitRebaseState | null>;
   conflictedPaths?: string[];
@@ -121,7 +125,12 @@ function createScenario(options: ScenarioOptions = {}) {
     path.join(os.tmpdir(), "agent-orchestrator-conflict-remediation-"),
   );
   temporaryDirectories.push(worktreeRoot);
-  const project = createProject(worktreeRoot);
+  const project = createProject(
+    worktreeRoot,
+    "validationCommand" in options
+      ? options.validationCommand
+      : "yarn validate",
+  );
   const card = createCard();
   const worktreePath = path.join(worktreeRoot, card.id);
   fs.mkdirSync(worktreePath);
@@ -276,50 +285,64 @@ describe("remediatePreparedConflict", () => {
     ).not.toBeNull();
   });
 
-  it("passes validation to OpenCode, publishes with the captured lease, and clears the handoff", async () => {
-    const scenario = createScenario();
+  it.each([
+    [
+      "configured command",
+      "yarn validate",
+      "Run the configured repository validation command: `yarn validate` before finishing remediation.",
+    ],
+    [
+      "no configured command",
+      undefined,
+      "Run the repository's appropriate validation checks before finishing.",
+    ],
+  ] as const)(
+    "keeps prepared-conflict validation in the OpenCode session: %s",
+    async (_label, validationCommand, validationInstruction) => {
+      const scenario = createScenario({ validationCommand });
 
-    await remediatePreparedConflict({
-      ...scenario,
-      signal: new AbortController().signal,
-    });
+      await remediatePreparedConflict({
+        ...scenario,
+        signal: new AbortController().signal,
+      });
 
-    expect(scenario.runOpenCode).toHaveBeenCalledWith(
-      expect.objectContaining({
-        cwd: scenario.worktreePath,
-        model: "remediation-model",
-        variant: "xhigh",
-        sessionLabel: "OpenCode conflict remediation",
-        prompt: expect.stringContaining(
-          "Run the configured repository validation command: `yarn validate` before finishing remediation.",
-        ),
-      }),
-    );
-    expect(scenario.runCommand).not.toHaveBeenCalled();
-    expect(scenario.git.pushWithLease).toHaveBeenCalledWith(
-      scenario.worktreePath,
-      "origin",
-      "agent/card-1",
-      taskSha,
-      scenario.project,
-    );
-    expect(
-      scenario.github.updatePullRequestDescriptionStatus,
-    ).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({ status: "resolving-conflicts" }),
-    );
-    expect(
-      scenario.github.updatePullRequestDescriptionStatus,
-    ).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({ status: "updating-remote" }),
-    );
-    expect(
-      scenario.github.updatePullRequestDescriptionStatus,
-    ).toHaveBeenNthCalledWith(3, expect.objectContaining({ status: null }));
-    expect(readPreparedConflict(scenario.project, scenario.card.id)).toBeNull();
-  });
+      expect(scenario.runOpenCode).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cwd: scenario.worktreePath,
+          model: "remediation-model",
+          variant: "xhigh",
+          sessionLabel: "OpenCode conflict remediation",
+          prompt: expect.stringContaining(validationInstruction),
+        }),
+      );
+      expect(scenario.runCommand).not.toHaveBeenCalled();
+      expect(scenario.git.pushWithLease).toHaveBeenCalledWith(
+        scenario.worktreePath,
+        "origin",
+        "agent/card-1",
+        taskSha,
+        scenario.project,
+      );
+      expect(
+        scenario.github.updatePullRequestDescriptionStatus,
+      ).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({ status: "resolving-conflicts" }),
+      );
+      expect(
+        scenario.github.updatePullRequestDescriptionStatus,
+      ).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({ status: "updating-remote" }),
+      );
+      expect(
+        scenario.github.updatePullRequestDescriptionStatus,
+      ).toHaveBeenNthCalledWith(3, expect.objectContaining({ status: null }));
+      expect(
+        readPreparedConflict(scenario.project, scenario.card.id),
+      ).toBeNull();
+    },
+  );
 
   it("keeps successful remediation when managed status removal fails", async () => {
     const scenario = createScenario();
