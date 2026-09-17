@@ -29,6 +29,7 @@ import {
 } from "./failure-diagnostic.js";
 import { githubReconciliationError } from "./github-reconciliation-error.js";
 import { trelloReconciliationError } from "./trello-reconciliation-error.js";
+import { getCardsForDiscovery } from "./trello-list-discovery.js";
 import { WorkflowError } from "./workflow-error.js";
 import { maintainReviewPullRequest } from "./maintain-review-pull-request.js";
 import {
@@ -109,20 +110,13 @@ export async function reconcileReviewCards(
     projectId: project.id,
   });
 
-  let cards: TrelloCard[];
-
-  try {
-    cards = await trello.getCards(project.trello.reviewListId);
-  } catch (error) {
-    throw trelloReconciliationError(
-      project.id,
-      undefined,
-      "card lookup",
-      error,
-      `Could not retrieve Human Review cards: ${getErrorMessage(error)}`,
-      { reconciliationListId: project.trello.reviewListId },
-    );
-  }
+  const cards = await getCardsForDiscovery(
+    trello,
+    project.id,
+    project.trello.reviewListId,
+    "Could not retrieve Human Review cards",
+    signal,
+  );
 
   if (signal?.aborted) {
     return null;

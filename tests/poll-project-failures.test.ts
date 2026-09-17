@@ -19,11 +19,20 @@ import {
 } from "../src/opencode/opencode-client.js";
 import { pollProject } from "../src/orchestrator/poll-project.js";
 import {
+  MAX_TRELLO_CARD_DISCOVERY_ATTEMPTS,
+  TrelloListDiscoveryError,
+} from "../src/orchestrator/trello-list-discovery.js";
+import { RETRY_BACKOFF_BASE_MILLISECONDS } from "../src/orchestrator/retry-backoff.js";
+import {
   CommandRunner,
   type RunCommand,
 } from "../src/process/command-runner.js";
 import { getRefinementResultPath } from "../src/refinement/refinement-result.js";
-import { type TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
+import {
+  TrelloRequestError,
+  type TrelloCard,
+  TrelloClient,
+} from "../src/trello/trello-client.js";
 
 interface ScenarioOptions {
   cards?: TrelloCard[];
@@ -515,6 +524,139 @@ describe("pollProject failure boundaries", () => {
       expect(countIdleEntries()).toBe(initialIdleEntries);
     });
   });
+
+  it("keeps an idle project retryable when Working card discovery is unavailable", async () => {
+    vi.useFakeTimers();
+    const random = vi.spyOn(Math, "random").mockReturnValue(0);
+
+    try {
+      await withScenario({ cards: [] }, async (scenario) => {
+        const discoveryError = new TrelloRequestError(
+          "card lookup",
+          "Trello request failed during card lookup: fetch failed",
+          { retryable: true },
+        );
+        let workingLookups = 0;
+
+        vi.mocked(scenario.trello.getCards).mockImplementation(
+          async (listId) => {
+            if (listId === scenario.project.trello.workingListId) {
+              workingLookups += 1;
+
+              if (workingLookups <= MAX_TRELLO_CARD_DISCOVERY_ATTEMPTS) {
+                throw discoveryError;
+              }
+            }
+
+            return [];
+          },
+        );
+
+        const firstPoll = expect(
+          pollProject(
+            scenario.trello,
+            scenario.git,
+            scenario.github,
+            scenario.openCode,
+            scenario.commands,
+            scenario.project,
+            scenario.signal,
+          ),
+        ).rejects.toBeInstanceOf(TrelloListDiscoveryError);
+
+        await vi.advanceTimersByTimeAsync(RETRY_BACKOFF_BASE_MILLISECONDS * 3);
+
+        expect(workingLookups).toBe(MAX_TRELLO_CARD_DISCOVERY_ATTEMPTS);
+        await firstPoll;
+        expect(scenario.trello.moveCard).not.toHaveBeenCalled();
+        expect(scenario.runOpenCode).not.toHaveBeenCalled();
+
+        await pollProject(
+          scenario.trello,
+          scenario.git,
+          scenario.github,
+          scenario.openCode,
+          scenario.commands,
+          scenario.project,
+          scenario.signal,
+        );
+
+        expect(workingLookups).toBe(MAX_TRELLO_CARD_DISCOVERY_ATTEMPTS + 1);
+        expect(scenario.trello.moveCard).not.toHaveBeenCalled();
+        expect(scenario.runOpenCode).not.toHaveBeenCalled();
+      });
+    } finally {
+      random.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    ["Human Review", "reviewListId", "Could not retrieve Human Review cards"],
+    [
+      "Ready for Agent",
+      "readyListId",
+      "Could not retrieve Ready for Agent cards",
+    ],
+  ] as const)(
+    "does not continue processing when %s card discovery is unavailable",
+    async (_listName, listProperty, description) => {
+      vi.useFakeTimers();
+      const random = vi.spyOn(Math, "random").mockReturnValue(0);
+
+      try {
+        await withScenario({ cards: [] }, async (scenario) => {
+          const listId = scenario.project.trello[listProperty];
+          const discoveryError = new TrelloRequestError(
+            "card lookup",
+            "Trello request failed during card lookup: fetch failed",
+            { retryable: true },
+          );
+          let failedLookups = 0;
+
+          vi.mocked(scenario.trello.getCards).mockImplementation(
+            async (requestedListId) => {
+              if (requestedListId === listId) {
+                failedLookups += 1;
+
+                if (failedLookups <= MAX_TRELLO_CARD_DISCOVERY_ATTEMPTS) {
+                  throw discoveryError;
+                }
+              }
+
+              return [];
+            },
+          );
+
+          const poll = expect(
+            pollProject(
+              scenario.trello,
+              scenario.git,
+              scenario.github,
+              scenario.openCode,
+              scenario.commands,
+              scenario.project,
+              scenario.signal,
+            ),
+          ).rejects.toMatchObject({
+            name: "TrelloListDiscoveryError",
+            message: expect.stringContaining(description),
+          });
+
+          await vi.advanceTimersByTimeAsync(
+            RETRY_BACKOFF_BASE_MILLISECONDS * 3,
+          );
+
+          await poll;
+          expect(scenario.trello.moveCard).not.toHaveBeenCalled();
+          expect(scenario.runOpenCode).not.toHaveBeenCalled();
+        });
+      } finally {
+        random.mockRestore();
+        vi.useRealTimers();
+      }
+    },
+  );
 
   it("does not run repository validation through CommandRunner", async () => {
     await withScenario(
