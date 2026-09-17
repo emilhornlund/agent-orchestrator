@@ -39,6 +39,7 @@ import {
   type RequestedChangeNoOpState,
 } from "./requested-change-no-op-state.js";
 import { trelloReconciliationError } from "./trello-reconciliation-error.js";
+import { getCardsForDiscovery } from "./trello-list-discovery.js";
 import { getElapsedWorkflowTime } from "./workflow-duration.js";
 import { getWorkflowKind, type WorkflowKind } from "./workflow-kind.js";
 import { WorkflowError } from "./workflow-error.js";
@@ -404,20 +405,13 @@ export async function reconcileWorkingCards(
     projectId: project.id,
   });
 
-  let cards: TrelloCard[];
-
-  try {
-    cards = await trello.getCards(project.trello.workingListId);
-  } catch (error) {
-    throw trelloReconciliationError(
-      project.id,
-      undefined,
-      "card lookup",
-      error,
-      `Could not retrieve Working cards: ${getErrorMessage(error)}`,
-      { reconciliationListId: project.trello.workingListId },
-    );
-  }
+  const cards = await getCardsForDiscovery(
+    trello,
+    project.id,
+    project.trello.workingListId,
+    "Could not retrieve Working cards",
+    signal,
+  );
 
   if (signal?.aborted) {
     return null;

@@ -6,6 +6,7 @@ import { type TrelloCard, type TrelloClient } from "../trello/trello-client.js";
 
 import { annotateCardFailure } from "./failure-diagnostic.js";
 import { trelloReconciliationError } from "./trello-reconciliation-error.js";
+import { getCardsForDiscovery } from "./trello-list-discovery.js";
 import { getWorkflowKind } from "./workflow-kind.js";
 import { isCardStartDateReached } from "./card-start-eligibility.js";
 
@@ -26,20 +27,13 @@ export async function claimNextCard(
     return null;
   }
 
-  let cards: TrelloCard[];
-
-  try {
-    cards = await trello.getCards(project.trello.readyListId);
-  } catch (error) {
-    throw trelloReconciliationError(
-      project.id,
-      undefined,
-      "card lookup",
-      error,
-      `Could not retrieve Ready for Agent cards: ${error instanceof Error ? error.message : String(error)}`,
-      { reconciliationListId: project.trello.readyListId },
-    );
-  }
+  const cards = await getCardsForDiscovery(
+    trello,
+    project.id,
+    project.trello.readyListId,
+    "Could not retrieve Ready for Agent cards",
+    signal,
+  );
 
   const now = Date.now();
 

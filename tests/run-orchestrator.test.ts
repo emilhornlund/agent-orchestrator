@@ -47,6 +47,7 @@ import {
 } from "../src/orchestrator/prepared-conflict-state.js";
 import { RETRY_BACKOFF_BASE_MILLISECONDS } from "../src/orchestrator/retry-backoff.js";
 import { getReconciliationBlockPath } from "../src/orchestrator/reconciliation-block-storage.js";
+import { TrelloListDiscoveryError } from "../src/orchestrator/trello-list-discovery.js";
 
 const pollProject = vi.fn();
 
@@ -1350,6 +1351,51 @@ describe("runOrchestrator", () => {
       random.mockRestore();
       vi.useRealTimers();
     }
+  });
+
+  it("retries exhausted cardless Trello discovery on a later poll without blocking", async () => {
+    const controller = new AbortController();
+    const notifier: EmailNotifier = { send: vi.fn() };
+    const project = createProject("project-a");
+    const failure = new TrelloListDiscoveryError(
+      project.id,
+      project.trello.workingListId,
+      3,
+      "Could not retrieve Working cards: Trello request failed during card lookup: fetch failed",
+      new TrelloRequestError(
+        "card lookup",
+        "Trello request failed during card lookup: fetch failed",
+        { retryable: true },
+      ),
+    );
+    let calls = 0;
+
+    pollProject.mockImplementation(async () => {
+      calls += 1;
+
+      if (calls < 3) {
+        throw failure;
+      }
+
+      controller.abort();
+    });
+
+    await runOrchestrator(
+      {} as TrelloClient,
+      {} as GitClient,
+      {} as GitHubClient,
+      {} as OpenCodeClient,
+      {} as CommandRunner,
+      createConfig([project], 0),
+      controller.signal,
+      notifier,
+    );
+
+    expect(calls).toBe(3);
+    expect(notifier.send).not.toHaveBeenCalled();
+    expect(
+      fs.existsSync(getReconciliationBlockPath(runtimeStorageRoot, project.id)),
+    ).toBe(false);
   });
 
   it("keeps non-retryable failures on the normal polling interval", async () => {

@@ -52,6 +52,7 @@ import {
   MAX_TRELLO_RECONCILIATION_ATTEMPTS,
   RetryableTrelloReconciliationError,
 } from "./trello-reconciliation-error.js";
+import { TrelloListDiscoveryError } from "./trello-list-discovery.js";
 import { getRetryBackoffDelayMilliseconds } from "./retry-backoff.js";
 import {
   loadReconciliationBlock,
@@ -664,6 +665,16 @@ async function runProjectWorker(
         (signal.aborted && signal.reason === "fatal")
       ) {
         return;
+      }
+
+      if (error instanceof TrelloListDiscoveryError) {
+        logger
+          .child({ projectId: project.id })
+          .warn(
+            `${error.message}; card-list discovery remains retryable and the project will be retried on the next polling cycle`,
+          );
+        await sleep(pollIntervalMilliseconds, signal);
+        continue;
       }
 
       let failureContext = getFailureContext(error);
