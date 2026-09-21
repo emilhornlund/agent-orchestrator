@@ -367,6 +367,25 @@ export class GitClient {
     ]);
   }
 
+  async getDiff(repositoryPath: string, staged = false): Promise<string> {
+    return this.runGit(
+      repositoryPath,
+      staged ? ["diff", "--cached", "--binary"] : ["diff", "--binary"],
+    );
+  }
+
+  async getUntrackedFiles(repositoryPath: string): Promise<string[]> {
+    const output = await this.runGit(repositoryPath, [
+      "ls-files",
+      "--others",
+      "--exclude-standard",
+      "--full-name",
+      "-z",
+    ]);
+
+    return output.split("\0").filter((filePath) => filePath.length > 0);
+  }
+
   async hasChanges(repositoryPath: string): Promise<boolean> {
     return (await this.getStatus(repositoryPath)).length > 0;
   }
@@ -377,6 +396,41 @@ export class GitClient {
 
   async getCommitMessage(repositoryPath: string): Promise<string> {
     return this.runGit(repositoryPath, ["log", "-1", "--format=%B"]);
+  }
+
+  async stageAll(repositoryPath: string): Promise<void> {
+    await this.runGit(repositoryPath, ["add", "-A"]);
+  }
+
+  async commit(
+    repositoryPath: string,
+    messageFilePath: string,
+    identity: GitIdentity,
+  ): Promise<void> {
+    await this.runGit(
+      repositoryPath,
+      ["commit", "-F", messageFilePath],
+      getGitIdentityEnvironment(identity),
+    );
+  }
+
+  async getCommitCountBetween(
+    repositoryPath: string,
+    fromExclusive: string,
+    toInclusive: string,
+  ): Promise<number> {
+    const output = await this.runGit(repositoryPath, [
+      "rev-list",
+      "--count",
+      `${fromExclusive}..${toInclusive}`,
+    ]);
+    const count = Number(output.trim());
+
+    if (!Number.isSafeInteger(count) || count < 0) {
+      throw new Error(`Git returned an invalid commit count: ${output}`);
+    }
+
+    return count;
   }
 
   async getCurrentBranch(repositoryPath: string): Promise<string> {

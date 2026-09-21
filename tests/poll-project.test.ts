@@ -20,6 +20,7 @@ import {
 } from "../src/orchestrator/prepared-conflict-state.js";
 import { CommandRunner } from "../src/process/command-runner.js";
 import { getRefinementResultPath } from "../src/refinement/refinement-result.js";
+import { getCommitResultPath } from "../src/opencode/commit-result.js";
 import { type TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
 
 describe("pollProject", () => {
@@ -1139,7 +1140,11 @@ describe("pollProject", () => {
         if (args[0] === "rev-parse") {
           headCall += 1;
 
-          return headCall === 1 ? "before-commit" : "after-commit";
+          return headCall <= 2 ? "before-commit" : "after-commit";
+        }
+
+        if (args[0] === "rev-list") {
+          return "1";
         }
 
         if (args[0] === "push") {
@@ -1196,6 +1201,16 @@ describe("pollProject", () => {
 
         events.push("commit");
 
+        const resultPath = getCommitResultPath(options.cwd);
+        fs.mkdirSync(path.dirname(resultPath), { recursive: true });
+        fs.writeFileSync(
+          resultPath,
+          JSON.stringify({
+            message:
+              "feat(example): complete the example task\n\n- Update the implementation.\n- Preserve the reviewed behavior.\n\nThe task is now complete.",
+          }),
+        );
+
         return {
           exitCode: 0,
           output: "",
@@ -1246,19 +1261,7 @@ describe("pollProject", () => {
       expect(openCodeRuns[0]?.environment).toBeUndefined();
       expect(openCodeRuns[1]?.environment).toBeUndefined();
 
-      expect(openCodeRuns[2]?.environment).toEqual({
-        GIT_AUTHOR_NAME: "Agent Orchestrator",
-        GIT_AUTHOR_EMAIL: "agent-orchestrator@users.noreply.github.com",
-        GIT_COMMITTER_NAME: "Agent Orchestrator",
-        GIT_COMMITTER_EMAIL: "agent-orchestrator@users.noreply.github.com",
-        GIT_CONFIG_COUNT: "3",
-        GIT_CONFIG_KEY_0: "gpg.format",
-        GIT_CONFIG_VALUE_0: "ssh",
-        GIT_CONFIG_KEY_1: "user.signingKey",
-        GIT_CONFIG_VALUE_1: "/secrets/agent-orchestrator-signing-key",
-        GIT_CONFIG_KEY_2: "commit.gpgSign",
-        GIT_CONFIG_VALUE_2: "true",
-      });
+      expect(openCodeRuns[2]?.environment).toBeUndefined();
 
       expect(events).not.toContain("move:failed");
     } finally {
@@ -1402,7 +1405,11 @@ describe("pollProject", () => {
         if (args[0] === "rev-parse") {
           headCall += 1;
 
-          return headCall === 1 ? "before-commit" : "after-commit";
+          return headCall <= 2 ? "before-commit" : "after-commit";
+        }
+
+        if (args[0] === "rev-list") {
+          return "1";
         }
 
         if (args[0] === "push") {
@@ -1417,7 +1424,7 @@ describe("pollProject", () => {
 
       let openCodeCall = 0;
 
-      const opencode = new OpenCodeClient(async () => {
+      const opencode = new OpenCodeClient(async (options) => {
         openCodeCall += 1;
 
         if (openCodeCall === 1) {
@@ -1452,6 +1459,16 @@ describe("pollProject", () => {
 
         if (openCodeCall === 4) {
           events.push("commit");
+
+          const resultPath = getCommitResultPath(options.cwd);
+          fs.mkdirSync(path.dirname(resultPath), { recursive: true });
+          fs.writeFileSync(
+            resultPath,
+            JSON.stringify({
+              message:
+                "feat(example): complete the example task\n\n- Update the implementation.\n- Preserve the reviewed behavior.\n\nThe task is now complete.",
+            }),
+          );
 
           return {
             exitCode: 0,
@@ -1760,10 +1777,14 @@ describe("pollProject", () => {
         .mockResolvedValueOnce("")
         .mockResolvedValueOnce(" M src/example.ts")
         .mockResolvedValueOnce("")
+        .mockResolvedValueOnce("")
+        .mockResolvedValueOnce("")
+        .mockResolvedValueOnce("")
         .mockResolvedValueOnce("");
 
       const getHeadSha = vi
         .fn()
+        .mockResolvedValueOnce("before-review-commit")
         .mockResolvedValueOnce("before-review-commit")
         .mockResolvedValueOnce("after-review-commit");
 
@@ -1777,11 +1798,16 @@ describe("pollProject", () => {
         cleanUntracked: vi.fn().mockResolvedValue(undefined),
         getStatus,
         getHeadSha,
+        getDiff: vi.fn().mockResolvedValue(""),
+        getUntrackedFiles: vi.fn().mockResolvedValue([]),
         getChangedFiles: vi.fn().mockResolvedValue("src/example.ts"),
         getCommitMessage: vi
           .fn()
           .mockResolvedValue("Implement the example task"),
         push: vi.fn().mockResolvedValue(undefined),
+        stageAll: vi.fn().mockResolvedValue(undefined),
+        commit: vi.fn().mockResolvedValue(undefined),
+        getCommitCountBetween: vi.fn().mockResolvedValue(1),
         removeWorktree: vi
           .fn()
           .mockRejectedValue(new Error("review worktree is locked")),
@@ -1824,9 +1850,17 @@ describe("pollProject", () => {
           exitCode: 0,
           output: "REVIEW_PASS",
         })
-        .mockResolvedValueOnce({
-          exitCode: 0,
-          output: "",
+        .mockImplementationOnce(async (options: OpenCodeRunOptions) => {
+          const resultPath = getCommitResultPath(options.cwd);
+          fs.mkdirSync(path.dirname(resultPath), { recursive: true });
+          fs.writeFileSync(
+            resultPath,
+            JSON.stringify({
+              message:
+                "feat(example): complete the example task\n\n- Update the implementation.\n- Preserve the reviewed behavior.\n\nThe task is now complete.",
+            }),
+          );
+          return { exitCode: 0, output: "" };
         })
         .mockResolvedValueOnce({
           exitCode: 0,
@@ -2032,10 +2066,13 @@ describe("pollProject", () => {
         .mockResolvedValueOnce("")
         .mockResolvedValueOnce(" M src/example.ts")
         .mockResolvedValueOnce("")
+        .mockResolvedValueOnce("")
+        .mockResolvedValueOnce("")
         .mockResolvedValueOnce("");
 
       const getHeadSha = vi
         .fn()
+        .mockResolvedValueOnce("before-review-commit")
         .mockResolvedValueOnce("before-review-commit")
         .mockResolvedValueOnce("after-review-commit");
 
@@ -2046,12 +2083,17 @@ describe("pollProject", () => {
         cleanUntracked: vi.fn().mockResolvedValue(undefined),
         getStatus,
         getHeadSha,
+        getDiff: vi.fn().mockResolvedValue(""),
+        getUntrackedFiles: vi.fn().mockResolvedValue([]),
         getChangedFiles: vi.fn().mockResolvedValue("src/example.ts"),
         getCommitMessage: vi
           .fn()
           .mockResolvedValue("Implement the example task"),
         rebase: vi.fn().mockResolvedValue(undefined),
         push: vi.fn().mockResolvedValue(undefined),
+        stageAll: vi.fn().mockResolvedValue(undefined),
+        commit: vi.fn().mockResolvedValue(undefined),
+        getCommitCountBetween: vi.fn().mockResolvedValue(1),
         removeWorktree: vi.fn().mockResolvedValue(undefined),
         pruneWorktrees: vi.fn().mockResolvedValue(undefined),
         branchExists: vi.fn().mockResolvedValue(true),
@@ -2079,9 +2121,17 @@ describe("pollProject", () => {
           exitCode: 0,
           output: "REVIEW_PASS",
         })
-        .mockResolvedValueOnce({
-          exitCode: 0,
-          output: "",
+        .mockImplementationOnce(async (options: OpenCodeRunOptions) => {
+          const resultPath = getCommitResultPath(options.cwd);
+          fs.mkdirSync(path.dirname(resultPath), { recursive: true });
+          fs.writeFileSync(
+            resultPath,
+            JSON.stringify({
+              message:
+                "feat(example): complete the example task\n\n- Update the implementation.\n- Preserve the reviewed behavior.\n\nThe task is now complete.",
+            }),
+          );
+          return { exitCode: 0, output: "" };
         })
         .mockResolvedValueOnce({
           exitCode: 0,

@@ -129,8 +129,9 @@ The implementation pass then:
 7. Stops immediately when the initial or an intermediate review passes. After the final allowed remediation pass, the workflow
    continues directly to the normal post-review flow without another automated review. Review attachment context is refreshed
    separately for each review and is not reused from implementation or remediation.
-8. Runs a separate OpenCode commit session with the configured Git identity. The session must create a commit and leave a
-   clean worktree.
+8. Runs a separate OpenCode commit-message session. The session may write only the structured
+   `.agent-orchestrator/commit-result.json` artifact; the orchestrator validates the message, stages all repository
+   changes, and creates exactly one commit with the configured Git identity before requiring a clean worktree.
 9. Runs a separate post-commit OpenCode pull-request-description session using the configured `opencode.commit` model and
    variant. It receives the Trello task and URL, final changed files, commit SHA and message, and known validation results.
    It must return exactly one JSON object with the `summary`, `changes`, and `validation` fields. This optional presentation step

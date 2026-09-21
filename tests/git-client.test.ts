@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { ProjectConfig } from "../src/config/config.js";
 import {
   GitClient,
+  getGitIdentityEnvironment,
   type GitIdentity,
   type RunGit,
 } from "../src/git/git-client.js";
@@ -183,6 +184,71 @@ describe("GitClient", () => {
     const git = new GitClient(runGit);
 
     await expect(git.hasChanges("/worktree")).resolves.toBe(true);
+  });
+
+  it("reads staged and unstaged binary diffs", async () => {
+    const runGit = vi.fn<RunGit>().mockResolvedValue("diff output");
+    const git = new GitClient(runGit);
+
+    await git.getDiff("/worktree");
+    await git.getDiff("/worktree", true);
+
+    expect(runGit).toHaveBeenNthCalledWith(1, "/worktree", [
+      "diff",
+      "--binary",
+    ]);
+    expect(runGit).toHaveBeenNthCalledWith(2, "/worktree", [
+      "diff",
+      "--cached",
+      "--binary",
+    ]);
+  });
+
+  it("lists untracked files with NUL-delimited Git output", async () => {
+    const runGit = vi
+      .fn<RunGit>()
+      .mockResolvedValue("new.txt\0nested/file.txt\0");
+    const git = new GitClient(runGit);
+
+    await expect(git.getUntrackedFiles("/worktree")).resolves.toEqual([
+      "new.txt",
+      "nested/file.txt",
+    ]);
+    expect(runGit).toHaveBeenCalledWith("/worktree", [
+      "ls-files",
+      "--others",
+      "--exclude-standard",
+      "--full-name",
+      "-z",
+    ]);
+  });
+
+  it("stages all changes and commits from a message file with the configured identity", async () => {
+    const runGit = vi.fn<RunGit>().mockResolvedValue("1");
+    const git = new GitClient(runGit);
+    const identity: GitIdentity = {
+      name: "Agent Orchestrator",
+      email: "agent-orchestrator@example.com",
+    };
+
+    await git.stageAll("/worktree");
+    await git.commit("/worktree", "/tmp/message-file", identity);
+    await expect(
+      git.getCommitCountBetween("/worktree", "before", "after"),
+    ).resolves.toBe(1);
+
+    expect(runGit).toHaveBeenNthCalledWith(1, "/worktree", ["add", "-A"]);
+    expect(runGit).toHaveBeenNthCalledWith(
+      2,
+      "/worktree",
+      ["commit", "-F", "/tmp/message-file"],
+      getGitIdentityEnvironment(identity),
+    );
+    expect(runGit).toHaveBeenNthCalledWith(3, "/worktree", [
+      "rev-list",
+      "--count",
+      "before..after",
+    ]);
   });
 
   it("detects a clean repository", async () => {

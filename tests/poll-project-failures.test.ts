@@ -18,6 +18,7 @@ import {
   type RunOpenCode,
 } from "../src/opencode/opencode-client.js";
 import { pollProject } from "../src/orchestrator/poll-project.js";
+import { getCommitResultPath } from "../src/opencode/commit-result.js";
 import {
   MAX_TRELLO_CARD_DISCOVERY_ATTEMPTS,
   TrelloListDiscoveryError,
@@ -201,7 +202,11 @@ function createScenario(options: ScenarioOptions = {}): Scenario {
   const statusOutputs = options.statusOutputs ?? [" M src/example.ts", ""];
   let statusCall = 0;
 
-  const headOutputs = options.headOutputs ?? ["before-commit", "after-commit"];
+  const headOutputs = options.headOutputs ?? [
+    "before-commit",
+    "before-commit",
+    "after-commit",
+  ];
   let headCall = 0;
   const changedFilesOutputs = options.changedFilesOutputs ?? [];
   const remoteBranchShaOutputs = options.remoteBranchShaOutputs ?? [];
@@ -231,7 +236,11 @@ function createScenario(options: ScenarioOptions = {}): Scenario {
     }
 
     if (args[0] === "diff") {
-      return changedFilesOutputs.shift() ?? "";
+      if (args[1] === "--name-only") {
+        return changedFilesOutputs.shift() ?? "";
+      }
+
+      return "";
     }
 
     if (args[0] === "ls-remote") {
@@ -250,6 +259,14 @@ function createScenario(options: ScenarioOptions = {}): Scenario {
       } else if (options.pushError !== undefined) {
         throw options.pushError;
       }
+    }
+
+    if (args[0] === "commit") {
+      return "";
+    }
+
+    if (args[0] === "rev-list") {
+      return "1";
     }
 
     return "";
@@ -331,6 +348,22 @@ function createScenario(options: ScenarioOptions = {}): Scenario {
 
     if (result === undefined) {
       throw new Error("Unexpected OpenCode call");
+    }
+
+    if (
+      runOptions.sessionLabel === "OpenCode commit" &&
+      result.exitCode === 0
+    ) {
+      const resultPath = getCommitResultPath(runOptions.cwd);
+
+      fs.mkdirSync(path.dirname(resultPath), { recursive: true });
+      fs.writeFileSync(
+        resultPath,
+        JSON.stringify({
+          message:
+            "feat(example): complete the example task\n\n- Update the implementation.\n- Preserve the reviewed behavior.\n\nThe task is now complete.",
+        }),
+      );
     }
 
     return result;
@@ -1358,7 +1391,7 @@ describe("pollProject failure boundaries", () => {
           " M src/example.ts\n M src/additional.ts",
           "",
         ],
-        headOutputs: ["before-commit", "after-commit"],
+        headOutputs: ["before-commit", "before-commit", "after-commit"],
         openCodeResults: [
           { exitCode: 0, output: "" },
           {
@@ -1416,7 +1449,7 @@ describe("pollProject failure boundaries", () => {
     await withScenario(
       {
         statusOutputs: [" M src/example.ts", " M src/example.ts", ""],
-        headOutputs: ["before-commit", "after-commit"],
+        headOutputs: ["before-commit", "before-commit", "after-commit"],
         openCodeResults: [
           { exitCode: 0, output: "" },
           {
@@ -1479,7 +1512,7 @@ describe("pollProject failure boundaries", () => {
       {
         maxPasses: 0,
         statusOutputs: [" M src/example.ts", ""],
-        headOutputs: ["before-commit", "after-commit"],
+        headOutputs: ["before-commit", "before-commit", "after-commit"],
         openCodeResults: [
           { exitCode: 0, output: "" },
           { exitCode: 0, output: "REVIEW_FAIL" },
@@ -1524,7 +1557,7 @@ describe("pollProject failure boundaries", () => {
           " M src/example.ts",
           "",
         ],
-        headOutputs: ["before-commit", "after-commit"],
+        headOutputs: ["before-commit", "before-commit", "after-commit"],
         openCodeResults: [
           { exitCode: 0, output: "" },
           { exitCode: 0, output: "REVIEW_FAIL" },
@@ -1667,7 +1700,7 @@ describe("pollProject failure boundaries", () => {
     await withScenario(
       {
         statusOutputs: [" M src/example.ts", ""],
-        headOutputs: ["same-commit", "same-commit"],
+        headOutputs: ["same-commit", "same-commit", "same-commit"],
         openCodeResults: [
           { exitCode: 0, output: "" },
           { exitCode: 0, output: "REVIEW_PASS" },
@@ -1685,7 +1718,7 @@ describe("pollProject failure boundaries", () => {
             scenario.project,
             scenario.signal,
           ),
-        ).rejects.toThrow("OpenCode commit session did not create a commit");
+        ).rejects.toThrow("Git commit did not advance HEAD");
 
         expect(scenario.runOpenCode).toHaveBeenCalledTimes(3);
         expectNothingPublished(scenario);
@@ -1697,7 +1730,7 @@ describe("pollProject failure boundaries", () => {
     await withScenario(
       {
         statusOutputs: [" M src/example.ts", " M src/example.ts"],
-        headOutputs: ["before-commit", "after-commit"],
+        headOutputs: ["before-commit", "before-commit", "after-commit"],
         openCodeResults: [
           { exitCode: 0, output: "" },
           { exitCode: 0, output: "REVIEW_PASS" },
@@ -1715,7 +1748,9 @@ describe("pollProject failure boundaries", () => {
             scenario.project,
             scenario.signal,
           ),
-        ).rejects.toThrow("OpenCode commit left repository changes");
+        ).rejects.toThrow(
+          "OpenCode commit-message session modified repository status or diff",
+        );
 
         expect(scenario.runOpenCode).toHaveBeenCalledTimes(3);
         expectNothingPublished(scenario);
@@ -1798,7 +1833,7 @@ describe("pollProject failure boundaries", () => {
         changedFilesOutputs: ["", "src/example.ts", "src/example.ts"],
         headOutputs: [
           "before-commit",
-          "after-commit",
+          "before-commit",
           "after-commit",
           "after-commit",
           "after-commit",
@@ -1884,7 +1919,7 @@ describe("pollProject failure boundaries", () => {
         changedFilesOutputs: ["", "src/example.ts", "src/example.ts"],
         headOutputs: [
           "before-commit",
-          "after-commit",
+          "before-commit",
           "after-commit",
           "after-commit",
           "after-commit",
@@ -1927,6 +1962,7 @@ describe("pollProject failure boundaries", () => {
           "move:failed-list",
           "move:working-list",
           "opencode:5",
+          "push",
           "pr",
           "move:review-list",
         ]);
@@ -1942,7 +1978,7 @@ describe("pollProject failure boundaries", () => {
     await withScenario(
       {
         changedFilesOutputs: ["", ""],
-        headOutputs: ["before-commit", "after-commit"],
+        headOutputs: ["before-commit", "before-commit", "after-commit"],
         openCodeResults: [
           { exitCode: 1, output: "implementation interrupted" },
           { exitCode: 0, output: "" },

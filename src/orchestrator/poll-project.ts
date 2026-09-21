@@ -1,3 +1,7 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import type { ProjectConfig } from "../config/config.js";
 import {
   withActiveCardContext,
@@ -11,10 +15,7 @@ import {
 } from "../context/materialize-card-attachments.js";
 import { hasCommittedImplementation } from "../git/detect-committed-implementation.js";
 import { cleanupWorktree } from "../git/cleanup-worktree.js";
-import {
-  getGitIdentityEnvironment,
-  type GitClient,
-} from "../git/git-client.js";
+import { type GitClient } from "../git/git-client.js";
 import { prepareReviewWorktree } from "../git/prepare-review-worktree.js";
 import {
   prepareWorktree,
@@ -31,6 +32,12 @@ import {
   type EmailNotifier,
 } from "../notifications/email-notifier.js";
 import { buildCommitPrompt } from "../opencode/build-commit-prompt.js";
+import {
+  captureRepositorySnapshot,
+  clearCommitResult,
+  readCommitResult,
+  repositorySnapshotsEqual,
+} from "../opencode/commit-result.js";
 import { buildRemediationPrompt } from "../opencode/build-remediation-prompt.js";
 import { buildReviewFeedbackPrompt } from "../opencode/build-review-feedback-prompt.js";
 import { buildReviewPrompt } from "../opencode/build-review-prompt.js";
@@ -1286,9 +1293,15 @@ async function processCardChanges(
     }
   }
 
-  const headBeforeCommit = await git.getHeadSha(worktree.path);
-
   cardLog.event("Starting fresh OpenCode commit session...");
+
+  clearCommitResult(worktree.path);
+
+  const headBeforeCommit = await git.getHeadSha(worktree.path);
+  const repositorySnapshotBeforeCommitMessage = await captureRepositorySnapshot(
+    git,
+    worktree.path,
+  );
 
   const commit = await opencode.run({
     cwd: worktree.path,
@@ -1297,7 +1310,6 @@ async function processCardChanges(
     timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
     prompt: buildCommitPrompt(card),
     signal,
-    environment: getGitIdentityEnvironment(project.repository.gitIdentity),
     sessionLogPath,
     sessionLabel: "OpenCode commit",
   });
@@ -1309,12 +1321,83 @@ async function processCardChanges(
     );
   }
 
+  let commitMessage: string;
+
+  try {
+    commitMessage = readCommitResult(worktree.path).message;
+  } catch (error) {
+    throw new WorkflowError(
+      "OpenCode",
+      error instanceof Error ? error.message : String(error),
+      { cause: error },
+    );
+  }
+
+  clearCommitResult(worktree.path);
+
+  const repositorySnapshotAfterCommitMessage = await captureRepositorySnapshot(
+    git,
+    worktree.path,
+  );
+
+  if (
+    !repositorySnapshotsEqual(
+      repositorySnapshotBeforeCommitMessage,
+      repositorySnapshotAfterCommitMessage,
+    )
+  ) {
+    throw new WorkflowError(
+      "OpenCode",
+      "OpenCode commit-message session modified repository status or diff",
+    );
+  }
+
+  const headAfterCommitMessage = await git.getHeadSha(worktree.path);
+
+  if (headAfterCommitMessage !== headBeforeCommit) {
+    throw new WorkflowError(
+      "OpenCode",
+      "OpenCode commit-message session created or changed a commit",
+    );
+  }
+
+  const temporaryDirectory = fs.mkdtempSync(
+    path.join(os.tmpdir(), "agent-orchestrator-commit-"),
+  );
+  const messageFilePath = path.join(temporaryDirectory, "message");
+
+  try {
+    fs.writeFileSync(messageFilePath, commitMessage, {
+      encoding: "utf8",
+      mode: 0o600,
+    });
+
+    await git.stageAll(worktree.path);
+    await git.commit(
+      worktree.path,
+      messageFilePath,
+      project.repository.gitIdentity,
+    );
+  } finally {
+    fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+  }
+
   const headAfterCommit = await git.getHeadSha(worktree.path);
 
   if (headAfterCommit === headBeforeCommit) {
+    throw new WorkflowError("Git/GitHub", "Git commit did not advance HEAD");
+  }
+
+  const commitsCreated = await git.getCommitCountBetween(
+    worktree.path,
+    headBeforeCommit,
+    headAfterCommit,
+  );
+
+  if (commitsCreated !== 1) {
     throw new WorkflowError(
-      "OpenCode",
-      "OpenCode commit session did not create a commit",
+      "Git/GitHub",
+      `Expected exactly one commit, but Git reported ${commitsCreated}`,
     );
   }
 
@@ -1322,8 +1405,8 @@ async function processCardChanges(
 
   if (statusAfterCommit.length > 0) {
     throw new WorkflowError(
-      "OpenCode",
-      `OpenCode commit left repository changes:\n${statusAfterCommit}`,
+      "Git/GitHub",
+      `Git commit left repository changes:\n${statusAfterCommit}`,
     );
   }
 

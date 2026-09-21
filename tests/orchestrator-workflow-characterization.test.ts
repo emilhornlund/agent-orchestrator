@@ -18,6 +18,7 @@ import {
   type RunCommand,
 } from "../src/process/command-runner.js";
 import { getRefinementResultPath } from "../src/refinement/refinement-result.js";
+import { getCommitResultPath } from "../src/opencode/commit-result.js";
 import type { EmailNotifier } from "../src/notifications/email-notifier.js";
 import {
   TrelloRequestError,
@@ -376,6 +377,8 @@ function createHarness(options: HarnessOptions = {}) {
     return "src/example.ts";
   });
   const getCommitMessage = vi.fn(async () => "Implement the example task");
+  const getDiff = vi.fn(async () => "");
+  const getUntrackedFiles = vi.fn(async () => []);
   const getRemoteBranchSha = vi.fn(async () => remoteSha);
   const rebase = vi.fn(async () => undefined);
   const push = vi.fn(async () => {
@@ -388,6 +391,12 @@ function createHarness(options: HarnessOptions = {}) {
     remoteSha = headSha;
     events.push("git:push");
   });
+  const stageAll = vi.fn(async () => undefined);
+  const commit = vi.fn(async () => {
+    dirty = false;
+    headSha = "implementation-commit";
+  });
+  const getCommitCountBetween = vi.fn(async () => 1);
   const removeWorktree = vi.fn(async () => {
     fs.rmSync(worktreePath, { recursive: true, force: true });
     events.push("git:cleanup-worktree");
@@ -411,6 +420,8 @@ function createHarness(options: HarnessOptions = {}) {
     addWorktree,
     addWorktreeWithNewBranch,
     getStatus,
+    getDiff,
+    getUntrackedFiles,
     getHeadSha,
     getChangedFiles,
     getCommitMessage,
@@ -418,6 +429,9 @@ function createHarness(options: HarnessOptions = {}) {
     rebase,
     isAncestor: vi.fn(async () => true),
     push,
+    stageAll,
+    commit,
+    getCommitCountBetween,
     removeWorktree,
     pruneWorktrees,
     deleteBranch,
@@ -533,8 +547,15 @@ function createHarness(options: HarnessOptions = {}) {
         dirty = true;
         events.push("opencode:remediation");
       } else if (label === "OpenCode commit") {
-        dirty = false;
-        headSha = "implementation-commit";
+        const resultPath = getCommitResultPath(runOptions.cwd);
+        fs.mkdirSync(path.dirname(resultPath), { recursive: true });
+        fs.writeFileSync(
+          resultPath,
+          JSON.stringify({
+            message:
+              "feat(example): complete the example task\n\n- Update the implementation.\n- Preserve the reviewed behavior.\n\nThe task is now complete.",
+          }),
+        );
         events.push("opencode:commit");
       } else if (label === "OpenCode pull request description") {
         events.push("opencode:pull-request-description");
