@@ -278,6 +278,34 @@ describe("prepareWorktree", () => {
     expect(runGit).not.toHaveBeenCalledWith(worktreePath, ["clean", "-fd"]);
   });
 
+  it("reuses an existing worktree with an active rebase for the expected branch", async () => {
+    const worktreeRoot = createTemporaryDirectory();
+    const worktreePath = path.join(worktreeRoot, "card-123");
+
+    fs.mkdirSync(worktreePath);
+
+    const project = createProject(worktreeRoot);
+    const rebase: GitRebaseState = {
+      active: true,
+      backend: "merge",
+      headName: "refs/heads/agent/card-123",
+      onto: "b".repeat(40),
+      originalHead: "a".repeat(40),
+    };
+    const git = {
+      getCurrentBranch: vi.fn().mockResolvedValue(""),
+      getRebaseState: vi.fn().mockResolvedValue(rebase),
+      getStatus: vi.fn().mockResolvedValue("UU src/example.ts"),
+    } as unknown as GitClient;
+
+    await expect(prepareWorktree(git, project, "card-123")).resolves.toEqual({
+      path: worktreePath,
+      branch: "agent/card-123",
+      reused: true,
+      initialStatus: "UU src/example.ts",
+    });
+  });
+
   it("rejects an existing directory that is not a Git worktree", async () => {
     const worktreeRoot = createTemporaryDirectory();
     const worktreePath = path.join(worktreeRoot, "card-123");
@@ -546,5 +574,50 @@ describe("existing worktree lookup", () => {
     expect(git.getCurrentBranch).toHaveBeenCalledWith(
       path.join(worktreeRoot, "card-123"),
     );
+  });
+
+  it("accepts an existing worktree with an active rebase for the expected branch", async () => {
+    const worktreeRoot = createTemporaryDirectory();
+    const worktreePath = path.join(worktreeRoot, "card-123");
+    fs.mkdirSync(worktreePath);
+    const project = createProject(worktreeRoot);
+    const git = {
+      getCurrentBranch: vi.fn().mockResolvedValue(""),
+      getRebaseState: vi.fn().mockResolvedValue({
+        active: true,
+        backend: "merge",
+        headName: "refs/heads/agent/card-123",
+        onto: "b".repeat(40),
+        originalHead: "a".repeat(40),
+      } satisfies GitRebaseState),
+    } as unknown as GitClient;
+
+    await expect(
+      getExistingWorktree(git, project, "card-123"),
+    ).resolves.toEqual({
+      path: worktreePath,
+      branch: "agent/card-123",
+    });
+  });
+
+  it("rejects a detached worktree with an active rebase for another branch", async () => {
+    const worktreeRoot = createTemporaryDirectory();
+    const worktreePath = path.join(worktreeRoot, "card-123");
+    fs.mkdirSync(worktreePath);
+    const project = createProject(worktreeRoot);
+    const git = {
+      getCurrentBranch: vi.fn().mockResolvedValue(""),
+      getRebaseState: vi.fn().mockResolvedValue({
+        active: true,
+        backend: "merge",
+        headName: "refs/heads/agent/other-card",
+        onto: "b".repeat(40),
+        originalHead: "a".repeat(40),
+      } satisfies GitRebaseState),
+    } as unknown as GitClient;
+
+    await expect(
+      getExistingWorktree(git, project, "card-123"),
+    ).resolves.toBeNull();
   });
 });

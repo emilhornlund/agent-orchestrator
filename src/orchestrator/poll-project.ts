@@ -75,14 +75,21 @@ import {
   toFailureError,
 } from "./failure-diagnostic.js";
 import { failCard } from "./fail-card.js";
-import { remediatePreparedConflict } from "./remediate-prepared-conflict.js";
+import {
+  PreparedConflictRemediationError,
+  remediatePreparedConflict,
+} from "./remediate-prepared-conflict.js";
 import { publishCard } from "./publish-card.js";
 import { PublishedCardStateError } from "./published-card-state-error.js";
 import {
   reconcileReviewCards,
   type ReviewChangeRequest,
 } from "./reconcile-review-cards.js";
-import { readPreparedConflicts } from "./prepared-conflict-state.js";
+import {
+  readPreparedConflict,
+  readPreparedConflicts,
+  writePreparedConflict,
+} from "./prepared-conflict-state.js";
 import {
   reconcileClaimedCard,
   isImplementationWorkingCard,
@@ -244,10 +251,13 @@ export async function pollProject(
     project.id,
     async () => {
       const preparedConflicts = readPreparedConflicts(project);
+      const humanReviewPreparedConflicts = preparedConflicts.filter(
+        (handoff) => handoff.origin === "human-review-maintenance",
+      );
       let workingChangeRequest;
       let reviewChangeRequest;
 
-      if (preparedConflicts.length > 0) {
+      if (humanReviewPreparedConflicts.length > 0) {
         reviewChangeRequest = await reconcileReviewCards(
           trello,
           git,
@@ -914,6 +924,13 @@ async function processImplementationCard(
       throw error;
     }
 
+    if (error instanceof PreparedConflictRemediationError) {
+      cardLog.warn(
+        `Initial-publication conflict remediation failed; preserving the card in Working for orchestrator retry: ${error.message}`,
+      );
+      throw error;
+    }
+
     if (error instanceof PublishedCardStateError) {
       const sessionLogPath = getExistingSessionLogPath(project.id, card.id);
 
@@ -1023,6 +1040,109 @@ async function processCardChanges(
   cardLog.info(`Branch: ${worktree.branch}`);
   cardLog.info(`Worktree: ${worktree.path}`);
 
+  let preparedConflict = readPreparedConflict(project, card.id);
+
+  const hasUnmergedInitialStatus =
+    preparedConflict === null &&
+    "initialStatus" in worktree &&
+    typeof worktree.initialStatus === "string" &&
+    worktree.initialStatus
+      .split(/\r?\n/)
+      .some((line) => /^(?:AA|AU|DD|DU|UA|UD|UU)\s/.test(line));
+
+  if (hasUnmergedInitialStatus && typeof git.getRebaseState === "function") {
+    const trustedCommit = readTrustedCommitState(project, card.id);
+    const activeRebase = await git.getRebaseState(worktree.path);
+
+    if (activeRebase !== null) {
+      const conflictedPaths = await git.getConflictedPaths(worktree.path);
+
+      if (conflictedPaths.length > 0) {
+        if (
+          trustedCommit === null ||
+          activeRebase.originalHead !== trustedCommit.commitSha
+        ) {
+          throw new WorkflowError(
+            "Git/GitHub",
+            "Existing active publication rebase conflict could not be matched to the trusted committed implementation",
+          );
+        }
+
+        try {
+          preparedConflict = writePreparedConflict(
+            project,
+            card.id,
+            undefined,
+            conflictedPaths,
+            activeRebase,
+            {
+              origin: "initial-publication",
+              trustedTaskCommitSha: trustedCommit.commitSha,
+              rebaseTargetSha: activeRebase.onto,
+            },
+          );
+        } catch (error) {
+          throw new WorkflowError(
+            "Git/GitHub",
+            `Could not adopt the preserved publication rebase conflict: ${error instanceof Error ? error.message : String(error)}`,
+            { cause: error },
+          );
+        }
+
+        cardLog.event(
+          "Adopted the preserved active publication rebase conflict for automated remediation",
+        );
+      }
+    }
+  }
+
+  if (preparedConflict?.origin === "initial-publication") {
+    cardLog.event(
+      "Resuming trusted implementation from preserved initial-publication conflict remediation",
+    );
+
+    await remediatePreparedConflict({
+      git,
+      github,
+      opencode,
+      commands,
+      project,
+      card,
+      handoff: preparedConflict,
+      signal,
+    });
+
+    const trustedCommit = readTrustedCommitState(project, card.id);
+
+    if (trustedCommit === null) {
+      throw new WorkflowError(
+        "Git/GitHub",
+        "Initial-publication conflict remediation completed without a trusted rebased commit",
+      );
+    }
+
+    await publishCard({
+      trello,
+      git,
+      github,
+      opencode,
+      project,
+      card,
+      worktreePath: worktree.path,
+      branch: worktree.branch,
+      commitSha: trustedCommit.commitSha,
+      reviewResult: "Passed",
+      remediationResult: "Not required",
+      commands,
+      rebaseAlreadyCompleted: true,
+      sessionLogPath,
+      signal,
+      ...(emailNotifier === undefined ? {} : { emailNotifier }),
+    });
+
+    return { worktree };
+  }
+
   const implementationWorktree = reviewIteration
     ? undefined
     : (worktree as PreparedImplementationWorktree);
@@ -1056,6 +1176,7 @@ async function processCardChanges(
       commitSha,
       reviewResult,
       remediationResult,
+      commands,
       sessionLogPath,
       signal,
       ...(emailNotifier === undefined ? {} : { emailNotifier }),
@@ -1526,6 +1647,7 @@ async function processCardChanges(
     commitSha: headAfterCommit,
     reviewResult,
     remediationResult,
+    commands,
     sessionLogPath,
     signal,
     ...(emailNotifier === undefined ? {} : { emailNotifier }),

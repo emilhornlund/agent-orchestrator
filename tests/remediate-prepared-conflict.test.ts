@@ -26,6 +26,7 @@ import {
   type PreparedConflictHandoff,
 } from "../src/orchestrator/prepared-conflict-state.js";
 import { remediatePreparedConflict } from "../src/orchestrator/remediate-prepared-conflict.js";
+import { readTrustedCommitState } from "../src/orchestrator/trusted-commit-state.js";
 import type { TrelloCard } from "../src/trello/trello-client.js";
 
 const taskSha = "a".repeat(40);
@@ -243,6 +244,72 @@ describe("buildConflictRemediationPrompt", () => {
 });
 
 describe("remediatePreparedConflict", () => {
+  it("remediates initial-publication conflicts without a PR or remote task branch", async () => {
+    const scenario = createScenario();
+    const handoff = writePreparedConflict(
+      scenario.project,
+      scenario.card.id,
+      undefined,
+      ["src/player.ts"],
+      scenario.handoff.rebase,
+      {
+        origin: "initial-publication",
+        trustedTaskCommitSha: taskSha,
+        rebaseTargetSha: baseSha,
+      },
+    );
+
+    await remediatePreparedConflict({
+      git: scenario.git,
+      opencode: scenario.opencode,
+      commands: scenario.commands,
+      project: scenario.project,
+      card: scenario.card,
+      handoff,
+      signal: new AbortController().signal,
+    });
+
+    expect(scenario.git.getRemoteBranchSha).not.toHaveBeenCalled();
+    expect(scenario.git.pushWithLease).not.toHaveBeenCalled();
+    expect(readPreparedConflict(scenario.project, scenario.card.id)).toBeNull();
+    expect(readTrustedCommitState(scenario.project, scenario.card.id)).toEqual(
+      expect.objectContaining({ commitSha: changedSha }),
+    );
+  });
+
+  it("resumes a completed initial-publication rebase after restart without another OpenCode session", async () => {
+    const scenario = createScenario({ initialRebaseState: null });
+    const handoff = writePreparedConflict(
+      scenario.project,
+      scenario.card.id,
+      undefined,
+      ["src/player.ts"],
+      scenario.handoff.rebase,
+      {
+        origin: "initial-publication",
+        trustedTaskCommitSha: taskSha,
+        rebaseTargetSha: baseSha,
+      },
+    );
+
+    await remediatePreparedConflict({
+      git: scenario.git,
+      opencode: scenario.opencode,
+      commands: scenario.commands,
+      project: scenario.project,
+      card: scenario.card,
+      handoff,
+      signal: new AbortController().signal,
+    });
+
+    expect(scenario.runOpenCode).not.toHaveBeenCalled();
+    expect(scenario.git.getRemoteBranchSha).not.toHaveBeenCalled();
+    expect(readPreparedConflict(scenario.project, scenario.card.id)).toBeNull();
+    expect(readTrustedCommitState(scenario.project, scenario.card.id)).toEqual(
+      expect.objectContaining({ commitSha: changedSha }),
+    );
+  });
+
   it("starts remediation from a matching detached-HEAD rebase and requires the branch after completion", async () => {
     const scenario = createScenario();
     const getCurrentBranch = vi.fn().mockResolvedValue("");

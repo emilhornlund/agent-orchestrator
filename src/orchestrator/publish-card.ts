@@ -23,6 +23,7 @@ import {
   type PullRequestDescription,
 } from "../opencode/pull-request-description.js";
 import { renderPullRequestDescription } from "../opencode/render-pull-request-description.js";
+import type { CommandRunner } from "../process/command-runner.js";
 
 import { toFailureError } from "./failure-diagnostic.js";
 import {
@@ -33,6 +34,8 @@ import { PublishedCardStateError } from "./published-card-state-error.js";
 import { getElapsedWorkflowTime } from "./workflow-duration.js";
 import { WorkflowError } from "./workflow-error.js";
 import { writeTrustedCommitState } from "./trusted-commit-state.js";
+import { writePreparedConflict } from "./prepared-conflict-state.js";
+import { remediatePreparedConflict } from "./remediate-prepared-conflict.js";
 
 export interface PublishCardOptions {
   trello: TrelloClient;
@@ -50,6 +53,8 @@ export interface PublishCardOptions {
   sessionLogPath?: string;
   emailNotifier?: EmailNotifier;
   signal?: AbortSignal;
+  commands?: CommandRunner;
+  rebaseAlreadyCompleted?: boolean;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -294,6 +299,8 @@ export async function publishCard({
   sessionLogPath,
   emailNotifier,
   signal,
+  commands,
+  rebaseAlreadyCompleted = false,
 }: PublishCardOptions): Promise<void> {
   const cardLog = logger.child({
     projectId: project.id,
@@ -319,47 +326,111 @@ export async function publishCard({
 
     const defaultBranchRef = `origin/${project.repository.defaultBranch}`;
 
-    cardLog.event(
-      `Fetching latest ${defaultBranchRef} before publishing ${branch}...`,
-    );
-
-    if (signal?.aborted) {
-      throw new TrelloRequestAbortedError();
-    }
-
-    try {
-      await git.fetch(
-        worktreePath,
-        "origin",
-        project.repository.defaultBranch,
-        project,
+    if (!rebaseAlreadyCompleted) {
+      cardLog.event(
+        `Fetching latest ${defaultBranchRef} before publishing ${branch}...`,
       );
-    } catch (error) {
-      throw new WorkflowError(
-        "Git/GitHub",
-        `Failed to fetch ${defaultBranchRef} before publishing ${branch}: ${getErrorMessage(error)}. The task worktree and branch were preserved; resolve the Git failure and retry.`,
-        { cause: error },
-      );
-    }
 
-    if (signal?.aborted) {
-      throw new TrelloRequestAbortedError();
-    }
+      if (signal?.aborted) {
+        throw new TrelloRequestAbortedError();
+      }
 
-    cardLog.event(`Rebasing ${branch} onto ${defaultBranchRef}...`);
+      try {
+        await git.fetch(
+          worktreePath,
+          "origin",
+          project.repository.defaultBranch,
+          project,
+        );
+      } catch (error) {
+        throw new WorkflowError(
+          "Git/GitHub",
+          `Failed to fetch ${defaultBranchRef} before publishing ${branch}: ${getErrorMessage(error)}. The task worktree and branch were preserved; resolve the Git failure and retry.`,
+          { cause: error },
+        );
+      }
 
-    try {
-      await git.rebase(
-        worktreePath,
-        defaultBranchRef,
-        project.repository.gitIdentity,
-      );
-    } catch (error) {
-      throw new WorkflowError(
-        "Git/GitHub",
-        `Failed to rebase ${branch} onto ${defaultBranchRef}: ${getErrorMessage(error)}. Resolve any conflicts in the preserved task worktree, then retry publication.`,
-        { cause: error },
-      );
+      if (signal?.aborted) {
+        throw new TrelloRequestAbortedError();
+      }
+
+      cardLog.event(`Rebasing ${branch} onto ${defaultBranchRef}...`);
+
+      try {
+        await git.rebase(
+          worktreePath,
+          defaultBranchRef,
+          project.repository.gitIdentity,
+        );
+      } catch (error) {
+        let rebaseState;
+        let conflictedPaths: string[];
+
+        try {
+          rebaseState = await git.getRebaseState(worktreePath);
+          conflictedPaths = await git.getConflictedPaths(worktreePath);
+        } catch (inspectionError) {
+          throw new WorkflowError(
+            "Git/GitHub",
+            `Failed to rebase ${branch} onto ${defaultBranchRef}: ${getErrorMessage(error)}. Git could not confirm an active rebase conflict (${getErrorMessage(inspectionError)}); the task worktree and branch were preserved for diagnosis and retry.`,
+            { cause: error },
+          );
+        }
+
+        if (rebaseState === null || conflictedPaths.length === 0) {
+          throw new WorkflowError(
+            "Git/GitHub",
+            `Failed to rebase ${branch} onto ${defaultBranchRef}: ${getErrorMessage(error)}. Git did not report an active rebase with conflicted paths; the task worktree and branch were preserved for diagnosis and retry.`,
+            { cause: error },
+          );
+        }
+
+        let handoff;
+
+        try {
+          handoff = writePreparedConflict(
+            project,
+            card.id,
+            undefined,
+            conflictedPaths,
+            rebaseState,
+            {
+              origin: "initial-publication",
+              trustedTaskCommitSha: commitSha,
+              rebaseTargetSha: rebaseState.onto,
+            },
+          );
+        } catch (handoffError) {
+          throw new WorkflowError(
+            "Git/GitHub",
+            `Failed to preserve the publication rebase conflict for ${branch}: ${getErrorMessage(handoffError)}. The task worktree and branch were preserved for diagnosis and retry.`,
+            { cause: handoffError },
+          );
+        }
+
+        cardLog.event(
+          `Preserved publication rebase conflict for automated conflict remediation: ${conflictedPaths.join(", ")}`,
+        );
+
+        if (opencode === undefined) {
+          throw new WorkflowError(
+            "OpenCode",
+            `Publication rebase conflict for ${branch} was preserved for automated conflict remediation, but no OpenCode client is configured.`,
+            { cause: error },
+          );
+        }
+
+        await remediatePreparedConflict({
+          git,
+          github,
+          opencode,
+          ...(commands === undefined ? {} : { commands }),
+          project,
+          card,
+          handoff,
+          signal: signal ?? new AbortController().signal,
+        });
+      }
     }
 
     publishedCommitSha = await git.getHeadSha(worktreePath);

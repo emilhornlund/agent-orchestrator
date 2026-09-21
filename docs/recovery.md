@@ -195,10 +195,10 @@ agent rebase before publishing.
 
 A rebase conflict is prepared only when Git reports both an active rebase and one or more conflicted paths. In that case the
 orchestrator writes a validated handoff at
-`<worktreeRoot>/.orchestrator/prepared-conflicts/<project-id>/<card-id>.json` and exposes the Human Review card as
-`prepared-conflict`. Its fields are `projectId`, `cardId`, `taskBranch`, `defaultBranch`, `expectedRemoteTaskSha`,
-`conflictedPaths`, and `rebase` (`backend`, `headName`, `onto`, `originalHead`, and available step metadata). The task branch
-SHA is captured with authoritative `ls-remote` before the rebase attempt, so it is not inferred from a rebased or local value.
+`<worktreeRoot>/.orchestrator/prepared-conflicts/<project-id>/<card-id>.json`. Its fields include `projectId`, `cardId`,
+`taskBranch`, `defaultBranch`, `origin`, `trustedTaskCommitSha`, `rebaseTargetSha`, `conflictedPaths`, and `rebase`
+(`backend`, `headName`, `onto`, `originalHead`, and available step metadata). Human Review maintenance also records and checks
+`expectedRemoteTaskSha`; initial publication deliberately does not require a remote task branch or pull request.
 
 Retry validation treats the task branch, expected worktree and repository, backend, `headName`, `onto`, and `originalHead` as
 the prepared rebase identity and keeps them strict. It accepts the recorded conflict step or forward progress to a later
@@ -207,16 +207,18 @@ Missing optional progress metadata remains acceptable. A completed rebase procee
 verification path.
 
 While this record exists, it is the durable active-remediation lock for the project. Reconciliation returns the same state after
-restart, does not start a second rebase, and does not process another Working or Ready card. The card stays in Human Review.
+restart, does not start a second rebase, and does not process another Working or Ready card. Human Review cards stay in Human
+Review; initial-publication cards remain owned by the implementation workflow and may remain in Working.
 The conflicted worktree, branch, conflict markers, and Git rebase metadata remain available; preparation performs no abort, reset,
 clean, removal, recreation, validation, push, pull-request mutation, or merge. The project worker starts dedicated remediation in
 that existing worktree using the configured remediation-stage OpenCode model and variant. The prompt is limited to the original
 card intent and active conflicts, and explicitly covers repeated conflict stops, staging resolutions, rebase continuation, and
-validation. The agent owns configured repository validation. After the rebase is safely complete, the worker verifies the Git state,
-runs setup when the retained preparation state does not match, confirms that the authoritative remote task SHA is still the handoff
-SHA, and performs one exact force-with-lease update. It removes the handoff only after that update succeeds. The existing pull
-request is retained, the card stays in Human Review, and normal reconciliation can observe the updated branch. It must not remove
-the record merely to make polling proceed.
+validation. The agent owns configured repository validation. After the rebase is safely complete, the worker verifies the Git state.
+Human Review maintenance confirms that the authoritative remote task SHA is still the handoff SHA and performs one exact
+force-with-lease update. Initial publication instead records the verified rebased `HEAD` as the new trusted commit and resumes
+publication without a remote-SHA or pull-request prerequisite. It removes the handoff only after the applicable successful
+publication step. The existing pull request is retained and Human Review cards remain in Human Review; the record must not be
+removed merely to make polling proceed.
 
 An OpenCode failure, timeout, permission denial, agent validation failure, unresolved rebase, malformed or missing remote SHA, concurrent
 remote change, or lease rejection leaves the handoff, worktree, branch, and pull request available for diagnosis. The failure is
@@ -313,8 +315,9 @@ An existing worktree or branch alone is not proof of completed implementation:
 - A commit created by a rejected commit-message session poisons that commit's lineage; descendant commits are not trusted unless
   the task branch is explicitly reset off the rejected commit.
 - Before publication, the retry fetches and rebases onto the latest `origin/<defaultBranch>`.
-- A rebase conflict or an existing remote branch that would require a non-fast-forward update stops publication and preserves
-  the task worktree and branch for diagnosis and another deliberate retry.
+- A confirmed initial-publication rebase conflict is persisted and routed through dedicated conflict remediation; it is not an
+  ordinary publication failure and does not require manual worktree repair. An existing remote branch that would require a
+  non-fast-forward update remains a normal publication failure.
 
 If the worktree or branch is not valid for recovery, the normal claim and worktree preparation rules apply. Reconciliation
 does not create worktrees for arbitrary `Working` cards.

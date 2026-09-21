@@ -282,12 +282,17 @@ branch into an unsuccessful publication, and preserved branch, worktree, and pul
 
 A lease rejection, missing or invalid remote SHA, fetch or non-conflict rebase failure leaves the pull
 request, card, task branch, and worktree unchanged for diagnosis and later reconciliation. When Git confirms an active conflicted
-rebase and reports conflicted paths, reconciliation writes a validated handoff at
-`<worktreeRoot>/.orchestrator/prepared-conflicts/<project-id>/<card-id>.json` and returns `prepared-conflict`. The handoff
-contains the project and card IDs, `agent/<card-id>`, the configured default branch, the authoritative remote task SHA captured
-before rebasing, conflicted paths, and current rebase metadata. The card remains in `Human Review`; no OpenCode, validation,
-push, pull-request operation, or Trello transition is performed. The orchestrator never aborts, resets, cleans, removes,
-recreates, or automatically resolves the conflicted worktree or rebase.
+rebase and reports conflicted paths, orchestration writes a validated handoff at
+`<worktreeRoot>/.orchestrator/prepared-conflicts/<project-id>/<card-id>.json`. The shared handoff records its lifecycle origin,
+the project and card IDs, `agent/<card-id>`, the configured default branch, the trusted pre-rebase task commit, the captured
+rebase target, conflicted paths, and current rebase metadata. Human Review maintenance retains its authoritative remote task SHA
+and lease checks. Initial publication has no remote-branch or pull-request prerequisite and is authorized by the trusted local
+commit and captured target.
+
+For an initial-publication conflict, the card remains owned by the implementation workflow while the preserved worktree is routed
+through dedicated OpenCode conflict remediation. The orchestrator does not move the card to `Failed` merely because normal merge
+conflicts occurred, and it never aborts, resets, cleans, removes, recreates, or automatically resolves the conflicted worktree or
+rebase outside that remediation session.
 
 Prepared retries keep strict worktree, task-branch, repository, and rebase identity checks. Rebase progress is not identity:
 the captured conflict step or legitimate forward progress to a later stop is accepted when the progress is positive and within
@@ -305,10 +310,10 @@ conflicted paths, uses normal failure diagnostics and never reports `prepared-co
 
 After the session, orchestration requires no active rebase, no unmerged paths, a valid worktree on `agent/<card-id>`, and a clean
 publication state. The OpenCode conflict-remediation session owns running the configured `validationCommand` and fixing failures;
-the orchestrator does not execute that command. The orchestrator resolves the authoritative task-branch SHA again and requires it
-to equal the SHA captured in the handoff. Only then does it update the existing branch with the exact force-with-lease helper. A
-successful lease update clears the handoff last; the existing pull request is retained and the card remains in `Human Review`
-for normal reconciliation. No replacement pull request, merge, unrelated Trello transition, or worktree cleanup is performed.
+the orchestrator does not execute that command. Human Review maintenance then resolves and verifies the authoritative task-branch
+SHA before its exact force-with-lease update. Initial publication instead records the verified rebased `HEAD` as the new trusted
+commit and resumes the normal push and pull-request flow. A successful completion clears the handoff last. No replacement pull
+request, merge, unrelated Trello transition, or worktree cleanup is performed.
 
 An unsuccessful, timed-out, permission-denied, incomplete, or lease-rejected remediation preserves the handoff and worktree and
 uses the normal failure diagnostic and `Attention Required` path. The worker permits only the existing bounded remediation retry
