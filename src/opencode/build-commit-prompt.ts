@@ -1,22 +1,26 @@
 import type { TrelloCard } from "../trello/trello-client.js";
 
+import {
+  commitResultRelativePath,
+  MAX_COMMIT_MESSAGE_LENGTH,
+} from "./commit-result.js";
+
 export function buildCommitPrompt(card: TrelloCard): string {
   return [
-    "Commit the final reviewed changes for this task.",
+    "Generate the commit message for the final reviewed changes for this task.",
     "",
     `Task: ${card.name}`,
     "",
-    "Inspect the complete Git status and diff before committing.",
-    "Stage all intended task changes, including additions, modifications, and deletions.",
-    "Create exactly one commit.",
-    "Do not modify implementation files.",
+    "Inspect the complete Git status and diff before generating the message.",
+    "Do not modify any repository file other than the required result artifact.",
+    "Do not stage files.",
+    "Do not create or amend commits.",
     "Do not push anything.",
     "",
-    "When creating a multiline commit message, preserve real line breaks.",
-    "Do not encode line breaks as literal \\n sequences in git command arguments.",
-    "Prefer a temporary commit-message file or another shell-safe method that preserves the message exactly.",
-    "After committing, inspect the final commit message with `git log -1 --format=%B`.",
-    "If the message contains literal \\n text or does not match the required format, amend that same commit to correct the message.",
+    `Write exactly one JSON object to ${commitResultRelativePath}.`,
+    "The artifact is the only permitted repository write.",
+    "Do not put the result in stdout; stdout is not authoritative.",
+    `The message must be at most ${MAX_COMMIT_MESSAGE_LENGTH} characters and preserve real line breaks.`,
     "",
     "Use this commit-message format:",
     "",
@@ -30,5 +34,7 @@ export function buildCommitPrompt(card: TrelloCard): string {
     "Choose the appropriate Conventional Commit type such as feat, fix, refactor, docs, test, build, ci, or chore.",
     "Base the message on the actual final changes.",
     "Do not include AI attribution.",
+    "The JSON object must contain exactly one field named message.",
+    "Do not include Markdown fences, explanation, or any additional fields.",
   ].join("\n");
 }

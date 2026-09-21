@@ -18,12 +18,12 @@ describe("buildCommitPrompt", () => {
 
     expect(prompt).toContain("Task: Add player inventory");
     expect(prompt).toContain("type(scope): summary");
-    expect(prompt).toContain("Create exactly one commit.");
+    expect(prompt).toContain("Do not create or amend commits.");
     expect(prompt).toContain("Do not push anything.");
     expect(prompt).toContain("Do not include AI attribution.");
   });
 
-  it("requires shell-safe multiline commit messages", () => {
+  it("requires a structured artifact with real multiline messages", () => {
     const card: TrelloCard = {
       id: "card-123",
       name: "Add player inventory",
@@ -36,13 +36,12 @@ describe("buildCommitPrompt", () => {
     const prompt = buildCommitPrompt(card);
 
     expect(prompt).toContain(
-      "Do not encode line breaks as literal \\n sequences in git command arguments.",
+      "Write exactly one JSON object to .agent-orchestrator/commit-result.json.",
     );
-
     expect(prompt).toContain(
-      "After committing, inspect the final commit message with `git log -1 --format=%B`.",
+      "The artifact is the only permitted repository write.",
     );
-
-    expect(prompt).toContain("amend that same commit to correct the message");
+    expect(prompt).toContain("Do not stage files.");
+    expect(prompt).toContain("preserve real line breaks");
   });
 });
