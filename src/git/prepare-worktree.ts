@@ -85,6 +85,26 @@ function getWorktreePath(project: ProjectConfig, cardId: string): string {
   return worktreePath;
 }
 
+async function isExpectedWorktreeState(
+  git: GitClient,
+  worktreePath: string,
+  branch: string,
+): Promise<boolean> {
+  const currentBranch = await git.getCurrentBranch(worktreePath);
+
+  if (currentBranch === branch) {
+    return true;
+  }
+
+  if (currentBranch !== "" || typeof git.getRebaseState !== "function") {
+    return false;
+  }
+
+  const rebase = await git.getRebaseState(worktreePath);
+
+  return rebase?.active === true && rebase.headName === `refs/heads/${branch}`;
+}
+
 export async function getExistingWorktree(
   git: GitClient,
   project: ProjectConfig,
@@ -103,9 +123,7 @@ export async function getExistingWorktree(
     return null;
   }
 
-  const currentBranch = await git.getCurrentBranch(worktreePath);
-
-  if (currentBranch !== branch) {
+  if (!(await isExpectedWorktreeState(git, worktreePath, branch))) {
     return null;
   }
 
@@ -192,9 +210,8 @@ export async function prepareWorktree(
       throw new Error(`Refusing to use symbolic-link worktree ${worktreePath}`);
     }
 
-    const currentBranch = await git.getCurrentBranch(worktreePath);
-
-    if (currentBranch !== branch) {
+    if (!(await isExpectedWorktreeState(git, worktreePath, branch))) {
+      const currentBranch = await git.getCurrentBranch(worktreePath);
       throw new Error(
         `Existing worktree ${worktreePath} is on branch "${currentBranch}", expected "${branch}"`,
       );

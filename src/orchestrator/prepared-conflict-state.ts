@@ -28,13 +28,32 @@ const preparedConflictSchema = z.strictObject({
   cardId: z.string().min(1),
   taskBranch: z.string().min(1),
   defaultBranch: z.string().min(1),
-  expectedRemoteTaskSha: gitSha,
+  origin: z
+    .enum(["human-review-maintenance", "initial-publication"])
+    .optional(),
+  expectedRemoteTaskSha: gitSha.optional(),
+  trustedTaskCommitSha: gitSha.optional(),
+  rebaseTargetSha: gitSha.optional(),
   conflictedPaths: z.array(z.string().min(1)).min(1),
   rebase: rebaseStateSchema,
   preparedAt: z.string().datetime(),
 });
 
-export type PreparedConflictHandoff = z.infer<typeof preparedConflictSchema>;
+export type PreparedConflictOrigin =
+  "human-review-maintenance" | "initial-publication";
+
+export type PreparedConflictHandoff = Omit<
+  z.infer<typeof preparedConflictSchema>,
+  | "origin"
+  | "expectedRemoteTaskSha"
+  | "trustedTaskCommitSha"
+  | "rebaseTargetSha"
+> & {
+  origin: PreparedConflictOrigin;
+  expectedRemoteTaskSha?: string | undefined;
+  trustedTaskCommitSha: string;
+  rebaseTargetSha: string;
+};
 
 function statePath(project: ProjectConfig, cardId: string): string {
   if (typeof project.repository.worktreeRoot !== "string") {
@@ -126,30 +145,76 @@ export function readPreparedConflict(
     throw new Error(`Prepared conflict handoff is invalid: ${handoffPath}`);
   }
 
+  const origin = result.data.origin ?? "human-review-maintenance";
+  const trustedTaskCommitSha =
+    result.data.trustedTaskCommitSha ?? result.data.expectedRemoteTaskSha;
+  const rebaseTargetSha =
+    result.data.rebaseTargetSha ?? result.data.rebase.onto;
+
   if (
+    trustedTaskCommitSha === undefined ||
+    rebaseTargetSha === undefined ||
     result.data.projectId !== project.id ||
     result.data.cardId !== cardId ||
     result.data.taskBranch !== `agent/${cardId}` ||
     result.data.defaultBranch !== project.repository.defaultBranch ||
     (result.data.rebase.headName !== `agent/${cardId}` &&
       result.data.rebase.headName !== `refs/heads/agent/${cardId}`) ||
-    result.data.rebase.originalHead !== result.data.expectedRemoteTaskSha
+    result.data.rebase.originalHead !== trustedTaskCommitSha ||
+    result.data.rebase.onto !== rebaseTargetSha ||
+    (origin === "human-review-maintenance" &&
+      result.data.expectedRemoteTaskSha !== trustedTaskCommitSha)
   ) {
     throw new Error(
       `Prepared conflict handoff does not match project ${project.id} and card ${cardId}`,
     );
   }
 
-  return result.data;
+  const normalizedHandoff: PreparedConflictHandoff = {
+    ...result.data,
+    origin,
+    ...(result.data.expectedRemoteTaskSha === undefined
+      ? {}
+      : { expectedRemoteTaskSha: result.data.expectedRemoteTaskSha }),
+    trustedTaskCommitSha,
+    rebaseTargetSha,
+  };
+
+  return normalizedHandoff;
 }
 
 export function writePreparedConflict(
   project: ProjectConfig,
   cardId: string,
-  expectedRemoteTaskSha: string,
+  expectedRemoteTaskSha: string | undefined,
   conflictedPaths: string[],
   rebase: GitRebaseState,
+  metadata: {
+    origin?: PreparedConflictOrigin;
+    trustedTaskCommitSha?: string;
+    rebaseTargetSha?: string;
+  } = {},
 ): PreparedConflictHandoff {
+  const origin = metadata.origin ?? "human-review-maintenance";
+  const trustedTaskCommitSha =
+    metadata.trustedTaskCommitSha ?? expectedRemoteTaskSha;
+  const rebaseTargetSha = metadata.rebaseTargetSha ?? rebase.onto;
+
+  if (trustedTaskCommitSha === undefined) {
+    throw new Error(
+      "Cannot record prepared conflict: trusted task commit is required",
+    );
+  }
+
+  if (
+    origin === "human-review-maintenance" &&
+    expectedRemoteTaskSha === undefined
+  ) {
+    throw new Error(
+      "Cannot record Human Review prepared conflict: authoritative remote SHA is required",
+    );
+  }
+
   const handoff: PreparedConflictHandoff = {
     version: 1,
     kind: "prepared-conflict",
@@ -157,7 +222,10 @@ export function writePreparedConflict(
     cardId,
     taskBranch: `agent/${cardId}`,
     defaultBranch: project.repository.defaultBranch,
-    expectedRemoteTaskSha,
+    origin,
+    ...(expectedRemoteTaskSha === undefined ? {} : { expectedRemoteTaskSha }),
+    trustedTaskCommitSha,
+    rebaseTargetSha,
     conflictedPaths: [...new Set(conflictedPaths)].sort(),
     rebase,
     preparedAt: new Date().toISOString(),
@@ -172,9 +240,24 @@ export function writePreparedConflict(
     );
   }
 
-  if (rebase.originalHead !== expectedRemoteTaskSha) {
+  if (rebase.originalHead !== trustedTaskCommitSha) {
     throw new Error(
-      "Cannot record prepared conflict: rebase original HEAD does not match the authoritative remote SHA",
+      "Cannot record prepared conflict: rebase original HEAD does not match the trusted task commit",
+    );
+  }
+
+  if (rebase.onto !== rebaseTargetSha) {
+    throw new Error(
+      "Cannot record prepared conflict: rebase target does not match the captured target",
+    );
+  }
+
+  if (
+    origin === "human-review-maintenance" &&
+    expectedRemoteTaskSha !== trustedTaskCommitSha
+  ) {
+    throw new Error(
+      "Cannot record Human Review prepared conflict: trusted commit does not match the authoritative remote SHA",
     );
   }
 
@@ -207,7 +290,7 @@ export function writePreparedConflict(
     );
   }
 
-  return result.data;
+  return handoff;
 }
 
 export function readPreparedConflicts(

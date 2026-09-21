@@ -1,3 +1,7 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ProjectConfig } from "../src/config/config.js";
@@ -11,6 +15,7 @@ import type { EmailNotifier } from "../src/notifications/email-notifier.js";
 import type { OpenCodeClient } from "../src/opencode/opencode-client.js";
 import { MAX_PULL_REQUEST_DESCRIPTION_SUMMARY_LENGTH } from "../src/opencode/pull-request-description.js";
 import { formatFailureDiagnostic } from "../src/orchestrator/failure-diagnostic.js";
+import { readPreparedConflict } from "../src/orchestrator/prepared-conflict-state.js";
 import { publishCard } from "../src/orchestrator/publish-card.js";
 import { WorkflowError } from "../src/orchestrator/workflow-error.js";
 import { type TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
@@ -110,8 +115,14 @@ function createPublicationGit(
   } as unknown as GitClient;
 }
 
+const temporaryDirectories: string[] = [];
+
 afterEach(() => {
   vi.unstubAllEnvs();
+
+  for (const directory of temporaryDirectories.splice(0)) {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 describe("publishCard", () => {
@@ -1323,6 +1334,98 @@ describe("publishCard", () => {
     expect(git.push).not.toHaveBeenCalled();
     expect(github.findPullRequest).not.toHaveBeenCalled();
     expect(trello.moveCard).not.toHaveBeenCalled();
+  });
+
+  it("remediates an initial publication rebase conflict before creating the PR", async () => {
+    const taskSha = "a".repeat(40);
+    const targetSha = "b".repeat(40);
+    const rebasedSha = "c".repeat(40);
+    const worktreeRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), "agent-orchestrator-publication-conflict-"),
+    );
+    temporaryDirectories.push(worktreeRoot);
+    const project = {
+      ...createProject(),
+      repository: { ...createProject().repository, worktreeRoot },
+    };
+    const card = createCard();
+    fs.mkdirSync(path.join(worktreeRoot, card.id));
+    const rebaseState = {
+      active: true as const,
+      backend: "merge" as const,
+      headName: "refs/heads/agent/card-1",
+      onto: targetSha,
+      originalHead: taskSha,
+      currentStep: 1,
+      totalSteps: 1,
+    };
+    const rebaseStates = [rebaseState, rebaseState, null];
+    const conflictedPaths = [["src/example.ts"], []];
+    const runOpenCode = vi
+      .fn()
+      .mockResolvedValueOnce({ exitCode: 0, output: "", errorOutput: "" })
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        output: JSON.stringify({
+          summary: "Published implementation",
+          changes: ["Resolved the publication conflict."],
+          validation: [],
+        }),
+        errorOutput: "",
+      });
+    const git = createPublicationGit({
+      rebase: vi.fn().mockRejectedValue(new Error("CONFLICT")),
+      getRebaseState: vi
+        .fn()
+        .mockImplementation(async () => rebaseStates.shift()),
+      getConflictedPaths: vi
+        .fn()
+        .mockImplementation(async () => conflictedPaths.shift() ?? []),
+      isValidRepository: vi.fn().mockResolvedValue(true),
+      getHeadSha: vi.fn().mockResolvedValue(rebasedSha),
+      isAncestor: vi.fn().mockResolvedValue(true),
+      getStatus: vi.fn().mockResolvedValue(""),
+      getChangedFiles: vi.fn().mockResolvedValue("src/example.ts"),
+      getCommitMessage: vi.fn().mockResolvedValue("publish implementation"),
+      push: vi.fn().mockResolvedValue(undefined),
+    });
+    const createPullRequest = vi.fn().mockResolvedValue({
+      url: "https://github.com/example/repository/pull/123",
+    });
+    const github = {
+      findPullRequest: vi.fn().mockResolvedValue(null),
+      createPullRequest,
+    } as unknown as GitHubClient;
+    const trello = {
+      moveCard: vi.fn().mockResolvedValue(card),
+      getListTransitions: vi.fn().mockResolvedValue([]),
+      addComment: vi.fn().mockResolvedValue(undefined),
+    } as unknown as TrelloClient;
+
+    await publishCard({
+      trello,
+      git,
+      github,
+      opencode: { run: runOpenCode } as unknown as OpenCodeClient,
+      project,
+      card,
+      worktreePath: path.join(worktreeRoot, card.id),
+      branch: "agent/card-1",
+      commitSha: taskSha,
+      reviewResult: "Passed",
+      remediationResult: "Not required",
+    });
+
+    expect(runOpenCode).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionLabel: "OpenCode conflict remediation",
+        prompt: expect.stringContaining("src/example.ts"),
+      }),
+    );
+    expect(git.push).toHaveBeenCalled();
+    expect(createPullRequest).toHaveBeenCalledOnce();
+    expect(readPreparedConflict(project, card.id)).toBeNull();
+    expect(trello.moveCard).toHaveBeenCalledWith(card.id, "review-list");
   });
 
   it("refuses a rebased branch when publication would not be fast-forward", async () => {

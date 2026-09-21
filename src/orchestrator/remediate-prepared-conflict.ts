@@ -40,6 +40,7 @@ import {
   WorkflowError,
   type WorkflowFailureCategory,
 } from "./workflow-error.js";
+import { writeTrustedCommitState } from "./trusted-commit-state.js";
 
 export const MAX_PREPARED_CONFLICT_REMEDIATION_ATTEMPTS = 3;
 
@@ -58,7 +59,7 @@ export interface RemediatePreparedConflictOptions {
   git: GitClient;
   github?: GitHubClient;
   opencode: OpenCodeClient;
-  commands: CommandRunner;
+  commands?: CommandRunner;
   project: ProjectConfig;
   card: TrelloCard;
   handoff: PreparedConflictHandoff;
@@ -92,7 +93,7 @@ function fail(
 ): PreparedConflictRemediationError {
   const failure = new PreparedConflictRemediationError(
     category,
-    `Could not remediate prepared rebase conflict for card "${options.card.name}" during ${operation}: ${getErrorMessage(error)}. The existing pull request, task branch, prepared-conflict handoff, and worktree were preserved.`,
+    `Could not remediate prepared rebase conflict for card "${options.card.name}" during ${operation}: ${getErrorMessage(error)}. The task branch, prepared-conflict handoff, and worktree were preserved.`,
     { cause: error },
   );
 
@@ -130,7 +131,8 @@ function createRemediationMaintenanceState(
     cardId: options.card.id,
     taskBranch: `agent/${options.card.id}`,
     defaultBranch: options.project.repository.defaultBranch,
-    remoteTaskSha: handoff.expectedRemoteTaskSha,
+    remoteTaskSha:
+      handoff.expectedRemoteTaskSha ?? handoff.trustedTaskCommitSha,
     remoteDefaultSha: handoff.rebase.onto,
     effectiveHeadSha: headSha,
     ...(setupCommand === undefined ? {} : { setupCommand }),
@@ -230,6 +232,10 @@ export async function remediatePreparedConflict(
 
     if (
       persistedHandoff === null ||
+      persistedHandoff.origin !== options.handoff.origin ||
+      persistedHandoff.trustedTaskCommitSha !==
+        options.handoff.trustedTaskCommitSha ||
+      persistedHandoff.rebaseTargetSha !== options.handoff.rebaseTargetSha ||
       persistedHandoff.expectedRemoteTaskSha !==
         options.handoff.expectedRemoteTaskSha ||
       persistedHandoff.preparedAt !== options.handoff.preparedAt
@@ -258,6 +264,41 @@ export async function remediatePreparedConflict(
       throw new Error(
         `Prepared remediation worktree ${worktree.path} is not a valid Git worktree`,
       );
+    }
+
+    if (
+      persistedHandoff.origin === "initial-publication" &&
+      options.project.repository.setupCommand !== undefined
+    ) {
+      if (options.commands === undefined) {
+        throw fail(
+          options,
+          "Setup",
+          "repository setup",
+          new Error("A command runner is required for configured setup"),
+        );
+      }
+
+      try {
+        const setup = await runRepositorySetup(options.commands, {
+          cwd: worktree.path,
+          command: options.project.repository.setupCommand,
+          timeoutMilliseconds: options.project.opencode.timeoutMinutes * 60_000,
+          signal: options.signal,
+          sessionLogPath,
+          sessionLabel:
+            "Repository setup for initial publication conflict remediation",
+        });
+
+        if (setup.exitCode !== 0) {
+          throw new Error(
+            `Repository setup exited with code ${setup.exitCode}`,
+          );
+        }
+      } catch (error) {
+        throwIfAborted(error);
+        throw fail(options, "Setup", "repository setup", error);
+      }
     }
 
     if (worktree.rebase !== null) {
@@ -393,6 +434,54 @@ export async function remediatePreparedConflict(
       );
     }
 
+    if (persistedHandoff.origin === "initial-publication") {
+      const finalStatus = await options.git.getStatus(worktree.path);
+
+      if (finalStatus.trim().length > 0) {
+        throw fail(
+          options,
+          "Git/GitHub",
+          "verifying publication state",
+          new Error(
+            `The remediated worktree has uncommitted changes:\n${finalStatus}`,
+          ),
+        );
+      }
+
+      try {
+        writeTrustedCommitState(options.project, options.card.id, {
+          version: 1,
+          kind: "trusted-commit",
+          projectId: options.project.id,
+          cardId: options.card.id,
+          taskBranch: branch,
+          defaultBranch: options.project.repository.defaultBranch,
+          commitSha: remediatedHead,
+        });
+      } catch (error) {
+        throw fail(
+          options,
+          "Git/GitHub",
+          "recording rebased trusted commit",
+          error,
+        );
+      }
+
+      clearPreparedConflict(options.project, options.card.id);
+      return;
+    }
+
+    const expectedRemoteTaskSha = persistedHandoff.expectedRemoteTaskSha;
+
+    if (expectedRemoteTaskSha === undefined) {
+      throw fail(
+        options,
+        "Git/GitHub",
+        "authoritative remote SHA verification",
+        new Error("The Human Review prepared conflict has no remote task SHA"),
+      );
+    }
+
     const setupCommand = options.project.repository.setupCommand;
     let recordedState: ReviewMaintenanceState | null;
 
@@ -414,14 +503,14 @@ export async function remediatePreparedConflict(
       options,
       worktree.path,
       branch,
-      persistedHandoff.expectedRemoteTaskSha,
+      expectedRemoteTaskSha,
       "authoritative remote SHA verification before setup reuse",
     );
 
     const stateMatches =
       recordedState !== null &&
       matchesReviewMaintenanceRepositoryState(recordedState, {
-        remoteTaskSha: persistedHandoff.expectedRemoteTaskSha,
+        remoteTaskSha: expectedRemoteTaskSha,
         remoteDefaultSha: persistedHandoff.rebase.onto,
         effectiveHeadSha: remediatedHead,
         ...(setupCommand === undefined ? {} : { setupCommand }),
@@ -431,6 +520,15 @@ export async function remediatePreparedConflict(
       setupCommand !== undefined &&
       (!stateMatches || recordedState?.setupCompleted !== true)
     ) {
+      if (options.commands === undefined) {
+        throw fail(
+          options,
+          "Setup",
+          "repository setup",
+          new Error("A command runner is required for configured setup"),
+        );
+      }
+
       try {
         const setup = await runRepositorySetup(options.commands, {
           cwd: worktree.path,
@@ -482,7 +580,7 @@ export async function remediatePreparedConflict(
       options,
       worktree.path,
       branch,
-      persistedHandoff.expectedRemoteTaskSha,
+      expectedRemoteTaskSha,
       "authoritative remote SHA verification",
     );
 
@@ -497,7 +595,7 @@ export async function remediatePreparedConflict(
       worktree.path,
       "origin",
       branch,
-      persistedHandoff.expectedRemoteTaskSha,
+      expectedRemoteTaskSha,
       options.project,
     );
 
