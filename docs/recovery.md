@@ -28,9 +28,11 @@ Each exhausted Trello or GitHub reconciliation is also recorded outside Git at
 operation, recorded reconciliation list, failure category and reason, retry key, recovery condition, and notification
 identity. It is runtime state, not card context or repository state, and must remain below the configured `contextRoot`.
 
-Before normal startup reconciliation, the service cleans only stale temporary files from the three persisted-state writers. It
+Before normal startup reconciliation, the service cleans only stale temporary files from the five persisted-state writers. It
 recognizes `<worktreeRoot>/.orchestrator/review-maintenance/<project-id>/<card-id>.json.<process-id>.tmp`,
 `<worktreeRoot>/.orchestrator/prepared-conflicts/<project-id>/<card-id>.json.<process-id>.tmp`, and
+`<worktreeRoot>/.orchestrator/trusted-commits/<project-id>/<card-id>.json.<process-id>.tmp`, and
+`<worktreeRoot>/.orchestrator/rejected-commits/<project-id>/<card-id>.json.<process-id>.tmp`, and
 `<contextRoot>/<project-id>/.reconciliation-block.json.<process-id>.<unique-suffix>`. A candidate is removed only when it is a
 regular file and its recorded writer process has stopped; a file from an active writer is retained. Missing directories and
 concurrent disappearance are harmless. Authoritative state, including malformed state retained for diagnosis, directories,
@@ -254,8 +256,8 @@ launch the exhausted operation, the file is retained unchanged, and an actionabl
 Other project workers continue independently. A failed block write or removal is reported and does not turn an unresolved or
 uncertain external operation into a successful recovery.
 
-The three authoritative orchestrator JSON stores, including the reconciliation block above, prepared-conflict handoffs, and
-review-maintenance records, have the same fixed 1 MiB file-size guard. The service checks the file size before reading or parsing
+The five authoritative orchestrator JSON stores, including the reconciliation block above, prepared-conflict handoffs,
+review-maintenance records, trusted committed-implementation records, and rejected-commit records, have the same fixed 1 MiB file-size guard. The service checks the file size before reading or parsing
 its contents. An oversized file is treated as malformed persisted state: the affected path and size-limit failure are included in
 the concise diagnostic, but persisted contents are not. The original file is preserved for investigation. Reconciliation keeps
 its malformed project-blocking path, while prepared-conflict and review-maintenance records keep their existing recovery and
@@ -295,15 +297,21 @@ human-review reconciliation path, so enabling `autoMerge` does not reinterpret a
 To retry, move the card from `Failed` to `Ready for Agent`. That transition is the explicit operator instruction used by
 failure comments and failure emails. The orchestrator does not automatically retry `Failed` cards.
 
-When the expected worktree and `agent/<trello-card-id>` branch remain valid, the retry reuses them. A clean worktree whose
-branch has tracked committed changes relative to `origin/<defaultBranch>` is treated as completed implementation work. The
-retry skips setup, implementation, review, remediation, and commit, then resumes publication.
+When the expected worktree and `agent/<trello-card-id>` branch remain valid, the retry reuses them. A clean worktree is treated
+as completed implementation work only when its branch has tracked committed changes relative to `origin/<defaultBranch>` and the
+card's trusted committed-implementation record identifies the current `HEAD` as orchestrator-created. The retry skips setup,
+implementation, review, remediation, and commit, then resumes publication.
 
 An existing worktree or branch alone is not proof of completed implementation:
 
 - A branch at its base, a branch with no tracked committed changes, or a dirty worktree follows the normal implementation
   path.
 - Uncommitted work is preserved for OpenCode to inspect rather than treated as a completed implementation.
+- A committed branch without matching trusted orchestrator state follows the normal implementation path; it is never published
+  merely because it is clean and differs from the default branch.
+- A trusted record for a different `HEAD` is rejected, including when a commit-message session created the current commit.
+- A commit created by a rejected commit-message session poisons that commit's lineage; descendant commits are not trusted unless
+  the task branch is explicitly reset off the rejected commit.
 - Before publication, the retry fetches and rebases onto the latest `origin/<defaultBranch>`.
 - A rebase conflict or an existing remote branch that would require a non-fast-forward update stops publication and preserves
   the task worktree and branch for diagnosis and another deliberate retry.

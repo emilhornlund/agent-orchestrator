@@ -6,6 +6,10 @@ import { logger } from "../logging/logger.js";
 import { getPreparedConflictStateDirectory } from "./prepared-conflict-state.js";
 import { getReconciliationBlockStateDirectory } from "./reconciliation-block-storage.js";
 import { getReviewMaintenanceStateDirectory } from "./review-maintenance-state.js";
+import {
+  getRejectedCommitStateDirectory,
+  getTrustedCommitStateDirectory,
+} from "./trusted-commit-state.js";
 
 const cardStateTemporaryFilePattern = /^.+\.json\.([1-9]\d*)\.tmp$/;
 const reconciliationBlockTemporaryFilePattern =
@@ -195,6 +199,14 @@ function cleanupProjectPersistedStateTemporaryFiles(
   const directories = [
     {
       getPath: () => getReviewMaintenanceStateDirectory(project),
+      pattern: cardStateTemporaryFilePattern,
+    },
+    {
+      getPath: () => getTrustedCommitStateDirectory(project),
+      pattern: cardStateTemporaryFilePattern,
+    },
+    {
+      getPath: () => getRejectedCommitStateDirectory(project),
       pattern: cardStateTemporaryFilePattern,
     },
     {

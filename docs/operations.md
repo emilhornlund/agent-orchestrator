@@ -45,7 +45,7 @@ preserve the file for investigation and repair it only as an explicit runtime-st
 
 ### Persisted-state size guard
 
-The reconciliation block, prepared-conflict handoff, and review-maintenance record are authoritative JSON state files. Each is
+The reconciliation block, prepared-conflict handoff, review-maintenance record, trusted committed-implementation record, and rejected-commit record are authoritative JSON state files. Each is
 limited by the same fixed 1 MiB upper bound; this is an implementation safety limit, not a configuration option. The service
 checks the filesystem byte size before reading a file for JSON parsing. A file above the limit is rejected as malformed state, and
 the diagnostic identifies the affected path and size-limit failure without logging its contents.

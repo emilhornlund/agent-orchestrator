@@ -101,6 +101,12 @@ import {
   type RequestedChangeNoOpInput,
 } from "./requested-change-no-op-state.js";
 import { trelloReconciliationError } from "./trello-reconciliation-error.js";
+import {
+  readRejectedCommitState,
+  readTrustedCommitState,
+  writeRejectedCommitState,
+  writeTrustedCommitState,
+} from "./trusted-commit-state.js";
 
 export type PollingProject = ProjectConfig & {
   contextRoot?: string;
@@ -168,16 +174,45 @@ function reportHousekeepingFailure(
 async function detectReusableImplementation(
   git: GitClient,
   project: ProjectConfig,
+  cardId: string,
   worktreePath: string,
   initialStatus?: string,
-): Promise<boolean> {
+): Promise<string | null> {
   try {
-    return await hasCommittedImplementation(
+    const hasCommittedWork = await hasCommittedImplementation(
       git,
       worktreePath,
       `origin/${project.repository.defaultBranch}`,
       initialStatus,
     );
+
+    if (!hasCommittedWork) {
+      return null;
+    }
+
+    const trustedState = readTrustedCommitState(project, cardId);
+
+    if (trustedState === null) {
+      return null;
+    }
+
+    const currentHead = await git.getHeadSha(worktreePath);
+
+    const rejectedState = readRejectedCommitState(project, cardId);
+
+    if (
+      rejectedState !== null &&
+      (rejectedState.commitSha === currentHead ||
+        (await git.isAncestor(
+          worktreePath,
+          rejectedState.commitSha,
+          currentHead,
+        )))
+    ) {
+      return null;
+    }
+
+    return trustedState.commitSha === currentHead ? currentHead : null;
   } catch (error) {
     const stateError = toFailureError(error);
 
@@ -992,16 +1027,18 @@ async function processCardChanges(
     ? undefined
     : (worktree as PreparedImplementationWorktree);
 
-  if (
-    implementationWorktree?.reused &&
-    (await detectReusableImplementation(
-      git,
-      project,
-      worktree.path,
-      implementationWorktree.initialStatus,
-    ))
-  ) {
-    const commitSha = await git.getHeadSha(worktree.path);
+  const reusableCommitSha = implementationWorktree?.reused
+    ? await detectReusableImplementation(
+        git,
+        project,
+        card.id,
+        worktree.path,
+        implementationWorktree.initialStatus,
+      )
+    : null;
+
+  if (reusableCommitSha !== null) {
+    const commitSha = reusableCommitSha;
 
     cardLog.event(
       `Reusing committed implementation ${commitSha}; skipping implementation stages`,
@@ -1340,6 +1377,33 @@ async function processCardChanges(
     worktree.path,
   );
 
+  const headAfterCommitMessage = await git.getHeadSha(worktree.path);
+
+  if (headAfterCommitMessage !== headBeforeCommit) {
+    try {
+      writeRejectedCommitState(project, card.id, {
+        version: 1,
+        kind: "rejected-commit",
+        projectId: project.id,
+        cardId: card.id,
+        taskBranch: worktree.branch,
+        defaultBranch: project.repository.defaultBranch,
+        commitSha: headAfterCommitMessage,
+      });
+    } catch (error) {
+      throw new WorkflowError(
+        "Git/GitHub",
+        `Could not persist rejected commit state: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+    }
+
+    throw new WorkflowError(
+      "OpenCode",
+      "OpenCode commit-message session created or changed a commit",
+    );
+  }
+
   if (
     !repositorySnapshotsEqual(
       repositorySnapshotBeforeCommitMessage,
@@ -1349,15 +1413,6 @@ async function processCardChanges(
     throw new WorkflowError(
       "OpenCode",
       "OpenCode commit-message session modified repository status or diff",
-    );
-  }
-
-  const headAfterCommitMessage = await git.getHeadSha(worktree.path);
-
-  if (headAfterCommitMessage !== headBeforeCommit) {
-    throw new WorkflowError(
-      "OpenCode",
-      "OpenCode commit-message session created or changed a commit",
     );
   }
 
@@ -1407,6 +1462,41 @@ async function processCardChanges(
     throw new WorkflowError(
       "Git/GitHub",
       `Git commit left repository changes:\n${statusAfterCommit}`,
+    );
+  }
+
+  const rejectedState = readRejectedCommitState(project, card.id);
+
+  if (
+    rejectedState !== null &&
+    (rejectedState.commitSha === headAfterCommit ||
+      (await git.isAncestor(
+        worktree.path,
+        rejectedState.commitSha,
+        headAfterCommit,
+      )))
+  ) {
+    throw new WorkflowError(
+      "Git/GitHub",
+      `Refusing to trust commit ${headAfterCommit}: it descends from rejected commit ${rejectedState.commitSha}. Reset the task branch off the rejected commit before retrying.`,
+    );
+  }
+
+  try {
+    writeTrustedCommitState(project, card.id, {
+      version: 1,
+      kind: "trusted-commit",
+      projectId: project.id,
+      cardId: card.id,
+      taskBranch: worktree.branch,
+      defaultBranch: project.repository.defaultBranch,
+      commitSha: headAfterCommit,
+    });
+  } catch (error) {
+    throw new WorkflowError(
+      "Git/GitHub",
+      `Could not persist trusted committed implementation: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
     );
   }
 
