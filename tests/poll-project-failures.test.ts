@@ -20,6 +20,11 @@ import {
 import { pollProject } from "../src/orchestrator/poll-project.js";
 import { getCommitResultPath } from "../src/opencode/commit-result.js";
 import {
+  getRejectedCommitStatePath,
+  getTrustedCommitStatePath,
+  writeTrustedCommitState,
+} from "../src/orchestrator/trusted-commit-state.js";
+import {
   MAX_TRELLO_CARD_DISCOVERY_ATTEMPTS,
   TrelloListDiscoveryError,
 } from "../src/orchestrator/trello-list-discovery.js";
@@ -1758,6 +1763,177 @@ describe("pollProject failure boundaries", () => {
     );
   });
 
+  it("does not reuse a commit created by the rejected commit session", async () => {
+    await withScenario(
+      {
+        statusOutputs: [
+          " M src/example.ts",
+          " M src/example.ts",
+          " M src/example.ts",
+        ],
+        headOutputs: ["before-commit", "agent-created-commit"],
+        changedFilesOutputs: ["", "src/example.ts"],
+        openCodeResults: [
+          { exitCode: 0, output: "" },
+          { exitCode: 0, output: "REVIEW_PASS" },
+          { exitCode: 0, output: "" },
+          { exitCode: 0, output: "" },
+        ],
+      },
+      async (scenario) => {
+        await expect(
+          pollProject(
+            scenario.trello,
+            scenario.git,
+            scenario.github,
+            scenario.openCode,
+            scenario.commands,
+            scenario.project,
+            scenario.signal,
+          ),
+        ).rejects.toThrow(
+          "OpenCode commit-message session created or changed a commit",
+        );
+
+        await expect(
+          pollProject(
+            scenario.trello,
+            scenario.git,
+            scenario.github,
+            scenario.openCode,
+            scenario.commands,
+            scenario.project,
+            scenario.signal,
+          ),
+        ).rejects.toThrow("OpenCode completed without repository changes");
+
+        expect(scenario.events).not.toContain("push");
+        expect(scenario.events).not.toContain("pr");
+        expect(
+          fs.existsSync(
+            getTrustedCommitStatePath(scenario.project, scenario.card.id),
+          ),
+        ).toBe(false);
+        expect(scenario.runOpenCode.mock.calls[3]?.[0].sessionLabel).toBe(
+          "OpenCode implementation",
+        );
+      },
+    );
+  });
+
+  it("does not trust a later commit that descends from a rejected commit", async () => {
+    await withScenario(
+      {
+        statusOutputs: [
+          " M src/example.ts",
+          " M src/example.ts",
+          " M src/example.ts",
+          "",
+          " M src/example.ts",
+          " M src/example.ts",
+          " M src/example.ts",
+          "",
+        ],
+        headOutputs: [
+          "before-commit",
+          "rejected-commit",
+          "recovery-before-commit",
+          "recovery-before-commit",
+          "recovery-commit",
+        ],
+        changedFilesOutputs: ["", "src/example.ts"],
+        openCodeResults: [
+          { exitCode: 0, output: "" },
+          { exitCode: 0, output: "REVIEW_PASS" },
+          { exitCode: 0, output: "" },
+          { exitCode: 0, output: "" },
+          { exitCode: 0, output: "REVIEW_PASS" },
+          { exitCode: 0, output: "" },
+        ],
+      },
+      async (scenario) => {
+        await expect(
+          pollProject(
+            scenario.trello,
+            scenario.git,
+            scenario.github,
+            scenario.openCode,
+            scenario.commands,
+            scenario.project,
+            scenario.signal,
+          ),
+        ).rejects.toThrow(
+          "OpenCode commit-message session created or changed a commit",
+        );
+
+        await expect(
+          pollProject(
+            scenario.trello,
+            scenario.git,
+            scenario.github,
+            scenario.openCode,
+            scenario.commands,
+            scenario.project,
+            scenario.signal,
+          ),
+        ).rejects.toThrow(
+          "Refusing to trust commit recovery-commit: it descends from rejected commit rejected-commit",
+        );
+
+        expect(scenario.events).not.toContain("push");
+        expect(scenario.events).not.toContain("pr");
+        expect(
+          fs.existsSync(
+            getRejectedCommitStatePath(scenario.project, scenario.card.id),
+          ),
+        ).toBe(true);
+        expect(
+          fs.existsSync(
+            getTrustedCommitStatePath(scenario.project, scenario.card.id),
+          ),
+        ).toBe(false);
+      },
+    );
+  });
+
+  it("does not reuse a trusted commit state whose SHA is stale", async () => {
+    await withScenario(
+      {
+        changedFilesOutputs: ["src/example.ts"],
+        headOutputs: ["current-head"],
+        openCodeResults: [{ exitCode: 1, output: "implementation failed" }],
+      },
+      async (scenario) => {
+        writeTrustedCommitState(scenario.project, scenario.card.id, {
+          version: 1,
+          kind: "trusted-commit",
+          projectId: scenario.project.id,
+          cardId: scenario.card.id,
+          taskBranch: `agent/${scenario.card.id}`,
+          defaultBranch: scenario.project.repository.defaultBranch,
+          commitSha: "stale-head",
+        });
+
+        await expect(
+          pollProject(
+            scenario.trello,
+            scenario.git,
+            scenario.github,
+            scenario.openCode,
+            scenario.commands,
+            scenario.project,
+            scenario.signal,
+          ),
+        ).rejects.toThrow("OpenCode implementation exited with code 1");
+
+        expect(scenario.runOpenCode).toHaveBeenCalledOnce();
+        expect(scenario.runOpenCode.mock.calls[0]?.[0].sessionLabel).toBe(
+          "OpenCode implementation",
+        );
+      },
+    );
+  });
+
   it("continues publication with the fallback for invalid description output", async () => {
     await withScenario(
       {
@@ -1883,6 +2059,14 @@ describe("pollProject failure boundaries", () => {
           scenario.card.id,
           scenario.project.trello.reviewListId,
         );
+        expect(
+          JSON.parse(
+            fs.readFileSync(
+              getTrustedCommitStatePath(scenario.project, scenario.card.id),
+              "utf8",
+            ),
+          ).commitSha,
+        ).toBe("after-commit");
       },
     );
   });

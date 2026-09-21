@@ -32,6 +32,7 @@ import {
 import { PublishedCardStateError } from "./published-card-state-error.js";
 import { getElapsedWorkflowTime } from "./workflow-duration.js";
 import { WorkflowError } from "./workflow-error.js";
+import { writeTrustedCommitState } from "./trusted-commit-state.js";
 
 export interface PublishCardOptions {
   trello: TrelloClient;
@@ -286,6 +287,7 @@ export async function publishCard({
   card,
   worktreePath,
   branch,
+  commitSha,
   reviewResult,
   remediationResult,
   pullRequestDescription,
@@ -363,6 +365,31 @@ export async function publishCard({
     publishedCommitSha = await git.getHeadSha(worktreePath);
 
     cardLog.event(`Publication commit is ${publishedCommitSha}`);
+
+    if (
+      typeof commitSha === "string" &&
+      typeof publishedCommitSha === "string" &&
+      publishedCommitSha.length > 0 &&
+      publishedCommitSha !== commitSha
+    ) {
+      try {
+        writeTrustedCommitState(project, card.id, {
+          version: 1,
+          kind: "trusted-commit",
+          projectId: project.id,
+          cardId: card.id,
+          taskBranch: branch,
+          defaultBranch: project.repository.defaultBranch,
+          commitSha: publishedCommitSha,
+        });
+      } catch (error) {
+        throw new WorkflowError(
+          "Git/GitHub",
+          `Could not persist rebased trusted committed implementation: ${error instanceof Error ? error.message : String(error)}`,
+          { cause: error },
+        );
+      }
+    }
 
     if (opencode !== undefined) {
       finalPullRequestDescription = await generatePullRequestDescription({
