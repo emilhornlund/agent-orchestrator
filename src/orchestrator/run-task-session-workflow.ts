@@ -5,7 +5,13 @@ import type { ProjectConfig } from "../config/config.js";
 import type { CardAttachmentPromptContext } from "../context/card-attachment-prompt.js";
 import type { GitClient } from "../git/git-client.js";
 import { prepareWorktree } from "../git/prepare-worktree.js";
-import type { GitHubClient } from "../github/github-client.js";
+import type {
+  CiCheckObservation,
+  FailedCheckDiagnostic,
+  GitHubClient,
+} from "../github/github-client.js";
+import { establishCiCheckExpectations } from "../github/ci-check-expectations.js";
+import { evaluateCiChecks } from "../github/evaluate-ci-checks.js";
 import { logger } from "../logging/logger.js";
 import { getSessionLogPath } from "../logging/session-log.js";
 import type { EmailNotifier } from "../notifications/email-notifier.js";
@@ -279,18 +285,28 @@ async function readTaskSessionRecoverySnapshot(options: {
   }
 
   const authoritativeHead = pullRequest?.headSha ?? headSha;
-  const requiredChecks = project.repository.requiredChecks ?? [];
-  const checkResult =
+  const ciObservation =
     (record.phase === "ci" || record.phase === "human-feedback") &&
     authoritativeHead !== undefined
-      ? await github.getRequiredChecks({
+      ? await github.getCiObservations({
           cwd: project.repository.path,
           repository: project.repository.github,
+          defaultBranch: project.repository.defaultBranch,
           headSha: authoritativeHead,
-          requiredChecks,
           project,
         })
       : null;
+  const ciEvaluation =
+    ciObservation === null || authoritativeHead === undefined
+      ? null
+      : evaluateCiChecks({
+          expectedHeadSha: authoritativeHead,
+          observedHeadSha: ciObservation.headSha,
+          expectations: establishCiCheckExpectations(
+            ciObservation.expectationSources,
+          ),
+          checks: ciObservation.checks,
+        });
   const remoteBranchHeadSha =
     record.phase === "publication" ||
     record.phase === "ci" ||
@@ -314,8 +330,7 @@ async function readTaskSessionRecoverySnapshot(options: {
     remoteBranchHeadSha,
     trelloListId: card.idList,
     pullRequest,
-    checkHeadSha: checkResult?.headSha ?? null,
-    checks: checkResult?.checks ?? [],
+    ciEvaluation,
     feedbackHeadSha:
       record.phase === "human-feedback"
         ? (record.reviewObservation?.headSha ?? null)
@@ -323,6 +338,47 @@ async function readTaskSessionRecoverySnapshot(options: {
     uncertainReplyIds: [],
     reconciledReplyIds: [],
   };
+}
+
+async function collectCiFailureDiagnostics(
+  github: GitHubClient,
+  project: ProjectConfig,
+  headSha: string,
+  failures: readonly CiCheckObservation[],
+): Promise<FailedCheckDiagnostic[]> {
+  const checkRunFailures = failures.filter(
+    (
+      failure,
+    ): failure is Extract<CiCheckObservation, { source: "check-run" }> =>
+      failure.source === "check-run",
+  );
+  const checkRunDiagnostics =
+    checkRunFailures.length === 0
+      ? []
+      : await github.getCiCheckRunDiagnostics({
+          cwd: project.repository.path,
+          repository: project.repository.github,
+          headSha,
+          checks: checkRunFailures,
+          project,
+        });
+  const statusDiagnostics: FailedCheckDiagnostic[] = failures
+    .filter(
+      (
+        failure,
+      ): failure is Extract<CiCheckObservation, { source: "commit-status" }> =>
+        failure.source === "commit-status",
+    )
+    .map((failure) => ({
+      name: failure.context,
+      headSha,
+      logUrl: failure.url,
+      available: failure.description !== null,
+      diagnostic:
+        failure.description ??
+        `Commit status ${failure.context} concluded ${failure.state}${failure.url === null ? "" : ` (${failure.url})`}`,
+    }));
+  return [...checkRunDiagnostics, ...statusDiagnostics];
 }
 
 /** Executes one new Ready for Agent implementation through the task-session gates. */
@@ -340,16 +396,11 @@ export async function runTaskSessionWorkflow(
     emailNotifier,
   } = options;
   const validationCommand = project.repository.validationCommand;
-  const requiredChecks = project.repository.requiredChecks;
   if (
     validationCommand === undefined ||
-    validationCommand.trim().length === 0 ||
-    requiredChecks === undefined ||
-    requiredChecks.length === 0
+    validationCommand.trim().length === 0
   ) {
-    throw new Error(
-      "Task-session workflow requires validationCommand and requiredChecks configuration",
-    );
+    throw new Error("Unified workflow requires repository.validationCommand");
   }
   const root = project.contextRoot;
   if (root === undefined)
@@ -518,7 +569,7 @@ export async function runTaskSessionWorkflow(
     if (
       record !== null &&
       record.phase === "human-feedback" &&
-      observation.checks.some((check) => check.status === "failed")
+      observation.ciEvaluation.status === "failed"
     ) {
       taskStore.compareAndSwap(
         record.cardId,
@@ -535,7 +586,13 @@ export async function runTaskSessionWorkflow(
       record = taskStore.read(observation.cardId);
     }
     if (record === null || record.phase !== "ci") continue;
-    if (observation.checks.some((check) => check.status === "failed")) {
+    if (
+      observation.ciEvaluation.status === "waiting" ||
+      observation.ciEvaluation.status === "uncertain"
+    ) {
+      continue;
+    }
+    if (observation.ciEvaluation.status === "failed") {
       const ciEventId = `ci-repair:${observation.cardId}:${observation.headSha}`;
       queue.enqueue({
         projectId: project.id,
@@ -731,24 +788,25 @@ export async function runTaskSessionWorkflow(
           operationKey,
           expectedPrimarySessionId: record.primarySessionId,
           headSha: observation.headSha,
-          observeChecks: async (headSha) =>
-            (
-              await github.getRequiredChecks({
-                cwd: project.repository.path,
-                repository: project.repository.github,
-                headSha,
-                requiredChecks,
-                project,
-              })
-            ).checks,
-          collectDiagnostics: async (headSha, checks) =>
-            github.getRequiredCheckDiagnostics({
+          observeChecks: async (headSha) => {
+            const ciObservation = await github.getCiObservations({
               cwd: project.repository.path,
               repository: project.repository.github,
+              defaultBranch: project.repository.defaultBranch,
               headSha,
-              checks,
               project,
-            }),
+            });
+            return evaluateCiChecks({
+              expectedHeadSha: headSha,
+              observedHeadSha: ciObservation.headSha,
+              expectations: establishCiCheckExpectations(
+                ciObservation.expectationSources,
+              ),
+              checks: ciObservation.checks,
+            });
+          },
+          collectDiagnostics: (headSha, failures) =>
+            collectCiFailureDiagnostics(github, project, headSha, failures),
           repairPrimarySession: async (diagnostics, attempt, sessionId) => {
             const failedHeadSha = diagnostics[0]?.headSha;
             if (
@@ -1044,16 +1102,7 @@ export async function runTaskSessionWorkflow(
       }
       continue;
     }
-    const checksPassed =
-      observation.checks.length === requiredChecks.length &&
-      requiredChecks.every((name) =>
-        observation.checks.some(
-          (check) =>
-            check.name === name &&
-            check.headSha === observation.headSha &&
-            check.status === "succeeded",
-        ),
-      );
+    const checksPassed = observation.ciEvaluation.status === "passed";
     if (!checksPassed) continue;
     if (!project.autoMerge || observation.feedbackIds.length > 0) {
       taskStore.compareAndSwap(
@@ -1117,8 +1166,7 @@ export async function runTaskSessionWorkflow(
     const readiness = {
       expectedHeadSha: observation.headSha,
       observedHeadSha: observation.headSha,
-      requiredCheckNames: requiredChecks,
-      checks: observation.checks,
+      ciEvaluation: observation.ciEvaluation,
       localEvidence: {
         currentContentIdentity: currentIdentity,
         validationCommand,
@@ -2107,14 +2155,22 @@ export async function runTaskSessionWorkflow(
     });
     taskStore.compareAndSwap(activeCard.id, current.revision, ci);
     if (project.autoMerge) {
-      const checkResult = await github.getRequiredChecks({
+      const ciObservation = await github.getCiObservations({
         cwd: project.repository.path,
         repository: project.repository.github,
+        defaultBranch: project.repository.defaultBranch,
         headSha: publishedSha,
-        requiredChecks,
         project,
       });
-      if (checkResult.checks.every((check) => check.status === "succeeded")) {
+      const ciEvaluation = evaluateCiChecks({
+        expectedHeadSha: publishedSha,
+        observedHeadSha: ciObservation.headSha,
+        expectations: establishCiCheckExpectations(
+          ciObservation.expectationSources,
+        ),
+        checks: ciObservation.checks,
+      });
+      if (ciEvaluation.status === "passed") {
         await mergeTaskSessionPullRequest(
           github,
           project,
@@ -2125,8 +2181,7 @@ export async function runTaskSessionWorkflow(
           {
             expectedHeadSha: publishedSha,
             observedHeadSha: publishedSha,
-            requiredCheckNames: requiredChecks,
-            checks: checkResult.checks,
+            ciEvaluation,
             localEvidence: preparedEvidence,
           },
           signal,

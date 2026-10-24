@@ -246,18 +246,7 @@ export async function runTaskSessionFeedbackCycle(
       "Feedback remediation requires an independently verified plan",
     );
   const ledgerBeforeSync = ledgerStore.read(card.id);
-  const checksReady =
-    observation.checks.length ===
-      (project.repository.requiredChecks?.length ?? 0) &&
-    project.repository.requiredChecks !== undefined &&
-    project.repository.requiredChecks.every((name) =>
-      observation.checks.some(
-        (check) =>
-          check.name === name &&
-          check.headSha === observation.headSha &&
-          check.status === "succeeded",
-      ),
-    );
+  const checksReady = observation.ciEvaluation.status === "passed";
   if (
     checksReady &&
     ledgerBeforeSync !== null &&
@@ -335,8 +324,7 @@ export async function runTaskSessionFeedbackCycle(
         pullRequestUrl: record.pullRequest!.url,
         publishedCommitSha: observation.headSha,
         observedHeadSha: observation.headSha,
-        requiredCheckNames: project.repository.requiredChecks ?? [],
-        checks: observation.checks,
+        ciEvaluation: observation.ciEvaluation,
         verification,
         ledgerStore,
         reconcileReply: async (entry, marker) => {

@@ -32,7 +32,6 @@ function fixture() {
       worktreeRoot,
       github: "owner/repo",
       defaultBranch: "main",
-      requiredChecks: ["Build", "Tests"],
     },
     trello: {
       workingListId: "working",
@@ -89,15 +88,25 @@ function fixture() {
         };
       },
     ),
-    getRequiredChecks: vi.fn(async ({ headSha }: { headSha: string }) => ({
+    getCiObservations: vi.fn(async ({ headSha }: { headSha: string }) => ({
       headSha,
-      checks: ["Build", "Tests"].map((name) => ({
+      checks: ["Build", "Tests"].map((name, index) => ({
+        source: "check-run" as const,
+        id: index + 1,
         name,
         headSha,
-        status: "queued" as const,
-        conclusion: null,
-        diagnostic: "",
+        status: "completed",
+        conclusion: "success",
+        url: null,
       })),
+      expectationSources: [
+        {
+          kind: "repository-rules" as const,
+          sourceId: "rules",
+          complete: true,
+          checkNames: ["Build", "Tests"],
+        },
+      ],
     })),
     findChangesRequestedPullRequest: vi.fn(
       async ({ headBranch }: { headBranch: string }) => ({
@@ -166,9 +175,9 @@ describe("observeTaskSessionReviewCards", () => {
     expect(
       (
         f.github as unknown as {
-          getRequiredChecks: { mock: { calls: unknown[][] } };
+          getCiObservations: { mock: { calls: unknown[][] } };
         }
-      ).getRequiredChecks.mock.calls,
+      ).getCiObservations.mock.calls,
     ).toHaveLength(2);
   });
 
@@ -201,7 +210,7 @@ describe("observeTaskSessionReviewCards", () => {
           pullRequestUrl: "https://github.com/owner/repo/pull/1",
         },
       ]);
-      expect(f.github.getRequiredChecks).not.toHaveBeenCalled();
+      expect(f.github.getCiObservations).not.toHaveBeenCalled();
       expect(f.store.read("card-one")?.reviewObservation).toBeUndefined();
     },
   );

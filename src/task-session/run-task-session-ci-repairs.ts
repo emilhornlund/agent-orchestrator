@@ -1,7 +1,8 @@
 import type {
+  CiCheckObservation,
   FailedCheckDiagnostic,
-  RequiredCheckObservation,
 } from "../github/github-client.js";
+import type { CiCheckEvaluation } from "../github/evaluate-ci-checks.js";
 import type { TaskExecutionRecord } from "./task-execution-record.js";
 import { TaskExecutionStore } from "./task-execution-store.js";
 
@@ -13,13 +14,13 @@ export type TaskSessionCiRepairResult =
       status: "waiting";
       attempts: number;
       headSha: string;
-      checks: RequiredCheckObservation[];
+      evaluation: CiCheckEvaluation;
     }
   | {
       status: "exhausted";
       attempts: number;
       headSha: string;
-      checks: RequiredCheckObservation[];
+      failures: CiCheckObservation[];
     };
 
 export interface RunTaskSessionCiRepairsOptions {
@@ -29,10 +30,10 @@ export interface RunTaskSessionCiRepairsOptions {
   operationKey: string;
   expectedPrimarySessionId: string;
   headSha: string;
-  observeChecks: (headSha: string) => Promise<RequiredCheckObservation[]>;
+  observeChecks: (headSha: string) => Promise<CiCheckEvaluation>;
   collectDiagnostics: (
     headSha: string,
-    checks: readonly RequiredCheckObservation[],
+    failures: readonly CiCheckObservation[],
   ) => Promise<FailedCheckDiagnostic[]>;
   repairPrimarySession: (
     diagnostics: readonly FailedCheckDiagnostic[],
@@ -85,12 +86,6 @@ function ownerRecord(
   return record;
 }
 
-function allSucceeded(checks: readonly RequiredCheckObservation[]): boolean {
-  return (
-    checks.length > 0 && checks.every((check) => check.status === "succeeded")
-  );
-}
-
 export async function runTaskSessionCiRepairs(
   options: RunTaskSessionCiRepairsOptions,
 ): Promise<TaskSessionCiRepairResult> {
@@ -105,37 +100,41 @@ export async function runTaskSessionCiRepairs(
   }
 
   for (;;) {
-    const checks = await options.observeChecks(headSha);
-    if (checks.some((check) => check.headSha !== headSha)) {
+    const evaluation = await options.observeChecks(headSha);
+    if (evaluation.expectedHeadSha !== headSha) {
       throw new TaskSessionCiRepairError(
-        "Required check observation belongs to a stale PR head",
+        "Complete CI evaluation belongs to a different PR head",
       );
     }
-    if (allSucceeded(checks)) {
+    if (evaluation.status === "passed") {
       record = ownerRecord(options, record.pullRequest?.headSha);
       updateRecord(options.store, record, {
         ciRepair: { cycleId, headSha, status: "passed" },
       });
       return { status: "passed", attempts: record.retryCounters.ci, headSha };
     }
-    const failed = checks.some((check) => check.status === "failed");
-    if (!failed) {
+    if (evaluation.status === "waiting" || evaluation.status === "uncertain") {
       return {
         status: "waiting",
         attempts: record.retryCounters.ci,
         headSha,
-        checks,
+        evaluation,
       };
     }
+    const failures = evaluation.failures;
+    if (failures.length === 0)
+      throw new TaskSessionCiRepairError(
+        "Failed CI evaluation did not include any terminal check failures",
+      );
     const attempt = record.retryCounters.ci;
     if (attempt >= MAX_CI_REPAIR_ATTEMPTS) {
       updateRecord(options.store, record, {
         phase: "attention-required",
         ciRepair: { cycleId, headSha, status: "exhausted" },
       });
-      return { status: "exhausted", attempts: attempt, headSha, checks };
+      return { status: "exhausted", attempts: attempt, headSha, failures };
     }
-    const diagnostics = await options.collectDiagnostics(headSha, checks);
+    const diagnostics = await options.collectDiagnostics(headSha, failures);
     record = updateRecord(options.store, record, {
       retryCounters: { ...record.retryCounters, ci: attempt + 1 },
       ciRepair: { cycleId, headSha, status: "active" },

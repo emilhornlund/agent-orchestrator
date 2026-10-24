@@ -427,7 +427,7 @@ are examples to inspect, not permission to invent unimplemented helpers.
   - **Verify locally:** Table-driven tests cover delayed check creation, one passing check while another has not started, mixed pending and failed checks, several simultaneous failures, cancellations, skipped or neutral results, changed heads, and empty expectations. No incomplete set may pass or trigger premature remediation.
   - **Out of scope:** Do not invoke OpenCode or alter PRs.
 
-- [ ] **T56 — Integrate complete CI evaluation into production**
+- [x] **T56 — Integrate complete CI evaluation into production**
   - **Depends on:** T55.
   - **Implement:** Replace existing requiredChecks-based decisions in production polling, CI remediation, feedback reply publication, and auto-merge readiness with the complete CI-result evaluation. Remove mandatory requiredChecks configuration. Pending or uncertain results must retain a waiting state without consuming repair attempts. Complete failing results must produce one bounded repair operation containing all relevant failures.
   - **Verify locally:** Production-polling tests show waiting while checks are pending, repair after complete failure, same-session corrections, successful rechecking after publication, correct feedback reply gating, and no auto-merge before full success.

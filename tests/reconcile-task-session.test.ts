@@ -86,8 +86,14 @@ function fixture(phase: TaskExecutionPhase = "validation") {
             state: phase === "done" ? "MERGED" : "OPEN",
           }
         : null,
-    checkHeadSha: phase === "ci" ? sha : null,
-    checks: [],
+    ciEvaluation:
+      phase === "ci"
+        ? {
+            status: "passed",
+            expectedHeadSha: sha,
+            expectedCheckNames: ["Build"],
+          }
+        : null,
     feedbackHeadSha: phase === "human-feedback" ? sha : null,
     uncertainReplyIds: [],
     reconciledReplyIds: [],
@@ -134,9 +140,17 @@ describe("reconcileTaskSession", () => {
     ).toBe("resume");
 
     const ci = fixture("ci");
-    expect((await ci.reconcile({ checkHeadSha: "b".repeat(40) })).status).toBe(
-      "attention-required",
-    );
+    expect(
+      (
+        await ci.reconcile({
+          ciEvaluation: {
+            status: "passed",
+            expectedHeadSha: "b".repeat(40),
+            expectedCheckNames: ["Build"],
+          },
+        })
+      ).status,
+    ).toBe("attention-required");
 
     const feedback = fixture("human-feedback");
     expect(

@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProjectConfig } from "../src/config/config.js";
-import type { RequiredCheckObservation } from "../src/github/github-client.js";
+import type { CiCheckEvaluation } from "../src/github/evaluate-ci-checks.js";
 import { FeedbackLedgerStore } from "../src/task-session/feedback-ledger-store.js";
 import { publishVerifiedFeedbackReplies } from "../src/task-session/publish-verified-feedback-replies.js";
 import type { FeedbackVerificationResult } from "../src/task-session/feedback-verification.js";
@@ -38,15 +38,11 @@ function fixture() {
     },
   ]);
   const head = "a".repeat(40);
-  const checks: RequiredCheckObservation[] = [
-    {
-      name: "Build",
-      headSha: head,
-      status: "succeeded",
-      conclusion: "success",
-      diagnostic: "",
-    },
-  ];
+  const ciEvaluation: CiCheckEvaluation = {
+    status: "passed",
+    expectedHeadSha: head,
+    expectedCheckNames: ["Build"],
+  };
   const verification: FeedbackVerificationResult = {
     version: 1,
     projectId: "project",
@@ -67,8 +63,7 @@ function fixture() {
     pullRequestUrl: "https://github.com/o/r/pull/1",
     publishedCommitSha: head,
     observedHeadSha: head,
-    requiredCheckNames: ["Build"],
-    checks,
+    ciEvaluation,
     verification,
     ledgerStore: store,
   };
@@ -113,11 +108,17 @@ describe("publishVerifiedFeedbackReplies", () => {
     await expect(
       publishVerifiedFeedbackReplies({
         ...f.base,
-        checks: [{ ...f.base.checks[0]!, status: "queued", conclusion: null }],
+        ciEvaluation: {
+          status: "waiting",
+          expectedHeadSha: f.head,
+          missingChecks: [],
+          pendingChecks: ["Build"],
+          diagnostic: "Build is pending",
+        },
         reconcileReply: async () => ({ status: "absent" }),
         sendReply,
       }),
-    ).rejects.toThrow("before current-head check Build succeeds");
+    ).rejects.toThrow("Complete current-head CI evidence has not passed");
     expect(sendReply).not.toHaveBeenCalled();
   });
 

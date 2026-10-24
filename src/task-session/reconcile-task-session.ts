@@ -1,5 +1,5 @@
 import type { ProjectConfig } from "../config/config.js";
-import type { RequiredCheckObservation } from "../github/github-client.js";
+import type { CiCheckEvaluation } from "../github/evaluate-ci-checks.js";
 import { TaskExecutionStore } from "./task-execution-store.js";
 import type {
   TaskExecutionRecord,
@@ -24,8 +24,7 @@ export interface TaskSessionRecoverySnapshot {
     headSha: string;
     state: "OPEN" | "CLOSED" | "MERGED";
   } | null;
-  checkHeadSha: string | null;
-  checks: readonly RequiredCheckObservation[];
+  ciEvaluation: CiCheckEvaluation | null;
   feedbackHeadSha: string | null;
   uncertainReplyIds: readonly string[];
   reconciledReplyIds: readonly string[];
@@ -104,9 +103,8 @@ function checkObservationIsStale(
   expectedHead: string,
 ): boolean {
   return (
-    (snapshot.checkHeadSha !== null &&
-      snapshot.checkHeadSha !== expectedHead) ||
-    snapshot.checks.some((check) => check.headSha !== expectedHead)
+    snapshot.ciEvaluation !== null &&
+    snapshot.ciEvaluation.expectedHeadSha !== expectedHead
   );
 }
 
@@ -291,7 +289,7 @@ export async function reconcileTaskSession(
     }
     if (
       record.phase === "ci" &&
-      (snapshot.checkHeadSha === null ||
+      (snapshot.ciEvaluation === null ||
         checkObservationIsStale(snapshot, expectedPr.headSha))
     ) {
       return preserveAttention(

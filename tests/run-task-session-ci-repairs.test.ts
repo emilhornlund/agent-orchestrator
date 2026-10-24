@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProjectConfig } from "../src/config/config.js";
+import type { CiCheckEvaluation } from "../src/github/evaluate-ci-checks.js";
 import { runTaskSessionCiRepairs } from "../src/task-session/run-task-session-ci-repairs.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
 
@@ -41,22 +42,28 @@ function fixture() {
     createdAt: "2026-10-24T09:00:00.000Z",
     updatedAt: "2026-10-24T09:00:00.000Z",
   });
-  const check = (
+  const evaluation = (
     headSha: string,
-    status: "failed" | "queued" | "succeeded",
-  ) => ({
-    name: "Build",
-    headSha,
-    checkRunId: 1,
-    status,
-    conclusion:
-      status === "failed"
-        ? "failure"
-        : status === "succeeded"
-          ? "success"
-          : null,
-    diagnostic: "",
-  });
+    status: "failed" | "passed",
+  ): CiCheckEvaluation =>
+    status === "passed"
+      ? { status, expectedHeadSha: headSha, expectedCheckNames: ["Build"] }
+      : {
+          status,
+          expectedHeadSha: headSha,
+          expectedCheckNames: ["Build"],
+          failures: [
+            {
+              source: "check-run",
+              id: 1,
+              name: "Build",
+              headSha,
+              status: "completed",
+              conclusion: "failure",
+              url: null,
+            },
+          ],
+        };
   const base = {
     store,
     projectId: "project",
@@ -69,7 +76,7 @@ function fixture() {
     rerunLocalGatesAndReview: vi.fn(async () => undefined),
     publishSamePullRequest: vi.fn(async () => "b".repeat(40)),
   };
-  return { base, check, sha, store };
+  return { base, evaluation, sha, store };
 }
 
 describe("runTaskSessionCiRepairs", () => {
@@ -77,7 +84,13 @@ describe("runTaskSessionCiRepairs", () => {
     const f = fixture();
     const result = await runTaskSessionCiRepairs({
       ...f.base,
-      observeChecks: async (sha) => [f.check(sha, "queued")],
+      observeChecks: async (sha) => ({
+        status: "waiting",
+        expectedHeadSha: sha,
+        missingChecks: [],
+        pendingChecks: ["Build"],
+        diagnostic: "Build queued",
+      }),
     });
     expect(result.status).toBe("waiting");
     expect(f.base.repairPrimarySession).not.toHaveBeenCalled();
@@ -88,9 +101,8 @@ describe("runTaskSessionCiRepairs", () => {
     const next = "b".repeat(40);
     const result = await runTaskSessionCiRepairs({
       ...f.base,
-      observeChecks: async (sha) => [
-        f.check(sha, sha === f.sha ? "failed" : "succeeded"),
-      ],
+      observeChecks: async (sha) =>
+        f.evaluation(sha, sha === f.sha ? "failed" : "passed"),
       publishSamePullRequest: async () => next,
     });
     expect(result).toMatchObject({
@@ -103,14 +115,19 @@ describe("runTaskSessionCiRepairs", () => {
     expect(f.store.read("card")?.pullRequest?.headSha).toBe(next);
   });
 
-  it("rejects stale check observations without remediation", async () => {
+  it("waits on uncertain stale-head evidence without remediation", async () => {
     const f = fixture();
-    await expect(
-      runTaskSessionCiRepairs({
-        ...f.base,
-        observeChecks: async () => [f.check("c".repeat(40), "failed")],
+    const result = await runTaskSessionCiRepairs({
+      ...f.base,
+      observeChecks: async () => ({
+        status: "uncertain",
+        expectedHeadSha: f.sha,
+        observedHeadSha: "c".repeat(40),
+        expectedCheckNames: ["Build"],
+        diagnostic: "Stale CI response",
       }),
-    ).rejects.toThrow("stale PR head");
+    });
+    expect(result.status).toBe("waiting");
     expect(f.base.repairPrimarySession).not.toHaveBeenCalled();
   });
 
@@ -120,7 +137,7 @@ describe("runTaskSessionCiRepairs", () => {
     const publishSamePullRequest = vi.fn(async () => heads.shift()!);
     const result = await runTaskSessionCiRepairs({
       ...f.base,
-      observeChecks: async (sha) => [f.check(sha, "failed")],
+      observeChecks: async (sha) => f.evaluation(sha, "failed"),
       publishSamePullRequest,
     });
     expect(result.status).toBe("exhausted");

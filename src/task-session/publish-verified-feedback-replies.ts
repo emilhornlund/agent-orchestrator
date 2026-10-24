@@ -1,5 +1,5 @@
 import type { ProjectConfig } from "../config/config.js";
-import type { RequiredCheckObservation } from "../github/github-client.js";
+import type { CiCheckEvaluation } from "../github/evaluate-ci-checks.js";
 import { FeedbackLedgerStore } from "./feedback-ledger-store.js";
 import type { FeedbackLedgerEntry } from "./feedback-ledger.js";
 import type { FeedbackVerificationResult } from "./feedback-verification.js";
@@ -15,8 +15,7 @@ export interface PublishVerifiedFeedbackRepliesOptions {
   pullRequestUrl: string;
   publishedCommitSha: string;
   observedHeadSha: string;
-  requiredCheckNames: readonly string[];
-  checks: readonly RequiredCheckObservation[];
+  ciEvaluation: CiCheckEvaluation;
   verification: FeedbackVerificationResult;
   ledgerStore: FeedbackLedgerStore;
   reconcileReply: (
@@ -57,29 +56,12 @@ function assertPublicationReady(
     );
   }
   if (
-    options.requiredCheckNames.length === 0 ||
-    new Set(options.requiredCheckNames).size !==
-      options.requiredCheckNames.length ||
-    options.checks.length !== options.requiredCheckNames.length
+    options.ciEvaluation.status !== "passed" ||
+    options.ciEvaluation.expectedHeadSha !== head
   ) {
     throw new FeedbackReplyPublicationError(
-      "Required CI checks are missing, duplicated, or incomplete",
+      "Complete current-head CI evidence has not passed; feedback replies cannot be published",
     );
-  }
-  const checksByName = new Map(
-    options.checks.map((check) => [check.name, check]),
-  );
-  for (const name of options.requiredCheckNames) {
-    const check = checksByName.get(name);
-    if (
-      check === undefined ||
-      check.headSha !== head ||
-      check.status !== "succeeded"
-    ) {
-      throw new FeedbackReplyPublicationError(
-        `Cannot reply to feedback before current-head check ${name} succeeds`,
-      );
-    }
   }
 }
 

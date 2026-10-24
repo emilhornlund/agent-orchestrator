@@ -122,21 +122,14 @@ const feedbackRemediationSchema = z.strictObject({
 const reviewObservationSchema = z.strictObject({
   headSha: gitSha,
   observedAt: z.string().datetime(),
-  checks: z.array(
-    z.strictObject({
-      name: nonBlankIdentifier,
-      status: z.enum([
-        "missing",
-        "queued",
-        "in_progress",
-        "succeeded",
-        "failed",
-        "cancelled",
-        "incomplete",
-      ]),
-      headSha: gitSha,
-    }),
-  ),
+  ciEvaluation: z.strictObject({
+    status: z.enum(["waiting", "passed", "failed", "uncertain"]),
+    expectedCheckNames: z.array(nonBlankIdentifier),
+    missingChecks: z.array(nonBlankIdentifier),
+    pendingChecks: z.array(nonBlankIdentifier),
+    failureCheckNames: z.array(nonBlankIdentifier),
+    diagnostic: z.string().optional(),
+  }),
   feedbackIds: z.array(nonBlankIdentifier),
 });
 

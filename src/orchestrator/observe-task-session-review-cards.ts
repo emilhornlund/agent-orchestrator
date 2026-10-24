@@ -4,8 +4,15 @@ import type {
   GitHubClient,
   PullRequestState,
   PullRequestConversationComment,
-  RequiredCheckObservation,
 } from "../github/github-client.js";
+import {
+  establishCiCheckExpectations,
+  type CiCheckExpectationDecision,
+} from "../github/ci-check-expectations.js";
+import {
+  evaluateCiChecks,
+  type CiCheckEvaluation,
+} from "../github/evaluate-ci-checks.js";
 import type { TrelloCard } from "../trello/trello-client.js";
 import { TaskExecutionStore } from "../task-session/task-execution-store.js";
 
@@ -14,7 +21,8 @@ export interface ObservedTaskSessionReviewCard {
   cardId: string;
   pullRequestUrl: string;
   headSha: string;
-  checks: RequiredCheckObservation[];
+  ciEvaluation: CiCheckEvaluation;
+  expectedCheckNames: string[];
   feedbackIds: string[];
   requestedChanges: ChangesRequestedPullRequest | null;
   conversationComments: PullRequestConversationComment[];
@@ -47,12 +55,6 @@ export async function observeTaskSessionReviewCards(
   options: ObserveTaskSessionReviewCardsOptions,
 ): Promise<TaskSessionPullRequestObservation[]> {
   const { project, cards, taskRecordStore, github } = options;
-  const requiredChecks = project.repository.requiredChecks;
-  if (requiredChecks === undefined || requiredChecks.length === 0) {
-    throw new Error(
-      "Task-session review monitoring requires configured required checks",
-    );
-  }
   const observed: TaskSessionPullRequestObservation[] = [];
   for (const card of cards) {
     const record = taskRecordStore.read(card.id);
@@ -119,13 +121,13 @@ export async function observeTaskSessionReviewCards(
         `Authoritative pull request identity or head changed for Human Review card ${card.id}`,
       );
     }
-    const [checkResult, requestedChanges, conversationComments] =
+    const [ciObservation, requestedChanges, conversationComments] =
       await Promise.all([
-        github.getRequiredChecks({
+        github.getCiObservations({
           cwd: lookup.cwd,
           repository: project.repository.github,
+          defaultBranch: project.repository.defaultBranch,
           headSha,
-          requiredChecks,
           project,
         }),
         github.findChangesRequestedPullRequest(lookup),
@@ -136,6 +138,14 @@ export async function observeTaskSessionReviewCards(
           project,
         }),
       ]);
+    const expectationDecision: CiCheckExpectationDecision =
+      establishCiCheckExpectations(ciObservation.expectationSources);
+    const ciEvaluation = evaluateCiChecks({
+      expectedHeadSha: headSha,
+      observedHeadSha: ciObservation.headSha,
+      expectations: expectationDecision,
+      checks: ciObservation.checks,
+    });
     const finalPullRequest = await github.findPullRequestState(lookup);
     if (
       (requestedChanges !== null && requestedChanges.headSha !== headSha) ||
@@ -174,13 +184,28 @@ export async function observeTaskSessionReviewCards(
       reviewObservation: {
         headSha,
         observedAt: nextTimestamp(latest.updatedAt),
-        checks: checkResult.checks.map(
-          ({ name, status, headSha: observedHead }) => ({
-            name,
-            status,
-            headSha: observedHead,
-          }),
-        ),
+        ciEvaluation: {
+          status: ciEvaluation.status,
+          expectedCheckNames: expectationDecision.expectedCheckNames,
+          missingChecks:
+            ciEvaluation.status === "waiting" ? ciEvaluation.missingChecks : [],
+          pendingChecks:
+            ciEvaluation.status === "waiting" ? ciEvaluation.pendingChecks : [],
+          failureCheckNames:
+            ciEvaluation.status === "failed"
+              ? [
+                  ...new Set(
+                    ciEvaluation.failures.map((check) =>
+                      check.source === "check-run" ? check.name : check.context,
+                    ),
+                  ),
+                ]
+              : [],
+          ...(ciEvaluation.status === "waiting" ||
+          ciEvaluation.status === "uncertain"
+            ? { diagnostic: ciEvaluation.diagnostic }
+            : {}),
+        },
         feedbackIds,
       },
       revision: latest.revision + 1,
@@ -191,7 +216,8 @@ export async function observeTaskSessionReviewCards(
       cardId: card.id,
       pullRequestUrl: record.pullRequest.url,
       headSha,
-      checks: checkResult.checks,
+      ciEvaluation,
+      expectedCheckNames: expectationDecision.expectedCheckNames,
       feedbackIds,
       requestedChanges,
       conversationComments,
