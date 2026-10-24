@@ -209,6 +209,7 @@ Read and retain the T60 instructions before deleting the
 temporary files.
 
 Then remove:
+
 - docs/redesign/REQUIREMENTS.md
 - docs/redesign/TASKS.md
 - .opencode/agents/redesign-executor.md
