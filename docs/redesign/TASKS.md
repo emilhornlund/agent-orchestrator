@@ -447,7 +447,7 @@ are examples to inspect, not permission to invent unimplemented helpers.
   - **Verify locally:** A production-polling regression proves successful complete-CI auto-merge records `done`, moves the card to Done, and does not call merge while CI is waiting.
   - **Out of scope:** Do not weaken terminal-record validation or change unrelated task transitions.
 
-- [ ] **T57 — Add comprehensive CI lifecycle regression tests**
+- [x] **T57 — Add comprehensive CI lifecycle regression tests**
   - **Depends on:** T56.
   - **Implement:** Extend mocked end-to-end scenarios through the actual pollProject entry point. Simulate delayed check registration, several GitHub Actions jobs, mixed check runs and commit statuses, multiple failed jobs, late results, CI repairs, head changes, and successful auto-merge.
   - **Verify locally:** Every scenario verifies complete-check semantics, preserved task ownership, no duplicate repairs, no stale-head acceptance, no premature success, and no skipped validation or review gates.
