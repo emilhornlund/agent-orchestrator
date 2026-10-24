@@ -228,6 +228,7 @@ const emailNotificationSchema = z
 const projectSchema = z.strictObject({
   id: pathComponent,
   autoMerge: z.boolean().default(false),
+  executionMode: z.enum(["legacy", "task-session"]).optional(),
   trello: trelloSchema,
   repository: repositorySchema,
   opencode: openCodeSchema,
@@ -380,7 +381,13 @@ export function parseConfig(raw: string): Config {
     throw new Error(`Invalid configuration:\n${messages.join("\n")}`);
   }
 
-  return result.data;
+  return {
+    ...result.data,
+    projects: result.data.projects.map((project) => ({
+      ...project,
+      executionMode: project.executionMode ?? "legacy",
+    })),
+  };
 }
 
 export function loadConfig(configPath = "config.yaml"): Config {

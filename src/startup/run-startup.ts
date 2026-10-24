@@ -74,6 +74,14 @@ export async function runStartup(
   signal: AbortSignal,
   operations: StartupOperations = defaultStartupOperations,
 ): Promise<void> {
+  if (
+    config.projects.some((project) => project.executionMode === "task-session")
+  ) {
+    throw new Error(
+      'executionMode "task-session" is not available until the task-session workflow is complete (T43)',
+    );
+  }
+
   runBestEffortStartupCleanup("log retention", () =>
     cleanupLogRetention(config.workflow.logRetentionDays),
   );

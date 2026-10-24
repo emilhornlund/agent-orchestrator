@@ -40,7 +40,7 @@ to inspect first, not permission to invent unimplemented helpers.
   - **Verify locally:** The tests pass on unchanged legacy production code and assert observable transitions, not internal function call order.
   - **Out of scope:** Do not refactor runtime logic or alter existing behavior.
 
-- [ ] **T02 — Introduce opt-in execution mode configuration**
+- [x] **T02 — Introduce opt-in execution mode configuration**
   - **Depends on:** T01.
   - **Implement:** Add optional `projects[].executionMode` with exactly `legacy` and `task-session` as valid values. Default to `legacy`. Until T43, fail startup clearly if `task-session` is configured.
   - **Verify locally:** Config parsing tests cover omitted, valid, and invalid modes; legacy project startup behavior remains unchanged.
