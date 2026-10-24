@@ -85,6 +85,10 @@ export interface RunTaskSessionWorkflowOptions {
   prepareAttachmentContext: (
     card: TrelloCard,
   ) => Promise<CardAttachmentPromptContext | undefined>;
+  processRefinement?: (
+    card: TrelloCard,
+    worktree: { path: string; branch: string },
+  ) => Promise<void>;
 }
 
 function timestamp(record: TaskExecutionRecord): string {
@@ -1077,6 +1081,52 @@ export async function runTaskSessionWorkflow(
     "Could not inspect task-session Working cards",
     signal,
   );
+  const activeMutation = queue.getActive();
+  if (
+    workingCards.length === 1 &&
+    activeMutation?.kind === "refinement" &&
+    activeMutation.cardId === workingCards[0]!.id &&
+    activeMutation.projectId === project.id
+  ) {
+    const card = workingCards[0]!;
+    const worktreePath = path.join(project.repository.worktreeRoot, card.id);
+    const matchingEvents = queue
+      .list()
+      .filter(
+        (candidate) =>
+          candidate.kind === "refinement" &&
+          candidate.projectId === project.id &&
+          candidate.cardId === card.id &&
+          candidate.eventId === activeMutation.eventId &&
+          candidate.operationKey === activeMutation.operationKey,
+      );
+    if (
+      matchingEvents.length !== 1 ||
+      taskStore.read(card.id) !== null ||
+      (await git.getCurrentBranch(worktreePath)) !== `agent/${card.id}`
+    ) {
+      throw new Error(
+        `Refinement restart ownership is ambiguous for Working card ${card.id}`,
+      );
+    }
+    const recovered = queue.claimForRecovery(activeMutation.eventId);
+    if (recovered === null || options.processRefinement === undefined)
+      throw new Error(
+        `Could not safely resume refinement mutation for ${card.id}`,
+      );
+    try {
+      await options.processRefinement(card, {
+        path: worktreePath,
+        branch: `agent/${card.id}`,
+      });
+      if (signal.aborted) queue.fail(recovered.eventId);
+      else queue.complete(recovered.eventId);
+      return;
+    } catch (error) {
+      queue.fail(recovered.eventId);
+      throw error;
+    }
+  }
   let selectedCard: TrelloCard | null;
   let mutation: TaskMutationEvent | null = null;
   let recoveryRecord: TaskExecutionRecord | null = null;
@@ -1212,10 +1262,10 @@ export async function runTaskSessionWorkflow(
     const eligibleCards = readyCards.filter(
       (card) =>
         isCardStartDateReached(card, Date.now()) &&
-        getWorkflowKind(card, project) === "implementation",
+        getWorkflowKind(card, project) !== null,
     );
     let readyRecoveryEvent: TaskMutationEvent | null = null;
-    for (const card of eligibleCards) {
+    for (const [readyIndex, card] of eligibleCards.entries()) {
       if (taskStore.read(card.id) !== null) {
         throw new Error(
           `Ready card ${card.id} already has task-session ownership; refusing to start a duplicate task`,
@@ -1230,8 +1280,10 @@ export async function runTaskSessionWorkflow(
         cardId: card.id,
         eventId: `implementation:${card.id}:${digest}`,
         operationKey: `task-session:${card.id}:${digest}`,
-        kind: "implementation",
-        enqueuedAt: new Date().toISOString(),
+        kind: getWorkflowKind(card, project)!,
+        // Preserve Trello's Ready-list order even when cards are observed in
+        // the same clock millisecond and the queue's stable tie-break applies.
+        enqueuedAt: new Date(Date.now() + readyIndex).toISOString(),
       });
       const activeEvent = queue.getActive();
       if (
@@ -1272,6 +1324,25 @@ export async function runTaskSessionWorkflow(
   if (mutation === null || selectedCard === null) return;
   const card = selectedCard;
   try {
+    if (mutation.kind === "refinement") {
+      if (recoveryRecord !== null) {
+        throw new Error(
+          "Refinement recovery cannot reuse an implementation task record",
+        );
+      }
+      if (options.processRefinement === undefined) {
+        throw new Error("Unified scheduler has no refinement operation");
+      }
+      const worktree = await prepareWorktree(git, project, card.id);
+      const claimedCard = await trello.moveCard(
+        card.id,
+        project.trello.workingListId,
+      );
+      await options.processRefinement(claimedCard ?? card, worktree);
+      if (signal.aborted) queue.fail(mutation.eventId);
+      else queue.complete(mutation.eventId);
+      return;
+    }
     let worktree: { path: string; branch: string };
     let activeCard: TrelloCard;
     let operationKey: string;

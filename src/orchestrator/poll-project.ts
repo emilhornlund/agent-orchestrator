@@ -267,6 +267,19 @@ export async function pollProject(
           );
           return createCardAttachmentPromptContext(project, card, manifest);
         },
+        processRefinement: async (card, worktree) =>
+          withActiveCardContext(project.id, card.id, () =>
+            processRefinementCard(
+              trello,
+              git,
+              opencode,
+              project,
+              card,
+              signal,
+              worktree,
+              emailNotifier,
+            ),
+          ),
       });
     });
     return;
