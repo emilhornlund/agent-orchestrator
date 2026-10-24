@@ -240,7 +240,7 @@ to inspect first, not permission to invent unimplemented helpers.
   - **Verify locally:** Table-driven tests cover old-head reviews, reviewer follow-ups, bot comments, unresolved threads, and non-actionable discussion.
   - **Out of scope:** Do not auto-dismiss human feedback or react to every comment with source edits.
 
-- [ ] **T34 — Resume the primary agent for actionable feedback**
+- [x] **T34 — Resume the primary agent for actionable feedback**
   - **Depends on:** T09, T25, T32–T33.
   - **Implement:** Build the feedback remediation prompt from the original task, approved plan, current code, current PR head, and all unaddressed actionable ledger items; resume the exact original session ID. Record the remediation operation identity.
   - **Verify locally:** Mock tests prove every pending item appears with correct locations, new items are not lost, wrong-session resume is rejected, and no-op does not count as addressed.
