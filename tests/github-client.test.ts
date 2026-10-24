@@ -13,6 +13,7 @@ import {
   isRetryableGitHubError,
   type RunGitHubCommand,
 } from "../src/github/github-client.js";
+import type { ProjectConfig } from "../src/config/config.js";
 import {
   AGENT_ORCHESTRATOR_STATUS_END,
   AGENT_ORCHESTRATOR_STATUS_START,
@@ -78,6 +79,143 @@ describe("GitHubClient", () => {
     "GitHub configuration is invalid",
   ])("does not classify %s as retryable", (message) => {
     expect(isRetryableGitHubError(new Error(message))).toBe(false);
+  });
+
+  it("collects exact-head required check conclusions across paginated responses", async () => {
+    const headSha = "a".repeat(40);
+    const run = vi.fn<RunGitHubCommand>().mockResolvedValue(
+      JSON.stringify([
+        [
+          {
+            check_runs: [
+              {
+                name: "Build",
+                head_sha: headSha,
+                status: "completed",
+                conclusion: "success",
+                created_at: "2026-01-01T00:00:00Z",
+              },
+              {
+                name: "Tests",
+                head_sha: headSha,
+                status: "in_progress",
+                conclusion: null,
+                created_at: "2026-01-01T00:00:00Z",
+              },
+              {
+                name: "Lint",
+                head_sha: headSha,
+                status: "completed",
+                conclusion: "failure",
+                created_at: "2026-01-01T00:00:00Z",
+              },
+              {
+                name: "Cancel",
+                head_sha: headSha,
+                status: "completed",
+                conclusion: "cancelled",
+                created_at: "2026-01-01T00:00:00Z",
+              },
+              {
+                name: "Odd",
+                head_sha: headSha,
+                status: "completed",
+                conclusion: "neutral",
+                created_at: "2026-01-01T00:00:00Z",
+              },
+            ],
+          },
+          {
+            check_runs: [
+              {
+                name: "Tests",
+                head_sha: headSha,
+                status: "queued",
+                conclusion: null,
+                created_at: "2026-01-02T00:00:00Z",
+              },
+            ],
+          },
+        ],
+      ]),
+    );
+    const project = {
+      id: "p",
+      repository: { github: "owner/repo" },
+    } as ProjectConfig;
+    const result = await new GitHubClient(run).getRequiredChecks({
+      cwd: "/repo",
+      repository: "owner/repo",
+      headSha,
+      requiredChecks: ["Build", "Tests", "Lint", "Cancel", "Odd", "Missing"],
+      project,
+    });
+    expect(result.checks.map(({ status }) => status)).toEqual([
+      "succeeded",
+      "queued",
+      "failed",
+      "cancelled",
+      "incomplete",
+      "missing",
+    ]);
+    expect(run).toHaveBeenCalledWith("/repo", [
+      "api",
+      "--paginate",
+      "--slurp",
+      `repos/owner/repo/commits/${headSha}/check-runs?per_page=100`,
+    ]);
+  });
+
+  it("rejects malformed or stale check responses and invalid required-check requests", async () => {
+    const headSha = "a".repeat(40);
+    const project = {
+      id: "p",
+      repository: { github: "owner/repo" },
+    } as ProjectConfig;
+    const stale = new GitHubClient(async () =>
+      JSON.stringify([
+        [
+          {
+            check_runs: [
+              {
+                name: "Build",
+                head_sha: "b".repeat(40),
+                status: "completed",
+                conclusion: "success",
+              },
+            ],
+          },
+        ],
+      ]),
+    );
+    await expect(
+      stale.getRequiredChecks({
+        cwd: "/repo",
+        repository: "owner/repo",
+        headSha,
+        requiredChecks: ["Build"],
+        project,
+      }),
+    ).rejects.toThrow("different commit SHA");
+    await expect(
+      stale.getRequiredChecks({
+        cwd: "/repo",
+        repository: "owner/repo",
+        headSha,
+        requiredChecks: ["Build", "Build"],
+        project,
+      }),
+    ).rejects.toThrow("unique nonempty names");
+    const malformed = new GitHubClient(async () => "not json");
+    await expect(
+      malformed.getRequiredChecks({
+        cwd: "/repo",
+        repository: "owner/repo",
+        headSha,
+        requiredChecks: ["Build"],
+        project,
+      }),
+    ).rejects.toThrow("invalid paginated check runs");
   });
 
   it("creates a pull request through the injected command runner", async () => {

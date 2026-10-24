@@ -190,7 +190,7 @@ to inspect first, not permission to invent unimplemented helpers.
   - **Verify locally:** Mocked Git/GitHub tests prove exactly one trusted commit, no unverified push, no force push, same-PR reuse, and preserved failure state.
   - **Out of scope:** No actual GitHub calls or live PRs in tests; legacy publishing is untouched.
 
-- [ ] **T26 — Collect current-head required GitHub checks**
+- [x] **T26 — Collect current-head required GitHub checks**
   - **Depends on:** T25.
   - **Implement:** Add `projects[].repository.requiredChecks` as a nonempty, unique list of check names required when `executionMode` is `task-session`. Extend `GitHubClient` to read exact-head statuses for these names; distinguish missing, queued/in-progress, succeeded, failed, cancelled, and incomplete responses.
   - **Verify locally:** Config and mocked API tests cover missing/duplicate check configuration, all conclusions, pagination, exact head matching, and unknown/temporary GitHub responses.

@@ -147,6 +147,14 @@ const repositorySchema = z.strictObject({
   setupCommand: nonBlankString.optional(),
   validationCommand: nonBlankString.optional(),
   coverageCommand: nonBlankString.optional(),
+  requiredChecks: z
+    .array(
+      nonBlankString.refine(
+        (value) => value.trim() === value && !hasControlCharacter(value),
+        "Required check names must not contain padding or control characters",
+      ),
+    )
+    .optional(),
   gitIdentity: gitIdentitySchema,
   githubApp: githubAppSchema.optional(),
 });
@@ -342,6 +350,30 @@ const configSchema = z
         ctx.addIssue({
           code: "custom",
           path: ["projects", projectIndex, "repository", "coverageCommand"],
+          message: "Only available when executionMode is task-session",
+        });
+      }
+
+      const requiredChecks = project.repository.requiredChecks;
+      if (project.executionMode === "task-session") {
+        if (requiredChecks === undefined || requiredChecks.length === 0) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["projects", projectIndex, "repository", "requiredChecks"],
+            message:
+              "A nonempty requiredChecks list is required when executionMode is task-session",
+          });
+        } else if (new Set(requiredChecks).size !== requiredChecks.length) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["projects", projectIndex, "repository", "requiredChecks"],
+            message: "Required check names must be unique",
+          });
+        }
+      } else if (requiredChecks !== undefined) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["projects", projectIndex, "repository", "requiredChecks"],
           message: "Only available when executionMode is task-session",
         });
       }
