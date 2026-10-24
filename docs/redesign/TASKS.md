@@ -462,7 +462,7 @@ are examples to inspect, not permission to invent unimplemented helpers.
 
 ## Phase J — Final consolidation and cleanup
 
-- [ ] **T58 — Consolidate configuration and permanent documentation**
+- [x] **T58 — Consolidate configuration and permanent documentation**
   - **Depends on:** T50–T57.
   - **Implement:** Update README, config.example.yaml, docs/configuration.md, docs/workflow.md, docs/recovery.md, and docs/operations.md to describe the single supported architecture. Remove obsolete executionMode, requiredChecks, opt-in rollout, and legacy migration instructions. Document refinement, CI expectation discovery, unknown-check behavior, terminal PR handling, and operator recovery.
   - **Verify locally:** Configuration examples parse successfully, documented defaults match code, no unsupported legacy settings remain, and yarn validate passes.

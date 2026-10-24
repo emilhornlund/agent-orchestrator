@@ -32,11 +32,13 @@ feedback. Human approval is required unless the project's `autoMerge` setting is
 reference](docs/workflow.md) for the complete lifecycle, lists, labels, and transitions.
 Pull request descriptions may be generated automatically from the final implementation result.
 
-The existing workflow remains the default. Projects can explicitly opt into the restart-safe `task-session` mode, which
-reuses a primary OpenCode session across implementation, bounded CI repairs, and human-feedback rounds. Task-session projects
-must configure the validation command and exact required GitHub check names. See the [configuration](docs/configuration.md#projectsexecutionmode)
-and [workflow](docs/workflow.md#task-session-mode) references before opting in. Implementation and integration behavior has
-been verified locally with mocked services; no live Trello/GitHub pilot has been performed.
+Every project uses the restart-safe task-session workflow. One primary OpenCode session is retained across implementation,
+bounded local/CI repairs, and human-feedback rounds; independent review sessions verify the plan and implementation. The
+orchestrator runs configured validation, optional coverage, and discovers current-head checks from available GitHub repository
+rules and static repository workflow contracts. An unknown or incomplete expected-check set waits or fails closed; visible green
+checks alone are never treated as proof that all expected checks have started. See the [configuration](docs/configuration.md),
+[workflow](docs/workflow.md), and [recovery](docs/recovery.md) references for operation and safe recovery. Local mocked tests
+cover the workflow; no live Trello/GitHub/OpenCode pilot or deployed-service test has been performed.
 
 ## Documentation
 
@@ -59,8 +61,8 @@ reorganized; current configuration names, states, commands, and safety boundarie
 - Pull requests are never merged automatically unless the owning project explicitly enables `autoMerge`; task branches are
   never force-pushed.
 - Only one task is active per project at a time. Independent projects can be processed concurrently.
-- Failed or interrupted work is reconciled from deterministic Trello, Git, GitHub, and session-log artifacts rather than
-  being silently discarded. See [Recovery](docs/recovery.md).
+- Failed or interrupted work is reconciled from durable task records, queue ownership, Trello, Git, GitHub, and session evidence
+  rather than being silently discarded. See [Recovery](docs/recovery.md).
 
 ## Requirements
 

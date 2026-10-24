@@ -158,43 +158,17 @@ during startup before repository or Trello bootstrap.
 
 ### `projects[].autoMerge`
 
-Boolean that defaults to `false`. When `true`, only that project's normal implementation workflow automatically merges its
-published pull request and moves the card to `Done`; refinement remains unchanged. When omitted or `false`, the pull
-request is published and the card enters `Human Review` for the existing human-merge workflow. The value must be a boolean.
+Boolean that defaults to `false`. When `true`, the orchestrator may merge only after local validation, configured coverage,
+independent review, and complete successful CI evidence for the current PR head. When omitted or `false`, the pull request enters
+`Human Review` for the existing human-merge workflow. Refinement is never auto-merged. The value must be a boolean.
 
-### `projects[].executionMode`
+### CI expectation discovery
 
-This optional project setting selects the implementation workflow:
-
-| Value          | Meaning                                                           |
-| -------------- | ----------------------------------------------------------------- |
-| `legacy`       | Existing workflow. This is the default when the field is omitted. |
-| `task-session` | Opts this project into the restart-safe task-session workflow.    |
-
-Task-session mode is deliberately opt-in and does not change other projects. It requires a non-blank
-`repository.validationCommand` and a nonempty, unique `repository.requiredChecks` list. `repository.coverageCommand` is optional;
-when configured, its exit status is a required quality gate. All three commands/check names must match tools and check runs
-actually configured for the repository. Required checks are evaluated against the exact current pull-request head; pending,
-missing, incomplete, stale, cancelled, or failed checks are not treated as successful.
-
-An active legacy `Working` card without a task-session ownership record is not migrated automatically. Finish or recover existing
-work under its original workflow before opting that project into task-session mode. Configuration validation may succeed while
-the first poll safely refuses such an active card; do not create or edit ownership records to bypass that guard.
-
-### Task-session configuration example
-
-Add these project-level and repository-level settings to a project to opt it in. Replace `Build` with each required check's exact
-name as reported by GitHub; the command values are examples and must exist in the repository. Coverage is optional and omitted here.
-
-```yaml
-projects:
-  - id: "project"
-    executionMode: "task-session"
-    repository:
-      validationCommand: "yarn validate"
-      requiredChecks:
-        - "Build"
-```
+There is no manually configured list of required check names. The orchestrator combines available branch-protection check
+contracts and static repository-owned pull-request workflow contracts, then observes all check runs and commit statuses on the
+current PR head. Pending, missing, queued, failed, cancelled, skipped, neutral, stale, malformed, dynamic, or unsupported evidence
+never counts as success. If workflow conditions or unavailable policy make the expected set unknown, the task waits with an
+explicit diagnostic or fails closed. The current visible checks are never assumed to be the complete set.
 
 ### `projects[].trello`
 
@@ -222,18 +196,17 @@ The configured list and label names do not matter to the service. The IDs are wh
 
 ### `projects[].repository`
 
-| Key                 | Meaning and validation                                                                                                                                     |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `path`              | Absolute path to the normal local checkout; repository paths must be unique across projects                                                                |
-| `github`            | GitHub repository in `owner/repository` format; repositories must be unique across projects                                                                |
-| `defaultBranch`     | Non-blank base branch for task branches and pull requests                                                                                                  |
-| `worktreeRoot`      | Absolute directory for isolated task worktrees; roots must be unique across projects                                                                       |
-| `setupCommand`      | Optional non-blank command executed by the orchestrator in the card worktree before agent work                                                             |
-| `validationCommand` | Optional in `legacy`; required in `task-session`. Legacy OpenCode sessions run it, while task-session orchestration runs and captures it as a quality gate |
-| `coverageCommand`   | Optional task-session quality command; when set, its exit status is a required gate. Unavailable in `legacy`                                               |
-| `requiredChecks`    | Required in `task-session`: a nonempty list of unique exact GitHub check names observed on the current PR head. Unavailable in `legacy`                    |
-| `gitIdentity`       | Required identity used by the commit session                                                                                                               |
-| `githubApp`         | Optional GitHub App identity used for all authenticated GitHub operations for this project                                                                 |
+| Key                 | Meaning and validation                                                                                   |
+| ------------------- | -------------------------------------------------------------------------------------------------------- |
+| `path`              | Absolute path to the normal local checkout; repository paths must be unique across projects              |
+| `github`            | GitHub repository in `owner/repository` format; repositories must be unique across projects              |
+| `defaultBranch`     | Non-blank base branch for task branches and pull requests                                                |
+| `worktreeRoot`      | Absolute directory for isolated task worktrees; roots must be unique across projects                     |
+| `setupCommand`      | Optional non-blank command executed by the orchestrator in the card worktree before agent work           |
+| `validationCommand` | Required non-blank command run by the orchestrator in the owned worktree and bound to the source content |
+| `coverageCommand`   | Optional command; when configured, its repository-owned exit status is a required local quality gate     |
+| `gitIdentity`       | Required identity used by the commit session                                                             |
+| `githubApp`         | Optional GitHub App identity used for all authenticated GitHub operations for this project               |
 
 `path`, `worktreeRoot`, and an optional `gitIdentity.signingKey` must be absolute paths. Parsed absolute paths are resolved
 before use. A project's normalized `path` and `worktreeRoot` must be disjoint: neither may equal, contain, or be contained
@@ -247,13 +220,11 @@ checked during configuration loading, before repository bootstrap or project pro
 | `email`      | Valid commit author and committer email address                                                            |
 | `signingKey` | Optional absolute path to the SSH signing key; it must be available where the service runs when configured |
 
-`setupCommand` and `validationCommand` are separate workflow contracts and may be configured together. `setupCommand` is owned
-by the orchestrator: it runs through the command runner in the task worktree before agent work, and a failure remains a `Setup`
-workflow failure. In `legacy`, `validationCommand` is supplied to implementation-mutating OpenCode sessions, which run it before
-finishing and fix failures caused by their changes; the legacy orchestrator does not execute it. In `task-session`, the
-orchestrator executes it in the owned worktree, captures the result against the source content, and requires it to pass before
-review or publication. The task-session repair loop is finite. A configured `coverageCommand` is run and enforced in task-session
-mode in the same manner; thresholds remain repository-owned.
+`setupCommand` and `validationCommand` are separate workflow contracts and may be configured together. `setupCommand` runs
+through the command runner in the task worktree before agent work, and a failure remains a `Setup` workflow failure. The
+orchestrator runs `validationCommand` in the owned worktree, captures its result against exact source content, and requires it to
+pass before review or publication. Repairs are finite. A configured `coverageCommand` is run and enforced as a required gate in
+the same manner; thresholds remain repository-owned.
 
 #### GitHub authentication modes
 
