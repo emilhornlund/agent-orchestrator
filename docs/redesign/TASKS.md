@@ -234,7 +234,7 @@ to inspect first, not permission to invent unimplemented helpers.
   - **Verify locally:** Local-file tests cover deduplication, new feedback, earlier unresolved carry-forward, stale writes, restart reload, and wrong-task rejection.
   - **Out of scope:** Do not invoke OpenCode or automatically resolve discussion threads.
 
-- [ ] **T33 — Define actionable-feedback selection rules**
+- [x] **T33 — Define actionable-feedback selection rules**
   - **Depends on:** T30–T32.
   - **Implement:** Build a pure selector that treats current-head `CHANGES_REQUESTED` and still-applicable unresolved inline requests as actionable while retaining general comments for explicit classification. Ignore the bot’s own replies as new work; unresolved ambiguity becomes attention-needed rather than a silent assumption.
   - **Verify locally:** Table-driven tests cover old-head reviews, reviewer follow-ups, bot comments, unresolved threads, and non-actionable discussion.
