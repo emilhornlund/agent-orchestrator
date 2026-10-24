@@ -166,3 +166,63 @@ After each successful task or correction, state briefly: task ID, what changed,
 full validation result, and local commit SHA. Immediately proceed to the next
 required task. At the end, summarize completed task IDs and local commits.
 No promises to continue after the current OpenCode execution terminates.
+
+## Final consolidation authorization
+
+The maintainer explicitly authorizes T46–T60 and the final
+architecture requirements in REQUIREMENTS.md.
+
+These requirements supersede prior instructions that require
+preserving legacy execution compatibility, retaining
+executionMode, or maintaining migration support for active
+legacy tasks.
+
+Execute T46–T60 sequentially using the normal autonomous
+plan, implement, validate, mark, commit, continue process.
+
+You are authorized to:
+
+- Replace legacy implementation dispatch with the unified
+  task-session workflow.
+- Remove obsolete legacy code after verifying it is unused.
+- Remove executionMode and requiredChecks configuration.
+- Preserve and integrate necessary shared functionality.
+- Correct confirmed defects discovered during consolidation.
+- Update the backlog with narrowly scoped corrective tasks
+  without asking for additional approval.
+
+Do not remove shared safety controls or assume that an
+unobserved GitHub check has succeeded.
+
+All tasks must be completed and verified with local tools,
+fixtures, and mocked services. Never push, deploy, create PRs,
+or use live external integrations.
+
+### Final self-removal
+
+T60 is a specially authorized final cleanup task.
+
+Before starting T60, confirm every preceding task is complete
+and the acceptance audit has passed.
+
+Read and retain the T60 instructions before deleting the
+temporary files.
+
+Then remove:
+- docs/redesign/REQUIREMENTS.md
+- docs/redesign/TASKS.md
+- .opencode/agents/redesign-executor.md
+
+Run yarn validate and yarn build after deletion.
+
+Commit the deletion as a focused local commit.
+
+Do not attempt to re-read the deleted documents or create
+another task afterward. The successful final commit and clean
+worktree establish T60 completion.
+
+This exception overrides the ordinary requirement to check
+the final task before committing and to re-read the execution
+documents after every task.
+
+Do not stop to request permission for this authorized cleanup.

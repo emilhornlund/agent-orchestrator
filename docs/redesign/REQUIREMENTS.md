@@ -259,3 +259,125 @@ retroactively check tasks that were not verified.
 Local commits are explicitly authorized for this migration task series.
 Remote pushes, PR creation, merging, and deployments are **not** authorized.
 Use the repository's Conventional Commit format; do not add AI attribution.
+
+## 10. Final architecture consolidation
+
+The maintainer has approved replacing the legacy implementation
+architecture entirely. The repository will use one unified
+task-session workflow.
+
+This section supersedes earlier requirements to retain legacy
+execution compatibility, default to legacy mode, or migrate
+existing legacy tasks.
+
+### 10.1 One execution architecture
+
+- Remove the `executionMode` configuration entirely.
+- Make the task-session architecture the only supported
+  implementation workflow.
+- Remove legacy-only orchestration, prompts, state handling,
+  configuration, and tests when no longer needed.
+- Retain shared Git, GitHub, Trello, OpenCode, worktree,
+  notification, refinement, and recovery functionality.
+- Do not retain dead code solely for backward compatibility.
+- There are no existing active legacy tasks requiring migration.
+- Continue to reject unknown or ambiguous persisted runtime state.
+- Preserve `autoMerge: false` as the default behavior.
+
+### 10.2 Preserve refinement
+
+Refinement remains a supported first-class workflow.
+
+- Preserve the existing Trello refinement classification,
+  description update, and Backlog return behavior.
+- Integrate refinement into the unified scheduler.
+- Respect Ready-list ordering and project mutation ownership.
+- Preserve safe worktrees, recovery, and failure handling.
+- Refinement must not create implementation PRs.
+- Do not retain the old implementation architecture merely
+  to keep refinement working.
+
+### 10.3 Complete PR lifecycle
+
+The unified workflow must handle:
+
+- New implementation PRs.
+- CI checks and automated CI remediation.
+- Human requested changes and PR conversations.
+- Repeated feedback rounds.
+- Manually merged PRs.
+- Deliberately closed, unmerged PRs.
+- Restart recovery and terminal cleanup.
+
+A merged PR must transition its associated Trello card to
+Done. A deliberately closed, unmerged PR must follow the
+existing Backlog behavior.
+
+These transitions must be verified, idempotent, and safe
+across process restarts.
+
+### 10.4 Automatic CI check discovery
+
+Remove the requirement for users to manually configure
+`repository.requiredChecks`.
+
+The orchestrator should automatically discover and track
+the expected CI checks for the current PR head.
+
+Requirements:
+
+- Include relevant GitHub check runs and commit statuses.
+- Prefer authoritative expected-check information from
+  available repository policies and workflow contracts.
+- Include every relevant observed check, not only a manually
+  selected subset.
+- Do not interpret an empty check list as success.
+- Do not infer that every expected check has started merely
+  because all currently visible checks have passed.
+- Pending, queued, missing, or incomplete expected checks
+  must prevent successful completion.
+- A changed PR head invalidates previous check observations.
+- Remediation must collect all terminal failures for a
+  complete expected-check set before making corrections.
+- Auto-merge must never proceed with unknown or incomplete
+  CI evidence.
+
+GitHub does not always expose checks before they are created.
+If a complete expected-check set cannot be established
+reliably, the workflow must fail closed or remain waiting
+with an explicit diagnostic.
+
+Do not silently substitute the currently visible check
+list as proof that no additional checks will appear.
+
+Do not introduce dependencies on paid GitHub features.
+
+### 10.5 No unnecessary compatibility layers
+
+The target architecture must contain:
+
+- One implementation execution pipeline.
+- One task lifecycle and ownership model.
+- One authoritative CI verification policy.
+- One human-feedback remediation lifecycle.
+- One consistent recovery mechanism.
+
+Preserve shared utilities and valid safety boundaries.
+Remove obsolete execution paths and their dedicated tests.
+
+### 10.6 Final delivery
+
+All implementation and verification work must remain local.
+
+After the final acceptance audit:
+
+- Remove `docs/redesign/REQUIREMENTS.md`.
+- Remove `docs/redesign/TASKS.md`.
+- Remove `.opencode/agents/redesign-executor.md`.
+- Preserve permanent operational documentation in README
+  and the canonical docs directory.
+- Run `yarn validate` and `yarn build`.
+- Commit the final cleanup locally.
+
+A live integration pilot is a separate post-implementation
+activity and is not required to complete these tasks.
