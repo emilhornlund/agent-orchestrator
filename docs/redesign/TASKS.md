@@ -335,15 +335,22 @@ are examples to inspect, not permission to invent unimplemented helpers.
   - **Out of scope:** Do not use real services or models, and do not deploy.
 
 - [ ] **T44 — Document operation, configuration, and pilot boundaries**
-  - **Depends on:** T43.
+  - **Depends on:** T43, T45.
   - **Implement:** Update README, configuration reference, workflow/recovery/operations docs, and `config.example.yaml` with opt-in mode, required validation, optional coverage, session ownership, CI/feedback behavior, bounded retries, and operator recovery instructions. Distinguish local mocked verification from an unperformed real-world pilot.
   - **Verify locally:** Docs examples match actual validated config; existing `yarn validate` passes; no claim of live integration testing is made.
   - **Out of scope:** Do not enable the new mode by default or modify code unrelated to docs.
 
+- [ ] **T45 — Resume owned task-session Working cards after restart**
+  - **Depends on:** T39, T43C.
+  - **Corrective rationale:** Production polling currently leaves already-owned task-session cards in `Working` untouched after a process restart, and `reconcileTaskSession` has no production caller. Persisted phase state must drive safe resumption before the redesign can be documented as restart-safe.
+  - **Implement:** Integrate the existing `reconcileTaskSession` recovery component into the production task-session polling path for owned `Working` cards. Read authoritative Trello, owned worktree/branch/HEAD/trusted-commit, primary-session, and any relevant publication evidence through existing injectable clients. Resume only the operation supported by the persisted phase and verified evidence, continuing the exact persisted primary session. Preserve the project mutation queue, operation identity, and phase-specific idempotency. Fail closed with durable attention state on ownership/session/worktree ambiguity or uncertain external effects; never create duplicate commits, pushes, PRs, feedback replies, or start a second task.
+  - **Verify locally:** Production `pollProject` restart tests interrupt an active `Working` task and prove phase-aware continuation with the same primary session and no duplicated operations. Cover verified resumption and ambiguous/malformed ownership, session, worktree, commit, and publication state using local fixtures/mocked clients only. Keep legacy execution unaffected.
+  - **Out of scope:** Do not use live services or models, migrate legacy tasks, discard preserved changes, or introduce a competing recovery mechanism.
+
 ## Completion checkpoint
 
-When T44 is complete, all 44 task checkboxes must be marked `[x]`,
-all 44 task commits must be individually identifiable in local Git history,
+When T45 is complete, all 45 task checkboxes must be marked `[x]`,
+all 45 task commits must be individually identifiable in local Git history,
 and the final worktree must be clean after a successful `yarn validate`.
 Live integration testing and release/deployment are **separate decisions**
 outside this backlog.
