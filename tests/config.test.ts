@@ -24,6 +24,8 @@ projects:
       defaultBranch: "main"
       worktreeRoot: "/tmp/worktrees"
       validationCommand: "yarn validate"
+      requiredChecks:
+        - "Build"
       gitIdentity:
         name: "Agent Orchestrator"
         email: "agent-orchestrator@users.noreply.github.com"
@@ -74,6 +76,9 @@ function appendProject(raw: string, id: string, suffix: string): string {
       github: "owner/repository-${suffix}"
       defaultBranch: "main"
       worktreeRoot: "/tmp/worktrees-${suffix}"
+      validationCommand: "yarn validate"
+      requiredChecks:
+        - "Build"
       gitIdentity:
         name: "Agent Orchestrator"
         email: "agent-orchestrator@users.noreply.github.com"
@@ -165,7 +170,6 @@ describe("parseConfig", () => {
     expect(project).toBeDefined();
     expect(project!.id).toBe("project-one");
     expect(project!.autoMerge).toBe(false);
-    expect(project!.executionMode).toBe("legacy");
     expect(project!.trello).toEqual({
       boardId: "board-one",
       backlogListId: "backlog",
@@ -212,130 +216,47 @@ describe("parseConfig", () => {
     expect(config.notifications).toBeUndefined();
   });
 
-  it.each(["legacy", "task-session"] as const)(
-    "accepts the %s execution mode",
-    (executionMode) => {
-      const raw = validConfig
-        .replace(
-          '  - id: "project-one"',
-          `  - id: "project-one"\n    executionMode: "${executionMode}"`,
-        )
-        .replace(
-          '      worktreeRoot: "/tmp/worktrees"',
-          `      worktreeRoot: "/tmp/worktrees"${executionMode === "task-session" ? '\n      requiredChecks:\n        - "Build"' : ""}`,
-        );
+  it("rejects the retired executionMode setting regardless of value", () => {
+    for (const value of ["legacy", "task-session", "experimental"]) {
+      const raw = validConfig.replace(
+        '  - id: "project-one"',
+        `  - id: "project-one"\n    executionMode: "${value}"`,
+      );
+      expect(() => parseConfig(raw)).toThrow(
+        'Unrecognized key: "executionMode"',
+      );
+    }
+  });
 
-      expect(parseConfig(raw).projects[0]?.executionMode).toBe(executionMode);
-    },
-  );
+  it("requires an orchestrator-owned validation command for every project", () => {
+    expect(() =>
+      parseConfig(
+        validConfig.replace('      validationCommand: "yarn validate"\n', ""),
+      ),
+    ).toThrow("projects.0.repository.validationCommand");
+  });
 
-  it("rejects unsupported execution modes", () => {
+  it("validates the current required-check contract for every project", () => {
+    expect(
+      parseConfig(validConfig).projects[0]?.repository.requiredChecks,
+    ).toEqual(["Build"]);
+    expect(() =>
+      parseConfig(validConfig.replace('        - "Build"\n', "")),
+    ).toThrow("requiredChecks");
+    expect(() =>
+      parseConfig(
+        validConfig.replace('        - "Build"', '        - " Build "'),
+      ),
+    ).toThrow("padding or control characters");
+  });
+
+  it("accepts configured coverage alongside unified validation", () => {
     const raw = validConfig.replace(
-      '  - id: "project-one"',
-      '  - id: "project-one"\n    executionMode: "experimental"',
-    );
-
-    expect(() => parseConfig(raw)).toThrow("projects.0.executionMode");
-  });
-
-  it("requires a repository validation command for task-session mode", () => {
-    const raw = validConfig
-      .replace('      validationCommand: "yarn validate"\n', "")
-      .replace(
-        '      worktreeRoot: "/tmp/worktrees"',
-        '      worktreeRoot: "/tmp/worktrees"\n      requiredChecks:\n        - "Build"',
-      )
-      .replace(
-        '  - id: "project-one"',
-        '  - id: "project-one"\n    executionMode: "task-session"',
-      );
-
-    expect(() => parseConfig(raw)).toThrow(
-      "projects.0.repository.validationCommand",
-    );
-    expect(() => parseConfig(raw)).toThrow(
-      "Required when executionMode is task-session",
-    );
-  });
-
-  it("requires unique check names only in task-session mode", () => {
-    const taskConfig = validConfig
-      .replace(
-        '  - id: "project-one"',
-        '  - id: "project-one"\n    executionMode: "task-session"',
-      )
-      .replace(
-        '      worktreeRoot: "/tmp/worktrees"',
-        '      worktreeRoot: "/tmp/worktrees"\n      requiredChecks:\n        - "Build"\n        - "Tests"',
-      );
-    expect(
-      parseConfig(taskConfig).projects[0]?.repository.requiredChecks,
-    ).toEqual(["Build", "Tests"]);
-
-    const missing = validConfig.replace(
-      '  - id: "project-one"',
-      '  - id: "project-one"\n    executionMode: "task-session"',
-    );
-    expect(() => parseConfig(missing)).toThrow("requiredChecks");
-
-    const duplicate = taskConfig.replace(
-      '        - "Tests"',
-      '        - "Build"',
-    );
-    expect(() => parseConfig(duplicate)).toThrow("unique");
-
-    const padded = taskConfig.replace(
-      '        - "Build"',
-      '        - " Build "',
-    );
-    expect(() => parseConfig(padded)).toThrow("padding or control characters");
-  });
-
-  it("accepts a coverage command only for task-session mode", () => {
-    const taskSessionConfig = validConfig
-      .replace(
-        '  - id: "project-one"',
-        '  - id: "project-one"\n    executionMode: "task-session"',
-      )
-      .replace(
-        '      worktreeRoot: "/tmp/worktrees"',
-        '      worktreeRoot: "/tmp/worktrees"\n      requiredChecks:\n        - "Build"',
-      )
-      .replace(
-        '      validationCommand: "yarn validate"',
-        '      validationCommand: "yarn validate"\n      coverageCommand: "yarn coverage"',
-      );
-
-    expect(
-      parseConfig(taskSessionConfig).projects[0]?.repository.coverageCommand,
-    ).toBe("yarn coverage");
-
-    const legacyConfig = validConfig.replace(
       '      validationCommand: "yarn validate"',
       '      validationCommand: "yarn validate"\n      coverageCommand: "yarn coverage"',
     );
-    expect(() => parseConfig(legacyConfig)).toThrow(
-      "Only available when executionMode is task-session",
-    );
-  });
-
-  it("rejects a blank task-session coverage command", () => {
-    const raw = validConfig
-      .replace(
-        '  - id: "project-one"',
-        '  - id: "project-one"\n    executionMode: "task-session"',
-      )
-      .replace(
-        '      worktreeRoot: "/tmp/worktrees"',
-        '      worktreeRoot: "/tmp/worktrees"\n      requiredChecks:\n        - "Build"',
-      )
-      .replace(
-        '      validationCommand: "yarn validate"',
-        '      validationCommand: "yarn validate"\n      coverageCommand: "  "',
-      );
-
-    expect(() => parseConfig(raw)).toThrow(
-      "projects.0.repository.coverageCommand",
+    expect(parseConfig(raw).projects[0]?.repository.coverageCommand).toBe(
+      "yarn coverage",
     );
   });
 
@@ -776,17 +697,15 @@ workflow:`,
     expect(() => parseConfig(raw)).toThrow();
   });
 
-  it("accepts configuration without a validation command", () => {
+  it("requires validation for every project", () => {
     const raw = validConfig.replace(
       '      validationCommand: "yarn validate"\n',
       "",
     );
 
-    const config = parseConfig(raw);
-    const project = config.projects[0];
-
-    expect(project).toBeDefined();
-    expect(project!.repository.validationCommand).toBeUndefined();
+    expect(() => parseConfig(raw)).toThrow(
+      "projects.0.repository.validationCommand",
+    );
   });
 
   it("accepts multiple projects", () => {
@@ -814,6 +733,8 @@ workflow:`,
       defaultBranch: "main"
       worktreeRoot: "/tmp/worktrees-two"
       validationCommand: "yarn validate"
+      requiredChecks:
+        - "Build"
       gitIdentity:
         name: "Agent Orchestrator"
         email: "agent-orchestrator@users.noreply.github.com"

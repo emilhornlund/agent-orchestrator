@@ -44,7 +44,6 @@ function createFixture(coverageCommand?: string) {
 
   const project = {
     id: "project-one",
-    executionMode: "task-session",
     repository: {
       path: repositoryPath,
       worktreeRoot,

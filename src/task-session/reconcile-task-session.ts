@@ -115,9 +115,6 @@ export async function reconcileTaskSession(
 ): Promise<TaskSessionRecoveryResult> {
   const { project, cardId, expectedBranch, operationKey, taskRecordStore } =
     options;
-  if (project.executionMode !== "task-session") {
-    throw new Error("Task-session reconciliation requires task-session mode");
-  }
   const record = loadOwnedTaskExecutionRecord(taskRecordStore, {
     projectId: project.id,
     cardId,

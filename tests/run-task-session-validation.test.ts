@@ -29,7 +29,6 @@ afterEach(() => {
 function createFixture(
   options: {
     validationCommand?: string | null;
-    executionMode?: "legacy" | "task-session";
   } = {},
 ) {
   temporaryRoot = fs.mkdtempSync(
@@ -44,7 +43,6 @@ function createFixture(
 
   const project = {
     id: "project-one",
-    executionMode: options.executionMode ?? "task-session",
     repository: {
       path: repositoryPath,
       worktreeRoot,
@@ -243,14 +241,7 @@ describe("runTaskSessionValidation", () => {
     },
   );
 
-  it("rejects legacy mode, a wrong phase, and a wrong branch before command execution", async () => {
-    const legacyFixture = createFixture({ executionMode: "legacy" });
-
-    await expect(runValidation(legacyFixture)).rejects.toThrow(
-      "requires task-session mode",
-    );
-    expect(legacyFixture.runCommand).not.toHaveBeenCalled();
-
+  it("rejects a wrong branch before command execution", async () => {
     const branchFixture = createFixture();
     branchFixture.getCurrentBranch.mockResolvedValue("agent/other-card");
 

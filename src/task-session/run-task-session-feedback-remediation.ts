@@ -80,11 +80,6 @@ function updateRecord(
 export async function runTaskSessionFeedbackRemediation(
   options: RunTaskSessionFeedbackRemediationOptions,
 ): Promise<TaskSessionFeedbackRemediationResult> {
-  if (options.project.executionMode !== "task-session") {
-    throw new TaskSessionFeedbackRemediationError(
-      "Feedback remediation requires task-session mode",
-    );
-  }
   assertOwnedTaskWorktreePath(options.project, options.worktreePath);
   const record = loadOwnedTaskExecutionRecord(options.taskRecordStore, {
     projectId: options.project.id,

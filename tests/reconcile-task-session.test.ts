@@ -26,7 +26,6 @@ function fixture(phase: TaskExecutionPhase = "validation") {
   fs.mkdirSync(worktreePath, { recursive: true });
   const project = {
     id: "project",
-    executionMode: "task-session",
     autoMerge: false,
     trello: {
       workingListId: "working",

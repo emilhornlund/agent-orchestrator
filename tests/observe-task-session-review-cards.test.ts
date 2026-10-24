@@ -26,7 +26,6 @@ function fixture() {
   );
   const project = {
     id: "project",
-    executionMode: "task-session",
     autoMerge: false,
     repository: {
       path: repositoryPath,

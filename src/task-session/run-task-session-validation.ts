@@ -77,10 +77,6 @@ export async function runTaskSessionValidation(
   const { project, cardId, expectedBranch, operationKey, worktreePath } =
     options;
 
-  if (project.executionMode !== "task-session") {
-    throw new Error("Task-session validation requires task-session mode");
-  }
-
   const validationCommand = project.repository.validationCommand;
 
   if (

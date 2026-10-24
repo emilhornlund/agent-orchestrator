@@ -163,12 +163,6 @@ export async function runTaskSessionReview(
     runOptions,
   } = options;
 
-  if (project.executionMode !== "task-session") {
-    throw new TaskSessionReviewError(
-      "Implementation review requires task-session mode",
-    );
-  }
-
   assertOwnedTaskWorktreePath(project, worktreePath);
   const record = loadOwnedTaskExecutionRecord(taskRecordStore, {
     projectId: project.id,

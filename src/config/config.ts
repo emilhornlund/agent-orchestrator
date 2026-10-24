@@ -154,6 +154,7 @@ const repositorySchema = z.strictObject({
         "Required check names must not contain padding or control characters",
       ),
     )
+    .min(1)
     .optional(),
   gitIdentity: gitIdentitySchema,
   githubApp: githubAppSchema.optional(),
@@ -237,7 +238,6 @@ const emailNotificationSchema = z
 const projectSchema = z.strictObject({
   id: pathComponent,
   autoMerge: z.boolean().default(false),
-  executionMode: z.enum(["legacy", "task-session"]).optional(),
   trello: trelloSchema,
   repository: repositorySchema,
   opencode: openCodeSchema,
@@ -331,50 +331,26 @@ const configSchema = z
     const contextRoot = config.workflow.contextRoot;
 
     for (const [projectIndex, project] of config.projects.entries()) {
-      if (
-        project.executionMode === "task-session" &&
-        project.repository.validationCommand === undefined
-      ) {
+      if (project.repository.validationCommand === undefined) {
         ctx.addIssue({
           code: "custom",
           path: ["projects", projectIndex, "repository", "validationCommand"],
-          message:
-            "Required when executionMode is task-session; the orchestrator must run repository validation",
-        });
-      }
-
-      if (
-        project.repository.coverageCommand !== undefined &&
-        project.executionMode !== "task-session"
-      ) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["projects", projectIndex, "repository", "coverageCommand"],
-          message: "Only available when executionMode is task-session",
+          message: "Required; the orchestrator must run repository validation",
         });
       }
 
       const requiredChecks = project.repository.requiredChecks;
-      if (project.executionMode === "task-session") {
-        if (requiredChecks === undefined || requiredChecks.length === 0) {
-          ctx.addIssue({
-            code: "custom",
-            path: ["projects", projectIndex, "repository", "requiredChecks"],
-            message:
-              "A nonempty requiredChecks list is required when executionMode is task-session",
-          });
-        } else if (new Set(requiredChecks).size !== requiredChecks.length) {
-          ctx.addIssue({
-            code: "custom",
-            path: ["projects", projectIndex, "repository", "requiredChecks"],
-            message: "Required check names must be unique",
-          });
-        }
-      } else if (requiredChecks !== undefined) {
+      if (requiredChecks === undefined || requiredChecks.length === 0) {
         ctx.addIssue({
           code: "custom",
           path: ["projects", projectIndex, "repository", "requiredChecks"],
-          message: "Only available when executionMode is task-session",
+          message: "A nonempty requiredChecks list is required",
+        });
+      } else if (new Set(requiredChecks).size !== requiredChecks.length) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["projects", projectIndex, "repository", "requiredChecks"],
+          message: "Required check names must be unique",
         });
       }
 
@@ -437,13 +413,7 @@ export function parseConfig(raw: string): Config {
     throw new Error(`Invalid configuration:\n${messages.join("\n")}`);
   }
 
-  return {
-    ...result.data,
-    projects: result.data.projects.map((project) => ({
-      ...project,
-      executionMode: project.executionMode ?? "legacy",
-    })),
-  };
+  return result.data;
 }
 
 export function loadConfig(configPath = "config.yaml"): Config {

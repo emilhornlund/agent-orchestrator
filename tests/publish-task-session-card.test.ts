@@ -63,7 +63,6 @@ function fixture() {
   temporaryRoots.push(stateRoot);
   const project = {
     id: "project",
-    executionMode: "task-session",
     repository: {
       worktreeRoot: stateRoot,
       defaultBranch: "main",

@@ -91,11 +91,8 @@ function createConfig(project: ProjectConfig): Config {
 }
 
 describe("runStartup", () => {
-  it("starts task-session projects when explicitly configured", async () => {
-    const project = {
-      ...createProject("/tmp/task-session-repository"),
-      executionMode: "task-session" as const,
-    };
+  it("starts projects under the unified workflow", async () => {
+    const project = createProject("/tmp/task-session-repository");
     const runGit = vi.fn<RunGit>().mockResolvedValue("true");
     const validateGitHubCli = vi.fn().mockResolvedValue(undefined);
     const validateProjectTrello = vi.fn().mockResolvedValue(undefined);

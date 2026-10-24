@@ -35,10 +35,6 @@ function assertPublicationEvidence(
 export async function publishTaskSessionCard(
   options: PublishTaskSessionCardOptions,
 ): Promise<string> {
-  if (options.project.executionMode !== "task-session") {
-    throw new Error("Task-session publication requires task-session mode");
-  }
-
   assertPublicationEvidence(options.initialEvidence);
   const headBefore = await options.git.getHeadSha(options.worktreePath);
   const temporaryDirectory = fs.mkdtempSync(

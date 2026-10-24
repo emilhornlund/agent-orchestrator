@@ -81,7 +81,6 @@ function createFixture(options: { includePlan?: boolean } = {}) {
 
   const project = {
     id: projectId,
-    executionMode: "task-session",
     repository: {
       path: repositoryPath,
       worktreeRoot,

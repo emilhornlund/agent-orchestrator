@@ -40,7 +40,6 @@ function projectFixture() {
   fs.mkdirSync(repositoryPath);
   const project: ProjectConfig & { contextRoot: string } = {
     id: "project",
-    executionMode: "task-session",
     autoMerge: false,
     contextRoot,
     trello: {

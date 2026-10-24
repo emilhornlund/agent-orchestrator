@@ -337,8 +337,6 @@ export async function runTaskSessionWorkflow(
     signal,
     emailNotifier,
   } = options;
-  if (project.executionMode !== "task-session")
-    throw new Error("Task-session workflow requires task-session mode");
   const validationCommand = project.repository.validationCommand;
   const requiredChecks = project.repository.requiredChecks;
   if (

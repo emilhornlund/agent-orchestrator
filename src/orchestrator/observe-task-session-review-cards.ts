@@ -47,11 +47,6 @@ export async function observeTaskSessionReviewCards(
   options: ObserveTaskSessionReviewCardsOptions,
 ): Promise<TaskSessionPullRequestObservation[]> {
   const { project, cards, taskRecordStore, github } = options;
-  if (project.executionMode !== "task-session") {
-    throw new Error(
-      "Task-session review monitoring requires task-session mode",
-    );
-  }
   const requiredChecks = project.repository.requiredChecks;
   if (requiredChecks === undefined || requiredChecks.length === 0) {
     throw new Error(

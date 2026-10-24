@@ -1,7 +1,5 @@
 projects:
   - id: "project"
-    # Optional opt-in; omitted projects use the legacy workflow.
-    # executionMode: "task-session"
     # Keep disabled to require human approval before merging implementation PRs.
     autoMerge: false
 
@@ -25,14 +23,12 @@ projects:
       worktreeRoot: "/absolute/path/to/worktrees/repository"
       # Orchestrator-owned preparation, run through CommandRunner in the task worktree.
       setupCommand: "yarn install"
-      # OpenCode-owned validation for sessions that modify implementation files.
-      # In legacy mode, the orchestrator supplies but does not run this command.
-      # Task-session mode requires it and runs it as an orchestrator-owned gate.
+      # Orchestrator-owned validation gate for implementation changes.
       validationCommand: "yarn test"
-      # Required only when executionMode is task-session; use exact GitHub check names.
-      # requiredChecks:
-      #   - "Build"
-      # Optional task-session gate; replace with this repository's coverage command.
+      # Required current-head checks until automatic discovery is available.
+      requiredChecks:
+        - "Build"
+      # Optional; replace with this repository's coverage command.
       # coverageCommand: "replace-with-repository-coverage-command"
       gitIdentity:
         name: "Agent Orchestrator"
@@ -73,16 +69,16 @@ projects:
 
     trello:
       boardId: "another-board-id"
-      backlogListId: "..."
-      readyListId: "..."
-      workingListId: "..."
-      reviewListId: "..."
-      failedListId: "..."
-      doneListId: "..."
-      refinementLabelId: "..."
-      featureLabelId: "..."
-      improvementLabelId: "..."
-      bugLabelId: "..."
+      backlogListId: "another-backlog-list-id"
+      readyListId: "another-ready-list-id"
+      workingListId: "another-working-list-id"
+      reviewListId: "another-review-list-id"
+      failedListId: "another-failed-list-id"
+      doneListId: "another-done-list-id"
+      refinementLabelId: "another-refinement-label-id"
+      featureLabelId: "another-feature-label-id"
+      improvementLabelId: "another-improvement-label-id"
+      bugLabelId: "another-bug-label-id"
 
     repository:
       path: "/absolute/path/to/another-repository"
@@ -92,8 +88,10 @@ projects:
       # Orchestrator-owned preparation, run through CommandRunner in the task worktree.
       setupCommand: "yarn install"
       # OpenCode-owned validation for sessions that modify implementation files.
-      # The orchestrator supplies this command to those sessions but never runs it.
+      # Orchestrator-owned validation gate for implementation changes.
       validationCommand: "yarn test"
+      requiredChecks:
+        - "Build"
       gitIdentity:
         name: "Agent Orchestrator"
         email: "agent-orchestrator@users.noreply.github.com"

@@ -33,7 +33,6 @@ function projectFixture() {
   fs.mkdirSync(path.join(worktreeRoot, "card"), { recursive: true });
   const project = {
     id: "project",
-    executionMode: "task-session",
     autoMerge: false,
     trello: {
       workingListId: "working",

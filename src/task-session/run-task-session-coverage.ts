@@ -8,10 +8,6 @@ import { runTaskSessionValidation } from "./run-task-session-validation.js";
 export async function runTaskSessionCoverage(
   options: RunTaskSessionValidationOptions,
 ): Promise<TaskSessionValidationResult | null> {
-  if (options.project.executionMode !== "task-session") {
-    throw new Error("Task-session coverage requires task-session mode");
-  }
-
   const command = options.project.repository.coverageCommand;
 
   if (command === undefined) {

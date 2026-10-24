@@ -47,7 +47,6 @@ function assertPublicationReady(
 ): void {
   const head = options.publishedCommitSha;
   if (
-    options.project.executionMode !== "task-session" ||
     head !== options.observedHeadSha ||
     options.verification.projectId !== options.project.id ||
     options.verification.cardId !== options.cardId ||
