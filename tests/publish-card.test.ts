@@ -126,6 +126,43 @@ afterEach(() => {
 });
 
 describe("publishCard", () => {
+  it("defers auto-merge and completion delivery until the complete CI gate", async () => {
+    const trello = {
+      moveCard: vi.fn().mockResolvedValue({
+        ...createCard(),
+        idList: "review-list",
+      }),
+      addComment: vi.fn(),
+    } as unknown as TrelloClient;
+    const github = {
+      findPullRequest: vi.fn().mockResolvedValue({
+        url: "https://github.com/example/repository/pull/123",
+      }),
+      mergePullRequest: vi.fn(),
+    } as unknown as GitHubClient;
+    const notifier: EmailNotifier = { send: vi.fn() };
+
+    await publishCard({
+      trello,
+      git: createPublicationGit(),
+      github,
+      project: { ...createProject(), autoMerge: true },
+      card: createCard(),
+      worktreePath: "/worktree",
+      branch: "agent/card-1",
+      commitSha: "abc123",
+      reviewResult: "Passed",
+      remediationResult: "Not required",
+      emailNotifier: notifier,
+      deferAutoMerge: true,
+    });
+
+    expect(github.mergePullRequest).not.toHaveBeenCalled();
+    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "review-list");
+    expect(trello.addComment).not.toHaveBeenCalled();
+    expect(notifier.send).not.toHaveBeenCalled();
+  });
+
   it("auto-merges after publication and completes before notifying", async () => {
     const events: string[] = [];
     const project = { ...createProject(), autoMerge: true };

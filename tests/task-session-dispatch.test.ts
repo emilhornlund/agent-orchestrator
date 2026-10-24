@@ -949,8 +949,9 @@ describe("task-session production dispatch", () => {
     expect(openCode).not.toHaveBeenCalled();
   });
 
-  it("does not trigger CI repair on a pending required check during production polling", async () => {
+  it("waits for delayed registrations and mixed pending/failing CI without consuming repair attempts", async () => {
     const { project, worktreeRoot } = projectFixture();
+    project.autoMerge = true;
     const card = createCard();
     card.idList = project.trello.reviewListId;
     const headSha = "d".repeat(40);
@@ -981,6 +982,25 @@ describe("task-session production dispatch", () => {
         listId === project.trello.reviewListId ? [card] : [],
       ),
     } as unknown as TrelloClient;
+    let checks: Array<{
+      source: "check-run";
+      id: number;
+      name: string;
+      headSha: string;
+      status: string;
+      conclusion: string | null;
+      url: null;
+    }> = [
+      {
+        source: "check-run",
+        id: 42,
+        name: "Build",
+        headSha,
+        status: "completed",
+        conclusion: "success",
+        url: null,
+      },
+    ];
     const github = {
       findPullRequestState: vi.fn(async () => ({
         url: "https://github.com/owner/repo/pull/9",
@@ -990,28 +1010,19 @@ describe("task-session production dispatch", () => {
       })),
       getCiObservations: vi.fn(async () => ({
         headSha,
-        checks: [
-          {
-            source: "check-run" as const,
-            id: 42,
-            name: "Build",
-            headSha,
-            status: "queued",
-            conclusion: null,
-            url: null,
-          },
-        ],
+        checks,
         expectationSources: [
           {
             kind: "repository-rules" as const,
             sourceId: "rules",
             complete: true,
-            checkNames: ["Build"],
+            checkNames: ["Build", "Tests", "Security"],
           },
         ],
       })),
       findChangesRequestedPullRequest: vi.fn(async () => null),
       getPullRequestConversationComments: vi.fn(async () => []),
+      mergePullRequest: vi.fn(async () => undefined),
     } as unknown as GitHubClient;
     const openCode = vi.fn<RunOpenCode>();
     await pollProject(
@@ -1028,9 +1039,65 @@ describe("task-session production dispatch", () => {
       phase: "ci",
       reviewObservation: {
         headSha,
-        ciEvaluation: { status: "waiting", expectedCheckNames: ["Build"] },
+        ciEvaluation: {
+          status: "waiting",
+          expectedCheckNames: ["Build", "Security", "Tests"],
+          missingChecks: ["Security", "Tests"],
+        },
       },
     });
+
+    checks = [
+      {
+        source: "check-run",
+        id: 42,
+        name: "Build",
+        headSha,
+        status: "completed",
+        conclusion: "success",
+        url: null,
+      },
+      {
+        source: "check-run",
+        id: 43,
+        name: "Tests",
+        headSha,
+        status: "in_progress",
+        conclusion: null,
+        url: null,
+      },
+      {
+        source: "check-run",
+        id: 44,
+        name: "Security",
+        headSha,
+        status: "completed",
+        conclusion: "failure",
+        url: null,
+      },
+    ];
+    await pollProject(
+      trello,
+      {} as GitClient,
+      github,
+      new OpenCodeClient(openCode),
+      new CommandRunner(vi.fn<RunCommand>()),
+      project,
+      new AbortController().signal,
+    );
+    expect(
+      recordStore.read(card.id)?.reviewObservation?.ciEvaluation,
+    ).toMatchObject({
+      status: "waiting",
+      pendingChecks: ["Tests"],
+      missingChecks: [],
+    });
+    expect(recordStore.read(card.id)?.retryCounters.ci).toBe(0);
+    expect(new TaskMutationQueue(project.contextRoot, project).list()).toEqual(
+      [],
+    );
+    expect(github.mergePullRequest).not.toHaveBeenCalled();
+    expect(openCode).not.toHaveBeenCalled();
   });
 
   it("monitors multiple waiting PRs through production polling without concurrent mutations", async () => {
