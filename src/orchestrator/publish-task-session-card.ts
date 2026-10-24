@@ -102,5 +102,5 @@ export async function publishTaskSessionCard(
       assertPublicationEvidence(preparedEvidence);
     },
   });
-  return commitSha;
+  return options.git.getHeadSha(options.worktreePath);
 }

@@ -91,7 +91,7 @@ function createConfig(project: ProjectConfig): Config {
 }
 
 describe("runStartup", () => {
-  it("rejects task-session mode before initializing external operations", async () => {
+  it("starts task-session projects when explicitly configured", async () => {
     const project = {
       ...createProject("/tmp/task-session-repository"),
       executionMode: "task-session" as const,
@@ -101,31 +101,33 @@ describe("runStartup", () => {
     const validateProjectTrello = vi.fn().mockResolvedValue(undefined);
     const runOrchestrator = vi.fn().mockResolvedValue(undefined);
 
-    await expect(
-      runStartup(
-        createConfig(project),
-        {
-          trello: {} as TrelloClient,
-          git: new GitClient(runGit),
-          github: {} as GitHubClient,
-          opencode: {} as OpenCodeClient,
-          commands: new CommandRunner(vi.fn<RunCommand>()),
-        },
-        new AbortController().signal,
-        {
-          validateGitHubCli,
-          validateProjectTrello,
-          runOrchestrator,
-        },
-      ),
-    ).rejects.toThrow(
-      'executionMode "task-session" is not available until the task-session workflow is complete (T43)',
+    await runStartup(
+      createConfig(project),
+      {
+        trello: {} as TrelloClient,
+        git: new GitClient(runGit),
+        github: {} as GitHubClient,
+        opencode: {} as OpenCodeClient,
+        commands: new CommandRunner(
+          vi.fn<RunCommand>().mockResolvedValue({
+            exitCode: 0,
+            output: "",
+            errorOutput: "",
+          }),
+        ),
+      },
+      new AbortController().signal,
+      {
+        validateGitHubCli,
+        validateProjectTrello,
+        runOrchestrator,
+      },
     );
 
-    expect(validateGitHubCli).not.toHaveBeenCalled();
-    expect(runGit).not.toHaveBeenCalled();
-    expect(validateProjectTrello).not.toHaveBeenCalled();
-    expect(runOrchestrator).not.toHaveBeenCalled();
+    expect(validateGitHubCli).toHaveBeenCalledOnce();
+    expect(runGit).toHaveBeenCalled();
+    expect(validateProjectTrello).toHaveBeenCalledOnce();
+    expect(runOrchestrator).toHaveBeenCalledOnce();
   });
 
   it("runs context retention cleanup before startup operations", async () => {

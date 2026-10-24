@@ -296,7 +296,7 @@ to inspect first, not permission to invent unimplemented helpers.
   - **Verify locally:** All scenarios pass offline and assert no unverified publication, preserved task ownership, correct session continuity, and bounded failure outcomes.
   - **Out of scope:** Do not call real services or AI models; do not enable mode yet.
 
-- [ ] **T43 — Enable task-session dispatch without auto-migration**
+- [x] **T43 — Enable task-session dispatch without auto-migration**
   - **Depends on:** T02, T15–T42.
   - **Implement:** Remove the temporary startup rejection for `executionMode: task-session` and route eligible new tasks to the completed task-session coordinator. Legacy remains the default. Reject attempts to attach new mode to an existing active legacy task without explicit migration.
   - **Verify locally:** Startup and mocked workflow tests verify mode routing, default legacy behavior, safe refusal to migrate, and correct local-only end-to-end completion.

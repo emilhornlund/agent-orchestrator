@@ -113,9 +113,9 @@ export async function runTaskSessionValidation(
     operationKey,
   });
 
-  if (record.phase !== "validation") {
+  if (record.phase !== "validation" && record.phase !== "publication") {
     throw new Error(
-      `Task-session validation requires the validation phase, found ${record.phase}`,
+      `Task-session validation requires validation or publication preparation, found ${record.phase}`,
     );
   }
 

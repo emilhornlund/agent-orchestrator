@@ -44,7 +44,12 @@ export async function observeTaskSessionReviewCards(
   const observed: ObservedTaskSessionReviewCard[] = [];
   for (const card of cards) {
     const record = taskRecordStore.read(card.id);
-    if (record === null || record.phase !== "human-feedback") continue;
+    if (
+      record === null ||
+      (record.phase !== "human-feedback" && record.phase !== "ci")
+    ) {
+      continue;
+    }
     if (
       record.projectId !== project.id ||
       record.cardId !== card.id ||
@@ -123,7 +128,7 @@ export async function observeTaskSessionReviewCards(
     if (
       latest === null ||
       latest.revision !== record.revision ||
-      latest.phase !== "human-feedback"
+      (latest.phase !== "human-feedback" && latest.phase !== "ci")
     ) {
       throw new Error(
         `Task record changed during read-only review monitoring for card ${card.id}`,
