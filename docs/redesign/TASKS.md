@@ -475,6 +475,20 @@ are examples to inspect, not permission to invent unimplemented helpers.
   - **Verify locally:** Permanent docs contain no unsupported maintenance-state claims; the config example parses and full validation passes.
   - **Out of scope:** Do not alter production behavior or remove prepared-conflict recovery.
 
+- [x] **T59A — Complete refinement lifecycle acceptance coverage**
+  - **Depends on:** T46–T47.
+  - **Corrective rationale:** The unified refinement production test covered only one successful refinement card; it did not prove both Ready-list orders, implementation/refinement serialization, malformed/failed refinement, or interruption during cleanup.
+  - **Implement:** Add deterministic production-entry-point scenarios for both eligible-card orders, refinement failures, and shutdown during safe cleanup; preserve all changes and queue ownership.
+  - **Verify locally:** Tests prove no overlapping project mutation, no implementation PR from refinement, and durable recovery/attention behavior for interrupted or failed work.
+  - **Out of scope:** Do not alter implementation planning or PR CI behavior.
+
+- [ ] **T59B — Complete terminal PR observation boundary tests**
+  - **Depends on:** T48–T49.
+  - **Corrective rationale:** Terminal PR tests did not cover incorrect repository/branch ownership, stale identities, or temporary GitHub read errors through the observation boundary.
+  - **Implement:** Add mocked OPEN/MERGED/CLOSED observation tests for wrong owner/base/head, stale PR URL/head, missing PR, and transient GitHub failures; verify no terminal side effects on uncertain reads.
+  - **Verify locally:** Only authoritative terminal PRs reach the queued terminal reconciler; malformed or transient reads preserve Trello and queue state.
+  - **Out of scope:** Do not call live GitHub or change terminal transition policy.
+
 - [ ] **T59 — Perform final unified lifecycle acceptance audit**
   - **Depends on:** T46–T58.
   - **Implement:** Audit actual production entry points and integration tests for refinement, implementation, session continuity, validation, coverage, independent review, publication, complete CI observation and repair, human feedback, contextual replies, merged/closed PR reconciliation, auto-merge, and restart recovery. Correct any confirmed blocking defect through a narrowly scoped corrective task before completing this audit.
