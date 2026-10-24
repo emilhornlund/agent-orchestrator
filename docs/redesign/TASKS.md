@@ -517,6 +517,13 @@ are examples to inspect, not permission to invent unimplemented helpers.
   - **Verify locally:** Production-polling tests prove manually and automatically merged PRs reach Done with terminal task records and clean worktrees; injected cleanup interruption retries safely without duplicate completion side effects.
   - **Out of scope:** Do not change auto-merge CI/local-evidence gates, closed-unmerged Backlog policy, or live-service behavior.
 
+- [x] **T59G — Remove publication-time auto-merge bypass**
+  - **Depends on:** T50, T56A.
+  - **Corrective rationale:** The retired generic publication path still exposes a direct `autoMerge` branch that can merge immediately after publishing, bypassing complete current-head CI evaluation. Current unified callers avoid the branch, but the helper remains an unsafe alternate merge path.
+  - **Implement:** Remove auto-merge execution and deferred-auto-merge compatibility from generic publication; keep all task-session merges behind the complete CI/local-evidence readiness gate.
+  - **Verify locally:** Production call-graph and publication tests prove generic publication never merges and the task-session CI lifecycle remains the only merge path.
+  - **Out of scope:** Do not change validated task-session merge readiness or remove shared GitHub merge operations.
+
 - [ ] **T59 — Perform final unified lifecycle acceptance audit**
   - **Depends on:** T46–T58.
   - **Implement:** Audit actual production entry points and integration tests for refinement, implementation, session continuity, validation, coverage, independent review, publication, complete CI observation and repair, human feedback, contextual replies, merged/closed PR reconciliation, auto-merge, and restart recovery. Correct any confirmed blocking defect through a narrowly scoped corrective task before completing this audit.

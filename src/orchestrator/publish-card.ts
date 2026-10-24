@@ -26,10 +26,6 @@ import { renderPullRequestDescription } from "../opencode/render-pull-request-de
 import type { CommandRunner } from "../process/command-runner.js";
 
 import { toFailureError } from "./failure-diagnostic.js";
-import {
-  completeAutoMergedCard,
-  mergePullRequestForAutoMerge,
-} from "./auto-merge.js";
 import { PublishedCardStateError } from "./published-card-state-error.js";
 import { getElapsedWorkflowTime } from "./workflow-duration.js";
 import { WorkflowError } from "./workflow-error.js";
@@ -57,8 +53,6 @@ export interface PublishCardOptions {
   rebaseAlreadyCompleted?: boolean;
   beforePushVerification?: () => Promise<void>;
   expectedExistingPullRequestUrl?: string;
-  /** Task-session auto-merge waits for the unified complete-CI gate. */
-  deferAutoMerge?: boolean;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -307,7 +301,6 @@ export async function publishCard({
   rebaseAlreadyCompleted = false,
   beforePushVerification,
   expectedExistingPullRequestUrl,
-  deferAutoMerge = false,
 }: PublishCardOptions): Promise<void> {
   const cardLog = logger.child({
     projectId: project.id,
@@ -592,22 +585,6 @@ export async function publishCard({
 
       cardLog.event(`Pull request created: ${pullRequest.url}`);
     }
-
-    if (project.autoMerge && !deferAutoMerge) {
-      cardLog.event(`Auto-merging pull request: ${pullRequest.url}`);
-
-      await mergePullRequestForAutoMerge(
-        github,
-        project,
-        card,
-        pullRequest.url,
-        publishedCommitSha,
-        worktreePath,
-        signal,
-      );
-
-      cardLog.event(`Pull request auto-merged: ${pullRequest.url}`);
-    }
   } catch (error) {
     if (error instanceof TrelloRequestAbortedError) {
       throw error;
@@ -628,23 +605,6 @@ export async function publishCard({
     throw new TrelloRequestAbortedError();
   }
 
-  if (project.autoMerge && !deferAutoMerge) {
-    await completeAutoMergedCard({
-      trello,
-      project,
-      card,
-      pullRequestUrl: pullRequest.url,
-      commitSha: publishedCommitSha,
-      reviewResult,
-      remediationResult,
-      cardLog,
-      ...(emailNotifier === undefined ? {} : { emailNotifier }),
-      ...(signal === undefined ? {} : { signal }),
-    });
-
-    return;
-  }
-
   cardLog.event("Moving Trello card to Human Review...");
 
   try {
@@ -663,13 +623,6 @@ export async function publishCard({
   }
 
   cardLog.event("Trello card moved to Human Review");
-
-  if (project.autoMerge && deferAutoMerge) {
-    cardLog.event(
-      "Auto-merge deferred until complete current-head CI evidence passes",
-    );
-    return;
-  }
 
   const elapsedWorkflowTime = await getElapsedWorkflowTime(
     trello,

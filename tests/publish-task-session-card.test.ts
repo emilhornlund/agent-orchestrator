@@ -119,7 +119,12 @@ describe("publishTaskSessionCard", () => {
     expect(git.stageAll).toHaveBeenCalledOnce();
     expect(git.commit).toHaveBeenCalledOnce();
     expect(publishCard).toHaveBeenCalledWith(
-      expect.objectContaining({ deferAutoMerge: true }),
+      expect.objectContaining({
+        beforePushVerification: expect.any(Function),
+      }),
+    );
+    expect(vi.mocked(publishCard).mock.calls[0]?.[0]).not.toHaveProperty(
+      "deferAutoMerge",
     );
   });
 
