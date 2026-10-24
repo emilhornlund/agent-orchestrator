@@ -166,6 +166,11 @@ describe("task-session terminal PR reconciliation", () => {
         ...(destination === "done" ? [{ dueComplete: true }] : []),
       );
       expect(github.getCiObservations).not.toHaveBeenCalled();
+      if (state === "MERGED") {
+        expect(
+          new TaskExecutionStore(contextRoot, project).read(card.id)?.phase,
+        ).toBe("done");
+      }
     },
   );
 });

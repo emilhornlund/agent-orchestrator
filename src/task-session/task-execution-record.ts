@@ -22,6 +22,7 @@ export const taskExecutionEventTypes = [
   "publication-completed",
   "ci-passed-awaiting-human",
   "ci-passed-completed",
+  "pull-request-merged",
   "ci-failed",
   "feedback-received",
   "feedback-ci-failed",

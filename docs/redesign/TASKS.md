@@ -510,6 +510,13 @@ are examples to inspect, not permission to invent unimplemented helpers.
   - **Verify locally:** Observation tests cover stale and absent terminal heads and prove no terminal observation reaches reconciliation; matching terminal PRs still reconcile.
   - **Out of scope:** Do not block valid terminal PRs on CI observations or alter the Done/Backlog transition policy.
 
+- [x] **T59F — Reconcile merged PR state and cleanup consistently**
+  - **Depends on:** T48–T49, T56A.
+  - **Corrective rationale:** Terminal reconciliation cleaned manually merged PRs but left their task records nonterminal; task-session auto-merge bypassed that cleanup path and recorded completion before terminal resource cleanup.
+  - **Implement:** Route authoritative merged outcomes through the recoverable terminal queue, clean branches/worktrees/session logs, then persist a distinct merged-to-Done task transition. Keep terminal queue ownership and task records recoverable if cleanup is interrupted.
+  - **Verify locally:** Production-polling tests prove manually and automatically merged PRs reach Done with terminal task records and clean worktrees; injected cleanup interruption retries safely without duplicate completion side effects.
+  - **Out of scope:** Do not change auto-merge CI/local-evidence gates, closed-unmerged Backlog policy, or live-service behavior.
+
 - [ ] **T59 — Perform final unified lifecycle acceptance audit**
   - **Depends on:** T46–T58.
   - **Implement:** Audit actual production entry points and integration tests for refinement, implementation, session continuity, validation, coverage, independent review, publication, complete CI observation and repair, human feedback, contextual replies, merged/closed PR reconciliation, auto-merge, and restart recovery. Correct any confirmed blocking defect through a narrowly scoped corrective task before completing this audit.

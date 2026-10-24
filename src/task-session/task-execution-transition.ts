@@ -46,6 +46,7 @@ const taskExecutionEventSchema = z.discriminatedUnion("type", [
     type: z.literal("ci-passed-awaiting-human"),
   }),
   eventIdentitySchema.extend({ type: z.literal("ci-passed-completed") }),
+  eventIdentitySchema.extend({ type: z.literal("pull-request-merged") }),
   eventIdentitySchema.extend({ type: z.literal("ci-failed") }),
   eventIdentitySchema.extend({ type: z.literal("feedback-received") }),
   eventIdentitySchema.extend({ type: z.literal("feedback-ci-failed") }),
@@ -66,7 +67,10 @@ export class TaskExecutionTransitionError extends Error {
 
 const phaseTransitions: Record<
   TaskExecutionEvent["type"],
-  { from: TaskExecutionPhase | null; to: TaskExecutionPhase }
+  {
+    from: TaskExecutionPhase | readonly TaskExecutionPhase[] | null;
+    to: TaskExecutionPhase;
+  }
 > = {
   "plan-approved": { from: "planning", to: "implementation" },
   "implementation-completed": { from: "implementation", to: "validation" },
@@ -77,6 +81,7 @@ const phaseTransitions: Record<
   "publication-completed": { from: "publication", to: "ci" },
   "ci-passed-awaiting-human": { from: "ci", to: "human-feedback" },
   "ci-passed-completed": { from: "ci", to: "done" },
+  "pull-request-merged": { from: ["ci", "human-feedback"], to: "done" },
   "ci-failed": { from: "ci", to: "implementation" },
   "feedback-received": { from: "human-feedback", to: "implementation" },
   "feedback-ci-failed": { from: "human-feedback", to: "ci" },
@@ -135,7 +140,15 @@ export function transitionTaskExecutionRecord(
   const transition = phaseTransitions[event.type];
   const destinationPhase = transition.to;
 
-  if (transition.from !== null && record.phase !== transition.from) {
+  const allowedSourcePhases = Array.isArray(transition.from)
+    ? transition.from
+    : transition.from === null
+      ? null
+      : [transition.from];
+  if (
+    allowedSourcePhases !== null &&
+    !allowedSourcePhases.includes(record.phase)
+  ) {
     throw new TaskExecutionTransitionError(
       `Event ${event.type} is not allowed during the ${record.phase} phase`,
     );

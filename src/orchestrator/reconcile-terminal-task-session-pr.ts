@@ -113,6 +113,7 @@ export async function completeMergedTaskSessionPullRequest(options: {
   card: TrelloCard;
   pullRequest: PullRequestState;
   preparedConflict?: PreparedConflictHandoff;
+  completionComment?: string;
   emailNotifier?: EmailNotifier;
   signal: AbortSignal;
 }): Promise<void> {
@@ -166,6 +167,15 @@ export async function completeMergedTaskSessionPullRequest(options: {
         `Could not move merged task card to Done: ${message(error)}`,
         { reconciliationListId: project.trello.reviewListId },
       );
+    }
+    if (options.completionComment !== undefined) {
+      try {
+        await trello.addComment(card.id, options.completionComment);
+      } catch (error) {
+        cardLog.warn(
+          `Could not add merged PR completion note: ${message(error)}`,
+        );
+      }
     }
     await notifyCompletion(
       options.emailNotifier,
