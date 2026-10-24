@@ -152,7 +152,7 @@ to inspect first, not permission to invent unimplemented helpers.
   - **Verify locally:** Configuration and mocked-command tests cover absent command, pass, threshold failure, timeout, and stale evidence.
   - **Out of scope:** Do not introduce universal percentages or parse heterogeneous coverage reports.
 
-- [ ] **T20 — Integrate coverage failures into the bounded repair loop**
+- [x] **T20 — Integrate coverage failures into the bounded repair loop**
   - **Depends on:** T18–T19.
   - **Implement:** Reuse the same primary-session repair flow for configured coverage failures, naming the failing coverage command and diagnostics explicitly. Rerun local validation and coverage after repairs.
   - **Verify locally:** Tests prove coverage failure causes repair, previously passed validation is rechecked after edits, and bounded exhaustion prevents review.

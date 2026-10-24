@@ -362,6 +362,91 @@ describe("runTaskSessionValidationWithRepairs", () => {
     );
   });
 
+  it("repairs coverage failures with the same loop and reruns validation after edits", async () => {
+    const fixture = createFixture();
+    fixture.project.repository.coverageCommand = "yarn coverage --threshold";
+    fixture.runCommand
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        output: "validation passed",
+        errorOutput: "",
+      })
+      .mockResolvedValueOnce({
+        exitCode: 1,
+        output: "coverage check failed",
+        errorOutput: "repository threshold not met",
+      })
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        output: "validation passed after repair",
+        errorOutput: "",
+      })
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        output: "coverage threshold satisfied",
+        errorOutput: "",
+      });
+    fixture.runOpenCode.mockImplementation(async (options) => {
+      expect(options.prompt).toContain(
+        'Coverage command: "yarn coverage --threshold"',
+      );
+      expect(options.prompt).toContain("repository threshold not met");
+      fs.writeFileSync(
+        path.join(fixture.worktreePath, "src.ts"),
+        "coverage fix applied\n",
+        "utf8",
+      );
+      return { exitCode: 0, output: "fixed", errorOutput: "" };
+    });
+
+    const result = await runRepairs(fixture);
+
+    expect(
+      fixture.runCommand.mock.calls.map(([options]) => options.command),
+    ).toEqual([
+      "yarn validate",
+      "yarn coverage --threshold",
+      "yarn validate",
+      "yarn coverage --threshold",
+    ]);
+    expect(fixture.runOpenCode).toHaveBeenCalledOnce();
+    expect(result.validation.status).toBe("passed");
+    expect(result.coverage?.status).toBe("passed");
+    expect(result.attempts).toBe(1);
+    expect(result.record.validationRepair).toMatchObject({
+      status: "passed",
+      evidence: { command: "yarn validate" },
+      coverageEvidence: { command: "yarn coverage --threshold" },
+    });
+  });
+
+  it("uses the shared two-attempt limit for repeated coverage failures", async () => {
+    const fixture = createFixture();
+    fixture.project.repository.coverageCommand = "yarn coverage";
+    fixture.runCommand.mockImplementation(async ({ command }) =>
+      command === "yarn validate"
+        ? { exitCode: 0, output: "valid", errorOutput: "" }
+        : { exitCode: 1, output: "coverage failed", errorOutput: "" },
+    );
+
+    await expect(runRepairs(fixture)).rejects.toBeInstanceOf(
+      TaskSessionValidationRepairExhaustedError,
+    );
+    expect(
+      fixture.runCommand.mock.calls.filter(
+        ([options]) => options.command === "yarn validate",
+      ),
+    ).toHaveLength(MAX_VALIDATION_REPAIR_ATTEMPTS + 1);
+    expect(
+      fixture.runCommand.mock.calls.filter(
+        ([options]) => options.command === "yarn coverage",
+      ),
+    ).toHaveLength(MAX_VALIDATION_REPAIR_ATTEMPTS + 1);
+    expect(fixture.runOpenCode).toHaveBeenCalledTimes(
+      MAX_VALIDATION_REPAIR_ATTEMPTS,
+    );
+  });
+
   it("starts a new bounded repair cycle only when task operation identity changes", async () => {
     const fixture = createFixture();
     fixture.runCommand.mockResolvedValue({
