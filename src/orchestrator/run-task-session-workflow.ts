@@ -33,6 +33,8 @@ import { runTaskSessionValidationWithRepairs } from "../task-session/run-task-se
 import { runTaskSessionReview } from "../task-session/run-task-session-review.js";
 import { runTaskSessionReviewWithRepairs } from "../task-session/run-task-session-review-repairs.js";
 import { runTaskSessionCiRepairs } from "../task-session/run-task-session-ci-repairs.js";
+import { runTaskSessionFeedbackCycle } from "./run-task-session-feedback-cycle.js";
+import { FeedbackLedgerStore } from "../task-session/feedback-ledger-store.js";
 import {
   decideVerifiedPublication,
   type VerifiedPublicationDecisionInput,
@@ -190,6 +192,7 @@ export async function runTaskSessionWorkflow(
   const taskStore = new TaskExecutionStore(root, project);
   const planStore = new TaskPlanStore(root, project);
   const queue = new TaskMutationQueue(root, project);
+  const feedbackLedgerStore = new FeedbackLedgerStore(root, project);
   const humanReviewCards = await getCardsForDiscovery(
     trello,
     project.id,
@@ -623,6 +626,37 @@ export async function runTaskSessionWorkflow(
                   coverage: coverageNow,
                   review: reviewNow.review,
                 };
+                const evidenceRecord = taskStore.read(card.id);
+                if (evidenceRecord === null)
+                  throw new Error(
+                    "Task record disappeared while storing CI repair publication evidence",
+                  );
+                updateRecord(taskStore, evidenceRecord, {
+                  publicationQuality: {
+                    contentIdentity: identity,
+                    validation: {
+                      command: validationNow.command,
+                      startedAt: validationNow.startedAt,
+                      completedAt: validationNow.completedAt,
+                      exitCode: 0,
+                      diagnostic: validationNow.diagnostic,
+                      contentIdentity: validationNow.contentIdentity,
+                    },
+                    ...(coverageNow === null
+                      ? {}
+                      : {
+                          coverageEvidence: {
+                            command: coverageNow.command,
+                            startedAt: coverageNow.startedAt,
+                            completedAt: coverageNow.completedAt,
+                            exitCode: 0,
+                            diagnostic: coverageNow.diagnostic,
+                            contentIdentity: coverageNow.contentIdentity,
+                          },
+                        }),
+                    review: reviewNow.review,
+                  },
+                });
                 return preparedGate;
               },
             });
@@ -668,7 +702,10 @@ export async function runTaskSessionWorkflow(
       }
       if (ciResult.status === "exhausted") queue.fail(ciEventId);
       else queue.complete(ciEventId);
-      if (ciResult.status === "passed" && !project.autoMerge) {
+      if (
+        ciResult.status === "passed" &&
+        (!project.autoMerge || observation.feedbackIds.length > 0)
+      ) {
         const latest = taskStore.read(card.id);
         if (latest !== null && latest.phase === "ci")
           taskStore.compareAndSwap(
@@ -693,7 +730,7 @@ export async function runTaskSessionWorkflow(
         ),
       );
     if (!checksPassed) continue;
-    if (!project.autoMerge) {
+    if (!project.autoMerge || observation.feedbackIds.length > 0) {
       taskStore.compareAndSwap(
         record.cardId,
         record.revision,
@@ -809,6 +846,52 @@ export async function runTaskSessionWorkflow(
       signal,
     });
   }
+  const latestHumanReviewCards = await getCardsForDiscovery(
+    trello,
+    project.id,
+    project.trello.reviewListId,
+    "Could not re-read task-session Human Review cards",
+    signal,
+  );
+  const latestObservations = await observeTaskSessionReviewCards({
+    project,
+    cards: latestHumanReviewCards,
+    taskRecordStore: taskStore,
+    github,
+    cwd: project.repository.path,
+  });
+  let feedbackNeedsAttention = false;
+  for (const observation of latestObservations) {
+    const record = taskStore.read(observation.cardId);
+    if (record === null || record.phase !== "human-feedback") continue;
+    const card = latestHumanReviewCards.find(
+      (candidate) => candidate.id === record.cardId,
+    );
+    if (card === undefined)
+      throw new Error(
+        `Observed task-session review card disappeared: ${record.cardId}`,
+      );
+    const attachmentContext = await options.prepareAttachmentContext(card);
+    const feedbackResult = await runTaskSessionFeedbackCycle({
+      project,
+      card,
+      observation,
+      taskStore,
+      planStore,
+      ledgerStore: feedbackLedgerStore,
+      mutationQueue: queue,
+      trello,
+      git,
+      github,
+      openCode,
+      commands,
+      worktreePath: path.join(project.repository.worktreeRoot, card.id),
+      ...(attachmentContext === undefined ? {} : { attachmentContext }),
+      signal,
+    });
+    if (feedbackResult === "attention-required") feedbackNeedsAttention = true;
+  }
+  if (feedbackNeedsAttention) return;
   const workingCards = await getCardsForDiscovery(
     trello,
     project.id,

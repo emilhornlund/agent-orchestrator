@@ -203,6 +203,9 @@ export class FeedbackLedgerStore {
               ...(previous.replyState === undefined
                 ? {}
                 : { replyState: previous.replyState }),
+              ...(previous.unresolvedReason === undefined
+                ? {}
+                : { unresolvedReason: previous.unresolvedReason }),
             },
       );
     }
