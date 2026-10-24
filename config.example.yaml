@@ -1,5 +1,7 @@
 projects:
   - id: "project"
+    # Optional opt-in; omitted projects use the legacy workflow.
+    # executionMode: "task-session"
     # Keep disabled to require human approval before merging implementation PRs.
     autoMerge: false
 
@@ -24,8 +26,14 @@ projects:
       # Orchestrator-owned preparation, run through CommandRunner in the task worktree.
       setupCommand: "yarn install"
       # OpenCode-owned validation for sessions that modify implementation files.
-      # The orchestrator supplies this command to those sessions but never runs it.
+      # In legacy mode, the orchestrator supplies but does not run this command.
+      # Task-session mode requires it and runs it as an orchestrator-owned gate.
       validationCommand: "yarn test"
+      # Required only when executionMode is task-session; use exact GitHub check names.
+      # requiredChecks:
+      #   - "Build"
+      # Optional task-session gate; replace with this repository's coverage command.
+      # coverageCommand: "replace-with-repository-coverage-command"
       gitIdentity:
         name: "Agent Orchestrator"
         email: "agent-orchestrator@users.noreply.github.com"

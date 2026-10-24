@@ -32,6 +32,12 @@ feedback. Human approval is required unless the project's `autoMerge` setting is
 reference](docs/workflow.md) for the complete lifecycle, lists, labels, and transitions.
 Pull request descriptions may be generated automatically from the final implementation result.
 
+The existing workflow remains the default. Projects can explicitly opt into the restart-safe `task-session` mode, which
+reuses a primary OpenCode session across implementation, bounded CI repairs, and human-feedback rounds. Task-session projects
+must configure the validation command and exact required GitHub check names. See the [configuration](docs/configuration.md#projectsexecutionmode)
+and [workflow](docs/workflow.md#task-session-mode) references before opting in. Implementation and integration behavior has
+been verified locally with mocked services; no live Trello/GitHub pilot has been performed.
+
 ## Documentation
 
 | Topic                                                                | Reference                              |
