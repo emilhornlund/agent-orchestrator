@@ -108,6 +108,13 @@ export class OpenCodeSessionIdCaptureError extends Error {
   }
 }
 
+export class OpenCodeTextOutputParseError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "OpenCodeTextOutputParseError";
+  }
+}
+
 function parseOpenCodeEventV1(value: unknown): string | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new OpenCodeSessionIdParseError(
@@ -204,6 +211,58 @@ export function parseOpenCodeSessionId(output: string): string {
   }
 
   return sessionId;
+}
+
+export function extractOpenCodeTextOutput(output: string): string {
+  const lines = output.split(/\r?\n/u).filter((line) => line.trim().length > 0);
+  const textParts: string[] = [];
+
+  for (const [index, line] of lines.entries()) {
+    let value: unknown;
+
+    try {
+      value = JSON.parse(line) as unknown;
+    } catch (error) {
+      throw new OpenCodeTextOutputParseError(
+        `Structured OpenCode output contains malformed JSON on line ${index + 1}`,
+        { cause: error },
+      );
+    }
+
+    parseOpenCodeEventV1(value);
+
+    if (
+      typeof value === "object" &&
+      value !== null &&
+      !Array.isArray(value) &&
+      "type" in value &&
+      value.type === "text"
+    ) {
+      if (
+        !("part" in value) ||
+        typeof value.part !== "object" ||
+        value.part === null ||
+        !("type" in value.part) ||
+        value.part.type !== "text" ||
+        !("text" in value.part) ||
+        typeof value.part.text !== "string"
+      ) {
+        throw new OpenCodeTextOutputParseError(
+          `Structured OpenCode text event is malformed on line ${index + 1}`,
+        );
+      }
+
+      textParts.push(value.part.text);
+    }
+  }
+
+  if (textParts.length === 0) {
+    throw new OpenCodeTextOutputParseError(
+      "Structured OpenCode output did not contain assistant text",
+    );
+  }
+
+  return textParts.join("");
 }
 
 export function signalProcessTree(
