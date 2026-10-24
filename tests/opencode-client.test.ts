@@ -4,7 +4,9 @@ import {
   buildOpenCodeArguments,
   OpenCodeClient,
   OpenCodeRunAbortedError,
+  OpenCodeSessionIdCaptureError,
   OpenCodeTimeoutError,
+  parseOpenCodeSessionId,
   signalProcessTree,
   type RunOpenCode,
 } from "../src/opencode/opencode-client.js";
@@ -53,6 +55,70 @@ describe("OpenCodeClient", () => {
       "ses_session-123",
       "Continue the task",
     ]);
+  });
+
+  it("selects structured JSON events only for session capture", () => {
+    expect(
+      buildOpenCodeArguments({
+        cwd: "/worktree",
+        model: "test-model",
+        variant: "high",
+        prompt: "Create the task session",
+        captureSessionId: true,
+      }),
+    ).toEqual([
+      "run",
+      "--auto",
+      "--model",
+      "test-model",
+      "--variant",
+      "high",
+      "--dir",
+      "/worktree",
+      "--format",
+      "json",
+      "Create the task session",
+    ]);
+  });
+
+  it("parses one session ID from supported version-one JSON events", () => {
+    const output = [
+      JSON.stringify({ type: "step_start", sessionID: "ses_created-123" }),
+      JSON.stringify({ type: "text", sessionID: "ses_created-123" }),
+      JSON.stringify({ type: "step_finish" }),
+    ].join("\n");
+
+    expect(parseOpenCodeSessionId(output)).toBe("ses_created-123");
+  });
+
+  it.each([
+    ["empty", ""],
+    ["missing", JSON.stringify({ type: "text", text: "No ID here" })],
+    ["malformed JSON", '{"type":"text"'],
+    ["free-form prose", "Created session ses_created-123"],
+    [
+      "unsupported event version",
+      JSON.stringify({
+        version: 2,
+        type: "text",
+        sessionID: "ses_created-123",
+      }),
+    ],
+    [
+      "invalid session identifier",
+      JSON.stringify({ type: "text", sessionID: "invalid session" }),
+    ],
+  ])("rejects %s structured session output", (_description, output) => {
+    expect(() => parseOpenCodeSessionId(output)).toThrow();
+  });
+
+  it("rejects ambiguous session IDs from a structured event stream", () => {
+    const output = [
+      JSON.stringify({ type: "step_start", sessionID: "ses_first" }),
+      JSON.stringify({ type: "text", sessionID: "ses_second" }),
+    ].join("\n");
+
+    expect(() => parseOpenCodeSessionId(output)).toThrow("ambiguous");
   });
 
   it("runs OpenCode with the provided options", async () => {
@@ -113,6 +179,61 @@ describe("OpenCodeClient", () => {
     expect(runOpenCode).toHaveBeenCalledWith(
       expect.objectContaining({ sessionId: "ses_session-123" }),
     );
+  });
+
+  it("returns a captured session ID while retaining structured diagnostics", async () => {
+    const output = JSON.stringify({
+      type: "step_start",
+      sessionID: "ses_created-123",
+    });
+    const result = {
+      exitCode: 0,
+      output,
+      errorOutput: "warning: optional diagnostic",
+    };
+    const runOpenCode = vi.fn<RunOpenCode>().mockResolvedValue(result);
+    const client = new OpenCodeClient(runOpenCode);
+
+    await expect(
+      client.run({
+        cwd: "/worktree",
+        model: "test-model",
+        variant: "high",
+        timeoutMilliseconds: 60_000,
+        prompt: "Create a task session",
+        signal: new AbortController().signal,
+        captureSessionId: true,
+      }),
+    ).resolves.toEqual({ ...result, sessionId: "ses_created-123" });
+    expect(runOpenCode).toHaveBeenCalledWith(
+      expect.objectContaining({ captureSessionId: true }),
+    );
+  });
+
+  it("preserves process output when session capture fails", async () => {
+    const result = {
+      exitCode: 0,
+      output: "OpenCode emitted no session event",
+      errorOutput: "diagnostic from stderr",
+    };
+    const client = new OpenCodeClient(
+      vi.fn<RunOpenCode>().mockResolvedValue(result),
+    );
+
+    await expect(
+      client.run({
+        cwd: "/worktree",
+        model: "test-model",
+        variant: "high",
+        timeoutMilliseconds: 60_000,
+        prompt: "Create a task session",
+        signal: new AbortController().signal,
+        captureSessionId: true,
+      }),
+    ).rejects.toMatchObject<Partial<OpenCodeSessionIdCaptureError>>({
+      name: "OpenCodeSessionIdCaptureError",
+      runResult: result,
+    });
   });
 
   it.each(["", " session", "session id", "--continue", "session/one"])(
