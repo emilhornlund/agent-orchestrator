@@ -69,7 +69,7 @@ function isWithin(parent: string, candidate: string): boolean {
   );
 }
 
-function assertOwnedWorktreePath(
+export function assertOwnedTaskWorktreePath(
   project: ProjectConfig,
   worktreePath: string,
 ): void {
@@ -184,7 +184,20 @@ export async function runTaskSessionImplementation(
   } = options;
   const projectId = project.id;
 
-  assertOwnedWorktreePath(project, worktreePath);
+  if (project.executionMode !== "task-session") {
+    throw new Error("Task-session implementation requires task-session mode");
+  }
+
+  if (
+    project.repository.validationCommand === undefined ||
+    project.repository.validationCommand.trim().length === 0
+  ) {
+    throw new Error(
+      "Task-session implementation requires a nonempty repository.validationCommand",
+    );
+  }
+
+  assertOwnedTaskWorktreePath(project, worktreePath);
 
   const record = loadOwnedTaskExecutionRecord(taskRecordStore, {
     projectId,

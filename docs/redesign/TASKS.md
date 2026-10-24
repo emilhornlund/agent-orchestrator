@@ -128,7 +128,7 @@ to inspect first, not permission to invent unimplemented helpers.
   - **Verify locally:** Mock orchestration tests show correct session reuse, verified-plan prerequisite, abort/error preservation, and no agent-side Git/PR actions.
   - **Out of scope:** No validation, commit, publication, or legacy workflow modifications.
 
-- [ ] **T16 — Create the orchestrator-owned validation runner**
+- [x] **T16 — Create the orchestrator-owned validation runner**
   - **Depends on:** T15.
   - **Implement:** Use existing `CommandRunner` to execute `repository.validationCommand` in the owned worktree for task-session runs. Require a nonempty command for that mode. Capture exact command, exit code, timestamps, bounded/redacted diagnostics, and timeout result.
   - **Verify locally:** Mock-command tests prove zero passes, nonzero fails, timeout/abort fail, and absent command rejects before implementation.
