@@ -421,7 +421,7 @@ are examples to inspect, not permission to invent unimplemented helpers.
   - **Verify locally:** Mock API tests cover multiple check suites, commit statuses, pagination, queued and in-progress checks, terminal failures, cancellation, skipped and neutral conclusions, duplicates, missing checks, and stale commit responses.
   - **Out of scope:** Do not trigger repairs or make merge decisions.
 
-- [ ] **T55 — Implement complete CI-result evaluation**
+- [x] **T55 — Implement complete CI-result evaluation**
   - **Depends on:** T53–T54.
   - **Implement:** Create a deterministic gate that evaluates the complete expected check set against the current PR head. Return distinct outcomes for waiting, passed, failed, and uncertain. A failed result requires that the expected check set is complete and every expected check has reached a terminal state. Collect all failures together. Treat missing expected checks as waiting or uncertain, never successful.
   - **Verify locally:** Table-driven tests cover delayed check creation, one passing check while another has not started, mixed pending and failed checks, several simultaneous failures, cancellations, skipped or neutral results, changed heads, and empty expectations. No incomplete set may pass or trigger premature remediation.
