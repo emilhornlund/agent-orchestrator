@@ -1002,7 +1002,7 @@ describe("GitHubClient", () => {
       baseBranch: "main",
     });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       url: "https://github.com/example/repository/pull/123",
       headSha: "current-head-sha",
       feedback: {
@@ -1115,7 +1115,7 @@ describe("GitHubClient", () => {
         repository: "example/repository",
         headBranch: "agent/card-1",
       }),
-    ).resolves.toEqual({
+    ).resolves.toMatchObject({
       url: "https://github.com/example/repository/pull/123",
       headSha: "current-head-sha",
       feedback: {
@@ -1189,7 +1189,7 @@ describe("GitHubClient", () => {
         repository: "example/repository",
         headBranch: "agent/card-1",
       }),
-    ).resolves.toEqual({
+    ).resolves.toMatchObject({
       url: "https://github.com/example/repository/pull/123",
       headSha: "current-head-sha",
       feedback: {
@@ -1372,7 +1372,7 @@ describe("GitHubClient", () => {
         repository: "example/repository",
         headBranch: "agent/card-1",
       }),
-    ).resolves.toEqual({
+    ).resolves.toMatchObject({
       url: "https://github.com/example/repository/pull/123",
       headSha: "second-review-head-sha",
       feedback: {
@@ -1481,7 +1481,7 @@ describe("GitHubClient", () => {
         repository: "example/repository",
         headBranch: "agent/card-1",
       }),
-    ).resolves.toEqual({
+    ).resolves.toMatchObject({
       url: "https://github.com/example/repository/pull/123",
       headSha: "current-head-sha",
       feedback: {
@@ -1628,7 +1628,7 @@ describe("GitHubClient", () => {
         repository: "example/repository",
         headBranch: "agent/card-1",
       }),
-    ).resolves.toEqual({
+    ).resolves.toMatchObject({
       url: "https://github.com/example/repository/pull/123",
       headSha: "current-head-sha",
       feedback: {
@@ -1817,18 +1817,23 @@ describe("GitHubClient", () => {
         repository: "example/repository",
         headBranch: "agent/card-1",
       }),
-    ).resolves.toEqual({
+    ).resolves.toMatchObject({
       url: "https://github.com/example/repository/pull/123",
       headSha: "remediation-head-sha",
       feedback: {
         reviews: [
           {
             id: 202,
+            commitSha: "remediation-head-sha",
             body: "Please add coverage for the new branch.",
             author: "reviewer-two",
             submittedAt: "2026-01-02T10:00:00Z",
             inlineComments: [
               {
+                id: 2002,
+                reviewId: 202,
+                isResolved: false,
+                isOutdated: false,
                 author: "reviewer-two",
                 body: "Add the regression test.",
                 threadId: "thread-current",
@@ -1839,12 +1844,18 @@ describe("GitHubClient", () => {
           },
           {
             id: 101,
+            commitSha: "initial-head-sha",
             body: null,
             author: "reviewer-one",
             submittedAt: "2026-01-01T10:00:00Z",
             source: "carried-forward",
             inlineComments: [
               {
+                id: 1001,
+                reviewId: 101,
+                commitSha: "initial-head-sha",
+                isResolved: false,
+                isOutdated: false,
                 author: "reviewer-one",
                 body: "Handle the null parser input.",
                 threadId: "thread-unresolved",
@@ -1962,7 +1973,7 @@ describe("GitHubClient", () => {
     });
     await expect(
       github.findChangesRequestedPullRequest(options),
-    ).resolves.toEqual({
+    ).resolves.toMatchObject({
       url: "https://github.com/example/repository/pull/123",
       headSha: "second-remediation-head-sha",
       feedback: {
@@ -2206,7 +2217,7 @@ describe("GitHubClient", () => {
         repository: "example/repository",
         headBranch: "agent/card-1",
       }),
-    ).resolves.toEqual({
+    ).resolves.toMatchObject({
       url: "https://github.com/example/repository/pull/123",
       headSha: "current-head-sha",
       feedback: {

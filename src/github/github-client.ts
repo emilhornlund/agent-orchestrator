@@ -172,6 +172,7 @@ export interface PullRequestReviewFeedback {
 
 export interface PullRequestReview {
   id: number;
+  commitSha?: string;
   body: string | null;
   author: string | null;
   submittedAt: string;
@@ -198,6 +199,7 @@ interface RequestedChangesReview {
 interface ValidatedInlineReviewComment {
   id?: number;
   reviewId: number | null;
+  commitSha?: string;
   body: string | null;
   author: string | null;
   path?: string;
@@ -210,6 +212,8 @@ interface ValidatedReviewThreadComment {
   id: number;
   threadId: string;
   reviewId: number;
+  isResolved: boolean;
+  isOutdated: boolean;
   body: string;
   author: string | null;
   path?: string;
@@ -226,6 +230,11 @@ interface ValidatedReviewThread {
 }
 
 export interface InlineReviewComment {
+  id?: number;
+  reviewId?: number;
+  commitSha?: string;
+  isResolved?: boolean;
+  isOutdated?: boolean;
   body: string;
   author: string | null;
   path?: string;
@@ -514,6 +523,7 @@ function validateInlineReviewComment(
   const path = value.path;
   const line = value.line;
   const originalLine = value.original_line;
+  const commitSha = value.commit_id;
   const diffHunk = value.diff_hunk;
   const author =
     user === null
@@ -532,6 +542,8 @@ function validateInlineReviewComment(
         !Number.isSafeInteger(reviewId) ||
         reviewId <= 0)) ||
     (typeof body !== "string" && body !== null) ||
+    (commitSha !== undefined &&
+      (typeof commitSha !== "string" || commitSha.length === 0)) ||
     author === undefined ||
     (path !== undefined &&
       path !== null &&
@@ -554,6 +566,7 @@ function validateInlineReviewComment(
   return {
     ...(typeof id === "number" ? { id } : {}),
     reviewId,
+    ...(typeof commitSha === "string" ? { commitSha } : {}),
     body,
     author,
     ...(typeof path === "string" ? { path } : {}),
@@ -601,6 +614,8 @@ query($owner: String!, $name: String!, $number: Int!) {
 function validateReviewThreadComment(
   value: unknown,
   threadId: string,
+  isResolved: boolean,
+  isOutdated: boolean,
 ): ValidatedReviewThreadComment {
   if (!isRecord(value)) {
     throw new Error("GitHub CLI returned an invalid review thread comment");
@@ -653,6 +668,8 @@ function validateReviewThreadComment(
     id,
     threadId,
     reviewId,
+    isResolved,
+    isOutdated,
     body,
     author,
     ...(typeof path === "string" ? { path } : {}),
@@ -719,7 +736,12 @@ function validateReviewThreadsResponse(
       isResolved: value.isResolved,
       isOutdated: value.isOutdated,
       comments: value.comments.nodes.map((comment) =>
-        validateReviewThreadComment(comment, threadId),
+        validateReviewThreadComment(
+          comment,
+          threadId,
+          value.isResolved as boolean,
+          value.isOutdated as boolean,
+        ),
       ),
     };
   });
@@ -1518,6 +1540,10 @@ export class GitHubClient {
       ValidatedReviewThreadComment[]
     >();
     const threadIdByCommentId = new Map<number, string>();
+    const threadStateByCommentId = new Map<
+      number,
+      { isResolved: boolean; isOutdated: boolean }
+    >();
 
     if (
       earlierReviewIds.size > 0 ||
@@ -1532,6 +1558,10 @@ export class GitHubClient {
       for (const thread of reviewThreads) {
         for (const comment of thread.comments) {
           threadIdByCommentId.set(comment.id, thread.id);
+          threadStateByCommentId.set(comment.id, {
+            isResolved: thread.isResolved,
+            isOutdated: thread.isOutdated,
+          });
 
           if (thread.isResolved || thread.isOutdated) {
             continue;
@@ -1550,6 +1580,7 @@ export class GitHubClient {
 
     const currentReviewFeedback = currentHeadReviews.map((review) => ({
       id: review.id,
+      commitSha: review.commitId,
       body: review.body,
       author: review.author,
       submittedAt: review.submittedAt,
@@ -1560,10 +1591,22 @@ export class GitHubClient {
             comment.id === undefined
               ? undefined
               : threadIdByCommentId.get(comment.id);
+          const threadState =
+            comment.id === undefined
+              ? undefined
+              : threadStateByCommentId.get(comment.id);
 
           return {
             body: comment.body,
             author: comment.author,
+            ...(comment.id === undefined ? {} : { id: comment.id }),
+            ...(comment.reviewId === null
+              ? {}
+              : { reviewId: comment.reviewId }),
+            ...(comment.commitSha === undefined
+              ? {}
+              : { commitSha: comment.commitSha }),
+            ...(threadState === undefined ? {} : threadState),
             ...(threadId === undefined ? {} : { threadId }),
             ...(comment.path === undefined ? {} : { path: comment.path }),
             ...(comment.line === undefined ? {} : { line: comment.line }),
@@ -1589,11 +1632,17 @@ export class GitHubClient {
         return [
           {
             id: review.id,
+            commitSha: review.commitId,
             body: null,
             author: review.author,
             submittedAt: review.submittedAt,
             source: "carried-forward" as const,
             inlineComments: comments.map((comment): InlineReviewComment => ({
+              id: comment.id,
+              reviewId: comment.reviewId,
+              commitSha: review.commitId,
+              isResolved: comment.isResolved,
+              isOutdated: comment.isOutdated,
               body: comment.body,
               author: comment.author,
               threadId: comment.threadId,

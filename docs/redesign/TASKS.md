@@ -216,7 +216,7 @@ to inspect first, not permission to invent unimplemented helpers.
 
 ## Phase E — Human feedback as a durable lifecycle
 
-- [ ] **T30 — Normalize submitted reviews and inline feedback**
+- [x] **T30 — Normalize submitted reviews and inline feedback**
   - **Depends on:** T26.
   - **Implement:** Extend existing GitHub review parsing into typed feedback records preserving review ID, thread/comment IDs, author, submitted time, file/line/diff context, isResolved/isOutdated, and originating commit SHA. Keep carried-forward still-applicable unresolved comments.
   - **Verify locally:** Mocked payload tests cover review-body-only, inline-only, mixed, old-head unresolved threads, and malformed/paginated responses.

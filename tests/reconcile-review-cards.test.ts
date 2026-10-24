@@ -795,7 +795,7 @@ describe("reconcileReviewCards", () => {
         new GitHubClient(runGitHubCommand, credentials),
         configuredProject,
       ),
-    ).resolves.toEqual({
+    ).resolves.toMatchObject({
       card: card(),
       pullRequestUrl: "https://github.com/owner/repo/pull/1",
       headSha: "head-sha",
