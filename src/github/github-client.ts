@@ -66,6 +66,22 @@ export interface PullRequest {
   url: string;
 }
 
+export interface PullRequestConversationComment {
+  id: number;
+  author: string | null;
+  createdAt: string;
+  updatedAt: string | null;
+  body: string;
+  commitSha?: string;
+}
+
+export interface PullRequestConversationCommentsOptions {
+  cwd: string;
+  repository: string;
+  pullRequestUrl: string;
+  project?: ProjectConfig;
+}
+
 export type RequiredCheckStatus =
   | "missing"
   | "queued"
@@ -1241,6 +1257,83 @@ export class GitHubClient {
         }
       }),
     );
+  }
+
+  async getPullRequestConversationComments(
+    options: PullRequestConversationCommentsOptions,
+  ): Promise<PullRequestConversationComment[]> {
+    const pullRequestUrl = parsePullRequestUrl(options.pullRequestUrl);
+    const url = new URL(pullRequestUrl);
+    const [, owner, repository, , number] = url.pathname.split("/");
+    if (
+      owner === undefined ||
+      repository === undefined ||
+      `${owner}/${repository}` !== options.repository ||
+      number === undefined ||
+      !/^\d+$/u.test(number)
+    ) {
+      throw new Error(
+        "Pull request URL does not match the requested repository",
+      );
+    }
+
+    const credential = await this.resolveCredential(options.project);
+    const output = await this.run(
+      options.cwd,
+      [
+        "api",
+        "--paginate",
+        "--slurp",
+        `repos/${options.repository}/issues/${number}/comments?per_page=100`,
+      ],
+      credential,
+    );
+    return parsePaginatedGitHubResponse(
+      output,
+      "paginated pull request conversation comments",
+    ).map((value): PullRequestConversationComment => {
+      if (!isRecord(value)) {
+        throw new Error("GitHub CLI returned a malformed conversation comment");
+      }
+      const user = value.user;
+      const author =
+        user === null
+          ? null
+          : isRecord(user) &&
+              typeof user.login === "string" &&
+              user.login.length > 0
+            ? user.login
+            : undefined;
+      if (
+        typeof value.id !== "number" ||
+        !Number.isSafeInteger(value.id) ||
+        value.id <= 0 ||
+        author === undefined ||
+        typeof value.body !== "string" ||
+        typeof value.created_at !== "string" ||
+        !Number.isFinite(Date.parse(value.created_at)) ||
+        (value.updated_at !== undefined &&
+          value.updated_at !== null &&
+          (typeof value.updated_at !== "string" ||
+            !Number.isFinite(Date.parse(value.updated_at)))) ||
+        (value.commit_id !== undefined &&
+          value.commit_id !== null &&
+          typeof value.commit_id !== "string")
+      ) {
+        throw new Error("GitHub CLI returned a malformed conversation comment");
+      }
+      return {
+        id: value.id,
+        author,
+        createdAt: value.created_at,
+        updatedAt:
+          typeof value.updated_at === "string" ? value.updated_at : null,
+        body: value.body,
+        ...(typeof value.commit_id === "string"
+          ? { commitSha: value.commit_id }
+          : {}),
+      };
+    });
   }
 
   private async findReviewThreads(
