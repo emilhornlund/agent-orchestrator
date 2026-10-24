@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  buildOpenCodeArguments,
   OpenCodeClient,
   OpenCodeRunAbortedError,
   OpenCodeTimeoutError,
@@ -9,6 +10,51 @@ import {
 } from "../src/opencode/opencode-client.js";
 
 describe("OpenCodeClient", () => {
+  it("builds unchanged CLI arguments when there is no explicit session", () => {
+    expect(
+      buildOpenCodeArguments({
+        cwd: "/worktree",
+        model: "test-model",
+        variant: "high",
+        prompt: "Implement the task",
+      }),
+    ).toEqual([
+      "run",
+      "--auto",
+      "--model",
+      "test-model",
+      "--variant",
+      "high",
+      "--dir",
+      "/worktree",
+      "Implement the task",
+    ]);
+  });
+
+  it("adds only the explicit session argument when a session ID is provided", () => {
+    expect(
+      buildOpenCodeArguments({
+        cwd: "/worktree",
+        model: "test-model",
+        variant: "high",
+        prompt: "Continue the task",
+        sessionId: "ses_session-123",
+      }),
+    ).toEqual([
+      "run",
+      "--auto",
+      "--model",
+      "test-model",
+      "--variant",
+      "high",
+      "--dir",
+      "/worktree",
+      "--session",
+      "ses_session-123",
+      "Continue the task",
+    ]);
+  });
+
   it("runs OpenCode with the provided options", async () => {
     const runOpenCode = vi.fn<RunOpenCode>().mockResolvedValue({
       exitCode: 0,
@@ -44,6 +90,51 @@ describe("OpenCodeClient", () => {
       errorOutput: "",
     });
   });
+
+  it("forwards an explicit session ID through the process boundary", async () => {
+    const runOpenCode = vi.fn<RunOpenCode>().mockResolvedValue({
+      exitCode: 0,
+      output: "Continued",
+      errorOutput: "",
+    });
+    const client = new OpenCodeClient(runOpenCode);
+    const controller = new AbortController();
+
+    await client.run({
+      cwd: "/worktree",
+      model: "test-model",
+      variant: "high",
+      timeoutMilliseconds: 60_000,
+      prompt: "Continue the task",
+      signal: controller.signal,
+      sessionId: "ses_session-123",
+    });
+
+    expect(runOpenCode).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: "ses_session-123" }),
+    );
+  });
+
+  it.each(["", " session", "session id", "--continue", "session/one"])(
+    "rejects an invalid session ID before starting OpenCode: %s",
+    async (sessionId) => {
+      const runOpenCode = vi.fn<RunOpenCode>();
+      const client = new OpenCodeClient(runOpenCode);
+
+      await expect(
+        client.run({
+          cwd: "/worktree",
+          model: "test-model",
+          variant: "high",
+          timeoutMilliseconds: 60_000,
+          prompt: "Continue the task",
+          signal: new AbortController().signal,
+          sessionId,
+        }),
+      ).rejects.toThrow("Invalid OpenCode session ID");
+      expect(runOpenCode).not.toHaveBeenCalled();
+    },
+  );
 
   it("signals the process group on non-Windows platforms", () => {
     if (process.platform === "win32") {

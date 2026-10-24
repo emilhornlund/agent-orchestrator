@@ -72,7 +72,7 @@ to inspect first, not permission to invent unimplemented helpers.
 
 ## Phase B — Session continuity and planning
 
-- [ ] **T07 — Allow explicit OpenCode session continuation**
+- [x] **T07 — Allow explicit OpenCode session continuation**
   - **Depends on:** T06.
   - **Implement:** Add optional `sessionId` to `OpenCodeRunOptions` and pass `--session <id>` to the OpenCode CLI only when provided. Use the existing process boundary and timeout/abort behavior.
   - **Verify locally:** Mock process-launcher tests assert exact arguments, unchanged legacy calls, rejected invalid IDs, and no `--continue` fallback.
