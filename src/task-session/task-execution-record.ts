@@ -105,6 +105,13 @@ const ciRepairSchema = z.strictObject({
   status: z.enum(["active", "passed", "exhausted"]),
 });
 
+const feedbackRemediationSchema = z.strictObject({
+  operationId: nonBlankIdentifier,
+  status: z.enum(["active", "changed", "no-op", "failed"]),
+  headSha: gitSha,
+  ledgerRevision: z.number().int().positive().safe(),
+});
+
 const taskExecutionRecordSchema = z
   .strictObject({
     version: z.literal(1),
@@ -128,6 +135,7 @@ const taskExecutionRecordSchema = z
     validationRepair: validationRepairSchema.optional(),
     reviewRepair: reviewRepairSchema.optional(),
     ciRepair: ciRepairSchema.optional(),
+    feedbackRemediation: feedbackRemediationSchema.optional(),
     revision: z.number().int().positive().safe(),
     retryCounters: retryCountersSchema,
     createdAt: z.string().datetime(),
@@ -378,6 +386,18 @@ const taskExecutionRecordSchema = z
           message: "Exhausted CI repair requires two attempts",
         });
       }
+    }
+
+    if (
+      record.feedbackRemediation !== undefined &&
+      record.phase !== "human-feedback"
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["feedbackRemediation"],
+        message:
+          "Feedback remediation state is only valid during human feedback",
+      });
     }
   });
 
