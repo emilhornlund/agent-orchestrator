@@ -67,6 +67,8 @@ const pullRequestSchema = z.strictObject({
   headSha: gitSha.optional(),
 });
 
+const sessionCreationStatus = z.enum(["creating", "bound", "ambiguous"]);
+
 const retryCountersSchema = z.strictObject({
   validation: z.number().int().nonnegative(),
   review: z.number().int().nonnegative(),
@@ -81,6 +83,7 @@ const taskExecutionRecordSchema = z
     cardId: ownerId,
     phase: z.enum(taskExecutionPhases),
     primarySessionId: nonBlankIdentifier.optional(),
+    sessionCreationStatus: sessionCreationStatus.optional(),
     expectedBranch: nonBlankIdentifier.optional(),
     pullRequest: pullRequestSchema.optional(),
     operationKey: nonBlankIdentifier,
@@ -99,6 +102,30 @@ const taskExecutionRecordSchema = z
     updatedAt: z.string().datetime(),
   })
   .superRefine((record, ctx) => {
+    if (
+      record.sessionCreationStatus === "bound" &&
+      record.primarySessionId === undefined
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["primarySessionId"],
+        message: "Required when session creation is bound",
+      });
+    }
+
+    if (
+      (record.sessionCreationStatus === "creating" ||
+        record.sessionCreationStatus === "ambiguous") &&
+      record.primarySessionId !== undefined
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["sessionCreationStatus"],
+        message:
+          "Cannot have a primary session ID before session creation is bound",
+      });
+    }
+
     const executionHasStarted = [
       "implementation",
       "validation",

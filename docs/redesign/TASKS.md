@@ -84,7 +84,7 @@ to inspect first, not permission to invent unimplemented helpers.
   - **Verify locally:** Fixture tests prove successful extraction, missing/ambiguous IDs fail closed, output diagnostics remain usable, and legacy text execution is unaffected.
   - **Out of scope:** Do not introduce live OpenCode integration tests.
 
-- [ ] **T09 — Bind the primary OpenCode session to a task record**
+- [x] **T09 — Bind the primary OpenCode session to a task record**
   - **Depends on:** T04, T07–T08.
   - **Implement:** Create-or-resume logic that stores the actual session ID under the owning task and always resumes that ID. Persist successful binding before later stages. Treat unclear creation after an interruption as an ambiguous state.
   - **Verify locally:** Mocked tests prove same-task reuse, cross-task isolation, restarted process reuse, duplicate-initialization safety, and no silent replacement.
