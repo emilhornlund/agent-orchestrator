@@ -99,6 +99,12 @@ const reviewRepairSchema = z.strictObject({
   status: z.enum(["active", "passed", "exhausted"]),
 });
 
+const ciRepairSchema = z.strictObject({
+  cycleId: nonBlankIdentifier,
+  headSha: gitSha,
+  status: z.enum(["active", "passed", "exhausted"]),
+});
+
 const taskExecutionRecordSchema = z
   .strictObject({
     version: z.literal(1),
@@ -121,6 +127,7 @@ const taskExecutionRecordSchema = z
       .optional(),
     validationRepair: validationRepairSchema.optional(),
     reviewRepair: reviewRepairSchema.optional(),
+    ciRepair: ciRepairSchema.optional(),
     revision: z.number().int().positive().safe(),
     retryCounters: retryCountersSchema,
     createdAt: z.string().datetime(),
@@ -334,6 +341,41 @@ const taskExecutionRecordSchema = z
           code: "custom",
           path: ["reviewRepair", "status"],
           message: "Exhausted review repair requires two attempts",
+        });
+      }
+    }
+
+    if (record.ciRepair !== undefined) {
+      if (
+        record.ciRepair.status !== "active" &&
+        record.phase !== "ci" &&
+        !(
+          record.ciRepair.status === "exhausted" &&
+          record.phase === "attention-required"
+        )
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["ciRepair", "status"],
+          message:
+            "Completed CI repair state must remain in CI or attention-required",
+        });
+      }
+      if (record.retryCounters.ci > 2) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["retryCounters", "ci"],
+          message: "CI repair attempts cannot exceed two per failure cycle",
+        });
+      }
+      if (
+        record.ciRepair.status === "exhausted" &&
+        record.retryCounters.ci !== 2
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["ciRepair", "status"],
+          message: "Exhausted CI repair requires two attempts",
         });
       }
     }
