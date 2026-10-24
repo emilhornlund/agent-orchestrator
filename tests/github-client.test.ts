@@ -218,6 +218,121 @@ describe("GitHubClient", () => {
     ).rejects.toThrow("invalid paginated check runs");
   });
 
+  it("collects bounded, redacted annotations for failed exact-head check runs", async () => {
+    const headSha = "a".repeat(40);
+    const run = vi.fn<RunGitHubCommand>().mockResolvedValue(
+      JSON.stringify([
+        [
+          {
+            path: "src/file.ts",
+            start_line: 12,
+            annotation_level: "failure",
+            message: `Bearer abc123 ${"x".repeat(3_000)}`,
+          },
+        ],
+      ]),
+    );
+    const client = new GitHubClient(run);
+    const diagnostics = await client.getRequiredCheckDiagnostics({
+      cwd: "/repo",
+      repository: "owner/repo",
+      headSha,
+      checks: [
+        {
+          name: "Build / linux",
+          headSha,
+          checkRunId: 42,
+          logUrl: "https://github.com/owner/repo/runs/42",
+          status: "failed",
+          conclusion: "failure",
+          diagnostic: "",
+        },
+      ],
+      project: {
+        id: "p",
+        repository: { github: "owner/repo" },
+      } as ProjectConfig,
+    });
+    expect(diagnostics[0]).toMatchObject({
+      name: "Build / linux",
+      checkRunId: 42,
+      headSha,
+      logUrl: "https://github.com/owner/repo/runs/42",
+      available: true,
+    });
+    expect(diagnostics[0]?.diagnostic).toContain("Bearer [REDACTED]");
+    expect(diagnostics[0]?.diagnostic.length).toBeLessThanOrEqual(2_000);
+  });
+
+  it("reports missing annotation access without losing the failed check context", async () => {
+    const headSha = "a".repeat(40);
+    const client = new GitHubClient(async () => {
+      throw new Error("HTTP 403: Resource not accessible by integration");
+    });
+    const result = await client.getRequiredCheckDiagnostics({
+      cwd: "/repo",
+      repository: "owner/repo",
+      headSha,
+      checks: [
+        {
+          name: "Tests",
+          headSha,
+          checkRunId: 7,
+          status: "failed",
+          conclusion: "failure",
+          diagnostic: "",
+        },
+      ],
+      project: {
+        id: "p",
+        repository: { github: "owner/repo" },
+      } as ProjectConfig,
+    });
+    expect(result[0]).toMatchObject({
+      available: false,
+      name: "Tests",
+      checkRunId: 7,
+    });
+    expect(result[0]?.diagnostic).toContain("Resource not accessible");
+  });
+
+  it("rejects stale heads and reports malformed annotation payloads as unavailable", async () => {
+    const headSha = "a".repeat(40);
+    const project = {
+      id: "p",
+      repository: { github: "owner/repo" },
+    } as ProjectConfig;
+    const failedCheck = {
+      name: "Tests",
+      headSha,
+      checkRunId: 7,
+      status: "failed" as const,
+      conclusion: "failure",
+      diagnostic: "",
+    };
+    const malformed = new GitHubClient(async () => "not json");
+    const result = await malformed.getRequiredCheckDiagnostics({
+      cwd: "/repo",
+      repository: "owner/repo",
+      headSha,
+      checks: [failedCheck],
+      project,
+    });
+    expect(result[0]?.available).toBe(false);
+    expect(result[0]?.diagnostic).toContain(
+      "invalid paginated check annotations",
+    );
+    await expect(
+      malformed.getRequiredCheckDiagnostics({
+        cwd: "/repo",
+        repository: "owner/repo",
+        headSha,
+        checks: [{ ...failedCheck, headSha: "b".repeat(40) }],
+        project,
+      }),
+    ).rejects.toThrow("stale or unidentified");
+  });
+
   it("creates a pull request through the injected command runner", async () => {
     const runGitHubCommand = vi.fn<RunGitHubCommand>(
       async () => "https://github.com/example/repository/pull/123",
