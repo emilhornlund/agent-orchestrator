@@ -378,7 +378,7 @@ const taskExecutionRecordSchema = z
     if (record.ciRepair !== undefined) {
       if (
         record.ciRepair.status !== "active" &&
-        record.phase !== "ci" &&
+        !["ci", "human-feedback", "done"].includes(record.phase) &&
         !(
           record.ciRepair.status === "exhausted" &&
           record.phase === "attention-required"
@@ -411,7 +411,7 @@ const taskExecutionRecordSchema = z
     }
 
     if (
-      record.feedbackRemediation !== undefined &&
+      record.feedbackRemediation?.status === "active" &&
       record.phase !== "human-feedback"
     ) {
       ctx.addIssue({
@@ -436,7 +436,8 @@ const taskExecutionRecordSchema = z
 
     if (
       record.reviewObservation !== undefined &&
-      record.phase !== "human-feedback"
+      record.phase !== "human-feedback" &&
+      record.phase !== "attention-required"
     ) {
       ctx.addIssue({
         code: "custom",
