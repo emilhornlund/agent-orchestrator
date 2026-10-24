@@ -20,6 +20,7 @@ import type { CommandRunner } from "../process/command-runner.js";
 import { runRepositorySetup } from "../process/run-setup.js";
 import { type TrelloCard, type TrelloClient } from "../trello/trello-client.js";
 import { buildTaskSessionReviewRepairPrompt } from "../opencode/build-task-session-review-repair-prompt.js";
+import { buildTaskSessionCiRepairPrompt } from "../opencode/build-task-session-ci-repair-prompt.js";
 import { runTaskPlanningOperation } from "../task-session/run-task-planning.js";
 import { runPlanVerification } from "../task-session/run-plan-verification.js";
 import { runTaskSessionImplementation } from "../task-session/run-task-session-implementation.js";
@@ -31,6 +32,7 @@ import { runTaskSessionCoverage } from "../task-session/run-task-session-coverag
 import { runTaskSessionValidationWithRepairs } from "../task-session/run-task-session-validation-repairs.js";
 import { runTaskSessionReview } from "../task-session/run-task-session-review.js";
 import { runTaskSessionReviewWithRepairs } from "../task-session/run-task-session-review-repairs.js";
+import { runTaskSessionCiRepairs } from "../task-session/run-task-session-ci-repairs.js";
 import {
   decideVerifiedPublication,
   type VerifiedPublicationDecisionInput,
@@ -205,6 +207,481 @@ export async function runTaskSessionWorkflow(
   for (const observation of observations) {
     const record = taskStore.read(observation.cardId);
     if (record === null || record.phase !== "ci") continue;
+    if (observation.checks.some((check) => check.status === "failed")) {
+      const ciEventId = `ci-repair:${observation.cardId}:${observation.headSha}`;
+      queue.enqueue({
+        projectId: project.id,
+        cardId: observation.cardId,
+        eventId: ciEventId,
+        operationKey: `${record.operationKey}:ci:${observation.headSha}`,
+        kind: "ci-repair",
+        enqueuedAt: record.updatedAt,
+      });
+      const activeMutation = queue.getActive() ?? queue.claimNext();
+      if (activeMutation === null || activeMutation.eventId !== ciEventId)
+        continue;
+      const card = humanReviewCards.find(
+        (candidate) => candidate.id === observation.cardId,
+      );
+      if (card === undefined || record.primarySessionId === undefined) {
+        throw new Error(
+          "CI repair requires the owned review card and primary session",
+        );
+      }
+      const worktreePath = path.join(project.repository.worktreeRoot, card.id);
+      const expectedBranch = `agent/${card.id}`;
+      const operationKey = record.operationKey;
+      const plan = planStore.read(card.id);
+      if (plan === null || plan.verification?.verdict !== "pass") {
+        throw new Error("CI repair requires the independently verified plan");
+      }
+      const validationOptions = {
+        project,
+        cardId: card.id,
+        expectedBranch,
+        operationKey,
+        worktreePath,
+        taskRecordStore: taskStore,
+        git,
+        commands,
+        signal,
+        timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
+      };
+      let quality: Awaited<
+        ReturnType<typeof runTaskSessionValidationWithRepairs>
+      >;
+      let latestReview: Awaited<ReturnType<typeof runTaskSessionReview>>;
+      const rerunQualityAndReview = async () => {
+        quality = await runTaskSessionValidationWithRepairs({
+          validation: validationOptions,
+          openCode,
+          planStore,
+          card,
+          expectedPrimarySessionId: record.primarySessionId!,
+          repairRunOptions: {
+            model: project.opencode.remediation.model,
+            variant: project.opencode.remediation.variant,
+            timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
+            signal,
+          },
+        });
+        const runReview = async () =>
+          runTaskSessionReview({
+            project,
+            card,
+            expectedBranch,
+            operationKey,
+            worktreePath,
+            taskRecordStore: taskStore,
+            planStore,
+            git,
+            openCode,
+            validation: quality.validation,
+            coverage: quality.coverage,
+            runOptions: {
+              model: project.opencode.review.model,
+              variant: project.opencode.review.variant,
+              timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
+              signal,
+            },
+          });
+        let first = await runReview();
+        const repairReview = async (
+          review: typeof first.review,
+          attempt: number,
+        ) => {
+          let latest = taskStore.read(card.id);
+          if (latest === null)
+            throw new Error("Task state disappeared during CI review repair");
+          taskStore.compareAndSwap(
+            card.id,
+            latest.revision,
+            transitionTaskExecutionRecord(
+              latest,
+              event(latest, "review-failed"),
+            ),
+          );
+          const prompt = buildTaskSessionReviewRepairPrompt({
+            projectId: project.id,
+            card,
+            approvedPlan: plan.plan,
+            review,
+            attempt,
+            maxAttempts: 2,
+          });
+          const repaired = await runWithPrimaryTaskSession(
+            taskStore,
+            openCode,
+            project.id,
+            card.id,
+            {
+              model: project.opencode.remediation.model,
+              variant: project.opencode.remediation.variant,
+              timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
+              signal,
+              cwd: worktreePath,
+              prompt,
+            },
+          );
+          if (repaired.exitCode !== 0)
+            throw new Error(
+              "Primary-session review correction failed during CI repair",
+            );
+          latest = taskStore.read(card.id);
+          if (latest === null)
+            throw new Error(
+              "Task state disappeared after CI review correction",
+            );
+          const validationPhase = transitionTaskExecutionRecord(
+            latest,
+            event(latest, "implementation-completed"),
+          );
+          latest = taskStore.compareAndSwap(
+            card.id,
+            latest.revision,
+            validationPhase,
+          );
+          updateRecord(taskStore, latest, {
+            retryCounters: { ...latest.retryCounters, validation: 0 },
+            validationRepair: { cycleId: operationKey, status: "active" },
+          });
+        };
+        let roundIndex = 0;
+        await runTaskSessionReviewWithRepairs({
+          store: taskStore,
+          projectId: project.id,
+          cardId: card.id,
+          operationKey,
+          expectedPrimarySessionId: record.primarySessionId!,
+          runReview: async () => {
+            if (roundIndex++ === 0)
+              return {
+                review: first.review,
+                contentIdentity: first.contentIdentity,
+              };
+            first = await runReview();
+            return {
+              review: first.review,
+              contentIdentity: first.contentIdentity,
+            };
+          },
+          repair: repairReview,
+          rerunQuality: async () => {
+            quality = await runTaskSessionValidationWithRepairs({
+              validation: validationOptions,
+              openCode,
+              planStore,
+              card,
+              expectedPrimarySessionId: record.primarySessionId!,
+              repairRunOptions: {
+                model: project.opencode.remediation.model,
+                variant: project.opencode.remediation.variant,
+                timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
+                signal,
+              },
+            });
+          },
+          getCurrentContentIdentity: () =>
+            getTaskSessionSourceSnapshotIdentity(git, worktreePath),
+        });
+        latestReview = first;
+        const latest = taskStore.read(card.id);
+        if (latest === null)
+          throw new Error("Task state disappeared after CI review");
+        taskStore.compareAndSwap(
+          card.id,
+          latest.revision,
+          transitionTaskExecutionRecord(latest, event(latest, "review-passed")),
+        );
+      };
+      let ciResult;
+      try {
+        ciResult = await runTaskSessionCiRepairs({
+          store: taskStore,
+          projectId: project.id,
+          cardId: card.id,
+          operationKey,
+          expectedPrimarySessionId: record.primarySessionId,
+          headSha: observation.headSha,
+          observeChecks: async (headSha) =>
+            (
+              await github.getRequiredChecks({
+                cwd: project.repository.path,
+                repository: project.repository.github,
+                headSha,
+                requiredChecks,
+                project,
+              })
+            ).checks,
+          collectDiagnostics: async (headSha, checks) =>
+            github.getRequiredCheckDiagnostics({
+              cwd: project.repository.path,
+              repository: project.repository.github,
+              headSha,
+              checks,
+              project,
+            }),
+          repairPrimarySession: async (diagnostics, attempt, sessionId) => {
+            const failedHeadSha = diagnostics[0]?.headSha;
+            if (
+              failedHeadSha === undefined ||
+              diagnostics.some(
+                (diagnostic) => diagnostic.headSha !== failedHeadSha,
+              )
+            ) {
+              throw new Error(
+                "CI repair diagnostics do not share one authoritative current head",
+              );
+            }
+            let latest = taskStore.read(card.id);
+            if (latest === null || latest.primarySessionId !== sessionId)
+              throw new Error("CI repair primary session ownership changed");
+            if (
+              latest.reviewObservation !== undefined ||
+              latest.publicationQuality !== undefined ||
+              latest.reviewRepair !== undefined
+            ) {
+              latest = updateRecord(taskStore, latest, {
+                reviewObservation: undefined,
+                publicationQuality: undefined,
+                reviewRepair: undefined,
+              });
+            }
+            taskStore.compareAndSwap(
+              card.id,
+              latest.revision,
+              transitionTaskExecutionRecord(latest, event(latest, "ci-failed")),
+            );
+            const prompt = buildTaskSessionCiRepairPrompt({
+              projectId: project.id,
+              card,
+              approvedPlan: plan.plan,
+              headSha: failedHeadSha,
+              attempt,
+              maxAttempts: 2,
+              diagnostics,
+            });
+            const repaired = await runWithPrimaryTaskSession(
+              taskStore,
+              openCode,
+              project.id,
+              card.id,
+              {
+                model: project.opencode.remediation.model,
+                variant: project.opencode.remediation.variant,
+                timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
+                signal,
+                cwd: worktreePath,
+                prompt,
+              },
+            );
+            if (repaired.exitCode !== 0)
+              throw new Error("Primary-session CI repair failed");
+            latest = taskStore.read(card.id);
+            if (latest === null)
+              throw new Error("Task state disappeared after primary CI repair");
+            taskStore.compareAndSwap(
+              card.id,
+              latest.revision,
+              transitionTaskExecutionRecord(
+                latest,
+                event(latest, "implementation-completed"),
+              ),
+            );
+            const validationRecord = taskStore.read(card.id);
+            if (validationRecord !== null)
+              updateRecord(taskStore, validationRecord, {
+                retryCounters: {
+                  ...validationRecord.retryCounters,
+                  validation: 0,
+                },
+                validationRepair: { cycleId: operationKey, status: "active" },
+                reviewRepair: { cycleId: operationKey, status: "active" },
+              });
+          },
+          rerunLocalGatesAndReview: rerunQualityAndReview,
+          publishSamePullRequest: async () => {
+            let latest = taskStore.read(card.id);
+            if (latest === null || latest.phase !== "publication")
+              throw new Error("CI repair did not reach publication phase");
+            const qualityIdentity = await getTaskSessionSourceSnapshotIdentity(
+              git,
+              worktreePath,
+            );
+            const validationEvidence = quality.validation;
+            const gateInput: VerifiedPublicationDecisionInput = {
+              currentContentIdentity: qualityIdentity,
+              validationCommand,
+              validation: validationEvidence,
+              ...(project.repository.coverageCommand === undefined
+                ? {}
+                : { coverageCommand: project.repository.coverageCommand }),
+              coverage: quality.coverage,
+              review: latestReview.review,
+            };
+            if (!decideVerifiedPublication(gateInput).allowed)
+              throw new Error("CI repair publication gates failed");
+            const existingPullRequestUrl = taskStore.read(card.id)?.pullRequest
+              ?.url;
+            if (existingPullRequestUrl === undefined) {
+              throw new Error(
+                "CI repair cannot publish without the persisted existing PR URL",
+              );
+            }
+            const snapshotBefore = await captureRepositorySnapshot(
+              git,
+              worktreePath,
+            );
+            clearCommitResult(worktreePath);
+            const commitMessageRun = await runWithPrimaryTaskSession(
+              taskStore,
+              openCode,
+              project.id,
+              card.id,
+              {
+                ...commitMessageRunOptions(
+                  project,
+                  signal,
+                  getSessionLogPath(project.id, card.id),
+                ),
+                cwd: worktreePath,
+                prompt: buildCommitPrompt(card),
+              },
+            );
+            if (commitMessageRun.exitCode !== 0)
+              throw new Error("CI correction commit-message generation failed");
+            const commitMessage = readCommitResult(worktreePath).message;
+            clearCommitResult(worktreePath);
+            if (
+              !repositorySnapshotsEqual(
+                snapshotBefore,
+                await captureRepositorySnapshot(git, worktreePath),
+              )
+            ) {
+              throw new Error(
+                "CI correction commit-message session modified source files",
+              );
+            }
+            let preparedGate = gateInput;
+            const newHead = await publishTaskSessionCard({
+              trello,
+              git,
+              github,
+              project: { ...project, autoMerge: false },
+              card,
+              worktreePath,
+              branch: expectedBranch,
+              expectedExistingPullRequestUrl: existingPullRequestUrl,
+              commitMessage,
+              reviewResult: "Passed",
+              remediationResult: `CI repair attempt ${taskStore.read(card.id)?.retryCounters.ci ?? 1}`,
+              signal,
+              initialEvidence: gateInput,
+              verifyPreparedContent: async () => {
+                const validationNow =
+                  await runTaskSessionValidation(validationOptions);
+                const coverageNow =
+                  await runTaskSessionCoverage(validationOptions);
+                persistQualityEvidence(
+                  taskStore,
+                  taskStore.read(card.id)!,
+                  operationKey,
+                  validationNow,
+                  coverageNow,
+                );
+                const reviewNow = await runTaskSessionReview({
+                  project,
+                  card,
+                  expectedBranch,
+                  operationKey,
+                  worktreePath,
+                  taskRecordStore: taskStore,
+                  planStore,
+                  git,
+                  openCode,
+                  validation: validationNow,
+                  coverage: coverageNow,
+                  runOptions: {
+                    model: project.opencode.review.model,
+                    variant: project.opencode.review.variant,
+                    timeoutMilliseconds:
+                      project.opencode.timeoutMinutes * 60_000,
+                    signal,
+                  },
+                });
+                const identity = await getTaskSessionSourceSnapshotIdentity(
+                  git,
+                  worktreePath,
+                );
+                preparedGate = {
+                  currentContentIdentity: identity,
+                  validationCommand,
+                  validation: validationNow,
+                  ...(project.repository.coverageCommand === undefined
+                    ? {}
+                    : { coverageCommand: project.repository.coverageCommand }),
+                  coverage: coverageNow,
+                  review: reviewNow.review,
+                };
+                return preparedGate;
+              },
+            });
+            const pr = await github.findPullRequestState({
+              cwd: project.repository.path,
+              repository: project.repository.github,
+              headBranch: expectedBranch,
+              baseBranch: project.repository.defaultBranch,
+              project,
+            });
+            if (pr === null || pr.headRefOid !== newHead || pr.state !== "OPEN")
+              throw new Error(
+                "CI correction did not update the existing open PR to its published head",
+              );
+            latest = taskStore.read(card.id);
+            if (latest === null || latest.phase !== "publication")
+              throw new Error(
+                "Task state changed during CI correction publication",
+              );
+            taskStore.compareAndSwap(
+              card.id,
+              latest.revision,
+              transitionTaskExecutionRecord(latest, {
+                type: "publication-completed",
+                eventId: `${operationKey}:ci-repair-publication:${taskStore.read(card.id)?.retryCounters.ci ?? 1}`,
+                projectId: project.id,
+                cardId: card.id,
+                operationKey,
+                occurredAt: timestamp(latest),
+                pullRequest: {
+                  number: Number(new URL(pr.url).pathname.split("/").at(-1)),
+                  url: pr.url,
+                  headSha: newHead,
+                },
+              }),
+            );
+            return newHead;
+          },
+        });
+      } catch (error) {
+        queue.fail(ciEventId);
+        throw error;
+      }
+      if (ciResult.status === "exhausted") queue.fail(ciEventId);
+      else queue.complete(ciEventId);
+      if (ciResult.status === "passed" && !project.autoMerge) {
+        const latest = taskStore.read(card.id);
+        if (latest !== null && latest.phase === "ci")
+          taskStore.compareAndSwap(
+            card.id,
+            latest.revision,
+            transitionTaskExecutionRecord(
+              latest,
+              event(latest, "ci-passed-awaiting-human"),
+            ),
+          );
+      }
+      continue;
+    }
     const checksPassed =
       observation.checks.length === requiredChecks.length &&
       requiredChecks.every((name) =>

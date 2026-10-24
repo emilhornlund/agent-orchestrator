@@ -304,7 +304,7 @@ to inspect first, not permission to invent unimplemented helpers.
 
   **Correction status:** The prior T43 commit enabled initial task-session dispatch but did not connect failed-CI repair or the human-feedback lifecycle to production polling. T43 remains incomplete until T43A–T43C pass and its original acceptance criteria are reverified.
 
-- [ ] **T43A — Integrate bounded CI remediation into production task-session polling**
+- [x] **T43A — Integrate bounded CI remediation into production task-session polling**
   - **Depends on:** T28, T39, T41–T43.
   - **Implement:** Connect the existing T28 CI remediation implementation to the actual task-session runtime. When a required check fails on the current PR head, enqueue or resume the appropriate repair operation using the original primary OpenCode session. Preserve current-head verification, idempotent event handling, retry limits, validation, coverage, independent review, safe publication, and persisted repair state.
   - **Verify locally:** Production-polling tests prove failed current-head CI triggers bounded repair on the original session, stale/pending checks do not trigger repair, the same PR advances to a new head, and exhaustion/ambiguity preserves state for attention.

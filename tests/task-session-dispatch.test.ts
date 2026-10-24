@@ -19,6 +19,8 @@ import {
   type RunCommand,
 } from "../src/process/command-runner.js";
 import { pollProject } from "../src/orchestrator/poll-project.js";
+import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
+import { TaskMutationQueue } from "../src/task-session/task-mutation-queue.js";
 import type { TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
 
 let root: string;
@@ -88,6 +90,10 @@ describe("task-session production dispatch", () => {
     const card = createCard();
     let branch = "";
     let headSha = "a".repeat(40);
+    let commitIndex = 0;
+    const commitHeads = ["b".repeat(40), "c".repeat(40)];
+    let cardList = project.trello.readyListId;
+    let pullRequestCreated = false;
     const trackedFiles = ["src/settings.ts"];
     const git = {
       fetch: vi.fn(async () => undefined),
@@ -120,7 +126,7 @@ describe("task-session production dispatch", () => {
       ),
       stageAll: vi.fn(async () => undefined),
       commit: vi.fn(async () => {
-        headSha = "b".repeat(40);
+        headSha = commitHeads[commitIndex++]!;
       }),
       getCommitCountBetween: vi.fn(async () => 1),
       rebase: vi.fn(async () => undefined),
@@ -128,36 +134,51 @@ describe("task-session production dispatch", () => {
     } as unknown as GitClient;
     const trello = {
       getCards: vi.fn(async (listId: string) =>
-        listId === project.trello.readyListId ? [card] : [],
+        listId === cardList ? [{ ...card, idList: cardList }] : [],
       ),
       getCardAttachments: vi.fn(async () => []),
-      moveCard: vi.fn(async (_cardId: string, listId: string) => ({
-        ...card,
-        idList: listId,
-      })),
+      moveCard: vi.fn(async (_cardId: string, listId: string) => {
+        cardList = listId;
+        return { ...card, idList: listId };
+      }),
       addComment: vi.fn(async () => undefined),
     } as unknown as TrelloClient;
     const githubRun = vi.fn<RunGitHubCommand>(async (_cwd, args) => {
       if (args[0] === "pr" && args[1] === "list") {
-        return args.some((argument) => argument.includes("headRefOid"))
-          ? JSON.stringify([
-              {
-                url: "https://github.com/owner/repo/pull/9",
-                state: "OPEN",
-                mergedAt: null,
-                headRefOid: headSha,
-                baseRefName: "main",
-                headRefName: "agent/card",
-                headRepository: { name: "repo" },
-                headRepositoryOwner: { login: "owner" },
-                mergeable: "MERGEABLE",
-                mergeStateStatus: "CLEAN",
-              },
-            ])
-          : "";
+        const requestedFields =
+          args.find((argument) => argument.includes("headRefOid")) ?? "";
+        if (requestedFields.includes("reviewDecision")) {
+          return JSON.stringify([
+            {
+              url: "https://github.com/owner/repo/pull/9",
+              number: 9,
+              reviewDecision: "REVIEW_REQUIRED",
+              headRefOid: headSha,
+            },
+          ]);
+        }
+        if (requestedFields.length > 0) {
+          return JSON.stringify([
+            {
+              url: "https://github.com/owner/repo/pull/9",
+              state: "OPEN",
+              mergedAt: null,
+              headRefOid: headSha,
+              baseRefName: "main",
+              headRefName: "agent/card",
+              headRepository: { name: "repo" },
+              headRepositoryOwner: { login: "owner" },
+              mergeable: "MERGEABLE",
+              mergeStateStatus: "CLEAN",
+            },
+          ]);
+        }
+        return pullRequestCreated ? "https://github.com/owner/repo/pull/9" : "";
       }
-      if (args[0] === "pr" && args[1] === "create")
+      if (args[0] === "pr" && args[1] === "create") {
+        pullRequestCreated = true;
         return "https://github.com/owner/repo/pull/9";
+      }
       if (args[0] === "pr" && args[1] === "view")
         return JSON.stringify([
           {
@@ -173,6 +194,43 @@ describe("task-session production dispatch", () => {
             mergeStateStatus: "CLEAN",
           },
         ]);
+      if (
+        args[0] === "api" &&
+        args.some((argument) => argument.includes("/check-runs?"))
+      ) {
+        const endpoint =
+          args.find((argument) => argument.includes("/check-runs?")) ?? "";
+        const observedHead =
+          endpoint.match(/\/commits\/([0-9a-f]+)\/check-runs/u)?.[1] ?? "";
+        return JSON.stringify([
+          [
+            {
+              check_runs: [
+                {
+                  id: 42,
+                  name: "Build",
+                  head_sha: observedHead,
+                  status: "completed",
+                  conclusion:
+                    observedHead === "b".repeat(40) ? "failure" : "success",
+                  created_at: "2026-10-24T10:00:00Z",
+                  html_url: "https://github.com/owner/repo/actions/runs/42",
+                },
+              ],
+            },
+          ],
+        ]);
+      }
+      if (
+        args[0] === "api" &&
+        args.some((argument) => argument.includes("/annotations?"))
+      )
+        return JSON.stringify([[]]);
+      if (
+        args[0] === "api" &&
+        args.some((argument) => argument.includes("/issues/9/comments?"))
+      )
+        return JSON.stringify([[]]);
       return "";
     });
     const github = new GitHubClient(githubRun);
@@ -266,6 +324,12 @@ describe("task-session production dispatch", () => {
             errorOutput: "",
           };
         }
+        if (run.prompt.startsWith("Repair the required GitHub CI failures")) {
+          fs.writeFileSync(
+            path.join(run.cwd, "src/settings.ts"),
+            "export const settings = { fixed: true };\n",
+          );
+        }
         if (run.prompt.includes("Generate the commit message")) {
           const resultPath = getCommitResultPath(run.cwd);
           fs.mkdirSync(path.dirname(resultPath), { recursive: true });
@@ -286,15 +350,9 @@ describe("task-session production dispatch", () => {
         errorOutput: "",
       }),
     );
-    await pollProject(
-      trello,
-      git,
-      github,
-      new OpenCodeClient(openCodeRun),
-      commands,
-      project,
-      new AbortController().signal,
-    );
+    const openCode = new OpenCodeClient(openCodeRun);
+    const signal = new AbortController().signal;
+    await pollProject(trello, git, github, openCode, commands, project, signal);
     expect(opened).toBe(true);
     expect(
       openCodeRun.mock.calls.some(
@@ -312,6 +370,34 @@ describe("task-session production dispatch", () => {
       card.id,
       project.trello.reviewListId,
     );
+    await pollProject(trello, git, github, openCode, commands, project, signal);
+    expect(git.commit).toHaveBeenCalledTimes(2);
+    expect(pullRequestCreated).toBe(true);
+    expect(
+      githubRun.mock.calls.filter(
+        ([, args]) => args[0] === "pr" && args[1] === "create",
+      ),
+    ).toHaveLength(1);
+    expect(
+      openCodeRun.mock.calls.some(
+        ([options]) =>
+          options.prompt.startsWith("Repair the required GitHub CI failures") &&
+          options.sessionId === "ses_primary-task",
+      ),
+    ).toBe(true);
+    const record = new TaskExecutionStore(project.contextRoot, project).read(
+      card.id,
+    );
+    expect(record).toMatchObject({
+      phase: "human-feedback",
+      retryCounters: { ci: 1 },
+      pullRequest: { headSha: "c".repeat(40) },
+    });
+    expect(
+      new TaskMutationQueue(project.contextRoot, project)
+        .list()
+        .map(({ status }) => status),
+    ).toEqual(["completed", "completed"]);
     expect(trello.getCards).toHaveBeenCalled();
     expect(fs.existsSync(path.join(worktreeRoot, card.id))).toBe(true);
     expect(fs.existsSync(repositoryPath)).toBe(true);
@@ -341,5 +427,76 @@ describe("task-session production dispatch", () => {
       ),
     ).rejects.toThrow("Refusing to auto-migrate active legacy Working card");
     expect(openCode).not.toHaveBeenCalled();
+  });
+
+  it("does not trigger CI repair on a pending required check during production polling", async () => {
+    const { project, worktreeRoot } = projectFixture();
+    const card = createCard();
+    card.idList = project.trello.reviewListId;
+    const headSha = "d".repeat(40);
+    fs.mkdirSync(path.join(worktreeRoot, card.id), { recursive: true });
+    fs.writeFileSync(path.join(worktreeRoot, card.id, "src.ts"), "worktree\n");
+    const recordStore = new TaskExecutionStore(project.contextRoot, project);
+    recordStore.create({
+      version: 1,
+      projectId: project.id,
+      cardId: card.id,
+      phase: "ci",
+      primarySessionId: "session",
+      sessionCreationStatus: "bound",
+      expectedBranch: `agent/${card.id}`,
+      pullRequest: {
+        number: 9,
+        url: "https://github.com/owner/repo/pull/9",
+        headSha,
+      },
+      operationKey: "operation-ci",
+      revision: 1,
+      retryCounters: { validation: 0, review: 0, ci: 0, humanFeedback: 0 },
+      createdAt: "2026-10-24T09:00:00.000Z",
+      updatedAt: "2026-10-24T09:00:00.000Z",
+    });
+    const trello = {
+      getCards: vi.fn(async (listId: string) =>
+        listId === project.trello.reviewListId ? [card] : [],
+      ),
+    } as unknown as TrelloClient;
+    const github = {
+      findPullRequestState: vi.fn(async () => ({
+        url: "https://github.com/owner/repo/pull/9",
+        state: "OPEN",
+        mergedAt: null,
+        headRefOid: headSha,
+      })),
+      getRequiredChecks: vi.fn(async () => ({
+        headSha,
+        checks: [
+          {
+            name: "Build",
+            headSha,
+            status: "queued",
+            conclusion: null,
+            diagnostic: "",
+          },
+        ],
+      })),
+      findChangesRequestedPullRequest: vi.fn(async () => null),
+      getPullRequestConversationComments: vi.fn(async () => []),
+    } as unknown as GitHubClient;
+    const openCode = vi.fn<RunOpenCode>();
+    await pollProject(
+      trello,
+      {} as GitClient,
+      github,
+      new OpenCodeClient(openCode),
+      new CommandRunner(vi.fn<RunCommand>()),
+      project,
+      new AbortController().signal,
+    );
+    expect(openCode).not.toHaveBeenCalled();
+    expect(recordStore.read(card.id)).toMatchObject({
+      phase: "ci",
+      reviewObservation: { headSha, checks: [{ status: "queued" }] },
+    });
   });
 });
