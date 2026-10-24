@@ -1200,7 +1200,7 @@ export async function runTaskSessionWorkflow(
         latest.cardId,
         latest.revision,
         transitionTaskExecutionRecord(
-          latest,
+          { ...latest, reviewObservation: undefined },
           event(latest, "ci-passed-completed"),
         ),
       );
