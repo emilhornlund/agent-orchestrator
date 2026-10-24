@@ -208,7 +208,26 @@ export async function runTaskSessionWorkflow(
     cwd: project.repository.path,
   });
   for (const observation of observations) {
-    const record = taskStore.read(observation.cardId);
+    let record = taskStore.read(observation.cardId);
+    if (
+      record !== null &&
+      record.phase === "human-feedback" &&
+      observation.checks.some((check) => check.status === "failed")
+    ) {
+      taskStore.compareAndSwap(
+        record.cardId,
+        record.revision,
+        transitionTaskExecutionRecord(record, {
+          type: "feedback-ci-failed",
+          eventId: `${record.operationKey}:feedback-ci-failed:${observation.headSha}`,
+          projectId: project.id,
+          cardId: record.cardId,
+          operationKey: record.operationKey,
+          occurredAt: timestamp(record),
+        }),
+      );
+      record = taskStore.read(observation.cardId);
+    }
     if (record === null || record.phase !== "ci") continue;
     if (observation.checks.some((check) => check.status === "failed")) {
       const ciEventId = `ci-repair:${observation.cardId}:${observation.headSha}`;

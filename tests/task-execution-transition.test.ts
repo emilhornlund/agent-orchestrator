@@ -79,6 +79,8 @@ describe("transitionTaskExecutionRecord", () => {
     ["ci", "ci-passed-completed", "done"],
     ["ci", "ci-failed", "implementation"],
     ["human-feedback", "feedback-received", "implementation"],
+    ["human-feedback", "feedback-ci-failed", "ci"],
+    ["human-feedback", "feedback-replies-published", "ci"],
   ] as const)("advances %s on %s to %s", (phase, eventType, expectedPhase) => {
     const nextRecord = transitionTaskExecutionRecord(
       createRecord(phase),
