@@ -229,6 +229,48 @@ describe("observeTaskSessionReviewCards", () => {
     ).rejects.toThrow("Authoritative pull request identity changed");
   });
 
+  it("rejects terminal PRs whose repository ownership or branch metadata is wrong", async () => {
+    const f = fixture();
+    vi.mocked(f.github.findPullRequestState).mockResolvedValue({
+      url: "https://github.com/owner/repo/pull/1",
+      state: "MERGED",
+      mergedAt: "2026-10-24T10:00:00Z",
+      headRefOid: f.headByCard.get("card-one")!,
+      baseRefName: "main",
+      headRefName: "agent/other-card",
+      headRepository: { name: "repo" },
+      headRepositoryOwner: { login: "attacker" },
+    });
+
+    await expect(
+      observeTaskSessionReviewCards({
+        project: f.project,
+        cards: f.cards.slice(0, 1),
+        taskRecordStore: f.store,
+        github: f.github,
+      }),
+    ).rejects.toThrow("metadata or ownership is ambiguous");
+    expect(f.github.getCiObservations).not.toHaveBeenCalled();
+    expect(f.store.read("card-one")?.reviewObservation).toBeUndefined();
+  });
+
+  it("preserves review state on temporary authoritative GitHub errors", async () => {
+    const f = fixture();
+    vi.mocked(f.github.findPullRequestState).mockRejectedValue(
+      new Error("HTTP 503: GitHub temporarily unavailable"),
+    );
+
+    await expect(
+      observeTaskSessionReviewCards({
+        project: f.project,
+        cards: f.cards.slice(0, 1),
+        taskRecordStore: f.store,
+        github: f.github,
+      }),
+    ).rejects.toThrow("temporarily unavailable");
+    expect(f.store.read("card-one")?.reviewObservation).toBeUndefined();
+  });
+
   it("does not persist observations for a card whose authoritative PR head mismatches", async () => {
     const f = fixture();
     vi.mocked(f.github.findPullRequestState).mockImplementation(

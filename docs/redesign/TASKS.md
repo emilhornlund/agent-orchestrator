@@ -482,7 +482,7 @@ are examples to inspect, not permission to invent unimplemented helpers.
   - **Verify locally:** Tests prove no overlapping project mutation, no implementation PR from refinement, and durable recovery/attention behavior for interrupted or failed work.
   - **Out of scope:** Do not alter implementation planning or PR CI behavior.
 
-- [ ] **T59B — Complete terminal PR observation boundary tests**
+- [x] **T59B — Complete terminal PR observation boundary tests**
   - **Depends on:** T48–T49.
   - **Corrective rationale:** Terminal PR tests did not cover incorrect repository/branch ownership, stale identities, or temporary GitHub read errors through the observation boundary.
   - **Implement:** Add mocked OPEN/MERGED/CLOSED observation tests for wrong owner/base/head, stale PR URL/head, missing PR, and transient GitHub failures; verify no terminal side effects on uncertain reads.
