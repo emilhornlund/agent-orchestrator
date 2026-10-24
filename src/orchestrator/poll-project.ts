@@ -80,6 +80,7 @@ import {
   remediatePreparedConflict,
 } from "./remediate-prepared-conflict.js";
 import { publishCard } from "./publish-card.js";
+import { runTaskSessionWorkflow } from "./run-task-session-workflow.js";
 import { PublishedCardStateError } from "./published-card-state-error.js";
 import {
   reconcileReviewCards,
@@ -244,6 +245,36 @@ export async function pollProject(
   onHumanReviewCardLeft?: (cardId: string) => void,
 ): Promise<void> {
   if (signal.aborted) {
+    return;
+  }
+
+  if (project.executionMode === "task-session") {
+    await withActiveProjectContext(project.id, async () => {
+      await runTaskSessionWorkflow({
+        project,
+        trello,
+        git,
+        github,
+        openCode: opencode,
+        commands,
+        signal,
+        ...(emailNotifier === undefined ? {} : { emailNotifier }),
+        prepareAttachmentContext: async (card) => {
+          const cardLog = logger.child({
+            projectId: project.id,
+            cardId: card.id,
+          });
+          const manifest = await prepareCardContext(
+            trello,
+            project,
+            card,
+            signal,
+            cardLog,
+          );
+          return createCardAttachmentPromptContext(project, card, manifest);
+        },
+      });
+    });
     return;
   }
 

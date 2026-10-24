@@ -178,7 +178,9 @@ export async function runTaskSessionReview(
   });
 
   if (
-    (record.phase !== "validation" && record.phase !== "review") ||
+    (record.phase !== "validation" &&
+      record.phase !== "review" &&
+      record.phase !== "publication") ||
     record.sessionCreationStatus !== "bound" ||
     record.primarySessionId === undefined
   ) {

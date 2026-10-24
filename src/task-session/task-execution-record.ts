@@ -133,6 +133,13 @@ const reviewObservationSchema = z.strictObject({
   feedbackIds: z.array(nonBlankIdentifier),
 });
 
+const publicationQualitySchema = z.strictObject({
+  contentIdentity: taskSessionContentIdentity,
+  validation: validationEvidenceSchema,
+  coverageEvidence: validationEvidenceSchema.optional(),
+  review: z.unknown(),
+});
+
 const taskExecutionRecordSchema = z
   .strictObject({
     version: z.literal(1),
@@ -158,6 +165,7 @@ const taskExecutionRecordSchema = z
     ciRepair: ciRepairSchema.optional(),
     feedbackRemediation: feedbackRemediationSchema.optional(),
     reviewObservation: reviewObservationSchema.optional(),
+    publicationQuality: publicationQualitySchema.optional(),
     revision: z.number().int().positive().safe(),
     retryCounters: retryCountersSchema,
     createdAt: z.string().datetime(),
@@ -345,7 +353,11 @@ const taskExecutionRecordSchema = z
 
       if (
         record.reviewRepair.status !== "active" &&
-        record.phase !== "review"
+        record.phase !== "review" &&
+        !(
+          record.reviewRepair.status === "passed" &&
+          ["publication", "ci", "human-feedback", "done"].includes(record.phase)
+        )
       ) {
         ctx.addIssue({
           code: "custom",
@@ -437,6 +449,7 @@ const taskExecutionRecordSchema = z
     if (
       record.reviewObservation !== undefined &&
       record.phase !== "human-feedback" &&
+      record.phase !== "ci" &&
       record.phase !== "attention-required"
     ) {
       ctx.addIssue({
