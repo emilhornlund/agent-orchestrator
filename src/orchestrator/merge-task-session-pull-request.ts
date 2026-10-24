@@ -17,7 +17,7 @@ export async function mergeTaskSessionPullRequest(
   readiness: TaskSessionAutoMergeReadinessInput,
   signal?: AbortSignal,
 ): Promise<void> {
-  if (project.executionMode !== "task-session" || !project.autoMerge) {
+  if (!project.autoMerge) {
     throw new Error(
       "CI-aware merge requires task-session mode with autoMerge enabled",
     );

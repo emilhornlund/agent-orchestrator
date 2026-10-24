@@ -90,7 +90,6 @@ function createFixture(options: { coverageCommand?: string } = {}) {
 
   const project = {
     id: projectId,
-    executionMode: "task-session",
     repository: {
       path: repositoryPath,
       worktreeRoot,

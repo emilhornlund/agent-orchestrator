@@ -389,7 +389,7 @@ are examples to inspect, not permission to invent unimplemented helpers.
   - **Verify locally:** Full `yarn validate` passes and task-session production integration tests still exercise `pollProject`.
   - **Out of scope:** Do not remove production modules or weaken task-session lifecycle coverage.
 
-- [ ] **T50 — Make task-session the only execution mode**
+- [x] **T50 — Make task-session the only execution mode**
   - **Depends on:** T47, T49.
   - **Implement:** Remove `projects[].executionMode` from the configuration schema and eliminate the legacy/task-session dispatch selection. Route all eligible implementation work through the unified task-session coordinator. Preserve the integrated refinement operation and existing external safety boundaries.
   - **Verify locally:** Configuration and production-polling tests prove omitted executionMode works, obsolete executionMode values are rejected, implementation uses the persistent primary session, and refinement remains functional.

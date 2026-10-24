@@ -20,7 +20,6 @@ function fixture() {
   root = fs.mkdtempSync(path.join(os.tmpdir(), "review-repairs-"));
   const project = {
     id: "project",
-    executionMode: "task-session",
     repository: {
       path: path.join(root, "repo"),
       worktreeRoot: path.join(root, "worktrees"),

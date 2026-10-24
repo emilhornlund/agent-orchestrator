@@ -165,13 +165,6 @@ export async function runTaskSessionValidationWithRepairs(
   const { project, cardId, expectedBranch, operationKey, worktreePath } =
     validation;
 
-  if (project.executionMode !== "task-session") {
-    throw new TaskSessionValidationRepairError(
-      "Validation repair requires task-session mode",
-      0,
-    );
-  }
-
   if (
     project.repository.validationCommand === undefined ||
     project.repository.validationCommand.trim().length === 0

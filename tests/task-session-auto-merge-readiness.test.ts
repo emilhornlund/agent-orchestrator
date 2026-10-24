@@ -100,7 +100,6 @@ describe("task-session auto-merge readiness", () => {
     const project = {
       id: "p",
       autoMerge: true,
-      executionMode: "task-session",
       repository: { github: "o/r" },
     } as ProjectConfig;
     await expect(

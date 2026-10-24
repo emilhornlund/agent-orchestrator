@@ -37,7 +37,6 @@ describe("task-session terminal PR reconciliation", () => {
       fs.mkdirSync(repositoryPath);
       const project = {
         id: "project",
-        executionMode: "task-session",
         autoMerge: false,
         contextRoot,
         trello: {

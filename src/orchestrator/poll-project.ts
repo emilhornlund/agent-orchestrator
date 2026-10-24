@@ -242,336 +242,350 @@ export async function pollProject(
     return;
   }
 
-  if (project.executionMode === "task-session") {
-    await withActiveProjectContext(project.id, async () => {
-      await runTaskSessionWorkflow({
-        project,
-        trello,
-        git,
-        github,
-        openCode: opencode,
-        commands,
-        signal,
-        ...(emailNotifier === undefined ? {} : { emailNotifier }),
-        prepareAttachmentContext: async (card) => {
-          const cardLog = logger.child({
-            projectId: project.id,
-            cardId: card.id,
-          });
-          const manifest = await prepareCardContext(
+  await withActiveProjectContext(project.id, async () => {
+    await runTaskSessionWorkflow({
+      project,
+      trello,
+      git,
+      github,
+      openCode: opencode,
+      commands,
+      signal,
+      ...(emailNotifier === undefined ? {} : { emailNotifier }),
+      prepareAttachmentContext: async (card) => {
+        const cardLog = logger.child({
+          projectId: project.id,
+          cardId: card.id,
+        });
+        const manifest = await prepareCardContext(
+          trello,
+          project,
+          card,
+          signal,
+          cardLog,
+        );
+        return createCardAttachmentPromptContext(project, card, manifest);
+      },
+      processRefinement: async (card, worktree) =>
+        withActiveCardContext(project.id, card.id, () =>
+          processRefinementCard(
             trello,
+            git,
+            opencode,
             project,
             card,
             signal,
-            cardLog,
-          );
-          return createCardAttachmentPromptContext(project, card, manifest);
-        },
-        processRefinement: async (card, worktree) =>
-          withActiveCardContext(project.id, card.id, () =>
-            processRefinementCard(
-              trello,
-              git,
-              opencode,
-              project,
-              card,
-              signal,
-              worktree,
-              emailNotifier,
-            ),
+            worktree,
+            emailNotifier,
           ),
-      });
+        ),
     });
-    return;
-  }
+  });
+  void pollLegacyProject;
+  return;
 
-  const reconciliation = await withActiveProjectContext(
-    project.id,
-    async () => {
-      const preparedConflicts = readPreparedConflicts(project);
-      const humanReviewPreparedConflicts = preparedConflicts.filter(
-        (handoff) => handoff.origin === "human-review-maintenance",
-      );
-      let workingChangeRequest;
-      let reviewChangeRequest;
-
-      if (humanReviewPreparedConflicts.length > 0) {
-        reviewChangeRequest = await reconcileReviewCards(
-          trello,
-          git,
-          github,
-          project,
-          {
-            moveRequestedChanges: false,
-            maintenance: { commands },
-            ...(onHumanReviewCardsObserved === undefined
-              ? {}
-              : { onHumanReviewCardsObserved }),
-            ...(onHumanReviewCardLeft === undefined
-              ? {}
-              : { onHumanReviewCardLeft }),
-          },
-          emailNotifier,
-          signal,
+  const projectForLegacy = project;
+  async function pollLegacyProject(): Promise<void> {
+    const project = { ...projectForLegacy, executionMode: "legacy" as const };
+    const reconciliation = await withActiveProjectContext(
+      project.id,
+      async () => {
+        const preparedConflicts = readPreparedConflicts(project);
+        const humanReviewPreparedConflicts = preparedConflicts.filter(
+          (handoff) => handoff.origin === "human-review-maintenance",
         );
+        let workingChangeRequest;
+        let reviewChangeRequest;
 
-        if (!(
-          reviewChangeRequest !== null &&
-          "active" in reviewChangeRequest &&
-          reviewChangeRequest.maintenanceState === "prepared-conflict"
-        )) {
-          throw new WorkflowError(
-            "Workflow",
-            `Prepared conflict state exists for project "${project.id}" but is not represented by an active Human Review card`,
+        if (humanReviewPreparedConflicts.length > 0) {
+          reviewChangeRequest = await reconcileReviewCards(
+            trello,
+            git,
+            github,
+            project,
+            {
+              moveRequestedChanges: false,
+              maintenance: { commands },
+              ...(onHumanReviewCardsObserved === undefined
+                ? {}
+                : { onHumanReviewCardsObserved }),
+              ...(onHumanReviewCardLeft === undefined
+                ? {}
+                : { onHumanReviewCardLeft }),
+            },
+            emailNotifier,
+            signal,
+          );
+
+          if (!(
+            reviewChangeRequest !== null &&
+            "active" in reviewChangeRequest &&
+            reviewChangeRequest.maintenanceState === "prepared-conflict"
+          )) {
+            throw new WorkflowError(
+              "Workflow",
+              `Prepared conflict state exists for project "${project.id}" but is not represented by an active Human Review card`,
+            );
+          }
+        } else {
+          workingChangeRequest = await reconcileWorkingCards(
+            trello,
+            git,
+            github,
+            project,
+            emailNotifier,
+            signal,
+          );
+
+          if (signal.aborted) {
+            return undefined;
+          }
+
+          reviewChangeRequest = await reconcileReviewCards(
+            trello,
+            git,
+            github,
+            project,
+            {
+              moveRequestedChanges: workingChangeRequest === null,
+              maintenance: { commands },
+              ...(onHumanReviewCardsObserved === undefined
+                ? {}
+                : { onHumanReviewCardsObserved }),
+              ...(onHumanReviewCardLeft === undefined
+                ? {}
+                : { onHumanReviewCardLeft }),
+            },
+            emailNotifier,
+            signal,
           );
         }
-      } else {
-        workingChangeRequest = await reconcileWorkingCards(
-          trello,
-          git,
-          github,
-          project,
-          emailNotifier,
-          signal,
-        );
 
         if (signal.aborted) {
           return undefined;
         }
 
-        reviewChangeRequest = await reconcileReviewCards(
-          trello,
-          git,
-          github,
-          project,
-          {
-            moveRequestedChanges: workingChangeRequest === null,
-            maintenance: { commands },
-            ...(onHumanReviewCardsObserved === undefined
-              ? {}
-              : { onHumanReviewCardsObserved }),
-            ...(onHumanReviewCardLeft === undefined
-              ? {}
-              : { onHumanReviewCardLeft }),
-          },
-          emailNotifier,
-          signal,
-        );
-      }
-
-      if (signal.aborted) {
-        return undefined;
-      }
-
-      return { workingChangeRequest, reviewChangeRequest };
-    },
-  );
-
-  if (reconciliation === undefined) {
-    return;
-  }
-
-  const { workingChangeRequest, reviewChangeRequest } = reconciliation;
-
-  if (reviewChangeRequest && workingChangeRequest) {
-    const conflictingWorkflowError = new WorkflowError(
-      "Workflow",
-      `Cannot process workflow cards in both Human Review (${reviewChangeRequest.card.id}) and Working (${workingChangeRequest.card.id})`,
+        return { workingChangeRequest, reviewChangeRequest };
+      },
     );
 
-    annotateFailure(conflictingWorkflowError, {
-      projectId: project.id,
-      cardIds: [reviewChangeRequest.card.id, workingChangeRequest.card.id],
-      sessionLogPaths: [
-        reviewChangeRequest.card.id,
-        workingChangeRequest.card.id,
-      ]
-        .map((cardId) => getExistingSessionLogPath(project.id, cardId))
-        .filter(
-          (sessionLogPath): sessionLogPath is string =>
-            sessionLogPath !== undefined,
-        ),
-    });
-
-    throw conflictingWorkflowError;
-  }
-
-  if (reviewChangeRequest && "active" in reviewChangeRequest) {
-    if (reviewChangeRequest.maintenanceState === "prepared-conflict") {
-      if (reviewChangeRequest.preparedConflict === undefined) {
-        throw new WorkflowError(
-          "Workflow",
-          "Prepared conflict state was not complete before remediation",
-        );
-      }
-
-      await remediatePreparedConflict({
-        git,
-        github,
-        opencode,
-        commands,
-        project,
-        card: reviewChangeRequest.card,
-        handoff: reviewChangeRequest.preparedConflict,
-        signal,
-        ...(reviewChangeRequest.pullRequestUrl === undefined
-          ? {}
-          : { pullRequestUrl: reviewChangeRequest.pullRequestUrl }),
-      });
+    if (reconciliation === undefined) {
+      return;
     }
 
-    return;
-  }
+    const { workingChangeRequest, reviewChangeRequest } = reconciliation ?? {
+      workingChangeRequest: null,
+      reviewChangeRequest: null,
+    };
 
-  if (reviewChangeRequest) {
-    await withActiveCardContext(project.id, reviewChangeRequest.card.id, () =>
-      processReviewChangeRequest(
-        trello,
-        git,
-        github,
-        opencode,
-        commands,
-        project,
-        reviewChangeRequest,
-        signal,
-        emailNotifier,
-      ),
-    );
+    if (reviewChangeRequest && workingChangeRequest) {
+      const conflictingWorkflowError = new WorkflowError(
+        "Workflow",
+        `Cannot process workflow cards in both Human Review (${reviewChangeRequest.card.id}) and Working (${workingChangeRequest.card.id})`,
+      );
 
-    return;
-  }
-
-  if (workingChangeRequest) {
-    if (isImplementationWorkingCard(workingChangeRequest)) {
-      if (workingChangeRequest.workflow === "refinement") {
-        await withActiveCardContext(
-          project.id,
+      annotateFailure(conflictingWorkflowError, {
+        projectId: project.id,
+        cardIds: [reviewChangeRequest.card.id, workingChangeRequest.card.id],
+        sessionLogPaths: [
+          reviewChangeRequest.card.id,
           workingChangeRequest.card.id,
-          () =>
-            processRefinementCard(
-              trello,
-              git,
-              opencode,
-              project,
-              workingChangeRequest.card,
-              signal,
-              undefined,
-              emailNotifier,
-            ),
-        );
-      } else {
-        await withActiveCardContext(
-          project.id,
-          workingChangeRequest.card.id,
-          () =>
-            processImplementationCard(
-              trello,
-              git,
-              github,
-              opencode,
-              commands,
-              project,
-              workingChangeRequest.card,
-              signal,
-              undefined,
-              emailNotifier,
-            ),
-        );
+        ]
+          .map((cardId) => getExistingSessionLogPath(project.id, cardId))
+          .filter(
+            (sessionLogPath): sessionLogPath is string =>
+              sessionLogPath !== undefined,
+          ),
+      });
+
+      throw conflictingWorkflowError;
+    }
+
+    if (reviewChangeRequest && "active" in reviewChangeRequest) {
+      if (reviewChangeRequest.maintenanceState === "prepared-conflict") {
+        if (reviewChangeRequest.preparedConflict === undefined) {
+          throw new WorkflowError(
+            "Workflow",
+            "Prepared conflict state was not complete before remediation",
+          );
+        }
+
+        await remediatePreparedConflict({
+          git,
+          github,
+          opencode,
+          commands,
+          project,
+          card: reviewChangeRequest.card,
+          handoff: reviewChangeRequest.preparedConflict,
+          signal,
+          ...(reviewChangeRequest.pullRequestUrl === undefined
+            ? {}
+            : { pullRequestUrl: reviewChangeRequest.pullRequestUrl }),
+        });
       }
 
       return;
     }
 
-    await withActiveCardContext(project.id, workingChangeRequest.card.id, () =>
-      processReviewChangeRequest(
-        trello,
-        git,
-        github,
-        opencode,
-        commands,
-        project,
-        workingChangeRequest,
-        signal,
-        emailNotifier,
-      ),
-    );
+    if (reviewChangeRequest) {
+      await withActiveCardContext(project.id, reviewChangeRequest.card.id, () =>
+        processReviewChangeRequest(
+          trello,
+          git,
+          github,
+          opencode,
+          commands,
+          project,
+          reviewChangeRequest,
+          signal,
+          emailNotifier,
+        ),
+      );
 
-    return;
-  }
+      return;
+    }
 
-  const readyClaim = await claimNextReadyCard(trello, git, project, signal);
+    if (workingChangeRequest) {
+      if (isImplementationWorkingCard(workingChangeRequest)) {
+        if (workingChangeRequest.workflow === "refinement") {
+          await withActiveCardContext(
+            project.id,
+            workingChangeRequest.card.id,
+            () =>
+              processRefinementCard(
+                trello,
+                git,
+                opencode,
+                project,
+                workingChangeRequest.card,
+                signal,
+                undefined,
+                emailNotifier,
+              ),
+          );
+        } else {
+          await withActiveCardContext(
+            project.id,
+            workingChangeRequest.card.id,
+            () =>
+              processImplementationCard(
+                trello,
+                git,
+                github,
+                opencode,
+                commands,
+                project,
+                workingChangeRequest.card,
+                signal,
+                undefined,
+                emailNotifier,
+              ),
+          );
+        }
 
-  if (!readyClaim) {
-    return;
-  }
+        return;
+      }
 
-  if (readyClaim.workflow === "refinement") {
+      await withActiveCardContext(
+        project.id,
+        workingChangeRequest.card.id,
+        () =>
+          processReviewChangeRequest(
+            trello,
+            git,
+            github,
+            opencode,
+            commands,
+            project,
+            workingChangeRequest,
+            signal,
+            emailNotifier,
+          ),
+      );
+
+      return;
+    }
+
+    const readyClaim = (await claimNextReadyCard(
+      trello,
+      git,
+      project,
+      signal,
+    ))!;
+
+    if (!readyClaim) {
+      return;
+    }
+
+    if (readyClaim.workflow === "refinement") {
+      if (signal.aborted) {
+        return;
+      }
+
+      await withActiveCardContext(project.id, readyClaim.card.id, () =>
+        processRefinementCard(
+          trello,
+          git,
+          opencode,
+          project,
+          readyClaim.card,
+          signal,
+          readyClaim.worktree,
+          emailNotifier,
+        ),
+      );
+
+      return;
+    }
+
     if (signal.aborted) {
       return;
     }
 
-    await withActiveCardContext(project.id, readyClaim.card.id, () =>
-      processRefinementCard(
+    const card = readyClaim.card;
+    const cardLog = logger.child({
+      projectId: project.id,
+      cardId: card.id,
+    });
+
+    cardLog.event(`Claimed card: ${card.name}`);
+
+    const reconciled = await withActiveCardContext(project.id, card.id, () =>
+      reconcileClaimedCard(
         trello,
         git,
-        opencode,
+        github,
         project,
-        readyClaim.card,
+        card,
+        emailNotifier,
+        signal,
+      ),
+    );
+
+    if (reconciled) {
+      return;
+    }
+
+    if (signal.aborted) {
+      return;
+    }
+
+    await withActiveCardContext(project.id, card.id, () =>
+      processImplementationCard(
+        trello,
+        git,
+        github,
+        opencode,
+        commands,
+        project,
+        card,
         signal,
         readyClaim.worktree,
         emailNotifier,
       ),
     );
-
-    return;
   }
-
-  if (signal.aborted) {
-    return;
-  }
-
-  const card = readyClaim.card;
-  const cardLog = logger.child({
-    projectId: project.id,
-    cardId: card.id,
-  });
-
-  cardLog.event(`Claimed card: ${card.name}`);
-
-  const reconciled = await withActiveCardContext(project.id, card.id, () =>
-    reconcileClaimedCard(
-      trello,
-      git,
-      github,
-      project,
-      card,
-      emailNotifier,
-      signal,
-    ),
-  );
-
-  if (reconciled) {
-    return;
-  }
-
-  if (signal.aborted) {
-    return;
-  }
-
-  await withActiveCardContext(project.id, card.id, () =>
-    processImplementationCard(
-      trello,
-      git,
-      github,
-      opencode,
-      commands,
-      project,
-      card,
-      signal,
-      readyClaim.worktree,
-      emailNotifier,
-    ),
-  );
 }
 
 async function processRefinementCard(

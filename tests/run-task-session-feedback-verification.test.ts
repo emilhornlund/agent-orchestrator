@@ -27,7 +27,6 @@ function fixture() {
   fs.writeFileSync(path.join(worktreePath, "source.ts"), "fixed\n");
   const project = {
     id: "project",
-    executionMode: "task-session",
     repository: { path: repositoryPath, worktreeRoot },
   } as ProjectConfig;
   const card: TrelloCard = {

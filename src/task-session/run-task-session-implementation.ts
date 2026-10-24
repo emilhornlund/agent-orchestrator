@@ -186,10 +186,6 @@ export async function runTaskSessionImplementation(
   } = options;
   const projectId = project.id;
 
-  if (project.executionMode !== "task-session") {
-    throw new Error("Task-session implementation requires task-session mode");
-  }
-
   if (
     project.repository.validationCommand === undefined ||
     project.repository.validationCommand.trim().length === 0

@@ -54,11 +54,6 @@ export class TaskSessionFeedbackVerificationError extends Error {
 export async function runTaskSessionFeedbackVerification(
   options: RunTaskSessionFeedbackVerificationOptions,
 ): Promise<FeedbackVerificationResult> {
-  if (options.project.executionMode !== "task-session") {
-    throw new TaskSessionFeedbackVerificationError(
-      "Feedback verification requires task-session mode",
-    );
-  }
   if (
     options.approvedPlan.projectId !== options.project.id ||
     options.approvedPlan.cardId !== options.card.id
