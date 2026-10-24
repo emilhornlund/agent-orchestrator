@@ -184,7 +184,7 @@ to inspect first, not permission to invent unimplemented helpers.
 
 ## Phase D — Publication and GitHub CI repair
 
-- [ ] **T25 — Connect verified task-session commits and publication**
+- [x] **T25 — Connect verified task-session commits and publication**
   - **Depends on:** T15, T24.
   - **Implement:** Reuse existing local commit, signing, safe fetch/rebase, trusted-state, push, and PR-reuse code behind the T24 gate in task-session mode. Invalidate gates if publication preparation changes content; require fresh verification before push.
   - **Verify locally:** Mocked Git/GitHub tests prove exactly one trusted commit, no unverified push, no force push, same-PR reuse, and preserved failure state.
