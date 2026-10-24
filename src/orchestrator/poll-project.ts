@@ -27,10 +27,7 @@ import type {
 } from "../github/github-client.js";
 import { logger, type Logger } from "../logging/logger.js";
 import { getSessionLogPath } from "../logging/session-log.js";
-import {
-  notifyRefinementCompletion,
-  type EmailNotifier,
-} from "../notifications/email-notifier.js";
+import { type EmailNotifier } from "../notifications/email-notifier.js";
 import { buildCommitPrompt } from "../opencode/build-commit-prompt.js";
 import {
   captureRepositorySnapshot,
@@ -57,9 +54,7 @@ import {
   clearRefinementResult,
   getRefinementResultPath,
 } from "../refinement/refinement-result.js";
-import { finalizeRefinement } from "../refinement/finalize-refinement.js";
-import { addRefinementCompletionComment } from "../refinement/refinement-completion.js";
-import { runRefinement } from "../refinement/run-refinement.js";
+import { runRefinementOperation } from "../refinement/refinement-operation.js";
 import {
   TrelloRequestAbortedError,
   isRetryableTrelloError,
@@ -97,7 +92,6 @@ import {
   reconcileWorkingCards,
 } from "./reconcile-working-cards.js";
 import { WorkflowError } from "./workflow-error.js";
-import { getElapsedRefinementWorkflowTime } from "./workflow-duration.js";
 import type { ManagedPullRequestStatus } from "../github/pull-request-status.js";
 import {
   PullRequestStatusPresentationError,
@@ -619,49 +613,18 @@ async function processRefinementCard(
 
     cardLog.event("Starting OpenCode refinement...");
 
-    const result = await runRefinement(
+    await runRefinementOperation({
+      trello,
       git,
       opencode,
       project,
       card,
-      worktree.path,
+      worktreePath: worktree.path,
       signal,
-      attachmentContext,
-    );
-
-    cardLog.event(
-      `OpenCode refinement completed with classification: ${result.type}`,
-    );
-
-    await finalizeRefinement(trello, project, card, result, signal);
-
-    cardLog.event("Refined card returned to Backlog");
-
-    const elapsedWorkflowTime = await getElapsedRefinementWorkflowTime(
-      trello,
-      project,
-      card.id,
       cardLog,
-    );
-
-    await notifyRefinementCompletion(
-      emailNotifier,
-      {
-        project,
-        card,
-        result,
-        ...(elapsedWorkflowTime === undefined ? {} : { elapsedWorkflowTime }),
-      },
-      cardLog,
-    );
-
-    await addRefinementCompletionComment(
-      trello,
-      card,
-      result,
-      cardLog,
-      elapsedWorkflowTime,
-    );
+      ...(attachmentContext === undefined ? {} : { attachmentContext }),
+      ...(emailNotifier === undefined ? {} : { emailNotifier }),
+    });
 
     if (signal.aborted) {
       return;
