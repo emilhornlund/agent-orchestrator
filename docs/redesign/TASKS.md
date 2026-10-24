@@ -503,6 +503,13 @@ are examples to inspect, not permission to invent unimplemented helpers.
   - **Verify locally:** A mocked failed refinement that writes an unauthorized worktree file moves the card to Failed but retains that file and never invokes reset/clean operations.
   - **Out of scope:** Do not weaken refinement result validation or change safe success cleanup.
 
+- [x] **T59E — Reject stale terminal PR heads**
+  - **Depends on:** T48–T49.
+  - **Corrective rationale:** Terminal PR observations verified the PR URL, repository, and branch, but did not require the observed PR head to equal the task record's persisted head before reconciling a merge or closure.
+  - **Implement:** Fail closed on MERGED or CLOSED observations whose authoritative head is missing or differs from the persisted task head.
+  - **Verify locally:** Observation tests cover stale and absent terminal heads and prove no terminal observation reaches reconciliation; matching terminal PRs still reconcile.
+  - **Out of scope:** Do not block valid terminal PRs on CI observations or alter the Done/Backlog transition policy.
+
 - [ ] **T59 — Perform final unified lifecycle acceptance audit**
   - **Depends on:** T46–T58.
   - **Implement:** Audit actual production entry points and integration tests for refinement, implementation, session continuity, validation, coverage, independent review, publication, complete CI observation and repair, human feedback, contextual replies, merged/closed PR reconciliation, auto-merge, and restart recovery. Correct any confirmed blocking defect through a narrowly scoped corrective task before completing this audit.
