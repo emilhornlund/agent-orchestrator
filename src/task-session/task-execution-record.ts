@@ -112,6 +112,27 @@ const feedbackRemediationSchema = z.strictObject({
   ledgerRevision: z.number().int().positive().safe(),
 });
 
+const reviewObservationSchema = z.strictObject({
+  headSha: gitSha,
+  observedAt: z.string().datetime(),
+  checks: z.array(
+    z.strictObject({
+      name: nonBlankIdentifier,
+      status: z.enum([
+        "missing",
+        "queued",
+        "in_progress",
+        "succeeded",
+        "failed",
+        "cancelled",
+        "incomplete",
+      ]),
+      headSha: gitSha,
+    }),
+  ),
+  feedbackIds: z.array(nonBlankIdentifier),
+});
+
 const taskExecutionRecordSchema = z
   .strictObject({
     version: z.literal(1),
@@ -136,6 +157,7 @@ const taskExecutionRecordSchema = z
     reviewRepair: reviewRepairSchema.optional(),
     ciRepair: ciRepairSchema.optional(),
     feedbackRemediation: feedbackRemediationSchema.optional(),
+    reviewObservation: reviewObservationSchema.optional(),
     revision: z.number().int().positive().safe(),
     retryCounters: retryCountersSchema,
     createdAt: z.string().datetime(),
@@ -397,6 +419,29 @@ const taskExecutionRecordSchema = z
         path: ["feedbackRemediation"],
         message:
           "Feedback remediation state is only valid during human feedback",
+      });
+    }
+
+    if (
+      record.reviewObservation !== undefined &&
+      record.pullRequest?.headSha !== record.reviewObservation.headSha
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["reviewObservation", "headSha"],
+        message:
+          "Review observation head must match the persisted pull request head",
+      });
+    }
+
+    if (
+      record.reviewObservation !== undefined &&
+      record.phase !== "human-feedback"
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["reviewObservation"],
+        message: "Review observations are only valid for Human Review tasks",
       });
     }
   });
