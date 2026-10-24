@@ -222,7 +222,7 @@ to inspect first, not permission to invent unimplemented helpers.
   - **Verify locally:** Mocked payload tests cover review-body-only, inline-only, mixed, old-head unresolved threads, and malformed/paginated responses.
   - **Out of scope:** Do not remove current-head safeguards or change remediation yet.
 
-- [ ] **T31 — Collect top-level PR conversation comments**
+- [x] **T31 — Collect top-level PR conversation comments**
   - **Depends on:** T30.
   - **Implement:** Add paginated collection of PR issue/conversation comments with stable IDs, author, timestamp, body, and commit/head observation where known. Preserve distinction between discussion and submitted review decisions.
   - **Verify locally:** Mocked API tests cover pagination, author identity, edited comments, empty replies, and GitHub-generated comments.

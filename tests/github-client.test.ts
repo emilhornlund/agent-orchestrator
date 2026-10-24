@@ -218,6 +218,91 @@ describe("GitHubClient", () => {
     ).rejects.toThrow("invalid paginated check runs");
   });
 
+  it("collects paginated PR conversation comments without classifying discussion", async () => {
+    const run = vi.fn<RunGitHubCommand>().mockResolvedValue(
+      JSON.stringify([
+        [
+          {
+            id: 10,
+            user: { login: "reviewer" },
+            created_at: "2026-01-01T10:00:00Z",
+            updated_at: "2026-01-02T10:00:00Z",
+            body: "Edited discussion body",
+          },
+        ],
+        [
+          {
+            id: 11,
+            user: { login: "github-actions[bot]" },
+            created_at: "2026-01-03T10:00:00Z",
+            updated_at: null,
+            body: "",
+            commit_id: "a".repeat(40),
+          },
+        ],
+      ]),
+    );
+    const project = {
+      id: "p",
+      repository: { github: "owner/repo" },
+    } as ProjectConfig;
+    const comments = await new GitHubClient(
+      run,
+    ).getPullRequestConversationComments({
+      cwd: "/repo",
+      repository: "owner/repo",
+      pullRequestUrl: "https://github.com/owner/repo/pull/12",
+      project,
+    });
+    expect(comments).toEqual([
+      {
+        id: 10,
+        author: "reviewer",
+        createdAt: "2026-01-01T10:00:00Z",
+        updatedAt: "2026-01-02T10:00:00Z",
+        body: "Edited discussion body",
+      },
+      {
+        id: 11,
+        author: "github-actions[bot]",
+        createdAt: "2026-01-03T10:00:00Z",
+        updatedAt: null,
+        body: "",
+        commitSha: "a".repeat(40),
+      },
+    ]);
+    expect(run).toHaveBeenCalledWith("/repo", [
+      "api",
+      "--paginate",
+      "--slurp",
+      "repos/owner/repo/issues/12/comments?per_page=100",
+    ]);
+  });
+
+  it("rejects a conversation URL for another repository and malformed comment payloads", async () => {
+    const client = new GitHubClient(async () => "not json");
+    const project = {
+      id: "p",
+      repository: { github: "owner/repo" },
+    } as ProjectConfig;
+    await expect(
+      client.getPullRequestConversationComments({
+        cwd: "/repo",
+        repository: "owner/repo",
+        pullRequestUrl: "https://github.com/other/repo/pull/12",
+        project,
+      }),
+    ).rejects.toThrow("does not match");
+    await expect(
+      client.getPullRequestConversationComments({
+        cwd: "/repo",
+        repository: "owner/repo",
+        pullRequestUrl: "https://github.com/owner/repo/pull/12",
+        project,
+      }),
+    ).rejects.toThrow("invalid paginated pull request conversation comments");
+  });
+
   it("collects bounded, redacted annotations for failed exact-head check runs", async () => {
     const headSha = "a".repeat(40);
     const run = vi.fn<RunGitHubCommand>().mockResolvedValue(
