@@ -961,7 +961,7 @@ describe("task-session production dispatch", () => {
     expect(reviewReplyMutationCount).toBe(2);
   });
 
-  it("refuses to auto-migrate an active Working card without a task-session record", async () => {
+  it("refuses an unowned Working card without a task-session record", async () => {
     const { project } = projectFixture();
     const legacyCard = {
       ...createCard(),
@@ -983,7 +983,7 @@ describe("task-session production dispatch", () => {
         project,
         new AbortController().signal,
       ),
-    ).rejects.toThrow("Refusing to auto-migrate active legacy Working card");
+    ).rejects.toThrow("Refusing to process unowned Working card");
     expect(openCode).not.toHaveBeenCalled();
   });
 
