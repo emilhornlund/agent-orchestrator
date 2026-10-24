@@ -52,7 +52,7 @@ describe("TaskMutationQueue", () => {
     );
     expect(
       queue.enqueue(
-        task("project-a", "earlier", "card-a", "2026-10-24T09:01:00.000Z"),
+        task("project-a", "earlier", "card-a", "2026-10-24T09:03:00.000Z"),
       ).status,
     ).toBe("queued");
     expect(queue.claimNext()?.eventId).toBe("earlier");

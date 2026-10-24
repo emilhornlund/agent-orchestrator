@@ -184,6 +184,7 @@ export class TaskMutationQueue {
       if (existing !== undefined) {
         const comparable = (value: TaskMutationEvent) => ({
           ...value,
+          enqueuedAt: undefined,
           status: undefined,
           ownerToken: undefined,
           ownerPid: undefined,
