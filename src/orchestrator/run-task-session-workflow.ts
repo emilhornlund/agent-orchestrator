@@ -1332,7 +1332,7 @@ export async function runTaskSessionWorkflow(
     );
     if (unowned.length > 0) {
       throw new Error(
-        `Refusing to auto-migrate active legacy Working card(s): ${unowned.map((card) => card.id).join(", ")}`,
+        `Refusing to process unowned Working card(s) without task-session records; operator recovery is required: ${unowned.map((card) => card.id).join(", ")}`,
       );
     }
     if (workingCards.length > 1) {

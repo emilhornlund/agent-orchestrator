@@ -489,6 +489,13 @@ are examples to inspect, not permission to invent unimplemented helpers.
   - **Verify locally:** Only authoritative terminal PRs reach the queued terminal reconciler; malformed or transient reads preserve Trello and queue state.
   - **Out of scope:** Do not call live GitHub or change terminal transition policy.
 
+- [x] **T59C — Remove retired migration terminology from runtime refusal**
+  - **Depends on:** T50–T51.
+  - **Corrective rationale:** The unified scheduler still described an unowned `Working` card as an active “legacy” card requiring migration, despite the final architecture removing legacy mode and migration support.
+  - **Implement:** Keep the same fail-closed behavior for unowned/ambiguous `Working` state but report it as an unowned task requiring operator recovery.
+  - **Verify locally:** The production dispatch test proves no agent or new work starts for unowned `Working` state and the diagnostic no longer references a retired execution mode.
+  - **Out of scope:** Do not infer ownership, migrate records, or weaken restart safety.
+
 - [ ] **T59 — Perform final unified lifecycle acceptance audit**
   - **Depends on:** T46–T58.
   - **Implement:** Audit actual production entry points and integration tests for refinement, implementation, session continuity, validation, coverage, independent review, publication, complete CI observation and repair, human feedback, contextual replies, merged/closed PR reconciliation, auto-merge, and restart recovery. Correct any confirmed blocking defect through a narrowly scoped corrective task before completing this audit.

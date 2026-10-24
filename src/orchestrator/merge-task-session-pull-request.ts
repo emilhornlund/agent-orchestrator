@@ -18,9 +18,7 @@ export async function mergeTaskSessionPullRequest(
   signal?: AbortSignal,
 ): Promise<void> {
   if (!project.autoMerge) {
-    throw new Error(
-      "CI-aware merge requires task-session mode with autoMerge enabled",
-    );
+    throw new Error("CI-aware merge requires autoMerge enabled");
   }
   const decision = decideTaskSessionAutoMergeReadiness(readiness);
   if (!decision.allowed || decision.headSha !== commitSha) {
