@@ -64,7 +64,7 @@ to inspect first, not permission to invent unimplemented helpers.
   - **Verify locally:** Table-driven tests prove allowed transitions, duplicate-event idempotency, impossible-transition rejection, and terminal-state safety.
   - **Out of scope:** No Trello/ GitHub side effects, subprocesses, or retries.
 
-- [ ] **T06 — Add task-session ownership guard**
+- [x] **T06 — Add task-session ownership guard**
   - **Depends on:** T04–T05.
   - **Implement:** Introduce a small coordinator helper that loads the owned card record and refuses to operate if its project/card/branch association conflicts with the requested task. Reuse existing per-project exclusivity assumptions for now.
   - **Verify locally:** Tests cover matching owner, other-card record, stale operation identity, missing record, and safe refusal without mutations.
