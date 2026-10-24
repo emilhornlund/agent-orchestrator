@@ -51,6 +51,6 @@ export function buildTaskSessionImplementationPrompt(
     JSON.stringify(input.approvedPlan, null, 2),
     ...taskSessionRepositoryGuidance,
     "Implement only the approved requirements and steps. Keep each requirement traceable to the plan and do not silently broaden scope.",
-    "Do not create commits, push branches, open pull requests, or modify the configured source checkout.",
+    "Do not run Git commands or invoke GitHub tools. Do not create commits, change branches, push, open pull requests, or modify the configured source checkout; the orchestrator owns all Git and GitHub operations.",
   ].join("\n");
 }

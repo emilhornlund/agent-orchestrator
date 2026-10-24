@@ -122,7 +122,7 @@ to inspect first, not permission to invent unimplemented helpers.
 
 ## Phase C — Local implementation and mandatory checks
 
-- [ ] **T15 — Add internal task-session implementation runner**
+- [x] **T15 — Add internal task-session implementation runner**
   - **Depends on:** T05, T09, T13–T14.
   - **Implement:** Compose verified-plan lookup, owned worktree, original task context, and primary-session continuation into an internal `task-session` implementation operation. Persist phase/outcome. Keep it unreachable from production polling until T43.
   - **Verify locally:** Mock orchestration tests show correct session reuse, verified-plan prerequisite, abort/error preservation, and no agent-side Git/PR actions.
