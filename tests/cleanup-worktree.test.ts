@@ -281,7 +281,9 @@ describe("cleanupWorktree", () => {
         cardId: "card-1",
         taskBranch: "agent/card-1",
         defaultBranch: "main",
-        expectedRemoteTaskSha: "a".repeat(40),
+        origin: "initial-publication",
+        trustedTaskCommitSha: "a".repeat(40),
+        rebaseTargetSha: "b".repeat(40),
         conflictedPaths: ["src/conflicted.ts"],
         rebase: {
           active: true,

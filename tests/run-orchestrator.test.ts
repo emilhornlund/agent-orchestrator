@@ -136,7 +136,6 @@ function prepareConflict(project: ProjectConfig): void {
   writePreparedConflict(
     project,
     "card-1",
-    "a".repeat(40),
     ["src/conflicted.ts"],
     {
       active: true,
@@ -144,6 +143,11 @@ function prepareConflict(project: ProjectConfig): void {
       headName: "refs/heads/agent/card-1",
       onto: "b".repeat(40),
       originalHead: "a".repeat(40),
+    },
+    {
+      origin: "initial-publication",
+      trustedTaskCommitSha: "a".repeat(40),
+      rebaseTargetSha: "b".repeat(40),
     },
   );
 }

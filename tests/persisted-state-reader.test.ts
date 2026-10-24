@@ -15,11 +15,6 @@ import {
   loadReconciliationBlock,
   writeReconciliationBlock,
 } from "../src/orchestrator/reconciliation-block-storage.js";
-import {
-  getReviewMaintenanceStatePath,
-  readReviewMaintenanceState,
-  writeReviewMaintenanceState,
-} from "../src/orchestrator/review-maintenance-state.js";
 import { MAX_PERSISTED_STATE_FILE_BYTES } from "../src/orchestrator/persisted-state-reader.js";
 
 let temporaryRoot: string | undefined;
@@ -74,29 +69,26 @@ function createFixture() {
   const contextRoot = path.join(temporaryRoot, "context");
   const taskSha = "a".repeat(40);
   const defaultSha = "b".repeat(40);
-  const reviewPath = getReviewMaintenanceStatePath(project, "card-one");
   const preparedPath = getPreparedConflictPath(project, "card-two");
   const blockPath = getReconciliationBlockPath(contextRoot, project.id);
 
-  writeReviewMaintenanceState(project, "card-one", {
-    version: 1,
-    kind: "review-maintenance",
-    projectId: project.id,
-    cardId: "card-one",
-    taskBranch: "agent/card-one",
-    defaultBranch: project.repository.defaultBranch,
-    remoteTaskSha: taskSha,
-    remoteDefaultSha: defaultSha,
-    effectiveHeadSha: taskSha,
-    setupCompleted: true,
-  });
-  writePreparedConflict(project, "card-two", taskSha, ["src/file.ts"], {
-    active: true,
-    backend: "merge",
-    headName: "agent/card-two",
-    onto: defaultSha,
-    originalHead: taskSha,
-  });
+  writePreparedConflict(
+    project,
+    "card-two",
+    ["src/file.ts"],
+    {
+      active: true,
+      backend: "merge",
+      headName: "agent/card-two",
+      onto: defaultSha,
+      originalHead: taskSha,
+    },
+    {
+      origin: "initial-publication",
+      trustedTaskCommitSha: taskSha,
+      rebaseTargetSha: defaultSha,
+    },
+  );
   writeReconciliationBlock(contextRoot, {
     version: 1,
     projectId: project.id,
@@ -112,11 +104,11 @@ function createFixture() {
     failureIdentity: "failure",
   });
 
-  return { project, contextRoot, reviewPath, preparedPath, blockPath };
+  return { project, contextRoot, preparedPath, blockPath };
 }
 
 describe("persisted state size protection", () => {
-  it("loads valid reconciliation, prepared-conflict, and review-maintenance state", () => {
+  it("loads valid reconciliation and prepared-conflict state", () => {
     const fixture = createFixture();
 
     expect(
@@ -125,34 +117,12 @@ describe("persisted state size protection", () => {
     expect(readPreparedConflict(fixture.project, "card-two")).toMatchObject({
       cardId: "card-two",
     });
-    expect(
-      readReviewMaintenanceState(fixture.project, "card-one"),
-    ).toMatchObject({ cardId: "card-one" });
-  });
-
-  it("loads legacy review-maintenance state without retaining validation fields", () => {
-    const fixture = createFixture();
-    const state = JSON.parse(fs.readFileSync(fixture.reviewPath, "utf8")) as {
-      [key: string]: unknown;
-    };
-    state.validationCommand = "yarn validate";
-    state.validation = { outcome: "failed", reason: "old failure" };
-    fs.writeFileSync(fixture.reviewPath, JSON.stringify(state), "utf8");
-
-    const loaded = readReviewMaintenanceState(fixture.project, "card-one");
-
-    expect(loaded).not.toHaveProperty("validationCommand");
-    expect(loaded).not.toHaveProperty("validation");
   });
 
   it("preserves ordinary malformed-state handling for every store", () => {
     const fixture = createFixture();
 
-    for (const filePath of [
-      fixture.reviewPath,
-      fixture.preparedPath,
-      fixture.blockPath,
-    ]) {
+    for (const filePath of [fixture.preparedPath, fixture.blockPath]) {
       fs.writeFileSync(filePath, "{", "utf8");
     }
 
@@ -162,20 +132,13 @@ describe("persisted state size protection", () => {
     expect(() => readPreparedConflict(fixture.project, "card-two")).toThrow(
       "not valid JSON",
     );
-    expect(() =>
-      readReviewMaintenanceState(fixture.project, "card-one"),
-    ).toThrow("not valid JSON");
   });
 
   it("rejects oversized state before reading content and preserves each file", () => {
     const fixture = createFixture();
     const oversized = `oversized-state-content-${"x".repeat(MAX_PERSISTED_STATE_FILE_BYTES)}`;
 
-    for (const filePath of [
-      fixture.reviewPath,
-      fixture.preparedPath,
-      fixture.blockPath,
-    ]) {
+    for (const filePath of [fixture.preparedPath, fixture.blockPath]) {
       fs.writeFileSync(filePath, oversized, "utf8");
     }
 
@@ -197,21 +160,12 @@ describe("persisted state size protection", () => {
       expect(() => readPreparedConflict(fixture.project, "card-two")).toThrow(
         `exceeds the ${MAX_PERSISTED_STATE_FILE_BYTES}-byte limit: ${fixture.preparedPath}`,
       );
-      expect(() =>
-        readReviewMaintenanceState(fixture.project, "card-one"),
-      ).toThrow(
-        `exceeds the ${MAX_PERSISTED_STATE_FILE_BYTES}-byte limit: ${fixture.reviewPath}`,
-      );
       expect(readFile).not.toHaveBeenCalled();
     } finally {
       readFile.mockRestore();
     }
 
-    for (const filePath of [
-      fixture.reviewPath,
-      fixture.preparedPath,
-      fixture.blockPath,
-    ]) {
+    for (const filePath of [fixture.preparedPath, fixture.blockPath]) {
       expect(fs.readFileSync(filePath, "utf8")).toBe(oversized);
     }
   });

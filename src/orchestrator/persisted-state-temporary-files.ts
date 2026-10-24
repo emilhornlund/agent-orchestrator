@@ -5,7 +5,6 @@ import type { ProjectConfig } from "../config/config.js";
 import { logger } from "../logging/logger.js";
 import { getPreparedConflictStateDirectory } from "./prepared-conflict-state.js";
 import { getReconciliationBlockStateDirectory } from "./reconciliation-block-storage.js";
-import { getReviewMaintenanceStateDirectory } from "./review-maintenance-state.js";
 import {
   getRejectedCommitStateDirectory,
   getTrustedCommitStateDirectory,
@@ -197,10 +196,6 @@ function cleanupProjectPersistedStateTemporaryFiles(
   contextRoot: string,
 ): void {
   const directories = [
-    {
-      getPath: () => getReviewMaintenanceStateDirectory(project),
-      pattern: cardStateTemporaryFilePattern,
-    },
     {
       getPath: () => getTrustedCommitStateDirectory(project),
       pattern: cardStateTemporaryFilePattern,

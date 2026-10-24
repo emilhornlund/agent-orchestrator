@@ -398,7 +398,6 @@ export async function publishCard({
           handoff = writePreparedConflict(
             project,
             card.id,
-            undefined,
             conflictedPaths,
             rebaseState,
             {

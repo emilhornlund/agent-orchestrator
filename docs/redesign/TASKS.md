@@ -407,6 +407,13 @@ are examples to inspect, not permission to invent unimplemented helpers.
   - **Verify locally:** No dangling imports, references, or orphaned production helpers remain. Tests and production build pass. Existing shared safety behavior remains covered.
   - **Out of scope:** Do not redesign the unified task state or remove safety mechanisms merely because they originated in the legacy architecture.
 
+- [x] **T52A — Remove obsolete Human Review maintenance conflict state**
+  - **Depends on:** T52.
+  - **Corrective rationale:** After T51 removed automatic Human Review branch maintenance, prepared-conflict recovery still accepted a `human-review-maintenance` origin and retained its dedicated maintenance-state store, temporary cleanup path, and force-with-lease branch.
+  - **Implement:** Restrict prepared-conflict handoffs to the unified initial-publication lifecycle, remove the unused maintenance-state flow and store, and retain initial publication conflict remediation and its trusted-commit/worktree safety checks.
+  - **Verify locally:** Prepared-conflict tests prove initial-publication recovery remains safe and unsupported legacy origins fail closed; no production import or temporary-file cleanup path references review-maintenance state.
+  - **Out of scope:** Do not remove prepared-conflict safety, trusted commits, exact lease checks used by other supported operations, or the task-session conflict recovery path.
+
 ## Phase I — Automatic CI check management
 
 - [x] **T53 — Define authoritative CI check expectations**
