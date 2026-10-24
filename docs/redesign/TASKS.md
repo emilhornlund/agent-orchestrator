@@ -164,7 +164,7 @@ to inspect first, not permission to invent unimplemented helpers.
   - **Verify locally:** Parser tests reject missing requirement assessments, invalid verdicts, stale content identities, and malformed findings.
   - **Out of scope:** Do not invoke OpenCode in this task.
 
-- [ ] **T22 — Implement independent completion and correctness review**
+- [x] **T22 — Implement independent completion and correctness review**
   - **Depends on:** T15, T20–T21.
   - **Implement:** Add a read-only reviewer invocation using a separate OpenCode session, the original card, approved plan, current diff, and evidence. Verify the structured response against the content identity and mandatory requirement IDs.
   - **Verify locally:** Mocked tests show passing complete work, blocking omitted requirements/serious defects, reviewer write protection, and malformed output failure.

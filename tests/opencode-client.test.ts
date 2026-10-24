@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  buildOpenCodeConfigContent,
   buildOpenCodeArguments,
   OpenCodeClient,
   OpenCodeRunAbortedError,
@@ -12,6 +13,20 @@ import {
 } from "../src/opencode/opencode-client.js";
 
 describe("OpenCodeClient", () => {
+  it("denies editing and command tools for read-only reviewer sessions", () => {
+    expect(JSON.parse(buildOpenCodeConfigContent(true))).toEqual({
+      permission: {
+        question: "deny",
+        edit: "deny",
+        bash: "deny",
+        external_directory: "deny",
+      },
+    });
+    expect(JSON.parse(buildOpenCodeConfigContent(false))).toEqual({
+      permission: { question: "deny" },
+    });
+  });
+
   it("builds unchanged CLI arguments when there is no explicit session", () => {
     expect(
       buildOpenCodeArguments({

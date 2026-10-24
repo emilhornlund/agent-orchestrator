@@ -17,6 +17,7 @@ export interface OpenCodeRunOptions {
   signal: AbortSignal;
   sessionId?: string;
   captureSessionId?: boolean;
+  readOnly?: boolean;
   environment?: Record<string, string>;
   sessionLogPath?: string;
   sessionLabel?: string;
@@ -51,6 +52,21 @@ type OpenCodeArgumentOptions = Pick<
   OpenCodeRunOptions,
   "cwd" | "model" | "variant" | "prompt" | "sessionId" | "captureSessionId"
 >;
+
+export function buildOpenCodeConfigContent(readOnly = false): string {
+  return JSON.stringify({
+    permission: {
+      question: "deny",
+      ...(readOnly
+        ? {
+            edit: "deny",
+            bash: "deny",
+            external_directory: "deny",
+          }
+        : {}),
+    },
+  });
+}
 
 function assertValidSessionId(sessionId: string): void {
   if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/u.test(sessionId)) {
@@ -302,6 +318,7 @@ const defaultRunOpenCode: RunOpenCode = async ({
   signal,
   sessionId,
   captureSessionId,
+  readOnly,
   environment,
   sessionLogPath,
   sessionLabel,
@@ -343,11 +360,7 @@ const defaultRunOpenCode: RunOpenCode = async ({
         env: {
           ...process.env,
           ...environment,
-          OPENCODE_CONFIG_CONTENT: JSON.stringify({
-            permission: {
-              question: "deny",
-            },
-          }),
+          OPENCODE_CONFIG_CONTENT: buildOpenCodeConfigContent(readOnly),
         },
       },
     );
