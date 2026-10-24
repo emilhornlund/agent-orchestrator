@@ -149,8 +149,12 @@ describe("observeTaskSessionReviewCards", () => {
       f.headByCard.get("card-one"),
       f.headByCard.get("card-two"),
     ]);
-    expect(observed[0]?.feedbackIds).toContain("conversation-comment:101");
-    expect(observed[1]?.feedbackIds).toContain("conversation-comment:202");
+    expect(observed[0]?.state === "OPEN" && observed[0].feedbackIds).toContain(
+      "conversation-comment:101",
+    );
+    expect(observed[1]?.state === "OPEN" && observed[1].feedbackIds).toContain(
+      "conversation-comment:202",
+    );
     expect(f.store.read("card-one")?.reviewObservation?.headSha).toBe(
       f.headByCard.get("card-one"),
     );
@@ -167,6 +171,54 @@ describe("observeTaskSessionReviewCards", () => {
         }
       ).getRequiredChecks.mock.calls,
     ).toHaveLength(2);
+  });
+
+  it.each(["MERGED", "CLOSED"] as const)(
+    "returns authoritative %s terminal state without waiting for CI",
+    async (state) => {
+      const f = fixture();
+      vi.mocked(f.github.findPullRequestState).mockResolvedValue({
+        url: "https://github.com/owner/repo/pull/1",
+        state,
+        mergedAt: state === "MERGED" ? "2026-10-24T10:00:00Z" : null,
+        headRefOid: f.headByCard.get("card-one")!,
+        baseRefName: "main",
+        headRefName: "agent/card-one",
+        headRepository: { name: "repo" },
+        headRepositoryOwner: { login: "owner" },
+      });
+
+      const observed = await observeTaskSessionReviewCards({
+        project: f.project,
+        cards: f.cards.slice(0, 1),
+        taskRecordStore: f.store,
+        github: f.github,
+      });
+
+      expect(observed).toMatchObject([
+        {
+          state,
+          cardId: "card-one",
+          pullRequestUrl: "https://github.com/owner/repo/pull/1",
+        },
+      ]);
+      expect(f.github.getRequiredChecks).not.toHaveBeenCalled();
+      expect(f.store.read("card-one")?.reviewObservation).toBeUndefined();
+    },
+  );
+
+  it("fails closed when authoritative PR identity is missing", async () => {
+    const f = fixture();
+    vi.mocked(f.github.findPullRequestState).mockResolvedValue(null);
+
+    await expect(
+      observeTaskSessionReviewCards({
+        project: f.project,
+        cards: f.cards.slice(0, 1),
+        taskRecordStore: f.store,
+        github: f.github,
+      }),
+    ).rejects.toThrow("Authoritative pull request identity changed");
   });
 
   it("does not persist observations for a card whose authoritative PR head mismatches", async () => {
