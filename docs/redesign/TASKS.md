@@ -496,6 +496,13 @@ are examples to inspect, not permission to invent unimplemented helpers.
   - **Verify locally:** The production dispatch test proves no agent or new work starts for unowned `Working` state and the diagnostic no longer references a retired execution mode.
   - **Out of scope:** Do not infer ownership, migrate records, or weaken restart safety.
 
+- [x] **T59D — Preserve refinement worktree changes after failure**
+  - **Depends on:** T46–T47.
+  - **Corrective rationale:** The extracted refinement workflow still called `resetHard` and `cleanUntracked` after a failed OpenCode operation, which could discard changes despite the repository's no-automatic-discard safety invariant.
+  - **Implement:** On refinement failure, remove only the dedicated refinement result artifact when safe and preserve all other worktree files and Git changes for diagnosis.
+  - **Verify locally:** A mocked failed refinement that writes an unauthorized worktree file moves the card to Failed but retains that file and never invokes reset/clean operations.
+  - **Out of scope:** Do not weaken refinement result validation or change safe success cleanup.
+
 - [ ] **T59 — Perform final unified lifecycle acceptance audit**
   - **Depends on:** T46–T58.
   - **Implement:** Audit actual production entry points and integration tests for refinement, implementation, session continuity, validation, coverage, independent review, publication, complete CI observation and repair, human feedback, contextual replies, merged/closed PR reconciliation, auto-merge, and restart recovery. Correct any confirmed blocking defect through a narrowly scoped corrective task before completing this audit.

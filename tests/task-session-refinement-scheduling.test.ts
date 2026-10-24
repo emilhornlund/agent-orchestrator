@@ -435,6 +435,9 @@ describe("task-session refinement scheduling", () => {
           );
         } else {
           fs.writeFileSync(resultPath, "not-json");
+          const agentChange = path.join(options.cwd, "src", "agent-change.ts");
+          fs.mkdirSync(path.dirname(agentChange), { recursive: true });
+          fs.writeFileSync(agentChange, "preserve refinement changes");
         }
         return { exitCode: 0, output: "complete", errorOutput: "" };
       });
@@ -458,7 +461,14 @@ describe("task-session refinement scheduling", () => {
       expect(openCodeRun).toHaveBeenCalledOnce();
       if (mode === "malformed-result") {
         expect(listId).toBe(project.trello.failedListId);
-        expect(git.resetHard).toHaveBeenCalledOnce();
+        expect(git.resetHard).not.toHaveBeenCalled();
+        expect(git.cleanUntracked).not.toHaveBeenCalled();
+        expect(
+          fs.readFileSync(
+            path.join(worktreePath, "src", "agent-change.ts"),
+            "utf8",
+          ),
+        ).toBe("preserve refinement changes");
       } else {
         expect(listId).toBe(project.trello.backlogListId);
         expect(git.removeWorktree).not.toHaveBeenCalled();

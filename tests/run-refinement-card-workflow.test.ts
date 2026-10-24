@@ -156,10 +156,11 @@ describe("runRefinementCardWorkflow", () => {
       "failed execution",
       "OpenCode refinement exited with code 7",
       async (f: ReturnType<typeof fixture>) => {
-        vi.mocked(f.runOpenCode).mockResolvedValueOnce({
-          exitCode: 7,
-          output: "",
-          errorOutput: "failure",
+        vi.mocked(f.runOpenCode).mockImplementationOnce(async (options) => {
+          const modifiedPath = path.join(options.cwd, "src", "agent-change.ts");
+          fs.mkdirSync(path.dirname(modifiedPath), { recursive: true });
+          fs.writeFileSync(modifiedPath, "preserve me");
+          return { exitCode: 7, output: "", errorOutput: "failure" };
         });
       },
     ],
@@ -175,6 +176,16 @@ describe("runRefinementCardWorkflow", () => {
         f.project.trello.failedListId,
       );
       expect(f.trello.updateCardContent).not.toHaveBeenCalled();
+      expect(f.git.resetHard).not.toHaveBeenCalled();
+      expect(f.git.cleanUntracked).not.toHaveBeenCalled();
+      if (_label === "failed execution") {
+        expect(
+          fs.readFileSync(
+            path.join(f.worktreePath, "src", "agent-change.ts"),
+            "utf8",
+          ),
+        ).toBe("preserve me");
+      }
     },
   );
 

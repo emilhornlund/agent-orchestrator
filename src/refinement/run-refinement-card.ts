@@ -146,15 +146,15 @@ export async function runRefinementCardWorkflow(options: {
     }
 
     if (worktree !== undefined && !cardContextPreparationFailed) {
-      cardLog.info("Resetting failed refinement worktree...");
       try {
         clearRefinementResult(worktree.path);
-        await git.resetHard(worktree.path);
-        await git.cleanUntracked(worktree.path);
-        cardLog.info("Failed refinement worktree reset");
       } catch (cleanupError) {
-        cardLog.error(
-          `Failed to reset refinement worktree: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
+        reportCleanupFailure(
+          cardLog,
+          project,
+          card,
+          getRefinementResultPath(worktree.path),
+          cleanupError,
         );
       }
     }
