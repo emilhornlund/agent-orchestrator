@@ -140,7 +140,7 @@ to inspect first, not permission to invent unimplemented helpers.
   - **Verify locally:** Local temporary-Git-repository tests prove that an edit, deletion, added untracked file, or rebase invalidates earlier evidence while unchanged content preserves identity.
   - **Out of scope:** Do not treat `git status` text alone as a sufficient fingerprint.
 
-- [ ] **T18 — Add bounded local validation repairs**
+- [x] **T18 — Add bounded local validation repairs**
   - **Depends on:** T09, T15–T17.
   - **Implement:** On a failed validation, resume the primary session with command, exit code, and relevant diagnostics; after each edit rerun validation. Persist an attempt counter and cap at two corrections per validation cycle.
   - **Verify locally:** Tests cover fail→fix→pass, repeated failure exhaustion, session mismatch, interrupted resume, and rejection of stale passing evidence.
