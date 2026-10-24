@@ -15,6 +15,8 @@ const eventSchema = z.strictObject({
   operationKey: z.string().min(1),
   enqueuedAt: z.string().datetime(),
   status: z.enum(["queued", "active", "failed", "completed"]),
+  ownerToken: z.string().uuid().optional(),
+  ownerPid: z.number().int().positive().optional(),
 });
 const queueSchema = z
   .strictObject({
@@ -62,6 +64,25 @@ const queueSchema = z
   });
 export type TaskMutationEvent = z.infer<typeof eventSchema>;
 type QueueRecord = z.infer<typeof queueSchema>;
+const liveMutationOwners = new Set<string>();
+
+function isProcessAlive(pid: number | undefined): boolean {
+  if (pid === undefined) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "ESRCH"
+    ) {
+      return false;
+    }
+    return true;
+  }
+}
 
 export class TaskMutationQueueConflictError extends Error {
   constructor(message: string) {
@@ -126,6 +147,7 @@ function ensureDirectory(directory: string): void {
 export class TaskMutationQueue {
   private readonly filePath: string;
   private readonly projectId: string;
+  private readonly ownerToken = randomUUID();
 
   constructor(rootDirectory: string, project: ProjectConfig) {
     if (!path.isAbsolute(rootDirectory))
@@ -149,7 +171,9 @@ export class TaskMutationQueue {
     );
   }
 
-  enqueue(input: Omit<TaskMutationEvent, "status">): TaskMutationEvent {
+  enqueue(
+    input: Omit<TaskMutationEvent, "status" | "ownerToken" | "ownerPid">,
+  ): TaskMutationEvent {
     const event = eventSchema.parse({ ...input, status: "queued" });
     if (event.projectId !== this.projectId)
       throw new Error("Mutation event belongs to another project");
@@ -161,6 +185,8 @@ export class TaskMutationQueue {
         const comparable = (value: TaskMutationEvent) => ({
           ...value,
           status: undefined,
+          ownerToken: undefined,
+          ownerPid: undefined,
         });
         if (
           JSON.stringify(comparable(existing)) !==
@@ -189,6 +215,15 @@ export class TaskMutationQueue {
           null);
   }
 
+  ownsActive(eventId: string): boolean {
+    const active = this.getActive();
+    return (
+      active?.eventId === eventId &&
+      active.ownerToken === this.ownerToken &&
+      liveMutationOwners.has(this.ownerToken)
+    );
+  }
+
   claimNext(): TaskMutationEvent | null {
     return this.update((queue) => {
       if (queue.activeEventId !== null) return { queue, result: null };
@@ -201,7 +236,13 @@ export class TaskMutationQueue {
             left.eventId.localeCompare(right.eventId),
         )[0];
       if (next === undefined) return { queue, result: null };
-      const claimed = { ...next, status: "active" as const };
+      const claimed = {
+        ...next,
+        status: "active" as const,
+        ownerToken: this.ownerToken,
+        ownerPid: process.pid,
+      };
+      liveMutationOwners.add(this.ownerToken);
       return {
         queue: {
           ...queue,
@@ -211,6 +252,81 @@ export class TaskMutationQueue {
           ),
         },
         result: claimed,
+      };
+    });
+  }
+
+  /** Reclaim a verified interrupted task before starting any queued work. */
+  claimForRecovery(eventId: string): TaskMutationEvent | null {
+    return this.update((queue) => {
+      const target = queue.events.find((event) => event.eventId === eventId);
+      if (target === undefined) return { queue, result: null };
+      if (queue.activeEventId !== null) {
+        if (queue.activeEventId !== eventId) return { queue, result: null };
+        if (target.status === "active") {
+          if (target.ownerToken === this.ownerToken)
+            return { queue, result: target };
+          if (
+            (target.ownerToken !== undefined &&
+              liveMutationOwners.has(target.ownerToken)) ||
+            isProcessAlive(target.ownerPid)
+          ) {
+            return { queue, result: null };
+          }
+          const reclaimed = {
+            ...target,
+            ownerToken: this.ownerToken,
+            ownerPid: process.pid,
+          };
+          liveMutationOwners.add(this.ownerToken);
+          return {
+            queue: {
+              ...queue,
+              events: queue.events.map((event) =>
+                event.eventId === eventId ? reclaimed : event,
+              ),
+            },
+            result: reclaimed,
+          };
+        }
+        if (target.status !== "failed")
+          throw new TaskMutationQueueConflictError(
+            "Recovery event does not own the project queue",
+          );
+        const active = {
+          ...target,
+          status: "active" as const,
+          ownerToken: this.ownerToken,
+          ownerPid: process.pid,
+        };
+        liveMutationOwners.add(this.ownerToken);
+        return {
+          queue: {
+            ...queue,
+            events: queue.events.map((event) =>
+              event.eventId === eventId ? active : event,
+            ),
+          },
+          result: active,
+        };
+      }
+      if (target.status !== "queued") return { queue, result: null };
+      const active = {
+        ...target,
+        status: "active" as const,
+        ownerToken: this.ownerToken,
+        ownerPid: process.pid,
+      };
+      liveMutationOwners.add(this.ownerToken);
+      return {
+        queue: {
+          ...queue,
+          activeEventId: eventId,
+          events: queue.events.map((event) =>
+            event.eventId === eventId ? active : event,
+          ),
+        },
+        result: active,
       };
     });
   }
@@ -245,7 +361,22 @@ export class TaskMutationQueue {
         throw new TaskMutationQueueConflictError(
           "Active mutation event disappeared",
         );
-      const next = { ...current, status };
+      if (
+        current.status === "active" &&
+        current.ownerToken !== this.ownerToken
+      ) {
+        throw new TaskMutationQueueConflictError(
+          "Mutation event is owned by another polling worker",
+        );
+      }
+      if (current.ownerToken !== undefined)
+        liveMutationOwners.delete(current.ownerToken);
+      const next = {
+        ...current,
+        status,
+        ownerToken: undefined,
+        ownerPid: undefined,
+      };
       return {
         queue: {
           ...queue,

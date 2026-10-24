@@ -176,4 +176,33 @@ describe("reconcileTaskSession", () => {
     });
     expect(mismatch.status).toBe("attention-required");
   });
+
+  it("requires recorded setup state and preserves uncertain setup outcomes for attention", async () => {
+    const legacyRecord = fixture("planning");
+    legacyRecord.project.repository.setupCommand = "yarn install";
+    const missingSetupState = await legacyRecord.reconcile();
+    expect(missingSetupState).toMatchObject({
+      status: "attention-required",
+      reason:
+        "Repository setup state is missing, changed, or has an uncertain outcome",
+    });
+
+    const interruptedSetup = fixture("planning");
+    interruptedSetup.project.repository.setupCommand = "yarn install";
+    const current = interruptedSetup.store.read("card");
+    expect(current).not.toBeNull();
+    interruptedSetup.store.compareAndSwap("card", current!.revision, {
+      ...current!,
+      setup: { command: "yarn install", status: "active" },
+      revision: current!.revision + 1,
+      updatedAt: "2026-10-24T09:00:01.000Z",
+    });
+    const setupOutcome = await interruptedSetup.reconcile();
+    expect(setupOutcome).toMatchObject({
+      status: "attention-required",
+      reason:
+        "Repository setup state is missing, changed, or has an uncertain outcome",
+    });
+    expect(interruptedSetup.store.read("card")?.setup?.status).toBe("active");
+  });
 });

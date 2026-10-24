@@ -81,6 +81,93 @@ describe("TaskMutationQueue", () => {
     expect(restarted.claimNext()?.eventId).toBe("one");
   });
 
+  it("reclaims the verified recovery event ahead of queued work", () => {
+    const queue = queueFor("project-a");
+    queue.enqueue(
+      task("project-a", "first", "card-one", "2026-10-24T09:01:00.000Z"),
+    );
+    queue.claimNext();
+    queue.enqueue(
+      task("project-a", "second", "card-two", "2026-10-24T09:00:00.000Z"),
+    );
+    queue.fail("first");
+
+    const restarted = queueFor("project-a");
+    expect(restarted.claimForRecovery("first")).toMatchObject({
+      eventId: "first",
+      status: "active",
+    });
+    expect(restarted.getActive()?.eventId).toBe("first");
+    expect(restarted.claimNext()).toBeNull();
+    restarted.complete("first");
+    expect(restarted.claimNext()?.eventId).toBe("second");
+  });
+
+  it("does not steal a different active event during restart recovery", () => {
+    const queue = queueFor("project-a");
+    queue.enqueue(
+      task("project-a", "first", "card-one", "2026-10-24T09:00:00.000Z"),
+    );
+    queue.enqueue(
+      task("project-a", "second", "card-two", "2026-10-24T09:01:00.000Z"),
+    );
+    queue.claimNext();
+
+    expect(queue.claimForRecovery("second")).toBeNull();
+    expect(queue.getActive()?.eventId).toBe("first");
+  });
+
+  it("prevents a second polling owner from resuming the same active mutation", () => {
+    const owner = queueFor("project-a");
+    owner.enqueue(
+      task("project-a", "active", "card-one", "2026-10-24T09:00:00.000Z"),
+    );
+    expect(owner.claimNext()?.status).toBe("active");
+    expect(owner.ownsActive("active")).toBe(true);
+
+    const contender = queueFor("project-a");
+    expect(contender.claimForRecovery("active")).toBeNull();
+    expect(contender.ownsActive("active")).toBe(false);
+    expect(() => contender.fail("active")).toThrow(
+      TaskMutationQueueConflictError,
+    );
+    expect(owner.getActive()?.status).toBe("active");
+  });
+
+  it("reclaims a persisted active event only after its process owner is gone", () => {
+    const queue = queueFor("project-a");
+    queue.enqueue(
+      task("project-a", "orphaned", "card-one", "2026-10-24T09:00:00.000Z"),
+    );
+    const statePath = path.join(
+      root!,
+      "state",
+      "task-mutation-queues",
+      "project-a.json",
+    );
+    const persisted = JSON.parse(fs.readFileSync(statePath, "utf8")) as {
+      activeEventId: string | null;
+      events: Array<{
+        eventId: string;
+        status: string;
+        ownerToken?: string;
+        ownerPid?: number;
+      }>;
+    };
+    persisted.activeEventId = "orphaned";
+    persisted.events[0]!.status = "active";
+    persisted.events[0]!.ownerToken = "00000000-0000-4000-8000-000000000001";
+    persisted.events[0]!.ownerPid = 2_147_483_647;
+    fs.writeFileSync(statePath, JSON.stringify(persisted), "utf8");
+
+    const restarted = queueFor("project-a");
+    expect(restarted.claimForRecovery("orphaned")).toMatchObject({
+      eventId: "orphaned",
+      status: "active",
+    });
+    expect(restarted.ownsActive("orphaned")).toBe(true);
+  });
+
   it("keeps independent project queues isolated and rejects reused event identities", () => {
     const first = queueFor("project-a");
     const second = queueFor("project-b");

@@ -41,6 +41,14 @@ describe("bounded external diagnostics", () => {
     expect(presented).toHaveLength(MAX_EXTERNAL_DIAGNOSTIC_LENGTH);
   });
 
+  it("supports a larger explicit bound for private machine-readable output", () => {
+    const output = "session metadata ".repeat(200);
+    expect(presentExternalDiagnostic(output, [], 4_096)).toBe(output);
+    expect(() => presentExternalDiagnostic(output, [], 0)).toThrow(
+      "maximum length must be positive",
+    );
+  });
+
   it("keeps project diagnostic context around bounded values", () => {
     const failure = new WorkflowError(
       "Setup",

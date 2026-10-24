@@ -291,8 +291,7 @@ export async function runTaskSessionFeedbackCycle(
         kind: "feedback",
         enqueuedAt: record.createdAt,
       });
-      const owner =
-        options.mutationQueue.getActive() ?? options.mutationQueue.claimNext();
+      const owner = options.mutationQueue.claimForRecovery(replyOperationId);
       if (owner === null || owner.eventId !== replyOperationId) return "idle";
     }
     const publicationQuality = record.publicationQuality as {
@@ -328,76 +327,88 @@ export async function runTaskSessionFeedbackCycle(
           };
         }),
     };
-    const replyResult = await publishVerifiedFeedbackReplies({
-      project,
-      cardId: card.id,
-      pullRequestUrl: record.pullRequest!.url,
-      publishedCommitSha: observation.headSha,
-      observedHeadSha: observation.headSha,
-      requiredCheckNames: project.repository.requiredChecks ?? [],
-      checks: observation.checks,
-      verification,
-      ledgerStore,
-      reconcileReply: async (entry, marker) => {
-        if (entry.kind === "inline-comment" && entry.threadId !== undefined) {
-          const replyId = await github.findReviewThreadReplyByMarker({
-            cwd: project.repository.path,
-            repository: project.repository.github,
-            pullRequestUrl: record.pullRequest!.url,
-            threadId: entry.threadId,
-            marker,
-            project,
-          });
-          return replyId === null
-            ? { status: "absent" as const }
-            : { status: "found" as const, replyId };
-        }
-        if (entry.kind === "conversation-comment") {
-          const comments = await github.getPullRequestConversationComments({
-            cwd: project.repository.path,
-            repository: project.repository.github,
-            pullRequestUrl: record.pullRequest!.url,
-            project,
-          });
-          const reply = comments.find((comment) =>
-            comment.body.includes(marker),
+    let replyResult: Awaited<ReturnType<typeof publishVerifiedFeedbackReplies>>;
+    try {
+      replyResult = await publishVerifiedFeedbackReplies({
+        project,
+        cardId: card.id,
+        pullRequestUrl: record.pullRequest!.url,
+        publishedCommitSha: observation.headSha,
+        observedHeadSha: observation.headSha,
+        requiredCheckNames: project.repository.requiredChecks ?? [],
+        checks: observation.checks,
+        verification,
+        ledgerStore,
+        reconcileReply: async (entry, marker) => {
+          if (entry.kind === "inline-comment" && entry.threadId !== undefined) {
+            const replyId = await github.findReviewThreadReplyByMarker({
+              cwd: project.repository.path,
+              repository: project.repository.github,
+              pullRequestUrl: record.pullRequest!.url,
+              threadId: entry.threadId,
+              marker,
+              project,
+            });
+            return replyId === null
+              ? { status: "absent" as const }
+              : { status: "found" as const, replyId };
+          }
+          if (entry.kind === "conversation-comment") {
+            const comments = await github.getPullRequestConversationComments({
+              cwd: project.repository.path,
+              repository: project.repository.github,
+              pullRequestUrl: record.pullRequest!.url,
+              project,
+            });
+            const reply = comments.find((comment) =>
+              comment.body.includes(marker),
+            );
+            return reply === undefined
+              ? { status: "absent" as const }
+              : { status: "found" as const, replyId: String(reply.id) };
+          }
+          return {
+            status: "unknown" as const,
+            reason:
+              "No contextual reply operation exists for this feedback kind",
+          };
+        },
+        sendReply: async (entry, body) => {
+          if (entry.kind === "inline-comment" && entry.threadId !== undefined) {
+            const reply = await github.replyToReviewThread({
+              cwd: project.repository.path,
+              repository: project.repository.github,
+              pullRequestUrl: record.pullRequest!.url,
+              threadId: entry.threadId,
+              body,
+              project,
+            });
+            return reply.id;
+          }
+          if (entry.kind === "conversation-comment") {
+            const reply = await github.replyToConversationComment({
+              cwd: project.repository.path,
+              repository: project.repository.github,
+              pullRequestUrl: record.pullRequest!.url,
+              body,
+              project,
+            });
+            return reply.id;
+          }
+          throw new Error(
+            "No contextual reply operation exists for this feedback kind",
           );
-          return reply === undefined
-            ? { status: "absent" as const }
-            : { status: "found" as const, replyId: String(reply.id) };
-        }
-        return {
-          status: "unknown" as const,
-          reason: "No contextual reply operation exists for this feedback kind",
-        };
-      },
-      sendReply: async (entry, body) => {
-        if (entry.kind === "inline-comment" && entry.threadId !== undefined) {
-          const reply = await github.replyToReviewThread({
-            cwd: project.repository.path,
-            repository: project.repository.github,
-            pullRequestUrl: record.pullRequest!.url,
-            threadId: entry.threadId,
-            body,
-            project,
-          });
-          return reply.id;
-        }
-        if (entry.kind === "conversation-comment") {
-          const reply = await github.replyToConversationComment({
-            cwd: project.repository.path,
-            repository: project.repository.github,
-            pullRequestUrl: record.pullRequest!.url,
-            body,
-            project,
-          });
-          return reply.id;
-        }
-        throw new Error(
-          "No contextual reply operation exists for this feedback kind",
-        );
-      },
-    });
+        },
+      });
+    } catch (error) {
+      if (
+        verifiedFeedbackIds.length > 0 &&
+        options.mutationQueue.ownsActive(replyOperationId)
+      ) {
+        options.mutationQueue.fail(replyOperationId);
+      }
+      throw error;
+    }
     const cannotReply = replyResult.unresolvedFeedbackIds.find((id) =>
       verifiedFeedbackIds.includes(id),
     );
@@ -540,8 +551,7 @@ export async function runTaskSessionFeedbackCycle(
     kind: "feedback",
     enqueuedAt: record.createdAt,
   });
-  const mutation =
-    options.mutationQueue.getActive() ?? options.mutationQueue.claimNext();
+  const mutation = options.mutationQueue.claimForRecovery(operationId);
   if (mutation === null || mutation.eventId !== operationId) return "idle";
   try {
     const attachmentContext = options.attachmentContext;
@@ -1134,7 +1144,7 @@ export async function runTaskSessionFeedbackCycle(
     options.mutationQueue.complete(operationId);
     return "published";
   } catch (error) {
-    if (options.mutationQueue.getActive()?.eventId === operationId) {
+    if (options.mutationQueue.ownsActive(operationId)) {
       options.mutationQueue.fail(operationId);
     }
     throw error;

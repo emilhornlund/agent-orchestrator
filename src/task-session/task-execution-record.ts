@@ -71,6 +71,11 @@ const pullRequestSchema = z.strictObject({
 
 const sessionCreationStatus = z.enum(["creating", "bound", "ambiguous"]);
 
+const taskSetupState = z.strictObject({
+  command: z.string().min(1).nullable(),
+  status: z.enum(["not-required", "pending", "active", "passed"]),
+});
+
 const retryCountersSchema = z.strictObject({
   validation: z.number().int().nonnegative(),
   review: z.number().int().nonnegative(),
@@ -150,6 +155,7 @@ const taskExecutionRecordSchema = z
     phase: z.enum(taskExecutionPhases),
     primarySessionId: nonBlankIdentifier.optional(),
     sessionCreationStatus: sessionCreationStatus.optional(),
+    setup: taskSetupState.optional(),
     expectedBranch: nonBlankIdentifier.optional(),
     pullRequest: pullRequestSchema.optional(),
     operationKey: nonBlankIdentifier,

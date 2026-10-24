@@ -141,6 +141,51 @@ describe("CommandRunner", () => {
     expect(sessionLog).not.toContain("token-a");
   });
 
+  it("can capture private command output without writing it to process streams", async () => {
+    const child = createFakeChild();
+    const stdoutWrite = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+    const stderrWrite = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    spawnMock.mockImplementationOnce(() => {
+      queueMicrotask(() => {
+        child.stdout.emit(
+          "data",
+          Buffer.from(
+            JSON.stringify([
+              {
+                id: "ses_primary",
+                directory: "/worktree",
+                title: "session ".repeat(400),
+              },
+            ]),
+          ),
+        );
+        child.emit("close", 0);
+      });
+      return child;
+    });
+
+    try {
+      const result = await new CommandRunner().run({
+        cwd: "/worktree",
+        command: "opencode session list --format json --pure",
+        captureOutput: true,
+        maxCaptureOutputLength: 4_096,
+        suppressOutput: true,
+      });
+      expect(result.output).toContain('"id":"ses_primary"');
+      expect(result.output?.length).toBeGreaterThan(2_000);
+      expect(stdoutWrite).not.toHaveBeenCalled();
+      expect(stderrWrite).not.toHaveBeenCalled();
+    } finally {
+      stdoutWrite.mockRestore();
+      stderrWrite.mockRestore();
+    }
+  });
+
   it("returns bounded redacted stdout and stderr only when capture is requested", async () => {
     const child = createFakeChild();
     const longOutput = `${"output token-a ".repeat(200)}\n`;

@@ -45,6 +45,7 @@ export interface RunTaskSessionImplementationOptions {
   card: TrelloCard;
   expectedBranch: string;
   operationKey: string;
+  resume?: boolean;
   worktreePath: string;
   attachmentContext?: CardAttachmentPromptContext;
   runOptions: Omit<
@@ -178,6 +179,7 @@ export async function runTaskSessionImplementation(
     card,
     expectedBranch,
     operationKey,
+    resume = false,
     worktreePath,
     attachmentContext,
     runOptions,
@@ -206,13 +208,20 @@ export async function runTaskSessionImplementation(
     operationKey,
   });
 
-  if (record.phase !== "planning" || record.sessionCreationStatus !== "bound") {
+  if (
+    (record.phase !== "planning" &&
+      !(resume && record.phase === "implementation")) ||
+    record.sessionCreationStatus !== "bound"
+  ) {
     throw new Error(
       `Task-session implementation requires a bound primary session in planning phase for ${projectId}/${card.id}`,
     );
   }
 
-  const storedPlan = planStore.read(card.id, record.revision);
+  const storedPlan = planStore.read(
+    card.id,
+    record.phase === "planning" ? record.revision : undefined,
+  );
 
   if (storedPlan === null) {
     throw new Error(
@@ -241,15 +250,17 @@ export async function runTaskSessionImplementation(
     ...(attachmentContext === undefined ? {} : { attachmentContext }),
   });
 
-  const implementationRecord = transitionTaskExecutionRecord(
-    record,
-    createEvent(record, "plan-approved", `${operationKey}:plan-approved`),
-  );
-  taskRecordStore.compareAndSwap(
-    card.id,
-    record.revision,
-    implementationRecord,
-  );
+  if (record.phase === "planning") {
+    const implementationRecord = transitionTaskExecutionRecord(
+      record,
+      createEvent(record, "plan-approved", `${operationKey}:plan-approved`),
+    );
+    taskRecordStore.compareAndSwap(
+      card.id,
+      record.revision,
+      implementationRecord,
+    );
+  }
 
   let runResult: OpenCodeRunResult;
 
@@ -286,6 +297,15 @@ export async function runTaskSessionImplementation(
     }
 
     const outcome = isAbort(error) ? "aborted" : "failed";
+
+    if (outcome === "aborted") {
+      throw new TaskSessionImplementationError(
+        `Task-session implementation ${outcome} for ${projectId}/${card.id}; the bound session and worktree were preserved for restart recovery`,
+        outcome,
+        undefined,
+        { cause: error },
+      );
+    }
 
     try {
       persistAttentionRequired(
