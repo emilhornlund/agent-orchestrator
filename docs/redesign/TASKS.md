@@ -356,7 +356,7 @@ are examples to inspect, not permission to invent unimplemented helpers.
   - **Verify locally:** The instruction file passes `prettier --check` and full `yarn validate` passes.
   - **Out of scope:** Do not change executor behavior or other documentation.
 
-- [ ] **T46 — Extract the existing refinement workflow**
+- [x] **T46 — Extract the existing refinement workflow**
   - **Depends on:** T43–T45.
   - **Implement:** Extract the existing refinement operation from the legacy polling implementation into a reusable, independently callable component. Preserve the existing Trello refinement result contract, classification changes, description updates, Backlog transition, notifications, worktree safety, and failure handling.
   - **Verify locally:** Existing refinement characterization tests pass against the extracted implementation. Add tests for successful refinement, malformed output, failed execution, and interrupted cleanup.
