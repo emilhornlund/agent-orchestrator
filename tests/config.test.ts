@@ -249,6 +249,46 @@ describe("parseConfig", () => {
     );
   });
 
+  it("accepts a coverage command only for task-session mode", () => {
+    const taskSessionConfig = validConfig
+      .replace(
+        '  - id: "project-one"',
+        '  - id: "project-one"\n    executionMode: "task-session"',
+      )
+      .replace(
+        '      validationCommand: "yarn validate"',
+        '      validationCommand: "yarn validate"\n      coverageCommand: "yarn coverage"',
+      );
+
+    expect(
+      parseConfig(taskSessionConfig).projects[0]?.repository.coverageCommand,
+    ).toBe("yarn coverage");
+
+    const legacyConfig = validConfig.replace(
+      '      validationCommand: "yarn validate"',
+      '      validationCommand: "yarn validate"\n      coverageCommand: "yarn coverage"',
+    );
+    expect(() => parseConfig(legacyConfig)).toThrow(
+      "Only available when executionMode is task-session",
+    );
+  });
+
+  it("rejects a blank task-session coverage command", () => {
+    const raw = validConfig
+      .replace(
+        '  - id: "project-one"',
+        '  - id: "project-one"\n    executionMode: "task-session"',
+      )
+      .replace(
+        '      validationCommand: "yarn validate"',
+        '      validationCommand: "yarn validate"\n      coverageCommand: "  "',
+      );
+
+    expect(() => parseConfig(raw)).toThrow(
+      "projects.0.repository.coverageCommand",
+    );
+  });
+
   it("accepts and normalizes a complete GitHub App configuration", () => {
     const config = parseConfig(
       configWithGithubApp(["appId", "installationId", "privateKeyPath"]),

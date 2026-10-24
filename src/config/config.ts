@@ -146,6 +146,7 @@ const repositorySchema = z.strictObject({
   worktreeRoot: absolutePath,
   setupCommand: nonBlankString.optional(),
   validationCommand: nonBlankString.optional(),
+  coverageCommand: nonBlankString.optional(),
   gitIdentity: gitIdentitySchema,
   githubApp: githubAppSchema.optional(),
 });
@@ -331,6 +332,17 @@ const configSchema = z
           path: ["projects", projectIndex, "repository", "validationCommand"],
           message:
             "Required when executionMode is task-session; the orchestrator must run repository validation",
+        });
+      }
+
+      if (
+        project.repository.coverageCommand !== undefined &&
+        project.executionMode !== "task-session"
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["projects", projectIndex, "repository", "coverageCommand"],
+          message: "Only available when executionMode is task-session",
         });
       }
 

@@ -45,6 +45,8 @@ export interface RunTaskSessionValidationOptions {
   commands: CommandRunner;
   signal: AbortSignal;
   timeoutMilliseconds: number;
+  commandOverride?: string;
+  commandLabel?: string;
   secretValues?: readonly string[];
   sessionLogPath?: string;
 }
@@ -62,7 +64,7 @@ function buildCommandOptions(
     ...(options.secretValues === undefined
       ? {}
       : { secretValues: options.secretValues }),
-    sessionLabel: "Task-session repository validation",
+    sessionLabel: options.commandLabel ?? "Task-session repository validation",
     ...(options.sessionLogPath === undefined
       ? {}
       : { sessionLogPath: options.sessionLogPath }),
@@ -79,12 +81,21 @@ export async function runTaskSessionValidation(
     throw new Error("Task-session validation requires task-session mode");
   }
 
-  const command = project.repository.validationCommand;
+  const validationCommand = project.repository.validationCommand;
 
-  if (command === undefined || command.trim().length === 0) {
+  if (
+    validationCommand === undefined ||
+    validationCommand.trim().length === 0
+  ) {
     throw new Error(
       "Task-session validation requires a nonempty repository.validationCommand",
     );
+  }
+
+  const command = options.commandOverride ?? validationCommand;
+
+  if (command.trim().length === 0) {
+    throw new Error("Task-session command must not be blank");
   }
 
   if (
