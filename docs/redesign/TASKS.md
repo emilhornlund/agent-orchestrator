@@ -78,7 +78,7 @@ to inspect first, not permission to invent unimplemented helpers.
   - **Verify locally:** Mock process-launcher tests assert exact arguments, unchanged legacy calls, rejected invalid IDs, and no `--continue` fallback.
   - **Out of scope:** Do not persist session IDs or create sessions yet.
 
-- [ ] **T08 — Capture a newly created OpenCode session ID**
+- [x] **T08 — Capture a newly created OpenCode session ID**
   - **Depends on:** T07.
   - **Implement:** Add a structured-output path for the initial OpenCode invocation to return the real created session ID. Parse supported JSON/event output or supported session API with a version-aware adapter; never parse free-form prose.
   - **Verify locally:** Fixture tests prove successful extraction, missing/ambiguous IDs fail closed, output diagnostics remain usable, and legacy text execution is unaffected.

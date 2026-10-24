@@ -16,6 +16,7 @@ export interface OpenCodeRunOptions {
   prompt: string;
   signal: AbortSignal;
   sessionId?: string;
+  captureSessionId?: boolean;
   environment?: Record<string, string>;
   sessionLogPath?: string;
   sessionLabel?: string;
@@ -25,6 +26,7 @@ export interface OpenCodeRunResult {
   exitCode: number;
   output: string;
   errorOutput: string;
+  sessionId?: string;
 }
 
 export class OpenCodeRunAbortedError extends Error {
@@ -47,7 +49,7 @@ export type RunOpenCode = (
 
 type OpenCodeArgumentOptions = Pick<
   OpenCodeRunOptions,
-  "cwd" | "model" | "variant" | "prompt" | "sessionId"
+  "cwd" | "model" | "variant" | "prompt" | "sessionId" | "captureSessionId"
 >;
 
 function assertValidSessionId(sessionId: string): void {
@@ -61,10 +63,16 @@ function assertValidSessionId(sessionId: string): void {
 export function buildOpenCodeArguments(
   options: OpenCodeArgumentOptions,
 ): string[] {
-  const { cwd, model, variant, prompt, sessionId } = options;
+  const { cwd, model, variant, prompt, sessionId, captureSessionId } = options;
 
   if (sessionId !== undefined) {
     assertValidSessionId(sessionId);
+  }
+
+  if (captureSessionId === true && sessionId !== undefined) {
+    throw new Error(
+      "Cannot capture a newly created OpenCode session while resuming an existing session",
+    );
   }
 
   return [
@@ -77,8 +85,125 @@ export function buildOpenCodeArguments(
     "--dir",
     cwd,
     ...(sessionId === undefined ? [] : ["--session", sessionId]),
+    ...(captureSessionId === true ? ["--format", "json"] : []),
     prompt,
   ];
+}
+
+export class OpenCodeSessionIdParseError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "OpenCodeSessionIdParseError";
+  }
+}
+
+export class OpenCodeSessionIdCaptureError extends Error {
+  constructor(
+    message: string,
+    public readonly runResult: OpenCodeRunResult,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = "OpenCodeSessionIdCaptureError";
+  }
+}
+
+function parseOpenCodeEventV1(value: unknown): string | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new OpenCodeSessionIdParseError(
+      "Structured OpenCode output contains a non-object event",
+    );
+  }
+
+  if (!("type" in value) || typeof value.type !== "string") {
+    throw new OpenCodeSessionIdParseError(
+      "Structured OpenCode event is missing its event type",
+    );
+  }
+
+  if (
+    "version" in value &&
+    value.version !== undefined &&
+    value.version !== 1
+  ) {
+    throw new OpenCodeSessionIdParseError(
+      `Unsupported OpenCode JSON event version: ${String(value.version)}`,
+    );
+  }
+
+  if (!("sessionID" in value)) {
+    return undefined;
+  }
+
+  if (typeof value.sessionID !== "string") {
+    throw new OpenCodeSessionIdParseError(
+      "Structured OpenCode event has an invalid sessionID",
+    );
+  }
+
+  try {
+    assertValidSessionId(value.sessionID);
+  } catch (error) {
+    throw new OpenCodeSessionIdParseError(
+      "Structured OpenCode event has an invalid sessionID",
+      { cause: error },
+    );
+  }
+
+  return value.sessionID;
+}
+
+export function parseOpenCodeSessionId(output: string): string {
+  const lines = output.split(/\r?\n/u).filter((line) => line.trim().length > 0);
+
+  if (lines.length === 0) {
+    throw new OpenCodeSessionIdParseError(
+      "Structured OpenCode output did not contain any events",
+    );
+  }
+
+  const sessionIds = new Set<string>();
+
+  for (const [index, line] of lines.entries()) {
+    let value: unknown;
+
+    try {
+      value = JSON.parse(line) as unknown;
+    } catch (error) {
+      throw new OpenCodeSessionIdParseError(
+        `Structured OpenCode output contains malformed JSON on line ${index + 1}`,
+        { cause: error },
+      );
+    }
+
+    const sessionId = parseOpenCodeEventV1(value);
+
+    if (sessionId !== undefined) {
+      sessionIds.add(sessionId);
+    }
+  }
+
+  if (sessionIds.size === 0) {
+    throw new OpenCodeSessionIdParseError(
+      "Structured OpenCode output did not contain a session ID",
+    );
+  }
+
+  if (sessionIds.size > 1) {
+    throw new OpenCodeSessionIdParseError(
+      "Structured OpenCode output contained ambiguous session IDs",
+    );
+  }
+
+  const [sessionId] = sessionIds;
+
+  if (sessionId === undefined) {
+    throw new OpenCodeSessionIdParseError(
+      "Structured OpenCode output did not contain a session ID",
+    );
+  }
+
+  return sessionId;
 }
 
 export function signalProcessTree(
@@ -117,6 +242,7 @@ const defaultRunOpenCode: RunOpenCode = async ({
   prompt,
   signal,
   sessionId,
+  captureSessionId,
   environment,
   sessionLogPath,
   sessionLabel,
@@ -149,6 +275,7 @@ const defaultRunOpenCode: RunOpenCode = async ({
         variant,
         prompt,
         ...(sessionId === undefined ? {} : { sessionId }),
+        ...(captureSessionId === undefined ? {} : { captureSessionId }),
       }),
       {
         cwd,
@@ -300,6 +427,26 @@ export class OpenCodeClient {
       assertValidSessionId(options.sessionId);
     }
 
-    return this.runOpenCode(options);
+    if (options.captureSessionId === true && options.sessionId !== undefined) {
+      throw new Error(
+        "Cannot capture a newly created OpenCode session while resuming an existing session",
+      );
+    }
+
+    const result = await this.runOpenCode(options);
+
+    if (options.captureSessionId !== true) {
+      return result;
+    }
+
+    try {
+      return { ...result, sessionId: parseOpenCodeSessionId(result.output) };
+    } catch (error) {
+      throw new OpenCodeSessionIdCaptureError(
+        "Could not capture the created OpenCode session ID",
+        result,
+        { cause: error },
+      );
+    }
   }
 }
