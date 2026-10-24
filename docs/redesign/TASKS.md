@@ -196,7 +196,7 @@ to inspect first, not permission to invent unimplemented helpers.
   - **Verify locally:** Config and mocked API tests cover missing/duplicate check configuration, all conclusions, pagination, exact head matching, and unknown/temporary GitHub responses.
   - **Out of scope:** Do not assume PR mergeability `BLOCKED` or `UNSTABLE` alone identifies a failed check.
 
-- [ ] **T27 — Collect bounded diagnostics for failing CI checks**
+- [x] **T27 — Collect bounded diagnostics for failing CI checks**
   - **Depends on:** T26.
   - **Implement:** Retrieve available workflow/job/step diagnostics for failed required checks, preserving check name, job identity, exact SHA and log URL; redact secrets and bound output size.
   - **Verify locally:** Mocked fixture tests cover successful logs, missing permissions/logs, malformed payload, secret redaction, and changed-head rejection.

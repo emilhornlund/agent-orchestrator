@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 
 import type { ProjectConfig } from "../config/config.js";
+import { presentExternalDiagnostic } from "../security/bounded-diagnostic.js";
 import {
   containsSecret,
   createSecretRedactor,
@@ -77,9 +78,28 @@ export type RequiredCheckStatus =
 export interface RequiredCheckObservation {
   name: string;
   headSha: string;
+  checkRunId?: number;
+  logUrl?: string;
   status: RequiredCheckStatus;
   conclusion: string | null;
   diagnostic: string;
+}
+
+export interface FailedCheckDiagnostic {
+  name: string;
+  checkRunId: number;
+  headSha: string;
+  logUrl: string | null;
+  available: boolean;
+  diagnostic: string;
+}
+
+export interface RequiredCheckDiagnosticsOptions {
+  cwd: string;
+  repository: string;
+  headSha: string;
+  checks: readonly RequiredCheckObservation[];
+  project?: ProjectConfig;
 }
 
 export interface RequiredChecksResult {
@@ -1045,6 +1065,11 @@ export class GitHubClient {
         typeof value.name !== "string" ||
         typeof value.head_sha !== "string" ||
         typeof value.status !== "string" ||
+        (value.id !== undefined &&
+          (typeof value.id !== "number" ||
+            !Number.isSafeInteger(value.id) ||
+            value.id <= 0)) ||
+        (value.html_url !== undefined && typeof value.html_url !== "string") ||
         (value.conclusion !== null && typeof value.conclusion !== "string") ||
         (value.created_at !== undefined && typeof value.created_at !== "string")
       ) {
@@ -1101,6 +1126,8 @@ export class GitHubClient {
         return {
           name,
           headSha: options.headSha,
+          ...(typeof run.id === "number" ? { checkRunId: run.id } : {}),
+          ...(typeof run.html_url === "string" ? { logUrl: run.html_url } : {}),
           status,
           conclusion,
           diagnostic:
@@ -1110,6 +1137,88 @@ export class GitHubClient {
         };
       }),
     };
+  }
+
+  async getRequiredCheckDiagnostics(
+    options: RequiredCheckDiagnosticsOptions,
+  ): Promise<FailedCheckDiagnostic[]> {
+    if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu.test(options.headSha)) {
+      throw new Error("Check diagnostics require a full expected commit SHA");
+    }
+    const credential = await this.resolveCredential(options.project);
+    const failedChecks = options.checks.filter(
+      (check) => check.status === "failed",
+    );
+    return Promise.all(
+      failedChecks.map(async (check) => {
+        if (
+          check.headSha !== options.headSha ||
+          check.checkRunId === undefined ||
+          !Number.isSafeInteger(check.checkRunId) ||
+          check.checkRunId <= 0
+        ) {
+          throw new Error(
+            "Failed check diagnostics refer to a stale or unidentified check run",
+          );
+        }
+        try {
+          const output = await this.run(
+            options.cwd,
+            [
+              "api",
+              "--paginate",
+              "--slurp",
+              `repos/${options.repository}/check-runs/${check.checkRunId}/annotations?per_page=100`,
+            ],
+            credential,
+          );
+          const annotations = parsePaginatedGitHubResponse(
+            output,
+            "paginated check annotations",
+          );
+          const details = annotations.map((annotation) => {
+            if (
+              !isRecord(annotation) ||
+              typeof annotation.annotation_level !== "string" ||
+              typeof annotation.message !== "string" ||
+              typeof annotation.path !== "string" ||
+              typeof annotation.start_line !== "number" ||
+              !Number.isSafeInteger(annotation.start_line)
+            ) {
+              throw new Error(
+                "GitHub CLI returned a malformed check annotation",
+              );
+            }
+            return `${annotation.annotation_level}: ${annotation.path}:${annotation.start_line}: ${annotation.message}`;
+          });
+          return {
+            name: check.name,
+            checkRunId: check.checkRunId,
+            headSha: options.headSha,
+            logUrl: check.logUrl ?? null,
+            available: details.length > 0,
+            diagnostic: presentExternalDiagnostic(
+              details.length > 0
+                ? details.join("\n")
+                : "No check annotations were available.",
+              credential.secretValues,
+            ),
+          };
+        } catch (error) {
+          return {
+            name: check.name,
+            checkRunId: check.checkRunId,
+            headSha: options.headSha,
+            logUrl: check.logUrl ?? null,
+            available: false,
+            diagnostic: presentExternalDiagnostic(
+              `Check diagnostics unavailable: ${error instanceof Error ? error.message : String(error)}`,
+              credential.secretValues,
+            ),
+          };
+        }
+      }),
+    );
   }
 
   private async findReviewThreads(
