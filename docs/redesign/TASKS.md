@@ -401,7 +401,7 @@ are examples to inspect, not permission to invent unimplemented helpers.
   - **Verify locally:** The production call graph contains one implementation pipeline. Tests prove no obsolete dispatch is reachable, and the unified implementation, refinement, and PR lifecycle remain operational.
   - **Out of scope:** Do not delete shared utilities or unrelated compatibility code.
 
-- [ ] **T52 — Remove unused legacy prompts and state artifacts**
+- [x] **T52 — Remove unused legacy prompts and state artifacts**
   - **Depends on:** T51.
   - **Implement:** Audit prompts, configuration fields, persisted-state helpers, imports, and tests associated exclusively with the removed legacy implementation. Delete code that has no remaining legitimate runtime caller. Retain shared commit, publication, conflict, notification, and safety functionality where required.
   - **Verify locally:** No dangling imports, references, or orphaned production helpers remain. Tests and production build pass. Existing shared safety behavior remains covered.
