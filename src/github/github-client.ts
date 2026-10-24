@@ -1,6 +1,8 @@
 import { spawn } from "node:child_process";
 
 import type { ProjectConfig } from "../config/config.js";
+import type { CiCheckExpectationSource } from "./ci-check-expectations.js";
+import { collectCiWorkflowExpectationSources } from "./ci-workflow-contract.js";
 import { presentExternalDiagnostic } from "../security/bounded-diagnostic.js";
 import {
   containsSecret,
@@ -144,6 +146,42 @@ export interface RequiredCheckDiagnosticsOptions {
 export interface RequiredChecksResult {
   headSha: string;
   checks: RequiredCheckObservation[];
+}
+
+export type CiCheckObservation =
+  | {
+      source: "check-run";
+      id: number;
+      name: string;
+      headSha: string;
+      status: string;
+      conclusion: string | null;
+      url: string | null;
+    }
+  | {
+      source: "commit-status";
+      id: number;
+      context: string;
+      headSha: string;
+      state: string;
+      createdAt: string;
+      updatedAt: string;
+      url: string | null;
+      description: string | null;
+    };
+
+export interface CiObservationsOptions {
+  cwd: string;
+  repository: string;
+  defaultBranch: string;
+  headSha: string;
+  project?: ProjectConfig;
+}
+
+export interface CiObservationsResult {
+  headSha: string;
+  checks: CiCheckObservation[];
+  expectationSources: CiCheckExpectationSource[];
 }
 
 export interface RequiredChecksOptions {
@@ -1104,6 +1142,203 @@ export class GitHubClient {
     const operationProject = project ?? getGitHubOperationProject();
 
     return this.credentials.resolve(operationProject);
+  }
+
+  /** Collects exact-head check runs, statuses, and available CI contracts. */
+  async getCiObservations(
+    options: CiObservationsOptions,
+  ): Promise<CiObservationsResult> {
+    if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu.test(options.headSha)) {
+      throw new Error("CI observations require a full expected commit SHA");
+    }
+    if (options.defaultBranch.trim().length === 0) {
+      throw new Error("CI observations require a configured default branch");
+    }
+
+    const credential = await this.resolveCredential(options.project);
+    const checkRunsPath = `repos/${options.repository}/commits/${options.headSha}/check-runs?per_page=100`;
+    const statusesPath = `repos/${options.repository}/commits/${options.headSha}/statuses?per_page=100`;
+    const branchRulesPath = `repos/${options.repository}/branches/${encodeURIComponent(options.defaultBranch)}/protection/required_status_checks`;
+    const [checkRunsOutput, statusesOutput, branchRulesResult] =
+      await Promise.all([
+        this.run(
+          options.cwd,
+          ["api", "--paginate", "--slurp", checkRunsPath],
+          credential,
+        ),
+        this.run(
+          options.cwd,
+          ["api", "--paginate", "--slurp", statusesPath],
+          credential,
+        ),
+        this.run(options.cwd, ["api", branchRulesPath], credential).then(
+          (output) => ({ output }),
+          (error: unknown) => ({ error }),
+        ),
+      ]);
+
+    const checkRunPages = parsePaginatedGitHubResponse(
+      checkRunsOutput,
+      "paginated check runs",
+    );
+    const checkRunValues: unknown[] = [];
+    for (const [index, page] of checkRunPages.entries()) {
+      if (!isRecord(page) || !Array.isArray(page.check_runs)) {
+        throw new Error(`GitHub returned a malformed check-runs page ${index}`);
+      }
+      checkRunValues.push(...page.check_runs);
+    }
+
+    const checks: CiCheckObservation[] = [];
+    for (const [index, value] of checkRunValues.entries()) {
+      if (
+        !isRecord(value) ||
+        typeof value.id !== "number" ||
+        !Number.isSafeInteger(value.id) ||
+        value.id <= 0 ||
+        typeof value.name !== "string" ||
+        value.name.trim().length === 0 ||
+        typeof value.head_sha !== "string" ||
+        typeof value.status !== "string" ||
+        (value.conclusion !== null && typeof value.conclusion !== "string") ||
+        (value.html_url !== null && typeof value.html_url !== "string")
+      ) {
+        throw new Error(
+          `GitHub returned a malformed check run at index ${index}`,
+        );
+      }
+      if (value.head_sha !== options.headSha) {
+        throw new Error(
+          "GitHub returned a check run for a different commit SHA",
+        );
+      }
+      checks.push({
+        source: "check-run",
+        id: value.id,
+        name: value.name,
+        headSha: value.head_sha,
+        status: value.status,
+        conclusion:
+          typeof value.conclusion === "string" ? value.conclusion : null,
+        url: typeof value.html_url === "string" ? value.html_url : null,
+      });
+    }
+
+    const statusValues = parsePaginatedGitHubResponse(
+      statusesOutput,
+      "paginated commit statuses",
+    );
+    for (const [index, value] of statusValues.entries()) {
+      if (
+        !isRecord(value) ||
+        typeof value.id !== "number" ||
+        !Number.isSafeInteger(value.id) ||
+        value.id <= 0 ||
+        typeof value.context !== "string" ||
+        value.context.trim().length === 0 ||
+        typeof value.sha !== "string" ||
+        typeof value.state !== "string" ||
+        typeof value.created_at !== "string" ||
+        typeof value.updated_at !== "string" ||
+        (value.target_url !== null && typeof value.target_url !== "string") ||
+        (value.description !== null && typeof value.description !== "string")
+      ) {
+        throw new Error(
+          `GitHub returned a malformed commit status at index ${index}`,
+        );
+      }
+      if (value.sha !== options.headSha) {
+        throw new Error(
+          "GitHub returned a commit status for a different commit SHA",
+        );
+      }
+      checks.push({
+        source: "commit-status",
+        id: value.id,
+        context: value.context,
+        headSha: value.sha,
+        state: value.state,
+        createdAt: value.created_at,
+        updatedAt: value.updated_at,
+        url: typeof value.target_url === "string" ? value.target_url : null,
+        description:
+          typeof value.description === "string" ? value.description : null,
+      });
+    }
+
+    const expectationSources: CiCheckExpectationSource[] = [];
+    if ("output" in branchRulesResult) {
+      try {
+        const rules: unknown = JSON.parse(branchRulesResult.output);
+        if (!isRecord(rules)) throw new Error("rules result is not an object");
+        const names: string[] = [];
+        if (Array.isArray(rules.contexts)) {
+          for (const context of rules.contexts) {
+            if (typeof context !== "string" || context.trim().length === 0)
+              throw new Error("branch rules include a malformed check context");
+            names.push(context);
+          }
+        }
+        if (Array.isArray(rules.checks)) {
+          for (const check of rules.checks) {
+            if (!isRecord(check) || typeof check.context !== "string")
+              throw new Error(
+                "branch rules include a malformed check contract",
+              );
+            names.push(check.context);
+          }
+        }
+        expectationSources.push({
+          kind: "repository-rules",
+          sourceId: `branch-protection:${options.defaultBranch}`,
+          complete: true,
+          checkNames: [...new Set(names)],
+        });
+      } catch {
+        expectationSources.push({
+          kind: "repository-rules",
+          sourceId: `branch-protection:${options.defaultBranch}`,
+          complete: false,
+          checkNames: [],
+          uncertainty:
+            "GitHub branch protection returned an invalid check contract",
+        });
+      }
+    } else if (
+      branchRulesResult.error instanceof Error &&
+      /(?:\b404\b|not found)/iu.test(branchRulesResult.error.message)
+    ) {
+      // A 404 means no branch protection contract is configured for this branch;
+      // it is absence of that optional source, not proof that observed checks pass.
+    } else {
+      expectationSources.push({
+        kind: "repository-rules",
+        sourceId: `branch-protection:${options.defaultBranch}`,
+        complete: false,
+        checkNames: [],
+        uncertainty: "GitHub branch protection expectations are unavailable",
+      });
+    }
+
+    try {
+      expectationSources.push(
+        ...collectCiWorkflowExpectationSources(options.cwd),
+      );
+    } catch {
+      expectationSources.push({
+        kind: "workflow-contract",
+        sourceId: "workflow-contract:repository",
+        complete: false,
+        checkNames: [],
+        uncertainty: "Repository-owned workflow expectations could not be read",
+      });
+    }
+
+    return {
+      headSha: options.headSha,
+      checks,
+      expectationSources,
+    };
   }
 
   async getRequiredChecks(

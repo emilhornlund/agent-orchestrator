@@ -415,7 +415,7 @@ are examples to inspect, not permission to invent unimplemented helpers.
   - **Verify locally:** Pure policy tests cover authoritative expectations, missing information, duplicate check names, dynamic check uncertainty, empty expectations, and unsupported sources. Unknown expectations must never produce a passing result.
   - **Out of scope:** Do not fetch GitHub data or change polling yet. Do not introduce paid-feature requirements.
 
-- [ ] **T54 — Collect all applicable GitHub check results**
+- [x] **T54 — Collect all applicable GitHub check results**
   - **Depends on:** T53.
   - **Implement:** Extend GitHubClient to gather relevant current-head check runs and commit statuses with pagination and exact commit identity. Collect available authoritative expectation information needed by T53. Normalize observations into one structured result, preserving check identity, status, conclusion, and diagnostic references.
   - **Verify locally:** Mock API tests cover multiple check suites, commit statuses, pagination, queued and in-progress checks, terminal failures, cancellation, skipped and neutral conclusions, duplicates, missing checks, and stale commit responses.
