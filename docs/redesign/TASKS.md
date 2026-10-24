@@ -278,7 +278,7 @@ to inspect first, not permission to invent unimplemented helpers.
   - **Verify locally:** Mock restart tests cover interruption before/after local commit, PR publication, CI repair, feedback reply, and malformed persisted state.
   - **Out of scope:** Do not reset unknown changes or replace legacy reconciliation.
 
-- [ ] **T40 — Allow read-only monitoring of multiple waiting PRs**
+- [x] **T40 — Allow read-only monitoring of multiple waiting PRs**
   - **Depends on:** T26, T32, T39.
   - **Implement:** Separate enumeration and observation of all owned Human Review PRs from the legacy assumption that there can be only one active review card, but only in task-session mode. Record their independent observed head/check/feedback state.
   - **Verify locally:** Tests confirm two waiting PRs can be observed independently with no source writes or cross-card state confusion.
