@@ -382,6 +382,13 @@ are examples to inspect, not permission to invent unimplemented helpers.
 
 ## Phase H — Consolidate execution architecture
 
+- [x] **T50A — Retire direct tests for removed legacy polling dispatch**
+  - **Depends on:** None; required to validate the T50 dispatch cutover.
+  - **Corrective rationale:** Direct legacy polling characterization tests exercise a retired implementation path and now fail against the unified production route; task-session production scenarios remain covered by task-session dispatch and lifecycle tests.
+  - **Implement:** Remove only the obsolete direct legacy polling test files; retain tests for shared Git, publication, recovery, refinement, and task-session production behavior.
+  - **Verify locally:** Full `yarn validate` passes and task-session production integration tests still exercise `pollProject`.
+  - **Out of scope:** Do not remove production modules or weaken task-session lifecycle coverage.
+
 - [ ] **T50 — Make task-session the only execution mode**
   - **Depends on:** T47, T49.
   - **Implement:** Remove `projects[].executionMode` from the configuration schema and eliminate the legacy/task-session dispatch selection. Route all eligible implementation work through the unified task-session coordinator. Preserve the integrated refinement operation and existing external safety boundaries.
