@@ -272,7 +272,7 @@ to inspect first, not permission to invent unimplemented helpers.
 
 ## Phase F — Recovery, scheduling, and activation
 
-- [ ] **T39 — Reconcile interrupted task-session operations**
+- [x] **T39 — Reconcile interrupted task-session operations**
   - **Depends on:** T04–T06, T09, T24–T25, T28, T32–T38.
   - **Implement:** On startup, reconstruct task-session state from the durable record plus owned Git worktree, branch/HEAD, Trello card, PR/head, CI and feedback snapshots obtained through injectable clients. Resume only verified transitions; fail closed on ambiguous session identity or partially published side effects.
   - **Verify locally:** Mock restart tests cover interruption before/after local commit, PR publication, CI repair, feedback reply, and malformed persisted state.
