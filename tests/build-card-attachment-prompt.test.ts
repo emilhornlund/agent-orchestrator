@@ -9,11 +9,10 @@ import {
   type CardAttachmentPromptContext,
 } from "../src/context/card-attachment-prompt.js";
 import type { CardAttachmentManifest } from "../src/context/materialize-card-attachments.js";
-import { buildReviewFeedbackPrompt } from "../src/opencode/build-review-feedback-prompt.js";
-import { buildRemediationPrompt } from "../src/opencode/build-remediation-prompt.js";
 import { buildRefinementPrompt } from "../src/opencode/build-refinement-prompt.js";
-import { buildReviewPrompt } from "../src/opencode/build-review-prompt.js";
-import { buildTaskPrompt } from "../src/opencode/build-task-prompt.js";
+import { buildTaskPlanningPrompt } from "../src/opencode/build-task-planning-prompt.js";
+import { buildTaskSessionImplementationPrompt } from "../src/opencode/build-task-session-implementation-prompt.js";
+import type { TaskPlan } from "../src/task-session/task-plan.js";
 import type { TrelloCard } from "../src/trello/trello-client.js";
 
 let temporaryRoot: string | undefined;
@@ -92,18 +91,37 @@ function buildPrompts(
   card: TrelloCard,
   context: CardAttachmentPromptContext,
 ): string[] {
+  const approvedPlan: TaskPlan = {
+    version: 1,
+    projectId: "project-123",
+    cardId: card.id,
+    requirements: [
+      {
+        id: "REQ-1",
+        text: "Implement the attachment task.",
+        verification: "Run the task tests.",
+      },
+    ],
+    steps: [
+      {
+        id: "STEP-1",
+        description: "Implement the task behavior.",
+        requirementIds: ["REQ-1"],
+        verification: "Run the task tests.",
+      },
+    ],
+    assumptions: [],
+    blockers: [],
+  };
   return [
-    buildTaskPrompt(card, "yarn validate", context),
-    buildRefinementPrompt(card, context),
-    buildRemediationPrompt(card, "Review finding", "yarn validate", context),
-    buildReviewPrompt(card, context),
-    buildReviewFeedbackPrompt(
+    buildTaskPlanningPrompt("project-123", card, [], context),
+    buildTaskSessionImplementationPrompt({
+      projectId: "project-123",
       card,
-      "https://github.com/example/repository/pull/1",
-      "Please fix the finding.",
-      "yarn validate",
-      context,
-    ),
+      approvedPlan,
+      attachmentContext: context,
+    }),
+    buildRefinementPrompt(card, context),
   ];
 }
 
@@ -188,11 +206,33 @@ describe("card attachment prompt context", () => {
       localFilename: "missing.md",
     };
 
-    expect(() => buildTaskPrompt(createCard(), undefined, context)).toThrow(
-      "materialized file",
-    );
-    expect(() => buildReviewPrompt(createCard(), context)).toThrow(
-      "materialized file",
-    );
+    expect(() =>
+      buildTaskPlanningPrompt("project-123", createCard(), [], context),
+    ).toThrow("materialized file");
+    expect(() =>
+      buildTaskSessionImplementationPrompt({
+        projectId: "project-123",
+        card: createCard(),
+        approvedPlan: {
+          version: 1,
+          projectId: "project-123",
+          cardId: "card-123",
+          requirements: [
+            { id: "REQ-1", text: "Do it", verification: "Test it" },
+          ],
+          steps: [
+            {
+              id: "STEP-1",
+              description: "Do it",
+              requirementIds: ["REQ-1"],
+              verification: "Test it",
+            },
+          ],
+          assumptions: [],
+          blockers: [],
+        },
+        attachmentContext: context,
+      }),
+    ).toThrow("materialized file");
   });
 });
