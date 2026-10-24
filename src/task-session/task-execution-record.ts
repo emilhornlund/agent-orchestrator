@@ -94,6 +94,11 @@ const validationRepairSchema = z.strictObject({
   coverageEvidence: validationEvidenceSchema.optional(),
 });
 
+const reviewRepairSchema = z.strictObject({
+  cycleId: nonBlankIdentifier,
+  status: z.enum(["active", "passed", "exhausted"]),
+});
+
 const taskExecutionRecordSchema = z
   .strictObject({
     version: z.literal(1),
@@ -115,6 +120,7 @@ const taskExecutionRecordSchema = z
       })
       .optional(),
     validationRepair: validationRepairSchema.optional(),
+    reviewRepair: reviewRepairSchema.optional(),
     revision: z.number().int().positive().safe(),
     retryCounters: retryCountersSchema,
     createdAt: z.string().datetime(),
@@ -277,6 +283,57 @@ const taskExecutionRecordSchema = z
           path: ["validationRepair", "coverageEvidence", "contentIdentity"],
           message:
             "Validation and coverage evidence must share a source snapshot",
+        });
+      }
+    }
+
+    if (record.reviewRepair !== undefined) {
+      const activeReviewRepairPhases = [
+        "implementation",
+        "validation",
+        "review",
+        "attention-required",
+      ];
+
+      if (
+        record.reviewRepair.status === "active" &&
+        !activeReviewRepairPhases.includes(record.phase)
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["reviewRepair", "status"],
+          message: `Active review repair is not valid during the ${record.phase} phase`,
+        });
+      }
+
+      if (
+        record.reviewRepair.status !== "active" &&
+        record.phase !== "review"
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["reviewRepair", "status"],
+          message:
+            "Completed review repair is only valid during the review phase",
+        });
+      }
+
+      if (record.retryCounters.review > 2) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["retryCounters", "review"],
+          message: "Review repair attempts cannot exceed two per cycle",
+        });
+      }
+
+      if (
+        record.reviewRepair.status === "exhausted" &&
+        record.retryCounters.review !== 2
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["reviewRepair", "status"],
+          message: "Exhausted review repair requires two attempts",
         });
       }
     }

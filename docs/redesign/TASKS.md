@@ -170,7 +170,7 @@ to inspect first, not permission to invent unimplemented helpers.
   - **Verify locally:** Mocked tests show passing complete work, blocking omitted requirements/serious defects, reviewer write protection, and malformed output failure.
   - **Out of scope:** Do not publish or remediate findings in this task.
 
-- [ ] **T23 — Implement final-review-after-remediation loop**
+- [x] **T23 — Implement final-review-after-remediation loop**
   - **Depends on:** T18, T20–T22.
   - **Implement:** On blocking review findings, resume the primary session for corrections, rerun validation/coverage, and repeat the independent review. Persist a finite review-remediation attempt count, and always run a final review even after the last allowed repair.
   - **Verify locally:** Tests prove latest review must pass, final allowed fix is reviewed, stale evidence is rejected, and exhaustion blocks progression.
