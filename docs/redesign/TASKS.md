@@ -409,7 +409,7 @@ are examples to inspect, not permission to invent unimplemented helpers.
 
 ## Phase I — Automatic CI check management
 
-- [ ] **T53 — Define authoritative CI check expectations**
+- [x] **T53 — Define authoritative CI check expectations**
   - **Depends on:** T29, T50.
   - **Implement:** Replace the manual requiredChecks contract with a deterministic policy for establishing expected CI checks. Prefer available authoritative GitHub repository rules and reliable repository-owned CI workflow expectations. Define how dynamically generated, conditional, and external checks are handled. Distinguish a complete expected set from an unknown or incomplete set.
   - **Verify locally:** Pure policy tests cover authoritative expectations, missing information, duplicate check names, dynamic check uncertainty, empty expectations, and unsupported sources. Unknown expectations must never produce a passing result.
