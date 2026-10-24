@@ -98,6 +98,7 @@ export async function observeTaskSessionReviewCards(
       if (
         pullRequest.baseRefName !== project.repository.defaultBranch ||
         pullRequest.headRefName !== `agent/${card.id}` ||
+        pullRequest.headRefOid !== headSha ||
         pullRequest.headRepository?.name !== repository ||
         pullRequest.headRepositoryOwner?.login !== owner ||
         (pullRequest.state === "MERGED" && pullRequest.mergedAt === null) ||

@@ -254,6 +254,34 @@ describe("observeTaskSessionReviewCards", () => {
     expect(f.store.read("card-one")?.reviewObservation).toBeUndefined();
   });
 
+  it.each(["stale", "missing"] as const)(
+    "rejects terminal PRs with a %s persisted head",
+    async (headState) => {
+      const f = fixture();
+      vi.mocked(f.github.findPullRequestState).mockResolvedValue({
+        url: "https://github.com/owner/repo/pull/1",
+        state: "MERGED",
+        mergedAt: "2026-10-24T10:00:00Z",
+        ...(headState === "stale" ? { headRefOid: "c".repeat(40) } : {}),
+        baseRefName: "main",
+        headRefName: "agent/card-one",
+        headRepository: { name: "repo" },
+        headRepositoryOwner: { login: "owner" },
+      });
+
+      await expect(
+        observeTaskSessionReviewCards({
+          project: f.project,
+          cards: f.cards.slice(0, 1),
+          taskRecordStore: f.store,
+          github: f.github,
+        }),
+      ).rejects.toThrow("metadata or ownership is ambiguous");
+      expect(f.store.read("card-one")?.reviewObservation).toBeUndefined();
+      expect(f.github.getCiObservations).not.toHaveBeenCalled();
+    },
+  );
+
   it("preserves review state on temporary authoritative GitHub errors", async () => {
     const f = fixture();
     vi.mocked(f.github.findPullRequestState).mockRejectedValue(
