@@ -216,7 +216,11 @@ be conducted manually after the full backlog is finished.
 
 ## 7. Scope and implementation strategy
 
-- Execute `TASKS.md` strictly in task ID order.
+- Execute planned backlog work in task ID order. A confirmed defect in completed
+  work, a missing implementation dependency, or an explicit maintainer correction
+  takes precedence; record a focused corrective task and complete it before
+  dependent remaining work. Do not stop solely because the correction belongs
+  to an earlier task.
 - One focused production concern per item; write tests for that concern.
 - All new behavior remains dormant behind `executionMode: task-session` until
   the final enablement task. Legacy behavior remains the default throughout.
@@ -224,8 +228,10 @@ be conducted manually after the full backlog is finished.
 - When current code differs from the examples here, preserve the contract and
   follow actual existing repository conventions; do not pretend that a named
   helper exists if it does not.
-- Any needed prerequisite outside the current task is a blocker: stop and
-  report it instead of skipping ahead or inventing an undocumented design.
+- A prerequisite outside the selected task is not permission to silently skip
+  work: record and implement a scoped corrective task, then resume the backlog.
+  Stop only when the requirement cannot be resolved safely with local tools or
+  needs a decision that changes the project requirements.
 
 ## 8. Completion definition
 

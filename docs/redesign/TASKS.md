@@ -1,36 +1,48 @@
 # Agent Orchestrator — Ordered Local Redesign Tasks
 
-This is the **authoritative ordered execution backlog** for
+This is the **authoritative execution backlog** for
 [REQUIREMENTS.md](REQUIREMENTS.md). The `redesign-executor` OpenCode agent
 implements each task in a dedicated local commit. Every task is verifiable
 with existing local tooling, fixtures and mocks — **no live service is a prerequisite**.
 
 ## Checklist semantics
 
-- **Select:** The first top-level unchecked task in ascending ID order.
+- **Select:** Normally the first top-level unchecked task in ascending ID
+  order. A confirmed defect in completed work, a missing prerequisite, or an
+  explicit maintainer correction takes precedence; add/reopen a focused task
+  and complete it before dependent remaining tasks.
 - **Plan:** Inspect the actual code and write an implementation plan in the OpenCode session.
-- **Implement:** Change only what the selected task permits, with tests.
+- **Implement:** Change only what the selected task or an authorized corrective
+  task requires, with deterministic tests.
 - **Validate:** Run focused tests and `yarn validate`; fix and rerun on failure.
-- **Complete:** Change only that task’s `[ ]` to `[x]`, then rerun `yarn validate`.
-- **Commit:** Include implementation, tests, and this checkbox in one local commit.
-- **Continue:** Re-read both documents, then select the next unchecked task.
+- **Complete:** Mark a task `[x]` only after its acceptance evidence passes;
+  reopen it if later evidence invalidates completion. Then rerun `yarn validate`.
+- **Commit:** Keep implementation/correction commits focused and local. Preserve
+  unrelated in-progress work unstaged; never rewrite existing history.
+- **Continue:** Re-read both documents, then continue with the next required
+  task, including any corrective task that precedes it.
 
 The executor must **not** check a task before it is genuinely done, skip a
-blocked task, change another task’s checkbox, batch tasks into one commit,
-or silently alter the backlog. Unexpected blockers require stopping with
-clear diagnostics and preserved working changes.
+requirement, batch unrelated work into one commit, or silently weaken acceptance
+criteria. The maintainer authorizes narrow backlog updates, reopening tasks, and
+corrective tasks when implementation evidence reveals a defect or missing
+integration. Preserve all existing work and Git history. Stop only for a genuine
+unresolvable blocker; an earlier-task defect is to be corrected autonomously.
 
 ## Global acceptance rules
 
 For **every** task: (1) preserve the legacy workflow unless explicitly
 requested; (2) use deterministic local tests and mocked external services;
 (3) do not introduce real network/service requirements; (4) run the full
-`yarn validate` after source edits **and** after checking the task; (5) commit
-exactly one task and leave a clean worktree; (6) no push, PR, merge or deploy.
+`yarn validate` after source edits **and** after checking the task; (5) keep
+commits focused, preserving unrelated uncommitted work; (6) no push, PR, merge
+or deploy. Corrective tasks may be completed before the next numbered task when
+required for correctness.
 
-A later task may rely only on earlier **completed** tasks, never on assumed
-future implementations. Source paths and method names are examples of where
-to inspect first, not permission to invent unimplemented helpers.
+Planned tasks rely only on their declared completed dependencies, never on
+assumed future implementations. A confirmed defect or missing dependency must
+be recorded and corrected before dependent work; source paths and method names
+are examples to inspect, not permission to invent unimplemented helpers.
 
 ## Phase A — Non-invasive foundation
 
