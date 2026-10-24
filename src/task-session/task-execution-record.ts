@@ -24,6 +24,8 @@ export const taskExecutionEventTypes = [
   "ci-passed-completed",
   "ci-failed",
   "feedback-received",
+  "feedback-ci-failed",
+  "feedback-replies-published",
   "attention-required",
 ] as const;
 
@@ -356,7 +358,13 @@ const taskExecutionRecordSchema = z
         record.phase !== "review" &&
         !(
           record.reviewRepair.status === "passed" &&
-          ["publication", "ci", "human-feedback", "done"].includes(record.phase)
+          [
+            "publication",
+            "ci",
+            "human-feedback",
+            "attention-required",
+            "done",
+          ].includes(record.phase)
         )
       ) {
         ctx.addIssue({

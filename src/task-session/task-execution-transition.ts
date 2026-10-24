@@ -48,6 +48,10 @@ const taskExecutionEventSchema = z.discriminatedUnion("type", [
   eventIdentitySchema.extend({ type: z.literal("ci-passed-completed") }),
   eventIdentitySchema.extend({ type: z.literal("ci-failed") }),
   eventIdentitySchema.extend({ type: z.literal("feedback-received") }),
+  eventIdentitySchema.extend({ type: z.literal("feedback-ci-failed") }),
+  eventIdentitySchema.extend({
+    type: z.literal("feedback-replies-published"),
+  }),
   eventIdentitySchema.extend({ type: z.literal("attention-required") }),
 ]);
 
@@ -75,6 +79,8 @@ const phaseTransitions: Record<
   "ci-passed-completed": { from: "ci", to: "done" },
   "ci-failed": { from: "ci", to: "implementation" },
   "feedback-received": { from: "human-feedback", to: "implementation" },
+  "feedback-ci-failed": { from: "human-feedback", to: "ci" },
+  "feedback-replies-published": { from: "human-feedback", to: "ci" },
   "attention-required": { from: null, to: "attention-required" },
 };
 

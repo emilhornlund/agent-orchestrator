@@ -316,7 +316,7 @@ to inspect first, not permission to invent unimplemented helpers.
   - **Verify locally:** Production-polling tests cover current requested changes, inline and conversation feedback, multiple rounds, late feedback, same-session continuation, verification gates, and idempotent contextual replies.
   - **Out of scope:** Do not auto-dismiss reviews, resolve threads, or invoke live GitHub services.
 
-- [ ] **T43C — Verify recovery and complete lifecycle integration**
+- [x] **T43C — Verify recovery and complete lifecycle integration**
   - **Depends on:** T39–T43B.
   - **Implement:** Complete any necessary task-session recovery wiring and add mocked end-to-end tests through the actual production polling entry point. Cover CI repair, repeated human feedback, session continuity, commit/publication safety, retry exhaustion, restart recovery, idempotency, and multiple waiting PRs under the single mutation-owner constraint. Keep legacy execution unaffected.
   - **Verify locally:** All scenarios pass offline and assert no unverified publication, preserved task ownership, no duplicate commits/replies, and human attention for exhausted or ambiguous states.

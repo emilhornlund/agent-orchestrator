@@ -97,13 +97,22 @@ describe("task-session production dispatch", () => {
       "c".repeat(40),
       "d".repeat(40),
       "e".repeat(40),
+      ...Array.from({ length: 20 }, (_, index) =>
+        index.toString(16).padStart(40, "0"),
+      ),
     ];
     let cardList = project.trello.readyListId;
     let pullRequestCreated = false;
     let feedbackActive = false;
-    let reviewReplySent = false;
-    let reviewReplyBody = "";
+    let lateFeedback = false;
+    let failAllChecks = false;
+    let throwAfterFirstReviewReply = true;
     let reviewReplyMutationCount = 0;
+    let nextReplyId = 900;
+    const reviewReplyBodies: Array<{ body: string; id: number }> = [];
+    let conversationReplyCount = 0;
+    let nextConversationReplyId = 910;
+    const conversationReplyBodies: string[] = [];
     const trackedFiles = ["src/settings.ts"];
     const git = {
       fetch: vi.fn(async () => undefined),
@@ -221,6 +230,20 @@ describe("task-session production dispatch", () => {
                   diff_hunk: "@@ -1 +1 @@",
                   user: { login: "reviewer" },
                 },
+                ...(lateFeedback
+                  ? [
+                      {
+                        id: 502,
+                        pull_request_review_id: 12,
+                        body: "Also cover the reset path.",
+                        path: "src/settings.ts",
+                        line: 3,
+                        original_line: 3,
+                        diff_hunk: "@@ -2 +2 @@",
+                        user: { login: "reviewer" },
+                      },
+                    ]
+                  : []),
               ],
             ])
           : JSON.stringify([[]]);
@@ -232,14 +255,21 @@ describe("task-session production dispatch", () => {
           )
         ) {
           reviewReplyMutationCount += 1;
-          reviewReplySent = true;
-          reviewReplyBody =
+          const replyBody =
             args
               .find((argument) => argument.startsWith("body="))
               ?.slice("body=".length) ?? "";
+          const replyId = nextReplyId++;
+          reviewReplyBodies.push({ body: replyBody, id: replyId });
+          if (throwAfterFirstReviewReply) {
+            throwAfterFirstReviewReply = false;
+            throw new Error("socket closed after GitHub accepted the reply");
+          }
           return JSON.stringify({
             data: {
-              addPullRequestReviewThreadReply: { comment: { databaseId: 900 } },
+              addPullRequestReviewThreadReply: {
+                comment: { databaseId: replyId },
+              },
             },
           });
         }
@@ -248,42 +278,43 @@ describe("task-session production dispatch", () => {
             repository: {
               pullRequest: {
                 reviewThreads: {
-                  nodes: [
-                    {
-                      id: "PRRT_settings",
-                      isResolved: false,
-                      isOutdated: false,
-                      comments: {
-                        nodes: [
-                          {
-                            databaseId: 501,
-                            body: "Fix the empty settings case.",
-                            author: { login: "reviewer" },
-                            path: "src/settings.ts",
-                            line: 2,
-                            originalLine: 2,
-                            diffHunk: "@@ -1 +1 @@",
+                  nodes: [501, ...(lateFeedback ? [502] : [])].map((id) => ({
+                    id: `PRRT_${id}`,
+                    isResolved: false,
+                    isOutdated: false,
+                    comments: {
+                      nodes: [
+                        {
+                          databaseId: id,
+                          body:
+                            id === 501
+                              ? "Fix the empty settings case."
+                              : "Also cover the reset path.",
+                          author: { login: "reviewer" },
+                          path: "src/settings.ts",
+                          line: id === 501 ? 2 : 3,
+                          originalLine: id === 501 ? 2 : 3,
+                          diffHunk: "@@ -1 +1 @@",
+                          pullRequestReview: { databaseId: 12 },
+                        },
+                        ...reviewReplyBodies
+                          .filter((reply) =>
+                            reply.body.includes(`inline-comment%3A${id}`),
+                          )
+                          .map((reply) => ({
+                            databaseId: reply.id,
+                            body: reply.body,
+                            author: { login: "agent[bot]" },
+                            path: null,
+                            line: null,
+                            originalLine: null,
+                            diffHunk: null,
                             pullRequestReview: { databaseId: 12 },
-                          },
-                          ...(reviewReplySent
-                            ? [
-                                {
-                                  databaseId: 900,
-                                  body: reviewReplyBody,
-                                  author: { login: "agent[bot]" },
-                                  path: null,
-                                  line: null,
-                                  originalLine: null,
-                                  diffHunk: null,
-                                  pullRequestReview: { databaseId: 12 },
-                                },
-                              ]
-                            : []),
-                        ],
-                        pageInfo: { hasNextPage: false },
-                      },
+                          })),
+                      ],
+                      pageInfo: { hasNextPage: false },
                     },
-                  ],
+                  })),
                   pageInfo: { hasNextPage: false },
                 },
               },
@@ -306,106 +337,6 @@ describe("task-session production dispatch", () => {
             mergeStateStatus: "CLEAN",
           },
         ]);
-      if (args[0] === "api" && args[1]?.includes("/pulls/9/reviews")) {
-        return feedbackActive
-          ? JSON.stringify([
-              [
-                {
-                  id: 12,
-                  body: null,
-                  commit_id: headSha,
-                  state: "CHANGES_REQUESTED",
-                  submitted_at: "2026-10-24T11:00:00Z",
-                  user: { login: "reviewer" },
-                },
-              ],
-            ])
-          : JSON.stringify([[]]);
-      }
-      if (args[0] === "api" && args[1]?.includes("/pulls/9/comments")) {
-        return feedbackActive
-          ? JSON.stringify([
-              [
-                {
-                  id: 501,
-                  pull_request_review_id: 12,
-                  body: "Fix the empty settings case.",
-                  path: "src/settings.ts",
-                  line: 2,
-                  original_line: 2,
-                  diff_hunk: "@@ -1 +1 @@",
-                  user: { login: "reviewer" },
-                },
-              ],
-            ])
-          : JSON.stringify([[]]);
-      }
-      if (args[0] === "api" && args[1] === "graphql") {
-        if (
-          args.some((argument) =>
-            argument.includes("addPullRequestReviewThreadReply"),
-          )
-        ) {
-          reviewReplyMutationCount += 1;
-          reviewReplySent = true;
-          reviewReplyBody =
-            args
-              .find((argument) => argument.startsWith("body="))
-              ?.slice("body=".length) ?? "";
-          return JSON.stringify({
-            data: {
-              addPullRequestReviewThreadReply: { comment: { databaseId: 900 } },
-            },
-          });
-        }
-        return JSON.stringify({
-          data: {
-            repository: {
-              pullRequest: {
-                reviewThreads: {
-                  nodes: [
-                    {
-                      id: "PRRT_settings",
-                      isResolved: false,
-                      isOutdated: false,
-                      comments: {
-                        nodes: [
-                          {
-                            databaseId: 501,
-                            body: "Fix the empty settings case.",
-                            author: { login: "reviewer" },
-                            path: "src/settings.ts",
-                            line: 2,
-                            originalLine: 2,
-                            diffHunk: "@@ -1 +1 @@",
-                            pullRequestReview: { databaseId: 12 },
-                          },
-                          ...(reviewReplySent
-                            ? [
-                                {
-                                  databaseId: 900,
-                                  body: reviewReplyBody,
-                                  author: { login: "agent[bot]" },
-                                  path: null,
-                                  line: null,
-                                  originalLine: null,
-                                  diffHunk: null,
-                                  pullRequestReview: { databaseId: 12 },
-                                },
-                              ]
-                            : []),
-                        ],
-                        pageInfo: { hasNextPage: false },
-                      },
-                    },
-                  ],
-                  pageInfo: { hasNextPage: false },
-                },
-              },
-            },
-          },
-        });
-      }
       if (
         args[0] === "api" &&
         args.some((argument) => argument.includes("/check-runs?"))
@@ -424,7 +355,9 @@ describe("task-session production dispatch", () => {
                   head_sha: observedHead,
                   status: "completed",
                   conclusion:
-                    observedHead === "b".repeat(40) ? "failure" : "success",
+                    observedHead === "b".repeat(40) || failAllChecks
+                      ? "failure"
+                      : "success",
                   created_at: "2026-10-24T10:00:00Z",
                   html_url: "https://github.com/owner/repo/actions/runs/42",
                 },
@@ -442,7 +375,41 @@ describe("task-session production dispatch", () => {
         args[0] === "api" &&
         args.some((argument) => argument.includes("/issues/9/comments?"))
       )
-        return JSON.stringify([[]]);
+        return JSON.stringify([
+          [
+            ...(feedbackActive
+              ? [
+                  {
+                    id: 601,
+                    user: { login: "reviewer" },
+                    created_at: "2026-10-24T11:30:00Z",
+                    updated_at: null,
+                    body: "Please also document the reset behavior.",
+                  },
+                ]
+              : []),
+            ...conversationReplyBodies.map((body, index) => ({
+              id: 910 + index,
+              user: { login: "agent[bot]" },
+              created_at: "2026-10-24T12:00:00Z",
+              updated_at: null,
+              body,
+            })),
+          ],
+        ]);
+      if (
+        args[0] === "api" &&
+        args.includes("POST") &&
+        args.some((argument) => argument.includes("/issues/9/comments"))
+      ) {
+        conversationReplyCount += 1;
+        const body =
+          args
+            .find((argument) => argument.startsWith("body="))
+            ?.slice("body=".length) ?? "";
+        conversationReplyBodies.push(body);
+        return JSON.stringify({ id: nextConversationReplyId++, body });
+      }
       return "";
     });
     const github = new GitHubClient(githubRun);
@@ -549,12 +516,20 @@ describe("task-session production dispatch", () => {
               headSha: verificationHead,
               contentIdentity: identity,
               dispositions: [
-                {
-                  feedbackId: "inline-comment:501",
+                ["inline-comment", 501],
+                ["inline-comment", 502],
+                ["conversation-comment", 601],
+              ]
+                .filter(
+                  ([kind, id]) =>
+                    run.prompt.includes(`"kind": "${kind}"`) &&
+                    run.prompt.includes(`"id": "${id}"`),
+                )
+                .map(([kind, id]) => ({
+                  feedbackId: `${kind}:${id}`,
                   status: "verified-fixed",
                   evidence: ["src/settings.ts", "tests/settings.test.ts"],
-                },
-              ],
+                })),
             }),
             errorOutput: "",
           };
@@ -584,7 +559,9 @@ describe("task-session production dispatch", () => {
         ) {
           fs.writeFileSync(
             path.join(run.cwd, "src/settings.ts"),
-            "export const settings = { fixed: true, feedbackHandled: true };\n",
+            run.prompt.includes("Also cover the reset path")
+              ? "export const settings = { fixed: true, feedbackHandled: true, resetHandled: true };\n"
+              : "export const settings = { fixed: true, feedbackHandled: true };\n",
           );
         }
         if (run.prompt.includes("Generate the commit message")) {
@@ -627,6 +604,23 @@ describe("task-session production dispatch", () => {
       card.id,
       project.trello.reviewListId,
     );
+    const feedbackLedger = new FeedbackLedgerStore(
+      project.contextRoot,
+      project,
+    );
+    feedbackLedger.create(card.id, [
+      {
+        kind: "conversation-comment",
+        id: "601",
+        author: "reviewer",
+        createdAt: "2026-10-24T11:30:00.000Z",
+        updatedAt: null,
+        body: "Please also document the reset behavior.",
+        actionability: "actionable",
+        status: "pending",
+        verificationEvidence: [],
+      },
+    ]);
     feedbackActive = true;
     await pollProject(trello, git, github, openCode, commands, project, signal);
     expect(git.commit).toHaveBeenCalledTimes(3);
@@ -659,8 +653,32 @@ describe("task-session production dispatch", () => {
     expect(trello.getCards).toHaveBeenCalled();
     expect(fs.existsSync(path.join(worktreeRoot, card.id))).toBe(true);
     expect(fs.existsSync(repositoryPath)).toBe(true);
-    await pollProject(trello, git, github, openCode, commands, project, signal);
+    lateFeedback = true;
+    await expect(
+      pollProject(trello, git, github, openCode, commands, project, signal),
+    ).rejects.toThrow("outcome is uncertain");
     expect(reviewReplyMutationCount).toBe(1);
+    expect(conversationReplyCount).toBe(1);
+    const afterUncertainReply = new TaskExecutionStore(
+      project.contextRoot,
+      project,
+    ).read(card.id);
+    expect(afterUncertainReply).toMatchObject({
+      phase: "human-feedback",
+      pullRequest: { headSha: "d".repeat(40) },
+    });
+    expect(afterUncertainReply?.publicationQuality).toBeDefined();
+    expect(feedbackLedger.read(card.id)?.entries).toContainEqual(
+      expect.objectContaining({
+        kind: "inline-comment",
+        id: "501",
+        status: "verified",
+        replyState: "outcome-unknown",
+      }),
+    );
+    expect(
+      new TaskMutationQueue(project.contextRoot, project).getActive()?.eventId,
+    ).toContain("feedback-replies:");
     expect(
       openCodeRun.mock.calls.some(
         ([options]) =>
@@ -669,22 +687,29 @@ describe("task-session production dispatch", () => {
           ) && options.sessionId === "ses_primary-task",
       ),
     ).toBe(true);
-    const successfulHeadChecks = githubRun.mock.calls.findIndex(([, args]) =>
-      args.some((argument) =>
-        argument.includes(`/commits/${"d".repeat(40)}/check-runs`),
-      ),
+    // The reply was accepted remotely but the client saw a connection failure.
+    // A fresh polling client must find the idempotency marker rather than resend.
+    await pollProject(
+      trello,
+      git,
+      github,
+      new OpenCodeClient(openCodeRun),
+      commands,
+      project,
+      signal,
     );
-    const replyMutation = githubRun.mock.calls.findIndex(([, args]) =>
-      args.some((argument) =>
-        argument.includes("addPullRequestReviewThreadReply"),
-      ),
-    );
-    expect(successfulHeadChecks).toBeGreaterThanOrEqual(0);
-    expect(replyMutation).toBeGreaterThan(successfulHeadChecks);
-    const publishedFeedback = new FeedbackLedgerStore(
+    expect(reviewReplyMutationCount).toBe(1);
+    const publishedFeedback = feedbackLedger.read(card.id);
+    const recoveredRecord = new TaskExecutionStore(
       project.contextRoot,
       project,
     ).read(card.id);
+    expect(recoveredRecord?.reviewObservation).toMatchObject({
+      headSha: "d".repeat(40),
+      checks: [{ name: "Build", status: "succeeded", headSha: "d".repeat(40) }],
+    });
+    expect(recoveredRecord?.phase).toBe("ci");
+    expect(recoveredRecord?.publicationQuality).toBeDefined();
     expect(publishedFeedback?.entries).toContainEqual(
       expect.objectContaining({
         kind: "inline-comment",
@@ -694,8 +719,57 @@ describe("task-session production dispatch", () => {
         remediationCommitSha: "d".repeat(40),
       }),
     );
+    expect(publishedFeedback?.entries).toContainEqual(
+      expect.objectContaining({
+        kind: "conversation-comment",
+        id: "601",
+        status: "published",
+        replyId: "910",
+        remediationCommitSha: "d".repeat(40),
+      }),
+    );
+
+    // The late request is preserved and starts a second remediation round.
     await pollProject(trello, git, github, openCode, commands, project, signal);
+    expect(git.commit).toHaveBeenCalledTimes(4);
     expect(reviewReplyMutationCount).toBe(1);
+    const secondRoundRecord = new TaskExecutionStore(
+      project.contextRoot,
+      project,
+    ).read(card.id);
+    expect(secondRoundRecord).toMatchObject({
+      phase: "ci",
+      pullRequest: { headSha: "e".repeat(40) },
+    });
+    await pollProject(trello, git, github, openCode, commands, project, signal);
+    expect(reviewReplyMutationCount).toBe(2);
+    failAllChecks = true;
+    await pollProject(trello, git, github, openCode, commands, project, signal);
+    const exhaustedRecord = new TaskExecutionStore(
+      project.contextRoot,
+      project,
+    ).read(card.id);
+    expect(exhaustedRecord).toMatchObject({
+      phase: "attention-required",
+      retryCounters: { ci: 2 },
+      ciRepair: { status: "exhausted" },
+    });
+    expect(git.commit).toHaveBeenCalledTimes(6);
+    expect(
+      new TaskMutationQueue(project.contextRoot, project).list().at(-1)?.status,
+    ).toBe("failed");
+    const finalLedger = feedbackLedger.read(card.id);
+    expect(finalLedger?.entries).toContainEqual(
+      expect.objectContaining({
+        kind: "inline-comment",
+        id: "502",
+        status: "published",
+        replyId: "901",
+        remediationCommitSha: "e".repeat(40),
+      }),
+    );
+    await pollProject(trello, git, github, openCode, commands, project, signal);
+    expect(reviewReplyMutationCount).toBe(2);
   });
 
   it("refuses to auto-migrate an active Working card without a task-session record", async () => {
@@ -793,5 +867,103 @@ describe("task-session production dispatch", () => {
       phase: "ci",
       reviewObservation: { headSha, checks: [{ status: "queued" }] },
     });
+  });
+
+  it("monitors multiple waiting PRs through production polling without concurrent mutations", async () => {
+    const { project } = projectFixture();
+    const cards = ["card-one", "card-two"].map((id) => ({
+      ...createCard(),
+      id,
+      idList: project.trello.reviewListId,
+    }));
+    const headByCard = new Map([
+      ["card-one", "a".repeat(40)],
+      ["card-two", "b".repeat(40)],
+    ]);
+    const taskStore = new TaskExecutionStore(project.contextRoot, project);
+    for (const [index, card] of cards.entries()) {
+      const headSha = headByCard.get(card.id)!;
+      taskStore.create({
+        version: 1,
+        projectId: project.id,
+        cardId: card.id,
+        phase: "ci",
+        primarySessionId: `session-${index}`,
+        sessionCreationStatus: "bound",
+        expectedBranch: `agent/${card.id}`,
+        pullRequest: {
+          number: index + 1,
+          url: `https://github.com/owner/repo/pull/${index + 1}`,
+          headSha,
+        },
+        operationKey: `operation-${index}`,
+        revision: 1,
+        retryCounters: { validation: 0, review: 0, ci: 0, humanFeedback: 0 },
+        createdAt: "2026-10-24T09:00:00.000Z",
+        updatedAt: "2026-10-24T09:00:00.000Z",
+      });
+    }
+    const trello = {
+      getCards: vi.fn(async (listId: string) =>
+        listId === project.trello.reviewListId ? cards : [],
+      ),
+    } as unknown as TrelloClient;
+    const getRequiredChecks = vi.fn(
+      async ({ headSha }: { headSha: string }) => ({
+        headSha,
+        checks: [
+          {
+            name: "Build",
+            headSha,
+            status: "queued" as const,
+            conclusion: null,
+            diagnostic: "",
+          },
+        ],
+      }),
+    );
+    const github = {
+      findPullRequestState: vi.fn(
+        async ({ headBranch }: { headBranch: string }) => {
+          const cardId = headBranch.slice("agent/".length);
+          const index = cards.findIndex(({ id }) => id === cardId);
+          return {
+            url: `https://github.com/owner/repo/pull/${index + 1}`,
+            state: "OPEN",
+            mergedAt: null,
+            headRefOid: headByCard.get(cardId),
+          };
+        },
+      ),
+      getRequiredChecks,
+      findChangesRequestedPullRequest: vi.fn(async () => null),
+      getPullRequestConversationComments: vi.fn(async () => []),
+    } as unknown as GitHubClient;
+    const openCode = vi.fn<RunOpenCode>();
+
+    await pollProject(
+      trello,
+      {} as GitClient,
+      github,
+      new OpenCodeClient(openCode),
+      new CommandRunner(vi.fn<RunCommand>()),
+      project,
+      new AbortController().signal,
+    );
+
+    expect(getRequiredChecks).toHaveBeenCalledTimes(4);
+    expect(
+      new Set(getRequiredChecks.mock.calls.map(([input]) => input.headSha)),
+    ).toEqual(new Set(headByCard.values()));
+    expect(taskStore.read("card-one")?.reviewObservation?.checks).toMatchObject(
+      [{ status: "queued", headSha: "a".repeat(40) }],
+    );
+    expect(taskStore.read("card-two")?.reviewObservation?.checks).toMatchObject(
+      [{ status: "queued", headSha: "b".repeat(40) }],
+    );
+    expect(new TaskMutationQueue(project.contextRoot, project).list()).toEqual(
+      [],
+    );
+    expect(openCode).not.toHaveBeenCalled();
   });
 });
