@@ -105,6 +105,7 @@ describe("task-session production dispatch", () => {
       ),
     ];
     let cardList = project.trello.readyListId;
+    let failFirstClaimMove = true;
     let pullRequestCreated = false;
     let feedbackActive = false;
     let lateFeedback = false;
@@ -169,6 +170,10 @@ describe("task-session production dispatch", () => {
       ),
       getCardAttachments: vi.fn(async () => []),
       moveCard: vi.fn(async (_cardId: string, listId: string) => {
+        if (listId === project.trello.workingListId && failFirstClaimMove) {
+          failFirstClaimMove = false;
+          throw new Error("simulated interruption after worktree preparation");
+        }
         cardList = listId;
         return { ...card, idList: listId };
       }),
@@ -630,6 +635,22 @@ describe("task-session production dispatch", () => {
         openCode,
         commands,
         project,
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow("simulated interruption after worktree preparation");
+    expect(cardList).toBe(project.trello.readyListId);
+    expect(
+      new TaskExecutionStore(project.contextRoot, project).read(card.id),
+    ).toBe(null);
+    expect(fs.existsSync(path.join(worktreeRoot, card.id))).toBe(true);
+    await expect(
+      pollProject(
+        trello,
+        git,
+        github,
+        openCode,
+        commands,
+        project,
         interruptedProcess.signal,
       ),
     ).rejects.toThrow("Task-session implementation aborted");
@@ -655,6 +676,7 @@ describe("task-session production dispatch", () => {
     ).toMatchObject({ phase: "publication" });
     await pollProject(trello, git, github, openCode, commands, project, signal);
     expect(opened).toBe(true);
+    expect(git.addWorktreeWithNewBranch).toHaveBeenCalledOnce();
     const implementationResumes = openCodeRun.mock.calls.filter(([options]) =>
       options.prompt.includes("Implement the approved task plan"),
     );

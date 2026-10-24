@@ -1214,12 +1214,18 @@ export async function runTaskSessionWorkflow(
         isCardStartDateReached(card, Date.now()) &&
         getWorkflowKind(card, project) === "implementation",
     );
+    let readyRecoveryEvent: TaskMutationEvent | null = null;
     for (const card of eligibleCards) {
+      if (taskStore.read(card.id) !== null) {
+        throw new Error(
+          `Ready card ${card.id} already has task-session ownership; refusing to start a duplicate task`,
+        );
+      }
       const digest = createHash("sha256")
         .update(`${card.name}\0${card.desc}\0${card.idLabels.join(",")}`)
         .digest("hex")
         .slice(0, 16);
-      queue.enqueue({
+      const queuedEvent = queue.enqueue({
         projectId: project.id,
         cardId: card.id,
         eventId: `implementation:${card.id}:${digest}`,
@@ -1227,8 +1233,33 @@ export async function runTaskSessionWorkflow(
         kind: "implementation",
         enqueuedAt: new Date().toISOString(),
       });
+      const activeEvent = queue.getActive();
+      if (
+        activeEvent !== null &&
+        activeEvent.cardId === card.id &&
+        activeEvent.operationKey !== queuedEvent.operationKey
+      ) {
+        throw new Error(
+          `Ready card ${card.id} changed identity while its prior task-session operation remains active`,
+        );
+      }
+      if (queuedEvent.status === "completed") {
+        throw new Error(
+          `Ready card ${card.id} has a completed implementation event but no task record; operator recovery is required`,
+        );
+      }
+      if (queuedEvent.status === "active" || queuedEvent.status === "failed") {
+        if (readyRecoveryEvent !== null)
+          throw new Error(
+            "Multiple interrupted task-session Ready claims require recovery",
+          );
+        readyRecoveryEvent = queuedEvent;
+      }
     }
-    mutation = queue.claimNext();
+    mutation =
+      readyRecoveryEvent === null
+        ? queue.claimNext()
+        : queue.claimForRecovery(readyRecoveryEvent.eventId);
     if (mutation === null) return;
     selectedCard =
       eligibleCards.find((candidate) => candidate.id === mutation!.cardId) ??
