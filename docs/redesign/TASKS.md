@@ -90,7 +90,7 @@ to inspect first, not permission to invent unimplemented helpers.
   - **Verify locally:** Mocked tests prove same-task reuse, cross-task isolation, restarted process reuse, duplicate-initialization safety, and no silent replacement.
   - **Out of scope:** Do not execute implementation or invent missing session IDs.
 
-- [ ] **T10 — Define structured plan and acceptance-criteria schemas**
+- [x] **T10 — Define structured plan and acceptance-criteria schemas**
   - **Depends on:** T03.
   - **Implement:** Create validated plan types with task/card identity, original requirement IDs, implementation steps, proposed verification, assumptions, and blockers. Require nonempty IDs and traceable requirements.
   - **Verify locally:** Parsing tests reject missing requirements, duplicate IDs, malformed steps, and unknown mandatory fields.
