@@ -146,7 +146,7 @@ to inspect first, not permission to invent unimplemented helpers.
   - **Verify locally:** Tests cover fail→fix→pass, repeated failure exhaustion, session mismatch, interrupted resume, and rejection of stale passing evidence.
   - **Out of scope:** Do not run GitHub CI or continue after exhausted repair.
 
-- [ ] **T19 — Add optional repository coverage command gate**
+- [x] **T19 — Add optional repository coverage command gate**
   - **Depends on:** T16–T17.
   - **Implement:** Add optional `repository.coverageCommand` for task-session mode. Run it with `CommandRunner`; its exit code is authoritative and thresholds remain repository-owned. Bind results to source snapshot.
   - **Verify locally:** Configuration and mocked-command tests cover absent command, pass, threshold failure, timeout, and stale evidence.
