@@ -284,7 +284,7 @@ to inspect first, not permission to invent unimplemented helpers.
   - **Verify locally:** Tests confirm two waiting PRs can be observed independently with no source writes or cross-card state confusion.
   - **Out of scope:** Do not allow parallel repository mutation or alter legacy scheduler.
 
-- [ ] **T41 — Queue repairs behind a single project mutation owner**
+- [x] **T41 — Queue repairs behind a single project mutation owner**
   - **Depends on:** T06, T39–T40.
   - **Implement:** Implement deterministic queuing for eligible implementation, CI repair, and feedback events so at most one repository-changing operation runs per project. Persist event identity and task ownership; never run two mutators concurrently.
   - **Verify locally:** Mock scheduler tests cover duplicate poll events, two waiting PRs, queued CI+feedback for separate tasks, restart recovery, and fair deterministic selection.
