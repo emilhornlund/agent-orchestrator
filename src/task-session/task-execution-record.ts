@@ -76,6 +76,23 @@ const retryCountersSchema = z.strictObject({
   humanFeedback: z.number().int().nonnegative(),
 });
 
+const taskSessionContentIdentity = z.string().regex(/^sha256:[0-9a-f]{64}$/u);
+
+const validationEvidenceSchema = z.strictObject({
+  command: nonBlankIdentifier,
+  startedAt: z.string().datetime(),
+  completedAt: z.string().datetime(),
+  exitCode: z.literal(0),
+  diagnostic: z.string().max(2_000),
+  contentIdentity: taskSessionContentIdentity,
+});
+
+const validationRepairSchema = z.strictObject({
+  cycleId: nonBlankIdentifier,
+  status: z.enum(["active", "passed", "exhausted"]),
+  evidence: validationEvidenceSchema.optional(),
+});
+
 const taskExecutionRecordSchema = z
   .strictObject({
     version: z.literal(1),
@@ -96,6 +113,7 @@ const taskExecutionRecordSchema = z
         pullRequest: pullRequestSchema.optional(),
       })
       .optional(),
+    validationRepair: validationRepairSchema.optional(),
     revision: z.number().int().positive().safe(),
     retryCounters: retryCountersSchema,
     createdAt: z.string().datetime(),
@@ -180,6 +198,61 @@ const taskExecutionRecordSchema = z
         path: ["updatedAt"],
         message: "Must not be earlier than createdAt",
       });
+    }
+
+    if (record.validationRepair !== undefined) {
+      if (
+        record.validationRepair.status !== "passed" &&
+        record.phase !== "validation"
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["validationRepair"],
+          message:
+            "Unresolved validation repair state is only valid during validation",
+        });
+      }
+
+      if (record.retryCounters.validation > 2) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["retryCounters", "validation"],
+          message: "Validation repair attempts cannot exceed two per cycle",
+        });
+      }
+
+      if (
+        record.validationRepair.status === "exhausted" &&
+        record.retryCounters.validation !== 2
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["validationRepair", "status"],
+          message: "Exhausted validation repair requires two attempts",
+        });
+      }
+
+      if (
+        record.validationRepair.status === "passed" &&
+        record.validationRepair.evidence === undefined
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["validationRepair", "evidence"],
+          message: "Passing validation requires content-bound evidence",
+        });
+      }
+
+      if (
+        record.validationRepair.status !== "passed" &&
+        record.validationRepair.evidence !== undefined
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["validationRepair", "evidence"],
+          message: "Only passing validation may store successful evidence",
+        });
+      }
     }
   });
 
