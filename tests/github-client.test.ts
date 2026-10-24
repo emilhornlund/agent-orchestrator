@@ -303,6 +303,166 @@ describe("GitHubClient", () => {
     ).rejects.toThrow("invalid paginated pull request conversation comments");
   });
 
+  it("replies to the exact known review thread only after confirming PR ownership", async () => {
+    const threadPage = {
+      data: {
+        repository: {
+          pullRequest: {
+            reviewThreads: {
+              nodes: [
+                {
+                  id: "PRRT_thread-id",
+                  isResolved: false,
+                  isOutdated: false,
+                  comments: {
+                    nodes: [
+                      {
+                        databaseId: 10,
+                        body: "Request",
+                        author: { login: "reviewer" },
+                        path: null,
+                        line: null,
+                        originalLine: null,
+                        diffHunk: null,
+                        pullRequestReview: { databaseId: 9 },
+                      },
+                    ],
+                    pageInfo: { hasNextPage: false },
+                  },
+                },
+              ],
+              pageInfo: { hasNextPage: false },
+            },
+          },
+        },
+      },
+    };
+    const run = vi
+      .fn<RunGitHubCommand>()
+      .mockResolvedValueOnce(JSON.stringify(threadPage))
+      .mockResolvedValueOnce(
+        JSON.stringify({
+          data: {
+            addPullRequestReviewThreadReply: { comment: { databaseId: 99 } },
+          },
+        }),
+      );
+    const reply = await new GitHubClient(run).replyToReviewThread({
+      cwd: "/repo",
+      repository: "owner/repo",
+      pullRequestUrl: "https://github.com/owner/repo/pull/12",
+      threadId: "PRRT_thread-id",
+      body: "Verified fix.",
+      project: {
+        id: "p",
+        repository: { github: "owner/repo" },
+      } as ProjectConfig,
+    });
+    expect(reply).toEqual({
+      id: "99",
+      kind: "review-thread",
+      threadId: "PRRT_thread-id",
+    });
+    expect(run.mock.calls[1]?.[1]).toContain("-F");
+
+    const wrongThread = vi.fn<RunGitHubCommand>().mockResolvedValueOnce(
+      JSON.stringify({
+        ...threadPage,
+        data: {
+          repository: {
+            pullRequest: {
+              reviewThreads: { nodes: [], pageInfo: { hasNextPage: false } },
+            },
+          },
+        },
+      }),
+    );
+    await expect(
+      new GitHubClient(wrongThread).replyToReviewThread({
+        cwd: "/repo",
+        repository: "owner/repo",
+        pullRequestUrl: "https://github.com/owner/repo/pull/12",
+        threadId: "PRRT_other",
+        body: "Reply",
+        project: {
+          id: "p",
+          repository: { github: "owner/repo" },
+        } as ProjectConfig,
+      }),
+    ).rejects.toThrow("does not belong");
+    expect(wrongThread).toHaveBeenCalledOnce();
+
+    const permissionFailure = vi
+      .fn<RunGitHubCommand>()
+      .mockResolvedValueOnce(JSON.stringify(threadPage))
+      .mockRejectedValueOnce(
+        new Error("HTTP 403: Resource not accessible by integration"),
+      );
+    await expect(
+      new GitHubClient(permissionFailure).replyToReviewThread({
+        cwd: "/repo",
+        repository: "owner/repo",
+        pullRequestUrl: "https://github.com/owner/repo/pull/12",
+        threadId: "PRRT_thread-id",
+        body: "Verified fix.",
+        project: {
+          id: "p",
+          repository: { github: "owner/repo" },
+        } as ProjectConfig,
+      }),
+    ).rejects.toThrow("HTTP 403");
+  });
+
+  it("creates contextual conversation replies and validates repository ownership and responses", async () => {
+    const run = vi.fn<RunGitHubCommand>().mockResolvedValue(
+      JSON.stringify({
+        id: 101,
+        body: "Thanks, fixed.",
+      }),
+    );
+    const project = {
+      id: "p",
+      repository: { github: "owner/repo" },
+    } as ProjectConfig;
+    const result = await new GitHubClient(run).replyToConversationComment({
+      cwd: "/repo",
+      repository: "owner/repo",
+      pullRequestUrl: "https://github.com/owner/repo/pull/12",
+      body: "Thanks, fixed.",
+      project,
+    });
+    expect(result).toEqual({ id: "101", kind: "conversation" });
+    expect(run.mock.calls[0]?.[1]).toEqual([
+      "api",
+      "--method",
+      "POST",
+      "repos/owner/repo/issues/12/comments",
+      "-f",
+      "body=Thanks, fixed.",
+    ]);
+    await expect(
+      new GitHubClient(run).replyToConversationComment({
+        cwd: "/repo",
+        repository: "owner/repo",
+        pullRequestUrl: "https://github.com/other/repo/pull/12",
+        body: "Reply",
+        project,
+      }),
+    ).rejects.toThrow("does not belong");
+    const malformed = new GitHubClient(async () =>
+      JSON.stringify({ id: "bad", body: "Reply" }),
+    );
+    await expect(
+      malformed.replyToConversationComment({
+        cwd: "/repo",
+        repository: "owner/repo",
+        pullRequestUrl: "https://github.com/owner/repo/pull/12",
+        body: "Reply",
+        project,
+      }),
+    ).rejects.toThrow("malformed conversation reply");
+  });
+
   it("collects bounded, redacted annotations for failed exact-head check runs", async () => {
     const headSha = "a".repeat(40);
     const run = vi.fn<RunGitHubCommand>().mockResolvedValue(

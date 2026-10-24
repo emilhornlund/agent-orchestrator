@@ -82,6 +82,29 @@ export interface PullRequestConversationCommentsOptions {
   project?: ProjectConfig;
 }
 
+export interface CreateReviewThreadReplyOptions {
+  cwd: string;
+  repository: string;
+  pullRequestUrl: string;
+  threadId: string;
+  body: string;
+  project?: ProjectConfig;
+}
+
+export interface CreateConversationReplyOptions {
+  cwd: string;
+  repository: string;
+  pullRequestUrl: string;
+  body: string;
+  project?: ProjectConfig;
+}
+
+export interface GitHubContextualReply {
+  id: string;
+  kind: "review-thread" | "conversation";
+  threadId?: string;
+}
+
 export type RequiredCheckStatus =
   | "missing"
   | "queued"
@@ -909,6 +932,30 @@ function parsePullRequestUrl(value: string): string {
   return url;
 }
 
+function getPullRequestNumberForRepository(
+  pullRequestUrl: string,
+  repository: string,
+): number {
+  const parsed = new URL(parsePullRequestUrl(pullRequestUrl));
+  const [, owner, name, , number] = parsed.pathname.split("/");
+  if (
+    owner === undefined ||
+    name === undefined ||
+    `${owner}/${name}` !== repository ||
+    number === undefined ||
+    !/^\d+$/u.test(number)
+  ) {
+    throw new Error(
+      "Pull request URL does not belong to the requested repository",
+    );
+  }
+  const parsedNumber = Number(number);
+  if (!Number.isSafeInteger(parsedNumber) || parsedNumber < 1) {
+    throw new Error("Pull request URL contains an invalid number");
+  }
+  return parsedNumber;
+}
+
 const defaultRunGitHubCommand: RunGitHubCommand = async (
   cwd,
   args,
@@ -1334,6 +1381,125 @@ export class GitHubClient {
           : {}),
       };
     });
+  }
+
+  async replyToReviewThread(
+    options: CreateReviewThreadReplyOptions,
+  ): Promise<GitHubContextualReply> {
+    const pullRequestNumber = getPullRequestNumberForRepository(
+      options.pullRequestUrl,
+      options.repository,
+    );
+    if (
+      options.threadId.trim().length === 0 ||
+      options.body.trim().length === 0
+    ) {
+      throw new Error(
+        "Review-thread reply requires a thread ID and nonblank body",
+      );
+    }
+    const credential = await this.resolveCredential(options.project);
+    const threads = await this.findReviewThreads(
+      {
+        cwd: options.cwd,
+        repository: options.repository,
+        headBranch: "reply-validation-only",
+        ...(options.project === undefined ? {} : { project: options.project }),
+      },
+      pullRequestNumber,
+      credential,
+    );
+    if (!threads.some((thread) => thread.id === options.threadId)) {
+      throw new Error(
+        "Review thread does not belong to the requested pull request",
+      );
+    }
+    const query = `mutation($threadId: ID!, $body: String!) { addPullRequestReviewThreadReply(input: {pullRequestReviewThreadId: $threadId, body: $body}) { comment { databaseId } } }`;
+    const output = await this.run(
+      options.cwd,
+      [
+        "api",
+        "graphql",
+        "-f",
+        `query=${query}`,
+        "-F",
+        `threadId=${options.threadId}`,
+        "-F",
+        `body=${options.body}`,
+      ],
+      credential,
+    );
+    let response: unknown;
+    try {
+      response = JSON.parse(output) as unknown;
+    } catch (error) {
+      throw new Error("GitHub CLI returned an invalid review-thread reply", {
+        cause: error,
+      });
+    }
+    if (
+      !isRecord(response) ||
+      (response.errors !== undefined &&
+        (!Array.isArray(response.errors) || response.errors.length > 0)) ||
+      !isRecord(response.data)
+    ) {
+      throw new Error("GitHub CLI returned an invalid review-thread reply");
+    }
+    const mutation = response.data.addPullRequestReviewThreadReply;
+    const comment = isRecord(mutation) ? mutation.comment : undefined;
+    const id = isRecord(comment) ? comment.databaseId : undefined;
+    if (typeof id !== "number" || !Number.isSafeInteger(id) || id <= 0) {
+      throw new Error("GitHub CLI returned a malformed review-thread reply ID");
+    }
+    return {
+      id: String(id),
+      kind: "review-thread",
+      threadId: options.threadId,
+    };
+  }
+
+  async replyToConversationComment(
+    options: CreateConversationReplyOptions,
+  ): Promise<GitHubContextualReply> {
+    const number = getPullRequestNumberForRepository(
+      options.pullRequestUrl,
+      options.repository,
+    );
+    if (options.body.trim().length === 0) {
+      throw new Error("Conversation reply body must not be blank");
+    }
+    const credential = await this.resolveCredential(options.project);
+    const output = await this.run(
+      options.cwd,
+      [
+        "api",
+        "--method",
+        "POST",
+        `repos/${options.repository}/issues/${number}/comments`,
+        "-f",
+        `body=${options.body}`,
+      ],
+      credential,
+    );
+    let response: unknown;
+    try {
+      response = JSON.parse(output) as unknown;
+    } catch (error) {
+      throw new Error("GitHub CLI returned an invalid conversation reply", {
+        cause: error,
+      });
+    }
+    if (
+      !isRecord(response) ||
+      typeof response.id !== "number" ||
+      !Number.isSafeInteger(response.id) ||
+      response.id <= 0 ||
+      typeof response.body !== "string" ||
+      response.body !== options.body
+    ) {
+      throw new Error("GitHub CLI returned a malformed conversation reply");
+    }
+    return { id: String(response.id), kind: "conversation" };
   }
 
   private async findReviewThreads(

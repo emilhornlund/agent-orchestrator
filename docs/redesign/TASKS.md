@@ -252,7 +252,7 @@ to inspect first, not permission to invent unimplemented helpers.
   - **Verify locally:** Tests fail verification when an item is omitted, a change is unverified, a disposition is invented, or prior evidence belongs to an earlier head.
   - **Out of scope:** Do not mark GitHub threads resolved or claim reviewer approval.
 
-- [ ] **T36 — Add GitHub contextual reply operations**
+- [x] **T36 — Add GitHub contextual reply operations**
   - **Depends on:** T30–T31.
   - **Implement:** Add typed GitHub client methods to reply to an inline review thread or top-level PR conversation comment using its exact known ID. Return the created reply ID and validate mismatched PR ownership.
   - **Verify locally:** Mock CLI/API tests verify correct endpoint/thread, malformed ID rejection, permission errors, and response parsing.
