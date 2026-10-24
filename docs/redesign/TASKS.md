@@ -134,7 +134,7 @@ to inspect first, not permission to invent unimplemented helpers.
   - **Verify locally:** Mock-command tests prove zero passes, nonzero fails, timeout/abort fail, and absent command rejects before implementation.
   - **Out of scope:** Do not change legacy delegated-validation behavior or introduce coverage yet.
 
-- [ ] **T17 — Implement deterministic source snapshot identity**
+- [x] **T17 — Implement deterministic source snapshot identity**
   - **Depends on:** T16.
   - **Implement:** Build a stable content identity for the current implementation including tracked, staged, deleted, renamed, and untracked file contents. Bind each quality result to this identity or to an exact committed SHA.
   - **Verify locally:** Local temporary-Git-repository tests prove that an edit, deletion, added untracked file, or rebase invalidates earlier evidence while unchanged content preserves identity.

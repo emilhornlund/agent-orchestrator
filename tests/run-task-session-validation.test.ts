@@ -77,6 +77,10 @@ function createFixture(
   });
 
   const getCurrentBranch = vi.fn(async () => "agent/card-one");
+  const getHeadSha = vi.fn(async () => "a".repeat(40));
+  const getHeadTrackedFiles = vi.fn(async () => [] as string[]);
+  const getIndexEntries = vi.fn(async () => "");
+  const getUntrackedFiles = vi.fn(async () => [] as string[]);
   const runCommand = vi.fn<RunCommand>().mockResolvedValue({ exitCode: 0 });
 
   return {
@@ -86,7 +90,20 @@ function createFixture(
     getCurrentBranch,
     runCommand,
     commands: new CommandRunner(runCommand),
-    git: { getCurrentBranch } as Pick<GitClient, "getCurrentBranch">,
+    git: {
+      getCurrentBranch,
+      getHeadSha,
+      getHeadTrackedFiles,
+      getIndexEntries,
+      getUntrackedFiles,
+    } as Pick<
+      GitClient,
+      | "getCurrentBranch"
+      | "getHeadSha"
+      | "getHeadTrackedFiles"
+      | "getIndexEntries"
+      | "getUntrackedFiles"
+    >,
   };
 }
 
@@ -142,6 +159,7 @@ describe("runTaskSessionValidation", () => {
       timedOut: false,
       aborted: false,
       diagnostic: "all tests passed",
+      contentIdentity: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
     });
     expect(Date.parse(result.completedAt)).toBeGreaterThanOrEqual(
       Date.parse(result.startedAt),

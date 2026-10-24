@@ -1,0 +1,174 @@
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { afterEach, describe, expect, it } from "vitest";
+
+import { GitClient } from "../src/git/git-client.js";
+import { getTaskSessionSourceSnapshotIdentity } from "../src/task-session/source-snapshot.js";
+
+let temporaryRoot: string | undefined;
+
+afterEach(() => {
+  if (temporaryRoot !== undefined) {
+    fs.rmSync(temporaryRoot, { recursive: true, force: true });
+    temporaryRoot = undefined;
+  }
+});
+
+function createRepository(): {
+  repositoryPath: string;
+  runGit: (...args: string[]) => void;
+} {
+  temporaryRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), "agent-orchestrator-source-snapshot-"),
+  );
+  const repositoryPath = path.join(temporaryRoot, "repository");
+  fs.mkdirSync(repositoryPath);
+  const runGit = (...args: string[]) => {
+    execFileSync("git", args, {
+      cwd: repositoryPath,
+      encoding: "utf8",
+      stdio: "pipe",
+    });
+  };
+
+  runGit("init");
+  runGit("config", "user.name", "Snapshot Test");
+  runGit("config", "user.email", "snapshot@example.com");
+  runGit("checkout", "-b", "main");
+  fs.writeFileSync(path.join(repositoryPath, "tracked.txt"), "base content\n");
+  runGit("add", "tracked.txt");
+  runGit("commit", "-m", "base");
+
+  return { repositoryPath, runGit };
+}
+
+describe("getTaskSessionSourceSnapshotIdentity", () => {
+  it("is deterministic for unchanged source and changes for a tracked edit or deletion", async () => {
+    const { repositoryPath } = createRepository();
+    const git = new GitClient();
+    const trackedPath = path.join(repositoryPath, "tracked.txt");
+    const baseIdentity = await getTaskSessionSourceSnapshotIdentity(
+      git,
+      repositoryPath,
+    );
+
+    expect(
+      await getTaskSessionSourceSnapshotIdentity(git, repositoryPath),
+    ).toBe(baseIdentity);
+
+    fs.writeFileSync(trackedPath, "edited content\n");
+    expect(
+      await getTaskSessionSourceSnapshotIdentity(git, repositoryPath),
+    ).not.toBe(baseIdentity);
+
+    fs.writeFileSync(trackedPath, "base content\n");
+    expect(
+      await getTaskSessionSourceSnapshotIdentity(git, repositoryPath),
+    ).toBe(baseIdentity);
+
+    fs.unlinkSync(trackedPath);
+    expect(
+      await getTaskSessionSourceSnapshotIdentity(git, repositoryPath),
+    ).not.toBe(baseIdentity);
+  });
+
+  it("includes staged index content even when the working copy matches HEAD", async () => {
+    const { repositoryPath, runGit } = createRepository();
+    const git = new GitClient();
+    const trackedPath = path.join(repositoryPath, "tracked.txt");
+    const baseIdentity = await getTaskSessionSourceSnapshotIdentity(
+      git,
+      repositoryPath,
+    );
+
+    fs.writeFileSync(trackedPath, "staged content\n");
+    runGit("add", "tracked.txt");
+    fs.writeFileSync(trackedPath, "base content\n");
+
+    const stagedIdentity = await getTaskSessionSourceSnapshotIdentity(
+      git,
+      repositoryPath,
+    );
+    expect(stagedIdentity).not.toBe(baseIdentity);
+
+    runGit("reset", "--quiet", "HEAD");
+    expect(
+      await getTaskSessionSourceSnapshotIdentity(git, repositoryPath),
+    ).toBe(baseIdentity);
+  });
+
+  it("includes staged renames and both contents of staged/unstaged paths", async () => {
+    const { repositoryPath, runGit } = createRepository();
+    const git = new GitClient();
+    const baseIdentity = await getTaskSessionSourceSnapshotIdentity(
+      git,
+      repositoryPath,
+    );
+
+    runGit("mv", "tracked.txt", "renamed.txt");
+    expect(
+      await getTaskSessionSourceSnapshotIdentity(git, repositoryPath),
+    ).not.toBe(baseIdentity);
+
+    runGit("reset", "--quiet", "HEAD");
+    fs.renameSync(
+      path.join(repositoryPath, "renamed.txt"),
+      path.join(repositoryPath, "working-rename.txt"),
+    );
+    expect(
+      await getTaskSessionSourceSnapshotIdentity(git, repositoryPath),
+    ).not.toBe(baseIdentity);
+  });
+
+  it("includes untracked file paths and contents", async () => {
+    const { repositoryPath } = createRepository();
+    const git = new GitClient();
+    const baseIdentity = await getTaskSessionSourceSnapshotIdentity(
+      git,
+      repositoryPath,
+    );
+    const untrackedPath = path.join(repositoryPath, "new-file.txt");
+
+    fs.writeFileSync(untrackedPath, "untracked contents\n");
+    const firstUntrackedIdentity = await getTaskSessionSourceSnapshotIdentity(
+      git,
+      repositoryPath,
+    );
+    expect(firstUntrackedIdentity).not.toBe(baseIdentity);
+
+    fs.writeFileSync(untrackedPath, "changed untracked contents\n");
+    expect(
+      await getTaskSessionSourceSnapshotIdentity(git, repositoryPath),
+    ).not.toBe(firstUntrackedIdentity);
+  });
+
+  it("invalidates a snapshot after a local rebase", async () => {
+    const { repositoryPath, runGit } = createRepository();
+    const git = new GitClient();
+    runGit("checkout", "-b", "agent/card-one");
+    fs.writeFileSync(
+      path.join(repositoryPath, "tracked.txt"),
+      "feature change\n",
+    );
+    runGit("add", "tracked.txt");
+    runGit("commit", "-m", "feature change");
+    const beforeRebase = await getTaskSessionSourceSnapshotIdentity(
+      git,
+      repositoryPath,
+    );
+
+    runGit("checkout", "main");
+    fs.writeFileSync(path.join(repositoryPath, "upstream.txt"), "upstream\n");
+    runGit("add", "upstream.txt");
+    runGit("commit", "-m", "upstream change");
+    runGit("checkout", "agent/card-one");
+    runGit("rebase", "main");
+
+    expect(
+      await getTaskSessionSourceSnapshotIdentity(git, repositoryPath),
+    ).not.toBe(beforeRebase);
+  });
+});
