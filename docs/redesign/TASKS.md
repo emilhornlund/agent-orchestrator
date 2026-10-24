@@ -52,7 +52,7 @@ to inspect first, not permission to invent unimplemented helpers.
   - **Verify locally:** Unit tests round-trip valid JSON and reject malformed IDs, unknown versions, invalid phase values, and impossible field combinations.
   - **Out of scope:** No filesystem operations or calls to outside services.
 
-- [ ] **T04 — Add atomic task-record storage**
+- [x] **T04 — Add atomic task-record storage**
   - **Depends on:** T03.
   - **Implement:** Create a file-backed task execution store rooted outside repositories/worktrees, using existing safe path resolution patterns. Implement create/read/compare-and-swap update with atomic temporary-file replacement and size limits.
   - **Verify locally:** Local temporary-directory tests prove successful round-trips, stale revision rejection, malformed-file preservation, path traversal protection, and write-failure safety.
