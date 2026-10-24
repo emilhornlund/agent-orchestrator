@@ -468,6 +468,13 @@ are examples to inspect, not permission to invent unimplemented helpers.
   - **Verify locally:** Configuration examples parse successfully, documented defaults match code, no unsupported legacy settings remain, and yarn validate passes.
   - **Out of scope:** Do not delete the temporary redesign documents or executor agent yet.
 
+- [x] **T58A — Align operator docs with removed review-maintenance state**
+  - **Depends on:** T52A, T58.
+  - **Corrective rationale:** T52A removed the retired Human Review branch-maintenance workflow and its persisted state after the first T58 documentation pass.
+  - **Implement:** Remove the final review-maintenance state/branch-maintenance references from permanent operations guidance and retain only the still-supported initial-publication conflict workflow.
+  - **Verify locally:** Permanent docs contain no unsupported maintenance-state claims; the config example parses and full validation passes.
+  - **Out of scope:** Do not alter production behavior or remove prepared-conflict recovery.
+
 - [ ] **T59 — Perform final unified lifecycle acceptance audit**
   - **Depends on:** T46–T58.
   - **Implement:** Audit actual production entry points and integration tests for refinement, implementation, session continuity, validation, coverage, independent review, publication, complete CI observation and repair, human feedback, contextual replies, merged/closed PR reconciliation, auto-merge, and restart recovery. Correct any confirmed blocking defect through a narrowly scoped corrective task before completing this audit.
