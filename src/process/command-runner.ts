@@ -8,6 +8,7 @@ import {
   createSecretRedactor,
   redactSecrets,
 } from "../security/redact-secrets.js";
+import { presentExternalDiagnostic } from "../security/bounded-diagnostic.js";
 
 const commandTerminationGraceMilliseconds = 5_000;
 
@@ -38,6 +39,7 @@ export interface CommandRunOptions {
   command: string;
   signal?: AbortSignal;
   timeoutMilliseconds?: number;
+  captureOutput?: boolean;
   environment?: Record<string, string>;
   secretValues?: readonly string[];
   sessionLogPath?: string;
@@ -46,6 +48,8 @@ export interface CommandRunOptions {
 
 export interface CommandRunResult {
   exitCode: number;
+  output?: string;
+  errorOutput?: string;
 }
 
 export type RunCommand = (
@@ -71,6 +75,7 @@ const defaultRunCommand: RunCommand = async ({
   command,
   signal,
   timeoutMilliseconds,
+  captureOutput,
   environment,
   secretValues,
   sessionLogPath,
@@ -111,6 +116,8 @@ const defaultRunCommand: RunCommand = async ({
     const stdoutRedactor = createSecretRedactor(secretValues);
     const stderrRedactor = createSecretRedactor(secretValues);
     let outputFlushed = false;
+    let capturedOutput: string | undefined;
+    let capturedErrorOutput: string | undefined;
 
     function writeOutput(text: string, stream: NodeJS.WriteStream): void {
       if (text.length === 0) {
@@ -130,8 +137,15 @@ const defaultRunCommand: RunCommand = async ({
       }
 
       outputFlushed = true;
-      writeOutput(stdoutRedactor.flush(), process.stdout);
-      writeOutput(stderrRedactor.flush(), process.stderr);
+      const stdout = stdoutRedactor.flush();
+      const stderr = stderrRedactor.flush();
+      writeOutput(stdout, process.stdout);
+      writeOutput(stderr, process.stderr);
+
+      if (captureOutput === true) {
+        capturedOutput = presentExternalDiagnostic(stdout, secretValues);
+        capturedErrorOutput = presentExternalDiagnostic(stderr, secretValues);
+      }
     }
 
     function settle(): void {
@@ -236,6 +250,12 @@ const defaultRunCommand: RunCommand = async ({
 
       resolve({
         exitCode: code ?? 1,
+        ...(captureOutput === true
+          ? {
+              output: capturedOutput ?? "",
+              errorOutput: capturedErrorOutput ?? "",
+            }
+          : {}),
       });
     });
   });

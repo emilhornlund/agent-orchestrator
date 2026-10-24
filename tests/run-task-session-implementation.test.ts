@@ -81,9 +81,11 @@ function createFixture(options: { includePlan?: boolean } = {}) {
 
   const project = {
     id: projectId,
+    executionMode: "task-session",
     repository: {
       path: repositoryPath,
       worktreeRoot,
+      validationCommand: "yarn validate",
     },
   } as ProjectConfig;
   const taskRecordStore = new TaskExecutionStore(storageRoot, project);
@@ -144,13 +146,14 @@ function createFixture(options: { includePlan?: boolean } = {}) {
 function runImplementation(
   fixture: ReturnType<typeof createFixture>,
   worktreePath = fixture.worktreePath,
+  project = fixture.project,
 ) {
   return runTaskSessionImplementation({
     taskRecordStore: fixture.taskRecordStore,
     planStore: fixture.planStore,
     git: fixture.git,
     openCode: fixture.openCode,
-    project: fixture.project,
+    project,
     card,
     expectedBranch,
     operationKey,
@@ -165,6 +168,28 @@ function runImplementation(
 }
 
 describe("runTaskSessionImplementation", () => {
+  it("rejects a missing validation command before invoking implementation", async () => {
+    const fixture = createFixture();
+    const projectWithoutValidation = {
+      ...fixture.project,
+      repository: {
+        path: fixture.project.repository.path,
+        worktreeRoot: fixture.project.repository.worktreeRoot,
+      },
+    } as ProjectConfig;
+
+    await expect(
+      runImplementation(
+        fixture,
+        fixture.worktreePath,
+        projectWithoutValidation,
+      ),
+    ).rejects.toThrow("nonempty repository.validationCommand");
+    expect(fixture.getCurrentBranch).not.toHaveBeenCalled();
+    expect(fixture.runOpenCode).not.toHaveBeenCalled();
+    expect(fixture.taskRecordStore.read(card.id)?.phase).toBe("planning");
+  });
+
   it("runs the verified plan in the owned worktree through the bound primary session", async () => {
     const fixture = createFixture();
     const result = await runImplementation(fixture);

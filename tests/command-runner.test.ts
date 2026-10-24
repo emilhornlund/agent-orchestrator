@@ -141,6 +141,32 @@ describe("CommandRunner", () => {
     expect(sessionLog).not.toContain("token-a");
   });
 
+  it("returns bounded redacted stdout and stderr only when capture is requested", async () => {
+    const child = createFakeChild();
+    const longOutput = `${"output token-a ".repeat(200)}\n`;
+
+    spawnMock.mockImplementationOnce(() => {
+      queueMicrotask(() => {
+        child.stdout.emit("data", Buffer.from(longOutput));
+        child.stderr.emit("data", Buffer.from("warning token-a\n"));
+        child.emit("close", 0);
+      });
+      return child;
+    });
+
+    const result = await new CommandRunner().run({
+      cwd: "/worktree",
+      command: "yarn validate",
+      captureOutput: true,
+      secretValues: ["token-a"],
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.output?.length).toBeLessThanOrEqual(2_000);
+    expect(result.errorOutput).toContain("warning [REDACTED]");
+    expect(result.output).not.toContain("token-a");
+  });
+
   it("passes operation credentials to the child and redacts command output", async () => {
     const child = createFakeChild();
     const stdoutWrite = vi

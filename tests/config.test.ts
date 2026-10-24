@@ -233,6 +233,22 @@ describe("parseConfig", () => {
     expect(() => parseConfig(raw)).toThrow("projects.0.executionMode");
   });
 
+  it("requires a repository validation command for task-session mode", () => {
+    const raw = validConfig
+      .replace('      validationCommand: "yarn validate"\n', "")
+      .replace(
+        '  - id: "project-one"',
+        '  - id: "project-one"\n    executionMode: "task-session"',
+      );
+
+    expect(() => parseConfig(raw)).toThrow(
+      "projects.0.repository.validationCommand",
+    );
+    expect(() => parseConfig(raw)).toThrow(
+      "Required when executionMode is task-session",
+    );
+  });
+
   it("accepts and normalizes a complete GitHub App configuration", () => {
     const config = parseConfig(
       configWithGithubApp(["appId", "installationId", "privateKeyPath"]),
