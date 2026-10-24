@@ -31,12 +31,6 @@ import {
   type PreparedConflictHandoff,
 } from "./prepared-conflict-state.js";
 import {
-  matchesReviewMaintenanceRepositoryState,
-  readReviewMaintenanceState,
-  writeReviewMaintenanceState,
-  type ReviewMaintenanceState,
-} from "./review-maintenance-state.js";
-import {
   WorkflowError,
   type WorkflowFailureCategory,
 } from "./workflow-error.js";
@@ -116,70 +110,6 @@ function throwIfSignalAborted(signal: AbortSignal): void {
   }
 }
 
-function createRemediationMaintenanceState(
-  options: RemediatePreparedConflictOptions,
-  handoff: PreparedConflictHandoff,
-  headSha: string,
-  setupCompleted = options.project.repository.setupCommand === undefined,
-): ReviewMaintenanceState {
-  const setupCommand = options.project.repository.setupCommand;
-
-  return {
-    version: 1,
-    kind: "review-maintenance",
-    projectId: options.project.id,
-    cardId: options.card.id,
-    taskBranch: `agent/${options.card.id}`,
-    defaultBranch: options.project.repository.defaultBranch,
-    remoteTaskSha:
-      handoff.expectedRemoteTaskSha ?? handoff.trustedTaskCommitSha,
-    remoteDefaultSha: handoff.rebase.onto,
-    effectiveHeadSha: headSha,
-    ...(setupCommand === undefined ? {} : { setupCommand }),
-    setupCompleted,
-  };
-}
-
-async function verifyAuthoritativeRemoteTaskSha(
-  options: RemediatePreparedConflictOptions,
-  worktreePath: string,
-  branch: string,
-  expectedRemoteTaskSha: string,
-  operation: string,
-): Promise<void> {
-  let remoteTaskSha: string | null;
-
-  try {
-    remoteTaskSha = await options.git.getRemoteBranchSha(
-      worktreePath,
-      "origin",
-      branch,
-      options.project,
-    );
-  } catch (error) {
-    throw fail(options, "Git/GitHub", operation, error);
-  }
-
-  if (
-    remoteTaskSha === null ||
-    !isGitSha(remoteTaskSha) ||
-    remoteTaskSha !== expectedRemoteTaskSha
-  ) {
-    throw fail(
-      options,
-      "Git/GitHub",
-      operation,
-      new Error(
-        remoteTaskSha === null
-          ? "The remote task branch is missing"
-          : !isGitSha(remoteTaskSha)
-            ? "Git returned a malformed authoritative remote SHA"
-            : `The remote task branch changed from ${expectedRemoteTaskSha} to ${remoteTaskSha}`,
-      ),
-    );
-  }
-}
-
 export async function remediatePreparedConflict(
   options: RemediatePreparedConflictOptions,
 ): Promise<void> {
@@ -236,8 +166,6 @@ export async function remediatePreparedConflict(
       persistedHandoff.trustedTaskCommitSha !==
         options.handoff.trustedTaskCommitSha ||
       persistedHandoff.rebaseTargetSha !== options.handoff.rebaseTargetSha ||
-      persistedHandoff.expectedRemoteTaskSha !==
-        options.handoff.expectedRemoteTaskSha ||
       persistedHandoff.preparedAt !== options.handoff.preparedAt
     ) {
       throw new Error("Prepared conflict handoff changed before remediation");
@@ -266,10 +194,7 @@ export async function remediatePreparedConflict(
       );
     }
 
-    if (
-      persistedHandoff.origin === "initial-publication" &&
-      options.project.repository.setupCommand !== undefined
-    ) {
+    if (options.project.repository.setupCommand !== undefined) {
       if (options.commands === undefined) {
         throw fail(
           options,
@@ -434,183 +359,45 @@ export async function remediatePreparedConflict(
       );
     }
 
-    if (persistedHandoff.origin === "initial-publication") {
-      const finalStatus = await options.git.getStatus(worktree.path);
+    const finalStatus = await options.git.getStatus(worktree.path);
 
-      if (finalStatus.trim().length > 0) {
-        throw fail(
-          options,
-          "Git/GitHub",
-          "verifying publication state",
-          new Error(
-            `The remediated worktree has uncommitted changes:\n${finalStatus}`,
-          ),
-        );
-      }
-
-      try {
-        writeTrustedCommitState(options.project, options.card.id, {
-          version: 1,
-          kind: "trusted-commit",
-          projectId: options.project.id,
-          cardId: options.card.id,
-          taskBranch: branch,
-          defaultBranch: options.project.repository.defaultBranch,
-          commitSha: remediatedHead,
-        });
-      } catch (error) {
-        throw fail(
-          options,
-          "Git/GitHub",
-          "recording rebased trusted commit",
-          error,
-        );
-      }
-
-      clearPreparedConflict(options.project, options.card.id);
-      return;
-    }
-
-    const expectedRemoteTaskSha = persistedHandoff.expectedRemoteTaskSha;
-
-    if (expectedRemoteTaskSha === undefined) {
+    if (finalStatus.trim().length > 0) {
       throw fail(
         options,
         "Git/GitHub",
-        "authoritative remote SHA verification",
-        new Error("The Human Review prepared conflict has no remote task SHA"),
+        "verifying publication state",
+        new Error(
+          `The remediated worktree has uncommitted changes:\n${finalStatus}`,
+        ),
       );
     }
 
-    const setupCommand = options.project.repository.setupCommand;
-    let recordedState: ReviewMaintenanceState | null;
-
     try {
-      recordedState = readReviewMaintenanceState(
-        options.project,
-        options.card.id,
-      );
+      writeTrustedCommitState(options.project, options.card.id, {
+        version: 1,
+        kind: "trusted-commit",
+        projectId: options.project.id,
+        cardId: options.card.id,
+        taskBranch: branch,
+        defaultBranch: options.project.repository.defaultBranch,
+        commitSha: remediatedHead,
+      });
     } catch (error) {
       throw fail(
         options,
         "Git/GitHub",
-        "review maintenance state lookup",
+        "recording rebased trusted commit",
         error,
       );
     }
 
-    await verifyAuthoritativeRemoteTaskSha(
-      options,
-      worktree.path,
-      branch,
-      expectedRemoteTaskSha,
-      "authoritative remote SHA verification before setup reuse",
-    );
-
-    const stateMatches =
-      recordedState !== null &&
-      matchesReviewMaintenanceRepositoryState(recordedState, {
-        remoteTaskSha: expectedRemoteTaskSha,
-        remoteDefaultSha: persistedHandoff.rebase.onto,
-        effectiveHeadSha: remediatedHead,
-        ...(setupCommand === undefined ? {} : { setupCommand }),
-      });
-
-    if (
-      setupCommand !== undefined &&
-      (!stateMatches || recordedState?.setupCompleted !== true)
-    ) {
-      if (options.commands === undefined) {
-        throw fail(
-          options,
-          "Setup",
-          "repository setup",
-          new Error("A command runner is required for configured setup"),
-        );
-      }
-
-      try {
-        const setup = await runRepositorySetup(options.commands, {
-          cwd: worktree.path,
-          command: setupCommand,
-          timeoutMilliseconds: options.project.opencode.timeoutMinutes * 60_000,
-          signal: options.signal,
-          sessionLogPath,
-          sessionLabel: "Repository setup for Human Review",
-        });
-
-        if (setup.exitCode !== 0) {
-          throw new Error(
-            `Repository setup exited with code ${setup.exitCode}`,
-          );
-        }
-      } catch (error) {
-        throwIfAborted(error);
-        throw fail(options, "Setup", "repository setup", error);
-      }
-
-      try {
-        writeReviewMaintenanceState(
-          options.project,
-          options.card.id,
-          createRemediationMaintenanceState(
-            options,
-            persistedHandoff,
-            remediatedHead,
-            true,
-          ),
-        );
-        recordedState = readReviewMaintenanceState(
-          options.project,
-          options.card.id,
-        );
-      } catch (error) {
-        throw fail(
-          options,
-          "Git/GitHub",
-          "recording successful repository setup",
-          error,
-        );
-      }
-    }
-
-    throwIfSignalAborted(options.signal);
-
-    await verifyAuthoritativeRemoteTaskSha(
-      options,
-      worktree.path,
-      branch,
-      expectedRemoteTaskSha,
-      "authoritative remote SHA verification",
-    );
-
-    throwIfSignalAborted(options.signal);
-
-    await setStatus(
-      "updating-remote",
-      "updating remote task branch after conflict remediation",
-    );
-
-    await options.git.pushWithLease(
-      worktree.path,
-      "origin",
-      branch,
-      expectedRemoteTaskSha,
-      options.project,
-    );
-
     try {
       await setStatus(null, "successful prepared conflict remediation", true);
     } catch (error) {
-      if (!(error instanceof PullRequestStatusPresentationError)) {
-        throw error;
-      }
-
       cardLog.warn(
-        `Housekeeping cleanup warning for project "${options.project.id}", card "${options.card.id}": could not remove the managed pull-request status from ${options.pullRequestUrl ?? "the existing pull request"}: ${getErrorMessage(error)}`,
+        `Could not clear the managed conflict status for ${options.pullRequestUrl ?? "the task PR"}: ${getErrorMessage(error)}`,
       );
     }
-
     clearPreparedConflict(options.project, options.card.id);
   } catch (error) {
     throwIfAborted(error);

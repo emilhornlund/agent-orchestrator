@@ -17,10 +17,11 @@ import {
   type PersistedReconciliationBlock,
 } from "../src/orchestrator/reconciliation-block-storage.js";
 import {
-  getReviewMaintenanceStatePath,
-  writeReviewMaintenanceState,
-  type ReviewMaintenanceState,
-} from "../src/orchestrator/review-maintenance-state.js";
+  getRejectedCommitStatePath,
+  getTrustedCommitStatePath,
+  writeRejectedCommitState,
+  writeTrustedCommitState,
+} from "../src/orchestrator/trusted-commit-state.js";
 import { cleanupPersistedStateTemporaryFiles } from "../src/orchestrator/persisted-state-temporary-files.js";
 import { logger } from "../src/logging/logger.js";
 
@@ -73,7 +74,6 @@ function createProject(root: string): ProjectConfig {
 }
 
 function createStateValues(project: ProjectConfig): {
-  review: ReviewMaintenanceState;
   rebase: GitRebaseState;
   block: PersistedReconciliationBlock;
 } {
@@ -81,18 +81,6 @@ function createStateValues(project: ProjectConfig): {
   const defaultSha = "b".repeat(40);
 
   return {
-    review: {
-      version: 1,
-      kind: "review-maintenance",
-      projectId: project.id,
-      cardId: "card-one",
-      taskBranch: "agent/card-one",
-      defaultBranch: project.repository.defaultBranch,
-      remoteTaskSha: taskSha,
-      remoteDefaultSha: defaultSha,
-      effectiveHeadSha: taskSha,
-      setupCompleted: true,
-    },
     rebase: {
       active: true,
       backend: "merge",
@@ -120,9 +108,10 @@ function createStateValues(project: ProjectConfig): {
 function createFixture(): {
   project: ProjectConfig;
   contextRoot: string;
-  reviewPath: string;
   preparedPath: string;
   blockPath: string;
+  trustedPath: string;
+  rejectedPath: string;
 } {
   temporaryRoot = fs.mkdtempSync(
     path.join(os.tmpdir(), "agent-orchestrator-state-cleanup-"),
@@ -132,53 +121,75 @@ function createFixture(): {
   const values = createStateValues(project);
 
   fs.mkdirSync(project.repository.path, { recursive: true });
-  writeReviewMaintenanceState(project, values.review.cardId, values.review);
-  writePreparedConflict(
-    project,
-    "card-two",
-    values.review.remoteTaskSha,
-    ["src/file.ts"],
-    values.rebase,
-  );
+  writePreparedConflict(project, "card-two", ["src/file.ts"], values.rebase, {
+    origin: "initial-publication",
+    trustedTaskCommitSha: values.rebase.originalHead,
+    rebaseTargetSha: values.rebase.onto,
+  });
+  writeTrustedCommitState(project, "card-one", {
+    version: 1,
+    kind: "trusted-commit",
+    projectId: project.id,
+    cardId: "card-one",
+    taskBranch: "agent/card-one",
+    defaultBranch: project.repository.defaultBranch,
+    commitSha: "a".repeat(40),
+  });
+  writeRejectedCommitState(project, "card-one", {
+    version: 1,
+    kind: "rejected-commit",
+    projectId: project.id,
+    cardId: "card-one",
+    taskBranch: "agent/card-one",
+    defaultBranch: project.repository.defaultBranch,
+    commitSha: "c".repeat(40),
+  });
   writeReconciliationBlock(contextRoot, values.block);
 
   return {
     project,
     contextRoot,
-    reviewPath: getReviewMaintenanceStatePath(project, values.review.cardId),
     preparedPath: getPreparedConflictPath(project, "card-two"),
     blockPath: getReconciliationBlockPath(contextRoot, project.id),
+    trustedPath: getTrustedCommitStatePath(project, "card-one"),
+    rejectedPath: getRejectedCommitStatePath(project, "card-one"),
   };
 }
 
 describe("persisted state temporary-file cleanup", () => {
   it("retains authoritative state when no temporary files exist", () => {
     const fixture = createFixture();
-    const reviewContents = fs.readFileSync(fixture.reviewPath, "utf8");
     const preparedContents = fs.readFileSync(fixture.preparedPath, "utf8");
     const blockContents = fs.readFileSync(fixture.blockPath, "utf8");
+    const trustedContents = fs.readFileSync(fixture.trustedPath, "utf8");
+    const rejectedContents = fs.readFileSync(fixture.rejectedPath, "utf8");
 
     cleanupPersistedStateTemporaryFiles([fixture.project], fixture.contextRoot);
 
-    expect(fs.readFileSync(fixture.reviewPath, "utf8")).toBe(reviewContents);
     expect(fs.readFileSync(fixture.preparedPath, "utf8")).toBe(
       preparedContents,
     );
     expect(fs.readFileSync(fixture.blockPath, "utf8")).toBe(blockContents);
+    expect(fs.readFileSync(fixture.trustedPath, "utf8")).toBe(trustedContents);
+    expect(fs.readFileSync(fixture.rejectedPath, "utf8")).toBe(
+      rejectedContents,
+    );
   });
 
   it("removes stale temporary files for every persisted state store", () => {
     const fixture = createFixture();
-    const staleReviewPath = `${fixture.reviewPath}.${staleProcessId}.tmp`;
     const stalePreparedPath = `${fixture.preparedPath}.${staleProcessId}.tmp`;
+    const staleTrustedPath = `${fixture.trustedPath}.${staleProcessId}.tmp`;
+    const staleRejectedPath = `${fixture.rejectedPath}.${staleProcessId}.tmp`;
     const staleBlockPath = path.join(
       path.dirname(fixture.blockPath),
       `.${RECONCILIATION_BLOCK_FILENAME}.${staleProcessId}.interrupted`,
     );
 
     for (const filePath of [
-      staleReviewPath,
       stalePreparedPath,
+      staleTrustedPath,
+      staleRejectedPath,
       staleBlockPath,
     ]) {
       fs.writeFileSync(filePath, "stale", "utf8");
@@ -186,49 +197,54 @@ describe("persisted state temporary-file cleanup", () => {
 
     cleanupPersistedStateTemporaryFiles([fixture.project], fixture.contextRoot);
 
-    expect(fs.existsSync(staleReviewPath)).toBe(false);
     expect(fs.existsSync(stalePreparedPath)).toBe(false);
+    expect(fs.existsSync(staleTrustedPath)).toBe(false);
+    expect(fs.existsSync(staleRejectedPath)).toBe(false);
     expect(fs.existsSync(staleBlockPath)).toBe(false);
-    expect(fs.existsSync(fixture.reviewPath)).toBe(true);
     expect(fs.existsSync(fixture.preparedPath)).toBe(true);
     expect(fs.existsSync(fixture.blockPath)).toBe(true);
+    expect(fs.existsSync(fixture.trustedPath)).toBe(true);
+    expect(fs.existsSync(fixture.rejectedPath)).toBe(true);
   });
 
   it("retains malformed authoritative state while removing its stale temporary file", () => {
     const fixture = createFixture();
-    const staleReviewPath = `${fixture.reviewPath}.${staleProcessId}.tmp`;
+    const stalePreparedPath = `${fixture.preparedPath}.${staleProcessId}.tmp`;
 
-    fs.writeFileSync(fixture.reviewPath, "{", "utf8");
-    fs.writeFileSync(staleReviewPath, "stale", "utf8");
+    fs.writeFileSync(fixture.preparedPath, "{", "utf8");
+    fs.writeFileSync(stalePreparedPath, "stale", "utf8");
 
     cleanupPersistedStateTemporaryFiles([fixture.project], fixture.contextRoot);
 
-    expect(fs.readFileSync(fixture.reviewPath, "utf8")).toBe("{");
-    expect(fs.existsSync(staleReviewPath)).toBe(false);
+    expect(fs.readFileSync(fixture.preparedPath, "utf8")).toBe("{");
+    expect(fs.existsSync(stalePreparedPath)).toBe(false);
   });
 
   it("retains active-writer files, unrelated files, and non-regular entries", () => {
     const fixture = createFixture();
-    const activeReviewPath = `${fixture.reviewPath}.${process.pid}.tmp`;
+    const activePreparedPath = `${fixture.preparedPath}.${process.pid}.tmp`;
     const activeBlockPath = path.join(
       path.dirname(fixture.blockPath),
       `.${RECONCILIATION_BLOCK_FILENAME}.${process.pid}.active`,
     );
-    const unknownReviewPath = path.join(
-      path.dirname(fixture.reviewPath),
+    const unknownPreparedPath = path.join(
+      path.dirname(fixture.preparedPath),
       "notes.txt",
     );
     const nonMatchingBlockPath = path.join(
       path.dirname(fixture.blockPath),
       `.${RECONCILIATION_BLOCK_FILENAME}.${staleProcessId}`,
     );
-    const directoryCandidate = `${fixture.reviewPath}.other.${staleProcessId}.tmp`;
+    const directoryCandidate = path.join(
+      path.dirname(fixture.preparedPath),
+      `other.json.${staleProcessId}.tmp`,
+    );
     const symlinkCandidate = `${fixture.preparedPath}.${staleProcessId}.tmp`;
     const symlinkTarget = path.join(temporaryRoot!, "outside");
 
-    fs.writeFileSync(activeReviewPath, "active", "utf8");
+    fs.writeFileSync(activePreparedPath, "active", "utf8");
     fs.writeFileSync(activeBlockPath, "active", "utf8");
-    fs.writeFileSync(unknownReviewPath, "keep", "utf8");
+    fs.writeFileSync(unknownPreparedPath, "keep", "utf8");
     fs.writeFileSync(nonMatchingBlockPath, "keep", "utf8");
     fs.mkdirSync(directoryCandidate);
     fs.writeFileSync(symlinkTarget, "outside", "utf8");
@@ -237,9 +253,9 @@ describe("persisted state temporary-file cleanup", () => {
     cleanupPersistedStateTemporaryFiles([fixture.project], fixture.contextRoot);
 
     for (const filePath of [
-      activeReviewPath,
+      activePreparedPath,
       activeBlockPath,
-      unknownReviewPath,
+      unknownPreparedPath,
       nonMatchingBlockPath,
       directoryCandidate,
       symlinkCandidate,
@@ -265,8 +281,9 @@ describe("persisted state temporary-file cleanup", () => {
 
   it("reports removal failures and continues with other state stores", () => {
     const fixture = createFixture();
-    const staleReviewPath = `${fixture.reviewPath}.${staleProcessId}.tmp`;
     const stalePreparedPath = `${fixture.preparedPath}.${staleProcessId}.tmp`;
+    const staleTrustedPath = `${fixture.trustedPath}.${staleProcessId}.tmp`;
+    const staleRejectedPath = `${fixture.rejectedPath}.${staleProcessId}.tmp`;
     const staleBlockPath = path.join(
       path.dirname(fixture.blockPath),
       `.${RECONCILIATION_BLOCK_FILENAME}.${staleProcessId}.interrupted`,
@@ -275,15 +292,16 @@ describe("persisted state temporary-file cleanup", () => {
     const originalUnlink = fs.unlinkSync;
 
     for (const filePath of [
-      staleReviewPath,
       stalePreparedPath,
+      staleTrustedPath,
+      staleRejectedPath,
       staleBlockPath,
     ]) {
       fs.writeFileSync(filePath, "stale", "utf8");
     }
 
     const unlink = vi.spyOn(fs, "unlinkSync").mockImplementation((filePath) => {
-      if (filePath === staleReviewPath) {
+      if (filePath === stalePreparedPath) {
         throw new Error("permission denied");
       }
 
@@ -296,11 +314,12 @@ describe("persisted state temporary-file cleanup", () => {
         fixture.contextRoot,
       );
 
-      expect(fs.existsSync(staleReviewPath)).toBe(true);
-      expect(fs.existsSync(stalePreparedPath)).toBe(false);
+      expect(fs.existsSync(stalePreparedPath)).toBe(true);
+      expect(fs.existsSync(staleTrustedPath)).toBe(false);
+      expect(fs.existsSync(staleRejectedPath)).toBe(false);
       expect(fs.existsSync(staleBlockPath)).toBe(false);
       expect(report).toHaveBeenCalledWith(
-        expect.stringContaining(`${staleReviewPath}: permission denied`),
+        expect.stringContaining(`${stalePreparedPath}: permission denied`),
       );
     } finally {
       unlink.mockRestore();

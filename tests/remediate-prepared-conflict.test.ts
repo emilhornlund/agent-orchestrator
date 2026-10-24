@@ -95,7 +95,6 @@ function createHandoff(project: ProjectConfig): PreparedConflictHandoff {
   return writePreparedConflict(
     project,
     "card-1",
-    taskSha,
     ["src/player.ts", "src/physics.ts"],
     {
       active: true,
@@ -105,6 +104,11 @@ function createHandoff(project: ProjectConfig): PreparedConflictHandoff {
       originalHead: taskSha,
       currentStep: 2,
       totalSteps: 4,
+    },
+    {
+      origin: "initial-publication",
+      trustedTaskCommitSha: taskSha,
+      rebaseTargetSha: baseSha,
     },
   );
 }
@@ -117,8 +121,6 @@ interface ScenarioOptions {
   status?: string;
   headSha?: string;
   rebaseTargetIsAncestor?: boolean;
-  remoteSha?: string | null;
-  pushError?: Error;
   openCodeResult?: Partial<OpenCodeRunResult>;
 }
 
@@ -153,16 +155,9 @@ function createScenario(options: ScenarioOptions = {}) {
   const runCommand = vi.fn<RunCommand>().mockResolvedValue({
     exitCode: 0,
   });
-  const pushWithLease = vi.fn();
   const github = {
     updatePullRequestDescriptionStatus: vi.fn().mockResolvedValue(false),
   } as unknown as GitHubClient;
-
-  if (options.pushError === undefined) {
-    pushWithLease.mockResolvedValue(undefined);
-  } else {
-    pushWithLease.mockRejectedValue(options.pushError);
-  }
 
   const git = {
     getCurrentBranch: vi.fn().mockResolvedValue("agent/card-1"),
@@ -178,12 +173,6 @@ function createScenario(options: ScenarioOptions = {}) {
       .fn()
       .mockResolvedValue(options.rebaseTargetIsAncestor ?? true),
     getStatus: vi.fn().mockResolvedValue(options.status ?? ""),
-    getRemoteBranchSha: vi
-      .fn()
-      .mockResolvedValue(
-        options.remoteSha === undefined ? taskSha : options.remoteSha,
-      ),
-    pushWithLease,
   } as unknown as GitClient;
 
   return {
@@ -244,12 +233,31 @@ describe("buildConflictRemediationPrompt", () => {
 });
 
 describe("remediatePreparedConflict", () => {
+  it("fails closed on a retired Human Review maintenance handoff origin", () => {
+    const scenario = createScenario();
+    const handoffPath = getPreparedConflictPath(
+      scenario.project,
+      scenario.card.id,
+    );
+    const handoff = JSON.parse(fs.readFileSync(handoffPath, "utf8")) as Record<
+      string,
+      unknown
+    >;
+    handoff.origin = "human-review-maintenance";
+    handoff.expectedRemoteTaskSha = taskSha;
+    fs.writeFileSync(handoffPath, JSON.stringify(handoff), "utf8");
+
+    expect(() =>
+      readPreparedConflict(scenario.project, scenario.card.id),
+    ).toThrow("Prepared conflict handoff is invalid");
+    expect(fs.existsSync(handoffPath)).toBe(true);
+  });
+
   it("remediates initial-publication conflicts without a PR or remote task branch", async () => {
     const scenario = createScenario();
     const handoff = writePreparedConflict(
       scenario.project,
       scenario.card.id,
-      undefined,
       ["src/player.ts"],
       scenario.handoff.rebase,
       {
@@ -269,8 +277,6 @@ describe("remediatePreparedConflict", () => {
       signal: new AbortController().signal,
     });
 
-    expect(scenario.git.getRemoteBranchSha).not.toHaveBeenCalled();
-    expect(scenario.git.pushWithLease).not.toHaveBeenCalled();
     expect(readPreparedConflict(scenario.project, scenario.card.id)).toBeNull();
     expect(readTrustedCommitState(scenario.project, scenario.card.id)).toEqual(
       expect.objectContaining({ commitSha: changedSha }),
@@ -282,7 +288,6 @@ describe("remediatePreparedConflict", () => {
     const handoff = writePreparedConflict(
       scenario.project,
       scenario.card.id,
-      undefined,
       ["src/player.ts"],
       scenario.handoff.rebase,
       {
@@ -303,7 +308,6 @@ describe("remediatePreparedConflict", () => {
     });
 
     expect(scenario.runOpenCode).not.toHaveBeenCalled();
-    expect(scenario.git.getRemoteBranchSha).not.toHaveBeenCalled();
     expect(readPreparedConflict(scenario.project, scenario.card.id)).toBeNull();
     expect(readTrustedCommitState(scenario.project, scenario.card.id)).toEqual(
       expect.objectContaining({ commitSha: changedSha }),
@@ -347,7 +351,6 @@ describe("remediatePreparedConflict", () => {
     ).rejects.toThrow("managed status");
 
     expect(scenario.runOpenCode).not.toHaveBeenCalled();
-    expect(scenario.git.pushWithLease).not.toHaveBeenCalled();
     expect(
       readPreparedConflict(scenario.project, scenario.card.id),
     ).not.toBeNull();
@@ -383,13 +386,6 @@ describe("remediatePreparedConflict", () => {
         expect(prompt).toContain(line);
       }
       expect(scenario.runCommand).not.toHaveBeenCalled();
-      expect(scenario.git.pushWithLease).toHaveBeenCalledWith(
-        scenario.worktreePath,
-        "origin",
-        "agent/card-1",
-        taskSha,
-        scenario.project,
-      );
       expect(
         scenario.github.updatePullRequestDescriptionStatus,
       ).toHaveBeenNthCalledWith(
@@ -398,13 +394,10 @@ describe("remediatePreparedConflict", () => {
       );
       expect(
         scenario.github.updatePullRequestDescriptionStatus,
-      ).toHaveBeenNthCalledWith(
-        2,
-        expect.objectContaining({ status: "updating-remote" }),
-      );
+      ).toHaveBeenNthCalledWith(2, expect.objectContaining({ status: null }));
       expect(
-        scenario.github.updatePullRequestDescriptionStatus,
-      ).toHaveBeenNthCalledWith(3, expect.objectContaining({ status: null }));
+        readTrustedCommitState(scenario.project, scenario.card.id),
+      ).toEqual(expect.objectContaining({ commitSha: changedSha }));
       expect(
         readPreparedConflict(scenario.project, scenario.card.id),
       ).toBeNull();
@@ -423,7 +416,8 @@ describe("remediatePreparedConflict", () => {
     expect(scenario.runCommand).toHaveBeenCalledWith(
       expect.objectContaining({
         command: "yarn install",
-        sessionLabel: "Repository setup for Human Review",
+        sessionLabel:
+          "Repository setup for initial publication conflict remediation",
       }),
     );
     expect(scenario.runCommand).not.toHaveBeenCalledWith(
@@ -457,7 +451,9 @@ describe("remediatePreparedConflict", () => {
         }),
       ).resolves.toBeUndefined();
 
-      expect(scenario.git.pushWithLease).toHaveBeenCalledOnce();
+      expect(
+        readTrustedCommitState(scenario.project, scenario.card.id),
+      ).toEqual(expect.objectContaining({ commitSha: changedSha }));
       expect(
         readPreparedConflict(scenario.project, scenario.card.id),
       ).toBeNull();
@@ -479,12 +475,8 @@ describe("remediatePreparedConflict", () => {
 
     expect(scenario.runOpenCode).not.toHaveBeenCalled();
     expect(scenario.runCommand).not.toHaveBeenCalled();
-    expect(scenario.git.pushWithLease).toHaveBeenCalledWith(
-      scenario.worktreePath,
-      "origin",
-      "agent/card-1",
-      taskSha,
-      scenario.project,
+    expect(readTrustedCommitState(scenario.project, scenario.card.id)).toEqual(
+      expect.objectContaining({ commitSha: changedSha }),
     );
     expect(readPreparedConflict(scenario.project, scenario.card.id)).toBeNull();
   });
@@ -513,27 +505,6 @@ describe("remediatePreparedConflict", () => {
     ).rejects.toThrow("still active");
 
     expect(scenario.runOpenCode).not.toHaveBeenCalled();
-    expect(scenario.git.pushWithLease).not.toHaveBeenCalled();
-    expect(
-      readPreparedConflict(scenario.project, scenario.card.id),
-    ).not.toBeNull();
-  });
-
-  it("preserves a completed handoff until its publication succeeds", async () => {
-    const scenario = createScenario({
-      initialRebaseState: null,
-      pushError: new Error("stale info"),
-    });
-
-    await expect(
-      remediatePreparedConflict({
-        ...scenario,
-        signal: new AbortController().signal,
-      }),
-    ).rejects.toThrow("prepared rebase conflict");
-
-    expect(scenario.runOpenCode).not.toHaveBeenCalled();
-    expect(scenario.git.pushWithLease).toHaveBeenCalledOnce();
     expect(
       readPreparedConflict(scenario.project, scenario.card.id),
     ).not.toBeNull();
@@ -561,7 +532,6 @@ describe("remediatePreparedConflict", () => {
       }),
     ).rejects.toThrow("still active");
 
-    expect(scenario.git.pushWithLease).not.toHaveBeenCalled();
     expect(
       readPreparedConflict(scenario.project, scenario.card.id),
     ).not.toBeNull();
@@ -582,7 +552,6 @@ describe("remediatePreparedConflict", () => {
       }),
     ).rejects.toThrow("may have been aborted");
 
-    expect(scenario.git.pushWithLease).not.toHaveBeenCalled();
     expect(
       readPreparedConflict(scenario.project, scenario.card.id),
     ).not.toBeNull();
@@ -598,7 +567,6 @@ describe("remediatePreparedConflict", () => {
       }),
     ).rejects.toThrow("does not contain rebase target");
 
-    expect(scenario.git.pushWithLease).not.toHaveBeenCalled();
     expect(
       readPreparedConflict(scenario.project, scenario.card.id),
     ).not.toBeNull();
@@ -628,7 +596,6 @@ describe("remediatePreparedConflict", () => {
       ).rejects.toThrow(message);
 
       expect(scenario.runOpenCode).not.toHaveBeenCalled();
-      expect(scenario.git.pushWithLease).not.toHaveBeenCalled();
       expect(
         readPreparedConflict(scenario.project, scenario.card.id),
       ).not.toBeNull();
@@ -644,52 +611,5 @@ describe("remediatePreparedConflict", () => {
         signal: new AbortController().signal,
       }),
     ).rejects.toThrow("unmerged paths remain");
-
-    expect(scenario.git.pushWithLease).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    ["missing", null],
-    ["changed", changedSha],
-    ["malformed", "not-a-sha"],
-  ] as const)(
-    "preserves state when the authoritative remote SHA is %s",
-    async (_label, remoteSha) => {
-      const scenario = createScenario({
-        initialRebaseState: null,
-        remoteSha,
-      });
-
-      await expect(
-        remediatePreparedConflict({
-          ...scenario,
-          signal: new AbortController().signal,
-        }),
-      ).rejects.toThrow("authoritative remote SHA verification");
-
-      expect(scenario.git.pushWithLease).not.toHaveBeenCalled();
-      expect(
-        readPreparedConflict(scenario.project, scenario.card.id),
-      ).not.toBeNull();
-      expect(scenario.runOpenCode).not.toHaveBeenCalled();
-    },
-  );
-
-  it("preserves state after a rejected force-with-lease update", async () => {
-    const scenario = createScenario({
-      pushError: new Error("stale info"),
-    });
-
-    await expect(
-      remediatePreparedConflict({
-        ...scenario,
-        signal: new AbortController().signal,
-      }),
-    ).rejects.toThrow("prepared rebase conflict");
-
-    expect(scenario.git.pushWithLease).toHaveBeenCalledTimes(1);
-    expect(
-      readPreparedConflict(scenario.project, scenario.card.id),
-    ).not.toBeNull();
   });
 });
