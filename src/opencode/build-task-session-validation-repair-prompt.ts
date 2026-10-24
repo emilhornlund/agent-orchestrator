@@ -12,6 +12,7 @@ export interface TaskSessionValidationRepairPromptInput {
   card: TrelloCard;
   approvedPlan: TaskPlan;
   validation: TaskSessionValidationResult;
+  coverage?: TaskSessionValidationResult | null;
   attempt: number;
   maxAttempts: number;
   attachmentContext?: CardAttachmentPromptContext;
@@ -40,7 +41,7 @@ export function buildTaskSessionValidationRepairPrompt(
   }
 
   return [
-    "Repair the local validation failure for this task using the existing primary task session.",
+    "Repair the failing local quality gate for this task using the existing primary task session.",
     "",
     `Task identity: ${JSON.stringify({ projectId: input.projectId, cardId: input.card.id })}`,
     `Task title: ${JSON.stringify(input.card.name)}`,
@@ -61,7 +62,20 @@ export function buildTaskSessionValidationRepairPrompt(
     input.validation.diagnostic.length > 0
       ? input.validation.diagnostic
       : "No diagnostic output was captured.",
-    "Make only changes needed to satisfy the approved plan and fix this validation failure. Leave all repository changes in the worktree for orchestrator-owned validation.",
+    ...(input.coverage === undefined || input.coverage === null
+      ? []
+      : [
+          `Coverage command: ${JSON.stringify(input.coverage.command)}`,
+          `Coverage status: ${input.coverage.status}`,
+          `Coverage exit code: ${input.coverage.exitCode === null ? "unavailable" : input.coverage.exitCode}`,
+          `Coverage source snapshot: ${input.coverage.contentIdentity}`,
+          "Bounded, redacted coverage diagnostics:",
+          input.coverage.diagnostic.length > 0
+            ? input.coverage.diagnostic
+            : "No coverage diagnostic output was captured.",
+          "The coverage command's exit code enforces repository-owned thresholds; do not invent or change coverage percentages.",
+        ]),
+    "Make only changes needed to satisfy the approved plan and fix the failing quality gates. Leave all repository changes in the worktree for orchestrator-owned validation and coverage checks.",
     "Do not run Git commands or invoke GitHub tools. Do not commit, change branches, push, or open pull requests; the orchestrator owns all Git and GitHub operations.",
   ].join("\n");
 }

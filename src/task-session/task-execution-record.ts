@@ -91,6 +91,7 @@ const validationRepairSchema = z.strictObject({
   cycleId: nonBlankIdentifier,
   status: z.enum(["active", "passed", "exhausted"]),
   evidence: validationEvidenceSchema.optional(),
+  coverageEvidence: validationEvidenceSchema.optional(),
 });
 
 const taskExecutionRecordSchema = z
@@ -251,6 +252,31 @@ const taskExecutionRecordSchema = z
           code: "custom",
           path: ["validationRepair", "evidence"],
           message: "Only passing validation may store successful evidence",
+        });
+      }
+
+      if (
+        record.validationRepair.status !== "passed" &&
+        record.validationRepair.coverageEvidence !== undefined
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["validationRepair", "coverageEvidence"],
+          message: "Only passing coverage may store successful evidence",
+        });
+      }
+
+      if (
+        record.validationRepair.evidence !== undefined &&
+        record.validationRepair.coverageEvidence !== undefined &&
+        record.validationRepair.evidence.contentIdentity !==
+          record.validationRepair.coverageEvidence.contentIdentity
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["validationRepair", "coverageEvidence", "contentIdentity"],
+          message:
+            "Validation and coverage evidence must share a source snapshot",
         });
       }
     }

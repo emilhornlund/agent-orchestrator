@@ -13,6 +13,7 @@ import {
   type RunTaskSessionValidationOptions,
   type TaskSessionValidationResult,
 } from "./run-task-session-validation.js";
+import { runTaskSessionCoverage } from "./run-task-session-coverage.js";
 import type { TaskPlanStore } from "./task-plan-store.js";
 import { runWithPrimaryTaskSession } from "./primary-task-session.js";
 import type { TaskExecutionRecord } from "./task-execution-record.js";
@@ -36,9 +37,10 @@ export class TaskSessionValidationRepairExhaustedError extends Error {
   constructor(
     public readonly attempts: number,
     public readonly validation?: TaskSessionValidationResult,
+    public readonly coverage?: TaskSessionValidationResult | null,
   ) {
     super(
-      `Task-session validation did not pass after ${attempts} repair attempts`,
+      `Task-session local quality gates did not pass after ${attempts} repair attempts`,
     );
     this.name = "TaskSessionValidationRepairExhaustedError";
   }
@@ -70,6 +72,7 @@ export interface RunTaskSessionValidationRepairsOptions {
 
 export interface TaskSessionValidationRepairResult {
   validation: TaskSessionValidationResult;
+  coverage: TaskSessionValidationResult | null;
   attempts: number;
   record: TaskExecutionRecord;
 }
@@ -244,37 +247,72 @@ export async function runTaskSessionValidationWithRepairs(
   if (repairState?.status === "passed") {
     await assertValidationPrerequisites(options, currentRecord);
     const evidence = validationResultFromEvidence(repairState.evidence);
-    const currentIdentity = await getTaskSessionSourceSnapshotIdentity(
-      validation.git,
-      worktreePath,
-    );
+    const coverageCommand = project.repository.coverageCommand;
+    const coverageEvidence = repairState.coverageEvidence;
+    const coverageIsCurrent =
+      coverageCommand === undefined ||
+      (coverageEvidence !== undefined &&
+        coverageEvidence.command === coverageCommand);
 
-    if (currentIdentity !== evidence.contentIdentity) {
-      throw new StaleTaskSessionValidationEvidenceError(
-        evidence.contentIdentity,
-        currentIdentity,
-      );
-    }
-
-    return {
-      validation: evidence,
-      attempts: currentRecord.retryCounters.validation,
-      record: currentRecord,
-    };
-  }
-
-  while (true) {
-    const validationResult = await runTaskSessionValidation(validation);
-
-    if (validationResult.status === "passed") {
+    if (!coverageIsCurrent) {
+      currentRecord = updateRecord(validation.taskRecordStore, currentRecord, {
+        validationRepair: { cycleId, status: "active" },
+      });
+    } else {
       const currentIdentity = await getTaskSessionSourceSnapshotIdentity(
         validation.git,
         worktreePath,
       );
 
-      if (currentIdentity !== validationResult.contentIdentity) {
+      if (
+        currentIdentity !== evidence.contentIdentity ||
+        (coverageEvidence !== undefined &&
+          currentIdentity !== coverageEvidence.contentIdentity)
+      ) {
         throw new StaleTaskSessionValidationEvidenceError(
-          validationResult.contentIdentity,
+          coverageEvidence !== undefined &&
+            currentIdentity !== coverageEvidence.contentIdentity
+            ? coverageEvidence.contentIdentity
+            : evidence.contentIdentity,
+          currentIdentity,
+        );
+      }
+
+      return {
+        validation: evidence,
+        coverage:
+          coverageEvidence === undefined
+            ? null
+            : validationResultFromEvidence(coverageEvidence),
+        attempts: currentRecord.retryCounters.validation,
+        record: currentRecord,
+      };
+    }
+  }
+
+  while (true) {
+    const validationResult = await runTaskSessionValidation(validation);
+    const coverageResult = await runTaskSessionCoverage(validation);
+    const allQualityGatesPassed =
+      validationResult.status === "passed" &&
+      (coverageResult === null || coverageResult.status === "passed");
+
+    if (allQualityGatesPassed) {
+      const currentIdentity = await getTaskSessionSourceSnapshotIdentity(
+        validation.git,
+        worktreePath,
+      );
+
+      if (
+        currentIdentity !== validationResult.contentIdentity ||
+        (coverageResult !== null &&
+          currentIdentity !== coverageResult.contentIdentity)
+      ) {
+        throw new StaleTaskSessionValidationEvidenceError(
+          coverageResult !== null &&
+            currentIdentity !== coverageResult.contentIdentity
+            ? coverageResult.contentIdentity
+            : validationResult.contentIdentity,
           currentIdentity,
         );
       }
@@ -305,11 +343,24 @@ export async function runTaskSessionValidationWithRepairs(
             diagnostic: validationResult.diagnostic,
             contentIdentity: validationResult.contentIdentity,
           },
+          ...(coverageResult === null
+            ? {}
+            : {
+                coverageEvidence: {
+                  command: coverageResult.command,
+                  startedAt: coverageResult.startedAt,
+                  completedAt: coverageResult.completedAt,
+                  exitCode: 0,
+                  diagnostic: coverageResult.diagnostic,
+                  contentIdentity: coverageResult.contentIdentity,
+                },
+              }),
         },
       });
 
       return {
         validation: validationResult,
+        coverage: coverageResult,
         attempts: currentRecord.retryCounters.validation,
         record: currentRecord,
       };
@@ -324,6 +375,7 @@ export async function runTaskSessionValidationWithRepairs(
       throw new TaskSessionValidationRepairExhaustedError(
         currentRecord.retryCounters.validation,
         validationResult,
+        coverageResult,
       );
     }
 
@@ -340,6 +392,7 @@ export async function runTaskSessionValidationWithRepairs(
       card,
       approvedPlan: plan.plan,
       validation: validationResult,
+      coverage: coverageResult,
       attempt: attempts + 1,
       maxAttempts: MAX_VALIDATION_REPAIR_ATTEMPTS,
       ...(options.attachmentContext === undefined
