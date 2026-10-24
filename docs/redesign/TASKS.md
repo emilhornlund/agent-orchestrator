@@ -228,7 +228,7 @@ to inspect first, not permission to invent unimplemented helpers.
   - **Verify locally:** Mocked API tests cover pagination, author identity, edited comments, empty replies, and GitHub-generated comments.
   - **Out of scope:** Do not automatically classify any general comment as a code-change request.
 
-- [ ] **T32 — Implement persistent feedback ledger**
+- [x] **T32 — Implement persistent feedback ledger**
   - **Depends on:** T04, T30–T31.
   - **Implement:** Persist normalized feedback outside Git in a task-scoped, revisioned ledger keyed by stable GitHub IDs. Store actionability, state, latest head, verification evidence, remediation commit, and published reply ID.
   - **Verify locally:** Local-file tests cover deduplication, new feedback, earlier unresolved carry-forward, stale writes, restart reload, and wrong-task rejection.
