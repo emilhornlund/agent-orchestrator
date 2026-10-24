@@ -56,6 +56,7 @@ export interface PublishCardOptions {
   commands?: CommandRunner;
   rebaseAlreadyCompleted?: boolean;
   beforePushVerification?: () => Promise<void>;
+  expectedExistingPullRequestUrl?: string;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -303,6 +304,7 @@ export async function publishCard({
   commands,
   rebaseAlreadyCompleted = false,
   beforePushVerification,
+  expectedExistingPullRequestUrl,
 }: PublishCardOptions): Promise<void> {
   const cardLog = logger.child({
     projectId: project.id,
@@ -535,6 +537,17 @@ export async function publishCard({
       headBranch: branch,
       project,
     });
+
+    if (
+      expectedExistingPullRequestUrl !== undefined &&
+      (pullRequest === null ||
+        pullRequest.url !== expectedExistingPullRequestUrl)
+    ) {
+      throw new WorkflowError(
+        "Git/GitHub",
+        `Refusing to create or update a different pull request; expected ${expectedExistingPullRequestUrl}`,
+      );
+    }
 
     if (pullRequest) {
       cardLog.event(`Existing pull request found: ${pullRequest.url}`);

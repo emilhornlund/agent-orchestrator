@@ -156,11 +156,31 @@ export async function runTaskSessionCiRepairs(
           "CI repair publication did not produce a new valid PR head",
         );
       }
-      record = ownerRecord(options, record.pullRequest?.headSha);
-      record = updateRecord(options.store, record, {
-        pullRequest: { ...record.pullRequest!, headSha },
-        ciRepair: { cycleId, headSha, status: "active" },
-      });
+      const latest = options.store.read(options.cardId);
+      if (
+        latest === null ||
+        latest.projectId !== options.projectId ||
+        latest.cardId !== options.cardId ||
+        latest.operationKey !== options.operationKey ||
+        latest.primarySessionId !== options.expectedPrimarySessionId ||
+        latest.phase !== "ci"
+      ) {
+        throw new TaskSessionCiRepairError(
+          "CI repair publication changed task ownership or phase unexpectedly",
+        );
+      }
+      if (latest.pullRequest?.headSha === headSha) {
+        // The publication operation may atomically persist publication-completed
+        // with the observed head before returning to this repair coordinator.
+        record = latest;
+      } else {
+        record = ownerRecord(options, latest.pullRequest?.headSha);
+        record = updateRecord(options.store, record, {
+          pullRequest: { ...record.pullRequest!, headSha },
+          ciRepair: { cycleId, headSha, status: "active" },
+          reviewObservation: undefined,
+        });
+      }
     } catch (error) {
       throw new TaskSessionCiRepairError(
         "CI repair did not complete; PR and task state are preserved",
