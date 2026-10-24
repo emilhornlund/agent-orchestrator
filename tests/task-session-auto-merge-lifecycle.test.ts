@@ -77,6 +77,7 @@ describe("task-session production auto-merge CI gate", () => {
       url: "https://trello.example/merge-card",
     };
     let cardList = project.trello.reviewListId;
+    let pullRequestState: "OPEN" | "MERGED" = "OPEN";
     const trello = {
       getCards: vi.fn(async (listId: string) =>
         listId === cardList ? [{ ...card, idList: cardList }] : [],
@@ -87,11 +88,27 @@ describe("task-session production auto-merge CI gate", () => {
       }),
       addComment: vi.fn(async () => undefined),
     } as unknown as TrelloClient;
+    let failCleanupOnce = true;
     const git = {
       getHeadSha: vi.fn(async () => headSha),
       getHeadTrackedFiles: vi.fn(async () => ["src.ts"]),
       getIndexEntries: vi.fn(async () => ""),
       getUntrackedFiles: vi.fn(async () => []),
+      remoteBranchExists: vi.fn(async () => false),
+      getCurrentBranch: vi.fn(async () => `agent/${card.id}`),
+      getRebaseState: vi.fn(async () => null),
+      getConflictedPaths: vi.fn(async () => []),
+      getStatus: vi.fn(async () => ""),
+      removeWorktree: vi.fn(async (_repo: string, cwd: string) => {
+        fs.rmSync(cwd, { recursive: true, force: true });
+      }),
+      pruneWorktrees: vi.fn(async () => {
+        if (failCleanupOnce) {
+          failCleanupOnce = false;
+          throw new Error("simulated auto-merge cleanup interruption");
+        }
+      }),
+      branchExists: vi.fn(async () => false),
     } as unknown as GitClient;
     const contentIdentity = await getTaskSessionSourceSnapshotIdentity(
       git,
@@ -108,12 +125,15 @@ describe("task-session production auto-merge CI gate", () => {
         url: null,
       },
     ];
-    const mergePullRequest = vi.fn(async () => undefined);
+    const mergePullRequest = vi.fn(async () => {
+      pullRequestState = "MERGED";
+    });
     const github = {
       findPullRequestState: vi.fn(async () => ({
         url: "https://github.com/owner/repo/pull/17",
-        state: "OPEN",
-        mergedAt: null,
+        state: pullRequestState,
+        mergedAt:
+          pullRequestState === "MERGED" ? "2026-10-24T11:00:00.000Z" : null,
         headRefOid: headSha,
         baseRefName: "main",
         headRefName: `agent/${card.id}`,
@@ -251,6 +271,12 @@ describe("task-session production auto-merge CI gate", () => {
         description: null,
       },
     ];
+    await expect(poll()).rejects.toThrow(
+      "simulated auto-merge cleanup interruption",
+    );
+    expect(cardList).toBe(project.trello.doneListId);
+    expect(taskStore.read(card.id)?.phase).toBe("ci");
+
     await poll();
     expect(mergePullRequest).toHaveBeenCalledOnce();
     expect(cardList).toBe(project.trello.doneListId);
@@ -259,5 +285,10 @@ describe("task-session production auto-merge CI gate", () => {
       pullRequest: { headSha },
     });
     expect(taskStore.read(card.id)?.reviewObservation).toBeUndefined();
+    expect(git.removeWorktree).toHaveBeenCalledWith(
+      repositoryPath,
+      worktreePath,
+    );
+    expect(fs.existsSync(worktreePath)).toBe(false);
   });
 });

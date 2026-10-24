@@ -9,10 +9,10 @@ import type {
   CiCheckObservation,
   FailedCheckDiagnostic,
   GitHubClient,
+  PullRequestState,
 } from "../github/github-client.js";
 import { establishCiCheckExpectations } from "../github/ci-check-expectations.js";
 import { evaluateCiChecks } from "../github/evaluate-ci-checks.js";
-import { logger } from "../logging/logger.js";
 import { getSessionLogPath } from "../logging/session-log.js";
 import type { EmailNotifier } from "../notifications/email-notifier.js";
 import type { OpenCodeClient } from "../opencode/opencode-client.js";
@@ -68,7 +68,7 @@ import { getTaskSessionSourceSnapshotIdentity } from "../task-session/source-sna
 import { publishTaskSessionCard } from "./publish-task-session-card.js";
 import { publishCard } from "./publish-card.js";
 import { runWithPrimaryTaskSession } from "../task-session/primary-task-session.js";
-import { completeAutoMergedCard } from "./auto-merge.js";
+import { buildAutoMergeSummary } from "./auto-merge.js";
 import { mergeTaskSessionPullRequest } from "./merge-task-session-pull-request.js";
 import { observeTaskSessionReviewCards } from "./observe-task-session-review-cards.js";
 import {
@@ -134,6 +134,119 @@ function event(
     operationKey: record.operationKey,
     occurredAt: timestamp(record),
   } as TaskExecutionEvent;
+}
+
+async function completeMergedTaskSession(options: {
+  queue: TaskMutationQueue;
+  taskStore: TaskExecutionStore;
+  trello: TrelloClient;
+  git: GitClient;
+  project: ProjectConfig;
+  card: TrelloCard;
+  pullRequest: PullRequestState;
+  signal: AbortSignal;
+  emailNotifier?: EmailNotifier;
+  completionComment?: string;
+  releaseMutationEventId?: string;
+  onMutationReleased?: () => void;
+}): Promise<void> {
+  const { queue, taskStore, trello, git, project, card, pullRequest, signal } =
+    options;
+  const headSha = pullRequest.headRefOid;
+  if (headSha === undefined) {
+    throw new Error(`Merged pull request has no head identity for ${card.id}`);
+  }
+  const terminalEventId = `terminal-pr:${card.id}:MERGED:${headSha}`;
+  const record = taskStore.read(card.id);
+  if (record === null || record.pullRequest?.url !== pullRequest.url) {
+    throw new Error(
+      `Merged pull request has no matching task record for ${card.id}`,
+    );
+  }
+  const [owner, repository] = project.repository.github.split("/");
+  if (
+    pullRequest.state !== "MERGED" ||
+    pullRequest.mergedAt === null ||
+    pullRequest.baseRefName !== project.repository.defaultBranch ||
+    pullRequest.headRefName !== `agent/${card.id}` ||
+    headSha !== record.pullRequest.headSha ||
+    pullRequest.headRepository?.name !== repository ||
+    pullRequest.headRepositoryOwner?.login !== owner
+  ) {
+    throw new Error(`Merged pull request identity is ambiguous for ${card.id}`);
+  }
+  const terminalEvent = queue.enqueue({
+    projectId: project.id,
+    cardId: card.id,
+    eventId: terminalEventId,
+    operationKey: `${record.operationKey}:MERGED:${headSha}`,
+    kind: "terminal-pr",
+    enqueuedAt: record.updatedAt,
+  });
+  if (terminalEvent.status === "completed" && record.phase === "done") return;
+  if (options.releaseMutationEventId !== undefined) {
+    if (queue.getActive()?.eventId !== options.releaseMutationEventId) {
+      throw new Error("Merged PR cannot release a mutation it does not own");
+    }
+    queue.complete(options.releaseMutationEventId);
+    options.onMutationReleased?.();
+  }
+  const mutation = queue.claimForRecovery(terminalEventId);
+  if (mutation === null || mutation.eventId !== terminalEventId) {
+    throw new Error(`Could not claim terminal PR cleanup for ${card.id}`);
+  }
+  try {
+    await completeMergedTaskSessionPullRequest({
+      trello,
+      git,
+      project,
+      card,
+      pullRequest,
+      ...(options.completionComment === undefined
+        ? {}
+        : { completionComment: options.completionComment }),
+      ...(options.emailNotifier === undefined
+        ? {}
+        : { emailNotifier: options.emailNotifier }),
+      signal,
+    });
+    if (signal.aborted) {
+      queue.fail(terminalEventId);
+      return;
+    }
+    const latest = taskStore.read(card.id);
+    if (latest === null || latest.pullRequest?.url !== pullRequest.url) {
+      throw new Error(
+        `Merged task record changed during cleanup for ${card.id}`,
+      );
+    }
+    if (latest.phase !== "done") {
+      if (latest.phase !== "ci" && latest.phase !== "human-feedback") {
+        throw new Error(
+          `Cannot complete merged task ${card.id} from phase ${latest.phase}`,
+        );
+      }
+      taskStore.compareAndSwap(
+        card.id,
+        latest.revision,
+        transitionTaskExecutionRecord(
+          { ...latest, reviewObservation: undefined },
+          {
+            type: "pull-request-merged",
+            eventId: `${latest.operationKey}:pull-request-merged`,
+            projectId: project.id,
+            cardId: card.id,
+            operationKey: latest.operationKey,
+            occurredAt: timestamp(latest),
+          },
+        ),
+      );
+    }
+    queue.complete(terminalEventId);
+  } catch (error) {
+    if (queue.ownsActive(terminalEventId)) queue.fail(terminalEventId);
+    throw error;
+  }
 }
 
 function commitMessageRunOptions(
@@ -479,7 +592,9 @@ export async function runTaskSessionWorkflow(
     if (recoveredTerminalMutation !== null) {
       try {
         if (isMerged) {
-          await completeMergedTaskSessionPullRequest({
+          await completeMergedTaskSession({
+            queue,
+            taskStore,
             trello,
             git,
             project,
@@ -499,10 +614,14 @@ export async function runTaskSessionWorkflow(
           });
         }
         options.onHumanReviewCardLeft?.(cardId);
-        if (signal.aborted) queue.fail(recoveredTerminalMutation.eventId);
-        else queue.complete(recoveredTerminalMutation.eventId);
+        if (!isMerged) {
+          if (signal.aborted) queue.fail(recoveredTerminalMutation.eventId);
+          else queue.complete(recoveredTerminalMutation.eventId);
+        }
       } catch (error) {
-        queue.fail(recoveredTerminalMutation.eventId);
+        if (!isMerged && queue.ownsActive(recoveredTerminalMutation.eventId)) {
+          queue.fail(recoveredTerminalMutation.eventId);
+        }
         throw error;
       }
     }
@@ -533,29 +652,32 @@ export async function runTaskSessionWorkflow(
         kind: "terminal-pr",
         enqueuedAt: record.updatedAt,
       });
+      if (observation.state === "MERGED") {
+        await completeMergedTaskSession({
+          queue,
+          taskStore,
+          trello,
+          git,
+          project,
+          card,
+          pullRequest: observation.pullRequest,
+          ...(emailNotifier === undefined ? {} : { emailNotifier }),
+          signal,
+        });
+        options.onHumanReviewCardLeft?.(card.id);
+        continue;
+      }
       const terminalMutation = queue.claimForRecovery(terminalEventId);
       if (terminalMutation === null) continue;
       try {
-        if (observation.state === "MERGED") {
-          await completeMergedTaskSessionPullRequest({
-            trello,
-            git,
-            project,
-            card,
-            pullRequest: observation.pullRequest,
-            ...(emailNotifier === undefined ? {} : { emailNotifier }),
-            signal,
-          });
-        } else {
-          await returnClosedTaskSessionPullRequestToBacklog({
-            trello,
-            git,
-            project,
-            card,
-            pullRequest: observation.pullRequest,
-            signal,
-          });
-        }
+        await returnClosedTaskSessionPullRequestToBacklog({
+          trello,
+          git,
+          project,
+          card,
+          pullRequest: observation.pullRequest,
+          signal,
+        });
         options.onHumanReviewCardLeft?.(card.id);
         if (signal.aborted) queue.fail(terminalMutation.eventId);
         else queue.complete(terminalMutation.eventId);
@@ -1194,27 +1316,31 @@ export async function runTaskSessionWorkflow(
       readiness,
       signal,
     );
-    const latest = taskStore.read(record.cardId);
-    if (latest !== null && latest.phase === "ci") {
-      taskStore.compareAndSwap(
-        latest.cardId,
-        latest.revision,
-        transitionTaskExecutionRecord(
-          { ...latest, reviewObservation: undefined },
-          event(latest, "ci-passed-completed"),
-        ),
-      );
+    const mergedPullRequest = await github.findPullRequestState({
+      cwd: project.repository.path,
+      repository: project.repository.github,
+      headBranch: `agent/${card.id}`,
+      baseBranch: project.repository.defaultBranch,
+      project,
+    });
+    if (mergedPullRequest === null) {
+      throw new Error(`Could not verify merged pull request for ${card.id}`);
     }
-    await completeAutoMergedCard({
+    await completeMergedTaskSession({
+      queue,
+      taskStore,
       trello,
+      git,
       project,
       card,
-      pullRequestUrl: observation.pullRequestUrl,
-      commitSha: observation.headSha,
-      reviewResult: "Passed",
-      remediationResult:
-        "Task-session quality and current-head required checks passed",
-      cardLog: logger.child({ projectId: project.id, cardId: card.id }),
+      pullRequest: mergedPullRequest,
+      completionComment: buildAutoMergeSummary({
+        pullRequestUrl: observation.pullRequestUrl,
+        commitSha: observation.headSha,
+        reviewResult: "Passed",
+        remediationResult:
+          "Task-session quality and current-head required checks passed",
+      }),
       ...(emailNotifier === undefined ? {} : { emailNotifier }),
       signal,
     });
@@ -2186,34 +2312,43 @@ export async function runTaskSessionWorkflow(
           },
           signal,
         );
-        const record = taskStore.read(activeCard.id);
-        if (record !== null)
-          taskStore.compareAndSwap(
-            activeCard.id,
-            record.revision,
-            transitionTaskExecutionRecord(
-              record,
-              event(record, "ci-passed-completed"),
-            ),
+        const mergedPullRequest = await github.findPullRequestState({
+          cwd: project.repository.path,
+          repository: project.repository.github,
+          headBranch: worktree.branch,
+          baseBranch: project.repository.defaultBranch,
+          project,
+        });
+        if (mergedPullRequest === null) {
+          throw new Error(
+            `Could not verify merged pull request for ${activeCard.id}`,
           );
-        await completeAutoMergedCard({
+        }
+        await completeMergedTaskSession({
+          queue,
+          taskStore,
           trello,
+          git,
           project,
           card: activeCard,
-          pullRequestUrl: pr.url,
-          commitSha: publishedSha,
-          reviewResult: "Passed",
-          remediationResult: `${finalReview.attempts} review repair(s)`,
-          cardLog: logger.child({
-            projectId: project.id,
-            cardId: activeCard.id,
+          pullRequest: mergedPullRequest,
+          completionComment: buildAutoMergeSummary({
+            pullRequestUrl: pr.url,
+            commitSha: publishedSha,
+            reviewResult: "Passed",
+            remediationResult: `${finalReview.attempts} review repair(s)`,
           }),
+          releaseMutationEventId: mutation.eventId,
+          onMutationReleased: () => {
+            mutation = null;
+          },
           ...(emailNotifier === undefined ? {} : { emailNotifier }),
           signal,
         });
+        mutation = null;
       }
     }
-    queue.complete(mutation.eventId);
+    if (mutation !== null) queue.complete(mutation.eventId);
   } catch (error) {
     if (recoveryRecord !== null && !signal.aborted) {
       const latest = taskStore.read(recoveryRecord.cardId);
@@ -2259,7 +2394,10 @@ export async function runTaskSessionWorkflow(
         }
       }
     }
-    queue.fail(mutation.eventId);
+    const activeMutation = queue.getActive();
+    if (activeMutation !== null && queue.ownsActive(activeMutation.eventId)) {
+      queue.fail(activeMutation.eventId);
+    }
     throw error;
   }
 }
