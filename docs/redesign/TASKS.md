@@ -347,10 +347,139 @@ are examples to inspect, not permission to invent unimplemented helpers.
   - **Verify locally:** `pollProject` restart tests cover interruption after claim/worktree preparation before `Working` record creation and during an active `Working` operation; prove matching event/worktree reuse despite a later poll timestamp, original-session continuation, trusted publication without a duplicate commit, and no active-mutation theft by a competing poller. Cover ambiguous/malformed ownership, session, setup, worktree, commit, and publication state with mocked clients/local fixtures only. Keep legacy execution unaffected.
   - **Out of scope:** Do not use live services or models, migrate legacy tasks, discard preserved changes, or introduce a competing recovery mechanism.
 
-## Completion checkpoint
+## Phase G — Preserve essential workflow behavior
 
-When T45 is complete, all 45 task checkboxes must be marked `[x]`,
-all 45 task commits must be individually identifiable in local Git history,
-and the final worktree must be clean after a successful `yarn validate`.
-Live integration testing and release/deployment are **separate decisions**
-outside this backlog.
+- [ ] **T46 — Extract the existing refinement workflow**
+  - **Depends on:** T43–T45.
+  - **Implement:** Extract the existing refinement operation from the legacy polling implementation into a reusable, independently callable component. Preserve the existing Trello refinement result contract, classification changes, description updates, Backlog transition, notifications, worktree safety, and failure handling.
+  - **Verify locally:** Existing refinement characterization tests pass against the extracted implementation. Add tests for successful refinement, malformed output, failed execution, and interrupted cleanup.
+  - **Out of scope:** Do not change refinement behavior, integrate scheduling, or remove the legacy implementation pipeline yet.
+
+- [ ] **T47 — Integrate refinement into unified task scheduling**
+  - **Depends on:** T46.
+  - **Implement:** Route eligible Refinement-labelled Ready cards through the extracted refinement component using the unified project scheduler. Preserve Ready-list order, label precedence, exclusive mutation ownership, and restart safety. Refinement must return cards to Backlog without creating implementation PRs.
+  - **Verify locally:** Production-polling tests cover refinement and implementation cards in both Ready-list orders, successful refinement, failures, interrupted operations, and absence of concurrent project mutations.
+  - **Out of scope:** Do not modify implementation planning or the PR lifecycle.
+
+- [ ] **T48 — Observe merged and closed task-session PRs**
+  - **Depends on:** T43C, T45.
+  - **Implement:** Extend task-session PR observation to explicitly recognize authoritative MERGED and CLOSED states instead of rejecting every non-OPEN PR. Verify PR identity, ownership, and relevant terminal metadata. Distinguish merged PRs from deliberately closed, unmerged PRs.
+  - **Verify locally:** Mock GitHub tests cover OPEN, MERGED, CLOSED, missing PRs, incorrect ownership, stale identities, and temporary GitHub errors. Terminal observations must not depend on successful CI checks.
+  - **Out of scope:** Do not move Trello cards or clean up branches yet.
+
+- [ ] **T49 — Reconcile terminal PRs in the unified workflow**
+  - **Depends on:** T48.
+  - **Implement:** Connect terminal PR observations to production polling. Move merged PR cards to Done and deliberately closed, unmerged PR cards to Backlog, preserving existing completion metadata, notifications, and safe cleanup behavior. Persist enough state to recover interrupted transitions without duplicate side effects.
+  - **Verify locally:** Production-polling tests cover merge-to-Done, close-to-Backlog, repeated polling, restart between external operations, already-deleted branches, and cleanup failures. Uncertain states must preserve recovery information.
+  - **Out of scope:** Do not change human feedback, CI remediation, or automatic merge policies.
+
+## Phase H — Consolidate execution architecture
+
+- [ ] **T50 — Make task-session the only execution mode**
+  - **Depends on:** T47, T49.
+  - **Implement:** Remove `projects[].executionMode` from the configuration schema and eliminate the legacy/task-session dispatch selection. Route all eligible implementation work through the unified task-session coordinator. Preserve the integrated refinement operation and existing external safety boundaries.
+  - **Verify locally:** Configuration and production-polling tests prove omitted executionMode works, obsolete executionMode values are rejected, implementation uses the persistent primary session, and refinement remains functional.
+  - **Out of scope:** Do not delete unused legacy modules or change CI configuration yet.
+
+- [ ] **T51 — Remove obsolete legacy orchestration**
+  - **Depends on:** T50.
+  - **Implement:** Identify and delete implementation/review/remediation orchestration functions reachable only from the retired legacy execution path. Remove obsolete dispatch branches and corresponding legacy-only characterization tests. Preserve shared publication, reconciliation, refinement, and recovery components still used by the unified workflow.
+  - **Verify locally:** The production call graph contains one implementation pipeline. Tests prove no obsolete dispatch is reachable, and the unified implementation, refinement, and PR lifecycle remain operational.
+  - **Out of scope:** Do not delete shared utilities or unrelated compatibility code.
+
+- [ ] **T52 — Remove unused legacy prompts and state artifacts**
+  - **Depends on:** T51.
+  - **Implement:** Audit prompts, configuration fields, persisted-state helpers, imports, and tests associated exclusively with the removed legacy implementation. Delete code that has no remaining legitimate runtime caller. Retain shared commit, publication, conflict, notification, and safety functionality where required.
+  - **Verify locally:** No dangling imports, references, or orphaned production helpers remain. Tests and production build pass. Existing shared safety behavior remains covered.
+  - **Out of scope:** Do not redesign the unified task state or remove safety mechanisms merely because they originated in the legacy architecture.
+
+## Phase I — Automatic CI check management
+
+- [ ] **T53 — Define authoritative CI check expectations**
+  - **Depends on:** T29, T50.
+  - **Implement:** Replace the manual requiredChecks contract with a deterministic policy for establishing expected CI checks. Prefer available authoritative GitHub repository rules and reliable repository-owned CI workflow expectations. Define how dynamically generated, conditional, and external checks are handled. Distinguish a complete expected set from an unknown or incomplete set.
+  - **Verify locally:** Pure policy tests cover authoritative expectations, missing information, duplicate check names, dynamic check uncertainty, empty expectations, and unsupported sources. Unknown expectations must never produce a passing result.
+  - **Out of scope:** Do not fetch GitHub data or change polling yet. Do not introduce paid-feature requirements.
+
+- [ ] **T54 — Collect all applicable GitHub check results**
+  - **Depends on:** T53.
+  - **Implement:** Extend GitHubClient to gather relevant current-head check runs and commit statuses with pagination and exact commit identity. Collect available authoritative expectation information needed by T53. Normalize observations into one structured result, preserving check identity, status, conclusion, and diagnostic references.
+  - **Verify locally:** Mock API tests cover multiple check suites, commit statuses, pagination, queued and in-progress checks, terminal failures, cancellation, skipped and neutral conclusions, duplicates, missing checks, and stale commit responses.
+  - **Out of scope:** Do not trigger repairs or make merge decisions.
+
+- [ ] **T55 — Implement complete CI-result evaluation**
+  - **Depends on:** T53–T54.
+  - **Implement:** Create a deterministic gate that evaluates the complete expected check set against the current PR head. Return distinct outcomes for waiting, passed, failed, and uncertain. A failed result requires that the expected check set is complete and every expected check has reached a terminal state. Collect all failures together. Treat missing expected checks as waiting or uncertain, never successful.
+  - **Verify locally:** Table-driven tests cover delayed check creation, one passing check while another has not started, mixed pending and failed checks, several simultaneous failures, cancellations, skipped or neutral results, changed heads, and empty expectations. No incomplete set may pass or trigger premature remediation.
+  - **Out of scope:** Do not invoke OpenCode or alter PRs.
+
+- [ ] **T56 — Integrate complete CI evaluation into production**
+  - **Depends on:** T55.
+  - **Implement:** Replace existing requiredChecks-based decisions in production polling, CI remediation, feedback reply publication, and auto-merge readiness with the complete CI-result evaluation. Remove mandatory requiredChecks configuration. Pending or uncertain results must retain a waiting state without consuming repair attempts. Complete failing results must produce one bounded repair operation containing all relevant failures.
+  - **Verify locally:** Production-polling tests show waiting while checks are pending, repair after complete failure, same-session corrections, successful rechecking after publication, correct feedback reply gating, and no auto-merge before full success.
+  - **Out of scope:** Do not remove validationCommand, coverageCommand, retry limits, or current-head ownership checks.
+
+- [ ] **T57 — Add comprehensive CI lifecycle regression tests**
+  - **Depends on:** T56.
+  - **Implement:** Extend mocked end-to-end scenarios through the actual pollProject entry point. Simulate delayed check registration, several GitHub Actions jobs, mixed check runs and commit statuses, multiple failed jobs, late results, CI repairs, head changes, and successful auto-merge.
+  - **Verify locally:** Every scenario verifies complete-check semantics, preserved task ownership, no duplicate repairs, no stale-head acceptance, no premature success, and no skipped validation or review gates.
+  - **Out of scope:** Do not call live GitHub APIs or change production architecture.
+
+## Phase J — Final consolidation and cleanup
+
+- [ ] **T58 — Consolidate configuration and permanent documentation**
+  - **Depends on:** T50–T57.
+  - **Implement:** Update README, config.example.yaml, docs/configuration.md, docs/workflow.md, docs/recovery.md, and docs/operations.md to describe the single supported architecture. Remove obsolete executionMode, requiredChecks, opt-in rollout, and legacy migration instructions. Document refinement, CI expectation discovery, unknown-check behavior, terminal PR handling, and operator recovery.
+  - **Verify locally:** Configuration examples parse successfully, documented defaults match code, no unsupported legacy settings remain, and yarn validate passes.
+  - **Out of scope:** Do not delete the temporary redesign documents or executor agent yet.
+
+- [ ] **T59 — Perform final unified lifecycle acceptance audit**
+  - **Depends on:** T46–T58.
+  - **Implement:** Audit actual production entry points and integration tests for refinement, implementation, session continuity, validation, coverage, independent review, publication, complete CI observation and repair, human feedback, contextual replies, merged/closed PR reconciliation, auto-merge, and restart recovery. Correct any confirmed blocking defect through a narrowly scoped corrective task before completing this audit.
+  - **Verify locally:** Run the full yarn validate and yarn build. Verify the intended production call paths are reachable, no dead legacy execution path remains, relevant mocked lifecycle scenarios pass, and no known blocking acceptance gap remains.
+  - **Out of scope:** Do not use real Trello, GitHub, OpenCode services, or deploy.
+
+- [ ] **T60 — Remove temporary redesign execution artifacts**
+  - **Depends on:** T59.
+  - **Implement:** After all previous tasks and the final audit are complete, remove docs/redesign/REQUIREMENTS.md, docs/redesign/TASKS.md, and .opencode/agents/redesign-executor.md from the repository. Preserve the permanent documentation produced by T58.
+  - **Verify locally:** Confirm all earlier tasks are completed before deletion. Run yarn validate and yarn build after deletion, verify that no surviving documentation references the deleted files, and create one final local cleanup commit.
+  - **Special completion rule:** Because TASKS.md is deleted by this task, T60 completion is represented by the validated deletion commit rather than a committed checkbox change.
+  - **Out of scope:** Do not remove AGENTS.md, unrelated OpenCode agents, permanent documentation, or any production functionality.
+
+## Final completion checkpoint
+
+The backlog contains T01–T60 plus T43A, T43B, and T43C.
+
+T46–T60 implement the maintainer-approved final clean-cutover
+requirements and supersede earlier legacy-compatibility decisions
+where they conflict.
+
+Before T60:
+
+- Every preceding task must be completed and verified.
+- All known blocking defects must be corrected.
+- The unified production lifecycle must have passing mocked
+  integration tests.
+- `yarn validate` and `yarn build` must pass.
+- The temporary redesign documents and executor must remain
+  available until the final cleanup task begins.
+
+T60 is the final operation. Its completion is recorded by
+the validated local commit deleting the temporary execution
+artifacts, not by a checkbox in a surviving task document.
+
+After T60:
+
+- The Git worktree must be clean.
+- No obsolete dual-mode execution configuration may remain.
+- No retired legacy implementation path may remain reachable.
+- Permanent documentation must describe the actual architecture.
+- No live pilot or deployment is claimed to have occurred.
+
+Do not require reading deleted execution documents after T60.
+Do not create additional implementation tasks after the final
+cleanup commit. If a blocking defect is discovered before cleanup,
+correct it before beginning T60.
+
+Remote push, PR creation, merging, and deployment remain outside
+the executor's authority.
