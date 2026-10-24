@@ -627,6 +627,32 @@ describe("task-session production dispatch", () => {
     const commands = new CommandRunner(runCommand);
     const openCode = new OpenCodeClient(openCodeRun);
     const signal = new AbortController().signal;
+    const abandonQueueOwner = (eventId: string) => {
+      const queuePath = path.join(
+        project.contextRoot,
+        "task-mutation-queues",
+        `${project.id}.json`,
+      );
+      const persisted = JSON.parse(fs.readFileSync(queuePath, "utf8")) as {
+        activeEventId: string | null;
+        events: Array<{
+          eventId: string;
+          status: string;
+          ownerToken?: string;
+          ownerPid?: number;
+        }>;
+      };
+      const event = persisted.events.find(
+        (candidate) => candidate.eventId === eventId,
+      );
+      if (event === undefined)
+        throw new Error("Expected persisted queue event");
+      persisted.activeEventId = eventId;
+      event.status = "active";
+      event.ownerToken = "00000000-0000-4000-8000-000000000001";
+      event.ownerPid = 2_147_483_647;
+      fs.writeFileSync(queuePath, JSON.stringify(persisted), "utf8");
+    };
     await expect(
       pollProject(
         trello,
@@ -643,6 +669,11 @@ describe("task-session production dispatch", () => {
       new TaskExecutionStore(project.contextRoot, project).read(card.id),
     ).toBe(null);
     expect(fs.existsSync(path.join(worktreeRoot, card.id))).toBe(true);
+    const claimedEventId = new TaskMutationQueue(
+      project.contextRoot,
+      project,
+    ).list()[0]!.eventId;
+    abandonQueueOwner(claimedEventId);
     await expect(
       pollProject(
         trello,
@@ -667,6 +698,7 @@ describe("task-session production dispatch", () => {
     expect(
       new TaskMutationQueue(project.contextRoot, project).getActive()?.status,
     ).toBe("failed");
+    abandonQueueOwner(claimedEventId);
     await expect(
       pollProject(trello, git, github, openCode, commands, project, signal),
     ).rejects.toThrow("simulated interruption after trusted commit");
