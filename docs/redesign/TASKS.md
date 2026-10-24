@@ -176,7 +176,7 @@ to inspect first, not permission to invent unimplemented helpers.
   - **Verify locally:** Tests prove latest review must pass, final allowed fix is reviewed, stale evidence is rejected, and exhaustion blocks progression.
   - **Out of scope:** Do not alter legacy `maxPasses` semantics.
 
-- [ ] **T24 — Create a pure verified-publication decision**
+- [x] **T24 — Create a pure verified-publication decision**
   - **Depends on:** T17, T19, T21–T23.
   - **Implement:** Define a deterministic gate that requires current-snapshot successful validation, configured coverage, and current-snapshot passing final review before a publish operation can begin.
   - **Verify locally:** Table-driven tests cover missing, stale, failed, and passing evidence; changing source after success denies publication.
