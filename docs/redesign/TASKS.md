@@ -46,7 +46,7 @@ to inspect first, not permission to invent unimplemented helpers.
   - **Verify locally:** Config parsing tests cover omitted, valid, and invalid modes; legacy project startup behavior remains unchanged.
   - **Out of scope:** Do not route production tasks to a partially built workflow.
 
-- [ ] **T03 — Define the task execution record schema**
+- [x] **T03 — Define the task execution record schema**
   - **Depends on:** T02.
   - **Implement:** Add a versioned runtime-validated type for task ownership, phase, card/project IDs, primary session ID, branch, PR/head, operation key, record revision, retry counters, and timestamps. All future-optional IDs must be explicit optional fields.
   - **Verify locally:** Unit tests round-trip valid JSON and reject malformed IDs, unknown versions, invalid phase values, and impossible field combinations.
