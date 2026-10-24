@@ -202,7 +202,7 @@ to inspect first, not permission to invent unimplemented helpers.
   - **Verify locally:** Mocked fixture tests cover successful logs, missing permissions/logs, malformed payload, secret redaction, and changed-head rejection.
   - **Out of scope:** Do not modify PRs or invoke the coding agent.
 
-- [ ] **T28 — Implement bounded CI repair rounds**
+- [x] **T28 — Implement bounded CI repair rounds**
   - **Depends on:** T18, T22–T27.
   - **Implement:** For failed required current-head CI, resume the original task session with T27 diagnostics; rerun local validation, coverage, and independent final review; update the same PR through T25, then poll checks for the new head. Persist at most two repair attempts per CI failure cycle.
   - **Verify locally:** Mock lifecycle tests prove fail→fix→green, stale-head rejection, missing/pending checks do not trigger blind fixes, and exhaustion preserves the PR for attention.
