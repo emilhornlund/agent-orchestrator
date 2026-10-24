@@ -102,7 +102,7 @@ to inspect first, not permission to invent unimplemented helpers.
   - **Verify locally:** Tests verify read/write/revision conflict, corrupted data protection, and wrong-task rejection.
   - **Out of scope:** Do not generate or approve plans.
 
-- [ ] **T12 — Build and parse the planning operation**
+- [x] **T12 — Build and parse the planning operation**
   - **Depends on:** T09–T11.
   - **Implement:** Add a prompt that asks the primary task session to inspect source/repository instructions and produce only the T10 plan artifact. Include original task and relevant attachment metadata. Parse, validate, then save it.
   - **Verify locally:** Tests assert plan prompt contract, mocked structured response handling, rejection of malformed plans, and preservation of unchanged repository files.
