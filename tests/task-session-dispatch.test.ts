@@ -378,6 +378,18 @@ describe("task-session production dispatch", () => {
                   created_at: "2026-10-24T10:00:00Z",
                   html_url: "https://github.com/owner/repo/actions/runs/42",
                 },
+                {
+                  id: 43,
+                  name: "Tests",
+                  head_sha: observedHead,
+                  status: "completed",
+                  conclusion:
+                    observedHead === "b".repeat(40) || failAllChecks
+                      ? "failure"
+                      : "success",
+                  created_at: "2026-10-24T10:00:01Z",
+                  html_url: "https://github.com/owner/repo/actions/runs/43",
+                },
               ],
             },
           ],
@@ -387,7 +399,27 @@ describe("task-session production dispatch", () => {
         args[0] === "api" &&
         args.some((argument) => argument.includes("/statuses?"))
       ) {
-        return JSON.stringify([[]]);
+        const endpoint =
+          args.find((argument) => argument.includes("/statuses?")) ?? "";
+        const observedHead =
+          endpoint.match(/\/commits\/([0-9a-f]+)\/statuses/u)?.[1] ?? "";
+        return JSON.stringify([
+          [
+            {
+              id: 52,
+              context: "Security",
+              sha: observedHead,
+              state:
+                observedHead === "b".repeat(40) || failAllChecks
+                  ? "failure"
+                  : "success",
+              created_at: "2026-10-24T10:00:02Z",
+              updated_at: "2026-10-24T10:00:02Z",
+              target_url: "https://github.com/owner/repo/security",
+              description: "Security policy",
+            },
+          ],
+        ]);
       }
       if (
         args[0] === "api" &&
@@ -395,7 +427,10 @@ describe("task-session production dispatch", () => {
           argument.includes("/protection/required_status_checks"),
         )
       ) {
-        return JSON.stringify({ contexts: ["Build"], checks: [] });
+        return JSON.stringify({
+          contexts: ["Build", "Tests", "Security"],
+          checks: [],
+        });
       }
       if (
         args[0] === "api" &&
@@ -779,6 +814,9 @@ describe("task-session production dispatch", () => {
       openCodeRun.mock.calls.some(
         ([options]) =>
           options.prompt.startsWith("Repair the required GitHub CI failures") &&
+          options.prompt.includes("Build") &&
+          options.prompt.includes("Tests") &&
+          options.prompt.includes("Security") &&
           options.sessionId === "ses_primary-task",
       ),
     ).toBe(true);
@@ -856,7 +894,7 @@ describe("task-session production dispatch", () => {
       headSha: "d".repeat(40),
       ciEvaluation: {
         status: "passed",
-        expectedCheckNames: ["Build"],
+        expectedCheckNames: ["Build", "Security", "Tests"],
       },
     });
     expect(recoveredRecord?.publicationQuality).toBeDefined();
