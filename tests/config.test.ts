@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import fs from "node:fs";
 import { parseConfig } from "../src/config/config.js";
 
 const validConfig = `
@@ -156,6 +157,23 @@ function configWithGithubAppValues(
 }
 
 describe("parseConfig", () => {
+  it("parses the unified configuration example", () => {
+    const config = parseConfig(
+      fs.readFileSync(
+        new URL("../config.example.yaml", import.meta.url),
+        "utf8",
+      ),
+    );
+    expect(
+      config.projects.every((project) => project.autoMerge === false),
+    ).toBe(true);
+    expect(
+      config.projects.every(
+        (project) => project.repository.validationCommand !== undefined,
+      ),
+    ).toBe(true);
+  });
+
   it("accepts valid configuration", () => {
     const config = parseConfig(validConfig);
 

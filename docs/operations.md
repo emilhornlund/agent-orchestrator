@@ -26,8 +26,9 @@ Before repository bootstrap and project reconciliation at startup, the service r
 each configured project. The recognized scope is limited to these writer-generated names:
 
 ```text
-<worktreeRoot>/.orchestrator/review-maintenance/<project-id>/<card-id>.json.<process-id>.tmp
 <worktreeRoot>/.orchestrator/prepared-conflicts/<project-id>/<card-id>.json.<process-id>.tmp
+<worktreeRoot>/.orchestrator/trusted-commits/<project-id>/<card-id>.json.<process-id>.tmp
+<worktreeRoot>/.orchestrator/rejected-commits/<project-id>/<card-id>.json.<process-id>.tmp
 <contextRoot>/<project-id>/.reconciliation-block.json.<process-id>.<unique-suffix>
 ```
 
@@ -45,13 +46,13 @@ preserve the file for investigation and repair it only as an explicit runtime-st
 
 ### Persisted-state size guard
 
-The reconciliation block, prepared-conflict handoff, review-maintenance record, trusted committed-implementation record, and rejected-commit record are authoritative JSON state files. Each is
+The reconciliation block, prepared-conflict handoff, trusted committed-implementation record, and rejected-commit record are authoritative JSON state files. Each is
 limited by the same fixed 1 MiB upper bound; this is an implementation safety limit, not a configuration option. The service
 checks the filesystem byte size before reading a file for JSON parsing. A file above the limit is rejected as malformed state, and
 the diagnostic identifies the affected path and size-limit failure without logging its contents.
 
 Oversized files are retained unchanged for diagnosis. A reconciliation block follows the existing malformed-state project-blocking
-path. An oversized prepared-conflict or review-maintenance record follows its existing recovery or maintenance error path. Missing
+path. An oversized prepared-conflict, trusted-commit, or rejected-commit record follows its existing recovery error path. Missing
 files and ordinary malformed or schema-invalid files behave as before, and no workflow state advances because persisted state was
 rejected.
 
@@ -197,15 +198,13 @@ unknown worktrees.
 
 For an initial claim, the expected worktree is prepared before the Trello card is moved to `Working`. A failed move leaves
 that prepared worktree available for the next attempt. Reconciliation checks existing worktrees but does not create them.
-After a successful implementation publication, cleanup is best effort and a cleanup failure is logged without undoing the
-publication or resulting `Human Review` or `Done` transition. Terminal Human Review reconciliation also attempts cleanup
-after its successful transition semantics: merged cards are cleaned after remote branch deletion, `Done`, and completion
-notification handling; closed cards are cleaned after `Backlog` and the explanatory comment attempt. This terminal cleanup
-is limited to the expected `<worktreeRoot>/<card-id>` and `agent/<card-id>` artifacts. A failure is an operational warning
-with project and card context and does not throw a new workflow failure. Refinement clears its result and attempts local cleanup
-after moving the card to `Backlog`. Result-file, worktree, and local-branch cleanup are housekeeping: failures are warning-level
-diagnostics containing the project, card, operation, and affected path, and do not undo the confirmed `Backlog` transition. Failed
-or unsafe removals preserve the remaining artifact for diagnosis.
+Implementation worktrees remain available while their owned PR is under CI monitoring or Human Review so bounded CI and feedback
+repairs can reuse the task branch. After an authoritative terminal PR transition, cleanup is limited to the expected
+`<worktreeRoot>/<card-id>` and `agent/<card-id>` artifacts. The terminal mutation remains durable until required cleanup has been
+verified; a failure preserves the queue event and task state for restart recovery without repeating a merge or duplicating the
+terminal Trello transition. Refinement clears its result and attempts local worktree cleanup after moving the card to `Backlog`.
+Result-file and refinement cleanup are housekeeping; failures are warning-level diagnostics with project, card, operation, and
+affected path, and do not undo a confirmed `Backlog` transition. Failed or unsafe removals preserve the remaining artifact.
 
 Terminal cleanup is fail-closed. It does not remove symbolic links, paths outside the configured root, nested or unknown
 worktrees, unexpected branches, dirty worktrees, worktrees with unmerged paths, or worktrees with an active rebase. A
@@ -280,24 +279,17 @@ block publication. New pull requests use the deterministic fallback body, consis
 footer `Implemented automatically by <projects[].repository.gitIdentity.name>.`; generated descriptions use that same footer.
 Existing open pull requests are reused without description updates, as usual.
 
-During Human Review reconciliation, the same isolated task worktree is used for automatic maintenance of an eligible stale
-branch. Eligibility requires an open pull request in the configured repository, exact `agent/<trello-card-id>` head and configured
-default base, a `behind` or `conflicted` state, and no requested changes on the current head. The pull request is revalidated
-before Git maintenance. A current branch is a no-op and is not fetched, rebased, set up, pushed, or reported as a successful
-maintenance update. A successful clean rebase updates the existing branch without running `repository.validationCommand`, retaining
-the existing pull request and leaving the card in `Human Review`. A recognized `UNKNOWN` value in either
-`mergeable` or `mergeStateStatus` is not a maintenance state: the card and branch are left unchanged while the existing
-card-scoped GitHub reconciliation retry policy reads the pull request again, using its three-attempt bound and backoff. A valid
-later response resumes normal handling; persistent unresolved state reaches the same exhausted-retry project block and
-`Attention Required` diagnostic. Unsupported or malformed values remain immediate failures.
+For every open owned PR, the worker verifies the persisted URL, branch, repository, and exact current head before observing CI and
+feedback. Checks and commit statuses are matched to automatically established expectations from repository rules and static
+workflow contracts. Conditional or dynamic workflows, inaccessible policies, delayed/missing checks, skipped/neutral/cancelled
+results, and stale heads remain waiting or uncertain. The worker never uses currently visible green checks as proof that the
+expected check set is complete. Only complete failures trigger the bounded primary-session CI repair cycle; only complete passes
+can authorize feedback replies or auto-merge.
 
-During this maintenance, the existing pull request description may contain one managed status section bounded by
-`<!-- agent-orchestrator-status:start -->` and `<!-- agent-orchestrator-status:end -->`. The orchestrator updates only the content
-inside that section as it rebases, resolves prepared conflicts, and updates the remote task branch. It removes the
-section after success, or records that maintenance failed and requires human attention when automatic Git work cannot complete.
-Every possible description write is based on a fresh body read; identical updates are skipped. Invalid or duplicate marker pairs
-are left untouched and escalated rather than guessed at. Description operations are presentation-only and their failures do not
-trigger Git cleanup or recovery actions.
+On review feedback, stable review/thread/comment identities remain in the durable task ledger through remediation and independent
+verification. Replies use the original GitHub conversation context and are published only after the correction is committed,
+published to the same PR, and fully CI-verified. A repair that produces no change does not mark feedback as addressed. The
+orchestrator does not approve reviews, dismiss reviewer decisions, or resolve threads.
 
 The publication rules are:
 
@@ -307,41 +299,27 @@ The publication rules are:
   update.
 - Fetch or rebase failure stops before push, pull-request lookup or creation, and the successful `Human Review` transition.
 - An existing open pull request is reused; a new pull request is created only when needed.
-- Normal publication never force-pushes. It merges a pull request only for a project with `autoMerge: true`, after that
-  project's normal implementation publication succeeds.
+- Normal publication never force-pushes. A task PR is observed on the exact published head, and auto-merge is deferred until
+  local quality gates, independent review, and the complete current-head CI evaluation pass. Pending, failed, unknown, and stale
+  CI evidence blocks merge.
 
-Requested-change no-ops are handled before publication. When OpenCode successfully determines that current review feedback is already
-satisfied, stale, or no longer applicable and leaves the worktree clean, the orchestrator writes a card-scoped no-op identity and
-returns the card to `Human Review`. It retains the existing PR URL and remote task branch, skips the commit session, push, PR
-creation/replacement, merge, and `Done` transition. The Trello diagnostic includes bounded PR head and attributed feedback context,
-does not call the feedback resolved, and is best effort after the confirmed Human Review transition. Repeated polls suppress the same
-URL/head/feedback identity; a reviewer dismissal or update, or a new PR head, makes the card eligible again. This exception applies
-only to requested-change feedback; initial implementation still requires repository changes, while ordinary review remediation
-may edit, replace, or remove the initial implementation as needed. It must leave repository changes in the worktree and may
-otherwise be a no-op.
+If feedback remediation returns no source changes, its feedback remains unverified in the task ledger. The orchestrator does not
+commit, publish, reply with a success claim, or move the card to `Done` based on a no-op result; the existing PR and worktree remain
+available for further review or operator attention.
 
-The task worktree and branch are preserved after fetch, rebase, publication, or merge failures so conflicts and diagnostics
-can be resolved. A human must review and merge the pull request before the card can reach `Done` when `autoMerge` is disabled.
-An enabled project's successful auto-merge is followed by the same `Done` transition and completion handling.
+The task worktree and branch are preserved after fetch, rebase, publication, CI, or merge failures so conflicts and diagnostics
+can be resolved. With `autoMerge: false`, a human must merge the pull request before the card reaches `Done`. With
+`autoMerge: true`, the unified worker merges only after complete current-head CI and local evidence pass.
 
-Maintenance failures follow the same preservation boundary but never move the card or create a pull request. A conflict is left in
-place for dedicated conflict handling without automatic abort, reset, clean,
-worktree removal, or recreation. The prepared-conflict handoff then starts a dedicated OpenCode remediation session in the same
-isolated worktree, using the configured remediation model and variant. Its prompt contains the original card intent, updated base
-and rebase target, conflicted paths, and configured validation command, and limits the agent to resolving and continuing the active
-rebase, including additional conflict stops from later commits.
+Prepared-publication conflicts follow the preservation boundary and never create a replacement pull request. A conflict is left
+in place for dedicated handling without automatic abort, reset, clean, worktree removal, or recreation. A validated handoff keeps
+task/base identity, the trusted pre-rebase commit, target, paths, and current rebase metadata. The dedicated OpenCode remediation
+session runs in the same isolated worktree and may continue every conflict stop; the agent does not control commits, pushes, or PRs.
 
-The remediation worker verifies that the rebase completed, all unmerged paths are gone, and the worktree is valid and clean. The
-OpenCode agent owns configured repository validation before finishing. The worker resolves the remote task branch SHA again and
-refuses publication unless it still equals the handoff SHA. It then performs one exact `--force-with-lease` update of the existing
-`agent/<card-id>` branch and clears the handoff only after the update succeeds. The existing pull request is retained and the card
-remains in Human Review. Failures, timeouts, permission denials, unresolved conflicts, agent validation failures, concurrent SHA
-changes, and lease rejection preserve the handoff and worktree, emit normal diagnostics, and use bounded retries followed by
-Attention Required project blocking.
-A blocked project periodically checks only the handoff and underlying Git conflict state, avoids relaunching remediation, and
-resumes when a valid handoff's local rebase is complete without requiring a restart. This releases only the project block: the
-next cycle routes the existing worktree through prepared-conflict remediation, where the OpenCode session owns validation and the
-worker owns the exact force-with-lease publication and handoff removal. A missing or invalid handoff remains blocked.
+The coordinator verifies a completed rebase, clean worktree, correct branch, and trust evidence before continuing normal local
+quality review and publication. Failure, timeout, permission denial, unresolved conflict, or uncertain identity retains the handoff
+and worktree for operator attention. A blocked worker checks only the persisted handoff and Git conflict state; a valid completed
+rebase releases the block for the next normal task-session quality/publication gates. A missing or malformed handoff remains blocked.
 
 ### Rewriting an owned task branch
 
@@ -509,18 +487,19 @@ The one-active-task rule applies per project, not globally. A project with an am
 state is blocked without affecting unrelated projects. A normal card or project failure is logged and reconciled within its
 own project; it does not silently advance another project's workflow.
 
-## Task-session operation
+## Unified task-session operation
 
-Task-session mode is enabled only by an explicit per-project `executionMode: "task-session"`; omission keeps the existing
-legacy workflow. Before enabling it for a project, configure a validation command and the exact unique required check names, and
-resolve active legacy `Working` cards under the legacy workflow. See [Configuration](configuration.md#projectsexecutionmode).
+Every configured project runs the same durable task-session workflow; there is no per-project mode switch or required-check-name
+list. Configure the required `repository.validationCommand`; `coverageCommand` remains optional and becomes a gate when set. CI
+expectations are discovered from branch-protection information and repository-owned pull-request workflows. See
+[Configuration](configuration.md#ci-expectation-discovery) for how unknown and dynamic CI contracts fail closed.
 
-Task-session plans, execution records, feedback ledgers, and mutation queues are stored under the workflow `contextRoot`, outside
-the repository and worktrees. Preserve this runtime data across restarts and include it in operational backups. Do not hand-edit
+Task plans, execution records, feedback ledgers, and mutation queues are stored under workflow `contextRoot`, outside the
+repository and worktrees. Preserve this runtime data across restarts and include it in operational backups. Do not hand-edit
 or remove a task record, ledger, or queue event to clear a failure. The queue persists event identity and permits only one active
-repository-mutating operation per project. A project can monitor multiple owned waiting PRs read-only; any CI repair or feedback
-remediation waits for the single project mutation owner. Independent projects retain their separate workers and may proceed
-concurrently.
+repository-mutating operation per project. A project can monitor multiple owned waiting PRs read-only; any implementation,
+refinement, CI repair, feedback remediation, or terminal PR reconciliation waits for the single project mutation owner.
+Independent projects retain their separate workers and may proceed concurrently.
 
 Mutation events record their active worker identity. A recovery claimant does not take an event from another live worker; after a
 worker exits, it can reclaim only the task's matching persisted event after authoritative ownership and worktree checks pass.
@@ -531,14 +510,15 @@ A queued event does not mutate a repository. A failed or uncertain event retains
 recovery; it blocks later mutations for that project rather than being discarded or automatically retried. Preserve its record,
 inspect the affected task and external state, and follow the task-session recovery guide before resuming.
 
-Validation repair, independent review repair, and CI repair each have a finite limit of two repair attempts per cycle. The
-relevant gates are rerun after the final correction; exhaustion or ambiguous state is preserved for operator attention rather
-than retried indefinitely. Each newly observed human-feedback round is independently tracked; it is not an automatic retry timer.
-Replies are published only for independently verified items after the correcting commit and exact-head required checks succeed.
-The process does not approve reviews or resolve reviewer threads. See [Workflow](workflow.md#task-session-mode) and
+Validation repair, independent review repair, and CI repair each have a finite limit of two attempts per cycle. Complete CI
+failures are collected together; pending or uncertain expected checks remain waiting without consuming repair attempts. Local
+gates and review are rerun after each correction. `autoMerge` defaults to `false`; when enabled it still requires complete
+current-head CI and passing local evidence. Exhaustion or ambiguous state is preserved for operator attention rather than retried
+indefinitely. Replies are published only for independently verified items after the correcting commit and a complete passing CI
+result. The process does not approve reviews or resolve reviewer threads. See [Workflow](workflow.md#unified-task-lifecycle) and
 [Recovery](recovery.md#task-session-recovery) for lifecycle and recovery details.
 
-Task-session code and tests have been verified locally with mocked Trello, GitHub, and OpenCode boundaries. This does not establish
+The unified implementation has been verified locally with mocked Trello, GitHub, and OpenCode boundaries. This does not establish
 that a particular GitHub check, permission, Trello board, or OpenCode runtime is available. No real-world pilot, deployed-service
 test, or live API verification has been performed; those checks remain separate operator decisions.
 
@@ -550,7 +530,7 @@ Operators should expect the orchestrator to refuse or stop rather than guess. It
 - use unrestricted force-pushes or unscoped force-with-lease pushes;
 - run agent implementation in the configured source checkout;
 - resume a `Working` card without qualifying transition and worktree or pull-request evidence;
-- process an active `Human Review` card without actionable requested changes on its expected pull request;
+- mutate an open `Human Review` task without actionable feedback on its expected pull request;
 - treat failed external operations as successful workflow transitions;
 - silently discard failed agent work; or
 - delete arbitrary or unrecognized worktrees.

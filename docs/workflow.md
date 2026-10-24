@@ -41,45 +41,41 @@ Ready for Agent + Refinement -> Working -> Backlog
 A refined card must be explicitly moved back to `Ready for Agent` before implementation. `Backlog`, `Failed`, and `Done`
 cards are not automatically processed.
 
-## Task-session mode
+## Unified task lifecycle
 
-Projects use the existing `legacy` workflow unless `projects[].executionMode` is explicitly set to `task-session`. The mode is
-per project; it does not change other projects or the default. It handles new eligible implementation cards claimed from
-`Ready for Agent`. Existing active legacy work is not adopted: an active `Working` card without a matching persisted
-task-session record is refused for operator recovery rather than silently migrated.
-
-The task-session lifecycle keeps the same Trello and publication safety boundaries while adding durable quality and recovery
-gates:
+Every project uses one durable task-session lifecycle. A Ready card is claimed only after ordered eligibility and label
+classification, then serialized behind the project's single mutation owner:
 
 ```text
-Ready for Agent -> Working -> plan + independent plan check
-  -> implementation with primary session
-  -> orchestrator-run validation and optional coverage
-  -> independent review -> trusted commit and same-PR publication
-  -> exact-current-head required CI checks
-       -> failure: bounded repair in the same primary session -> revalidate/review -> update same PR
-  -> Human Review (unless auto-merge is explicitly enabled)
-       -> actionable feedback -> durable ledger -> same primary session
-          -> independent verification -> quality gates -> same PR -> current-head CI -> contextual reply
+Ready for Agent -> Working -> approved plan + independent plan check
+  -> implementation in the persisted primary OpenCode session
+  -> orchestrator validation + configured coverage + independent review
+  -> trusted commit + existing/new PR publication
+  -> discover expected checks + observe all exact-head check runs and commit statuses
+       -> waiting/uncertain: preserve state; do not repair, reply, or merge
+       -> complete failures: bounded same-session repair -> local gates/review -> same PR -> re-observe new head
+       -> complete pass: Human Review, or auto-merge when explicitly enabled
+  -> Human Review: ledger actionable feedback -> same primary session -> verify -> gates -> publish -> CI -> contextual reply
+  -> manually merged PR -> Done; deliberately closed PR -> Backlog
 ```
 
-One primary OpenCode session ID is persisted for each task and resumed for implementation, CI repair, and human-feedback
-remediation. Independent plan and implementation reviewers use separate sessions. The orchestrator, not OpenCode, decides
-whether configured commands and exact-head GitHub checks passed before committing or publishing. A feedback item is not
-considered handled until its disposition is independently verified and the correcting commit passes required checks; only then
-may a factual reply be published in the original inline-thread or conversation context. The orchestrator does not approve reviews
-or resolve reviewer threads.
+One primary OpenCode session ID is persisted per task and resumed for implementation, CI repair, and human-feedback remediation.
+Independent plan and implementation reviewers use separate sessions. The orchestrator, not OpenCode, decides whether local
+commands, independent review, and CI evidence pass before publication, feedback replies, or auto-merge. Exhausted or ambiguous
+operations preserve their durable records and require operator attention. No manual check-name configuration is required. Local
+mock tests cover the lifecycle; no live Trello/GitHub/OpenCode pilot has been performed. See
+[Configuration](configuration.md#ci-expectation-discovery) and [Recovery](recovery.md#task-session-recovery).
 
-Task-session projects require a repository validation command and a nonempty list of unique required GitHub check names. An
-optional coverage command becomes a mandatory gate when configured. Validation, review, and per-head CI repair attempts are
-bounded; exhausted or ambiguous operations preserve their artifacts and require operator attention. See
-[Configuration](configuration.md#projectsexecutionmode) for activation and [Recovery](recovery.md#task-session-recovery) for
-operator guidance. Local mock tests cover these flows; no live Trello, GitHub Actions, or OpenCode pilot has been performed.
+Automatic CI expectations come from available branch-protection policies and static repository-owned pull-request workflow
+contracts. Conditional jobs, dynamic matrices, unsupported workflow constructs, inaccessible policies, empty contracts, and
+checks that have not appeared keep the result uncertain or waiting. A visible subset of passing checks is not evidence that the
+expected set is complete. All failures in a complete set are supplied together to the bounded repair cycle; pending or uncertain
+results do not consume repair attempts.
 
-When polling resumes an owned task-session `Working` card, it reconciles persisted phase, queue ownership, worktree/branch,
-setup status, and primary-session identity before continuing. Planning and implementation reuse the existing task record and
-primary session; validation/review use persisted content-bound evidence; publication may reuse only an exactly trusted commit.
-Missing or contradictory evidence is escalated without starting a second implementation, commit, or PR.
+When polling resumes an owned `Working` card, the coordinator reconciles persisted phase, queue ownership, worktree/branch,
+setup status, and primary-session identity before continuing. Validation/review uses persisted content-bound evidence, and
+publication reuses only an exactly trusted commit. Missing or contradictory evidence is escalated without starting a second
+implementation, commit, push, or PR.
 
 ## Trello lists
 
@@ -142,55 +138,22 @@ Email and comment failures are logged independently and do not undo the successf
 fails, produces an invalid result, or modifies unauthorized repository files, the card is sent through normal failure
 handling to `Failed`. Its deliberate retry action is to move it to `Ready for Agent`; see [Recovery](recovery.md).
 
-## Implementation
+## Implementation and quality gates
 
-The steps in this section describe the legacy implementation path. Task-session projects use the additional lifecycle and
-independently enforced gates described above; in particular, task-session validation is run by the orchestrator rather than
-being delegated solely to the implementation session.
+An implementation card is claimed only from `Ready for Agent`. The project mutation queue serializes implementation, refinement,
+CI repair, and feedback remediation; an owned worktree and a persisted primary session are tied to the task record. The coordinator
+runs optional `setupCommand`, reconciles current Trello attachment context, creates a structured plan, and requires independent
+plan verification before code changes begin.
 
-An implementation card is claimed only from `Ready for Agent`. The worktree is prepared before the card is moved to
-`Working`, so a failed card claim does not leave the next attempt without its expected worktree.
+The primary session implements the approved plan. The orchestrator—not the agent—runs the required `validationCommand` and any
+configured `coverageCommand`, binding each result to the exact source content. An independent reviewer uses a separate session to
+assess every approved requirement. Validation, coverage, and review repairs are bounded; after the last correction the relevant
+checks run again. No commit or publication proceeds without current passing quality evidence and a passing final review.
 
-The implementation pass then:
-
-1. Runs the optional `repository.setupCommand` in the card worktree.
-2. Reconciles the current Trello attachments immediately before each applicable OpenCode session. Uploaded files are
-   materialized outside the repository and worktree; external URLs remain metadata-only.
-3. Runs an OpenCode implementation session using the configured implementation model and variant.
-4. Requires OpenCode to leave repository changes. The configured `validationCommand`, when present, is supplied to sessions
-   that modify implementation files; those agents run it before finishing and fix failures caused by their changes. The
-   orchestrator does not execute this command itself.
-5. Refreshes the current Trello attachment context immediately before every automatic review, then runs the initial
-   separate OpenCode review session with compact attachment metadata and usable locations. This review is always run and
-   does not consume a remediation pass.
-6. If a review reports findings and `projects[].opencode.remediation.maxPasses` has remaining capacity, refreshes the card
-   context immediately before each separate remediation session. The resulting worktree must still contain repository changes.
-   Remediation may edit, replace, or remove changes from the initial implementation. A pass may therefore produce no additional
-   changes when the existing repository changes remain. The pass number and configured
-   limit are logged with the project and card context. A new review runs only when another remediation pass remains. The
-   default limit is `1`; a value of `0` skips remediation and any follow-up review while continuing through the normal
-   post-review flow.
-7. Stops immediately when the initial or an intermediate review passes. After the final allowed remediation pass, the workflow
-   continues directly to the normal post-review flow without another automated review. Review attachment context is refreshed
-   separately for each review and is not reused from implementation or remediation.
-8. Runs a separate OpenCode commit-message session. The session may write only the structured
-   `.agent-orchestrator/commit-result.json` artifact; the orchestrator validates the message, stages all repository
-   changes, and creates exactly one commit with the configured Git identity before requiring a clean worktree.
-9. Runs a separate post-commit OpenCode pull-request-description session using the configured `opencode.commit` model and
-   variant. It receives the Trello task and URL, final changed files, commit SHA and message, and known validation results.
-   It must return exactly one JSON object with the `summary`, `changes`, and `validation` fields. This optional presentation step
-   does not block publication: if its context collection, OpenCode execution, structured-output parsing or validation, or Markdown
-   rendering fails, the workflow logs the stage and uses the deterministic pull-request body instead.
-10. Publishes or reuses the task pull request. With `autoMerge: false`, the card moves to `Human Review`; with `autoMerge: true`,
-    the pull request is merged and the card moves directly to `Done`.
-
-An OpenCode stage that exits unsuccessfully, produces no expected changes, fails to create a commit, or leaves changes after the
-commit stage fails the workflow. Description-generation failures are non-critical presentation failures: the committed task
-worktree and branch are preserved, a diagnostic identifies the failed stage and the deterministic fallback, and publication
-continues. The fallback body is the Trello card URL followed by the deterministic attribution footer
-`Implemented automatically by <projects[].repository.gitIdentity.name>.`; partial,
-malformed, or unvalidated generated content is never published. Publication details and non-force-push boundaries are in
-[Operations](operations.md).
+The orchestrator then creates one trusted commit with the configured Git identity and publishes or reuses the same task PR through
+the safe fetch/rebase and non-force-push path. The optional post-commit PR-description session is presentation-only: if structured
+output or rendering fails, a deterministic Trello-link/attribution body is used without weakening publication gates. Failures
+preserve the owned worktree and durable task state for recovery; they do not create a success transition.
 
 The description result contract is strict: `summary` is a non-blank string of at most 1,000 characters, while `changes` and
 `validation` are arrays of at most 20 non-blank strings each, with every entry limited to 500 characters. Empty arrays are
@@ -215,26 +178,27 @@ Before publication, the task worktree fetches `origin/<defaultBranch>` and rebas
 reference. The resulting `HEAD` is used for remote-branch comparison, push decisions, pull-request publication,
 notifications, and the Trello summary. The configured source checkout is not used for these operations.
 
-An existing open pull request is reused; a new one is created only when none exists. With `autoMerge: false`, successful
-publication moves the card to `Human Review`, adds a Trello summary with the pull-request URL, commit, review result,
-remediation result, and, when available, elapsed workflow time, and uses the Human Review email path. With `autoMerge: true`,
-the expected pull request is merged immediately after publication. Only a successful merge permits the card to move to `Done`
-with `dueComplete: true`; after that transition the orchestrator attempts the existing `done` email and adds a distinct
-auto-merged summary containing the pull-request URL, final published commit, and automated review/remediation results. A
-publication, merge, or card-transition failure does not produce a successful completion.
+An existing open pull request is reused; a new one is created only when none exists. After publication, every exact-head CI check
+run and commit status is collected and evaluated against the complete expectation set. The card remains in `Human Review` while
+checks are pending or the expected set is uncertain. A complete failure set starts at most two CI repair rounds in the existing
+primary session; each correction reruns local validation/coverage and independent review, publishes to the same PR, and invalidates
+all prior-head CI evidence. With `autoMerge: false`, a successful complete CI result permits Human Review. With `autoMerge: true`,
+merge is deferred until local quality gates, review, and complete current-head CI all pass. Only a successful merge permits the
+card to move to `Done` with `dueComplete: true`; completion notification and summary follow that transition. A publication, merge,
+or card-transition failure does not produce a successful completion.
 
 ## Human review
 
 Human review takes place on GitHub when `autoMerge` is disabled. The orchestrator never merges a pull request for a project
-with `autoMerge: false`; an enabled project merges only its normal implementation pull requests after successful publication.
+with `autoMerge: false`; an enabled project merges only task-session implementation PRs after complete CI and local gates pass.
 
-| GitHub state                                                 | Trello result                                                  |
-| ------------------------------------------------------------ | -------------------------------------------------------------- |
-| Pull request merged                                          | Move the card to `Done` and mark it complete                   |
-| Pull request closed without merge                            | Move the card to `Backlog` and add the closed-PR comment       |
-| Open pull request with changes requested on its current head | Move the card to `Working` and pass the feedback to OpenCode   |
-| Open pull request without actionable requested changes       | Leave the card in `Human Review`; expose its maintenance state |
-| No expected pull request                                     | Reconcile the card to `Backlog`                                |
+| GitHub state                                                 | Trello result                                                     |
+| ------------------------------------------------------------ | ----------------------------------------------------------------- |
+| Pull request merged                                          | Move the card to `Done` and mark it complete                      |
+| Pull request closed without merge                            | Move the card to `Backlog` and add the closed-PR comment          |
+| Open pull request with changes requested on its current head | Move the card to `Working` and pass the feedback to OpenCode      |
+| Open pull request without actionable requested changes       | Leave the card in `Human Review` and observe complete CI evidence |
+| No expected pull request                                     | Reconcile the card to `Backlog`                                   |
 
 After an owned pull request reaches either terminal state, reconciliation attempts to remove only the dedicated
 `<worktreeRoot>/<trello-card-id>` worktree and its local `agent/<trello-card-id>` branch. For a merged pull request this
@@ -268,70 +232,29 @@ each location field GitHub supplies, including a path, current line, original li
 incompletely described threads are excluded or fail reconciliation rather than being inferred. This applies to review-body-only,
 inline-only, and mixed feedback.
 
-If the requested-change OpenCode session exits successfully but leaves the repository clean, it is a requested-change no-op, not a
-workflow failure. The existing pull request and remote `agent/<trello-card-id>` branch are retained, no commit, push, pull-request
-rewrite, merge, or `Done` transition is performed, and the card is returned to `Human Review` even when `autoMerge` is enabled. The
-outcome explicitly says that no reviewer feedback was resolved. It records a bounded Trello diagnostic with the pull-request URL,
-head, review identity and feedback context when available, and asks a human to dismiss or update the review or provide clearer
-feedback. The no-op identity is scoped to the pull-request URL, current head, and submitted feedback, so unchanged feedback is not
-retried on later polls; a new head or newly submitted feedback is eligible again. Initial implementations still require repository
-changes. Ordinary in-workflow review remediation may change, replace, or remove the initial implementation, but it fails if the
-resulting worktree has no repository changes. A successful no-op remediation continues through the normal post-review flow.
+If a feedback remediation produces no repository changes, it is not treated as resolved: the ledger retains the item and the
+workflow does not publish a correction or claim success. The task remains available for another feedback round or human attention.
+An initial implementation still requires repository changes; validation/review repair remains scoped to its approved task.
 
-For every owned open pull request on the expected `agent/<trello-card-id>` branch, Human Review reconciliation records a
-maintenance state: `up-to-date` when the configured default branch is not ahead and GitHub reports no conflict, `behind` when
-the default branch has advanced without a conflict, or `conflicted` when GitHub reports merge conflicts. A prepared local
-rebase conflict is exposed separately as `prepared-conflict`. Pull requests on other branches, and closed or merged pull
-requests, are outside this state. A recognized `UNKNOWN` value in either GitHub merge-state field is a temporary unresolved
-condition: the card remains in `Human Review`, no maintenance starts, and the existing card-scoped GitHub reconciliation retry
-path reads the state again with its bounded three-attempt backoff. If it remains unresolved through the threshold, the project is
-blocked and uses the normal `Attention Required` diagnostic. Incomplete, malformed, or unsupported GitHub evidence fails
-deterministically rather than being retried.
+For each owned open PR, the coordinator verifies repository, branch, URL, persisted head, and current GitHub head before acting.
+It normalizes submitted review bodies, unresolved inline threads, and conversation comments into a durable task-scoped ledger.
+Actionable feedback is remediated in the original primary session, then independently verified; earlier still-applicable items remain
+tracked when new feedback arrives. Replies are sent only in the originating conversation/thread after the correcting commit has
+been published and the complete current-head CI result passes. The service never approves a PR, dismisses a review, or resolves a
+reviewer thread.
 
-An open, owned `behind` or `conflicted` pull request with no actionable requested changes is revalidated immediately before
-maintenance. The orchestrator then resolves the authoritative remote task-branch SHA, prepares or reuses only the expected
-task worktree, fetches `origin/<defaultBranch>`, and attempts to rebase the task branch. A clean rebase runs the configured
-`setupCommand` when needed for the new or changed effective worktree state. Setup state is retained for the expected worktree and
-repository SHAs, avoiding repeated setup for an unchanged prepared worktree. Clean branch maintenance does not run
-`validationCommand`; it remains available to OpenCode sessions that modify implementation files or remediate prepared conflicts. The existing pull request is
-updated with the exact force-with-lease helper, remains associated with the card, and the card remains in `Human Review`; no
-OpenCode session, pull-request creation, or Trello transition is performed. After a successful update, reconciliation exposes
-`up-to-date` and logs the resulting commit. If the branch is already current, maintenance is a no-op: no worktree preparation,
-rebase, setup, push, pull-request operation, OpenCode invocation, or successful maintenance result occurs.
-
-When eligible long-running maintenance starts, the existing pull request description receives one hidden managed status section:
-`<!-- agent-orchestrator-status:start -->` through `<!-- agent-orchestrator-status:end -->`. The supported statuses are `rebasing`
-(onto the latest configured default branch), `resolving-conflicts`, `updating-remote`, and `failed` (requiring human attention).
-A failed automatic maintenance attempt replaces the section with the `failed` message; it
-never presents that attempt as successful. Successful maintenance removes the section and both markers.
-
-When a stable current-head requested-change snapshot starts remediation, the same section uses `addressing-review-feedback` while
-feedback changes are implemented, `validating-review-changes` while the updated branch is reviewed, and
-`publishing-review-changes` while the corrected branch and existing pull request are published. Each message states that
-remediation is in progress and that the review is not yet resolved. A requested-change failure uses `failed`; a successful no-op uses
-`attention-required` because the feedback remains unresolved. The section is removed only after successful publication and the
-existing workflow has completed its return to `Human Review` (or its existing auto-merge completion path).
-
-Only the content between this exact marker pair belongs to the orchestrator. All other description content, including human-written
-text and content from other tools, is preserved. Each reconciliation reads the current description immediately before a possible
-write, and an identical status is not written again. Unmatched, reversed, or duplicate markers are malformed: the orchestrator
-does not guess ownership or rewrite the description, and reports the pull request and card through the normal attention path.
-
-Description reads and writes are presentation operations. A presentation failure before or during recovery-critical Git work is
-logged with the pull request and card and uses the normal attention path without resetting, aborting, cleaning, overwriting, or
-otherwise changing Git maintenance state. After a successful branch update, removal of the managed status section is housekeeping:
-its failure is a warning, the pull request content is retained, and the maintenance result remains successful.
-The same rule applies to requested-change publication: a status presentation failure never turns a successfully published corrected
-branch into an unsuccessful publication, and preserved branch, worktree, and pull-request content remain available for diagnosis.
+Pending or uncertain CI retains the PR in `Human Review` without consuming a repair attempt. Complete failures start one bounded
+CI repair operation containing all failed checks; a published new head invalidates every previous check observation. Auto-merge
+is allowed only after complete expected checks and local evidence pass. An unknown expected-check set, missing check, stale head,
+or incomplete GitHub response never counts as green.
 
 A lease rejection, missing or invalid remote SHA, fetch or non-conflict rebase failure leaves the pull
 request, card, task branch, and worktree unchanged for diagnosis and later reconciliation. When Git confirms an active conflicted
 rebase and reports conflicted paths, orchestration writes a validated handoff at
 `<worktreeRoot>/.orchestrator/prepared-conflicts/<project-id>/<card-id>.json`. The shared handoff records its lifecycle origin,
 the project and card IDs, `agent/<card-id>`, the configured default branch, the trusted pre-rebase task commit, the captured
-rebase target, conflicted paths, and current rebase metadata. Human Review maintenance retains its authoritative remote task SHA
-and lease checks. Initial publication has no remote-branch or pull-request prerequisite and is authorized by the trusted local
-commit and captured target.
+rebase target, conflicted paths, and current rebase metadata. Initial publication is authorized by the trusted local commit and
+captured target; no replacement PR is created.
 
 For an initial-publication conflict, the card remains owned by the implementation workflow while the preserved worktree is routed
 through dedicated OpenCode conflict remediation. The orchestrator does not move the card to `Failed` merely because normal merge
@@ -344,7 +267,7 @@ the available range. Present `totalSteps` values must agree; unavailable optiona
 the same prepared rebase.
 
 A valid prepared-conflict handoff is an active remediation state. Reconciliation is idempotent while it exists and does not start
-another rebase. The project worker does not process Working or Ready cards, ordinary review maintenance, publication, or cleanup
+another rebase. The project worker does not process another Working or Ready card, publication, or cleanup
 until dedicated remediation has inspected the worktree. Remediation revalidates the handoff and isolated worktree, starts one
 OpenCode session using the configured `opencode.remediation` model and variant, and supplies the card title and description, task
 branch, updated base and rebase target, conflicted paths, active-rebase status, and configured validation command. OpenCode is
@@ -354,10 +277,9 @@ conflicted paths, uses normal failure diagnostics and never reports `prepared-co
 
 After the session, orchestration requires no active rebase, no unmerged paths, a valid worktree on `agent/<card-id>`, and a clean
 publication state. The OpenCode conflict-remediation session owns running the configured `validationCommand` and fixing failures;
-the orchestrator does not execute that command. Human Review maintenance then resolves and verifies the authoritative task-branch
-SHA before its exact force-with-lease update. Initial publication instead records the verified rebased `HEAD` as the new trusted
-commit and resumes the normal push and pull-request flow. A successful completion clears the handoff last. No replacement pull
-request, merge, unrelated Trello transition, or worktree cleanup is performed.
+the orchestrator independently re-runs the quality and review gates before publication. A verified rebased `HEAD` becomes the new
+trusted commit and resumes the normal safe push and existing-PR publication flow. A successful completion clears the handoff last.
+No replacement pull request, merge, unrelated Trello transition, or worktree cleanup is performed by the conflict resolver.
 
 An unsuccessful, timed-out, permission-denied, incomplete, or lease-rejected remediation preserves the handoff and worktree and
 uses the normal failure diagnostic and `Attention Required` path. The worker permits only the existing bounded remediation retry
@@ -391,7 +313,6 @@ this outcome does not send the `failed` notification. If the `Backlog` move fail
 context and no cancellation comment is added. If the move succeeds but the comment fails, the card remains in `Backlog` and
 the comment failure is logged.
 
-An external operation must succeed before its related workflow transition is treated as complete. For example, if an enabled
-project merged a pull request but moving the card to `Done` failed, the card remains available for reconciliation as a merged
-`Working` card; reconciliation completes it without attempting another merge. If a disabled project published but moving the
-card to `Human Review` failed, the same published `Working` recovery applies. See [Recovery](recovery.md) for these states.
+An external operation must succeed before its related workflow transition is treated as complete. If a merge succeeds but moving
+the card to `Done` fails, persisted terminal PR reconciliation retries the Trello transition without attempting another merge. A
+closed PR transition is similarly idempotent and returns to `Backlog`. See [Recovery](recovery.md) for these states.
