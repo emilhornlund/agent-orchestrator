@@ -55,6 +55,7 @@ export interface PublishCardOptions {
   signal?: AbortSignal;
   commands?: CommandRunner;
   rebaseAlreadyCompleted?: boolean;
+  beforePushVerification?: () => Promise<void>;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -301,6 +302,7 @@ export async function publishCard({
   signal,
   commands,
   rebaseAlreadyCompleted = false,
+  beforePushVerification,
 }: PublishCardOptions): Promise<void> {
   const cardLog = logger.child({
     projectId: project.id,
@@ -434,6 +436,10 @@ export async function publishCard({
     }
 
     publishedCommitSha = await git.getHeadSha(worktreePath);
+
+    // Task-session callers use this hook to revalidate content-bound quality
+    // evidence after the fetch/rebase preparation and before any remote write.
+    await beforePushVerification?.();
 
     cardLog.event(`Publication commit is ${publishedCommitSha}`);
 
