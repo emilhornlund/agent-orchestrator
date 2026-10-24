@@ -296,11 +296,31 @@ to inspect first, not permission to invent unimplemented helpers.
   - **Verify locally:** All scenarios pass offline and assert no unverified publication, preserved task ownership, correct session continuity, and bounded failure outcomes.
   - **Out of scope:** Do not call real services or AI models; do not enable mode yet.
 
-- [x] **T43 — Enable task-session dispatch without auto-migration**
+- [ ] **T43 — Enable task-session dispatch without auto-migration**
   - **Depends on:** T02, T15–T42.
   - **Implement:** Remove the temporary startup rejection for `executionMode: task-session` and route eligible new tasks to the completed task-session coordinator. Legacy remains the default. Reject attempts to attach new mode to an existing active legacy task without explicit migration.
   - **Verify locally:** Startup and mocked workflow tests verify mode routing, default legacy behavior, safe refusal to migrate, and correct local-only end-to-end completion.
   - **Out of scope:** Do not deploy, run live integrations, or change defaults.
+
+  **Correction status:** The prior T43 commit enabled initial task-session dispatch but did not connect failed-CI repair or the human-feedback lifecycle to production polling. T43 remains incomplete until T43A–T43C pass and its original acceptance criteria are reverified.
+
+- [ ] **T43A — Integrate bounded CI remediation into production task-session polling**
+  - **Depends on:** T28, T39, T41–T43.
+  - **Implement:** Connect the existing T28 CI remediation implementation to the actual task-session runtime. When a required check fails on the current PR head, enqueue or resume the appropriate repair operation using the original primary OpenCode session. Preserve current-head verification, idempotent event handling, retry limits, validation, coverage, independent review, safe publication, and persisted repair state.
+  - **Verify locally:** Production-polling tests prove failed current-head CI triggers bounded repair on the original session, stale/pending checks do not trigger repair, the same PR advances to a new head, and exhaustion/ambiguity preserves state for attention.
+  - **Out of scope:** Do not call real GitHub Actions or create a new PR.
+
+- [ ] **T43B — Integrate human feedback remediation into production task-session polling**
+  - **Depends on:** T30–T38, T41–T43A.
+  - **Implement:** Connect the existing T30–T38 feedback collection, actionability classification, primary-session remediation, independent verification, and contextual reply functionality to production polling. Preserve unresolved feedback, support subsequent rounds, and publish replies only after verified corrections and required successful checks.
+  - **Verify locally:** Production-polling tests cover current requested changes, inline and conversation feedback, multiple rounds, late feedback, same-session continuation, verification gates, and idempotent contextual replies.
+  - **Out of scope:** Do not auto-dismiss reviews, resolve threads, or invoke live GitHub services.
+
+- [ ] **T43C — Verify recovery and complete lifecycle integration**
+  - **Depends on:** T39–T43B.
+  - **Implement:** Complete any necessary task-session recovery wiring and add mocked end-to-end tests through the actual production polling entry point. Cover CI repair, repeated human feedback, session continuity, commit/publication safety, retry exhaustion, restart recovery, idempotency, and multiple waiting PRs under the single mutation-owner constraint. Keep legacy execution unaffected.
+  - **Verify locally:** All scenarios pass offline and assert no unverified publication, preserved task ownership, no duplicate commits/replies, and human attention for exhausted or ambiguous states.
+  - **Out of scope:** Do not use real services or models, and do not deploy.
 
 - [ ] **T44 — Document operation, configuration, and pilot boundaries**
   - **Depends on:** T43.
