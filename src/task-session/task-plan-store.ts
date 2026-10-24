@@ -4,6 +4,10 @@ import path from "node:path";
 import { z } from "zod";
 
 import type { ProjectConfig } from "../config/config.js";
+import {
+  parsePlanVerificationResult,
+  type PlanVerificationResult,
+} from "./plan-verification.js";
 import { parseTaskPlan, type TaskPlan } from "./task-plan.js";
 
 export const MAX_TASK_PLAN_BYTES = 1024 * 1024;
@@ -13,6 +17,7 @@ const storedTaskPlanEnvelopeSchema = z.strictObject({
   planRevision: z.number().int().positive().safe(),
   taskRecordRevision: z.number().int().positive().safe(),
   plan: z.unknown(),
+  verification: z.unknown().optional(),
 });
 
 export interface StoredTaskPlan {
@@ -20,6 +25,7 @@ export interface StoredTaskPlan {
   planRevision: number;
   taskRecordRevision: number;
   plan: TaskPlan;
+  verification?: PlanVerificationResult;
 }
 
 export class TaskPlanConflictError extends Error {
@@ -140,12 +146,27 @@ function assertDirectoryPath(directoryPath: string, create: boolean): boolean {
 
 function validateStoredTaskPlan(value: unknown): StoredTaskPlan {
   const envelope = storedTaskPlanEnvelopeSchema.parse(value);
+  const plan = parseTaskPlan(envelope.plan);
+  const verification =
+    envelope.verification === undefined
+      ? undefined
+      : parsePlanVerificationResult(envelope.verification);
+
+  if (
+    verification !== undefined &&
+    (verification.projectId !== plan.projectId ||
+      verification.cardId !== plan.cardId ||
+      verification.planRevision !== envelope.planRevision)
+  ) {
+    throw new Error("Task plan verification identity does not match its plan");
+  }
 
   return {
     version: envelope.version,
     planRevision: envelope.planRevision,
     taskRecordRevision: envelope.taskRecordRevision,
-    plan: parseTaskPlan(envelope.plan),
+    plan,
+    ...(verification === undefined ? {} : { verification }),
   };
 }
 
@@ -327,6 +348,56 @@ export class TaskPlanStore {
         taskRecordRevision,
         plan,
       };
+      const temporaryPath = this.writeTemporaryPlan(filePath, updated);
+
+      try {
+        fs.renameSync(temporaryPath, filePath);
+      } finally {
+        if (fs.existsSync(temporaryPath)) {
+          fs.unlinkSync(temporaryPath);
+        }
+      }
+
+      return updated;
+    });
+  }
+
+  storeVerification(
+    cardId: string,
+    expectedPlanRevision: number,
+    verificationInput: PlanVerificationResult,
+  ): StoredTaskPlan {
+    if (
+      !Number.isSafeInteger(expectedPlanRevision) ||
+      expectedPlanRevision < 1
+    ) {
+      throw new Error("Expected task plan revision must be positive");
+    }
+
+    const verification = parsePlanVerificationResult(verificationInput);
+
+    if (
+      verification.projectId !== this.projectId ||
+      verification.cardId !== cardId ||
+      verification.planRevision !== expectedPlanRevision
+    ) {
+      throw new Error(
+        "Plan verification identity must match the requested task and plan revision",
+      );
+    }
+
+    const filePath = this.getPlanPath(cardId);
+
+    return this.withLock(filePath, () => {
+      const current = readTaskPlanFile(filePath, this.projectId, cardId);
+
+      if (current === null || current.planRevision !== expectedPlanRevision) {
+        throw new TaskPlanConflictError(
+          `Task plan revision conflict for ${filePath}: expected ${expectedPlanRevision}, found ${current?.planRevision ?? "missing"}`,
+        );
+      }
+
+      const updated: StoredTaskPlan = { ...current, verification };
       const temporaryPath = this.writeTemporaryPlan(filePath, updated);
 
       try {
