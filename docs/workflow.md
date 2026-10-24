@@ -41,6 +41,46 @@ Ready for Agent + Refinement -> Working -> Backlog
 A refined card must be explicitly moved back to `Ready for Agent` before implementation. `Backlog`, `Failed`, and `Done`
 cards are not automatically processed.
 
+## Task-session mode
+
+Projects use the existing `legacy` workflow unless `projects[].executionMode` is explicitly set to `task-session`. The mode is
+per project; it does not change other projects or the default. It handles new eligible implementation cards claimed from
+`Ready for Agent`. Existing active legacy work is not adopted: an active `Working` card without a matching persisted
+task-session record is refused for operator recovery rather than silently migrated.
+
+The task-session lifecycle keeps the same Trello and publication safety boundaries while adding durable quality and recovery
+gates:
+
+```text
+Ready for Agent -> Working -> plan + independent plan check
+  -> implementation with primary session
+  -> orchestrator-run validation and optional coverage
+  -> independent review -> trusted commit and same-PR publication
+  -> exact-current-head required CI checks
+       -> failure: bounded repair in the same primary session -> revalidate/review -> update same PR
+  -> Human Review (unless auto-merge is explicitly enabled)
+       -> actionable feedback -> durable ledger -> same primary session
+          -> independent verification -> quality gates -> same PR -> current-head CI -> contextual reply
+```
+
+One primary OpenCode session ID is persisted for each task and resumed for implementation, CI repair, and human-feedback
+remediation. Independent plan and implementation reviewers use separate sessions. The orchestrator, not OpenCode, decides
+whether configured commands and exact-head GitHub checks passed before committing or publishing. A feedback item is not
+considered handled until its disposition is independently verified and the correcting commit passes required checks; only then
+may a factual reply be published in the original inline-thread or conversation context. The orchestrator does not approve reviews
+or resolve reviewer threads.
+
+Task-session projects require a repository validation command and a nonempty list of unique required GitHub check names. An
+optional coverage command becomes a mandatory gate when configured. Validation, review, and per-head CI repair attempts are
+bounded; exhausted or ambiguous operations preserve their artifacts and require operator attention. See
+[Configuration](configuration.md#projectsexecutionmode) for activation and [Recovery](recovery.md#task-session-recovery) for
+operator guidance. Local mock tests cover these flows; no live Trello, GitHub Actions, or OpenCode pilot has been performed.
+
+When polling resumes an owned task-session `Working` card, it reconciles persisted phase, queue ownership, worktree/branch,
+setup status, and primary-session identity before continuing. Planning and implementation reuse the existing task record and
+primary session; validation/review use persisted content-bound evidence; publication may reuse only an exactly trusted commit.
+Missing or contradictory evidence is escalated without starting a second implementation, commit, or PR.
+
 ## Trello lists
 
 | List              | Purpose                                                          |
@@ -103,6 +143,10 @@ fails, produces an invalid result, or modifies unauthorized repository files, th
 handling to `Failed`. Its deliberate retry action is to move it to `Ready for Agent`; see [Recovery](recovery.md).
 
 ## Implementation
+
+The steps in this section describe the legacy implementation path. Task-session projects use the additional lifecycle and
+independently enforced gates described above; in particular, task-session validation is run by the orchestrator rather than
+being delegated solely to the implementation session.
 
 An implementation card is claimed only from `Ready for Agent`. The worktree is prepared before the card is moved to
 `Working`, so a failed card claim does not leave the next attempt without its expected worktree.

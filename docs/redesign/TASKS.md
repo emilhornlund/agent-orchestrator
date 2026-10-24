@@ -334,7 +334,7 @@ are examples to inspect, not permission to invent unimplemented helpers.
   - **Verify locally:** All scenarios pass offline and assert no unverified publication, preserved task ownership, no duplicate commits/replies, and human attention for exhausted or ambiguous states.
   - **Out of scope:** Do not use real services or models, and do not deploy.
 
-- [ ] **T44 — Document operation, configuration, and pilot boundaries**
+- [x] **T44 — Document operation, configuration, and pilot boundaries**
   - **Depends on:** T43, T45.
   - **Implement:** Update README, configuration reference, workflow/recovery/operations docs, and `config.example.yaml` with opt-in mode, required validation, optional coverage, session ownership, CI/feedback behavior, bounded retries, and operator recovery instructions. Distinguish local mocked verification from an unperformed real-world pilot.
   - **Verify locally:** Docs examples match actual validated config; existing `yarn validate` passes; no claim of live integration testing is made.

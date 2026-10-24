@@ -509,6 +509,39 @@ The one-active-task rule applies per project, not globally. A project with an am
 state is blocked without affecting unrelated projects. A normal card or project failure is logged and reconciled within its
 own project; it does not silently advance another project's workflow.
 
+## Task-session operation
+
+Task-session mode is enabled only by an explicit per-project `executionMode: "task-session"`; omission keeps the existing
+legacy workflow. Before enabling it for a project, configure a validation command and the exact unique required check names, and
+resolve active legacy `Working` cards under the legacy workflow. See [Configuration](configuration.md#projectsexecutionmode).
+
+Task-session plans, execution records, feedback ledgers, and mutation queues are stored under the workflow `contextRoot`, outside
+the repository and worktrees. Preserve this runtime data across restarts and include it in operational backups. Do not hand-edit
+or remove a task record, ledger, or queue event to clear a failure. The queue persists event identity and permits only one active
+repository-mutating operation per project. A project can monitor multiple owned waiting PRs read-only; any CI repair or feedback
+remediation waits for the single project mutation owner. Independent projects retain their separate workers and may proceed
+concurrently.
+
+Mutation events record their active worker identity. A recovery claimant does not take an event from another live worker; after a
+worker exits, it can reclaim only the task's matching persisted event after authoritative ownership and worktree checks pass.
+Repeated polling with a changed card operation identity does not reuse an old event. A failed pre-`Working` claim can resume its
+prepared owned worktree only when the original queue identity still matches.
+
+A queued event does not mutate a repository. A failed or uncertain event retains queue ownership until the workflow verifies
+recovery; it blocks later mutations for that project rather than being discarded or automatically retried. Preserve its record,
+inspect the affected task and external state, and follow the task-session recovery guide before resuming.
+
+Validation repair, independent review repair, and CI repair each have a finite limit of two repair attempts per cycle. The
+relevant gates are rerun after the final correction; exhaustion or ambiguous state is preserved for operator attention rather
+than retried indefinitely. Each newly observed human-feedback round is independently tracked; it is not an automatic retry timer.
+Replies are published only for independently verified items after the correcting commit and exact-head required checks succeed.
+The process does not approve reviews or resolve reviewer threads. See [Workflow](workflow.md#task-session-mode) and
+[Recovery](recovery.md#task-session-recovery) for lifecycle and recovery details.
+
+Task-session code and tests have been verified locally with mocked Trello, GitHub, and OpenCode boundaries. This does not establish
+that a particular GitHub check, permission, Trello board, or OpenCode runtime is available. No real-world pilot, deployed-service
+test, or live API verification has been performed; those checks remain separate operator decisions.
+
 ## Safety boundaries
 
 Operators should expect the orchestrator to refuse or stop rather than guess. It does not:

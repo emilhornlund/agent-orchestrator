@@ -51,6 +51,53 @@ actively being processed.
 Operators may remove only known card-context data below the configured `contextRoot` after the card no longer needs a retry or
 diagnosis, and must not remove unknown files outside that root.
 
+## Task-session recovery
+
+Task-session state is durable runtime data outside both the configured source checkout and worktree root. Under
+`<contextRoot>`, inspect the affected project's records when diagnosing a task:
+
+```text
+task-executions/<project-id>/<card-id>.json       task phase, session, PR/head, evidence, and repair state
+task-plans/<project-id>/<card-id>.json             approved plan and requirement evidence
+feedback-ledgers/<project-id>/<card-id>.json       feedback identities, dispositions, and reply state
+task-mutation-queues/<project-id>.json             queued events and the single project mutation owner
+```
+
+These are validated, revisioned runtime records, not operator-editable configuration. Preserve them for diagnosis; do not delete,
+hand-edit, or replace them to make polling continue. Malformed, missing, stale, or conflicting state fails closed rather than
+being reconstructed by guessing. Back up the context root using the same care as other workflow state, and keep it disjoint from
+the repository and worktrees.
+
+After a restart, production task-session polling re-observes Trello ownership, the expected worktree and branch, the primary
+session, and, for publication/review phases, the authoritative PR/head, trusted commit, required checks, and feedback/reply
+evidence before resuming. The primary session is checked with `opencode session list --format json --pure --max-count 10000`
+from the owned task worktree; its ID and directory must match the persisted binding. The exact persisted session ID is resumed;
+the service never substitutes a new session or uses implicit `--continue`.
+
+An interrupted `Ready for Agent` claim is resumed only when its persisted implementation queue event still matches the card's
+stable operation identity and the prepared worktree is the expected owned branch. An owned `Working` card resumes by its
+persisted phase: planning reuses a saved plan or continues the primary planning session; implementation continues that same
+session; validation reruns its content-bound quality gate; and review reruns independent review against persisted passing
+validation evidence. Repository setup is recorded before execution; an active or changed setup command is treated as uncertain
+and escalated rather than blindly rerun. Interrupted review repairs without persisted findings require manual attention.
+
+Publication resumes only when a trusted commit exactly matches the current worktree `HEAD`, the worktree is clean, and any
+remote branch/PR evidence is consistent. The existing trusted commit is republished/reconciled without creating another
+commit. A publication with no trusted commit, an existing PR whose identity was not persisted, or a changed remote/PR head is
+not guessed at: it remains available for operator attention. Missing or inaccessible primary sessions, ambiguous ownership,
+unsafe worktrees, or failed authoritative reads similarly preserve state and escalate. For an uncertain feedback reply, verify
+whether its stable marker is present in the original thread or conversation; do not send a duplicate reply manually.
+
+When a task enters `Attention Required` because a bounded validation, review, CI repair, or feedback operation is exhausted or
+ambiguous, normal polling does not silently restart that operation. Read the card's diagnostic and session log, compare the
+persisted task record with Git/Trello/GitHub evidence, and determine a deliberate recovery before changing any state. In
+particular, confirm the task branch and PR head, required checks, unresolved feedback, and any active mutation queue owner.
+Do not start a different task in the project while the current task has ambiguous state. Existing active legacy work is not
+automatically adopted when a project is switched to task-session mode; recover it under its original workflow first.
+
+Task-session recovery was verified with local fixtures and mocked service responses only. No live GitHub/Trello recovery pilot,
+real OpenCode session restart, or external API availability test has been performed.
+
 ## Interrupted runs and restart
 
 `SIGINT` and `SIGTERM` request coordinated shutdown. Cancellation is cooperative rather than universal: Trello requests,
