@@ -96,7 +96,7 @@ to inspect first, not permission to invent unimplemented helpers.
   - **Verify locally:** Parsing tests reject missing requirements, duplicate IDs, malformed steps, and unknown mandatory fields.
   - **Out of scope:** Do not call a planning model or persist plans.
 
-- [ ] **T11 — Persist versioned plans locally and safely**
+- [x] **T11 — Persist versioned plans locally and safely**
   - **Depends on:** T04, T10.
   - **Implement:** Add atomic per-task plan storage outside Git worktrees, with the same path, size, identity, and corrupted-record protections as task state. Store plan revision and task-record association.
   - **Verify locally:** Tests verify read/write/revision conflict, corrupted data protection, and wrong-task rejection.
