@@ -1458,6 +1458,47 @@ export class GitHubClient {
     };
   }
 
+  async findReviewThreadReplyByMarker(
+    options: Omit<CreateReviewThreadReplyOptions, "body"> & { marker: string },
+  ): Promise<string | null> {
+    const pullRequestNumber = getPullRequestNumberForRepository(
+      options.pullRequestUrl,
+      options.repository,
+    );
+    if (
+      options.threadId.trim().length === 0 ||
+      options.marker.trim().length === 0
+    ) {
+      throw new Error(
+        "Review-thread reconciliation requires a thread ID and marker",
+      );
+    }
+    const credential = await this.resolveCredential(options.project);
+    const threads = await this.findReviewThreads(
+      {
+        cwd: options.cwd,
+        repository: options.repository,
+        headBranch: "reply-reconciliation-only",
+        ...(options.project === undefined ? {} : { project: options.project }),
+      },
+      pullRequestNumber,
+      credential,
+    );
+    const thread = threads.find(
+      (candidate) => candidate.id === options.threadId,
+    );
+    if (thread === undefined) {
+      throw new Error(
+        "Review thread does not belong to the requested pull request",
+      );
+    }
+    return (
+      thread.comments
+        .find((comment) => comment.body.includes(options.marker))
+        ?.id.toString() ?? null
+    );
+  }
+
   async replyToConversationComment(
     options: CreateConversationReplyOptions,
   ): Promise<GitHubContextualReply> {

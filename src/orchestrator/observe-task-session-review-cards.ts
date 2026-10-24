@@ -1,6 +1,8 @@
 import type { ProjectConfig } from "../config/config.js";
 import type {
+  ChangesRequestedPullRequest,
   GitHubClient,
+  PullRequestConversationComment,
   RequiredCheckObservation,
 } from "../github/github-client.js";
 import type { TrelloCard } from "../trello/trello-client.js";
@@ -12,6 +14,8 @@ export interface ObservedTaskSessionReviewCard {
   headSha: string;
   checks: RequiredCheckObservation[];
   feedbackIds: string[];
+  requestedChanges: ChangesRequestedPullRequest | null;
+  conversationComments: PullRequestConversationComment[];
 }
 
 export interface ObserveTaskSessionReviewCardsOptions {
@@ -157,6 +161,8 @@ export async function observeTaskSessionReviewCards(
       headSha,
       checks: checkResult.checks,
       feedbackIds,
+      requestedChanges,
+      conversationComments,
     });
   }
   return observed;

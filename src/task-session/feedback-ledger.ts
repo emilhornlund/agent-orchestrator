@@ -25,6 +25,7 @@ const feedbackEntrySchema = z.strictObject({
     "not-actionable",
   ]),
   status: z.enum(["pending", "verified", "escalated", "published", "closed"]),
+  unresolvedReason: z.string().min(1).optional(),
   verificationEvidence: z.array(z.string().min(1)),
   remediationCommitSha: sha.optional(),
   replyId: z.string().min(1).optional(),
@@ -75,6 +76,16 @@ const feedbackLedgerSchema = z
           code: "custom",
           path: ["entries", index, "replyState"],
           message: "Published feedback requires a persisted sent reply state",
+        });
+      }
+      if (
+        entry.status === "escalated" &&
+        entry.unresolvedReason === undefined
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["entries", index, "unresolvedReason"],
+          message: "Escalated feedback requires a concrete unresolved reason",
         });
       }
     }

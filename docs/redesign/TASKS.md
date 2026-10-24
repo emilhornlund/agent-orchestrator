@@ -310,7 +310,7 @@ to inspect first, not permission to invent unimplemented helpers.
   - **Verify locally:** Production-polling tests prove failed current-head CI triggers bounded repair on the original session, stale/pending checks do not trigger repair, the same PR advances to a new head, and exhaustion/ambiguity preserves state for attention.
   - **Out of scope:** Do not call real GitHub Actions or create a new PR.
 
-- [ ] **T43B — Integrate human feedback remediation into production task-session polling**
+- [x] **T43B — Integrate human feedback remediation into production task-session polling**
   - **Depends on:** T30–T38, T41–T43A.
   - **Implement:** Connect the existing T30–T38 feedback collection, actionability classification, primary-session remediation, independent verification, and contextual reply functionality to production polling. Preserve unresolved feedback, support subsequent rounds, and publish replies only after verified corrections and required successful checks.
   - **Verify locally:** Production-polling tests cover current requested changes, inline and conversation feedback, multiple rounds, late feedback, same-session continuation, verification gates, and idempotent contextual replies.

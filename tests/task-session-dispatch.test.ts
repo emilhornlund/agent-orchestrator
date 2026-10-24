@@ -21,6 +21,7 @@ import {
 import { pollProject } from "../src/orchestrator/poll-project.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
 import { TaskMutationQueue } from "../src/task-session/task-mutation-queue.js";
+import { FeedbackLedgerStore } from "../src/task-session/feedback-ledger-store.js";
 import type { TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
 
 let root: string;
@@ -91,9 +92,18 @@ describe("task-session production dispatch", () => {
     let branch = "";
     let headSha = "a".repeat(40);
     let commitIndex = 0;
-    const commitHeads = ["b".repeat(40), "c".repeat(40)];
+    const commitHeads = [
+      "b".repeat(40),
+      "c".repeat(40),
+      "d".repeat(40),
+      "e".repeat(40),
+    ];
     let cardList = project.trello.readyListId;
     let pullRequestCreated = false;
+    let feedbackActive = false;
+    let reviewReplySent = false;
+    let reviewReplyBody = "";
+    let reviewReplyMutationCount = 0;
     const trackedFiles = ["src/settings.ts"];
     const git = {
       fetch: vi.fn(async () => undefined),
@@ -152,7 +162,9 @@ describe("task-session production dispatch", () => {
             {
               url: "https://github.com/owner/repo/pull/9",
               number: 9,
-              reviewDecision: "REVIEW_REQUIRED",
+              reviewDecision: feedbackActive
+                ? "CHANGES_REQUESTED"
+                : "REVIEW_REQUIRED",
               headRefOid: headSha,
             },
           ]);
@@ -179,6 +191,106 @@ describe("task-session production dispatch", () => {
         pullRequestCreated = true;
         return "https://github.com/owner/repo/pull/9";
       }
+      if (args[0] === "api" && args[1]?.includes("/pulls/9/reviews")) {
+        return feedbackActive
+          ? JSON.stringify([
+              [
+                {
+                  id: 12,
+                  body: null,
+                  commit_id: headSha,
+                  state: "CHANGES_REQUESTED",
+                  submitted_at: "2026-10-24T11:00:00Z",
+                  user: { login: "reviewer" },
+                },
+              ],
+            ])
+          : JSON.stringify([[]]);
+      }
+      if (args[0] === "api" && args[1]?.includes("/pulls/9/comments")) {
+        return feedbackActive
+          ? JSON.stringify([
+              [
+                {
+                  id: 501,
+                  pull_request_review_id: 12,
+                  body: "Fix the empty settings case.",
+                  path: "src/settings.ts",
+                  line: 2,
+                  original_line: 2,
+                  diff_hunk: "@@ -1 +1 @@",
+                  user: { login: "reviewer" },
+                },
+              ],
+            ])
+          : JSON.stringify([[]]);
+      }
+      if (args[0] === "api" && args[1] === "graphql") {
+        if (
+          args.some((argument) =>
+            argument.includes("addPullRequestReviewThreadReply"),
+          )
+        ) {
+          reviewReplyMutationCount += 1;
+          reviewReplySent = true;
+          reviewReplyBody =
+            args
+              .find((argument) => argument.startsWith("body="))
+              ?.slice("body=".length) ?? "";
+          return JSON.stringify({
+            data: {
+              addPullRequestReviewThreadReply: { comment: { databaseId: 900 } },
+            },
+          });
+        }
+        return JSON.stringify({
+          data: {
+            repository: {
+              pullRequest: {
+                reviewThreads: {
+                  nodes: [
+                    {
+                      id: "PRRT_settings",
+                      isResolved: false,
+                      isOutdated: false,
+                      comments: {
+                        nodes: [
+                          {
+                            databaseId: 501,
+                            body: "Fix the empty settings case.",
+                            author: { login: "reviewer" },
+                            path: "src/settings.ts",
+                            line: 2,
+                            originalLine: 2,
+                            diffHunk: "@@ -1 +1 @@",
+                            pullRequestReview: { databaseId: 12 },
+                          },
+                          ...(reviewReplySent
+                            ? [
+                                {
+                                  databaseId: 900,
+                                  body: reviewReplyBody,
+                                  author: { login: "agent[bot]" },
+                                  path: null,
+                                  line: null,
+                                  originalLine: null,
+                                  diffHunk: null,
+                                  pullRequestReview: { databaseId: 12 },
+                                },
+                              ]
+                            : []),
+                        ],
+                        pageInfo: { hasNextPage: false },
+                      },
+                    },
+                  ],
+                  pageInfo: { hasNextPage: false },
+                },
+              },
+            },
+          },
+        });
+      }
       if (args[0] === "pr" && args[1] === "view")
         return JSON.stringify([
           {
@@ -194,6 +306,106 @@ describe("task-session production dispatch", () => {
             mergeStateStatus: "CLEAN",
           },
         ]);
+      if (args[0] === "api" && args[1]?.includes("/pulls/9/reviews")) {
+        return feedbackActive
+          ? JSON.stringify([
+              [
+                {
+                  id: 12,
+                  body: null,
+                  commit_id: headSha,
+                  state: "CHANGES_REQUESTED",
+                  submitted_at: "2026-10-24T11:00:00Z",
+                  user: { login: "reviewer" },
+                },
+              ],
+            ])
+          : JSON.stringify([[]]);
+      }
+      if (args[0] === "api" && args[1]?.includes("/pulls/9/comments")) {
+        return feedbackActive
+          ? JSON.stringify([
+              [
+                {
+                  id: 501,
+                  pull_request_review_id: 12,
+                  body: "Fix the empty settings case.",
+                  path: "src/settings.ts",
+                  line: 2,
+                  original_line: 2,
+                  diff_hunk: "@@ -1 +1 @@",
+                  user: { login: "reviewer" },
+                },
+              ],
+            ])
+          : JSON.stringify([[]]);
+      }
+      if (args[0] === "api" && args[1] === "graphql") {
+        if (
+          args.some((argument) =>
+            argument.includes("addPullRequestReviewThreadReply"),
+          )
+        ) {
+          reviewReplyMutationCount += 1;
+          reviewReplySent = true;
+          reviewReplyBody =
+            args
+              .find((argument) => argument.startsWith("body="))
+              ?.slice("body=".length) ?? "";
+          return JSON.stringify({
+            data: {
+              addPullRequestReviewThreadReply: { comment: { databaseId: 900 } },
+            },
+          });
+        }
+        return JSON.stringify({
+          data: {
+            repository: {
+              pullRequest: {
+                reviewThreads: {
+                  nodes: [
+                    {
+                      id: "PRRT_settings",
+                      isResolved: false,
+                      isOutdated: false,
+                      comments: {
+                        nodes: [
+                          {
+                            databaseId: 501,
+                            body: "Fix the empty settings case.",
+                            author: { login: "reviewer" },
+                            path: "src/settings.ts",
+                            line: 2,
+                            originalLine: 2,
+                            diffHunk: "@@ -1 +1 @@",
+                            pullRequestReview: { databaseId: 12 },
+                          },
+                          ...(reviewReplySent
+                            ? [
+                                {
+                                  databaseId: 900,
+                                  body: reviewReplyBody,
+                                  author: { login: "agent[bot]" },
+                                  path: null,
+                                  line: null,
+                                  originalLine: null,
+                                  diffHunk: null,
+                                  pullRequestReview: { databaseId: 12 },
+                                },
+                              ]
+                            : []),
+                        ],
+                        pageInfo: { hasNextPage: false },
+                      },
+                    },
+                  ],
+                  pageInfo: { hasNextPage: false },
+                },
+              },
+            },
+          },
+        });
+      }
       if (
         args[0] === "api" &&
         args.some((argument) => argument.includes("/check-runs?"))
@@ -312,6 +524,41 @@ describe("task-session production dispatch", () => {
             errorOutput: "",
           };
         }
+        if (
+          run.readOnly &&
+          run.prompt.includes(
+            "Independently verify each actionable human PR feedback item",
+          )
+        ) {
+          const identity = run.prompt.match(
+            /Reviewed source identity: (sha256:[0-9a-f]{64})/,
+          )?.[1];
+          const verificationHead = run.prompt.match(
+            /Current PR head: ([0-9a-f]{40,64})/,
+          )?.[1];
+          if (identity === undefined || verificationHead === undefined)
+            throw new Error(
+              "feedback verifier prompt omitted snapshot identity",
+            );
+          return {
+            exitCode: 0,
+            output: JSON.stringify({
+              version: 1,
+              projectId: "project",
+              cardId: card.id,
+              headSha: verificationHead,
+              contentIdentity: identity,
+              dispositions: [
+                {
+                  feedbackId: "inline-comment:501",
+                  status: "verified-fixed",
+                  evidence: ["src/settings.ts", "tests/settings.test.ts"],
+                },
+              ],
+            }),
+            errorOutput: "",
+          };
+        }
         if (run.readOnly) {
           const identity = run.prompt.match(
             /Reviewed source content identity: (sha256:[0-9a-f]{64})/,
@@ -328,6 +575,16 @@ describe("task-session production dispatch", () => {
           fs.writeFileSync(
             path.join(run.cwd, "src/settings.ts"),
             "export const settings = { fixed: true };\n",
+          );
+        }
+        if (
+          run.prompt.startsWith(
+            "Address the following verified-as-actionable human PR feedback",
+          )
+        ) {
+          fs.writeFileSync(
+            path.join(run.cwd, "src/settings.ts"),
+            "export const settings = { fixed: true, feedbackHandled: true };\n",
           );
         }
         if (run.prompt.includes("Generate the commit message")) {
@@ -370,8 +627,9 @@ describe("task-session production dispatch", () => {
       card.id,
       project.trello.reviewListId,
     );
+    feedbackActive = true;
     await pollProject(trello, git, github, openCode, commands, project, signal);
-    expect(git.commit).toHaveBeenCalledTimes(2);
+    expect(git.commit).toHaveBeenCalledTimes(3);
     expect(pullRequestCreated).toBe(true);
     expect(
       githubRun.mock.calls.filter(
@@ -389,18 +647,55 @@ describe("task-session production dispatch", () => {
       card.id,
     );
     expect(record).toMatchObject({
-      phase: "human-feedback",
+      phase: "ci",
       retryCounters: { ci: 1 },
-      pullRequest: { headSha: "c".repeat(40) },
+      pullRequest: { headSha: "d".repeat(40) },
     });
     expect(
       new TaskMutationQueue(project.contextRoot, project)
         .list()
         .map(({ status }) => status),
-    ).toEqual(["completed", "completed"]);
+    ).toEqual(["completed", "completed", "completed"]);
     expect(trello.getCards).toHaveBeenCalled();
     expect(fs.existsSync(path.join(worktreeRoot, card.id))).toBe(true);
     expect(fs.existsSync(repositoryPath)).toBe(true);
+    await pollProject(trello, git, github, openCode, commands, project, signal);
+    expect(reviewReplyMutationCount).toBe(1);
+    expect(
+      openCodeRun.mock.calls.some(
+        ([options]) =>
+          options.prompt.startsWith(
+            "Address the following verified-as-actionable human PR feedback",
+          ) && options.sessionId === "ses_primary-task",
+      ),
+    ).toBe(true);
+    const successfulHeadChecks = githubRun.mock.calls.findIndex(([, args]) =>
+      args.some((argument) =>
+        argument.includes(`/commits/${"d".repeat(40)}/check-runs`),
+      ),
+    );
+    const replyMutation = githubRun.mock.calls.findIndex(([, args]) =>
+      args.some((argument) =>
+        argument.includes("addPullRequestReviewThreadReply"),
+      ),
+    );
+    expect(successfulHeadChecks).toBeGreaterThanOrEqual(0);
+    expect(replyMutation).toBeGreaterThan(successfulHeadChecks);
+    const publishedFeedback = new FeedbackLedgerStore(
+      project.contextRoot,
+      project,
+    ).read(card.id);
+    expect(publishedFeedback?.entries).toContainEqual(
+      expect.objectContaining({
+        kind: "inline-comment",
+        id: "501",
+        status: "published",
+        replyId: "900",
+        remediationCommitSha: "d".repeat(40),
+      }),
+    );
+    await pollProject(trello, git, github, openCode, commands, project, signal);
+    expect(reviewReplyMutationCount).toBe(1);
   });
 
   it("refuses to auto-migrate an active Working card without a task-session record", async () => {
