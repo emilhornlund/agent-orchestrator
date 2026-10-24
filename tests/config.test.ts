@@ -215,10 +215,15 @@ describe("parseConfig", () => {
   it.each(["legacy", "task-session"] as const)(
     "accepts the %s execution mode",
     (executionMode) => {
-      const raw = validConfig.replace(
-        '  - id: "project-one"',
-        `  - id: "project-one"\n    executionMode: "${executionMode}"`,
-      );
+      const raw = validConfig
+        .replace(
+          '  - id: "project-one"',
+          `  - id: "project-one"\n    executionMode: "${executionMode}"`,
+        )
+        .replace(
+          '      worktreeRoot: "/tmp/worktrees"',
+          `      worktreeRoot: "/tmp/worktrees"${executionMode === "task-session" ? '\n      requiredChecks:\n        - "Build"' : ""}`,
+        );
 
       expect(parseConfig(raw).projects[0]?.executionMode).toBe(executionMode);
     },
@@ -237,6 +242,10 @@ describe("parseConfig", () => {
     const raw = validConfig
       .replace('      validationCommand: "yarn validate"\n', "")
       .replace(
+        '      worktreeRoot: "/tmp/worktrees"',
+        '      worktreeRoot: "/tmp/worktrees"\n      requiredChecks:\n        - "Build"',
+      )
+      .replace(
         '  - id: "project-one"',
         '  - id: "project-one"\n    executionMode: "task-session"',
       );
@@ -249,11 +258,48 @@ describe("parseConfig", () => {
     );
   });
 
+  it("requires unique check names only in task-session mode", () => {
+    const taskConfig = validConfig
+      .replace(
+        '  - id: "project-one"',
+        '  - id: "project-one"\n    executionMode: "task-session"',
+      )
+      .replace(
+        '      worktreeRoot: "/tmp/worktrees"',
+        '      worktreeRoot: "/tmp/worktrees"\n      requiredChecks:\n        - "Build"\n        - "Tests"',
+      );
+    expect(
+      parseConfig(taskConfig).projects[0]?.repository.requiredChecks,
+    ).toEqual(["Build", "Tests"]);
+
+    const missing = validConfig.replace(
+      '  - id: "project-one"',
+      '  - id: "project-one"\n    executionMode: "task-session"',
+    );
+    expect(() => parseConfig(missing)).toThrow("requiredChecks");
+
+    const duplicate = taskConfig.replace(
+      '        - "Tests"',
+      '        - "Build"',
+    );
+    expect(() => parseConfig(duplicate)).toThrow("unique");
+
+    const padded = taskConfig.replace(
+      '        - "Build"',
+      '        - " Build "',
+    );
+    expect(() => parseConfig(padded)).toThrow("padding or control characters");
+  });
+
   it("accepts a coverage command only for task-session mode", () => {
     const taskSessionConfig = validConfig
       .replace(
         '  - id: "project-one"',
         '  - id: "project-one"\n    executionMode: "task-session"',
+      )
+      .replace(
+        '      worktreeRoot: "/tmp/worktrees"',
+        '      worktreeRoot: "/tmp/worktrees"\n      requiredChecks:\n        - "Build"',
       )
       .replace(
         '      validationCommand: "yarn validate"',
@@ -278,6 +324,10 @@ describe("parseConfig", () => {
       .replace(
         '  - id: "project-one"',
         '  - id: "project-one"\n    executionMode: "task-session"',
+      )
+      .replace(
+        '      worktreeRoot: "/tmp/worktrees"',
+        '      worktreeRoot: "/tmp/worktrees"\n      requiredChecks:\n        - "Build"',
       )
       .replace(
         '      validationCommand: "yarn validate"',
