@@ -4,7 +4,10 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProjectConfig } from "../src/config/config.js";
 import type { GitClient } from "../src/git/git-client.js";
-import type { PublishCardOptions } from "../src/orchestrator/publish-card.js";
+import {
+  publishCard,
+  type PublishCardOptions,
+} from "../src/orchestrator/publish-card.js";
 import { publishTaskSessionCard } from "../src/orchestrator/publish-task-session-card.js";
 import type { VerifiedPublicationDecisionInput } from "../src/task-session/verified-publication-decision.js";
 import type { TrelloCard } from "../src/trello/trello-client.js";
@@ -115,6 +118,9 @@ describe("publishTaskSessionCard", () => {
     expect(commitSha).toBe("after");
     expect(git.stageAll).toHaveBeenCalledOnce();
     expect(git.commit).toHaveBeenCalledOnce();
+    expect(publishCard).toHaveBeenCalledWith(
+      expect.objectContaining({ deferAutoMerge: true }),
+    );
   });
 
   it("refuses publication when prepared content has stale evidence", async () => {

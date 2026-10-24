@@ -93,6 +93,7 @@ export async function publishTaskSessionCard(
   await publishCard({
     ...options,
     commitSha,
+    deferAutoMerge: true,
     beforePushVerification: async () => {
       const preparedEvidence = await options.verifyPreparedContent();
       assertPublicationEvidence(preparedEvidence);

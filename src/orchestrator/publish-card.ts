@@ -57,6 +57,8 @@ export interface PublishCardOptions {
   rebaseAlreadyCompleted?: boolean;
   beforePushVerification?: () => Promise<void>;
   expectedExistingPullRequestUrl?: string;
+  /** Task-session auto-merge waits for the unified complete-CI gate. */
+  deferAutoMerge?: boolean;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -305,6 +307,7 @@ export async function publishCard({
   rebaseAlreadyCompleted = false,
   beforePushVerification,
   expectedExistingPullRequestUrl,
+  deferAutoMerge = false,
 }: PublishCardOptions): Promise<void> {
   const cardLog = logger.child({
     projectId: project.id,
@@ -591,7 +594,7 @@ export async function publishCard({
       cardLog.event(`Pull request created: ${pullRequest.url}`);
     }
 
-    if (project.autoMerge) {
+    if (project.autoMerge && !deferAutoMerge) {
       cardLog.event(`Auto-merging pull request: ${pullRequest.url}`);
 
       await mergePullRequestForAutoMerge(
@@ -626,7 +629,7 @@ export async function publishCard({
     throw new TrelloRequestAbortedError();
   }
 
-  if (project.autoMerge) {
+  if (project.autoMerge && !deferAutoMerge) {
     await completeAutoMergedCard({
       trello,
       project,
@@ -661,6 +664,13 @@ export async function publishCard({
   }
 
   cardLog.event("Trello card moved to Human Review");
+
+  if (project.autoMerge && deferAutoMerge) {
+    cardLog.event(
+      "Auto-merge deferred until complete current-head CI evidence passes",
+    );
+    return;
+  }
 
   const elapsedWorkflowTime = await getElapsedWorkflowTime(
     trello,

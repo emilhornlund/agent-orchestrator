@@ -433,6 +433,13 @@ are examples to inspect, not permission to invent unimplemented helpers.
   - **Verify locally:** Production-polling tests show waiting while checks are pending, repair after complete failure, same-session corrections, successful rechecking after publication, correct feedback reply gating, and no auto-merge before full success.
   - **Out of scope:** Do not remove validationCommand, coverageCommand, retry limits, or current-head ownership checks.
 
+- [x] **T56A — Defer task-session auto-merge until complete CI passes**
+  - **Depends on:** T56.
+  - **Corrective rationale:** The shared publication helper still auto-merged immediately for `autoMerge: true`, before the task-session workflow had collected complete current-head CI evidence.
+  - **Implement:** Defer task-session publication's auto-merge; move the card to the monitoring state without completion claims, then let the unified evaluator authorize the merge only after complete current-head CI and local evidence pass.
+  - **Verify locally:** Publication tests prove no early merge, and production task-session polling continues to block auto-merge for waiting, failed, or uncertain CI evidence.
+  - **Out of scope:** Do not change legacy behavior or bypass the complete CI evaluator.
+
 - [ ] **T57 — Add comprehensive CI lifecycle regression tests**
   - **Depends on:** T56.
   - **Implement:** Extend mocked end-to-end scenarios through the actual pollProject entry point. Simulate delayed check registration, several GitHub Actions jobs, mixed check runs and commit statuses, multiple failed jobs, late results, CI repairs, head changes, and successful auto-merge.
