@@ -395,7 +395,7 @@ are examples to inspect, not permission to invent unimplemented helpers.
   - **Verify locally:** Configuration and production-polling tests prove omitted executionMode works, obsolete executionMode values are rejected, implementation uses the persistent primary session, and refinement remains functional.
   - **Out of scope:** Do not delete unused legacy modules or change CI configuration yet.
 
-- [ ] **T51 — Remove obsolete legacy orchestration**
+- [x] **T51 — Remove obsolete legacy orchestration**
   - **Depends on:** T50.
   - **Implement:** Identify and delete implementation/review/remediation orchestration functions reachable only from the retired legacy execution path. Remove obsolete dispatch branches and corresponding legacy-only characterization tests. Preserve shared publication, reconciliation, refinement, and recovery components still used by the unified workflow.
   - **Verify locally:** The production call graph contains one implementation pipeline. Tests prove no obsolete dispatch is reachable, and the unified implementation, refinement, and PR lifecycle remain operational.
