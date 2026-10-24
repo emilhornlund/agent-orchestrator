@@ -91,6 +91,43 @@ function createConfig(project: ProjectConfig): Config {
 }
 
 describe("runStartup", () => {
+  it("rejects task-session mode before initializing external operations", async () => {
+    const project = {
+      ...createProject("/tmp/task-session-repository"),
+      executionMode: "task-session" as const,
+    };
+    const runGit = vi.fn<RunGit>().mockResolvedValue("true");
+    const validateGitHubCli = vi.fn().mockResolvedValue(undefined);
+    const validateProjectTrello = vi.fn().mockResolvedValue(undefined);
+    const runOrchestrator = vi.fn().mockResolvedValue(undefined);
+
+    await expect(
+      runStartup(
+        createConfig(project),
+        {
+          trello: {} as TrelloClient,
+          git: new GitClient(runGit),
+          github: {} as GitHubClient,
+          opencode: {} as OpenCodeClient,
+          commands: new CommandRunner(vi.fn<RunCommand>()),
+        },
+        new AbortController().signal,
+        {
+          validateGitHubCli,
+          validateProjectTrello,
+          runOrchestrator,
+        },
+      ),
+    ).rejects.toThrow(
+      'executionMode "task-session" is not available until the task-session workflow is complete (T43)',
+    );
+
+    expect(validateGitHubCli).not.toHaveBeenCalled();
+    expect(runGit).not.toHaveBeenCalled();
+    expect(validateProjectTrello).not.toHaveBeenCalled();
+    expect(runOrchestrator).not.toHaveBeenCalled();
+  });
+
   it("runs context retention cleanup before startup operations", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "agent-orchestrator-"));
     const repositoryPath = path.join(root, "repository");

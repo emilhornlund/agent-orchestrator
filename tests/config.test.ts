@@ -165,6 +165,7 @@ describe("parseConfig", () => {
     expect(project).toBeDefined();
     expect(project!.id).toBe("project-one");
     expect(project!.autoMerge).toBe(false);
+    expect(project!.executionMode).toBe("legacy");
     expect(project!.trello).toEqual({
       boardId: "board-one",
       backlogListId: "backlog",
@@ -209,6 +210,27 @@ describe("parseConfig", () => {
     expect(config.workflow.contextRetentionDays).toBe(14);
     expect(config.workflow.contextRoot).toBe("/opt/.agent-context");
     expect(config.notifications).toBeUndefined();
+  });
+
+  it.each(["legacy", "task-session"] as const)(
+    "accepts the %s execution mode",
+    (executionMode) => {
+      const raw = validConfig.replace(
+        '  - id: "project-one"',
+        `  - id: "project-one"\n    executionMode: "${executionMode}"`,
+      );
+
+      expect(parseConfig(raw).projects[0]?.executionMode).toBe(executionMode);
+    },
+  );
+
+  it("rejects unsupported execution modes", () => {
+    const raw = validConfig.replace(
+      '  - id: "project-one"',
+      '  - id: "project-one"\n    executionMode: "experimental"',
+    );
+
+    expect(() => parseConfig(raw)).toThrow("projects.0.executionMode");
   });
 
   it("accepts and normalizes a complete GitHub App configuration", () => {
