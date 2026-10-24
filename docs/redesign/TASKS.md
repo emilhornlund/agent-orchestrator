@@ -349,6 +349,13 @@ are examples to inspect, not permission to invent unimplemented helpers.
 
 ## Phase G — Preserve essential workflow behavior
 
+- [x] **T45A — Restore executor instruction formatting validation**
+  - **Depends on:** None.
+  - **Corrective rationale:** The committed executor instruction fails the repository's required Prettier check, preventing `yarn validate` from running.
+  - **Implement:** Apply the repository formatter to `.opencode/agents/redesign-executor.md` without changing its instructions.
+  - **Verify locally:** The instruction file passes `prettier --check` and full `yarn validate` passes.
+  - **Out of scope:** Do not change executor behavior or other documentation.
+
 - [ ] **T46 — Extract the existing refinement workflow**
   - **Depends on:** T43–T45.
   - **Implement:** Extract the existing refinement operation from the legacy polling implementation into a reusable, independently callable component. Preserve the existing Trello refinement result contract, classification changes, description updates, Backlog transition, notifications, worktree safety, and failure handling.
