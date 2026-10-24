@@ -3,6 +3,7 @@ import {
   type CardAttachmentPromptContext,
 } from "../context/card-attachment-prompt.js";
 import type { TrelloAttachment, TrelloCard } from "../trello/trello-client.js";
+import { taskSessionRepositoryGuidance } from "./task-session-prompt-guidance.js";
 
 function buildAttachmentMetadata(
   attachments: readonly TrelloAttachment[],
@@ -51,7 +52,7 @@ export function buildTaskPlanningPrompt(
     "Original Trello attachment metadata (uploaded file URLs are intentionally omitted):",
     buildAttachmentMetadata(attachments),
     ...buildCardAttachmentPromptLines(attachmentContext),
-    "Inspect the repository source and read AGENTS.md and any relevant repository instructions before planning.",
+    ...taskSessionRepositoryGuidance,
     "Use attachment context when it clarifies the task requirements.",
     "Represent every explicit original requirement as a requirement with a stable ID, its original meaning, and a proposed verification method. Do not invent requirements or silently broaden scope.",
     "Map every requirement to at least one implementation step. Use requirement IDs from the requirements array in each step.",

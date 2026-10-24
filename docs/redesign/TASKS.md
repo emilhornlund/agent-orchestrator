@@ -114,7 +114,7 @@ to inspect first, not permission to invent unimplemented helpers.
   - **Verify locally:** Unit tests cover accepted plan, omitted task criterion, invented scope, malformed reviewer response, and no implementation transition on failure.
   - **Out of scope:** Do not rewrite the plan automatically or share the primary conversation as reviewer.
 
-- [ ] **T14 — Require native repository skill discovery in prompts**
+- [x] **T14 — Require native repository skill discovery in prompts**
   - **Depends on:** T12–T13.
   - **Implement:** Amend task-session planning and implementation prompts to direct OpenCode to follow `AGENTS.md` and load relevant existing native OpenCode skills from the repository when available.
   - **Verify locally:** Prompt-contract tests verify the guidance and a no-skill fallback; no tests require installed external skills or internet.
