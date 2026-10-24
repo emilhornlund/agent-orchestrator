@@ -24,8 +24,6 @@ projects:
       defaultBranch: "main"
       worktreeRoot: "/tmp/worktrees"
       validationCommand: "yarn validate"
-      requiredChecks:
-        - "Build"
       gitIdentity:
         name: "Agent Orchestrator"
         email: "agent-orchestrator@users.noreply.github.com"
@@ -77,8 +75,6 @@ function appendProject(raw: string, id: string, suffix: string): string {
       defaultBranch: "main"
       worktreeRoot: "/tmp/worktrees-${suffix}"
       validationCommand: "yarn validate"
-      requiredChecks:
-        - "Build"
       gitIdentity:
         name: "Agent Orchestrator"
         email: "agent-orchestrator@users.noreply.github.com"
@@ -236,18 +232,14 @@ describe("parseConfig", () => {
     ).toThrow("projects.0.repository.validationCommand");
   });
 
-  it("validates the current required-check contract for every project", () => {
-    expect(
-      parseConfig(validConfig).projects[0]?.repository.requiredChecks,
-    ).toEqual(["Build"]);
-    expect(() =>
-      parseConfig(validConfig.replace('        - "Build"\n', "")),
-    ).toThrow("requiredChecks");
-    expect(() =>
-      parseConfig(
-        validConfig.replace('        - "Build"', '        - " Build "'),
-      ),
-    ).toThrow("padding or control characters");
+  it("rejects the retired manual requiredChecks contract", () => {
+    const raw = validConfig.replace(
+      '      worktreeRoot: "/tmp/worktrees"',
+      '      worktreeRoot: "/tmp/worktrees"\n      requiredChecks:\n        - "Build"',
+    );
+    expect(() => parseConfig(raw)).toThrow(
+      'Unrecognized key: "requiredChecks"',
+    );
   });
 
   it("accepts configured coverage alongside unified validation", () => {
@@ -733,8 +725,6 @@ workflow:`,
       defaultBranch: "main"
       worktreeRoot: "/tmp/worktrees-two"
       validationCommand: "yarn validate"
-      requiredChecks:
-        - "Build"
       gitIdentity:
         name: "Agent Orchestrator"
         email: "agent-orchestrator@users.noreply.github.com"

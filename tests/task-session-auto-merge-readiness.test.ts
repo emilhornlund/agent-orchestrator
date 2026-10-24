@@ -1,9 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ProjectConfig } from "../src/config/config.js";
-import type {
-  GitHubClient,
-  RequiredCheckObservation,
-} from "../src/github/github-client.js";
+import type { GitHubClient } from "../src/github/github-client.js";
+import type { CiCheckEvaluation } from "../src/github/evaluate-ci-checks.js";
 import { mergeTaskSessionPullRequest } from "../src/orchestrator/merge-task-session-pull-request.js";
 import { decideTaskSessionAutoMergeReadiness } from "../src/task-session/task-session-auto-merge-readiness.js";
 import type { VerifiedPublicationDecisionInput } from "../src/task-session/verified-publication-decision.js";
@@ -43,39 +41,46 @@ const evidence: VerifiedPublicationDecisionInput = {
     reviewedContentIdentity: content,
   },
 };
-const check = (
-  status: RequiredCheckObservation["status"],
-  headSha = sha,
-): RequiredCheckObservation => ({
-  name: "Build",
-  headSha,
-  status,
-  conclusion: status === "succeeded" ? "success" : null,
-  diagnostic: "",
-});
+const ci = (status: CiCheckEvaluation["status"]): CiCheckEvaluation =>
+  status === "uncertain"
+    ? {
+        status,
+        expectedHeadSha: sha,
+        observedHeadSha: sha,
+        expectedCheckNames: ["Build"],
+        diagnostic: "Unknown check set",
+      }
+    : status === "waiting"
+      ? {
+          status,
+          expectedHeadSha: sha,
+          missingChecks: [],
+          pendingChecks: ["Build"],
+          diagnostic: "Build is pending",
+        }
+      : status === "failed"
+        ? {
+            status,
+            expectedHeadSha: sha,
+            expectedCheckNames: ["Build"],
+            failures: [],
+          }
+        : { status, expectedHeadSha: sha, expectedCheckNames: ["Build"] };
 const base = {
   expectedHeadSha: sha,
   observedHeadSha: sha,
-  requiredCheckNames: ["Build"],
-  checks: [check("succeeded")],
+  ciEvaluation: ci("passed"),
   localEvidence: evidence,
 };
 
 describe("task-session auto-merge readiness", () => {
   it("allows fully verified exact-head readiness and blocks non-green states", () => {
     expect(decideTaskSessionAutoMergeReadiness(base).allowed).toBe(true);
-    for (const status of [
-      "missing",
-      "queued",
-      "in_progress",
-      "failed",
-      "cancelled",
-      "incomplete",
-    ] as const) {
+    for (const status of ["waiting", "failed", "uncertain"] as const) {
       expect(
         decideTaskSessionAutoMergeReadiness({
           ...base,
-          checks: [check(status)],
+          ciEvaluation: ci(status),
         }).allowed,
       ).toBe(false);
     }
@@ -88,7 +93,10 @@ describe("task-session auto-merge readiness", () => {
     expect(
       decideTaskSessionAutoMergeReadiness({
         ...base,
-        checks: [check("succeeded", "c".repeat(40))],
+        ciEvaluation: {
+          ...ci("passed"),
+          expectedHeadSha: "c".repeat(40),
+        },
       }).allowed,
     ).toBe(false);
   });

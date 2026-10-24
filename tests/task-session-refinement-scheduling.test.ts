@@ -52,7 +52,6 @@ describe("task-session refinement scheduling", () => {
         defaultBranch: "main",
         worktreeRoot,
         validationCommand: "yarn validate",
-        requiredChecks: ["Build"],
         gitIdentity: { name: "Agent", email: "agent@example.test" },
       },
       opencode: {

@@ -25,9 +25,7 @@ projects:
       setupCommand: "yarn install"
       # Orchestrator-owned validation gate for implementation changes.
       validationCommand: "yarn test"
-      # Required current-head checks until automatic discovery is available.
-      requiredChecks:
-        - "Build"
+      # GitHub Actions check expectations are discovered from repository workflows and policies.
       # Optional; replace with this repository's coverage command.
       # coverageCommand: "replace-with-repository-coverage-command"
       gitIdentity:
@@ -90,8 +88,6 @@ projects:
       # OpenCode-owned validation for sessions that modify implementation files.
       # Orchestrator-owned validation gate for implementation changes.
       validationCommand: "yarn test"
-      requiredChecks:
-        - "Build"
       gitIdentity:
         name: "Agent Orchestrator"
         email: "agent-orchestrator@users.noreply.github.com"

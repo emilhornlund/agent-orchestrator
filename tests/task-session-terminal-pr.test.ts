@@ -58,7 +58,6 @@ describe("task-session terminal PR reconciliation", () => {
           defaultBranch: "main",
           worktreeRoot,
           validationCommand: "yarn validate",
-          requiredChecks: ["Build"],
           gitIdentity: { name: "Agent", email: "agent@example.test" },
         },
         opencode: {
@@ -102,7 +101,7 @@ describe("task-session terminal PR reconciliation", () => {
           headRepository: { name: "repo" },
           headRepositoryOwner: { login: "owner" },
         })),
-        getRequiredChecks: vi.fn(async () => {
+        getCiObservations: vi.fn(async () => {
           throw new Error("terminal PR reconciliation must not require CI");
         }),
       } as unknown as GitHubClient;
@@ -166,7 +165,7 @@ describe("task-session terminal PR reconciliation", () => {
           : project.trello.backlogListId,
         ...(destination === "done" ? [{ dueComplete: true }] : []),
       );
-      expect(github.getRequiredChecks).not.toHaveBeenCalled();
+      expect(github.getCiObservations).not.toHaveBeenCalled();
     },
   );
 });

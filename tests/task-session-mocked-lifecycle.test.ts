@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProjectConfig } from "../src/config/config.js";
-import type { RequiredCheckObservation } from "../src/github/github-client.js";
+import type { CiCheckEvaluation } from "../src/github/evaluate-ci-checks.js";
 import { decideVerifiedPublication } from "../src/task-session/verified-publication-decision.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
 import { TaskMutationQueue } from "../src/task-session/task-mutation-queue.js";
@@ -44,7 +44,6 @@ function projectFixture() {
       worktreeRoot,
       github: "owner/repo",
       defaultBranch: "main",
-      requiredChecks: ["Build"],
       validationCommand: "yarn validate",
     },
   } as ProjectConfig;
@@ -120,16 +119,32 @@ function projectFixture() {
   };
 }
 
-const check = (
+const ciEvaluation = (
   headSha: string,
-  status: RequiredCheckObservation["status"],
-): RequiredCheckObservation => ({
-  name: "Build",
-  headSha,
-  status,
-  conclusion: status === "succeeded" ? "success" : null,
-  diagnostic: "",
-});
+  status: "failed" | "passed",
+): CiCheckEvaluation =>
+  status === "passed"
+    ? {
+        status,
+        expectedHeadSha: headSha,
+        expectedCheckNames: ["Build"],
+      }
+    : {
+        status,
+        expectedHeadSha: headSha,
+        expectedCheckNames: ["Build"],
+        failures: [
+          {
+            source: "check-run",
+            id: 1,
+            name: "Build",
+            headSha,
+            status: "completed",
+            conclusion: "failure",
+            url: null,
+          },
+        ],
+      };
 const feedback = (id: string): FeedbackLedgerEntry => ({
   kind: "inline-comment",
   id,
@@ -192,12 +207,14 @@ describe("mocked task-session lifecycle scenarios", () => {
       operationKey: "operation",
       expectedPrimarySessionId: "primary-session",
       headSha: f.headA,
-      observeChecks: async (head) => [
-        check(head, head === f.headA ? "failed" : "succeeded"),
-      ],
-      collectDiagnostics: async (_head, checks) => [
+      observeChecks: async (head) =>
+        ciEvaluation(head, head === f.headA ? "failed" : "passed"),
+      collectDiagnostics: async (_head, failures) => [
         {
-          name: checks[0]!.name,
+          name:
+            failures[0]?.source === "check-run"
+              ? failures[0].name
+              : failures[0]!.context,
           checkRunId: 1,
           headSha: _head,
           logUrl: null,
@@ -269,8 +286,7 @@ describe("mocked task-session lifecycle scenarios", () => {
       pullRequestUrl: "https://github.com/owner/repo/pull/1",
       publishedCommitSha: f.headB,
       observedHeadSha: f.headB,
-      requiredCheckNames: ["Build"],
-      checks: [check(f.headB, "succeeded")],
+      ciEvaluation: ciEvaluation(f.headB, "passed"),
       verification,
       ledgerStore: f.ledgerStore,
       reconcileReply: async () => ({ status: "absent" }),
@@ -293,7 +309,13 @@ describe("mocked task-session lifecycle scenarios", () => {
       reviewObservation: {
         headSha: f.headA,
         observedAt: "2026-10-24T09:00:00.000Z",
-        checks: [{ name: "Build", status: "queued", headSha: f.headA }],
+        ciEvaluation: {
+          status: "waiting",
+          expectedCheckNames: ["Build"],
+          missingChecks: [],
+          pendingChecks: ["Build"],
+          failureCheckNames: [],
+        },
         feedbackIds: ["inline-comment:1"],
       },
       revision: record.revision + 1,
@@ -344,9 +366,27 @@ describe("mocked task-session lifecycle scenarios", () => {
           headRefOid: headBranch === "agent/card" ? f.headA : secondHead,
         }),
       ),
-      getRequiredChecks: vi.fn(async ({ headSha }: { headSha: string }) => ({
+      getCiObservations: vi.fn(async ({ headSha }: { headSha: string }) => ({
         headSha,
-        checks: [check(headSha, "queued")],
+        checks: [
+          {
+            source: "check-run" as const,
+            id: 1,
+            name: "Build",
+            headSha,
+            status: "queued",
+            conclusion: null,
+            url: null,
+          },
+        ],
+        expectationSources: [
+          {
+            kind: "repository-rules" as const,
+            sourceId: "rules",
+            complete: true,
+            checkNames: ["Build"],
+          },
+        ],
       })),
       findChangesRequestedPullRequest: vi.fn(async () => null),
       getPullRequestConversationComments: vi.fn(async () => []),
@@ -400,8 +440,7 @@ describe("mocked task-session lifecycle scenarios", () => {
           headSha: f.headA,
           state: "OPEN",
         },
-        checkHeadSha: null,
-        checks: [],
+        ciEvaluation: null,
         feedbackHeadSha: f.headA,
         uncertainReplyIds: ["conversation-comment:1"],
         reconciledReplyIds: [],

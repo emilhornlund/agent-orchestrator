@@ -61,7 +61,6 @@ function projectFixture() {
       defaultBranch: "main",
       worktreeRoot,
       validationCommand: "yarn validate",
-      requiredChecks: ["Build"],
       gitIdentity: { name: "Agent", email: "agent@example.test" },
     },
     opencode: {
@@ -383,6 +382,20 @@ describe("task-session production dispatch", () => {
             },
           ],
         ]);
+      }
+      if (
+        args[0] === "api" &&
+        args.some((argument) => argument.includes("/statuses?"))
+      ) {
+        return JSON.stringify([[]]);
+      }
+      if (
+        args[0] === "api" &&
+        args.some((argument) =>
+          argument.includes("/protection/required_status_checks"),
+        )
+      ) {
+        return JSON.stringify({ contexts: ["Build"], checks: [] });
       }
       if (
         args[0] === "api" &&
@@ -841,7 +854,10 @@ describe("task-session production dispatch", () => {
     ).read(card.id);
     expect(recoveredRecord?.reviewObservation).toMatchObject({
       headSha: "d".repeat(40),
-      checks: [{ name: "Build", status: "succeeded", headSha: "d".repeat(40) }],
+      ciEvaluation: {
+        status: "passed",
+        expectedCheckNames: ["Build"],
+      },
     });
     expect(recoveredRecord?.publicationQuality).toBeDefined();
     expect(publishedFeedback?.entries).toContainEqual(
@@ -972,15 +988,25 @@ describe("task-session production dispatch", () => {
         mergedAt: null,
         headRefOid: headSha,
       })),
-      getRequiredChecks: vi.fn(async () => ({
+      getCiObservations: vi.fn(async () => ({
         headSha,
         checks: [
           {
+            source: "check-run" as const,
+            id: 42,
             name: "Build",
             headSha,
             status: "queued",
             conclusion: null,
-            diagnostic: "",
+            url: null,
+          },
+        ],
+        expectationSources: [
+          {
+            kind: "repository-rules" as const,
+            sourceId: "rules",
+            complete: true,
+            checkNames: ["Build"],
           },
         ],
       })),
@@ -1000,7 +1026,10 @@ describe("task-session production dispatch", () => {
     expect(openCode).not.toHaveBeenCalled();
     expect(recordStore.read(card.id)).toMatchObject({
       phase: "ci",
-      reviewObservation: { headSha, checks: [{ status: "queued" }] },
+      reviewObservation: {
+        headSha,
+        ciEvaluation: { status: "waiting", expectedCheckNames: ["Build"] },
+      },
     });
   });
 
@@ -1043,16 +1072,26 @@ describe("task-session production dispatch", () => {
         listId === project.trello.reviewListId ? cards : [],
       ),
     } as unknown as TrelloClient;
-    const getRequiredChecks = vi.fn(
+    const getCiObservations = vi.fn(
       async ({ headSha }: { headSha: string }) => ({
         headSha,
         checks: [
           {
+            source: "check-run" as const,
+            id: 42,
             name: "Build",
             headSha,
             status: "queued" as const,
             conclusion: null,
-            diagnostic: "",
+            url: null,
+          },
+        ],
+        expectationSources: [
+          {
+            kind: "repository-rules" as const,
+            sourceId: "rules",
+            complete: true,
+            checkNames: ["Build"],
           },
         ],
       }),
@@ -1070,7 +1109,7 @@ describe("task-session production dispatch", () => {
           };
         },
       ),
-      getRequiredChecks,
+      getCiObservations,
       findChangesRequestedPullRequest: vi.fn(async () => null),
       getPullRequestConversationComments: vi.fn(async () => []),
     } as unknown as GitHubClient;
@@ -1086,16 +1125,24 @@ describe("task-session production dispatch", () => {
       new AbortController().signal,
     );
 
-    expect(getRequiredChecks).toHaveBeenCalledTimes(4);
+    expect(getCiObservations).toHaveBeenCalledTimes(4);
     expect(
-      new Set(getRequiredChecks.mock.calls.map(([input]) => input.headSha)),
+      new Set(getCiObservations.mock.calls.map(([input]) => input.headSha)),
     ).toEqual(new Set(headByCard.values()));
-    expect(taskStore.read("card-one")?.reviewObservation?.checks).toMatchObject(
-      [{ status: "queued", headSha: "a".repeat(40) }],
-    );
-    expect(taskStore.read("card-two")?.reviewObservation?.checks).toMatchObject(
-      [{ status: "queued", headSha: "b".repeat(40) }],
-    );
+    expect(
+      taskStore.read("card-one")?.reviewObservation?.ciEvaluation,
+    ).toMatchObject({
+      status: "waiting",
+      expectedCheckNames: ["Build"],
+      pendingChecks: ["Build"],
+    });
+    expect(
+      taskStore.read("card-two")?.reviewObservation?.ciEvaluation,
+    ).toMatchObject({
+      status: "waiting",
+      expectedCheckNames: ["Build"],
+      pendingChecks: ["Build"],
+    });
     expect(new TaskMutationQueue(project.contextRoot, project).list()).toEqual(
       [],
     );

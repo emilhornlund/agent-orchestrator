@@ -107,45 +107,21 @@ export interface GitHubContextualReply {
   threadId?: string;
 }
 
-export type RequiredCheckStatus =
-  | "missing"
-  | "queued"
-  | "in_progress"
-  | "succeeded"
-  | "failed"
-  | "cancelled"
-  | "incomplete";
-
-export interface RequiredCheckObservation {
-  name: string;
-  headSha: string;
-  checkRunId?: number;
-  logUrl?: string;
-  status: RequiredCheckStatus;
-  conclusion: string | null;
-  diagnostic: string;
-}
-
 export interface FailedCheckDiagnostic {
   name: string;
-  checkRunId: number;
+  checkRunId?: number;
   headSha: string;
   logUrl: string | null;
   available: boolean;
   diagnostic: string;
 }
 
-export interface RequiredCheckDiagnosticsOptions {
+export interface CiCheckRunDiagnosticsOptions {
   cwd: string;
   repository: string;
   headSha: string;
-  checks: readonly RequiredCheckObservation[];
+  checks: readonly Extract<CiCheckObservation, { source: "check-run" }>[];
   project?: ProjectConfig;
-}
-
-export interface RequiredChecksResult {
-  headSha: string;
-  checks: RequiredCheckObservation[];
 }
 
 export type CiCheckObservation =
@@ -182,14 +158,6 @@ export interface CiObservationsResult {
   headSha: string;
   checks: CiCheckObservation[];
   expectationSources: CiCheckExpectationSource[];
-}
-
-export interface RequiredChecksOptions {
-  cwd: string;
-  repository: string;
-  headSha: string;
-  requiredChecks: readonly string[];
-  project?: ProjectConfig;
 }
 
 export type PullRequestStatus = "OPEN" | "CLOSED" | "MERGED";
@@ -1341,141 +1309,26 @@ export class GitHubClient {
     };
   }
 
-  async getRequiredChecks(
-    options: RequiredChecksOptions,
-  ): Promise<RequiredChecksResult> {
-    if (
-      !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu.test(options.headSha) ||
-      options.requiredChecks.length === 0 ||
-      options.requiredChecks.some(
-        (name) => name.trim() !== name || name.length === 0,
-      ) ||
-      new Set(options.requiredChecks).size !== options.requiredChecks.length
-    ) {
-      throw new Error(
-        "Required checks need a full commit SHA and unique nonempty names",
-      );
-    }
-
-    const credential = await this.resolveCredential(options.project);
-    const output = await this.run(
-      options.cwd,
-      [
-        "api",
-        "--paginate",
-        "--slurp",
-        `repos/${options.repository}/commits/${options.headSha}/check-runs?per_page=100`,
-      ],
-      credential,
-    );
-    const runs = parsePaginatedGitHubResponse(
-      output,
-      "paginated check runs",
-    ).flatMap((page) => {
-      if (!isRecord(page) || !Array.isArray(page.check_runs)) {
-        throw new Error("GitHub CLI returned an invalid check-runs page");
-      }
-      return page.check_runs;
-    });
-    const latestByName = new Map<string, Record<string, unknown>>();
-
-    for (const value of runs) {
-      if (
-        !isRecord(value) ||
-        typeof value.name !== "string" ||
-        typeof value.head_sha !== "string" ||
-        typeof value.status !== "string" ||
-        (value.id !== undefined &&
-          (typeof value.id !== "number" ||
-            !Number.isSafeInteger(value.id) ||
-            value.id <= 0)) ||
-        (value.html_url !== undefined && typeof value.html_url !== "string") ||
-        (value.conclusion !== null && typeof value.conclusion !== "string") ||
-        (value.created_at !== undefined && typeof value.created_at !== "string")
-      ) {
-        throw new Error("GitHub CLI returned a malformed check run");
-      }
-      if (value.head_sha !== options.headSha) {
-        throw new Error(
-          "GitHub returned a check run for a different commit SHA",
-        );
-      }
-      const previous = latestByName.get(value.name);
-      if (
-        previous === undefined ||
-        String(value.created_at ?? "") >= String(previous.created_at ?? "")
-      ) {
-        latestByName.set(value.name, value);
-      }
-    }
-
-    return {
-      headSha: options.headSha,
-      checks: options.requiredChecks.map((name) => {
-        const run = latestByName.get(name);
-        if (run === undefined) {
-          return {
-            name,
-            headSha: options.headSha,
-            status: "missing",
-            conclusion: null,
-            diagnostic: "No check run was reported for the expected commit.",
-          };
-        }
-        const conclusion =
-          typeof run.conclusion === "string" ? run.conclusion : null;
-        const status: RequiredCheckStatus =
-          run.status === "queued"
-            ? "queued"
-            : run.status === "in_progress"
-              ? "in_progress"
-              : run.status !== "completed" || conclusion === null
-                ? "incomplete"
-                : conclusion === "success"
-                  ? "succeeded"
-                  : conclusion === "cancelled"
-                    ? "cancelled"
-                    : [
-                          "failure",
-                          "timed_out",
-                          "action_required",
-                          "startup_failure",
-                        ].includes(conclusion)
-                      ? "failed"
-                      : "incomplete";
-        return {
-          name,
-          headSha: options.headSha,
-          ...(typeof run.id === "number" ? { checkRunId: run.id } : {}),
-          ...(typeof run.html_url === "string" ? { logUrl: run.html_url } : {}),
-          status,
-          conclusion,
-          diagnostic:
-            status === "incomplete"
-              ? `GitHub reported an unrecognized or incomplete status (${run.status}/${conclusion ?? "none"}).`
-              : "",
-        };
-      }),
-    };
-  }
-
-  async getRequiredCheckDiagnostics(
-    options: RequiredCheckDiagnosticsOptions,
+  async getCiCheckRunDiagnostics(
+    options: CiCheckRunDiagnosticsOptions,
   ): Promise<FailedCheckDiagnostic[]> {
     if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu.test(options.headSha)) {
       throw new Error("Check diagnostics require a full expected commit SHA");
     }
     const credential = await this.resolveCredential(options.project);
     const failedChecks = options.checks.filter(
-      (check) => check.status === "failed",
+      (check) =>
+        check.status === "completed" &&
+        ["failure", "timed_out", "action_required", "startup_failure"].includes(
+          check.conclusion ?? "",
+        ),
     );
     return Promise.all(
       failedChecks.map(async (check) => {
         if (
           check.headSha !== options.headSha ||
-          check.checkRunId === undefined ||
-          !Number.isSafeInteger(check.checkRunId) ||
-          check.checkRunId <= 0
+          !Number.isSafeInteger(check.id) ||
+          check.id <= 0
         ) {
           throw new Error(
             "Failed check diagnostics refer to a stale or unidentified check run",
@@ -1488,7 +1341,7 @@ export class GitHubClient {
               "api",
               "--paginate",
               "--slurp",
-              `repos/${options.repository}/check-runs/${check.checkRunId}/annotations?per_page=100`,
+              `repos/${options.repository}/check-runs/${check.id}/annotations?per_page=100`,
             ],
             credential,
           );
@@ -1513,9 +1366,9 @@ export class GitHubClient {
           });
           return {
             name: check.name,
-            checkRunId: check.checkRunId,
+            checkRunId: check.id,
             headSha: options.headSha,
-            logUrl: check.logUrl ?? null,
+            logUrl: check.url,
             available: details.length > 0,
             diagnostic: presentExternalDiagnostic(
               details.length > 0
@@ -1527,9 +1380,9 @@ export class GitHubClient {
         } catch (error) {
           return {
             name: check.name,
-            checkRunId: check.checkRunId,
+            checkRunId: check.id,
             headSha: options.headSha,
-            logUrl: check.logUrl ?? null,
+            logUrl: check.url,
             available: false,
             diagnostic: presentExternalDiagnostic(
               `Check diagnostics unavailable: ${error instanceof Error ? error.message : String(error)}`,

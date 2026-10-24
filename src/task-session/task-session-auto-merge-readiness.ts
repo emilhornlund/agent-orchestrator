@@ -1,4 +1,4 @@
-import type { RequiredCheckObservation } from "../github/github-client.js";
+import type { CiCheckEvaluation } from "../github/evaluate-ci-checks.js";
 import {
   decideVerifiedPublication,
   type VerifiedPublicationDecisionInput,
@@ -7,8 +7,7 @@ import {
 export interface TaskSessionAutoMergeReadinessInput {
   expectedHeadSha: string;
   observedHeadSha: string;
-  requiredCheckNames: readonly string[];
-  checks: readonly RequiredCheckObservation[];
+  ciEvaluation: CiCheckEvaluation;
   localEvidence: VerifiedPublicationDecisionInput;
 }
 
@@ -29,31 +28,17 @@ export function decideTaskSessionAutoMergeReadiness(
     reasons.push("Observed PR head does not match the expected head");
   }
   if (
-    input.requiredCheckNames.length === 0 ||
-    new Set(input.requiredCheckNames).size !== input.requiredCheckNames.length
+    input.ciEvaluation.status !== "passed" ||
+    input.ciEvaluation.expectedHeadSha !== input.expectedHeadSha
   ) {
-    reasons.push("Required check configuration is missing or duplicated");
-  }
-  const byName = new Map(input.checks.map((check) => [check.name, check]));
-  if (byName.size !== input.checks.length) {
-    reasons.push("Observed required checks contain duplicate names");
-  }
-  for (const name of input.requiredCheckNames) {
-    const check = byName.get(name);
-    if (check === undefined) {
-      reasons.push(`Required check is missing: ${name}`);
-    } else if (check.headSha !== input.expectedHeadSha) {
-      reasons.push(`Required check is stale: ${name}`);
-    } else if (check.status !== "succeeded") {
-      reasons.push(
-        `Required check is not successful: ${name} (${check.status})`,
-      );
-    }
-  }
-  for (const check of input.checks) {
-    if (!input.requiredCheckNames.includes(check.name)) {
-      reasons.push(`Unexpected required check result: ${check.name}`);
-    }
+    reasons.push(
+      input.ciEvaluation.status === "waiting" ||
+        input.ciEvaluation.status === "uncertain"
+        ? `Complete current-head CI evidence is unavailable: ${input.ciEvaluation.diagnostic}`
+        : input.ciEvaluation.status === "failed"
+          ? "Current-head CI contains terminal failures"
+          : "CI evidence does not match the expected PR head",
+    );
   }
   const local = decideVerifiedPublication({
     ...input.localEvidence,
