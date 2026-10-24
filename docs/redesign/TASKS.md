@@ -258,7 +258,7 @@ to inspect first, not permission to invent unimplemented helpers.
   - **Verify locally:** Mock CLI/API tests verify correct endpoint/thread, malformed ID rejection, permission errors, and response parsing.
   - **Out of scope:** Do not let the agent call GitHub directly or publish replies yet.
 
-- [ ] **T37 — Publish verified feedback responses idempotently**
+- [x] **T37 — Publish verified feedback responses idempotently**
   - **Depends on:** T25, T28, T32, T35–T36.
   - **Implement:** Only after the correcting commit is published and required current-head CI passes, compose factual replies from verified per-item evidence and publish via T36. Record reply IDs before considering the cycle complete; reconcile uncertain outcomes to avoid duplicate replies.
   - **Verify locally:** Mock tests cover exact thread routing, no premature success claim, reply persistence, interrupted response recovery, and duplicate-event idempotency.

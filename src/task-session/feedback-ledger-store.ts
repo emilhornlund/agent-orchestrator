@@ -197,6 +197,12 @@ export class FeedbackLedgerStore {
               ...(previous.replyId === undefined
                 ? {}
                 : { replyId: previous.replyId }),
+              ...(previous.replyOperationId === undefined
+                ? {}
+                : { replyOperationId: previous.replyOperationId }),
+              ...(previous.replyState === undefined
+                ? {}
+                : { replyState: previous.replyState }),
             },
       );
     }
