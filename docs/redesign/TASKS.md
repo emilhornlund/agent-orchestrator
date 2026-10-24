@@ -374,7 +374,7 @@ are examples to inspect, not permission to invent unimplemented helpers.
   - **Verify locally:** Mock GitHub tests cover OPEN, MERGED, CLOSED, missing PRs, incorrect ownership, stale identities, and temporary GitHub errors. Terminal observations must not depend on successful CI checks.
   - **Out of scope:** Do not move Trello cards or clean up branches yet.
 
-- [ ] **T49 — Reconcile terminal PRs in the unified workflow**
+- [x] **T49 — Reconcile terminal PRs in the unified workflow**
   - **Depends on:** T48.
   - **Implement:** Connect terminal PR observations to production polling. Move merged PR cards to Done and deliberately closed, unmerged PR cards to Backlog, preserving existing completion metadata, notifications, and safe cleanup behavior. Persist enough state to recover interrupted transitions without duplicate side effects.
   - **Verify locally:** Production-polling tests cover merge-to-Done, close-to-Backlog, repeated polling, restart between external operations, already-deleted branches, and cleanup failures. Uncertain states must preserve recovery information.
