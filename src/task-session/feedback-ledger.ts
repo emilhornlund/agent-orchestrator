@@ -28,6 +28,8 @@ const feedbackEntrySchema = z.strictObject({
   verificationEvidence: z.array(z.string().min(1)),
   remediationCommitSha: sha.optional(),
   replyId: z.string().min(1).optional(),
+  replyOperationId: z.string().min(1).optional(),
+  replyState: z.enum(["sending", "outcome-unknown", "sent"]).optional(),
 });
 
 const feedbackLedgerSchema = z
@@ -66,6 +68,13 @@ const feedbackLedgerSchema = z
           code: "custom",
           path: ["entries", index, "replyId"],
           message: "Published feedback requires a reply ID",
+        });
+      }
+      if (entry.status === "published" && entry.replyState !== "sent") {
+        ctx.addIssue({
+          code: "custom",
+          path: ["entries", index, "replyState"],
+          message: "Published feedback requires a persisted sent reply state",
         });
       }
     }
