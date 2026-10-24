@@ -208,7 +208,7 @@ to inspect first, not permission to invent unimplemented helpers.
   - **Verify locally:** Mock lifecycle tests prove fail→fix→green, stale-head rejection, missing/pending checks do not trigger blind fixes, and exhaustion preserves the PR for attention.
   - **Out of scope:** Do not open another PR or use real GitHub Actions.
 
-- [ ] **T29 — Enforce CI-aware auto-merge readiness**
+- [x] **T29 — Enforce CI-aware auto-merge readiness**
   - **Depends on:** T24–T28.
   - **Implement:** Add a deterministic merge-readiness gate for task-session mode: all configured required checks must have succeeded on the expected PR head, and required local evidence must still be valid. Route through existing `autoMerge` safety behavior.
   - **Verify locally:** Tests prove stale, pending, missing, cancelled, and failed checks block auto-merge, while fully verified results allow the existing merge path.
