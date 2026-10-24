@@ -371,6 +371,7 @@ export async function runTaskSessionWorkflow(
     cwd: project.repository.path,
   });
   for (const observation of observations) {
+    if (observation.state !== "OPEN") continue;
     let record = taskStore.read(observation.cardId);
     if (
       record !== null &&
@@ -1044,6 +1045,7 @@ export async function runTaskSessionWorkflow(
   });
   let feedbackNeedsAttention = false;
   for (const observation of latestObservations) {
+    if (observation.state !== "OPEN") continue;
     const record = taskStore.read(observation.cardId);
     if (record === null || record.phase !== "human-feedback") continue;
     const card = latestHumanReviewCards.find(

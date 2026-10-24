@@ -2,6 +2,7 @@ import type { ProjectConfig } from "../config/config.js";
 import type {
   ChangesRequestedPullRequest,
   GitHubClient,
+  PullRequestState,
   PullRequestConversationComment,
   RequiredCheckObservation,
 } from "../github/github-client.js";
@@ -9,6 +10,7 @@ import type { TrelloCard } from "../trello/trello-client.js";
 import { TaskExecutionStore } from "../task-session/task-execution-store.js";
 
 export interface ObservedTaskSessionReviewCard {
+  state: "OPEN";
   cardId: string;
   pullRequestUrl: string;
   headSha: string;
@@ -17,6 +19,17 @@ export interface ObservedTaskSessionReviewCard {
   requestedChanges: ChangesRequestedPullRequest | null;
   conversationComments: PullRequestConversationComment[];
 }
+
+export interface ObservedTerminalTaskSessionPullRequest {
+  state: "MERGED" | "CLOSED";
+  cardId: string;
+  pullRequestUrl: string;
+  headSha: string | null;
+  pullRequest: PullRequestState;
+}
+
+export type TaskSessionPullRequestObservation =
+  ObservedTaskSessionReviewCard | ObservedTerminalTaskSessionPullRequest;
 
 export interface ObserveTaskSessionReviewCardsOptions {
   project: ProjectConfig;
@@ -32,7 +45,7 @@ function nextTimestamp(previous: string): string {
 
 export async function observeTaskSessionReviewCards(
   options: ObserveTaskSessionReviewCardsOptions,
-): Promise<ObservedTaskSessionReviewCard[]> {
+): Promise<TaskSessionPullRequestObservation[]> {
   const { project, cards, taskRecordStore, github } = options;
   if (project.executionMode !== "task-session") {
     throw new Error(
@@ -45,7 +58,7 @@ export async function observeTaskSessionReviewCards(
       "Task-session review monitoring requires configured required checks",
     );
   }
-  const observed: ObservedTaskSessionReviewCard[] = [];
+  const observed: TaskSessionPullRequestObservation[] = [];
   for (const card of cards) {
     const record = taskRecordStore.read(card.id);
     if (
@@ -78,12 +91,35 @@ export async function observeTaskSessionReviewCards(
       project,
     };
     const pullRequest = await github.findPullRequestState(lookup);
-    if (
-      pullRequest === null ||
-      pullRequest.state !== "OPEN" ||
-      pullRequest.url !== record.pullRequest.url ||
-      pullRequest.headRefOid !== headSha
-    ) {
+    if (pullRequest === null || pullRequest.url !== record.pullRequest.url) {
+      throw new Error(
+        `Authoritative pull request identity changed for Human Review card ${card.id}`,
+      );
+    }
+    if (pullRequest.state !== "OPEN") {
+      const [owner, repository] = project.repository.github.split("/");
+      if (
+        pullRequest.baseRefName !== project.repository.defaultBranch ||
+        pullRequest.headRefName !== `agent/${card.id}` ||
+        pullRequest.headRepository?.name !== repository ||
+        pullRequest.headRepositoryOwner?.login !== owner ||
+        (pullRequest.state === "MERGED" && pullRequest.mergedAt === null) ||
+        (pullRequest.state === "CLOSED" && pullRequest.mergedAt !== null)
+      ) {
+        throw new Error(
+          `Terminal pull request metadata or ownership is ambiguous for Human Review card ${card.id}`,
+        );
+      }
+      observed.push({
+        state: pullRequest.state,
+        cardId: card.id,
+        pullRequestUrl: pullRequest.url,
+        headSha: pullRequest.headRefOid ?? null,
+        pullRequest,
+      });
+      continue;
+    }
+    if (pullRequest.headRefOid !== headSha) {
       throw new Error(
         `Authoritative pull request identity or head changed for Human Review card ${card.id}`,
       );
@@ -156,6 +192,7 @@ export async function observeTaskSessionReviewCards(
       updatedAt: nextTimestamp(latest.updatedAt),
     });
     observed.push({
+      state: "OPEN",
       cardId: card.id,
       pullRequestUrl: record.pullRequest.url,
       headSha,

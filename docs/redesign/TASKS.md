@@ -368,7 +368,7 @@ are examples to inspect, not permission to invent unimplemented helpers.
   - **Verify locally:** Production-polling tests cover refinement and implementation cards in both Ready-list orders, successful refinement, failures, interrupted operations, and absence of concurrent project mutations.
   - **Out of scope:** Do not modify implementation planning or the PR lifecycle.
 
-- [ ] **T48 — Observe merged and closed task-session PRs**
+- [x] **T48 — Observe merged and closed task-session PRs**
   - **Depends on:** T43C, T45.
   - **Implement:** Extend task-session PR observation to explicitly recognize authoritative MERGED and CLOSED states instead of rejecting every non-OPEN PR. Verify PR identity, ownership, and relevant terminal metadata. Distinguish merged PRs from deliberately closed, unmerged PRs.
   - **Verify locally:** Mock GitHub tests cover OPEN, MERGED, CLOSED, missing PRs, incorrect ownership, stale identities, and temporary GitHub errors. Terminal observations must not depend on successful CI checks.
