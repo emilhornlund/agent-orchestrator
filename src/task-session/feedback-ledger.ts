@@ -24,7 +24,7 @@ const feedbackEntrySchema = z.strictObject({
     "discussion",
     "not-actionable",
   ]),
-  status: z.enum(["pending", "verified", "escalated", "published"]),
+  status: z.enum(["pending", "verified", "escalated", "published", "closed"]),
   verificationEvidence: z.array(z.string().min(1)),
   remediationCommitSha: sha.optional(),
   replyId: z.string().min(1).optional(),
