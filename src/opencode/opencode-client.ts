@@ -15,6 +15,7 @@ export interface OpenCodeRunOptions {
   timeoutMilliseconds: number;
   prompt: string;
   signal: AbortSignal;
+  sessionId?: string;
   environment?: Record<string, string>;
   sessionLogPath?: string;
   sessionLabel?: string;
@@ -43,6 +44,42 @@ export class OpenCodeTimeoutError extends Error {
 export type RunOpenCode = (
   options: OpenCodeRunOptions,
 ) => Promise<OpenCodeRunResult>;
+
+type OpenCodeArgumentOptions = Pick<
+  OpenCodeRunOptions,
+  "cwd" | "model" | "variant" | "prompt" | "sessionId"
+>;
+
+function assertValidSessionId(sessionId: string): void {
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/u.test(sessionId)) {
+    throw new Error(
+      "Invalid OpenCode session ID: expected letters, numbers, underscores, or hyphens",
+    );
+  }
+}
+
+export function buildOpenCodeArguments(
+  options: OpenCodeArgumentOptions,
+): string[] {
+  const { cwd, model, variant, prompt, sessionId } = options;
+
+  if (sessionId !== undefined) {
+    assertValidSessionId(sessionId);
+  }
+
+  return [
+    "run",
+    "--auto",
+    "--model",
+    model,
+    "--variant",
+    variant,
+    "--dir",
+    cwd,
+    ...(sessionId === undefined ? [] : ["--session", sessionId]),
+    prompt,
+  ];
+}
 
 export function signalProcessTree(
   childPid: number | undefined,
@@ -79,6 +116,7 @@ const defaultRunOpenCode: RunOpenCode = async ({
   timeoutMilliseconds,
   prompt,
   signal,
+  sessionId,
   environment,
   sessionLogPath,
   sessionLabel,
@@ -105,17 +143,13 @@ const defaultRunOpenCode: RunOpenCode = async ({
 
     const child = spawn(
       "opencode",
-      [
-        "run",
-        "--auto",
-        "--model",
-        model,
-        "--variant",
-        variant,
-        "--dir",
+      buildOpenCodeArguments({
         cwd,
+        model,
+        variant,
         prompt,
-      ],
+        ...(sessionId === undefined ? {} : { sessionId }),
+      }),
       {
         cwd,
         stdio: ["inherit", "pipe", "pipe"],
@@ -261,7 +295,11 @@ const defaultRunOpenCode: RunOpenCode = async ({
 export class OpenCodeClient {
   constructor(private readonly runOpenCode: RunOpenCode = defaultRunOpenCode) {}
 
-  run(options: OpenCodeRunOptions): Promise<OpenCodeRunResult> {
+  async run(options: OpenCodeRunOptions): Promise<OpenCodeRunResult> {
+    if (options.sessionId !== undefined) {
+      assertValidSessionId(options.sessionId);
+    }
+
     return this.runOpenCode(options);
   }
 }
