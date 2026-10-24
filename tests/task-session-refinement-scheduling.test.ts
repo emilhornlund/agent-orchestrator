@@ -6,9 +6,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProjectConfig } from "../src/config/config.js";
 import { GitClient } from "../src/git/git-client.js";
 import { GitHubClient } from "../src/github/github-client.js";
-import { OpenCodeClient } from "../src/opencode/opencode-client.js";
+import {
+  OpenCodeClient,
+  type OpenCodeRunOptions,
+  type OpenCodeRunResult,
+} from "../src/opencode/opencode-client.js";
+import { getRefinementResultPath } from "../src/refinement/refinement-result.js";
 import { CommandRunner } from "../src/process/command-runner.js";
-import { runTaskSessionWorkflow } from "../src/orchestrator/run-task-session-workflow.js";
+import { pollProject } from "../src/orchestrator/poll-project.js";
 import { TaskMutationQueue } from "../src/task-session/task-mutation-queue.js";
 import type { TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
 
@@ -72,11 +77,21 @@ describe("task-session refinement scheduling", () => {
       getCards: vi.fn(async (listId: string) =>
         listId === cardList ? [{ ...readyCard, idList: cardList }] : [],
       ),
+      getCardAttachments: vi.fn(async () => []),
       moveCard: vi.fn(async (_cardId: string, listId: string) => {
         cardList = listId;
-        return { ...readyCard, idList: listId };
+        return { ...readyCard, idList: listId, idLabels: [...labels] };
       }),
+      updateCardContent: vi.fn(async () => undefined),
+      addLabel: vi.fn(async (_cardId: string, labelId: string) => {
+        labels.add(labelId);
+      }),
+      removeLabel: vi.fn(async (_cardId: string, labelId: string) => {
+        labels.delete(labelId);
+      }),
+      addComment: vi.fn(async () => undefined),
     } as unknown as TrelloClient;
+    const labels = new Set(readyCard.idLabels);
     const git = {
       fetch: vi.fn(async () => undefined),
       branchExists: vi.fn(async () => false),
@@ -85,34 +100,61 @@ describe("task-session refinement scheduling", () => {
           fs.mkdirSync(worktreePath, { recursive: true });
         },
       ),
+      getStatus: vi.fn(async (worktreePath: string) =>
+        fs.existsSync(getRefinementResultPath(worktreePath))
+          ? "?? .agent-orchestrator/refinement-result.json"
+          : "",
+      ),
+      getCurrentBranch: vi.fn(async () => `agent/${readyCard.id}`),
+      getRebaseState: vi.fn(async () => null),
+      getConflictedPaths: vi.fn(async () => []),
+      removeWorktree: vi.fn(async (_repo: string, worktreePath: string) => {
+        fs.rmSync(worktreePath, { recursive: true, force: true });
+      }),
+      pruneWorktrees: vi.fn(async () => undefined),
     } as unknown as GitClient;
     const githubRun = vi.fn();
     const github = new GitHubClient(githubRun);
-    const openCodeRun = vi.fn();
+    const openCodeRun = vi.fn(
+      async (options: OpenCodeRunOptions): Promise<OpenCodeRunResult> => {
+        const resultPath = getRefinementResultPath(options.cwd);
+        fs.mkdirSync(path.dirname(resultPath), { recursive: true });
+        fs.writeFileSync(
+          resultPath,
+          JSON.stringify({
+            title: "Clarified feature",
+            description: "# Clarified feature\n\nAcceptance criteria.",
+            type: "feature",
+          }),
+        );
+        return { exitCode: 0, output: "done", errorOutput: "" };
+      },
+    );
     const openCode = new OpenCodeClient(openCodeRun);
     const commands = new CommandRunner(vi.fn());
-    const processRefinement = vi.fn(async (card: TrelloCard) => {
-      expect(card.idList).toBe(project.trello.workingListId);
-      cardList = project.trello.backlogListId;
-    });
 
-    await runTaskSessionWorkflow({
-      project,
+    await pollProject(
       trello,
       git,
       github,
       openCode,
       commands,
-      signal: new AbortController().signal,
-      prepareAttachmentContext: async () => undefined,
-      processRefinement,
-    });
+      project,
+      new AbortController().signal,
+    );
 
-    expect(processRefinement).toHaveBeenCalledOnce();
+    expect(openCodeRun).toHaveBeenCalledOnce();
     expect(git.addWorktreeWithNewBranch).toHaveBeenCalledOnce();
     expect(cardList).toBe(project.trello.backlogListId);
+    expect([...labels]).toContain(project.trello.featureLabelId);
+    expect([...labels]).not.toContain(project.trello.refinementLabelId);
     expect(githubRun).not.toHaveBeenCalled();
-    expect(openCodeRun).not.toHaveBeenCalled();
+    expect(openCodeRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: "refine",
+        sessionLabel: "OpenCode refinement",
+      }),
+    );
     expect(new TaskMutationQueue(contextRoot, project).list()).toMatchObject([
       { cardId: readyCard.id, kind: "refinement", status: "completed" },
     ]);

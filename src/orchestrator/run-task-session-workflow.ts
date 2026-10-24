@@ -66,9 +66,9 @@ import { completeAutoMergedCard } from "./auto-merge.js";
 import { mergeTaskSessionPullRequest } from "./merge-task-session-pull-request.js";
 import { observeTaskSessionReviewCards } from "./observe-task-session-review-cards.js";
 import {
-  completeMergedReviewCard,
-  returnClosedReviewCardToBacklog,
-} from "./reconcile-review-cards.js";
+  completeMergedTaskSessionPullRequest,
+  returnClosedTaskSessionPullRequestToBacklog,
+} from "./reconcile-terminal-task-session-pr.js";
 import { getCardsForDiscovery } from "./trello-list-discovery.js";
 import { isCardStartDateReached } from "./card-start-eligibility.js";
 import { getWorkflowKind } from "./workflow-kind.js";
@@ -93,6 +93,8 @@ export interface RunTaskSessionWorkflowOptions {
     card: TrelloCard,
     worktree: { path: string; branch: string },
   ) => Promise<void>;
+  onHumanReviewCardsObserved?: (cardIds: string[]) => void;
+  onHumanReviewCardLeft?: (cardId: string) => void;
 }
 
 function timestamp(record: TaskExecutionRecord): string {
@@ -365,6 +367,7 @@ export async function runTaskSessionWorkflow(
     "Could not retrieve task-session Human Review cards",
     signal,
   );
+  options.onHumanReviewCardsObserved?.(humanReviewCards.map((card) => card.id));
   const observations = await observeTaskSessionReviewCards({
     project,
     cards: humanReviewCards,
@@ -425,34 +428,26 @@ export async function runTaskSessionWorkflow(
     if (recoveredTerminalMutation !== null) {
       try {
         if (isMerged) {
-          await completeMergedReviewCard(
+          await completeMergedTaskSessionPullRequest({
             trello,
             git,
             project,
             card,
-            `agent/${card.id}`,
-            authoritative,
-            undefined,
-            logger.child({ projectId: project.id, cardId }),
-            emailNotifier,
+            pullRequest: authoritative,
+            ...(emailNotifier === undefined ? {} : { emailNotifier }),
             signal,
-            undefined,
-            true,
-          );
+          });
         } else {
-          await returnClosedReviewCardToBacklog(
+          await returnClosedTaskSessionPullRequestToBacklog({
             trello,
             git,
             project,
             card,
-            authoritative,
-            undefined,
-            logger.child({ projectId: project.id, cardId }),
+            pullRequest: authoritative,
             signal,
-            undefined,
-            true,
-          );
+          });
         }
+        options.onHumanReviewCardLeft?.(cardId);
         if (signal.aborted) queue.fail(recoveredTerminalMutation.eventId);
         else queue.complete(recoveredTerminalMutation.eventId);
       } catch (error) {
@@ -489,40 +484,28 @@ export async function runTaskSessionWorkflow(
       });
       const terminalMutation = queue.claimForRecovery(terminalEventId);
       if (terminalMutation === null) continue;
-      const cardLog = logger.child({
-        projectId: project.id,
-        cardId: card.id,
-      });
       try {
         if (observation.state === "MERGED") {
-          await completeMergedReviewCard(
+          await completeMergedTaskSessionPullRequest({
             trello,
             git,
             project,
             card,
-            `agent/${card.id}`,
-            observation.pullRequest,
-            undefined,
-            cardLog,
-            emailNotifier,
+            pullRequest: observation.pullRequest,
+            ...(emailNotifier === undefined ? {} : { emailNotifier }),
             signal,
-            undefined,
-            true,
-          );
+          });
         } else {
-          await returnClosedReviewCardToBacklog(
+          await returnClosedTaskSessionPullRequestToBacklog({
             trello,
             git,
             project,
             card,
-            observation.pullRequest,
-            undefined,
-            cardLog,
+            pullRequest: observation.pullRequest,
             signal,
-            undefined,
-            true,
-          );
+          });
         }
+        options.onHumanReviewCardLeft?.(card.id);
         if (signal.aborted) queue.fail(terminalMutation.eventId);
         else queue.complete(terminalMutation.eventId);
       } catch (error) {
@@ -1194,6 +1177,9 @@ export async function runTaskSessionWorkflow(
     project.trello.reviewListId,
     "Could not re-read task-session Human Review cards",
     signal,
+  );
+  options.onHumanReviewCardsObserved?.(
+    latestHumanReviewCards.map((card) => card.id),
   );
   const latestObservations = await observeTaskSessionReviewCards({
     project,
