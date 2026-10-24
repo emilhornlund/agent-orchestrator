@@ -11,7 +11,7 @@ const eventSchema = z.strictObject({
     .refine((value) => value.trim() === value),
   projectId: z.string().min(1),
   cardId: z.string().min(1),
-  kind: z.enum(["implementation", "ci-repair", "feedback"]),
+  kind: z.enum(["implementation", "refinement", "ci-repair", "feedback"]),
   operationKey: z.string().min(1),
   enqueuedAt: z.string().datetime(),
   status: z.enum(["queued", "active", "failed", "completed"]),

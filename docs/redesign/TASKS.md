@@ -362,7 +362,7 @@ are examples to inspect, not permission to invent unimplemented helpers.
   - **Verify locally:** Existing refinement characterization tests pass against the extracted implementation. Add tests for successful refinement, malformed output, failed execution, and interrupted cleanup.
   - **Out of scope:** Do not change refinement behavior, integrate scheduling, or remove the legacy implementation pipeline yet.
 
-- [ ] **T47 — Integrate refinement into unified task scheduling**
+- [x] **T47 — Integrate refinement into unified task scheduling**
   - **Depends on:** T46.
   - **Implement:** Route eligible Refinement-labelled Ready cards through the extracted refinement component using the unified project scheduler. Preserve Ready-list order, label precedence, exclusive mutation ownership, and restart safety. Refinement must return cards to Backlog without creating implementation PRs.
   - **Verify locally:** Production-polling tests cover refinement and implementation cards in both Ready-list orders, successful refinement, failures, interrupted operations, and absence of concurrent project mutations.
