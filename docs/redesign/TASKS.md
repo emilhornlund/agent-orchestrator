@@ -440,6 +440,13 @@ are examples to inspect, not permission to invent unimplemented helpers.
   - **Verify locally:** Publication tests prove no early merge, and production task-session polling continues to block auto-merge for waiting, failed, or uncertain CI evidence.
   - **Out of scope:** Do not change legacy behavior or bypass the complete CI evaluator.
 
+- [x] **T56B — Clear transient CI observations on task completion**
+  - **Depends on:** T56.
+  - **Corrective rationale:** The production auto-merge path persisted a `done` record with a `reviewObservation`, which the task-record schema correctly rejects outside the active CI/Human Review phases.
+  - **Implement:** Clear the transient review observation when recording `ci-passed-completed`; preserve the authoritative PR and quality evidence.
+  - **Verify locally:** A production-polling regression proves successful complete-CI auto-merge records `done`, moves the card to Done, and does not call merge while CI is waiting.
+  - **Out of scope:** Do not weaken terminal-record validation or change unrelated task transitions.
+
 - [ ] **T57 — Add comprehensive CI lifecycle regression tests**
   - **Depends on:** T56.
   - **Implement:** Extend mocked end-to-end scenarios through the actual pollProject entry point. Simulate delayed check registration, several GitHub Actions jobs, mixed check runs and commit statuses, multiple failed jobs, late results, CI repairs, head changes, and successful auto-merge.
