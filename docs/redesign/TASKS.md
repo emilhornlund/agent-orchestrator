@@ -158,7 +158,7 @@ to inspect first, not permission to invent unimplemented helpers.
   - **Verify locally:** Tests prove coverage failure causes repair, previously passed validation is rechecked after edits, and bounded exhaustion prevents review.
   - **Out of scope:** Do not create a second unlimited retry mechanism.
 
-- [ ] **T21 — Define structured implementation review results**
+- [x] **T21 — Define structured implementation review results**
   - **Depends on:** T10, T17.
   - **Implement:** Add a validated schema with overall verdict, per-requirement assessment, concrete blocking findings, source location when known, and reviewed content identity.
   - **Verify locally:** Parser tests reject missing requirement assessments, invalid verdicts, stale content identities, and malformed findings.
