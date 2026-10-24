@@ -290,7 +290,7 @@ to inspect first, not permission to invent unimplemented helpers.
   - **Verify locally:** Mock scheduler tests cover duplicate poll events, two waiting PRs, queued CI+feedback for separate tasks, restart recovery, and fair deterministic selection.
   - **Out of scope:** Do not implement multi-writer concurrency or parallel commits.
 
-- [ ] **T42 — Add full mocked lifecycle scenario coverage**
+- [x] **T42 — Add full mocked lifecycle scenario coverage**
   - **Depends on:** T15–T41.
   - **Implement:** Add end-to-end-style tests using in-memory/mocked Trello, GitHub, OpenCode, commands and temporary Git repositories for initial success, validation failure, coverage repair, review remediation, PR CI failure/repair, two human-review rounds, late comments, interruption recovery, and multiple waiting PRs.
   - **Verify locally:** All scenarios pass offline and assert no unverified publication, preserved task ownership, correct session continuity, and bounded failure outcomes.
