@@ -7,6 +7,7 @@ import {
 } from "../process/command-runner.js";
 import type { CommandRunOptions } from "../process/command-runner.js";
 import { presentExternalDiagnostic } from "../security/bounded-diagnostic.js";
+import { getTaskSessionSourceSnapshotIdentity } from "./source-snapshot.js";
 import type { TaskExecutionStore } from "./task-execution-store.js";
 import { loadOwnedTaskExecutionRecord } from "./task-execution-ownership.js";
 import { assertOwnedTaskWorktreePath } from "./run-task-session-implementation.js";
@@ -23,6 +24,7 @@ export interface TaskSessionValidationResult {
   timedOut: boolean;
   aborted: boolean;
   diagnostic: string;
+  contentIdentity: string;
 }
 
 export interface RunTaskSessionValidationOptions {
@@ -32,7 +34,14 @@ export interface RunTaskSessionValidationOptions {
   operationKey: string;
   worktreePath: string;
   taskRecordStore: TaskExecutionStore;
-  git: Pick<GitClient, "getCurrentBranch">;
+  git: Pick<
+    GitClient,
+    | "getCurrentBranch"
+    | "getHeadSha"
+    | "getHeadTrackedFiles"
+    | "getIndexEntries"
+    | "getUntrackedFiles"
+  >;
   commands: CommandRunner;
   signal: AbortSignal;
   timeoutMilliseconds: number;
@@ -107,6 +116,10 @@ export async function runTaskSessionValidation(
     );
   }
 
+  const contentIdentity = await getTaskSessionSourceSnapshotIdentity(
+    options.git,
+    worktreePath,
+  );
   const startedAt = new Date().toISOString();
 
   try {
@@ -128,6 +141,7 @@ export async function runTaskSessionValidation(
       timedOut: false,
       aborted: false,
       diagnostic,
+      contentIdentity,
     };
   } catch (error) {
     const timedOut = error instanceof CommandTimeoutError;
@@ -145,6 +159,7 @@ export async function runTaskSessionValidation(
         error instanceof Error ? error.message : String(error),
         options.secretValues,
       ),
+      contentIdentity,
     };
   }
 }

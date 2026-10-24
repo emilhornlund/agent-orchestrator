@@ -386,6 +386,23 @@ export class GitClient {
     return output.split("\0").filter((filePath) => filePath.length > 0);
   }
 
+  async getHeadTrackedFiles(repositoryPath: string): Promise<string[]> {
+    const output = await this.runGit(repositoryPath, [
+      "ls-tree",
+      "--full-tree",
+      "-r",
+      "--name-only",
+      "-z",
+      "HEAD",
+    ]);
+
+    return output.split("\0").filter((filePath) => filePath.length > 0);
+  }
+
+  async getIndexEntries(repositoryPath: string): Promise<string> {
+    return this.runGit(repositoryPath, ["ls-files", "--stage", "-z"]);
+  }
+
   async hasChanges(repositoryPath: string): Promise<boolean> {
     return (await this.getStatus(repositoryPath)).length > 0;
   }
