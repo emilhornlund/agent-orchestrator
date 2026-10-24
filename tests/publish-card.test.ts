@@ -126,13 +126,12 @@ afterEach(() => {
 });
 
 describe("publishCard", () => {
-  it("defers auto-merge and completion delivery until the complete CI gate", async () => {
+  it("never merges during publication, even when auto-merge is enabled", async () => {
     const trello = {
       moveCard: vi.fn().mockResolvedValue({
         ...createCard(),
         idList: "review-list",
       }),
-      addComment: vi.fn(),
     } as unknown as TrelloClient;
     const github = {
       findPullRequest: vi.fn().mockResolvedValue({
@@ -140,7 +139,6 @@ describe("publishCard", () => {
       }),
       mergePullRequest: vi.fn(),
     } as unknown as GitHubClient;
-    const notifier: EmailNotifier = { send: vi.fn() };
 
     await publishCard({
       trello,
@@ -153,192 +151,10 @@ describe("publishCard", () => {
       commitSha: "abc123",
       reviewResult: "Passed",
       remediationResult: "Not required",
-      emailNotifier: notifier,
-      deferAutoMerge: true,
     });
 
     expect(github.mergePullRequest).not.toHaveBeenCalled();
     expect(trello.moveCard).toHaveBeenCalledWith("card-1", "review-list");
-    expect(trello.addComment).not.toHaveBeenCalled();
-    expect(notifier.send).not.toHaveBeenCalled();
-  });
-
-  it("auto-merges after publication and completes before notifying", async () => {
-    const events: string[] = [];
-    const project = { ...createProject(), autoMerge: true };
-    const notifier: EmailNotifier = {
-      send: vi.fn(async (message) => {
-        events.push("email");
-        expect(message.text).toContain(
-          "https://github.com/example/repository/pull/123",
-        );
-      }),
-    };
-    const trello = {
-      moveCard: vi.fn().mockImplementation(async () => {
-        events.push("done");
-        return { ...createCard(), idList: "done-list" };
-      }),
-      addComment: vi.fn().mockImplementation(async (_cardId, text) => {
-        events.push("comment");
-        expect(text).toContain("Status: Auto-merged");
-        expect(text).toContain("Final published commit: abc123");
-        expect(text).toContain("Review: Passed");
-        expect(text).toContain("Remediation: Not required");
-        return undefined;
-      }),
-    } as unknown as TrelloClient;
-    const github = {
-      findPullRequest: vi.fn().mockResolvedValue({
-        url: "https://github.com/example/repository/pull/123",
-      }),
-      mergePullRequest: vi.fn().mockImplementation(async () => {
-        events.push("merge");
-      }),
-    } as unknown as GitHubClient;
-
-    await publishCard({
-      trello,
-      git: createPublicationGit({
-        push: vi.fn().mockImplementation(async () => {
-          events.push("push");
-        }),
-      }),
-      github,
-      project,
-      card: createCard(),
-      worktreePath: "/worktree",
-      branch: "agent/card-1",
-      commitSha: "abc123",
-      reviewResult: "Passed",
-      remediationResult: "Not required",
-      emailNotifier: notifier,
-    });
-
-    expect(events).toEqual(["push", "merge", "done", "email", "comment"]);
-    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "done-list", {
-      dueComplete: true,
-    });
-    expect(github.mergePullRequest).toHaveBeenCalledWith({
-      cwd: "/worktree",
-      repository: "example/repository",
-      pullRequestUrl: "https://github.com/example/repository/pull/123",
-      commitSha: "abc123",
-      project,
-    });
-  });
-
-  it("does not complete or notify when auto-merge fails", async () => {
-    const mergeError = new Error("merge blocked");
-    const trello = {
-      moveCard: vi.fn(),
-      addComment: vi.fn(),
-    } as unknown as TrelloClient;
-    const github = {
-      findPullRequest: vi.fn().mockResolvedValue({
-        url: "https://github.com/example/repository/pull/123",
-      }),
-      mergePullRequest: vi.fn().mockRejectedValue(mergeError),
-    } as unknown as GitHubClient;
-    const notifier: EmailNotifier = { send: vi.fn() };
-
-    await expect(
-      publishCard({
-        trello,
-        git: createPublicationGit(),
-        github,
-        project: { ...createProject(), autoMerge: true },
-        card: createCard(),
-        worktreePath: "/worktree",
-        branch: "agent/card-1",
-        commitSha: "abc123",
-        reviewResult: "Passed",
-        remediationResult: "Not required",
-        emailNotifier: notifier,
-      }),
-    ).rejects.toThrow("Could not auto-merge pull request");
-
-    expect(trello.moveCard).not.toHaveBeenCalled();
-    expect(trello.addComment).not.toHaveBeenCalled();
-    expect(notifier.send).not.toHaveBeenCalled();
-  });
-
-  it("keeps an auto-merged card in Done when completion email delivery fails", async () => {
-    const trello = {
-      moveCard: vi.fn().mockResolvedValue({
-        ...createCard(),
-        idList: "done-list",
-      }),
-      addComment: vi.fn().mockResolvedValue(undefined),
-    } as unknown as TrelloClient;
-    const github = {
-      findPullRequest: vi.fn().mockResolvedValue({
-        url: "https://github.com/example/repository/pull/123",
-      }),
-      mergePullRequest: vi.fn().mockResolvedValue(undefined),
-    } as unknown as GitHubClient;
-    const notifier: EmailNotifier = {
-      send: vi.fn().mockRejectedValue(new Error("SMTP unavailable")),
-    };
-
-    await expect(
-      publishCard({
-        trello,
-        git: createPublicationGit(),
-        github,
-        project: { ...createProject(), autoMerge: true },
-        card: createCard(),
-        worktreePath: "/worktree",
-        branch: "agent/card-1",
-        commitSha: "abc123",
-        reviewResult: "Passed",
-        remediationResult: "Not required",
-        emailNotifier: notifier,
-      }),
-    ).resolves.toBeUndefined();
-
-    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "done-list", {
-      dueComplete: true,
-    });
-    expect(trello.addComment).toHaveBeenCalledWith(
-      "card-1",
-      expect.stringContaining("Status: Auto-merged"),
-    );
-    expect(notifier.send).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not add the auto-merge summary when moving to Done fails", async () => {
-    const trello = {
-      moveCard: vi.fn().mockRejectedValue(new Error("Done unavailable")),
-      addComment: vi.fn(),
-    } as unknown as TrelloClient;
-    const github = {
-      findPullRequest: vi.fn().mockResolvedValue({
-        url: "https://github.com/example/repository/pull/123",
-      }),
-      mergePullRequest: vi.fn().mockResolvedValue(undefined),
-    } as unknown as GitHubClient;
-    const notifier: EmailNotifier = { send: vi.fn() };
-
-    await expect(
-      publishCard({
-        trello,
-        git: createPublicationGit(),
-        github,
-        project: { ...createProject(), autoMerge: true },
-        card: createCard(),
-        worktreePath: "/worktree",
-        branch: "agent/card-1",
-        commitSha: "abc123",
-        reviewResult: "Passed",
-        remediationResult: "Not required",
-        emailNotifier: notifier,
-      }),
-    ).rejects.toThrow("could not be moved to Done");
-
-    expect(github.mergePullRequest).toHaveBeenCalledTimes(1);
-    expect(trello.addComment).not.toHaveBeenCalled();
-    expect(notifier.send).not.toHaveBeenCalled();
   });
 
   it("sends a Human Review email only after the Trello move succeeds", async () => {
