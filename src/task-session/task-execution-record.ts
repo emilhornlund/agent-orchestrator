@@ -12,6 +12,21 @@ const taskExecutionPhases = [
   "attention-required",
 ] as const;
 
+export const taskExecutionEventTypes = [
+  "plan-approved",
+  "implementation-completed",
+  "validation-passed",
+  "validation-failed",
+  "review-passed",
+  "review-failed",
+  "publication-completed",
+  "ci-passed-awaiting-human",
+  "ci-passed-completed",
+  "ci-failed",
+  "feedback-received",
+  "attention-required",
+] as const;
+
 function hasControlCharacter(value: string): boolean {
   return Array.from(value).some((character) => {
     const code = character.codePointAt(0);
@@ -69,6 +84,15 @@ const taskExecutionRecordSchema = z
     expectedBranch: nonBlankIdentifier.optional(),
     pullRequest: pullRequestSchema.optional(),
     operationKey: nonBlankIdentifier,
+    lastEvent: z
+      .strictObject({
+        id: nonBlankIdentifier,
+        type: z.enum(taskExecutionEventTypes),
+        operationKey: nonBlankIdentifier,
+        occurredAt: z.string().datetime(),
+        pullRequest: pullRequestSchema.optional(),
+      })
+      .optional(),
     revision: z.number().int().positive().safe(),
     retryCounters: retryCountersSchema,
     createdAt: z.string().datetime(),

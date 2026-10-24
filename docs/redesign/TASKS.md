@@ -58,7 +58,7 @@ to inspect first, not permission to invent unimplemented helpers.
   - **Verify locally:** Local temporary-directory tests prove successful round-trips, stale revision rejection, malformed-file preservation, path traversal protection, and write-failure safety.
   - **Out of scope:** Do not replace legacy persisted recovery artifacts.
 
-- [ ] **T05 — Add pure task-session state transitions**
+- [x] **T05 — Add pure task-session state transitions**
   - **Depends on:** T03–T04.
   - **Implement:** Define a discriminated set of phase/event transitions for planning, implementation, validation, review, publication, CI, human feedback, done, and attention-required. Validate ownership and event identity on transition.
   - **Verify locally:** Table-driven tests prove allowed transitions, duplicate-event idempotency, impossible-transition rejection, and terminal-state safety.
