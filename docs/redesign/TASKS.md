@@ -246,7 +246,7 @@ to inspect first, not permission to invent unimplemented helpers.
   - **Verify locally:** Mock tests prove every pending item appears with correct locations, new items are not lost, wrong-session resume is rejected, and no-op does not count as addressed.
   - **Out of scope:** Do not push changes, verify feedback, or publish replies here.
 
-- [ ] **T35 — Independently verify feedback dispositions**
+- [x] **T35 — Independently verify feedback dispositions**
   - **Depends on:** T22–T24, T32, T34.
   - **Implement:** Add a read-only verifier returning one structured disposition per actionable feedback ID: verified fixed with code/test evidence, or unresolved with reason. Require local validation, coverage, and review again after edits.
   - **Verify locally:** Tests fail verification when an item is omitted, a change is unverified, a disposition is invented, or prior evidence belongs to an earlier head.
