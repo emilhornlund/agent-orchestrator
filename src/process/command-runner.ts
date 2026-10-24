@@ -40,6 +40,8 @@ export interface CommandRunOptions {
   signal?: AbortSignal;
   timeoutMilliseconds?: number;
   captureOutput?: boolean;
+  maxCaptureOutputLength?: number;
+  suppressOutput?: boolean;
   environment?: Record<string, string>;
   secretValues?: readonly string[];
   sessionLogPath?: string;
@@ -76,6 +78,8 @@ const defaultRunCommand: RunCommand = async ({
   signal,
   timeoutMilliseconds,
   captureOutput,
+  maxCaptureOutputLength,
+  suppressOutput,
   environment,
   secretValues,
   sessionLogPath,
@@ -124,6 +128,8 @@ const defaultRunCommand: RunCommand = async ({
         return;
       }
 
+      if (suppressOutput === true) return;
+
       if (sessionLogPath) {
         appendSessionLog(sessionLogPath, text);
       } else {
@@ -143,8 +149,16 @@ const defaultRunCommand: RunCommand = async ({
       writeOutput(stderr, process.stderr);
 
       if (captureOutput === true) {
-        capturedOutput = presentExternalDiagnostic(stdout, secretValues);
-        capturedErrorOutput = presentExternalDiagnostic(stderr, secretValues);
+        capturedOutput = presentExternalDiagnostic(
+          stdout,
+          secretValues,
+          maxCaptureOutputLength,
+        );
+        capturedErrorOutput = presentExternalDiagnostic(
+          stderr,
+          secretValues,
+          maxCaptureOutputLength,
+        );
       }
     }
 

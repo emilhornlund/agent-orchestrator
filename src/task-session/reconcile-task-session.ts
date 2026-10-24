@@ -38,6 +38,7 @@ export interface ReconcileTaskSessionOptions {
   operationKey: string;
   worktreePath: string;
   taskRecordStore: TaskExecutionStore;
+  signal?: AbortSignal;
   readAuthoritativeSnapshot: (
     record: TaskExecutionRecord,
   ) => Promise<TaskSessionRecoverySnapshot>;
@@ -91,9 +92,7 @@ function expectedTrelloList(
 }
 
 function requiresWorktree(phase: TaskExecutionPhase): boolean {
-  return (
-    phase !== "planning" && phase !== "attention-required" && phase !== "done"
-  );
+  return phase !== "attention-required" && phase !== "done";
 }
 
 function requiresPullRequest(phase: TaskExecutionPhase): boolean {
@@ -143,10 +142,24 @@ export async function reconcileTaskSession(
       "Primary session identity is missing or ambiguous",
     );
   }
+  if (
+    record.setup?.status === "active" ||
+    (project.repository.setupCommand !== undefined &&
+      record.setup === undefined) ||
+    (record.setup !== undefined &&
+      record.setup.command !== (project.repository.setupCommand ?? null))
+  ) {
+    return preserveAttention(
+      taskRecordStore,
+      record,
+      "Repository setup state is missing, changed, or has an uncertain outcome",
+    );
+  }
   let snapshot: TaskSessionRecoverySnapshot;
   try {
     snapshot = await options.readAuthoritativeSnapshot(record);
   } catch (error) {
+    if (options.signal?.aborted) throw error;
     return preserveAttention(
       taskRecordStore,
       record,

@@ -325,7 +325,7 @@ describe("runTaskSessionImplementation", () => {
     );
   });
 
-  it("preserves an aborted implementation as attention-required without cleanup", async () => {
+  it("preserves an aborted implementation phase for restart recovery without cleanup", async () => {
     const fixture = createFixture();
     fixture.runOpenCode.mockRejectedValue(new OpenCodeRunAbortedError());
 
@@ -333,9 +333,10 @@ describe("runTaskSessionImplementation", () => {
       name: "TaskSessionImplementationError",
       outcome: "aborted",
     });
-    expect(fixture.taskRecordStore.read(card.id)?.phase).toBe(
-      "attention-required",
-    );
+    expect(fixture.taskRecordStore.read(card.id)).toMatchObject({
+      phase: "implementation",
+      primarySessionId: "ses_primary-task-session",
+    });
     expect(fs.existsSync(fixture.worktreePath)).toBe(true);
     expect(fixture.runOpenCode).toHaveBeenCalledOnce();
   });

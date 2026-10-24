@@ -12,7 +12,10 @@ import type {
   OpenCodeRunOptions,
   RunOpenCode,
 } from "../src/opencode/opencode-client.js";
-import { OpenCodeClient } from "../src/opencode/opencode-client.js";
+import {
+  OpenCodeClient,
+  OpenCodeRunAbortedError,
+} from "../src/opencode/opencode-client.js";
 import { getCommitResultPath } from "../src/opencode/commit-result.js";
 import {
   CommandRunner,
@@ -86,7 +89,7 @@ function createCard(): TrelloCard {
 }
 
 describe("task-session production dispatch", () => {
-  it("runs an eligible Ready task through planning, implementation, local gates, independent review, commit, and PR publication", async () => {
+  it("recovers an interrupted Working task through the primary session before CI and feedback polling", async () => {
     const { project, repositoryPath, worktreeRoot } = projectFixture();
     const card = createCard();
     let branch = "";
@@ -106,6 +109,7 @@ describe("task-session production dispatch", () => {
     let feedbackActive = false;
     let lateFeedback = false;
     let failAllChecks = false;
+    let failNextPush = true;
     let throwAfterFirstReviewReply = true;
     let reviewReplyMutationCount = 0;
     let nextReplyId = 900;
@@ -133,6 +137,8 @@ describe("task-session production dispatch", () => {
       ),
       getCurrentBranch: vi.fn(async () => branch),
       getHeadSha: vi.fn(async () => headSha),
+      getRebaseState: vi.fn(async () => null),
+      getConflictedPaths: vi.fn(async () => []),
       getHeadTrackedFiles: vi.fn(async () => trackedFiles),
       getIndexEntries: vi.fn(
         async () =>
@@ -149,7 +155,13 @@ describe("task-session production dispatch", () => {
       }),
       getCommitCountBetween: vi.fn(async () => 1),
       rebase: vi.fn(async () => undefined),
-      push: vi.fn(async () => undefined),
+      getRemoteBranchSha: vi.fn(async () => null),
+      push: vi.fn(async () => {
+        if (failNextPush) {
+          failNextPush = false;
+          throw new Error("simulated interruption after trusted commit");
+        }
+      }),
     } as unknown as GitClient;
     const trello = {
       getCards: vi.fn(async (listId: string) =>
@@ -166,6 +178,8 @@ describe("task-session production dispatch", () => {
       if (args[0] === "pr" && args[1] === "list") {
         const requestedFields =
           args.find((argument) => argument.includes("headRefOid")) ?? "";
+        if (!pullRequestCreated)
+          return requestedFields.length > 0 ? JSON.stringify([]) : "";
         if (requestedFields.includes("reviewDecision")) {
           return JSON.stringify([
             {
@@ -452,6 +466,8 @@ describe("task-session production dispatch", () => {
       reviewedContentIdentity: contentIdentity,
     });
     let opened = false;
+    let interruptImplementation = true;
+    const interruptedProcess = new AbortController();
     const openCodeRun = vi
       .fn<RunOpenCode>()
       .mockImplementation(async (run: OpenCodeRunOptions) => {
@@ -546,6 +562,17 @@ describe("task-session production dispatch", () => {
             errorOutput: "",
           };
         }
+        if (run.prompt.includes("Implement the approved task plan")) {
+          fs.writeFileSync(
+            path.join(run.cwd, "src/settings.ts"),
+            "export const settings = { fixed: true };\n",
+          );
+          if (interruptImplementation) {
+            interruptImplementation = false;
+            interruptedProcess.abort();
+            throw new OpenCodeRunAbortedError();
+          }
+        }
         if (run.prompt.startsWith("Repair the required GitHub CI failures")) {
           fs.writeFileSync(
             path.join(run.cwd, "src/settings.ts"),
@@ -577,17 +604,69 @@ describe("task-session production dispatch", () => {
         }
         return { exitCode: 0, output: "completed", errorOutput: "" };
       });
-    const commands = new CommandRunner(
-      vi.fn<RunCommand>().mockResolvedValue({
+    const runCommand = vi.fn<RunCommand>(async (options) => {
+      if (options.command.startsWith("opencode session list"))
+        return {
+          exitCode: 0,
+          output: JSON.stringify([
+            { id: "ses_primary-task", directory: options.cwd },
+          ]),
+          errorOutput: "",
+        };
+      return {
         exitCode: 0,
         output: "validation passed",
         errorOutput: "",
-      }),
-    );
+      };
+    });
+    const commands = new CommandRunner(runCommand);
     const openCode = new OpenCodeClient(openCodeRun);
     const signal = new AbortController().signal;
+    await expect(
+      pollProject(
+        trello,
+        git,
+        github,
+        openCode,
+        commands,
+        project,
+        interruptedProcess.signal,
+      ),
+    ).rejects.toThrow("Task-session implementation aborted");
+    const interruptedRecord = new TaskExecutionStore(
+      project.contextRoot,
+      project,
+    ).read(card.id);
+    expect(interruptedRecord).toMatchObject({
+      phase: "implementation",
+      primarySessionId: "ses_primary-task",
+      sessionCreationStatus: "bound",
+      setup: { status: "not-required" },
+    });
+    expect(
+      new TaskMutationQueue(project.contextRoot, project).getActive()?.status,
+    ).toBe("failed");
+    await expect(
+      pollProject(trello, git, github, openCode, commands, project, signal),
+    ).rejects.toThrow("simulated interruption after trusted commit");
+    expect(git.commit).toHaveBeenCalledOnce();
+    expect(
+      new TaskExecutionStore(project.contextRoot, project).read(card.id),
+    ).toMatchObject({ phase: "publication" });
     await pollProject(trello, git, github, openCode, commands, project, signal);
     expect(opened).toBe(true);
+    const implementationResumes = openCodeRun.mock.calls.filter(([options]) =>
+      options.prompt.includes("Implement the approved task plan"),
+    );
+    expect(implementationResumes).toHaveLength(2);
+    expect(
+      implementationResumes.every(
+        ([options]) => options.sessionId === "ses_primary-task",
+      ),
+    ).toBe(true);
+    expect(
+      openCodeRun.mock.calls.filter(([options]) => options.captureSessionId),
+    ).toHaveLength(1);
     expect(
       openCodeRun.mock.calls.some(
         ([options]) => options.sessionId === "ses_primary-task",
@@ -595,7 +674,7 @@ describe("task-session production dispatch", () => {
     ).toBe(true);
     expect(git.stageAll).toHaveBeenCalledOnce();
     expect(git.commit).toHaveBeenCalledOnce();
-    expect(git.push).toHaveBeenCalledOnce();
+    expect(git.push).toHaveBeenCalledTimes(2);
     expect(trello.moveCard).toHaveBeenCalledWith(
       card.id,
       project.trello.workingListId,
@@ -680,6 +759,9 @@ describe("task-session production dispatch", () => {
       new TaskMutationQueue(project.contextRoot, project).getActive()?.eventId,
     ).toContain("feedback-replies:");
     expect(
+      new TaskMutationQueue(project.contextRoot, project).getActive()?.status,
+    ).toBe("failed");
+    expect(
       openCodeRun.mock.calls.some(
         ([options]) =>
           options.prompt.startsWith(
@@ -708,7 +790,6 @@ describe("task-session production dispatch", () => {
       headSha: "d".repeat(40),
       checks: [{ name: "Build", status: "succeeded", headSha: "d".repeat(40) }],
     });
-    expect(recoveredRecord?.phase).toBe("ci");
     expect(recoveredRecord?.publicationQuality).toBeDefined();
     expect(publishedFeedback?.entries).toContainEqual(
       expect.objectContaining({
@@ -719,6 +800,7 @@ describe("task-session production dispatch", () => {
         remediationCommitSha: "d".repeat(40),
       }),
     );
+    expect(recoveredRecord?.phase).toBe("ci");
     expect(publishedFeedback?.entries).toContainEqual(
       expect.objectContaining({
         kind: "conversation-comment",
@@ -965,5 +1047,88 @@ describe("task-session production dispatch", () => {
       [],
     );
     expect(openCode).not.toHaveBeenCalled();
+  });
+
+  it("escalates an ambiguous owned Working task during production restart recovery", async () => {
+    const { project, worktreeRoot } = projectFixture();
+    const card = { ...createCard(), idList: project.trello.workingListId };
+    const worktreePath = path.join(worktreeRoot, card.id);
+    fs.mkdirSync(worktreePath, { recursive: true });
+    fs.writeFileSync(path.join(worktreePath, "src.ts"), "preserve me\n");
+    const taskStore = new TaskExecutionStore(project.contextRoot, project);
+    taskStore.create({
+      version: 1,
+      projectId: project.id,
+      cardId: card.id,
+      phase: "implementation",
+      primarySessionId: "ses_primary-task",
+      sessionCreationStatus: "bound",
+      expectedBranch: `agent/${card.id}`,
+      operationKey: "restart-operation",
+      setup: { command: null, status: "not-required" },
+      revision: 1,
+      retryCounters: { validation: 0, review: 0, ci: 0, humanFeedback: 0 },
+      createdAt: "2026-10-24T09:00:00.000Z",
+      updatedAt: "2026-10-24T09:00:00.000Z",
+    });
+    const queue = new TaskMutationQueue(project.contextRoot, project);
+    queue.enqueue({
+      projectId: project.id,
+      cardId: card.id,
+      eventId: "implementation:card:restart",
+      operationKey: "restart-operation",
+      kind: "implementation",
+      enqueuedAt: "2026-10-24T09:00:00.000Z",
+    });
+    queue.claimNext();
+    const trello = {
+      getCards: vi.fn(async (listId: string) =>
+        listId === project.trello.workingListId ? [card] : [],
+      ),
+    } as unknown as TrelloClient;
+    const git = {
+      getCurrentBranch: vi.fn(async () => "agent/some-other-task"),
+      getHeadSha: vi.fn(async () => "a".repeat(40)),
+      getRebaseState: vi.fn(async () => null),
+      getConflictedPaths: vi.fn(async () => []),
+    } as unknown as GitClient;
+    const openCodeRun = vi.fn<RunOpenCode>();
+    const commands = new CommandRunner(
+      vi.fn<RunCommand>().mockResolvedValue({
+        exitCode: 0,
+        output: JSON.stringify([
+          {
+            id: "ses_primary-task",
+            directory: worktreePath,
+          },
+        ]),
+        errorOutput: "",
+      }),
+    );
+
+    await expect(
+      pollProject(
+        trello,
+        git,
+        {} as GitHubClient,
+        new OpenCodeClient(openCodeRun),
+        commands,
+        project,
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow("Owned worktree is missing, on the wrong branch");
+
+    expect(taskStore.read(card.id)).toMatchObject({
+      phase: "attention-required",
+      primarySessionId: "ses_primary-task",
+    });
+    expect(openCodeRun).not.toHaveBeenCalled();
+    expect(fs.readFileSync(path.join(worktreePath, "src.ts"), "utf8")).toBe(
+      "preserve me\n",
+    );
+    expect(queue.getActive()).toMatchObject({
+      cardId: card.id,
+      operationKey: "restart-operation",
+    });
   });
 });

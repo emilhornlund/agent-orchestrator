@@ -340,7 +340,7 @@ are examples to inspect, not permission to invent unimplemented helpers.
   - **Verify locally:** Docs examples match actual validated config; existing `yarn validate` passes; no claim of live integration testing is made.
   - **Out of scope:** Do not enable the new mode by default or modify code unrelated to docs.
 
-- [ ] **T45 — Resume owned task-session Working cards after restart**
+- [x] **T45 — Resume owned task-session Working cards after restart**
   - **Depends on:** T39, T43C.
   - **Corrective rationale:** Production polling currently leaves already-owned task-session cards in `Working` untouched after a process restart, and `reconcileTaskSession` has no production caller. Persisted phase state must drive safe resumption before the redesign can be documented as restart-safe.
   - **Implement:** Integrate the existing `reconcileTaskSession` recovery component into the production task-session polling path for owned `Working` cards. Read authoritative Trello, owned worktree/branch/HEAD/trusted-commit, primary-session, and any relevant publication evidence through existing injectable clients. Resume only the operation supported by the persisted phase and verified evidence, continuing the exact persisted primary session. Preserve the project mutation queue, operation identity, and phase-specific idempotency. Fail closed with durable attention state on ownership/session/worktree ambiguity or uncertain external effects; never create duplicate commits, pushes, PRs, feedback replies, or start a second task.
