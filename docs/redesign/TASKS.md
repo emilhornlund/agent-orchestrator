@@ -264,7 +264,7 @@ to inspect first, not permission to invent unimplemented helpers.
   - **Verify locally:** Mock tests cover exact thread routing, no premature success claim, reply persistence, interrupted response recovery, and duplicate-event idempotency.
   - **Out of scope:** Do not automatically resolve threads, approve PRs, or rewrite review decisions.
 
-- [ ] **T38 — Handle multiple and late feedback rounds**
+- [x] **T38 — Handle multiple and late feedback rounds**
   - **Depends on:** T32–T37.
   - **Implement:** Re-read authoritative PR head and feedback identities after each remediation/publish cycle. Keep earlier still-applicable unresolved items, enqueue newly arrived feedback, and invalidate outdated local evidence if the head or feedback set changes.
   - **Verify locally:** Mock scenarios cover two sequential requested-change rounds, a late inline comment during repair, and no duplicate correction when no new actionable feedback exists.
