@@ -524,7 +524,7 @@ are examples to inspect, not permission to invent unimplemented helpers.
   - **Verify locally:** Production call-graph and publication tests prove generic publication never merges and the task-session CI lifecycle remains the only merge path.
   - **Out of scope:** Do not change validated task-session merge readiness or remove shared GitHub merge operations.
 
-- [ ] **T59 — Perform final unified lifecycle acceptance audit**
+- [x] **T59 — Perform final unified lifecycle acceptance audit**
   - **Depends on:** T46–T58.
   - **Implement:** Audit actual production entry points and integration tests for refinement, implementation, session continuity, validation, coverage, independent review, publication, complete CI observation and repair, human feedback, contextual replies, merged/closed PR reconciliation, auto-merge, and restart recovery. Correct any confirmed blocking defect through a narrowly scoped corrective task before completing this audit.
   - **Verify locally:** Run the full yarn validate and yarn build. Verify the intended production call paths are reachable, no dead legacy execution path remains, relevant mocked lifecycle scenarios pass, and no known blocking acceptance gap remains.
