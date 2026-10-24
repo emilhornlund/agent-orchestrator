@@ -108,7 +108,7 @@ to inspect first, not permission to invent unimplemented helpers.
   - **Verify locally:** Tests assert plan prompt contract, mocked structured response handling, rejection of malformed plans, and preservation of unchanged repository files.
   - **Out of scope:** Do not implement code or run an independent reviewer.
 
-- [ ] **T13 — Add independent plan verification**
+- [x] **T13 — Add independent plan verification**
   - **Depends on:** T10–T12.
   - **Implement:** Add a read-only independent OpenCode review call comparing the original card and acceptance criteria to the persisted plan. Return structured `pass` or concrete missing/unsupported requirement findings; persist outcome.
   - **Verify locally:** Unit tests cover accepted plan, omitted task criterion, invented scope, malformed reviewer response, and no implementation transition on failure.
