@@ -760,7 +760,7 @@ function classifyMaintenanceState(
   );
 }
 
-async function completeMergedReviewCard(
+export async function completeMergedReviewCard(
   trello: TrelloClient,
   git: GitClient,
   project: ProjectConfig,
@@ -772,6 +772,7 @@ async function completeMergedReviewCard(
   emailNotifier?: EmailNotifier,
   signal?: AbortSignal,
   onHumanReviewCardLeft?: (cardId: string) => void,
+  requireCleanup = false,
 ): Promise<void> {
   if (signal?.aborted) {
     return;
@@ -874,13 +875,15 @@ async function completeMergedReviewCard(
     );
   }
 
+  const alreadyDone = card.idList === project.trello.doneListId;
   try {
-    await trello.moveCard(card.id, project.trello.doneListId, {
-      dueComplete: true,
-    });
-
-    onHumanReviewCardLeft?.(card.id);
-    cardLog.event("Merged card moved to Done");
+    if (!alreadyDone) {
+      await trello.moveCard(card.id, project.trello.doneListId, {
+        dueComplete: true,
+      });
+      onHumanReviewCardLeft?.(card.id);
+      cardLog.event("Merged card moved to Done");
+    }
   } catch (error) {
     const message = getErrorMessage(error);
     cardLog.error(
@@ -903,15 +906,17 @@ async function completeMergedReviewCard(
     return;
   }
 
-  await notifyCompletion(
-    emailNotifier,
-    {
-      project,
-      card,
-      pullRequestUrl: pullRequest.url,
-    },
-    cardLog,
-  );
+  if (!alreadyDone) {
+    await notifyCompletion(
+      emailNotifier,
+      {
+        project,
+        card,
+        pullRequestUrl: pullRequest.url,
+      },
+      cardLog,
+    );
+  }
 
   if (signal?.aborted) {
     return;
@@ -926,10 +931,17 @@ async function completeMergedReviewCard(
     );
   }
 
-  await cleanupTerminalReviewWorktree(git, project, card, cardLog, signal);
+  await cleanupTerminalReviewWorktree(
+    git,
+    project,
+    card,
+    cardLog,
+    signal,
+    requireCleanup,
+  );
 }
 
-async function returnClosedReviewCardToBacklog(
+export async function returnClosedReviewCardToBacklog(
   trello: TrelloClient,
   git: GitClient,
   project: ProjectConfig,
@@ -939,6 +951,7 @@ async function returnClosedReviewCardToBacklog(
   cardLog: ReturnType<typeof logger.child>,
   signal?: AbortSignal,
   onHumanReviewCardLeft?: (cardId: string) => void,
+  requireCleanup = false,
 ): Promise<void> {
   if (signal?.aborted) {
     return;
@@ -961,10 +974,13 @@ async function returnClosedReviewCardToBacklog(
     return;
   }
 
+  const alreadyBacklog = card.idList === project.trello.backlogListId;
   try {
-    await trello.moveCard(card.id, project.trello.backlogListId);
-    onHumanReviewCardLeft?.(card.id);
-    cardLog.event("Card with closed pull request moved to Backlog");
+    if (!alreadyBacklog) {
+      await trello.moveCard(card.id, project.trello.backlogListId);
+      onHumanReviewCardLeft?.(card.id);
+      cardLog.event("Card with closed pull request moved to Backlog");
+    }
   } catch (error) {
     const message = getErrorMessage(error);
     cardLog.error(`Failed to move card "${card.name}" to Backlog: ${message}`);
@@ -985,22 +1001,31 @@ async function returnClosedReviewCardToBacklog(
     return;
   }
 
-  try {
-    await trello.addComment(
-      card.id,
-      [
-        "Pull request was closed without being merged.",
-        "",
-        `Pull request: ${pullRequest.url}`,
-      ].join("\n"),
-    );
-  } catch (error) {
-    cardLog.error(
-      `Failed to add closed pull request comment to "${card.name}": ${getErrorMessage(error)}`,
-    );
+  if (!alreadyBacklog) {
+    try {
+      await trello.addComment(
+        card.id,
+        [
+          "Pull request was closed without being merged.",
+          "",
+          `Pull request: ${pullRequest.url}`,
+        ].join("\n"),
+      );
+    } catch (error) {
+      cardLog.error(
+        `Failed to add closed pull request comment to "${card.name}": ${getErrorMessage(error)}`,
+      );
+    }
   }
 
-  await cleanupTerminalReviewWorktree(git, project, card, cardLog, signal);
+  await cleanupTerminalReviewWorktree(
+    git,
+    project,
+    card,
+    cardLog,
+    signal,
+    requireCleanup,
+  );
 }
 
 async function cleanupTerminalReviewWorktree(
@@ -1009,6 +1034,7 @@ async function cleanupTerminalReviewWorktree(
   card: TrelloCard,
   cardLog: ReturnType<typeof logger.child>,
   signal?: AbortSignal,
+  requireCleanup = false,
 ): Promise<void> {
   if (signal?.aborted) {
     return;
@@ -1045,6 +1071,7 @@ async function cleanupTerminalReviewWorktree(
     cardLog.warn(
       `Terminal Human Review workflow completed, but local cleanup was not completed for ${worktreePath} and ${branch}: ${getErrorMessage(error)}`,
     );
+    if (requireCleanup) throw error;
   }
 }
 

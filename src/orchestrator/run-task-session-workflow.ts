@@ -65,6 +65,10 @@ import { runWithPrimaryTaskSession } from "../task-session/primary-task-session.
 import { completeAutoMergedCard } from "./auto-merge.js";
 import { mergeTaskSessionPullRequest } from "./merge-task-session-pull-request.js";
 import { observeTaskSessionReviewCards } from "./observe-task-session-review-cards.js";
+import {
+  completeMergedReviewCard,
+  returnClosedReviewCardToBacklog,
+} from "./reconcile-review-cards.js";
 import { getCardsForDiscovery } from "./trello-list-discovery.js";
 import { isCardStartDateReached } from "./card-start-eligibility.js";
 import { getWorkflowKind } from "./workflow-kind.js";
@@ -370,8 +374,165 @@ export async function runTaskSessionWorkflow(
     github,
     cwd: project.repository.path,
   });
+  const pendingTerminalMutation = queue.getActive();
+  if (pendingTerminalMutation?.kind === "terminal-pr") {
+    const isMerged = pendingTerminalMutation.eventId.includes(":MERGED:");
+    const isClosed = pendingTerminalMutation.eventId.includes(":CLOSED:");
+    if (!isMerged && !isClosed) {
+      throw new Error("Persisted terminal PR mutation has an invalid identity");
+    }
+    const cardId = pendingTerminalMutation.cardId;
+    const destinationListId = isMerged
+      ? project.trello.doneListId
+      : project.trello.backlogListId;
+    const terminalCards = await getCardsForDiscovery(
+      trello,
+      project.id,
+      destinationListId,
+      `Could not recover terminal PR card ${cardId}`,
+      signal,
+    );
+    const card =
+      humanReviewCards.find((candidate) => candidate.id === cardId) ??
+      terminalCards.find((candidate) => candidate.id === cardId);
+    const record = taskStore.read(cardId);
+    if (card === undefined || record?.pullRequest === undefined) {
+      throw new Error(
+        `Persisted terminal PR mutation has no matching task card and record for ${cardId}`,
+      );
+    }
+    const authoritative = await github.findPullRequestState({
+      cwd: project.repository.path,
+      repository: project.repository.github,
+      headBranch: `agent/${cardId}`,
+      baseBranch: project.repository.defaultBranch,
+      project,
+    });
+    const expectedState = isMerged ? "MERGED" : "CLOSED";
+    if (
+      authoritative === null ||
+      authoritative.state !== expectedState ||
+      authoritative.url !== record.pullRequest.url ||
+      authoritative.baseRefName !== project.repository.defaultBranch ||
+      authoritative.headRefName !== `agent/${cardId}` ||
+      authoritative.headRefOid !== record.pullRequest.headSha
+    ) {
+      throw new Error(
+        `Persisted terminal PR mutation no longer matches authoritative PR state for ${cardId}`,
+      );
+    }
+    const recoveredTerminalMutation = queue.claimForRecovery(
+      pendingTerminalMutation.eventId,
+    );
+    if (recoveredTerminalMutation !== null) {
+      try {
+        if (isMerged) {
+          await completeMergedReviewCard(
+            trello,
+            git,
+            project,
+            card,
+            `agent/${card.id}`,
+            authoritative,
+            undefined,
+            logger.child({ projectId: project.id, cardId }),
+            emailNotifier,
+            signal,
+            undefined,
+            true,
+          );
+        } else {
+          await returnClosedReviewCardToBacklog(
+            trello,
+            git,
+            project,
+            card,
+            authoritative,
+            undefined,
+            logger.child({ projectId: project.id, cardId }),
+            signal,
+            undefined,
+            true,
+          );
+        }
+        if (signal.aborted) queue.fail(recoveredTerminalMutation.eventId);
+        else queue.complete(recoveredTerminalMutation.eventId);
+      } catch (error) {
+        queue.fail(recoveredTerminalMutation.eventId);
+        throw error;
+      }
+    }
+  }
   for (const observation of observations) {
-    if (observation.state !== "OPEN") continue;
+    if (observation.state !== "OPEN") {
+      const record = taskStore.read(observation.cardId);
+      const card = humanReviewCards.find(
+        (candidate) => candidate.id === observation.cardId,
+      );
+      if (record === null || card === undefined) {
+        throw new Error(
+          `Terminal PR observation lost task ownership for ${observation.cardId}`,
+        );
+      }
+      const headIdentity = observation.headSha ?? record.pullRequest?.headSha;
+      if (headIdentity === undefined) {
+        throw new Error(
+          `Terminal PR has no stable head identity for ${observation.cardId}`,
+        );
+      }
+      const terminalEventId = `terminal-pr:${observation.cardId}:${observation.state}:${headIdentity}`;
+      queue.enqueue({
+        projectId: project.id,
+        cardId: observation.cardId,
+        eventId: terminalEventId,
+        operationKey: `${record.operationKey}:${observation.state}:${headIdentity}`,
+        kind: "terminal-pr",
+        enqueuedAt: record.updatedAt,
+      });
+      const terminalMutation = queue.claimForRecovery(terminalEventId);
+      if (terminalMutation === null) continue;
+      const cardLog = logger.child({
+        projectId: project.id,
+        cardId: card.id,
+      });
+      try {
+        if (observation.state === "MERGED") {
+          await completeMergedReviewCard(
+            trello,
+            git,
+            project,
+            card,
+            `agent/${card.id}`,
+            observation.pullRequest,
+            undefined,
+            cardLog,
+            emailNotifier,
+            signal,
+            undefined,
+            true,
+          );
+        } else {
+          await returnClosedReviewCardToBacklog(
+            trello,
+            git,
+            project,
+            card,
+            observation.pullRequest,
+            undefined,
+            cardLog,
+            signal,
+            undefined,
+            true,
+          );
+        }
+        if (signal.aborted) queue.fail(terminalMutation.eventId);
+        else queue.complete(terminalMutation.eventId);
+      } catch (error) {
+        queue.fail(terminalMutation.eventId);
+        throw error;
+      }
+      continue;
+    }
     let record = taskStore.read(observation.cardId);
     if (
       record !== null &&
