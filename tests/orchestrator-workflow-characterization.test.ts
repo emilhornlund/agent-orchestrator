@@ -1314,6 +1314,57 @@ describe("orchestrator workflow characterization", () => {
     }
   });
 
+  it("preserves a failed implementation without publishing or automatically retrying it", async () => {
+    const harness = createHarness();
+    harness.runOpenCode.mockImplementationOnce(async () => ({
+      exitCode: 1,
+      output: "",
+      errorOutput: "implementation process failed",
+    }));
+
+    try {
+      await expect(
+        pollProject(
+          harness.trello,
+          harness.git,
+          harness.github,
+          harness.openCode,
+          harness.commands,
+          harness.project,
+          new AbortController().signal,
+        ),
+      ).rejects.toThrow("OpenCode implementation exited with code 1");
+
+      expect(harness.card.idList).toBe(listIds.failed);
+      expect(
+        harness.runOpenCode.mock.calls.map(([run]) => run.sessionLabel),
+      ).toEqual(["OpenCode implementation"]);
+      expect(harness.push).not.toHaveBeenCalled();
+      expect(harness.createPullRequest).not.toHaveBeenCalled();
+      expect(harness.removeWorktree).not.toHaveBeenCalled();
+
+      const eventCountAfterFailure = harness.events.length;
+
+      await pollProject(
+        harness.trello,
+        harness.git,
+        harness.github,
+        harness.openCode,
+        harness.commands,
+        harness.project,
+        new AbortController().signal,
+      );
+
+      expect(harness.card.idList).toBe(listIds.failed);
+      expect(harness.runOpenCode).toHaveBeenCalledOnce();
+      expect(harness.events).toHaveLength(eventCountAfterFailure);
+      expect(harness.push).not.toHaveBeenCalled();
+      expect(harness.createPullRequest).not.toHaveBeenCalled();
+    } finally {
+      harness.cleanup();
+    }
+  });
+
   it("sends one merged completion email and does not repeat it when polled again", async () => {
     const harness = createHarness({
       initialList: "review",
