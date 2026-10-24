@@ -1349,8 +1349,8 @@ describe("orchestrator workflow characterization", () => {
         harness.trello,
         harness.git,
         harness.github,
-        harness.openCode,
-        harness.commands,
+        new OpenCodeClient(harness.runOpenCode),
+        new CommandRunner(harness.runCommand),
         harness.project,
         new AbortController().signal,
       );

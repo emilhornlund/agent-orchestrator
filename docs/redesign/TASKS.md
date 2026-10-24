@@ -34,7 +34,7 @@ to inspect first, not permission to invent unimplemented helpers.
 
 ## Phase A — Non-invasive foundation
 
-- [ ] **T01 — Lock down legacy workflow behavior**
+- [x] **T01 — Lock down legacy workflow behavior**
   - **Depends on:** None.
   - **Implement:** Extend existing workflow-characterization tests for implementation, requested-change remediation, publication, and interrupted recovery. Use only mocks and existing test helpers.
   - **Verify locally:** The tests pass on unchanged legacy production code and assert observable transitions, not internal function call order.
