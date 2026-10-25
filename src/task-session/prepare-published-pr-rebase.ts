@@ -260,6 +260,21 @@ export async function preparePublishedPrRebase(
   if (existingRebaseState === null && prep?.status !== "conflicted")
     await assertCleanWorktree(git, worktreePath);
   let currentHead = await git.getHeadSha(worktreePath);
+  // A new maintenance attempt must start from the exact published head.
+  // Otherwise an unapproved, clean local commit could be rebased and pushed.
+  // Once rebase preparation has begun, use the persisted backup/rebase state
+  // for recovery rather than requiring the changing local HEAD to match.
+  if (
+    (prep === undefined ||
+      prep.status === "fetching-base" ||
+      prep.status === "base-fetched" ||
+      prep.status === "backing-up") &&
+    currentHead !== operation.expectedRemoteHead
+  ) {
+    throw new PrMaintenanceConflictError(
+      "Local task branch has commits beyond the trusted published PR head; refusing to rebase or publish unverified local commits",
+    );
+  }
   if (
     !(await git.isAncestor(
       worktreePath,

@@ -260,6 +260,37 @@ describe("preparePublishedPrRebase", () => {
     ).toBe("keep me");
   });
 
+  it("refuses clean untrusted local commits beyond the published PR head", async () => {
+    const f = createFixture();
+    fs.writeFileSync(
+      path.join(f.worktreePath, "unpublished.txt"),
+      "unpublished local change\n",
+      "utf8",
+    );
+    command(f.worktreePath, "add", "unpublished.txt");
+    command(f.worktreePath, "commit", "-m", "unpublished local commit");
+    const localHead = command(f.worktreePath, "rev-parse", "HEAD");
+    expect(localHead).not.toBe(f.publishedHead);
+    expect(await f.git.getStatus(f.worktreePath)).toBe("");
+
+    await expect(f.run()).rejects.toThrow(
+      /commits beyond the trusted published PR head/,
+    );
+    expect(await f.git.getHeadSha(f.worktreePath)).toBe(localHead);
+    expect(await f.git.getRebaseState(f.worktreePath)).toBeNull();
+    expect(
+      f.maintenanceStore.inspect("maintenance-1")?.localPreparation,
+    ).toBeUndefined();
+    expect(
+      await f.git.getRemoteBranchSha(
+        f.repositoryPath,
+        "origin",
+        "agent/card-1",
+        f.project,
+      ),
+    ).toBe(f.publishedHead);
+  });
+
   it("preserves progress and the original branch when fetching the base fails", async () => {
     const f = createFixture();
     const failingGit = Object.create(f.git) as GitClient;
