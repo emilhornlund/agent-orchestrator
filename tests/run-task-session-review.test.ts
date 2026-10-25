@@ -308,6 +308,17 @@ describe("runTaskSessionReview", () => {
     expect(run?.prompt).toContain("new-test.ts");
     expect(run?.prompt).toContain('"content": "test\\n"');
     expect(run?.prompt).toContain("validation passed");
+    expect(run?.prompt).toContain(
+      "status (string enum 'satisfied' or 'unsatisfied')",
+    );
+    expect(run?.prompt).toContain(
+      "kind (string enum 'defect', 'incomplete', or 'contract-violation')",
+    );
+    expect(run?.prompt).toContain("Valid pass example:");
+    expect(run?.prompt).toContain("Valid fail example:");
+    expect(run?.prompt).toContain(
+      "A valid 'fail' is a review verdict, not a format/parse error",
+    );
     expect(fixture.taskRecordStore.read(card.id)?.phase).toBe("review");
     expect(fixture.git.getDiff).toHaveBeenCalledWith(
       fixture.worktreePath,
@@ -452,8 +463,84 @@ describe("runTaskSessionReview", () => {
           successfulQualityEvidence(contentIdentity).validation,
         ),
       ),
-    ).rejects.toThrow("malformed or stale result");
+    ).rejects.toThrow("malformed, stale, or out-of-scope result");
     expect(fixture.taskRecordStore.read(card.id)?.phase).toBe("review");
+    expect(runOpenCode).toHaveBeenCalledTimes(2);
+    expect(runOpenCode.mock.calls[1]?.[0].prompt).toContain(
+      "FORMAT-ONLY CORRECTION",
+    );
+    expect(runOpenCode.mock.calls.every(([options]) => options.readOnly)).toBe(
+      true,
+    );
+  });
+
+  it("accepts a corrected response after one format-only retry", async () => {
+    const fixture = createFixture();
+    const contentIdentity = await fixture.createStoredPlan();
+    const runOpenCode = vi
+      .fn<RunOpenCode>()
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        output: "{not json}",
+        errorOutput: "",
+      })
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        output: JSON.stringify(passingReview(contentIdentity)),
+        errorOutput: "",
+      });
+
+    const result = await runTaskSessionReview(
+      reviewOptions(
+        fixture,
+        new OpenCodeClient(runOpenCode),
+        successfulQualityEvidence(contentIdentity).validation,
+      ),
+    );
+
+    expect(result.review.verdict).toBe("pass");
+    expect(runOpenCode).toHaveBeenCalledTimes(2);
+    expect(runOpenCode.mock.calls[1]?.[0].prompt).toContain("{not json}");
+    expect(runOpenCode.mock.calls.every(([options]) => options.readOnly)).toBe(
+      true,
+    );
+  });
+
+  it("rejects a validly-shaped response that assesses an out-of-scope requirement without retry", async () => {
+    const fixture = createFixture();
+    const contentIdentity = await fixture.createStoredPlan();
+    const outOfScopeReview = {
+      ...passingReview(contentIdentity),
+      requirementAssessments: [
+        {
+          requirementId: "REQ-1",
+          status: "satisfied",
+          details: "The requested behavior is implemented.",
+          evidence: ["src.ts"],
+        },
+        {
+          requirementId: "REQ-EXTRA",
+          status: "satisfied",
+          details: "An unrelated behavior is implemented.",
+          evidence: ["src.ts"],
+        },
+      ],
+    };
+    const runOpenCode = vi.fn<RunOpenCode>().mockResolvedValue({
+      exitCode: 0,
+      output: JSON.stringify(outOfScopeReview),
+      errorOutput: "",
+    });
+
+    await expect(
+      runTaskSessionReview(
+        reviewOptions(
+          fixture,
+          new OpenCodeClient(runOpenCode),
+          successfulQualityEvidence(contentIdentity).validation,
+        ),
+      ),
+    ).rejects.toThrow("out-of-scope result");
     expect(runOpenCode).toHaveBeenCalledOnce();
   });
 
@@ -483,5 +570,40 @@ describe("runTaskSessionReview", () => {
       ),
     ).rejects.toThrow("changed during independent implementation review");
     expect(fixture.taskRecordStore.read(card.id)?.phase).toBe("review");
+  });
+
+  it("rechecks reviewed content identity after a format-only retry", async () => {
+    const fixture = createFixture();
+    const contentIdentity = await fixture.createStoredPlan();
+    const runOpenCode = vi
+      .fn<RunOpenCode>()
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        output: "not json",
+        errorOutput: "",
+      })
+      .mockImplementationOnce(async () => {
+        fs.writeFileSync(
+          path.join(fixture.worktreePath, "src.ts"),
+          "changed during format retry\n",
+          "utf8",
+        );
+        return {
+          exitCode: 0,
+          output: JSON.stringify(passingReview(contentIdentity)),
+          errorOutput: "",
+        };
+      });
+
+    await expect(
+      runTaskSessionReview(
+        reviewOptions(
+          fixture,
+          new OpenCodeClient(runOpenCode),
+          successfulQualityEvidence(contentIdentity).validation,
+        ),
+      ),
+    ).rejects.toThrow("changed during independent implementation review");
+    expect(runOpenCode).toHaveBeenCalledTimes(2);
   });
 });

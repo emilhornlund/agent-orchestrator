@@ -49,6 +49,50 @@ export function buildTaskSessionReviewPrompt(
     );
   }
 
+  const identity = {
+    version: 1,
+    projectId: input.projectId,
+    cardId: input.card.id,
+    reviewedContentIdentity: input.contentIdentity,
+  };
+  const passingExample = {
+    ...identity,
+    verdict: "pass",
+    requirementAssessments: input.approvedPlan.requirements.map(
+      (requirement) => ({
+        requirementId: requirement.id,
+        status: "satisfied",
+        details: "The requested behavior is implemented.",
+        evidence: ["src/example.ts", "tests/example.test.ts"],
+      }),
+    ),
+    blockingFindings: [],
+  };
+  const failingExample = {
+    ...identity,
+    verdict: "fail",
+    requirementAssessments: input.approvedPlan.requirements.map(
+      (requirement, index) => ({
+        requirementId: requirement.id,
+        status: index === 0 ? "unsatisfied" : "satisfied",
+        details:
+          index === 0
+            ? "The requested behavior is not implemented."
+            : "The requested behavior is implemented.",
+        evidence:
+          index === 0 ? [] : ["src/example.ts", "tests/example.test.ts"],
+      }),
+    ),
+    blockingFindings: [
+      {
+        kind: "incomplete",
+        summary: "A requested behavior is incomplete.",
+        detail: "The implementation does not meet this requirement.",
+        location: { filePath: "src/example.ts", line: 12 },
+      },
+    ],
+  };
+
   return [
     "Independently review the implementation for completeness and correctness. This is a read-only review; do not implement, edit files, run commands, or perform Git/GitHub actions.",
     "",
@@ -74,7 +118,12 @@ export function buildTaskSessionReviewPrompt(
       2,
     ),
     "Assess every approved plan requirement exactly once. Identify missing requested behavior, unsupported or invented scope, serious correctness defects, and repository contract violations. The successful agent process exit is not evidence that requirements are satisfied.",
-    "Return only a JSON object matching the required implementation review result schema: version, projectId, cardId, verdict ('pass' or 'fail'), requirementAssessments, blockingFindings, and reviewedContentIdentity. Every satisfied requirement must include concrete evidence. Use fail with a concrete finding for any unmet requirement or serious defect.",
+    "Return exactly one JSON object and no markdown or surrounding text. The top-level object has exactly these fields: version (number, exactly 1), projectId (string, exactly the task identity above), cardId (string, exactly the task identity above), verdict (string enum 'pass' or 'fail'), requirementAssessments (array with exactly one assessment for every approved plan requirement and no others), blockingFindings (array), and reviewedContentIdentity (string, exactly the source identity above).",
+    "Each requirementAssessments item has exactly: requirementId (string, exact approved plan requirement ID), status (string enum 'satisfied' or 'unsatisfied'), details (non-empty string explaining the assessment), and evidence (array of non-empty strings). A 'satisfied' assessment must have at least one concrete evidence item. An 'unsatisfied' assessment may use an empty evidence array.",
+    "Each blockingFindings item has exactly: kind (string enum 'defect', 'incomplete', or 'contract-violation'), summary (non-empty string), detail (non-empty string), and optional location. If present, location has filePath (non-empty repository-relative string with no '..' path component) and optional line (positive integer). Do not use other finding fields.",
+    "Use verdict 'pass' only when every requirement is satisfied and blockingFindings is empty. Use verdict 'fail' when any requirement is unsatisfied or there is any blocking finding. A valid 'fail' is a review verdict, not a format/parse error; report it with its complete assessments and findings for normal bounded remediation.",
+    `Valid pass example:\n${JSON.stringify(passingExample, null, 2)}`,
+    `Valid fail example:\n${JSON.stringify(failingExample, null, 2)}`,
     "A source location is optional when unknown; when supplied, use a repository-relative path and a positive line number if known.",
   ].join("\n");
 }
