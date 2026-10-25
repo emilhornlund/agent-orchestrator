@@ -538,6 +538,7 @@ function validateRequestedChangesReview(
 function parsePaginatedGitHubResponse(
   output: string,
   description: string,
+  collectionProperty?: string,
 ): unknown[] {
   let parsed: unknown;
 
@@ -549,11 +550,27 @@ function parsePaginatedGitHubResponse(
     });
   }
 
-  if (!Array.isArray(parsed) || !parsed.every((page) => Array.isArray(page))) {
+  if (!Array.isArray(parsed)) {
     throw new Error(`GitHub CLI returned an invalid ${description}`);
   }
 
-  return parsed.flat();
+  if (collectionProperty === undefined) {
+    if (!parsed.every((page) => Array.isArray(page))) {
+      throw new Error(`GitHub CLI returned an invalid ${description}`);
+    }
+    return parsed.flat();
+  }
+
+  const values: unknown[] = [];
+  for (const [index, page] of parsed.entries()) {
+    if (!isRecord(page) || !Array.isArray(page[collectionProperty])) {
+      throw new Error(
+        `GitHub CLI returned an invalid ${description}: page ${index} must contain an array in '${collectionProperty}'`,
+      );
+    }
+    values.push(...page[collectionProperty]);
+  }
+  return values;
 }
 
 function validateInlineReviewComment(
@@ -1150,17 +1167,11 @@ export class GitHubClient {
     const checkRunPages = parsePaginatedGitHubResponse(
       checkRunsOutput,
       "paginated check runs",
+      "check_runs",
     );
-    const checkRunValues: unknown[] = [];
-    for (const [index, page] of checkRunPages.entries()) {
-      if (!isRecord(page) || !Array.isArray(page.check_runs)) {
-        throw new Error(`GitHub returned a malformed check-runs page ${index}`);
-      }
-      checkRunValues.push(...page.check_runs);
-    }
 
     const checks: CiCheckObservation[] = [];
-    for (const [index, value] of checkRunValues.entries()) {
+    for (const [index, value] of checkRunPages.entries()) {
       if (
         !isRecord(value) ||
         typeof value.id !== "number" ||
@@ -1380,30 +1391,29 @@ export class GitHubClient {
       ],
       options.credential,
     );
-    const pages = parsePaginatedGitHubResponse(output, "workflow runs");
+    const workflowRuns = parsePaginatedGitHubResponse(
+      output,
+      "workflow runs",
+      "workflow_runs",
+    );
     const runs: Record<string, unknown>[] = [];
     let allRunsCompleted = true;
-    for (const page of pages) {
-      if (!isRecord(page) || !Array.isArray(page.workflow_runs))
-        throw new Error("GitHub returned malformed workflow runs");
-      for (const run of page.workflow_runs) {
-        if (
-          !isRecord(run) ||
-          typeof run.id !== "number" ||
-          typeof run.head_sha !== "string" ||
-          typeof run.status !== "string" ||
-          !Array.isArray(run.pull_requests)
-        )
-          throw new Error("GitHub returned a malformed workflow run");
-        if (run.head_sha !== options.headSha) continue;
-        const associated = run.pull_requests.some(
-          (pr) =>
-            isRecord(pr) && Number(pr.number) === options.pullRequestNumber,
-        );
-        if (associated) {
-          runs.push(run);
-          if (run.status !== "completed") allRunsCompleted = false;
-        }
+    for (const run of workflowRuns) {
+      if (
+        !isRecord(run) ||
+        typeof run.id !== "number" ||
+        typeof run.head_sha !== "string" ||
+        typeof run.status !== "string" ||
+        !Array.isArray(run.pull_requests)
+      )
+        throw new Error("GitHub returned a malformed workflow run");
+      if (run.head_sha !== options.headSha) continue;
+      const associated = run.pull_requests.some(
+        (pr) => isRecord(pr) && Number(pr.number) === options.pullRequestNumber,
+      );
+      if (associated) {
+        runs.push(run);
+        if (run.status !== "completed") allRunsCompleted = false;
       }
     }
     if (runs.length === 0)
@@ -1429,36 +1439,33 @@ export class GitHubClient {
       const jobPages = parsePaginatedGitHubResponse(
         jobsOutput,
         "workflow jobs",
+        "jobs",
       );
       let jobCount = 0;
-      for (const page of jobPages) {
-        if (!isRecord(page) || !Array.isArray(page.jobs))
-          throw new Error("GitHub returned malformed workflow jobs");
-        for (const job of page.jobs) {
-          if (
-            !isRecord(job) ||
-            typeof job.name !== "string" ||
-            job.name.trim().length === 0 ||
-            typeof job.status !== "string" ||
-            (job.conclusion !== null && typeof job.conclusion !== "string")
-          )
-            throw new Error("GitHub returned a malformed workflow job");
-          jobCount += 1;
-          // A skipped job is authoritative evidence that this conditional branch did not apply.
-          if (job.conclusion !== "skipped") expectedNames.add(job.name);
-          if (
-            job.status !== "completed" ||
-            (job.conclusion !== "success" &&
-              job.conclusion !== "failure" &&
-              job.conclusion !== "cancelled" &&
-              job.conclusion !== "skipped" &&
-              job.conclusion !== "neutral" &&
-              job.conclusion !== "timed_out" &&
-              job.conclusion !== "action_required" &&
-              job.conclusion !== "startup_failure")
-          ) {
-            allJobsTerminal = false;
-          }
+      for (const job of jobPages) {
+        if (
+          !isRecord(job) ||
+          typeof job.name !== "string" ||
+          job.name.trim().length === 0 ||
+          typeof job.status !== "string" ||
+          (job.conclusion !== null && typeof job.conclusion !== "string")
+        )
+          throw new Error("GitHub returned a malformed workflow job");
+        jobCount += 1;
+        // A skipped job is authoritative evidence that this conditional branch did not apply.
+        if (job.conclusion !== "skipped") expectedNames.add(job.name);
+        if (
+          job.status !== "completed" ||
+          (job.conclusion !== "success" &&
+            job.conclusion !== "failure" &&
+            job.conclusion !== "cancelled" &&
+            job.conclusion !== "skipped" &&
+            job.conclusion !== "neutral" &&
+            job.conclusion !== "timed_out" &&
+            job.conclusion !== "action_required" &&
+            job.conclusion !== "startup_failure")
+        ) {
+          allJobsTerminal = false;
         }
       }
       if (jobCount === 0)

@@ -27,66 +27,64 @@ describe("GitHubClient.getCiObservations", () => {
     const command = vi.fn<RunGitHubCommand>(async (_cwd, args) => {
       if (args.some((arg) => arg.includes("/check-runs?"))) {
         return JSON.stringify([
-          [
-            {
-              check_runs: [
-                {
-                  id: 11,
-                  name: "Build (node 20)",
-                  head_sha: headSha,
-                  status: "completed",
-                  conclusion: "success",
-                  html_url: "https://example.test/check/11",
-                },
-              ],
-            },
-          ],
-          [
-            {
-              check_runs: [
-                {
-                  id: 12,
-                  name: "Build (node 22)",
-                  head_sha: headSha,
-                  status: "in_progress",
-                  conclusion: null,
-                  html_url: "https://example.test/check/12",
-                },
-                {
-                  id: 13,
-                  name: "Cancelled",
-                  head_sha: headSha,
-                  status: "completed",
-                  conclusion: "cancelled",
-                  html_url: "https://example.test/check/13",
-                },
-                {
-                  id: 14,
-                  name: "Skipped",
-                  head_sha: headSha,
-                  status: "completed",
-                  conclusion: "skipped",
-                  html_url: "https://example.test/check/14",
-                },
-                {
-                  id: 15,
-                  name: "Neutral",
-                  head_sha: headSha,
-                  status: "completed",
-                  conclusion: "neutral",
-                  html_url: "https://example.test/check/15",
-                },
-                {
-                  id: 16,
-                  name: "Lint",
-                  head_sha: headSha,
-                  status: "completed",
-                  conclusion: "failure",
-                  html_url: "https://example.test/check/16",
-                },
-              ],
-            },
-          ],
+          {
+            total_count: 1,
+            check_runs: [
+              {
+                id: 11,
+                name: "Build (node 20)",
+                head_sha: headSha,
+                status: "completed",
+                conclusion: "success",
+                html_url: "https://example.test/check/11",
+              },
+            ],
+          },
+          {
+            total_count: 5,
+            check_runs: [
+              {
+                id: 12,
+                name: "Build (node 22)",
+                head_sha: headSha,
+                status: "in_progress",
+                conclusion: null,
+                html_url: "https://example.test/check/12",
+              },
+              {
+                id: 13,
+                name: "Cancelled",
+                head_sha: headSha,
+                status: "completed",
+                conclusion: "cancelled",
+                html_url: "https://example.test/check/13",
+              },
+              {
+                id: 14,
+                name: "Skipped",
+                head_sha: headSha,
+                status: "completed",
+                conclusion: "skipped",
+                html_url: "https://example.test/check/14",
+              },
+              {
+                id: 15,
+                name: "Neutral",
+                head_sha: headSha,
+                status: "completed",
+                conclusion: "neutral",
+                html_url: "https://example.test/check/15",
+              },
+              {
+                id: 16,
+                name: "Lint",
+                head_sha: headSha,
+                status: "completed",
+                conclusion: "failure",
+                html_url: "https://example.test/check/16",
+              },
+            ],
+          },
         ]);
       }
       if (args.some((arg) => arg.includes("/statuses?"))) {
@@ -193,20 +191,19 @@ describe("GitHubClient.getCiObservations", () => {
     const command = vi.fn<RunGitHubCommand>(async (_cwd, args) => {
       if (args.some((arg) => arg.includes("/check-runs?"))) {
         return JSON.stringify([
-          [
-            {
-              check_runs: [
-                {
-                  id: 1,
-                  name: "Build",
-                  head_sha: "b".repeat(40),
-                  status: "completed",
-                  conclusion: "success",
-                  html_url: null,
-                },
-              ],
-            },
-          ],
+          {
+            total_count: 1,
+            check_runs: [
+              {
+                id: 1,
+                name: "Build",
+                head_sha: "b".repeat(40),
+                status: "completed",
+                conclusion: "success",
+                html_url: null,
+              },
+            ],
+          },
         ]);
       }
       if (args.some((arg) => arg.includes("/statuses?")))
@@ -229,7 +226,7 @@ describe("GitHubClient.getCiObservations", () => {
     const cwd = workingDirectory();
     const command = vi.fn<RunGitHubCommand>(async (_cwd, args) => {
       if (args.some((arg) => arg.includes("/check-runs?"))) {
-        return JSON.stringify([[{ check_runs: [] }]]);
+        return JSON.stringify([{ total_count: 0, check_runs: [] }]);
       }
       if (args.some((arg) => arg.includes("/statuses?"))) {
         return JSON.stringify([
@@ -264,7 +261,7 @@ describe("GitHubClient.getCiObservations", () => {
     const cwd = workingDirectory();
     const command = vi.fn<RunGitHubCommand>(async (_cwd, args) => {
       if (args.some((arg) => arg.includes("/check-runs?")))
-        return JSON.stringify([[]]);
+        return JSON.stringify([{ total_count: 0, check_runs: [] }]);
       if (args.some((arg) => arg.includes("/statuses?")))
         return JSON.stringify([[]]);
       throw new Error("HTTP 403: resource not accessible by integration");
@@ -290,7 +287,7 @@ describe("GitHubClient.getCiObservations", () => {
     const cwd = workingDirectory();
     const command = vi.fn<RunGitHubCommand>(async (_cwd, args) => {
       if (args.some((arg) => arg.includes("/check-runs?"))) {
-        return JSON.stringify([[{ check_runs: [] }]]);
+        return JSON.stringify([{ total_count: 0, check_runs: [] }]);
       }
       if (args.some((arg) => arg.includes("/statuses?"))) {
         return JSON.stringify([[]]);
@@ -318,7 +315,7 @@ describe("GitHubClient.getCiObservations", () => {
     );
     const command = vi.fn<RunGitHubCommand>(async (_cwd, args) => {
       if (args.some((arg) => arg.includes("/check-runs?")))
-        return JSON.stringify([[{ check_runs: [] }]]);
+        return JSON.stringify([{ total_count: 0, check_runs: [] }]);
       if (args.some((arg) => arg.includes("/statuses?")))
         return JSON.stringify([[]]);
       if (
@@ -327,47 +324,45 @@ describe("GitHubClient.getCiObservations", () => {
         throw new Error("HTTP 404: not found");
       if (args.some((arg) => arg.includes("/actions/runs?")))
         return JSON.stringify([
-          [
-            {
-              workflow_runs: [
-                {
-                  id: 100,
-                  head_sha: headSha,
-                  status: "completed",
-                  pull_requests: [{ number: 7 }],
-                },
-              ],
-            },
-          ],
+          {
+            total_count: 2,
+            workflow_runs: [
+              {
+                id: 100,
+                head_sha: headSha,
+                status: "completed",
+                pull_requests: [{ number: 7 }],
+              },
+            ],
+          },
         ]);
       if (args.some((arg) => arg.includes("/actions/runs/100/jobs?")))
         return JSON.stringify([
-          [
-            {
-              jobs: [
-                {
-                  name: "CI / test (ubuntu, 20)",
-                  status: "completed",
-                  conclusion: "success",
-                },
-                {
-                  name: "CI / test (ubuntu, 22)",
-                  status: "completed",
-                  conclusion: "success",
-                },
-                {
-                  name: "CI / conditional",
-                  status: "completed",
-                  conclusion: "skipped",
-                },
-                {
-                  name: "CI / reusable / build",
-                  status: "completed",
-                  conclusion: "success",
-                },
-              ],
-            },
-          ],
+          {
+            total_count: 1,
+            jobs: [
+              {
+                name: "CI / test (ubuntu, 20)",
+                status: "completed",
+                conclusion: "success",
+              },
+              {
+                name: "CI / test (ubuntu, 22)",
+                status: "completed",
+                conclusion: "success",
+              },
+              {
+                name: "CI / conditional",
+                status: "completed",
+                conclusion: "skipped",
+              },
+              {
+                name: "CI / reusable / build",
+                status: "completed",
+                conclusion: "success",
+              },
+            ],
+          },
         ]);
       throw new Error(`Unexpected GitHub query: ${args.join(" ")}`);
     });
@@ -403,7 +398,7 @@ describe("GitHubClient.getCiObservations", () => {
     );
     const command = vi.fn<RunGitHubCommand>(async (_cwd, args) => {
       if (args.some((arg) => arg.includes("/check-runs?")))
-        return JSON.stringify([[{ check_runs: [] }]]);
+        return JSON.stringify([{ total_count: 0, check_runs: [] }]);
       if (args.some((arg) => arg.includes("/statuses?")))
         return JSON.stringify([[]]);
       if (
@@ -412,18 +407,17 @@ describe("GitHubClient.getCiObservations", () => {
         throw new Error("HTTP 404: not found");
       if (args.some((arg) => arg.includes("/actions/runs?")))
         return JSON.stringify([
-          [
-            {
-              workflow_runs: [
-                {
-                  id: 101,
-                  head_sha: headSha,
-                  status: "completed",
-                  pull_requests: [{ number: 8 }],
-                },
-              ],
-            },
-          ],
+          {
+            total_count: 1,
+            workflow_runs: [
+              {
+                id: 101,
+                head_sha: headSha,
+                status: "completed",
+                pull_requests: [{ number: 8 }],
+              },
+            ],
+          },
         ]);
       throw new Error(`Unexpected GitHub query: ${args.join(" ")}`);
     });
@@ -459,7 +453,7 @@ describe("GitHubClient.getCiObservations", () => {
     );
     const command = vi.fn<RunGitHubCommand>(async (_cwd, args) => {
       if (args.some((arg) => arg.includes("/check-runs?")))
-        return JSON.stringify([[{ check_runs: [] }]]);
+        return JSON.stringify([{ total_count: 0, check_runs: [] }]);
       if (args.some((arg) => arg.includes("/statuses?")))
         return JSON.stringify([[]]);
       if (
@@ -468,37 +462,35 @@ describe("GitHubClient.getCiObservations", () => {
         throw new Error("HTTP 404: not found");
       if (args.some((arg) => arg.includes("/actions/runs?")))
         return JSON.stringify([
-          [
-            {
-              workflow_runs: [
-                {
-                  id: 102,
-                  head_sha: headSha,
-                  status: "in_progress",
-                  pull_requests: [{ number: 7 }],
-                },
-              ],
-            },
-          ],
+          {
+            total_count: 1,
+            workflow_runs: [
+              {
+                id: 102,
+                head_sha: headSha,
+                status: "in_progress",
+                pull_requests: [{ number: 7 }],
+              },
+            ],
+          },
         ]);
       if (args.some((arg) => arg.includes("/actions/runs/102/jobs?")))
         return JSON.stringify([
-          [
-            {
-              jobs: [
-                {
-                  name: "CI / test (ubuntu)",
-                  status: "completed",
-                  conclusion: "success",
-                },
-                {
-                  name: "CI / test (macos)",
-                  status: "in_progress",
-                  conclusion: null,
-                },
-              ],
-            },
-          ],
+          {
+            total_count: 2,
+            jobs: [
+              {
+                name: "CI / test (ubuntu)",
+                status: "completed",
+                conclusion: "success",
+              },
+              {
+                name: "CI / test (macos)",
+                status: "in_progress",
+                conclusion: null,
+              },
+            ],
+          },
         ]);
       throw new Error(`Unexpected GitHub query: ${args.join(" ")}`);
     });
@@ -536,7 +528,7 @@ describe("GitHubClient.getCiObservations", () => {
     );
     const command = vi.fn<RunGitHubCommand>(async (_cwd, args) => {
       if (args.some((arg) => arg.includes("/check-runs?")))
-        return JSON.stringify([[{ check_runs: [] }]]);
+        return JSON.stringify([{ total_count: 0, check_runs: [] }]);
       if (args.some((arg) => arg.includes("/statuses?")))
         return JSON.stringify([[]]);
       if (
@@ -545,18 +537,17 @@ describe("GitHubClient.getCiObservations", () => {
         throw new Error("HTTP 404: not found");
       if (args.some((arg) => arg.includes("/actions/runs?")))
         return JSON.stringify([
-          [
-            {
-              workflow_runs: [
-                {
-                  id: 103,
-                  head_sha: "b".repeat(40),
-                  status: "completed",
-                  pull_requests: [{ number: 7 }],
-                },
-              ],
-            },
-          ],
+          {
+            total_count: 1,
+            workflow_runs: [
+              {
+                id: 103,
+                head_sha: "b".repeat(40),
+                status: "completed",
+                pull_requests: [{ number: 7 }],
+              },
+            ],
+          },
         ]);
       throw new Error(`Unexpected GitHub query: ${args.join(" ")}`);
     });
