@@ -351,9 +351,14 @@ describe("runTaskSessionValidationWithRepairs", () => {
       projectId,
       cardId: card.id,
       operationKey,
-      occurredAt: "2026-10-25T09:00:00.000Z",
+      occurredAt: new Date(
+        Date.parse(result.record.updatedAt) + 1,
+      ).toISOString(),
     });
 
+    expect(Date.parse(reviewedRecord.updatedAt)).toBeGreaterThan(
+      Date.parse(result.record.updatedAt),
+    );
     expect(reviewedRecord.phase).toBe("review");
     expect(reviewedRecord.validationRepair?.status).toBe("passed");
     expect(reviewedRecord.validationRepair?.evidence?.contentIdentity).toBe(
