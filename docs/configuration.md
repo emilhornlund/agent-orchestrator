@@ -164,19 +164,17 @@ independent review, and complete successful CI evidence for the current PR head.
 
 ### `projects[].maintenance`
 
-Optional per-project setting for automatic rebasing of owned, outdated pull requests in `Human Review`:
+Optional per-project override for automatic rebasing of owned, outdated pull requests in `Human Review`:
 
 ```yaml
 maintenance:
   enabled: true
 ```
 
-`enabled` defaults to `false`. When enabled, maintenance is limited to a verified agent-owned PR that is behind its configured
-base and has no active requested changes, unresolved review feedback, or other project mutation. The orchestrator validates and
+Maintenance is enabled by default even when this section is omitted. `enabled` also defaults to `true` when the section is present; set `maintenance.enabled: false` to opt out. Eligible PRs must be verified and agent-owned, with an advanced base (`behind` or `diverged` in GitHub comparison) and no active requested changes, unresolved review feedback, or other project mutation. The orchestrator validates and
 reviews the prepared rebased content, publishes with an exact force-with-lease, preserves the existing PR and Trello card, and
 waits for complete CI on the new exact head. Conflicts are preserved for manual handling. Maintenance does not enable auto-merge
-or remove the `Human Review` step. Leave this setting omitted or disabled in production unless maintenance has been deliberately
-enabled for that project.
+or remove the `Human Review` step. The rebase process never enables auto-merge; with `autoMerge: false`, the PR remains in `Human Review` for human approval.
 
 ### CI expectation discovery
 
