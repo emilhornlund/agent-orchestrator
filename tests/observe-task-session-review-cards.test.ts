@@ -8,6 +8,7 @@ import { observeTaskSessionReviewCards } from "../src/orchestrator/observe-task-
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
 import type { TaskExecutionRecord } from "../src/task-session/task-execution-record.js";
 import type { TrelloCard } from "../src/trello/trello-client.js";
+import { logger } from "../src/logging/logger.js";
 
 let root: string;
 afterEach(() => {
@@ -85,9 +86,14 @@ function fixture() {
           state: "OPEN",
           mergedAt: null,
           headRefOid: headByCard.get(cardId),
+          baseRefName: "main",
+          headRefName: `agent/${cardId}`,
+          headRepository: { name: "repo" },
+          headRepositoryOwner: { login: "owner" },
         };
       },
     ),
+    comparePullRequestHeadToBase: vi.fn(async () => "current" as const),
     getCiObservations: vi.fn(async ({ headSha }: { headSha: string }) => ({
       headSha,
       checks: ["Build", "Tests"].map((name, index) => ({
@@ -318,5 +324,58 @@ describe("observeTaskSessionReviewCards", () => {
       }),
     ).rejects.toThrow("identity or head changed");
     expect(f.store.read("card-one")?.reviewObservation).toBeUndefined();
+  });
+
+  it.each(["current", "behind", "diverged", "uncertain"] as const)(
+    "reports the authoritative base relation as %s",
+    async (baseRelation) => {
+      const f = fixture();
+      vi.mocked(f.github.comparePullRequestHeadToBase).mockResolvedValue(
+        baseRelation,
+      );
+      const observed = await observeTaskSessionReviewCards({
+        project: f.project,
+        cards: f.cards.slice(0, 1),
+        taskRecordStore: f.store,
+        github: f.github,
+      });
+      expect(observed[0]).toMatchObject({ state: "OPEN", baseRelation });
+    },
+  );
+
+  it("does not emit repeated diagnostics for an unchanged outdated PR", async () => {
+    const f = fixture();
+    vi.mocked(f.github.comparePullRequestHeadToBase).mockResolvedValue(
+      "behind",
+    );
+    const warn = vi.fn();
+    vi.spyOn(logger, "child").mockReturnValue({ warn } as never);
+    try {
+      for (let cycle = 0; cycle < 2; cycle += 1) {
+        await observeTaskSessionReviewCards({
+          project: f.project,
+          cards: f.cards.slice(0, 1),
+          taskRecordStore: f.store,
+          github: f.github,
+        });
+      }
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("maps comparison API failures to uncertain", async () => {
+    const f = fixture();
+    vi.mocked(f.github.comparePullRequestHeadToBase).mockRejectedValue(
+      new Error("API failure"),
+    );
+    const observed = await observeTaskSessionReviewCards({
+      project: f.project,
+      cards: f.cards.slice(0, 1),
+      taskRecordStore: f.store,
+      github: f.github,
+    });
+    expect(observed[0]).toMatchObject({ baseRelation: "uncertain" });
   });
 });
