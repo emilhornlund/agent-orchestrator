@@ -792,6 +792,8 @@ describe("publishCard", () => {
       card: createCard(),
       worktreePath: "/worktree",
       branch: "agent/card-1",
+      expectedExistingPullRequestUrl:
+        "https://github.com/example/repository/pull/142",
       commitSha: "abc123",
       reviewResult: "Passed",
       remediationResult: "Not required",
