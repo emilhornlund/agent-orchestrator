@@ -96,31 +96,38 @@ async function pollReview(
     createdAt: "2026-10-24T09:00:00.000Z",
     updatedAt: "2026-10-24T09:00:00.000Z",
   });
-  new TaskPlanStore(project.contextRoot, project).create({
-    version: 1,
-    projectId: project.id,
-    cardId: card.id,
-    requirements: [{ id: "REQ-1", text: "Task", verification: "Check task" }],
-    steps: [{
-      id: "STEP-1",
-      description: "Implement the requirement",
-      requirementIds: ["REQ-1"],
-      verification: "Run checks",
-    }],
-    assumptions: [],
-    blockers: [],
-  }, 1);
-  vi.mocked(observeTaskSessionReviewCards).mockResolvedValue([{
-    cardId: card.id,
-    state: "OPEN",
-    headSha: sha,
-    pullRequestUrl: "https://github.com/owner/repo/pull/42",
-    baseRelation: relation,
-    ciEvaluation: { status: "passed" },
-    feedbackIds: [],
-    requestedChanges: null,
-    conversationComments: [],
-  }] as never);
+  new TaskPlanStore(project.contextRoot, project).create(
+    {
+      version: 1,
+      projectId: project.id,
+      cardId: card.id,
+      requirements: [{ id: "REQ-1", text: "Task", verification: "Check task" }],
+      steps: [
+        {
+          id: "STEP-1",
+          description: "Implement the requirement",
+          requirementIds: ["REQ-1"],
+          verification: "Run checks",
+        },
+      ],
+      assumptions: [],
+      blockers: [],
+    },
+    1,
+  );
+  vi.mocked(observeTaskSessionReviewCards).mockResolvedValue([
+    {
+      cardId: card.id,
+      state: "OPEN",
+      headSha: sha,
+      pullRequestUrl: "https://github.com/owner/repo/pull/42",
+      baseRelation: relation,
+      ciEvaluation: { status: "passed" },
+      feedbackIds: [],
+      requestedChanges: null,
+      conversationComments: [],
+    },
+  ] as never);
 
   await runTaskSessionWorkflow({
     project,
