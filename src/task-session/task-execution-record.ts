@@ -77,6 +77,12 @@ const taskSetupState = z.strictObject({
   status: z.enum(["not-required", "pending", "active", "passed"]),
 });
 
+const terminalFailureState = z.strictObject({
+  kind: z.literal("implementation"),
+  reason: z.string().min(1).max(4_000),
+  outcome: z.enum(["confirmed", "pending"]),
+});
+
 const retryCountersSchema = z.strictObject({
   validation: z.number().int().nonnegative(),
   review: z.number().int().nonnegative(),
@@ -150,6 +156,7 @@ const taskExecutionRecordSchema = z
     primarySessionId: nonBlankIdentifier.optional(),
     sessionCreationStatus: sessionCreationStatus.optional(),
     setup: taskSetupState.optional(),
+    terminalFailure: terminalFailureState.optional(),
     expectedBranch: nonBlankIdentifier.optional(),
     pullRequest: pullRequestSchema.optional(),
     operationKey: nonBlankIdentifier,

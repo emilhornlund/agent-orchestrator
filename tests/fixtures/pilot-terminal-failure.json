@@ -1,0 +1,22 @@
+{
+  "projectId": "agent-orchestrator",
+  "cardId": "6addc5c65599982e28a0c6b9",
+  "trelloList": "Working",
+  "phase": "attention-required",
+  "revision": 12,
+  "primarySessionId": "ses_e8db2e6edffezePNR3A6EPnlR5",
+  "expectedBranch": "agent/6addc5c65599982e28a0c6b9",
+  "mutation": { "status": "failed", "active": true },
+  "validation": "passed",
+  "pullRequest": null,
+  "commit": null,
+  "terminalFailure": {
+    "kind": "implementation",
+    "reason": "OpenCode implementation exited with code 1",
+    "outcome": "pending"
+  },
+  "worktree": {
+    "modified": ["tests/run-task-session-validation-repairs.test.ts"],
+    "untracked": ["tests/card-start-eligibility.test.ts"]
+  }
+}

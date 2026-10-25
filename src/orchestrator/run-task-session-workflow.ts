@@ -1401,6 +1401,101 @@ export async function runTaskSessionWorkflow(
     if (feedbackResult === "attention-required") feedbackNeedsAttention = true;
   }
   if (feedbackNeedsAttention) return;
+  const strandedMutation = queue.getActive();
+  const strandedTask =
+    strandedMutation?.kind === "implementation"
+      ? taskStore.read(strandedMutation.cardId)
+      : null;
+  if (
+    strandedMutation?.kind === "implementation" &&
+    strandedTask?.phase === "attention-required"
+  ) {
+    const strandedRecord = strandedTask;
+    if (
+      strandedRecord.projectId !== project.id ||
+      strandedRecord.operationKey !== strandedMutation.operationKey ||
+      strandedRecord.expectedBranch !== `agent/${strandedMutation.cardId}`
+    )
+      throw new Error(
+        "Terminal failure record and queue identity do not match",
+      );
+    const owner = queue.claimForRecovery(strandedMutation.eventId);
+    if (owner === null)
+      throw new Error(
+        `Terminal failure recovery cannot claim the verified queue event for ${strandedMutation.cardId}`,
+      );
+    const failedCards = await getCardsForDiscovery(
+      trello,
+      project.id,
+      project.trello.failedListId,
+      "Could not verify Failed list before terminal recovery",
+      signal,
+    );
+    const alreadyFailed = failedCards.some(
+      (candidate) => candidate.id === strandedMutation.cardId,
+    );
+    if (!alreadyFailed) {
+      if (strandedRecord.terminalFailure?.kind !== "implementation")
+        throw new Error(
+          "Legacy attention-required task needs an explicitly authorized Trello move to Failed before queue retirement",
+        );
+      const working = await getCardsForDiscovery(
+        trello,
+        project.id,
+        project.trello.workingListId,
+        "Could not verify Working list before terminal recovery",
+        signal,
+      );
+      if (
+        !working.some((candidate) => candidate.id === strandedMutation.cardId)
+      )
+        throw new Error(
+          `Terminal failure card ${strandedMutation.cardId} is in neither its expected Working nor Failed list`,
+        );
+      await trello.moveCard(
+        strandedMutation.cardId,
+        project.trello.failedListId,
+      );
+      const confirmed = await getCardsForDiscovery(
+        trello,
+        project.id,
+        project.trello.failedListId,
+        "Could not confirm Failed transition during terminal recovery",
+        signal,
+      );
+      if (
+        !confirmed.some((candidate) => candidate.id === strandedMutation.cardId)
+      )
+        throw new Error(
+          `Trello did not confirm terminal Failed transition for ${strandedMutation.cardId}`,
+        );
+    }
+    const currentRecord = taskStore.read(strandedMutation.cardId);
+    if (
+      currentRecord === null ||
+      currentRecord.operationKey !== strandedMutation.operationKey ||
+      currentRecord.expectedBranch !== `agent/${strandedMutation.cardId}`
+    )
+      throw new Error(
+        "Terminal failure identity changed during reconciliation",
+      );
+    if (
+      currentRecord.terminalFailure?.kind === "implementation" &&
+      currentRecord.terminalFailure.outcome !== "confirmed"
+    )
+      taskStore.compareAndSwap(currentRecord.cardId, currentRecord.revision, {
+        ...currentRecord,
+        terminalFailure: {
+          ...currentRecord.terminalFailure,
+          outcome: "confirmed",
+        },
+        revision: currentRecord.revision + 1,
+        updatedAt: timestamp(currentRecord),
+      });
+    queue.complete(owner.eventId);
+    return;
+  }
+
   const workingCards = await getCardsForDiscovery(
     trello,
     project.id,
@@ -1476,6 +1571,73 @@ export async function runTaskSessionWorkflow(
     const record = taskStore.read(card.id);
     if (record === null)
       throw new Error(`Task execution record disappeared for ${card.id}`);
+    if (record.phase === "attention-required" && record.terminalFailure) {
+      const matching = queue
+        .list()
+        .filter(
+          (candidate) =>
+            candidate.projectId === project.id &&
+            candidate.cardId === card.id &&
+            candidate.operationKey === record.operationKey &&
+            candidate.kind === "implementation",
+        );
+      if (matching.length !== 1)
+        throw new Error(
+          `Terminal failure recovery requires one matching mutation event for ${project.id}/${card.id}`,
+        );
+      const owner = queue.claimForRecovery(matching[0]!.eventId);
+      if (owner === null)
+        throw new Error(
+          `Terminal failure recovery cannot claim the verified queue event for ${card.id}`,
+        );
+      const failedCards = await getCardsForDiscovery(
+        trello,
+        project.id,
+        project.trello.failedListId,
+        "Could not verify Failed list before terminal recovery",
+        signal,
+      );
+      if (!failedCards.some((candidate) => candidate.id === card.id)) {
+        const currentWorkingCard = workingCards.find(
+          (candidate) => candidate.id === card.id,
+        );
+        if (currentWorkingCard === undefined)
+          throw new Error(
+            "Terminal failure card identity changed during recovery",
+          );
+        await trello.moveCard(card.id, project.trello.failedListId);
+        const confirmed = await getCardsForDiscovery(
+          trello,
+          project.id,
+          project.trello.failedListId,
+          "Could not confirm Failed transition during terminal recovery",
+          signal,
+        );
+        if (!confirmed.some((candidate) => candidate.id === card.id))
+          throw new Error(
+            `Trello did not confirm terminal Failed transition for ${card.id}`,
+          );
+      }
+      const latestFailureRecord = taskStore.read(card.id);
+      if (
+        latestFailureRecord === null ||
+        latestFailureRecord.operationKey !== record.operationKey ||
+        latestFailureRecord.terminalFailure?.kind !== "implementation"
+      )
+        throw new Error(`Terminal failure identity changed for ${card.id}`);
+      if (latestFailureRecord.terminalFailure.outcome !== "confirmed")
+        taskStore.compareAndSwap(card.id, latestFailureRecord.revision, {
+          ...latestFailureRecord,
+          terminalFailure: {
+            ...latestFailureRecord.terminalFailure,
+            outcome: "confirmed",
+          },
+          revision: latestFailureRecord.revision + 1,
+          updatedAt: timestamp(latestFailureRecord),
+        });
+      queue.complete(owner.eventId);
+      return;
+    }
     const worktreePath = path.join(project.repository.worktreeRoot, card.id);
     const recovery = await reconcileTaskSession({
       project,
@@ -2357,6 +2519,59 @@ export async function runTaskSessionWorkflow(
     }
     if (mutation !== null) queue.complete(mutation.eventId);
   } catch (error) {
+    const failedRecord =
+      mutation === null ? null : taskStore.read(mutation.cardId);
+    if (
+      mutation !== null &&
+      failedRecord?.phase === "attention-required" &&
+      failedRecord.terminalFailure?.kind === "implementation" &&
+      failedRecord.terminalFailure.outcome === "pending" &&
+      queue.ownsActive(mutation.eventId) &&
+      !signal.aborted
+    ) {
+      const failedCards = await getCardsForDiscovery(
+        trello,
+        project.id,
+        project.trello.failedListId,
+        "Could not verify Failed list after implementation failure",
+        signal,
+      );
+      if (!failedCards.some((candidate) => candidate.id === mutation!.cardId)) {
+        await trello.moveCard(mutation.cardId, project.trello.failedListId);
+        const confirmed = await getCardsForDiscovery(
+          trello,
+          project.id,
+          project.trello.failedListId,
+          "Could not confirm Failed transition after implementation failure",
+          signal,
+        );
+        if (!confirmed.some((candidate) => candidate.id === mutation!.cardId))
+          throw new Error(
+            `Trello did not confirm terminal Failed transition for ${mutation.cardId}`,
+            { cause: error },
+          );
+      }
+      const latest = taskStore.read(mutation.cardId);
+      if (
+        latest === null ||
+        latest.operationKey !== mutation.operationKey ||
+        latest.terminalFailure?.kind !== "implementation"
+      )
+        throw new Error(
+          `Terminal failure identity changed for ${mutation.cardId}`,
+          { cause: error },
+        );
+      if (latest.terminalFailure.outcome !== "confirmed")
+        taskStore.compareAndSwap(mutation.cardId, latest.revision, {
+          ...latest,
+          terminalFailure: { ...latest.terminalFailure, outcome: "confirmed" },
+          revision: latest.revision + 1,
+          updatedAt: timestamp(latest),
+        });
+      queue.complete(mutation.eventId);
+      mutation = null;
+      throw error;
+    }
     if (recoveryRecord !== null && !signal.aborted) {
       const latest = taskStore.read(recoveryRecord.cardId);
       let commitVerified = false;
