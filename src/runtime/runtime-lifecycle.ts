@@ -144,6 +144,10 @@ export class RuntimeLifecycle {
     return this.fatalFailureValue;
   }
 
+  getSecretValues(): readonly string[] {
+    return [...this.secretValues];
+  }
+
   get exitCode(): 0 | 1 {
     return this.fatalFailureValue === undefined ? 0 : 1;
   }

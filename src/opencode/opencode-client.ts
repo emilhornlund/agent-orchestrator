@@ -425,8 +425,8 @@ const defaultRunOpenCode: RunOpenCode = async ({
     }
 
     function flushOutput(): void {
-      const stdout = redactSecrets(stdoutRedactor.flush(), secretValues);
-      const stderr = redactSecrets(stderrRedactor.flush(), secretValues);
+      const stdout = stdoutRedactor.flush();
+      const stderr = stderrRedactor.flush();
       output += stdout;
       errorOutput += stderr;
       if (sessionLogPath) {
@@ -470,6 +470,10 @@ const defaultRunOpenCode: RunOpenCode = async ({
       }
 
       flushOutput();
+
+      logger.error(
+        `Failed to start OpenCode: ${redactSecrets(error.message, secretValues)}`,
+      );
 
       settled = true;
       clearTimeout(safetyTimeout);
@@ -518,7 +522,10 @@ const defaultRunOpenCode: RunOpenCode = async ({
   });
 
 export class OpenCodeClient {
-  constructor(private readonly runOpenCode: RunOpenCode = defaultRunOpenCode) {}
+  constructor(
+    private readonly runOpenCode: RunOpenCode = defaultRunOpenCode,
+    private readonly configuredSecretValues: readonly string[] = [],
+  ) {}
 
   async run(options: OpenCodeRunOptions): Promise<OpenCodeRunResult> {
     if (options.sessionId !== undefined) {
@@ -531,7 +538,14 @@ export class OpenCodeClient {
       );
     }
 
-    const result = await this.runOpenCode(options);
+    const secretValues = [
+      ...this.configuredSecretValues,
+      ...(options.secretValues ?? []),
+    ];
+    const result = await this.runOpenCode({
+      ...options,
+      ...(secretValues.length === 0 ? {} : { secretValues }),
+    });
 
     if (options.captureSessionId !== true) {
       return result;

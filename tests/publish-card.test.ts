@@ -790,6 +790,9 @@ describe("publishCard", () => {
     });
 
     expect(runDescription).toHaveBeenCalledTimes(2);
+    expect(runDescription).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionLogPath: expect.any(String) }),
+    );
     expect(runDescription.mock.calls[1]?.[0].prompt).toEqual(
       expect.stringContaining("The previous response was invalid."),
     );

@@ -3,6 +3,7 @@ import type { GitClient } from "../git/git-client.js";
 import type { GitHubClient } from "../github/github-client.js";
 import { buildPullRequestAttributionFooter } from "../github/pull-request-attribution.js";
 import { logger } from "../logging/logger.js";
+import { getSessionLogPath } from "../logging/session-log.js";
 import {
   notifyHumanReview,
   type EmailNotifier,
@@ -179,7 +180,8 @@ async function generatePullRequestDescription(options: {
         timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
         prompt,
         signal,
-        ...(sessionLogPath === undefined ? {} : { sessionLogPath }),
+        sessionLogPath:
+          sessionLogPath ?? getSessionLogPath(project.id, card.id),
         sessionLabel: "OpenCode pull request description",
       });
     } catch (error) {
@@ -477,7 +479,8 @@ export async function publishCard({
         remediationResult,
         signal: signal ?? new AbortController().signal,
         cardLog,
-        ...(sessionLogPath === undefined ? {} : { sessionLogPath }),
+        sessionLogPath:
+          sessionLogPath ?? getSessionLogPath(project.id, card.id),
       });
     }
 
