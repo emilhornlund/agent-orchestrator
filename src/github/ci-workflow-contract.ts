@@ -24,6 +24,74 @@ function sourceId(workflowFile: string): string {
   return `workflow:${workflowFile.split(path.sep).join("/")}`;
 }
 
+function branchPatternMatches(pattern: string, branch: string): boolean | null {
+  if (pattern.length === 0) return null;
+  const positivePattern = pattern.startsWith("!") ? pattern.slice(1) : pattern;
+  if (positivePattern.length === 0 || positivePattern.startsWith("!"))
+    return null;
+  let expression = "^";
+  for (let index = 0; index < positivePattern.length; index += 1) {
+    const character = positivePattern[index]!;
+    if (character === "*") {
+      if (positivePattern[index + 1] === "*") {
+        expression += ".*";
+        index += 1;
+      } else {
+        expression += "[^/]*";
+      }
+    } else if (character === "?") {
+      expression += "[^/]";
+    } else if (character === "[") {
+      const close = positivePattern.indexOf("]", index + 1);
+      if (close < 0) return null;
+      expression += positivePattern.slice(index, close + 1);
+      index = close;
+    } else {
+      expression += character.replace(/[|\\{}()[\]^$+?.]/gu, "\\$&");
+    }
+  }
+  try {
+    return new RegExp(`${expression}$`, "u").test(branch);
+  } catch {
+    return null;
+  }
+}
+
+function branchFilterMatches(
+  trigger: Record<string, unknown>,
+  baseBranch: string | undefined,
+): boolean | null {
+  const branches = trigger.branches;
+  const ignored = trigger["branches-ignore"];
+  if (branches === undefined && ignored === undefined) return true;
+  if (baseBranch === undefined || baseBranch.length === 0) return null;
+  const matchesPatterns = (
+    value: unknown,
+    allowNegation: boolean,
+  ): boolean | null => {
+    if (
+      !Array.isArray(value) ||
+      !value.every((entry) => typeof entry === "string")
+    )
+      return null;
+    if (value.length === 0) return null;
+    let matched = false;
+    let hasPositivePattern = false;
+    for (const pattern of value) {
+      if (pattern.startsWith("!") && !allowNegation) return null;
+      if (!pattern.startsWith("!")) hasPositivePattern = true;
+      const match = branchPatternMatches(pattern, baseBranch);
+      if (match === null) return null;
+      if (match) matched = !pattern.startsWith("!");
+    }
+    if (allowNegation && !hasPositivePattern) return null;
+    return matched;
+  };
+  if (branches !== undefined) return matchesPatterns(branches, true);
+  const match = matchesPatterns(ignored, false);
+  return match === null ? null : !match;
+}
+
 function uncertainWorkflow(
   id: string,
   reason: string,
@@ -41,6 +109,7 @@ function uncertainWorkflow(
 /** Reads repository-owned workflow contracts without executing or contacting services. */
 export function collectCiWorkflowExpectationSources(
   repositoryPath: string,
+  baseBranch?: string,
 ): CiCheckExpectationSource[] {
   const workflowsDirectory = path.join(repositoryPath, ".github", "workflows");
   const directory = fs.lstatSync(workflowsDirectory, { throwIfNoEntry: false });
@@ -91,21 +160,30 @@ export function collectCiWorkflowExpectationSources(
           : isRecord(triggers.pull_request_target)
             ? triggers.pull_request_target
             : undefined);
-      if (
-        triggerDetails !== undefined &&
-        triggerDetails !== false &&
-        (triggerDetails.paths !== undefined ||
-          triggerDetails["paths-ignore"] !== undefined ||
-          triggerDetails.branches !== undefined ||
-          triggerDetails["branches-ignore"] !== undefined)
-      ) {
-        sources.push(
-          uncertainWorkflow(
-            id,
-            "pull-request workflow has path or branch filters whose applicability cannot be proven from the workflow file alone",
-          ),
-        );
-        continue;
+      if (triggerDetails !== undefined && triggerDetails !== false) {
+        const branchMatch = branchFilterMatches(triggerDetails, baseBranch);
+        if (branchMatch === false) continue;
+        if (branchMatch === null) {
+          sources.push(
+            uncertainWorkflow(
+              id,
+              "pull-request branch filter is unsupported or the base branch is unavailable",
+            ),
+          );
+          continue;
+        }
+        if (
+          triggerDetails.paths !== undefined ||
+          triggerDetails["paths-ignore"] !== undefined
+        ) {
+          sources.push(
+            uncertainWorkflow(
+              id,
+              "pull-request workflow has path filters whose applicability cannot be proven from the workflow file alone",
+            ),
+          );
+          continue;
+        }
       }
 
       if (!isRecord(workflow.jobs) || Object.keys(workflow.jobs).length === 0) {

@@ -150,6 +150,7 @@ export interface CiObservationsOptions {
   cwd: string;
   repository: string;
   defaultBranch: string;
+  baseBranch?: string;
   headSha: string;
   project?: ProjectConfig;
 }
@@ -1290,7 +1291,10 @@ export class GitHubClient {
 
     try {
       expectationSources.push(
-        ...collectCiWorkflowExpectationSources(options.cwd),
+        ...collectCiWorkflowExpectationSources(
+          options.cwd,
+          options.baseBranch ?? options.defaultBranch,
+        ),
       );
     } catch {
       expectationSources.push({

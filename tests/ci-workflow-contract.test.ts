@@ -64,6 +64,61 @@ describe("collectCiWorkflowExpectationSources", () => {
   });
 
   it.each([
+    ["agent-orchestrator", "main", "[main]", true],
+    ["klurigo", "main", "['**']", true],
+    ["rpg-sdl", "feature", "[main]", false],
+    ["agent-orchestrator", "release/1", "['**', '!release/**']", false],
+  ])(
+    "evaluates %s pull-request branch filters",
+    (_project, base, filter, applicable) => {
+      root = fs.mkdtempSync(path.join(os.tmpdir(), "ci-workflow-branches-"));
+      addWorkflow(
+        "ci.yml",
+        [
+          "name: CI",
+          "on:",
+          "  pull_request:",
+          `    branches: ${filter}`,
+          "jobs:",
+          "  test:",
+          "    runs-on: ubuntu-latest",
+          "    steps: []",
+        ].join("\n"),
+      );
+
+      const sources = collectCiWorkflowExpectationSources(root, base);
+      expect(sources).toHaveLength(applicable ? 1 : 0);
+      if (applicable)
+        expect(sources[0]).toMatchObject({
+          complete: true,
+          checkNames: ["test"],
+        });
+    },
+  );
+
+  it("excludes branches-ignore matches and leaves unavailable branch context uncertain", () => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "ci-workflow-ignore-"));
+    addWorkflow(
+      "ignored.yml",
+      [
+        "on:",
+        "  pull_request:",
+        "    branches-ignore: ['release/**']",
+        "jobs:",
+        "  test:",
+        "    steps: []",
+      ].join("\n"),
+    );
+    expect(collectCiWorkflowExpectationSources(root, "release/1")).toEqual([]);
+    expect(collectCiWorkflowExpectationSources(root)).toMatchObject([
+      {
+        complete: false,
+        uncertainty: expect.stringContaining("base branch is unavailable"),
+      },
+    ]);
+  });
+
+  it.each([
     [
       "conditional job",
       [],
