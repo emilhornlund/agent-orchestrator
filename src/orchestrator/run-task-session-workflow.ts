@@ -1488,6 +1488,43 @@ export async function runTaskSessionWorkflow(
             },
           );
         },
+        remediateConflict: async ({
+          conflictedPaths,
+          rebase,
+          attempt,
+          signal: remediationSignal,
+        }) => {
+          if (task.primarySessionId === undefined)
+            throw new Error(
+              "PR maintenance conflict remediation requires the primary task session",
+            );
+          const result = await openCode.run({
+            cwd: path.join(project.repository.worktreeRoot, card.id),
+            model: project.opencode.remediation.model,
+            variant: project.opencode.remediation.variant,
+            timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
+            signal: remediationSignal,
+            sessionId: task.primarySessionId,
+            sessionLabel: `PR maintenance conflict remediation pass ${attempt}`,
+            prompt: [
+              "Resolve only the active conflicts in this existing published task branch rebase.",
+              `Task: ${card.name}`,
+              `Task description: ${card.desc.trim() || "(No task description was provided.)"}`,
+              `Task branch: agent/${card.id}`,
+              `Rebase target commit: ${rebase.onto}`,
+              `Original task head: ${rebase.originalHead}`,
+              `Rebase progress: ${rebase.currentStep ?? "unknown"} of ${rebase.totalSteps ?? "unknown"}`,
+              `Attempt: ${attempt} of ${project.opencode.remediation.maxPasses}`,
+              `Exact currently conflicted paths:\n${conflictedPaths.map((file) => `- ${file}`).join("\n")}`,
+              "Preserve both the task's intended changes and compatible changes from upstream; never discard either side automatically. Inspect current repository and Git state, resolve and stage only the active conflicts, then continue the rebase. Re-inspect paths at each subsequent rebase stop and continue until complete.",
+              "Run the configured validation command if applicable. Do not push, create or modify pull requests, or perform unrelated work.",
+            ].join("\n\n"),
+          });
+          if (result.exitCode !== 0)
+            throw new Error(
+              `PR maintenance conflict remediation exited with code ${result.exitCode}`,
+            );
+        },
       });
       if (
         maintenanceResult === "published" ||

@@ -177,6 +177,24 @@ describe("PrMaintenanceStore", () => {
     ).toThrow(/already owns this project/);
   });
 
+  it("persists bounded conflict-remediation attempts across process restarts", () => {
+    const { store, contextRoot, project } = setup();
+    store.create(operation());
+    store.advance("maintenance-1", "prepared", "active", identity());
+    expect(
+      store.recordConflictRemediationAttempt("maintenance-1", identity())
+        .conflictRemediationAttempts,
+    ).toBe(1);
+    expect(
+      store.recordConflictRemediationAttempt("maintenance-1", identity())
+        .conflictRemediationAttempts,
+    ).toBe(2);
+    store.advance("maintenance-1", "active", "uncertain", identity());
+    expect(
+      new PrMaintenanceStore(contextRoot, project).inspect("maintenance-1"),
+    ).toMatchObject({ status: "uncertain", conflictRemediationAttempts: 2 });
+  });
+
   it("reconciles stale ownership without releasing the incomplete operation", () => {
     const { store, contextRoot, project } = setup();
     store.create(operation());

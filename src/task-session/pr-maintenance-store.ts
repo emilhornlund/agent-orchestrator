@@ -267,7 +267,7 @@ export class PrMaintenanceStore {
         "base-fetched": ["base-fetched", "backing-up", "prepared"],
         "backing-up": ["backing-up", "rebasing"],
         rebasing: ["rebasing", "conflicted", "prepared"],
-        conflicted: ["conflicted"],
+        conflicted: ["conflicted", "prepared"],
         prepared: ["prepared"],
       };
       if (
@@ -322,6 +322,47 @@ export class PrMaintenanceStore {
       const updated = parsePrMaintenanceOperation({
         ...current,
         qualityVerification: evidence,
+        updatedAt: new Date().toISOString(),
+      });
+      const operations = [...record.operations];
+      operations[index] = updated;
+      return { ...record, operations };
+    }, operationId);
+  }
+
+  recordConflictRemediationAttempt(
+    operationId: string,
+    identity: Pick<
+      PrMaintenanceOperation,
+      | "projectId"
+      | "cardId"
+      | "pullRequest"
+      | "expectedRemoteHead"
+      | "targetBaseHead"
+    >,
+  ): PrMaintenanceOperation {
+    return this.update((record) => {
+      const index = record.operations.findIndex(
+        (item) => item.operationId === operationId,
+      );
+      const current = record.operations[index];
+      if (current === undefined)
+        throw new PrMaintenanceConflictError(
+          `Unknown maintenance operation: ${operationId}`,
+        );
+      this.assertIdentity(current, identity);
+      if (
+        current.status !== "active" ||
+        current.ownerToken !== this.ownerToken ||
+        !liveOwners.has(this.ownerToken)
+      )
+        throw new PrMaintenanceConflictError(
+          "Verified exclusive ownership is required to remediate conflicts",
+        );
+      const updated = parsePrMaintenanceOperation({
+        ...current,
+        conflictRemediationAttempts:
+          (current.conflictRemediationAttempts ?? 0) + 1,
         updatedAt: new Date().toISOString(),
       });
       const operations = [...record.operations];
