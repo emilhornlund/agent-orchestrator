@@ -128,10 +128,10 @@ const defaultRunCommand: RunCommand = async ({
         return;
       }
 
-      if (suppressOutput === true) return;
-
       if (sessionLogPath) {
         appendSessionLog(sessionLogPath, text);
+      } else if (suppressOutput === true) {
+        return;
       } else {
         stream.write(text);
       }
