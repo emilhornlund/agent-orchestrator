@@ -448,4 +448,139 @@ describe("GitHubClient.getCiObservations", () => {
       ),
     ).toBe(false);
   });
+
+  it("keeps discovered matrix jobs incomplete while their workflow run is pending", async () => {
+    const cwd = workingDirectory();
+    const workflows = path.join(cwd, ".github", "workflows");
+    fs.mkdirSync(workflows, { recursive: true });
+    fs.writeFileSync(
+      path.join(workflows, "ci.yml"),
+      "on: [pull_request]\njobs:\n  test:\n    strategy:\n      matrix:\n        os: [ubuntu, macos]\n",
+    );
+    const command = vi.fn<RunGitHubCommand>(async (_cwd, args) => {
+      if (args.some((arg) => arg.includes("/check-runs?")))
+        return JSON.stringify([[{ check_runs: [] }]]);
+      if (args.some((arg) => arg.includes("/statuses?")))
+        return JSON.stringify([[]]);
+      if (
+        args.some((arg) => arg.includes("/protection/required_status_checks"))
+      )
+        throw new Error("HTTP 404: not found");
+      if (args.some((arg) => arg.includes("/actions/runs?")))
+        return JSON.stringify([
+          [
+            {
+              workflow_runs: [
+                {
+                  id: 102,
+                  head_sha: headSha,
+                  status: "in_progress",
+                  pull_requests: [{ number: 7 }],
+                },
+              ],
+            },
+          ],
+        ]);
+      if (args.some((arg) => arg.includes("/actions/runs/102/jobs?")))
+        return JSON.stringify([
+          [
+            {
+              jobs: [
+                {
+                  name: "CI / test (ubuntu)",
+                  status: "completed",
+                  conclusion: "success",
+                },
+                {
+                  name: "CI / test (macos)",
+                  status: "in_progress",
+                  conclusion: null,
+                },
+              ],
+            },
+          ],
+        ]);
+      throw new Error(`Unexpected GitHub query: ${args.join(" ")}`);
+    });
+
+    const result = await new GitHubClient(command).getCiObservations({
+      cwd,
+      repository: "owner/repo",
+      defaultBranch: "main",
+      headSha,
+      pullRequestNumber: 7,
+    });
+
+    expect(result.expectationSources).toContainEqual(
+      expect.objectContaining({
+        sourceId: `workflow-runs:pull-request:7:${headSha}`,
+        complete: false,
+        checkNames: ["CI / test (ubuntu)", "CI / test (macos)"],
+        uncertainty: expect.stringContaining("in progress"),
+      }),
+    );
+    expect(
+      result.expectationSources.some(
+        (source) => source.complete && source.kind === "workflow-contract",
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects runtime observations for a stale head even when the PR matches", async () => {
+    const cwd = workingDirectory();
+    const workflows = path.join(cwd, ".github", "workflows");
+    fs.mkdirSync(workflows, { recursive: true });
+    fs.writeFileSync(
+      path.join(workflows, "ci.yml"),
+      "on: [pull_request]\njobs:\n  conditional:\n    if: always()\n",
+    );
+    const command = vi.fn<RunGitHubCommand>(async (_cwd, args) => {
+      if (args.some((arg) => arg.includes("/check-runs?")))
+        return JSON.stringify([[{ check_runs: [] }]]);
+      if (args.some((arg) => arg.includes("/statuses?")))
+        return JSON.stringify([[]]);
+      if (
+        args.some((arg) => arg.includes("/protection/required_status_checks"))
+      )
+        throw new Error("HTTP 404: not found");
+      if (args.some((arg) => arg.includes("/actions/runs?")))
+        return JSON.stringify([
+          [
+            {
+              workflow_runs: [
+                {
+                  id: 103,
+                  head_sha: "b".repeat(40),
+                  status: "completed",
+                  pull_requests: [{ number: 7 }],
+                },
+              ],
+            },
+          ],
+        ]);
+      throw new Error(`Unexpected GitHub query: ${args.join(" ")}`);
+    });
+
+    const result = await new GitHubClient(command).getCiObservations({
+      cwd,
+      repository: "owner/repo",
+      defaultBranch: "main",
+      headSha,
+      pullRequestNumber: 7,
+    });
+
+    expect(
+      result.expectationSources.some((source) =>
+        source.sourceId.startsWith("workflow-runs:"),
+      ),
+    ).toBe(false);
+    expect(result.expectationSources.some((source) => !source.complete)).toBe(
+      true,
+    );
+    expect(
+      command.mock.calls.some(([, args]) =>
+        args.some((arg) => arg.includes("/actions/runs/103/jobs")),
+      ),
+    ).toBe(false);
+  });
 });
