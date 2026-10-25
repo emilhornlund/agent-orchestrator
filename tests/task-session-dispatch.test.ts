@@ -986,6 +986,63 @@ describe("task-session production dispatch", () => {
     expect(openCode).not.toHaveBeenCalled();
   });
 
+  it("parks a legacy attention-required task without repeated polling failures or unauthorized mutation", async () => {
+    const { project } = projectFixture();
+    const card = { ...createCard(), idList: project.trello.workingListId };
+    const queue = new TaskMutationQueue(project.contextRoot, project);
+    queue.enqueue({
+      eventId: "implementation:card:legacy",
+      projectId: project.id,
+      cardId: card.id,
+      kind: "implementation",
+      operationKey: "legacy-operation",
+      enqueuedAt: "2026-10-25T20:20:00.000Z",
+    });
+    expect(queue.claimNext()?.cardId).toBe(card.id);
+    queue.fail("implementation:card:legacy");
+    const store = new TaskExecutionStore(project.contextRoot, project);
+    store.create({
+      version: 1,
+      projectId: project.id,
+      cardId: card.id,
+      phase: "attention-required",
+      primarySessionId: "legacy-session",
+      sessionCreationStatus: "bound",
+      expectedBranch: `agent/${card.id}`,
+      operationKey: "legacy-operation",
+      revision: 1,
+      retryCounters: { validation: 0, review: 2, ci: 0, humanFeedback: 0 },
+      createdAt: "2026-10-25T20:20:00.000Z",
+      updatedAt: "2026-10-25T20:27:00.000Z",
+    });
+    const trello = {
+      getCards: vi.fn(async (listId: string) =>
+        listId === project.trello.workingListId ? [card] : [],
+      ),
+      moveCard: vi.fn(),
+    } as unknown as TrelloClient;
+    const openCode = vi.fn<RunOpenCode>();
+    const call = () =>
+      pollProject(
+        trello,
+        {} as GitClient,
+        {} as GitHubClient,
+        new OpenCodeClient(openCode),
+        new CommandRunner(vi.fn<RunCommand>()),
+        project,
+        new AbortController().signal,
+      );
+    await expect(call()).resolves.toBeUndefined();
+    await expect(call()).resolves.toBeUndefined();
+    expect(openCode).not.toHaveBeenCalled();
+    expect(trello.moveCard).not.toHaveBeenCalled();
+    expect(queue.getActive()).toMatchObject({
+      eventId: "implementation:card:legacy",
+      status: "failed",
+    });
+    expect(store.read(card.id)?.phase).toBe("attention-required");
+  });
+
   it("waits for delayed registrations and mixed pending/failing CI without consuming repair attempts", async () => {
     const { project, worktreeRoot } = projectFixture();
     project.autoMerge = true;

@@ -132,66 +132,128 @@ describe("publishTaskSessionCard", () => {
     );
   });
 
-  it(
-    "publishes exhausted failed reviews only to Human Review with valid snapshot evidence",
-    async () => {
-      const { base, git } = fixture();
-      const failed = {
-        ...evidence.review!,
-        verdict: "fail" as const,
-        blockingFindings: [
-          {
-            kind: "defect" as const,
-            summary: "Open issue",
-            detail: "Needs human review",
-          },
-        ],
-      };
-      const withFailure = { ...evidence, review: failed };
-      const committed = await publishTaskSessionCard({
-        ...base,
+  it("publishes exhausted failed reviews only to Human Review with valid snapshot evidence", async () => {
+    const { base, git } = fixture();
+    const failed = {
+      ...evidence.review!,
+      verdict: "fail" as const,
+      blockingFindings: [
+        {
+          kind: "defect" as const,
+          summary: "Open issue",
+          detail: "Needs human review",
+        },
+      ],
+    };
+    const withFailure = { ...evidence, review: failed };
+    const committed = await publishTaskSessionCard({
+      ...base,
+      reviewResult: "Failed (human review required)",
+      exhaustedReview: failed,
+      initialEvidence: withFailure,
+      verifyPreparedContent: async () => withFailure,
+    } as never);
+    expect(committed).toBe("after");
+    expect(git.stageAll).toHaveBeenCalledOnce();
+    expect(publishCard).toHaveBeenCalledWith(
+      expect.objectContaining({
         reviewResult: "Failed (human review required)",
         exhaustedReview: failed,
-        initialEvidence: withFailure,
-        verifyPreparedContent: async () => withFailure,
-      } as never);
-      expect(committed).toBe("after");
-      expect(git.stageAll).toHaveBeenCalledOnce();
-      expect(publishCard).toHaveBeenCalledWith(
-        expect.objectContaining({
-          reviewResult: "Failed (human review required)",
-          exhaustedReview: failed,
-        }),
-      );
-    },
-  );
+      }),
+    );
+  });
 
-  it(
-    "blocks failed-review publication when it lacks verified exhaustion evidence",
-    async () => {
-      const { base, git } = fixture();
-      await expect(
-        publishTaskSessionCard({
-          ...base,
-          initialEvidence: {
-            ...evidence,
-            review: {
-              ...evidence.review!,
-              verdict: "fail",
-              blockingFindings: [
-                {
-                  kind: "defect",
-                  summary: "Needs review",
-                  detail: "Open finding",
-                },
-              ],
-            },
+  it("blocks failed-review publication when it lacks verified exhaustion evidence", async () => {
+    const { base, git } = fixture();
+    await expect(
+      publishTaskSessionCard({
+        ...base,
+        initialEvidence: {
+          ...evidence,
+          review: {
+            ...evidence.review!,
+            verdict: "fail",
+            blockingFindings: [
+              {
+                kind: "defect",
+                summary: "Needs review",
+                detail: "Open finding",
+              },
+            ],
           },
-        } as never),
-      ).rejects.toThrow("Final implementation review did not pass");
-      expect(git.stageAll).not.toHaveBeenCalled();
-    },
-  );
+        },
+      } as never),
+    ).rejects.toThrow("Final implementation review did not pass");
+    expect(git.stageAll).not.toHaveBeenCalled();
+  });
+
+  it("publishes a rebased exhausted review only when the new head passes current validation", async () => {
+    const { base, git } = fixture();
+    const failed = {
+      ...evidence.review!,
+      verdict: "fail" as const,
+      blockingFindings: [
+        {
+          kind: "defect" as const,
+          summary: "Open issue",
+          detail: "Needs human review",
+        },
+      ],
+    };
+    const rebasedIdentity = `sha256:${"c".repeat(64)}`;
+    const prepared = {
+      ...evidence,
+      currentContentIdentity: rebasedIdentity,
+      validation: { ...evidence.validation!, contentIdentity: rebasedIdentity },
+      review: failed,
+    };
+    vi.mocked(git.getHeadSha)
+      .mockReset()
+      .mockResolvedValueOnce("before")
+      .mockResolvedValueOnce("after")
+      .mockResolvedValue("rebased");
+    const head = await publishTaskSessionCard({
+      ...base,
+      exhaustedReview: failed,
+      initialEvidence: { ...evidence, review: failed },
+      verifyPreparedContent: async () => prepared,
+    } as never);
+    expect(head).toBe("rebased");
+    expect(git.getStatus).toHaveBeenCalled();
+    expect(publishCard).toHaveBeenCalledOnce();
+  });
+
+  it("refuses a rebased exhausted review when validation belongs to the previous head", async () => {
+    const { base, git } = fixture();
+    const failed = {
+      ...evidence.review!,
+      verdict: "fail" as const,
+      blockingFindings: [
+        {
+          kind: "defect" as const,
+          summary: "Open issue",
+          detail: "Needs human review",
+        },
+      ],
+    };
+    vi.mocked(git.getHeadSha)
+      .mockReset()
+      .mockResolvedValueOnce("before")
+      .mockResolvedValueOnce("after")
+      .mockResolvedValue("rebased");
+    await expect(
+      publishTaskSessionCard({
+        ...base,
+        exhaustedReview: failed,
+        initialEvidence: { ...evidence, review: failed },
+        verifyPreparedContent: async () => ({
+          ...evidence,
+          currentContentIdentity: `sha256:${"c".repeat(64)}`,
+          review: failed,
+        }),
+      } as never),
+    ).rejects.toThrow("Local validation evidence is stale");
+  });
 
   it("refuses publication when prepared content has stale evidence", async () => {
     const { base, git } = fixture();

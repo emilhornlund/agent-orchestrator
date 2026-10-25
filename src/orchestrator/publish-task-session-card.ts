@@ -25,8 +25,11 @@ export interface PublishTaskSessionCardOptions extends Omit<
 function assertPublicationEvidence(
   input: VerifiedPublicationDecisionInput,
   exhaustedReview: ImplementationReviewResult | undefined,
+  allowStaleExhaustedReview = false,
 ): void {
-  const decision = decideHumanReviewPublication(input, exhaustedReview);
+  const decision = decideHumanReviewPublication(input, exhaustedReview, {
+    allowStaleExhaustedReview,
+  });
   if (!decision.allowed) {
     throw new Error(
       `Task-session publication is blocked: ${decision.reasons.join("; ")}`,
@@ -98,7 +101,21 @@ export async function publishTaskSessionCard(
     commitSha,
     beforePushVerification: async () => {
       const preparedEvidence = await options.verifyPreparedContent();
-      assertPublicationEvidence(preparedEvidence, options.exhaustedReview);
+      const preparedHead = await options.git.getHeadSha(options.worktreePath);
+      const allowStaleExhaustedReview =
+        options.exhaustedReview !== undefined && preparedHead !== commitSha;
+      if (
+        allowStaleExhaustedReview &&
+        (await options.git.getStatus(options.worktreePath)).trim().length > 0
+      )
+        throw new Error(
+          "Refusing exhausted-review publication from a dirty rebased worktree",
+        );
+      assertPublicationEvidence(
+        preparedEvidence,
+        options.exhaustedReview,
+        allowStaleExhaustedReview,
+      );
     },
   });
   return options.git.getHeadSha(options.worktreePath);
