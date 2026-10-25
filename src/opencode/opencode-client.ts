@@ -2,6 +2,10 @@ import { spawn } from "node:child_process";
 
 import { logger } from "../logging/logger.js";
 import {
+  createSecretRedactor,
+  redactSecrets,
+} from "../security/redact-secrets.js";
+import {
   appendSessionLog,
   appendSessionSection,
 } from "../logging/session-log.js";
@@ -21,6 +25,7 @@ export interface OpenCodeRunOptions {
   environment?: Record<string, string>;
   sessionLogPath?: string;
   sessionLabel?: string;
+  secretValues?: readonly string[];
 }
 
 export interface OpenCodeRunResult {
@@ -322,6 +327,7 @@ const defaultRunOpenCode: RunOpenCode = async ({
   environment,
   sessionLogPath,
   sessionLabel,
+  secretValues,
 }) =>
   new Promise((resolve, reject) => {
     if (signal.aborted) {
@@ -367,6 +373,8 @@ const defaultRunOpenCode: RunOpenCode = async ({
 
     let output = "";
     let errorOutput = "";
+    const stdoutRedactor = createSecretRedactor(secretValues);
+    const stderrRedactor = createSecretRedactor(secretValues);
     let settled = false;
     let timedOut = false;
 
@@ -416,10 +424,24 @@ const defaultRunOpenCode: RunOpenCode = async ({
       terminate();
     }
 
+    function flushOutput(): void {
+      const stdout = redactSecrets(stdoutRedactor.flush(), secretValues);
+      const stderr = redactSecrets(stderrRedactor.flush(), secretValues);
+      output += stdout;
+      errorOutput += stderr;
+      if (sessionLogPath) {
+        appendSessionLog(sessionLogPath, stdout);
+        appendSessionLog(sessionLogPath, stderr);
+      } else {
+        process.stdout.write(stdout);
+        process.stderr.write(stderr);
+      }
+    }
+
     signal.addEventListener("abort", handleAbort, { once: true });
 
     child.stdout.on("data", (chunk: Buffer) => {
-      const text = chunk.toString();
+      const text = stdoutRedactor.push(chunk.toString());
 
       output += text;
 
@@ -431,7 +453,7 @@ const defaultRunOpenCode: RunOpenCode = async ({
     });
 
     child.stderr.on("data", (chunk: Buffer) => {
-      const text = chunk.toString();
+      const text = stderrRedactor.push(chunk.toString());
 
       errorOutput += text;
 
@@ -446,6 +468,8 @@ const defaultRunOpenCode: RunOpenCode = async ({
       if (settled) {
         return;
       }
+
+      flushOutput();
 
       settled = true;
       clearTimeout(safetyTimeout);
@@ -465,6 +489,8 @@ const defaultRunOpenCode: RunOpenCode = async ({
       if (settled) {
         return;
       }
+
+      flushOutput();
 
       settled = true;
       clearTimeout(safetyTimeout);

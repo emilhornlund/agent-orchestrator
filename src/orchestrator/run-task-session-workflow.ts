@@ -82,6 +82,7 @@ import {
   readRejectedCommitState,
   readTrustedCommitState,
 } from "./trusted-commit-state.js";
+import { logger } from "../logging/logger.js";
 
 export interface RunTaskSessionWorkflowOptions {
   project: ProjectConfig & { contextRoot?: string };
@@ -1812,6 +1813,8 @@ export async function runTaskSessionWorkflow(
   }
   if (mutation === null || selectedCard === null) return;
   const card = selectedCard;
+  const cardLog = logger.child({ projectId: project.id, cardId: card.id });
+  cardLog.event("Card claimed from Ready for Agent");
   try {
     if (mutation.kind === "refinement") {
       if (recoveryRecord !== null) {
@@ -1823,6 +1826,7 @@ export async function runTaskSessionWorkflow(
         throw new Error("Unified scheduler has no refinement operation");
       }
       const worktree = await prepareWorktree(git, project, card.id);
+      cardLog.event("Worktree prepared");
       const claimedCard = await trello.moveCard(
         card.id,
         project.trello.workingListId,
@@ -1844,10 +1848,12 @@ export async function runTaskSessionWorkflow(
       operationKey = recoveryRecord.operationKey;
     } else {
       worktree = await prepareWorktree(git, project, card.id);
+      cardLog.event("Worktree prepared");
       const claimedCard = await trello.moveCard(
         card.id,
         project.trello.workingListId,
       );
+      cardLog.event("Card moved to Working");
       activeCard = claimedCard ?? card;
       operationKey = mutation.operationKey;
       taskStore.create({

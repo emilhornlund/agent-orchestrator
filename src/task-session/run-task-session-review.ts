@@ -24,6 +24,7 @@ import { transitionTaskExecutionRecord } from "./task-execution-transition.js";
 import type { ImplementationReviewResult } from "./implementation-review-result.js";
 import { parseImplementationReviewResult } from "./implementation-review-result.js";
 import type { TrelloCard } from "../trello/trello-client.js";
+import { getSessionLogPath } from "../logging/session-log.js";
 
 export class TaskSessionReviewError extends Error {
   constructor(
@@ -305,6 +306,10 @@ export async function runTaskSessionReview(
           ].join("\n\n");
     runResult = await openCode.run({
       ...runOptions,
+      sessionLogPath:
+        runOptions.sessionLogPath ?? getSessionLogPath(project.id, card.id),
+      sessionLabel:
+        runOptions.sessionLabel ?? "Task-session implementation review",
       cwd: worktreePath,
       prompt: attemptPrompt,
       readOnly: true,

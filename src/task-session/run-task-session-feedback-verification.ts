@@ -6,6 +6,7 @@ import type {
 } from "../opencode/opencode-client.js";
 import { buildTaskSessionFeedbackVerificationPrompt } from "../opencode/build-task-session-feedback-verification-prompt.js";
 import type { TrelloCard } from "../trello/trello-client.js";
+import { getSessionLogPath } from "../logging/session-log.js";
 import type { FeedbackLedgerEntry } from "./feedback-ledger.js";
 import type { TaskPlan } from "./task-plan.js";
 import {
@@ -116,6 +117,11 @@ export async function runTaskSessionFeedbackVerification(
   });
   const response = await options.openCode.run({
     ...options.runOptions,
+    sessionLogPath:
+      options.runOptions.sessionLogPath ??
+      getSessionLogPath(options.project.id, options.card.id),
+    sessionLabel:
+      options.runOptions.sessionLabel ?? "Task-session feedback verification",
     cwd: options.worktreePath,
     prompt,
     readOnly: true,

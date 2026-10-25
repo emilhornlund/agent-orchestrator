@@ -11,6 +11,7 @@ import { getTaskSessionSourceSnapshotIdentity } from "./source-snapshot.js";
 import type { TaskExecutionStore } from "./task-execution-store.js";
 import { loadOwnedTaskExecutionRecord } from "./task-execution-ownership.js";
 import { assertOwnedTaskWorktreePath } from "./run-task-session-implementation.js";
+import { getSessionLogPath } from "../logging/session-log.js";
 
 export type TaskSessionValidationStatus =
   "passed" | "failed" | "timed-out" | "aborted";
@@ -65,9 +66,9 @@ function buildCommandOptions(
       ? {}
       : { secretValues: options.secretValues }),
     sessionLabel: options.commandLabel ?? "Task-session repository validation",
-    ...(options.sessionLogPath === undefined
-      ? {}
-      : { sessionLogPath: options.sessionLogPath }),
+    sessionLogPath:
+      options.sessionLogPath ??
+      getSessionLogPath(options.project.id, options.cardId),
   };
 }
 

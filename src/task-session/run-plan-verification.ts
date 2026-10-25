@@ -5,6 +5,7 @@ import type {
   OpenCodeRunResult,
 } from "../opencode/opencode-client.js";
 import type { TrelloCard } from "../trello/trello-client.js";
+import { getSessionLogPath } from "../logging/session-log.js";
 import { TaskExecutionStore } from "./task-execution-store.js";
 import { TaskPlanStore } from "./task-plan-store.js";
 import {
@@ -87,7 +88,13 @@ export async function runPlanVerification(
     ...(attachmentContext === undefined ? {} : { attachmentContext }),
   });
 
-  const runResult = await openCode.run({ ...runOptions, prompt });
+  const runResult = await openCode.run({
+    ...runOptions,
+    sessionLogPath:
+      runOptions.sessionLogPath ?? getSessionLogPath(projectId, card.id),
+    sessionLabel: runOptions.sessionLabel ?? "Independent plan verification",
+    prompt,
+  });
 
   if (runResult.exitCode !== 0) {
     throw new PlanVerificationOperationError(

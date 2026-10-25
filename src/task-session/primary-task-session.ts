@@ -4,6 +4,7 @@ import type {
   OpenCodeRunResult,
 } from "../opencode/opencode-client.js";
 import { TaskExecutionStore } from "./task-execution-store.js";
+import { getSessionLogPath } from "../logging/session-log.js";
 import type { TaskExecutionRecord } from "./task-execution-record.js";
 
 export class PrimaryTaskSessionError extends Error {
@@ -43,6 +44,11 @@ export async function runWithPrimaryTaskSession(
   cardId: string,
   runOptions: Omit<OpenCodeRunOptions, "sessionId" | "captureSessionId">,
 ): Promise<OpenCodeRunResult> {
+  runOptions = {
+    ...runOptions,
+    sessionLogPath:
+      runOptions.sessionLogPath ?? getSessionLogPath(projectId, cardId),
+  };
   const record = store.read(cardId);
 
   if (record === null) {
