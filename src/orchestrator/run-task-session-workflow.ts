@@ -66,7 +66,10 @@ import { parseImplementationReviewResult } from "../task-session/implementation-
 import { decideTaskSessionAutoMergeReadiness } from "../task-session/task-session-auto-merge-readiness.js";
 import { getTaskSessionSourceSnapshotIdentity } from "../task-session/source-snapshot.js";
 import { publishTaskSessionCard } from "./publish-task-session-card.js";
-import { publishCard } from "./publish-card.js";
+import {
+  publishCard,
+  enrichMaintainedPullRequestDescription,
+} from "./publish-card.js";
 import { runWithPrimaryTaskSession } from "../task-session/primary-task-session.js";
 import { buildAutoMergeSummary } from "./auto-merge.js";
 import { mergeTaskSessionPullRequest } from "./merge-task-session-pull-request.js";
@@ -1538,6 +1541,42 @@ export async function runTaskSessionWorkflow(
         maintenanceResult === "conflicted"
       ) {
         maintenanceHandledCardIds.add(observation.cardId);
+      }
+      if (
+        maintenanceResult === "published" ||
+        maintenanceResult === "reconciled"
+      ) {
+        const published = taskStore.read(observation.cardId);
+        if (
+          published?.pullRequest?.url === observation.pullRequestUrl &&
+          typeof published.pullRequest.headSha === "string" &&
+          published.pullRequest.headSha !== observation.headSha
+        ) {
+          try {
+            await enrichMaintainedPullRequestDescription({
+              git,
+              github,
+              opencode: openCode,
+              project,
+              card,
+              worktreePath: path.join(project.repository.worktreeRoot, card.id),
+              pullRequestUrl: observation.pullRequestUrl,
+              commitSha: published.pullRequest.headSha,
+              verifiedFacts: [
+                `Configured validation passed for maintained commit ${published.pullRequest.headSha}.`,
+                "Independent implementation review passed for the maintained source.",
+                "Fresh GitHub CI for the maintained head has not yet been verified.",
+              ],
+              signal,
+            });
+          } catch {
+            logger
+              .child({ projectId: project.id, cardId: card.id })
+              .warn(
+                "PR description enrichment failed after verified maintenance; publication and CI state remain intact",
+              );
+          }
+        }
       }
     }
   }

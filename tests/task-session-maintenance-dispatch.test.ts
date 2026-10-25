@@ -6,6 +6,7 @@ import type { ProjectConfig } from "../src/config/config.js";
 import { runTaskSessionWorkflow } from "../src/orchestrator/run-task-session-workflow.js";
 import { observeTaskSessionReviewCards } from "../src/orchestrator/observe-task-session-review-cards.js";
 import { maintainOutdatedPr } from "../src/orchestrator/maintain-outdated-pr.js";
+import { enrichMaintainedPullRequestDescription } from "../src/orchestrator/publish-card.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
 import { TaskPlanStore } from "../src/task-session/task-plan-store.js";
 
@@ -18,6 +19,10 @@ vi.mock("../src/orchestrator/maintain-outdated-pr.js", () => ({
 }));
 vi.mock("../src/orchestrator/run-task-session-feedback-cycle.js", () => ({
   runTaskSessionFeedbackCycle: vi.fn(async () => "idle"),
+}));
+vi.mock("../src/orchestrator/publish-card.js", () => ({
+  publishCard: vi.fn(),
+  enrichMaintainedPullRequestDescription: vi.fn(async () => true),
 }));
 
 const sha = "a".repeat(40);
@@ -170,6 +175,30 @@ describe("default-enabled maintenance in the production Human Review polling pat
   it("dispatches when maintenance is explicitly enabled", async () => {
     await pollReview("diverged", { enabled: true });
     expect(maintainOutdatedPr).toHaveBeenCalledOnce();
+  });
+
+  it("enriches the same PR only after successful maintenance publication", async () => {
+    const newHead = "b".repeat(40);
+    vi.mocked(maintainOutdatedPr).mockImplementationOnce(async (options) => {
+      const current = options.taskStore.read(options.card.id)!;
+      options.taskStore.compareAndSwap(current.cardId, current.revision, {
+        ...current,
+        pullRequest: { ...current.pullRequest!, headSha: newHead },
+        revision: current.revision + 1,
+        updatedAt: new Date(
+          Math.max(Date.now(), Date.parse(current.updatedAt) + 1),
+        ).toISOString(),
+      });
+      return "published";
+    });
+    await pollReview("diverged");
+    expect(enrichMaintainedPullRequestDescription).toHaveBeenCalledOnce();
+    expect(
+      vi.mocked(enrichMaintainedPullRequestDescription).mock.calls[0]?.[0],
+    ).toMatchObject({
+      pullRequestUrl: "https://github.com/owner/repo/pull/42",
+      commitSha: newHead,
+    });
   });
 
   it("honors an explicit maintenance opt-out", async () => {
