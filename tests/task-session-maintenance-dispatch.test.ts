@@ -150,11 +150,11 @@ async function pollReview(
   });
 }
 
-describe("default-enabled maintenance in the production Human Review polling path", () => {
+describe("opt-in maintenance in the production Human Review polling path", () => {
   it.each(["behind", "diverged"] as const)(
-    "dispatches %s owned PRs with maintenance omitted",
+    "dispatches %s owned PRs only with maintenance enabled",
     async (relation) => {
-      await pollReview(relation);
+      await pollReview(relation, { enabled: true });
       expect(maintainOutdatedPr).toHaveBeenCalledOnce();
       expect(vi.mocked(maintainOutdatedPr).mock.calls[0]?.[0]).toMatchObject({
         eligible: true,
@@ -172,9 +172,9 @@ describe("default-enabled maintenance in the production Human Review polling pat
     },
   );
 
-  it("dispatches when maintenance is explicitly enabled", async () => {
-    await pollReview("diverged", { enabled: true });
-    expect(maintainOutdatedPr).toHaveBeenCalledOnce();
+  it("does not dispatch when maintenance is omitted", async () => {
+    await pollReview("diverged");
+    expect(maintainOutdatedPr).not.toHaveBeenCalled();
   });
 
   it("enriches the same PR only after successful maintenance publication", async () => {
@@ -191,7 +191,7 @@ describe("default-enabled maintenance in the production Human Review polling pat
       });
       return "published";
     });
-    await pollReview("diverged");
+    await pollReview("diverged", { enabled: true });
     expect(enrichMaintainedPullRequestDescription).toHaveBeenCalledOnce();
     expect(
       vi.mocked(enrichMaintainedPullRequestDescription).mock.calls[0]?.[0],
