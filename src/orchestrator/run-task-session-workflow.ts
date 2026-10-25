@@ -62,6 +62,7 @@ import {
   type TaskExecutionEvent,
 } from "../task-session/task-execution-transition.js";
 import type { TaskExecutionRecord } from "../task-session/task-execution-record.js";
+import { runPrMaintenanceReview } from "../task-session/run-pr-maintenance-review.js";
 import { parseImplementationReviewResult } from "../task-session/implementation-review-result.js";
 import { decideTaskSessionAutoMergeReadiness } from "../task-session/task-session-auto-merge-readiness.js";
 import { getTaskSessionSourceSnapshotIdentity } from "../task-session/source-snapshot.js";
@@ -1476,40 +1477,29 @@ export async function runTaskSessionWorkflow(
         review: async ({
           contentIdentity,
           preparedHead,
+          baseHead,
           requirementIds,
+          validation,
+          coverage,
           signal: reviewSignal,
-        }) => {
-          const result = await openCode.run({
-            cwd: path.join(project.repository.worktreeRoot, card.id),
-            model: project.opencode.review.model,
-            variant: project.opencode.review.variant,
-            timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
+        }) =>
+          runPrMaintenanceReview({
+            openCode,
+            project,
+            card,
+            worktreePath: path.join(project.repository.worktreeRoot, card.id),
+            approvedRequirements: storedPlan.plan.requirements,
+            changedFiles: await git.getChangedFiles(
+              path.join(project.repository.worktreeRoot, card.id),
+              baseHead,
+            ),
+            requirementIds,
+            preparedHead,
+            contentIdentity,
+            validation,
+            coverage,
             signal: reviewSignal,
-            readOnly: true,
-            sessionLabel: "PR maintenance independent review",
-            prompt: [
-              "Independently review this rebased implementation against every approved requirement.",
-              "Inspect the complete current repository content and report only the specified JSON schema.",
-              `Project: ${project.id}; card: ${card.id}; prepared commit: ${preparedHead}; content identity: ${contentIdentity}`,
-              `Approved requirements (review every one): ${JSON.stringify(storedPlan.plan.requirements)}`,
-              `Every requirement must have one concrete assessment: ${JSON.stringify(requirementIds)}`,
-              'Schema: {"version":1,"projectId":"...","cardId":"...","verdict":"pass|fail","requirementAssessments":[{"requirementId":"...","status":"satisfied|unsatisfied","details":"...","evidence":["..."]}],"blockingFindings":[],"reviewedContentIdentity":"..."}',
-            ].join("\n\n"),
-          });
-          if (result.exitCode !== 0)
-            throw new Error(
-              `Maintenance review exited with code ${result.exitCode}`,
-            );
-          return parseImplementationReviewResult(
-            JSON.parse(result.output) as unknown,
-            {
-              projectId: project.id,
-              cardId: card.id,
-              requirementIds,
-              contentIdentity,
-            },
-          );
-        },
+          }),
         remediateConflict: async ({
           conflictedPaths,
           rebase,
@@ -1527,6 +1517,7 @@ export async function runTaskSessionWorkflow(
             timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
             signal: remediationSignal,
             sessionId: task.primarySessionId,
+            sessionLogPath: getSessionLogPath(project.id, card.id),
             sessionLabel: `PR maintenance conflict remediation pass ${attempt}`,
             prompt: [
               "Resolve only the active conflicts in this existing published task branch rebase.",
