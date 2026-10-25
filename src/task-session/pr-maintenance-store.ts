@@ -7,6 +7,7 @@ import {
   parsePrMaintenanceOperation,
   localPreparationSchema,
   type LocalPreparationProgress,
+  type MaintenanceQualityEvidence,
   type PrMaintenanceOperation,
 } from "./pr-maintenance-operation.js";
 
@@ -280,6 +281,47 @@ export class PrMaintenanceStore {
       const updated = parsePrMaintenanceOperation({
         ...current,
         localPreparation: validated,
+        updatedAt: new Date().toISOString(),
+      });
+      const operations = [...record.operations];
+      operations[index] = updated;
+      return { ...record, operations };
+    }, operationId);
+  }
+
+  recordQualityVerification(
+    operationId: string,
+    identity: Pick<
+      PrMaintenanceOperation,
+      | "projectId"
+      | "cardId"
+      | "pullRequest"
+      | "expectedRemoteHead"
+      | "targetBaseHead"
+    >,
+    evidence: MaintenanceQualityEvidence,
+  ): PrMaintenanceOperation {
+    return this.update((record) => {
+      const index = record.operations.findIndex(
+        (item) => item.operationId === operationId,
+      );
+      const current = record.operations[index];
+      if (current === undefined)
+        throw new PrMaintenanceConflictError(
+          `Unknown maintenance operation: ${operationId}`,
+        );
+      this.assertIdentity(current, identity);
+      if (
+        current.localPreparation?.status !== "prepared" ||
+        current.localPreparation.resultingHead !== evidence.preparedHead
+      ) {
+        throw new PrMaintenanceConflictError(
+          "Quality evidence must match the prepared maintenance head",
+        );
+      }
+      const updated = parsePrMaintenanceOperation({
+        ...current,
+        qualityVerification: evidence,
         updatedAt: new Date().toISOString(),
       });
       const operations = [...record.operations];
