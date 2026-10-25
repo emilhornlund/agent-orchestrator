@@ -84,6 +84,8 @@ import {
 } from "./trusted-commit-state.js";
 import { logger } from "../logging/logger.js";
 
+const lastLoggedCiState = new Map<string, string>();
+
 export interface RunTaskSessionWorkflowOptions {
   project: ProjectConfig & { contextRoot?: string };
   trello: TrelloClient;
@@ -692,6 +694,22 @@ export async function runTaskSessionWorkflow(
       continue;
     }
     let record = taskStore.read(observation.cardId);
+    const ciStateKey = `${project.id}/${observation.cardId}/${observation.headSha}`;
+    const ciState = observation.ciEvaluation.status;
+    if (lastLoggedCiState.get(ciStateKey) !== ciState) {
+      logger
+        .child({ projectId: project.id, cardId: observation.cardId })
+        .event(
+          ciState === "waiting"
+            ? `CI waiting for ${observation.headSha}`
+            : ciState === "failed"
+              ? `CI failed for ${observation.headSha}`
+              : ciState === "passed"
+                ? `CI passed for ${observation.headSha}`
+                : `CI state uncertain for ${observation.headSha}`,
+        );
+      lastLoggedCiState.set(ciStateKey, ciState);
+    }
     if (
       record !== null &&
       record.phase === "human-feedback" &&
@@ -731,6 +749,9 @@ export async function runTaskSessionWorkflow(
       const activeMutation = queue.claimForRecovery(ciEventId);
       if (activeMutation === null || activeMutation.eventId !== ciEventId)
         continue;
+      logger
+        .child({ projectId: project.id, cardId: observation.cardId })
+        .event("CI repair started");
       const card = humanReviewCards.find(
         (candidate) => candidate.id === observation.cardId,
       );
@@ -1214,6 +1235,13 @@ export async function runTaskSessionWorkflow(
       }
       if (ciResult.status === "exhausted") queue.fail(ciEventId);
       else queue.complete(ciEventId);
+      logger
+        .child({ projectId: project.id, cardId: observation.cardId })
+        .event(
+          ciResult.status === "passed"
+            ? "CI repair succeeded"
+            : "CI repair failed",
+        );
       if (
         ciResult.status === "passed" &&
         (!project.autoMerge || observation.feedbackIds.length > 0)
@@ -1470,6 +1498,9 @@ export async function runTaskSessionWorkflow(
         throw new Error(
           `Trello did not confirm terminal Failed transition for ${strandedMutation.cardId}`,
         );
+      logger
+        .child({ projectId: project.id, cardId: strandedMutation.cardId })
+        .event("Terminal failure transition to Failed confirmed");
     }
     const currentRecord = taskStore.read(strandedMutation.cardId);
     if (
@@ -1618,6 +1649,9 @@ export async function runTaskSessionWorkflow(
           throw new Error(
             `Trello did not confirm terminal Failed transition for ${card.id}`,
           );
+        logger
+          .child({ projectId: project.id, cardId: card.id })
+          .event("Terminal failure transition to Failed confirmed");
       }
       const latestFailureRecord = taskStore.read(card.id);
       if (
@@ -1814,7 +1848,9 @@ export async function runTaskSessionWorkflow(
   if (mutation === null || selectedCard === null) return;
   const card = selectedCard;
   const cardLog = logger.child({ projectId: project.id, cardId: card.id });
-  cardLog.event("Card claimed from Ready for Agent");
+  if (recoveryRecord !== null) {
+    cardLog.event(`Recovering existing task in ${recoveryRecord.phase} phase`);
+  }
   try {
     if (mutation.kind === "refinement") {
       if (recoveryRecord !== null) {
@@ -1831,6 +1867,7 @@ export async function runTaskSessionWorkflow(
         card.id,
         project.trello.workingListId,
       );
+      cardLog.event("Card claimed; transition to Working succeeded");
       await options.processRefinement(claimedCard ?? card, worktree);
       if (signal.aborted) queue.fail(mutation.eventId);
       else queue.complete(mutation.eventId);
@@ -1853,7 +1890,7 @@ export async function runTaskSessionWorkflow(
         card.id,
         project.trello.workingListId,
       );
-      cardLog.event("Card moved to Working");
+      cardLog.event("Card claimed; transition to Working succeeded");
       activeCard = claimedCard ?? card;
       operationKey = mutation.operationKey;
       taskStore.create({
@@ -1919,7 +1956,8 @@ export async function runTaskSessionWorkflow(
     if (taskRecord === null)
       throw new Error("Task record disappeared before task-session execution");
     if (taskRecord.phase === "planning") {
-      if (planStore.read(activeCard.id) === null)
+      if (planStore.read(activeCard.id) === null) {
+        cardLog.event("Planning started");
         await runTaskPlanningOperation({
           taskRecordStore: taskStore,
           planStore,
@@ -1929,10 +1967,13 @@ export async function runTaskSessionWorkflow(
           ...(attachmentContext === undefined ? {} : { attachmentContext }),
           runOptions: { ...commonRunOptions, cwd: worktreePath },
         });
+        cardLog.event("Planning completed");
+      }
       const savedPlan = planStore.read(activeCard.id);
       if (savedPlan === null)
         throw new Error("Task planning completed without a persisted plan");
       if (savedPlan.verification?.verdict !== "pass") {
+        cardLog.event("Independent plan verification started");
         const verification = await runPlanVerification({
           taskRecordStore: taskStore,
           planStore,
@@ -1949,8 +1990,11 @@ export async function runTaskSessionWorkflow(
             readOnly: true,
           },
         });
-        if (verification.verification.verdict !== "pass")
+        if (verification.verification.verdict !== "pass") {
+          cardLog.event("Independent plan verification failed");
           throw new Error("Independent plan verification did not pass");
+        }
+        cardLog.event("Independent plan verification passed");
       }
     } else {
       const savedPlan = planStore.read(activeCard.id);
@@ -1974,6 +2018,7 @@ export async function runTaskSessionWorkflow(
           "Interrupted review repair does not contain its persisted findings; manual attention is required",
         );
       }
+      cardLog.event("Implementation started");
       await runTaskSessionImplementation({
         taskRecordStore: taskStore,
         planStore,
@@ -1988,6 +2033,7 @@ export async function runTaskSessionWorkflow(
         resume: taskRecord.phase === "implementation",
         runOptions: commonRunOptions,
       });
+      cardLog.event("Implementation completed");
     }
     const validationOptions = {
       project,
@@ -2008,20 +2054,27 @@ export async function runTaskSessionWorkflow(
       ReturnType<typeof runTaskSessionValidationWithRepairs>
     >;
     if (phaseRecord.phase === "validation") {
-      quality = await runTaskSessionValidationWithRepairs({
-        validation: validationOptions,
-        openCode,
-        planStore,
-        card: activeCard,
-        expectedPrimarySessionId: phaseRecord.primarySessionId!,
-        ...(attachmentContext === undefined ? {} : { attachmentContext }),
-        repairRunOptions: {
-          model: project.opencode.remediation.model,
-          variant: project.opencode.remediation.variant,
-          timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
-          signal,
-        },
-      });
+      cardLog.event("Validation started");
+      try {
+        quality = await runTaskSessionValidationWithRepairs({
+          validation: validationOptions,
+          openCode,
+          planStore,
+          card: activeCard,
+          expectedPrimarySessionId: phaseRecord.primarySessionId!,
+          ...(attachmentContext === undefined ? {} : { attachmentContext }),
+          repairRunOptions: {
+            model: project.opencode.remediation.model,
+            variant: project.opencode.remediation.variant,
+            timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
+            signal,
+          },
+        });
+        cardLog.event("Validation passed");
+      } catch (error) {
+        cardLog.event("Validation failed");
+        throw error;
+      }
     } else if (
       phaseRecord.phase === "review" ||
       phaseRecord.phase === "publication"
@@ -2080,6 +2133,7 @@ export async function runTaskSessionWorkflow(
     let currentCoverage = quality.coverage;
     const expectedSession = taskStore.read(activeCard.id)!.primarySessionId!;
     const runReview = async () => {
+      cardLog.event("Review started");
       const result = await runTaskSessionReview({
         project,
         card: activeCard,
@@ -2100,6 +2154,9 @@ export async function runTaskSessionWorkflow(
           signal,
         },
       });
+      cardLog.event(
+        result.review.verdict === "pass" ? "Review passed" : "Review failed",
+      );
       return { review: result.review, contentIdentity: result.contentIdentity };
     };
     const runQualityAgain = async () => {
@@ -2157,6 +2214,7 @@ export async function runTaskSessionWorkflow(
         expectedPrimarySessionId: expectedSession,
         runReview: runReviewRounds,
         repair: async (review, attempt) => {
+          cardLog.event(`Review repair attempt ${attempt} started`);
           let current = taskStore.read(activeCard.id);
           if (current === null)
             throw new Error(
@@ -2196,6 +2254,7 @@ export async function runTaskSessionWorkflow(
             throw new Error(
               `Primary review repair exited with code ${repaired.exitCode}`,
             );
+          cardLog.event(`Review repair attempt ${attempt} completed`);
           current = taskStore.read(activeCard.id);
           if (current === null)
             throw new Error("Task record disappeared after review repair");
@@ -2427,6 +2486,9 @@ export async function runTaskSessionWorkflow(
         verifyPreparedContent,
       });
     }
+    cardLog.event(
+      `${recoveredTrustedCommit === null ? "Commit created" : "Trusted commit reused"}: ${publishedSha}`,
+    );
     const pr = await github.findPullRequestState({
       cwd: project.repository.path,
       repository: project.repository.github,
@@ -2438,6 +2500,9 @@ export async function runTaskSessionWorkflow(
       throw new Error(
         "Published PR could not be verified on its expected head",
       );
+    cardLog.event(
+      `Pull request published or reused: #${Number(new URL(pr.url).pathname.split("/").at(-1))} ${pr.url}`,
+    );
     const current = taskStore.read(activeCard.id);
     if (current === null)
       throw new Error("Task record disappeared after PR publication");
@@ -2471,6 +2536,9 @@ export async function runTaskSessionWorkflow(
         ),
         checks: ciObservation.checks,
       });
+      cardLog.event(
+        `CI ${ciEvaluation.status === "waiting" ? "waiting" : ciEvaluation.status === "failed" ? "failed" : "passed"} for ${publishedSha}`,
+      );
       if (ciEvaluation.status === "passed") {
         await mergeTaskSessionPullRequest(
           github,

@@ -168,6 +168,9 @@ export async function completeMergedTaskSessionPullRequest(options: {
         { reconciliationListId: project.trello.reviewListId },
       );
     }
+    cardLog.event(
+      `Merged pull request transitioned card to Done: ${pullRequest.url}`,
+    );
     if (options.completionComment !== undefined) {
       try {
         await trello.addComment(card.id, options.completionComment);
@@ -214,6 +217,9 @@ export async function returnClosedTaskSessionPullRequestToBacklog(options: {
         { reconciliationListId: project.trello.reviewListId },
       );
     }
+    cardLog.event(
+      `Closed pull request returned card to Backlog: ${pullRequest.url}`,
+    );
     try {
       await trello.addComment(
         card.id,
