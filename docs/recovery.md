@@ -81,6 +81,34 @@ The expected remote branch is deleted only for a verified merged PR and only aft
 local worktree cleanup is restricted to the expected path and branch and refuses symlinks, dirty trees, active rebases, conflicts,
 or unknown paths. A cleanup failure preserves the terminal event so the operation can be retried without losing ownership.
 
+## Failed, unpublished PR maintenance and removed tasks
+
+A deterministic PR-maintenance quality failure (including an invalid review
+response after format correction) must not indefinitely own the project queue.
+On the next poll, a failed maintenance mutation can be retired only when its
+persisted operation is unowned, the prepared commit identity matches the failed
+quality evidence, and **no publication intent exists**. The maintenance record
+is marked `cancelled` before the matching queue mutation is completed. A
+restart between these writes reconciles the same event without replaying work.
+
+The prepared local rebase, its worktree, and its persisted evidence are
+preserved. A cancelled, failed maintenance review is not treated as passing
+and is not automatically rerun or published. A subsequent closed PR with
+such an unpublished rebase can transition its extant Trello card to Backlog,
+but must preserve the worktree for deliberate operator cleanup.
+
+A queued or interrupted terminal-PR mutation may outlive its Trello card.
+If that card is absent from the Human Review list, polling verifies the
+exact PR by its stored number, URL, original task ownership, base and head
+identity, and terminal state. Only then can it complete the orphan event
+**without recreating or moving the missing Trello card or deleting the
+worktree**. A mismatch or unavailable authoritative PR evidence remains
+blocked with a diagnostic rather than being guessed.
+
+These safeguards do not authorize retiring an ambiguous push, live owner,
+active conflict, or unknown repository mutation. Preserve state and seek
+operator recovery in those cases.
+
 ## Prepared publication conflicts
 
 A verified active conflicted rebase uses the persisted handoff below the configured worktree root:

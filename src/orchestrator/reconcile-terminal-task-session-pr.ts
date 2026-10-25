@@ -198,6 +198,7 @@ export async function returnClosedTaskSessionPullRequestToBacklog(options: {
   pullRequest: PullRequestState;
   preparedConflict?: PreparedConflictHandoff;
   signal: AbortSignal;
+  preserveWorktree?: boolean;
 }): Promise<void> {
   const { trello, git, project, card, pullRequest, signal } = options;
   const cardLog = logger.child({ projectId: project.id, cardId: card.id });
@@ -233,5 +234,11 @@ export async function returnClosedTaskSessionPullRequestToBacklog(options: {
       cardLog.error(`Could not add closed PR note: ${message(error)}`);
     }
   }
-  await cleanupTerminalWorktree(git, project, card, cardLog, signal);
+  if (options.preserveWorktree) {
+    cardLog.warn(
+      "Unpublished prepared PR-maintenance worktree preserved after closed PR; manual cleanup required",
+    );
+  } else {
+    await cleanupTerminalWorktree(git, project, card, cardLog, signal);
+  }
 }

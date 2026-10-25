@@ -91,7 +91,9 @@ import { PrMaintenanceStore } from "../task-session/pr-maintenance-store.js";
 import {
   maintainOutdatedPr,
   reconcileInterruptedPrMaintenance,
+  retireFailedUnpublishedPrMaintenance,
 } from "./maintain-outdated-pr.js";
+import { reconcileUnobservedTerminalPrEvents } from "./reconcile-unobserved-terminal-pr.js";
 
 const lastLoggedCiState = new Map<string, string>();
 const reportedMissingMaintenancePlans = new Set<string>();
@@ -539,11 +541,17 @@ export async function runTaskSessionWorkflow(
   const taskStore = new TaskExecutionStore(root, project);
   const planStore = new TaskPlanStore(root, project);
   const queue = new TaskMutationQueue(root, project);
+  const maintenanceStore = new PrMaintenanceStore(root, project);
   const feedbackLedgerStore = new FeedbackLedgerStore(root, project);
+  retireFailedUnpublishedPrMaintenance({
+    project,
+    maintenanceStore,
+    mutationQueue: queue,
+  });
   await reconcileInterruptedPrMaintenance({
     project,
     taskStore,
-    maintenanceStore: new PrMaintenanceStore(root, project),
+    maintenanceStore,
     mutationQueue: queue,
     github,
   });
@@ -555,6 +563,16 @@ export async function runTaskSessionWorkflow(
     signal,
   );
   options.onHumanReviewCardsObserved?.(humanReviewCards.map((card) => card.id));
+  await reconcileUnobservedTerminalPrEvents({
+    project,
+    queue,
+    taskStore,
+    maintenanceStore,
+    github,
+    trello,
+    signal,
+    observedReviewCardIds: humanReviewCards.map((card) => card.id),
+  });
   const observations = await observeTaskSessionReviewCards({
     project,
     cards: humanReviewCards,
@@ -633,6 +651,14 @@ export async function runTaskSessionWorkflow(
             project,
             card,
             pullRequest: authoritative,
+            preserveWorktree: maintenanceStore
+              .inspect()
+              .some(
+                (item) =>
+                  item.cardId === cardId &&
+                  item.status === "cancelled" &&
+                  item.localPreparation?.status === "prepared",
+              ),
             signal,
           });
         }
@@ -699,6 +725,14 @@ export async function runTaskSessionWorkflow(
           project,
           card,
           pullRequest: observation.pullRequest,
+          preserveWorktree: maintenanceStore
+            .inspect()
+            .some(
+              (item) =>
+                item.cardId === card.id &&
+                item.status === "cancelled" &&
+                item.localPreparation?.status === "prepared",
+            ),
           signal,
         });
         options.onHumanReviewCardLeft?.(card.id);
@@ -1426,9 +1460,18 @@ export async function runTaskSessionWorkflow(
     github,
     cwd: project.repository.path,
   });
+  await reconcileUnobservedTerminalPrEvents({
+    project,
+    queue,
+    taskStore,
+    maintenanceStore,
+    github,
+    trello,
+    signal,
+    observedReviewCardIds: latestHumanReviewCards.map((card) => card.id),
+  });
   const maintenanceHandledCardIds = new Set<string>();
   if (project.maintenance?.enabled === true) {
-    const maintenanceStore = new PrMaintenanceStore(root, project);
     for (const observation of latestObservations) {
       if (
         observation.state !== "OPEN" ||

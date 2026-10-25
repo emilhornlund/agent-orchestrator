@@ -16,6 +16,7 @@ vi.mock("../src/orchestrator/observe-task-session-review-cards.js", () => ({
 vi.mock("../src/orchestrator/maintain-outdated-pr.js", () => ({
   maintainOutdatedPr: vi.fn(async () => "deferred"),
   reconcileInterruptedPrMaintenance: vi.fn(async () => undefined),
+  retireFailedUnpublishedPrMaintenance: vi.fn(),
 }));
 vi.mock("../src/orchestrator/run-task-session-feedback-cycle.js", () => ({
   runTaskSessionFeedbackCycle: vi.fn(async () => "idle"),
