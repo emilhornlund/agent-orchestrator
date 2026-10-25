@@ -17,6 +17,7 @@ const eventSchema = z.strictObject({
     "terminal-pr",
     "ci-repair",
     "feedback",
+    "pr-maintenance",
   ]),
   operationKey: z.string().min(1),
   enqueuedAt: z.string().datetime(),
