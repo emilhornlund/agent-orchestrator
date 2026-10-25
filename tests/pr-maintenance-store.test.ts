@@ -177,6 +177,36 @@ describe("PrMaintenanceStore", () => {
     ).toThrow(/already owns this project/);
   });
 
+  it("requires live exclusive ownership to write quality evidence", () => {
+    const { store, contextRoot, project } = setup();
+    store.create(operation());
+    store.advance("maintenance-1", "prepared", "active", identity());
+    store.recordLocalPreparation("maintenance-1", identity(), {
+      status: "prepared",
+      originalHead: sha("a"),
+      baseHead: sha("b"),
+      resultingHead: sha("c"),
+      updatedAt: new Date().toISOString(),
+    });
+    const evidence = {
+      status: "running" as const,
+      preparedHead: sha("c"),
+      contentIdentity: `sha256:${"f".repeat(64)}`,
+      startedAt: new Date().toISOString(),
+    };
+    const contender = new PrMaintenanceStore(contextRoot, project);
+    const writeQuality = (writer: PrMaintenanceStore) =>
+      writer.recordQualityVerification("maintenance-1", identity(), evidence);
+    expect(() => writeQuality(contender)).toThrow(
+      /exclusive maintenance ownership/,
+    );
+    expect(writeQuality(store).qualityVerification?.status).toBe("running");
+    store.advance("maintenance-1", "active", "completed", identity());
+    expect(() => writeQuality(store)).toThrow(
+      /exclusive maintenance ownership/,
+    );
+  });
+
   it("persists bounded conflict-remediation attempts across process restarts", () => {
     const { store, contextRoot, project } = setup();
     store.create(operation());

@@ -312,6 +312,15 @@ export class PrMaintenanceStore {
         );
       this.assertIdentity(current, identity);
       if (
+        current.status !== "active" ||
+        current.ownerToken !== this.ownerToken ||
+        !liveOwners.has(this.ownerToken)
+      ) {
+        throw new PrMaintenanceConflictError(
+          "Verified exclusive maintenance ownership is required to record quality evidence",
+        );
+      }
+      if (
         current.localPreparation?.status !== "prepared" ||
         current.localPreparation.resultingHead !== evidence.preparedHead
       ) {
