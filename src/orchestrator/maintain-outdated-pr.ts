@@ -4,6 +4,7 @@ import type { GitClient } from "../git/git-client.js";
 import type { GitHubClient } from "../github/github-client.js";
 import type { TrelloCard } from "../trello/trello-client.js";
 import type { ImplementationReviewResult } from "../task-session/implementation-review-result.js";
+import type { TaskSessionValidationResult } from "../task-session/run-task-session-validation.js";
 import type { PrMaintenanceOperation } from "../task-session/pr-maintenance-operation.js";
 import { PrMaintenanceStore } from "../task-session/pr-maintenance-store.js";
 import type { TaskExecutionRecord } from "../task-session/task-execution-record.js";
@@ -41,7 +42,10 @@ export interface MaintainOutdatedPrOptions {
   review: (input: {
     contentIdentity: string;
     preparedHead: string;
+    baseHead: string;
     requirementIds: readonly string[];
+    validation: TaskSessionValidationResult;
+    coverage: TaskSessionValidationResult | null;
     signal: AbortSignal;
   }) => Promise<ImplementationReviewResult>;
   remediateConflict?: (input: {

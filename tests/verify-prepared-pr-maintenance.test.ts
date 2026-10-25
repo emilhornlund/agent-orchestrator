@@ -4,6 +4,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { ProjectConfig } from "../src/config/config.js";
 import { CommandRunAbortedError } from "../src/process/command-runner.js";
+import { getSessionLogPath } from "../src/logging/session-log.js";
 import { PrMaintenanceStore } from "../src/task-session/pr-maintenance-store.js";
 import { verifyPreparedPrMaintenance } from "../src/task-session/verify-prepared-pr-maintenance.js";
 import type { ImplementationReviewResult } from "../src/task-session/implementation-review-result.js";
@@ -147,6 +148,18 @@ describe("verifyPreparedPrMaintenance", () => {
     const f = fixture({ coverage: true });
     const result = await f.run();
     expect(result.coverage?.status).toBe("passed");
+    expect(f.commands.run).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionLogPath: getSessionLogPath("project", "card"),
+        sessionLabel: "PR maintenance validation",
+      }),
+    );
+    expect(f.commands.run).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionLogPath: getSessionLogPath("project", "card"),
+        sessionLabel: "PR maintenance coverage",
+      }),
+    );
     expect(f.store.inspect("maintenance")?.qualityVerification?.status).toBe(
       "passed",
     );

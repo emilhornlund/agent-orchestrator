@@ -1,4 +1,5 @@
 import type { ProjectConfig } from "../config/config.js";
+import { getSessionLogPath } from "../logging/session-log.js";
 import type { GitClient } from "../git/git-client.js";
 import {
   CommandRunAbortedError,
@@ -40,7 +41,10 @@ export interface VerifyPreparedPrMaintenanceOptions {
   review: (input: {
     contentIdentity: string;
     preparedHead: string;
+    baseHead: string;
     requirementIds: readonly string[];
+    validation: TaskSessionValidationResult;
+    coverage: TaskSessionValidationResult | null;
     signal: AbortSignal;
   }) => Promise<ImplementationReviewResult>;
   secretValues?: readonly string[];
@@ -122,9 +126,9 @@ export async function verifyPreparedPrMaintenance(
         ? {}
         : { secretValues: options.secretValues }),
       sessionLabel: label,
-      ...(options.sessionLogPath === undefined
-        ? {}
-        : { sessionLogPath: options.sessionLogPath }),
+      sessionLogPath:
+        options.sessionLogPath ??
+        getSessionLogPath(project.id, operation.cardId),
     });
     return {
       command,
@@ -168,7 +172,10 @@ export async function verifyPreparedPrMaintenance(
     const review = await options.review({
       contentIdentity,
       preparedHead,
+      baseHead: operation.targetBaseHead,
       requirementIds: options.requirementIds,
+      validation,
+      coverage,
       signal: options.signal,
     });
     const assessed = new Map(
