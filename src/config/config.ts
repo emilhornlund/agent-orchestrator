@@ -231,7 +231,7 @@ const projectSchema = z.strictObject({
   autoMerge: z.boolean().default(false),
   maintenance: z
     .strictObject({
-      enabled: z.boolean().default(true),
+      enabled: z.boolean().default(false),
     })
     .optional(),
   trello: trelloSchema,
