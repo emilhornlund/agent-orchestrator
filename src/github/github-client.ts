@@ -164,6 +164,17 @@ export interface CiObservationsResult {
 
 export type PullRequestStatus = "OPEN" | "CLOSED" | "MERGED";
 
+export type PullRequestBaseRelation =
+  "current" | "behind" | "diverged" | "uncertain";
+
+export interface PullRequestBaseRelationOptions {
+  cwd: string;
+  repository: string;
+  baseBranch: string;
+  headSha: string;
+  project?: ProjectConfig;
+}
+
 export type PullRequestMergeability = "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
 
 export type PullRequestMergeStateStatus =
@@ -2043,6 +2054,46 @@ export class GitHubClient {
         options.baseBranch !== undefined,
       )[0] ?? null
     );
+  }
+
+  /** Compares the configured base with an exact PR head using GitHub's authoritative compare API. */
+  async comparePullRequestHeadToBase(
+    options: PullRequestBaseRelationOptions,
+  ): Promise<PullRequestBaseRelation> {
+    if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu.test(options.headSha)) {
+      return "uncertain";
+    }
+    let output: string;
+    try {
+      const credential = await this.resolveCredential(options.project);
+      const comparison = `${encodeURIComponent(options.baseBranch)}...${options.headSha}`;
+      output = await this.run(
+        options.cwd,
+        ["api", `repos/${options.repository}/compare/${comparison}`],
+        credential,
+      );
+    } catch {
+      return "uncertain";
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(output);
+    } catch {
+      return "uncertain";
+    }
+    if (
+      !isRecord(parsed) ||
+      !isRecord(parsed.head_commit) ||
+      parsed.head_commit.sha !== options.headSha ||
+      typeof parsed.status !== "string"
+    ) {
+      return "uncertain";
+    }
+    if (parsed.status === "behind") return "behind";
+    if (parsed.status === "diverged") return "diverged";
+    if (parsed.status === "ahead" || parsed.status === "identical")
+      return "current";
+    return "uncertain";
   }
 
   async findChangesRequestedPullRequest(

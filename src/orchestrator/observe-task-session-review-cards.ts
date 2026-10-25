@@ -15,6 +15,9 @@ import {
 } from "../github/evaluate-ci-checks.js";
 import type { TrelloCard } from "../trello/trello-client.js";
 import { TaskExecutionStore } from "../task-session/task-execution-store.js";
+import { logger } from "../logging/logger.js";
+
+const reportedOutdatedPullRequests = new Map<string, string>();
 
 export interface ObservedTaskSessionReviewCard {
   state: "OPEN";
@@ -26,6 +29,7 @@ export interface ObservedTaskSessionReviewCard {
   feedbackIds: string[];
   requestedChanges: ChangesRequestedPullRequest | null;
   conversationComments: PullRequestConversationComment[];
+  baseRelation: "current" | "behind" | "diverged" | "uncertain";
 }
 
 export interface ObservedTerminalTaskSessionPullRequest {
@@ -121,6 +125,58 @@ export async function observeTaskSessionReviewCards(
       throw new Error(
         `Authoritative pull request identity or head changed for Human Review card ${card.id}`,
       );
+    }
+    const [owner, repository] = project.repository.github.split("/");
+    const expectedNumber = Number(
+      new URL(record.pullRequest.url).pathname.split("/").at(-1),
+    );
+    const hasVerifiedOpenIdentity =
+      pullRequest.baseRefName !== undefined &&
+      pullRequest.headRefName !== undefined &&
+      pullRequest.headRepository !== undefined &&
+      pullRequest.headRepositoryOwner !== undefined;
+    if (
+      hasVerifiedOpenIdentity &&
+      (pullRequest.baseRefName !== project.repository.defaultBranch ||
+        pullRequest.headRefName !== `agent/${card.id}` ||
+        pullRequest.headRepository?.name !== repository ||
+        pullRequest.headRepositoryOwner?.login !== owner)
+    ) {
+      throw new Error(
+        `Open pull request metadata or ownership is ambiguous for Human Review card ${card.id}`,
+      );
+    }
+    let baseRelation: "current" | "behind" | "diverged" | "uncertain" =
+      "uncertain";
+    if (
+      hasVerifiedOpenIdentity &&
+      typeof github.comparePullRequestHeadToBase === "function"
+    ) {
+      try {
+        baseRelation = await github.comparePullRequestHeadToBase({
+          cwd: lookup.cwd,
+          repository: project.repository.github,
+          baseBranch: project.repository.defaultBranch,
+          headSha,
+          project,
+        });
+      } catch {
+        baseRelation = "uncertain";
+      }
+    }
+    const diagnosticKey = `${project.id}:${expectedNumber}`;
+    if (baseRelation === "behind" || baseRelation === "diverged") {
+      const identity = `${baseRelation}:${headSha}`;
+      if (reportedOutdatedPullRequests.get(diagnosticKey) !== identity) {
+        logger
+          .child({ projectId: project.id, cardId: card.id })
+          .warn(
+            `Owned Human Review PR #${expectedNumber} is outdated (${baseRelation} configured base ${project.repository.defaultBranch})`,
+          );
+        reportedOutdatedPullRequests.set(diagnosticKey, identity);
+      }
+    } else {
+      reportedOutdatedPullRequests.delete(diagnosticKey);
     }
     const [ciObservation, requestedChanges, conversationComments] =
       await Promise.all([
@@ -225,6 +281,7 @@ export async function observeTaskSessionReviewCards(
       feedbackIds,
       requestedChanges,
       conversationComments,
+      baseRelation,
     });
   }
   return observed;
