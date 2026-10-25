@@ -126,7 +126,7 @@ export async function maintainOutdatedPr(
 ): Promise<"deferred" | "conflicted" | "published" | "reconciled"> {
   const { project, card, task, maintenanceStore, mutationQueue } = options;
   if (
-    project.maintenance?.enabled !== true ||
+    project.maintenance?.enabled === false ||
     !options.eligible ||
     options.hasRequestedChanges ||
     options.hasUnresolvedFeedback ||
