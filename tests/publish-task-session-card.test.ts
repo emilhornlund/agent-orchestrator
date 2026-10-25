@@ -132,6 +132,67 @@ describe("publishTaskSessionCard", () => {
     );
   });
 
+  it(
+    "publishes exhausted failed reviews only to Human Review with valid snapshot evidence",
+    async () => {
+      const { base, git } = fixture();
+      const failed = {
+        ...evidence.review!,
+        verdict: "fail" as const,
+        blockingFindings: [
+          {
+            kind: "defect" as const,
+            summary: "Open issue",
+            detail: "Needs human review",
+          },
+        ],
+      };
+      const withFailure = { ...evidence, review: failed };
+      const committed = await publishTaskSessionCard({
+        ...base,
+        reviewResult: "Failed (human review required)",
+        exhaustedReview: failed,
+        initialEvidence: withFailure,
+        verifyPreparedContent: async () => withFailure,
+      } as never);
+      expect(committed).toBe("after");
+      expect(git.stageAll).toHaveBeenCalledOnce();
+      expect(publishCard).toHaveBeenCalledWith(
+        expect.objectContaining({
+          reviewResult: "Failed (human review required)",
+          exhaustedReview: failed,
+        }),
+      );
+    },
+  );
+
+  it(
+    "blocks failed-review publication when it lacks verified exhaustion evidence",
+    async () => {
+      const { base, git } = fixture();
+      await expect(
+        publishTaskSessionCard({
+          ...base,
+          initialEvidence: {
+            ...evidence,
+            review: {
+              ...evidence.review!,
+              verdict: "fail",
+              blockingFindings: [
+                {
+                  kind: "defect",
+                  summary: "Needs review",
+                  detail: "Open finding",
+                },
+              ],
+            },
+          },
+        } as never),
+      ).rejects.toThrow("Final implementation review did not pass");
+      expect(git.stageAll).not.toHaveBeenCalled();
+    },
+  );
+
   it("refuses publication when prepared content has stale evidence", async () => {
     const { base, git } = fixture();
     await expect(

@@ -61,7 +61,10 @@ Ready for Agent -> Working -> approved plan + independent plan check
 
 One primary OpenCode session ID is persisted per task and resumed for implementation, CI repair, and human-feedback remediation.
 Independent plan and implementation reviewers use separate sessions. The orchestrator, not OpenCode, decides whether local
-commands, independent review, and CI evidence pass before publication, feedback replies, or auto-merge. Exhausted or ambiguous
+commands, independent review, and CI evidence pass before publication, feedback replies, or auto-merge. The
+exception is a structurally valid, content-bound failed implementation review after the configured
+`remediation.maxPasses`: local validation/coverage must pass and the PR is published for human
+review with an explicit warning, but is never automatically merged. Other exhausted or ambiguous
 operations preserve their durable records and require operator attention. No manual check-name configuration is required. Local
 mock tests cover the lifecycle; no live Trello/GitHub/OpenCode pilot has been performed. See
 [Configuration](configuration.md#ci-expectation-discovery) and [Recovery](recovery.md#task-session-recovery).
@@ -148,7 +151,12 @@ plan verification before code changes begin.
 The primary session implements the approved plan. The orchestrator—not the agent—runs the required `validationCommand` and any
 configured `coverageCommand`, binding each result to the exact source content. An independent reviewer uses a separate session to
 assess every approved requirement. Validation, coverage, and review repairs are bounded; after the last correction the relevant
-checks run again. No commit or publication proceeds without current passing quality evidence and a passing final review.
+checks run again. A passing final review permits normal publication and, separately, possible
+auto-merge. If the independent implementation review remains failed after the configured
+remediation limit, successful current validation and coverage still permit publication to Human
+Review only. The failed findings are preserved and disclosed on the PR; this outcome is not a
+workflow error and sends no Attention Required notification. Failed local validation, missing
+evidence, stale snapshots, and ambiguous publication remain blocked.
 
 The orchestrator then creates one trusted commit with the configured Git identity and publishes or reuses the same task PR through
 the safe fetch/rebase and non-force-push path. The optional post-commit PR-description session is presentation-only: if structured

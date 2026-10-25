@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { ImplementationReviewResult } from "../src/task-session/implementation-review-result.js";
 import type { TaskSessionValidationResult } from "../src/task-session/run-task-session-validation.js";
-import { decideVerifiedPublication } from "../src/task-session/verified-publication-decision.js";
+import {
+  decideHumanReviewPublication,
+  decideVerifiedPublication,
+} from "../src/task-session/verified-publication-decision.js";
 
 const identity = `sha256:${"a".repeat(64)}`;
 const validation: TaskSessionValidationResult = {
@@ -121,5 +124,52 @@ describe("decideVerifiedPublication", () => {
         input({ coverageCommand: "yarn coverage", coverage: null }),
       ).reasons,
     ).toContain("Configured coverage evidence is missing");
+  });
+});
+
+describe("human-review publication after configured repair exhaustion", () => {
+  const failedReview: ImplementationReviewResult = {
+    ...review,
+    verdict: "fail",
+    blockingFindings: [
+      { kind: "defect", summary: "Unresolved", detail: "Needs human review" },
+    ],
+  };
+
+  it("allows only the exact persisted exhausted review with passed current validation", () => {
+    expect(
+      decideHumanReviewPublication(
+        input({ review: failedReview }),
+        failedReview,
+      ),
+    ).toMatchObject({ allowed: true, reasons: [] });
+    expect(
+      decideVerifiedPublication(input({ review: failedReview })).allowed,
+    ).toBe(false);
+    expect(
+      decideHumanReviewPublication(input({ review: failedReview }), undefined)
+        .allowed,
+    ).toBe(false);
+    expect(
+      decideHumanReviewPublication(input({ review: failedReview }), {
+        ...failedReview,
+        blockingFindings: [],
+      }).allowed,
+    ).toBe(false);
+    expect(
+      decideHumanReviewPublication(
+        input({ review: failedReview, validation: null }),
+        failedReview,
+      ).allowed,
+    ).toBe(false);
+    expect(
+      decideHumanReviewPublication(
+        input({
+          review: failedReview,
+          currentContentIdentity: `sha256:${"b".repeat(64)}`,
+        }),
+        failedReview,
+      ).allowed,
+    ).toBe(false);
   });
 });

@@ -321,12 +321,16 @@ The `remediation` stage also accepts the optional `maxPasses` setting:
 | ----------- | ------------------------------------------------------------------------------------------------- |
 | `maxPasses` | Non-negative integer maximum number of automatic remediation passes; defaults to `1` when omitted |
 
-The initial automated review is not counted. Each remediation pass consists of one remediation session; a new review runs
-after it only when another remediation pass remains. Therefore, a value of `1` runs the initial review and one remediation with
-no final follow-up review, while a value of `2` permits one review between two remediation sessions. A value of `0` disables
-automatic remediation, but the initial review still runs and the normal commit and publication flow continues even when that
-review reports findings. The normal commit, publication, Human Review, and enabled auto-merge boundaries remain unchanged.
-The counter exists only for the current workflow execution and is not stored on the Trello card.
+The initial automated review is not counted. A value of `0` runs the initial review with no
+repair; `1` permits one repair followed by one final review; `2` permits two repairs
+followed by a final review. If review still fails when the limit is reached, the
+latest verified implementation proceeds to PR publication for **Human Review only**:
+unresolved findings are recorded in the task execution state and disclosed in
+the PR description, without sending an Attention Required notification.
+Local validation and configured coverage must still pass on the current content.
+An unresolved review never permits automatic merge, even if `autoMerge` is enabled.
+The attempt count and final reviewed snapshot are persisted outside the Git
+worktree for crash-safe resumption.
 
 ## Validation rules
 

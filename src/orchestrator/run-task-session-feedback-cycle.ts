@@ -667,6 +667,7 @@ export async function runTaskSessionFeedbackCycle(
     });
     let roundIndex = 0;
     const finalReview = await runTaskSessionReviewWithRepairs({
+      maxAttempts: project.opencode.remediation.maxPasses,
       store: taskStore,
       projectId: project.id,
       cardId: card.id,
@@ -724,7 +725,7 @@ export async function runTaskSessionFeedbackCycle(
           approvedPlan: storedPlan.plan,
           review,
           attempt,
-          maxAttempts: 2,
+          maxAttempts: project.opencode.remediation.maxPasses,
           ...(attachmentContext === undefined ? {} : { attachmentContext }),
         });
         const repaired = await runWithPrimaryTaskSession(
