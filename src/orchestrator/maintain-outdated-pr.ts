@@ -12,6 +12,7 @@ import { TaskMutationQueue } from "../task-session/task-mutation-queue.js";
 import { preparePublishedPrRebase } from "../task-session/prepare-published-pr-rebase.js";
 import { verifyPreparedPrMaintenance } from "../task-session/verify-prepared-pr-maintenance.js";
 import type { CommandRunner } from "../process/command-runner.js";
+import type { GitRebaseState } from "../git/git-client.js";
 import { writeTrustedCommitState } from "./trusted-commit-state.js";
 import { logger } from "../logging/logger.js";
 
@@ -42,6 +43,12 @@ export interface MaintainOutdatedPrOptions {
     requirementIds: readonly string[];
     signal: AbortSignal;
   }) => Promise<ImplementationReviewResult>;
+  remediateConflict?: (input: {
+    conflictedPaths: readonly string[];
+    rebase: GitRebaseState;
+    attempt: number;
+    signal: AbortSignal;
+  }) => Promise<void>;
 }
 
 type MaintenanceIdentity = Pick<
@@ -169,8 +176,11 @@ export async function maintainOutdatedPr(
         item.expectedRemoteHead === currentHead &&
         item.status !== "completed",
     );
-  if (prior?.localPreparation?.status === "conflicted") return "conflicted";
-  if (prior?.status === "uncertain" && prior.publication === undefined)
+  if (
+    prior?.status === "uncertain" &&
+    prior.publication === undefined &&
+    prior.localPreparation?.status !== "conflicted"
+  )
     return "deferred";
   if (
     prior?.qualityVerification?.status === "failed" ||
@@ -269,19 +279,106 @@ export async function maintainOutdatedPr(
       github: options.github,
     });
     if (prepared.status === "conflicted") {
-      logger
-        .child({ projectId: project.id, cardId: card.id })
-        .warn(
-          `Automatic conflict resolution is not yet supported by this PR; prepared handoff preserved (${prepared.conflictedPaths.join(", ")})`,
+      const maxPasses = project.opencode.remediation.maxPasses;
+      if (options.remediateConflict === undefined || maxPasses < 1) {
+        logger
+          .child({ projectId: project.id, cardId: card.id })
+          .warn(
+            `PR maintenance rebase conflict requires manual attention (${prepared.conflictedPaths.join(", ")})`,
+          );
+        maintenanceStore.advance(
+          owned.operationId,
+          "active",
+          "uncertain",
+          identity,
         );
-      maintenanceStore.advance(
-        owned.operationId,
-        "active",
-        "uncertain",
-        identity,
+        mutationQueue.fail(eventId);
+        return "conflicted";
+      }
+      let conflictedPaths = prepared.conflictedPaths;
+      let completed = false;
+      let attempts = owned.conflictRemediationAttempts ?? 0;
+      while (attempts < maxPasses) {
+        if (options.signal.aborted) break;
+        const rebase = await options.git.getRebaseState(options.worktreePath);
+        if (rebase === null) {
+          completed = true;
+          break;
+        }
+        conflictedPaths = await options.git.getConflictedPaths(
+          options.worktreePath,
+        );
+        if (conflictedPaths.length === 0) break;
+        owned = maintenanceStore.recordConflictRemediationAttempt(
+          owned.operationId,
+          identity,
+        );
+        attempts = owned.conflictRemediationAttempts ?? attempts + 1;
+        await options.remediateConflict({
+          conflictedPaths,
+          rebase,
+          attempt: attempts,
+          signal: options.signal,
+        });
+        if (options.signal.aborted) break;
+        const nextRebase = await options.git.getRebaseState(
+          options.worktreePath,
+        );
+        if (nextRebase === null) {
+          completed = true;
+          break;
+        }
+        conflictedPaths = await options.git.getConflictedPaths(
+          options.worktreePath,
+        );
+      }
+      const finalRebase = await options.git.getRebaseState(
+        options.worktreePath,
       );
-      mutationQueue.fail(eventId);
-      return "conflicted";
+      if (!completed && finalRebase === null) completed = true;
+      if (!completed || finalRebase !== null) {
+        logger
+          .child({ projectId: project.id, cardId: card.id })
+          .warn(
+            `PR maintenance conflict remediation did not complete within ${maxPasses} passes; preserved paths: ${conflictedPaths.join(", ")}`,
+          );
+        maintenanceStore.advance(
+          owned.operationId,
+          "active",
+          "uncertain",
+          identity,
+        );
+        mutationQueue.fail(eventId);
+        return "conflicted";
+      }
+      const resultingHead = await options.git.getHeadSha(options.worktreePath);
+      if (
+        !(await options.git.isAncestor(
+          options.worktreePath,
+          prepared.baseHead,
+          resultingHead,
+        ))
+      )
+        throw new Error(
+          "Remediated PR maintenance head does not contain the fetched base",
+        );
+      const status = await options.git.getStatus(options.worktreePath);
+      if (status.trim().length > 0)
+        throw new Error(
+          `Remediated PR maintenance worktree is not clean:\n${status}`,
+        );
+      owned = maintenanceStore.recordLocalPreparation(
+        owned.operationId,
+        identity,
+        {
+          status: "prepared",
+          originalHead: prepared.originalHead,
+          baseHead: prepared.baseHead,
+          backupRef: prepared.backupRef,
+          resultingHead,
+          updatedAt: new Date().toISOString(),
+        },
+      );
     }
     owned = maintenanceStore.inspect(owned.operationId)!;
     await verifyPreparedPrMaintenance({
@@ -329,7 +426,11 @@ export async function maintainOutdatedPr(
       throw new Error(
         "New review feedback arrived before maintenance publication",
       );
-    const resultingHead = prepared.resultingHead;
+    const resultingHead = owned.localPreparation?.resultingHead;
+    if (resultingHead === undefined)
+      throw new Error(
+        "Prepared PR maintenance operation has no resulting head",
+      );
     maintenanceStore.recordPublication(
       owned.operationId,
       identity,

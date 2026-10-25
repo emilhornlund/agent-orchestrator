@@ -63,6 +63,12 @@ export const prMaintenanceOperationSchema = z
     ownerToken: z.uuid().optional(),
     ownerPid: z.number().int().positive().optional(),
     localPreparation: localPreparationSchema.optional(),
+    conflictRemediationAttempts: z
+      .number()
+      .int()
+      .nonnegative()
+      .safe()
+      .optional(),
     qualityVerification: maintenanceQualityEvidenceSchema.optional(),
     publication: z
       .strictObject({
