@@ -447,6 +447,55 @@ export class PrMaintenanceStore {
     }, operationId);
   }
 
+  /**
+   * Retire a deterministic quality failure without losing the prepared rebase.
+   * No push may have been attempted. The caller must preserve the worktree.
+   */
+  cancelFailedUnpublished(
+    operationId: string,
+    identity: Pick<
+      PrMaintenanceOperation,
+      | "projectId"
+      | "cardId"
+      | "pullRequest"
+      | "expectedRemoteHead"
+      | "targetBaseHead"
+    >,
+  ): PrMaintenanceOperation {
+    return this.update((record) => {
+      const index = record.operations.findIndex(
+        (item) => item.operationId === operationId,
+      );
+      const current = record.operations[index];
+      if (current === undefined)
+        throw new PrMaintenanceConflictError(
+          `Unknown maintenance operation: ${operationId}`,
+        );
+      this.assertIdentity(current, identity);
+      if (current.status === "cancelled") return record;
+      if (
+        current.status !== "uncertain" ||
+        current.ownerToken !== undefined ||
+        current.localPreparation?.status !== "prepared" ||
+        current.localPreparation.resultingHead === undefined ||
+        current.qualityVerification?.status !== "failed" ||
+        current.qualityVerification.preparedHead !==
+          current.localPreparation.resultingHead ||
+        current.publication !== undefined
+      )
+        throw new PrMaintenanceConflictError(
+          "Only an unowned, unpublished, prepared operation with a confirmed quality failure may be cancelled",
+        );
+      const operations = [...record.operations];
+      operations[index] = parsePrMaintenanceOperation({
+        ...current,
+        status: "cancelled",
+        updatedAt: new Date().toISOString(),
+      });
+      return { ...record, operations };
+    }, operationId);
+  }
+
   create(
     input: Omit<
       PrMaintenanceOperation,
@@ -471,7 +520,11 @@ export class PrMaintenanceStore {
         throw new PrMaintenanceConflictError(
           `Maintenance operation already exists: ${operation.operationId}`,
         );
-      if (record.operations.some((item) => item.status !== "completed"))
+      if (
+        record.operations.some(
+          (item) => item.status !== "completed" && item.status !== "cancelled",
+        )
+      )
         throw new PrMaintenanceConflictError(
           "An incomplete PR maintenance operation already owns this project",
         );

@@ -509,6 +509,71 @@ export async function maintainOutdatedPr(
   }
 }
 
+/**
+ * Release a failed maintenance queue owner after a deterministic, unpublished
+ * quality failure. Never discard the prepared local commit/worktree.
+ *
+ * A cancelled store record is durable before queue completion, so a crash in
+ * between can be recovered on the next poll without repeating publication.
+ */
+export function retireFailedUnpublishedPrMaintenance(options: {
+  project: ProjectConfig;
+  maintenanceStore: PrMaintenanceStore;
+  mutationQueue: TaskMutationQueue;
+}): void {
+  const active = options.mutationQueue.getActive();
+  if (
+    active === null ||
+    active.kind !== "pr-maintenance" ||
+    (active.status !== "failed" && active.status !== "active")
+  )
+    return;
+  const operation = options.maintenanceStore.inspect(active.operationKey);
+  if (
+    operation === null ||
+    operation.projectId !== options.project.id ||
+    operation.cardId !== active.cardId ||
+    active.eventId !==
+      `pr-maintenance:${operation.cardId}:${operation.operationId}`
+  )
+    throw new Error("Failed PR maintenance queue and store identities differ");
+  if (
+    operation.status !== "cancelled" &&
+    !(
+      operation.status === "uncertain" &&
+      operation.qualityVerification?.status === "failed" &&
+      operation.localPreparation?.status === "prepared" &&
+      operation.publication === undefined
+    )
+  ) {
+    logger
+      .child({ projectId: options.project.id, cardId: active.cardId })
+      .warn(
+        "PR maintenance still owns the project queue: publication or recovery is uncertain; operator attention required",
+      );
+    return;
+  }
+  const claimed = options.mutationQueue.claimForRecovery(active.eventId);
+  if (claimed === null) return; // A live worker still owns the mutation.
+  try {
+    if (operation.status !== "cancelled")
+      options.maintenanceStore.cancelFailedUnpublished(
+        operation.operationId,
+        operation,
+      );
+    options.mutationQueue.complete(claimed.eventId);
+    logger
+      .child({ projectId: options.project.id, cardId: active.cardId })
+      .warn(
+        "Cancelled failed unpublished PR maintenance; preserved prepared Git worktree and released project queue",
+      );
+  } catch (error) {
+    if (options.mutationQueue.ownsActive(claimed.eventId))
+      options.mutationQueue.fail(claimed.eventId);
+    throw error;
+  }
+}
+
 /** Reconcile a publication interrupted after its durable push-intent marker. */
 export async function reconcileInterruptedPrMaintenance(options: {
   project: ProjectConfig;
@@ -518,6 +583,7 @@ export async function reconcileInterruptedPrMaintenance(options: {
   github: Pick<GitHubClient, "findPullRequestState">;
 }): Promise<void> {
   for (const stored of options.maintenanceStore.inspect()) {
+    if (stored.status === "cancelled") continue;
     const eventId = `pr-maintenance:${stored.cardId}:${stored.operationId}`;
     if (stored.status === "completed") {
       const completedMutation = options.mutationQueue.claimForRecovery(eventId);

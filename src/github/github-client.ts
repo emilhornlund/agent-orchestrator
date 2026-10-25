@@ -56,6 +56,13 @@ export interface FindPullRequestOptions {
   project?: ProjectConfig;
 }
 
+export interface GetPullRequestStateByNumberOptions {
+  cwd: string;
+  repository: string;
+  pullRequestNumber: number;
+  project?: ProjectConfig;
+}
+
 export interface PullRequestDescriptionStatusOptions {
   cwd: string;
   repository: string;
@@ -2002,6 +2009,62 @@ export class GitHubClient {
     );
 
     return true;
+  }
+
+  /**
+   * Retrieve an exact PR identity by number, including after the head branch
+   * was deleted. Never infer a terminal PR from the newest branch match.
+   */
+  async getPullRequestStateByNumber(
+    options: GetPullRequestStateByNumberOptions,
+  ): Promise<PullRequestState> {
+    if (
+      !Number.isSafeInteger(options.pullRequestNumber) ||
+      options.pullRequestNumber < 1
+    )
+      throw new Error("PR number must be a positive integer");
+    const credential = await this.resolveCredential(options.project);
+    const output = await this.run(
+      options.cwd,
+      [
+        "pr",
+        "view",
+        String(options.pullRequestNumber),
+        "--repo",
+        options.repository,
+        "--json",
+        GITHUB_CLI_PR_MAINTENANCE_JSON_FIELDS.join(","),
+      ],
+      credential,
+    );
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(output);
+    } catch {
+      throw new Error("GitHub CLI returned an invalid numbered pull request");
+    }
+    const result = validatePullRequestStateList([parsed])[0];
+    if (
+      result === undefined ||
+      !isRecord(parsed) ||
+      (typeof parsed.headRefOid !== "string" &&
+        !(result.state !== "OPEN" && parsed.headRefOid === null)) ||
+      typeof parsed.headRefName !== "string" ||
+      typeof parsed.baseRefName !== "string"
+    )
+      throw new Error(
+        "GitHub CLI did not return complete numbered PR identity",
+      );
+    // Closed PRs can have null mergeability, which must not remove
+    // their still-authoritative base/head names from the parsed identity.
+    return {
+      ...result,
+      ...(typeof parsed.headRefOid === "string"
+        ? { headRefOid: parsed.headRefOid }
+        : {}),
+      headRefName: parsed.headRefName,
+      baseRefName: parsed.baseRefName,
+    };
   }
 
   async findPullRequestState(
