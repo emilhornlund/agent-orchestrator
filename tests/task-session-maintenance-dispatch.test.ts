@@ -37,6 +37,7 @@ afterEach(() => {
 async function pollReview(
   relation: "current" | "behind" | "diverged" | "uncertain",
   maintenance?: { enabled: boolean },
+  withPlan = true,
 ): Promise<void> {
   root = fs.mkdtempSync(path.join(os.tmpdir(), "pr-maintenance-dispatch-"));
   const project = {
@@ -101,25 +102,29 @@ async function pollReview(
     createdAt: "2026-10-24T09:00:00.000Z",
     updatedAt: "2026-10-24T09:00:00.000Z",
   });
-  new TaskPlanStore(project.contextRoot, project).create(
-    {
-      version: 1,
-      projectId: project.id,
-      cardId: card.id,
-      requirements: [{ id: "REQ-1", text: "Task", verification: "Check task" }],
-      steps: [
-        {
-          id: "STEP-1",
-          description: "Implement the requirement",
-          requirementIds: ["REQ-1"],
-          verification: "Run checks",
-        },
-      ],
-      assumptions: [],
-      blockers: [],
-    },
-    1,
-  );
+  if (withPlan) {
+    new TaskPlanStore(project.contextRoot, project).create(
+      {
+        version: 1,
+        projectId: project.id,
+        cardId: card.id,
+        requirements: [
+          { id: "REQ-1", text: "Task", verification: "Check task" },
+        ],
+        steps: [
+          {
+            id: "STEP-1",
+            description: "Implement the requirement",
+            requirementIds: ["REQ-1"],
+            verification: "Run checks",
+          },
+        ],
+        assumptions: [],
+        blockers: [],
+      },
+      1,
+    );
+  }
   vi.mocked(observeTaskSessionReviewCards).mockResolvedValue([
     {
       cardId: card.id,
@@ -174,6 +179,11 @@ describe("opt-in maintenance in the production Human Review polling path", () =>
 
   it("does not dispatch when maintenance is omitted", async () => {
     await pollReview("diverged");
+    expect(maintainOutdatedPr).not.toHaveBeenCalled();
+  });
+
+  it("does not schedule maintenance when the approved plan is missing", async () => {
+    await pollReview("diverged", { enabled: true }, false);
     expect(maintainOutdatedPr).not.toHaveBeenCalled();
   });
 

@@ -63,6 +63,7 @@ function createFixture(
   command(repositoryPath, "commit", "-m", "published task work");
   command(repositoryPath, "push", "-u", "origin", "agent/card-1");
   const publishedHead = command(repositoryPath, "rev-parse", "HEAD");
+  let pinnedBaseHead = baseSha;
   command(repositoryPath, "checkout", "main");
   command(repositoryPath, "worktree", "add", worktreePath, "agent/card-1");
 
@@ -86,6 +87,7 @@ function createFixture(
     command(updater, "add", options.conflict ? "shared.txt" : "base-only.txt");
     command(updater, "commit", "-m", "advance base");
     command(updater, "push", "origin", "main");
+    pinnedBaseHead = command(updater, "rev-parse", "HEAD");
   }
 
   const project = {
@@ -121,7 +123,7 @@ function createFixture(
     cardId: "card-1",
     pullRequest: { number: 42, url: pullRequestUrl },
     expectedRemoteHead: publishedHead,
-    targetBaseHead: baseSha,
+    targetBaseHead: pinnedBaseHead,
     operationId: "maintenance-1",
     createdAt: "2026-10-25T10:00:00.000Z",
     updatedAt: "2026-10-25T10:00:00.000Z",
@@ -131,7 +133,7 @@ function createFixture(
     cardId: "card-1",
     pullRequest: { number: 42, url: pullRequestUrl },
     expectedRemoteHead: publishedHead,
-    targetBaseHead: baseSha,
+    targetBaseHead: pinnedBaseHead,
   };
   maintenanceStore.advance("maintenance-1", "prepared", "active", identity);
   const github = {
@@ -339,7 +341,7 @@ describe("preparePublishedPrRebase", () => {
           url: "https://github.com/example/repository/pull/42",
         },
         expectedRemoteHead: f.publishedHead,
-        targetBaseHead: f.baseSha,
+        targetBaseHead: baseHead,
       },
       {
         status: "rebasing",

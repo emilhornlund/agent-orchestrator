@@ -45,6 +45,75 @@ describe("GitHubClient", () => {
     vi.restoreAllMocks();
   });
 
+  it("classifies GitHub's real compare response without the nonexistent head_commit field", async () => {
+    const head = "a".repeat(40);
+    const base = "b".repeat(40);
+    const run = vi.fn<RunGitHubCommand>().mockResolvedValue(
+      JSON.stringify({
+        status: "diverged",
+        ahead_by: 1,
+        behind_by: 19,
+        base_commit: { sha: base },
+        merge_base_commit: { sha: "c".repeat(40) },
+      }),
+    );
+    const project = {
+      id: "project",
+      repository: { github: "example/repository" },
+    } as ProjectConfig;
+    await expect(
+      new GitHubClient(run).comparePullRequestHeadToBase({
+        cwd: "/repo",
+        repository: "example/repository",
+        baseBranch: "main",
+        headSha: head,
+        project,
+      }),
+    ).resolves.toBe("diverged");
+    expect(run).toHaveBeenCalledWith("/repo", [
+      "api",
+      `repos/example/repository/compare/main...${head}`,
+    ]);
+  });
+
+  it("fails closed on incomplete GitHub compare data and rejects stale branch metadata", async () => {
+    const project = {
+      id: "project",
+      repository: { github: "example/repository" },
+    } as ProjectConfig;
+    const head = "a".repeat(40);
+    const options = {
+      cwd: "/repo",
+      repository: "example/repository",
+      baseBranch: "main",
+      headSha: head,
+      project,
+    };
+    const malformed = new GitHubClient(
+      vi
+        .fn<RunGitHubCommand>()
+        .mockResolvedValue(
+          JSON.stringify({ status: "diverged", ahead_by: 1, behind_by: 19 }),
+        ),
+    );
+    await expect(malformed.comparePullRequestHeadToBase(options)).resolves.toBe(
+      "uncertain",
+    );
+    const live = "b".repeat(40);
+    const gh = new GitHubClient(
+      vi
+        .fn<RunGitHubCommand>()
+        .mockResolvedValue(JSON.stringify({ commit: { sha: live } })),
+    );
+    await expect(gh.getBaseBranchHeadSha(options)).resolves.toBe(live);
+    const missing = new GitHubClient(
+      vi.fn<RunGitHubCommand>().mockResolvedValue("{}"),
+    );
+    await expect(missing.getBaseBranchHeadSha(options)).rejects.toThrow(
+      /invalid branch HEAD metadata/,
+    );
+  });
+
   it.each([500, 502, 503, 504])(
     "classifies HTTP %s as a retryable GitHub failure",
     (status) => {

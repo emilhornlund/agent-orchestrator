@@ -358,6 +358,10 @@ export async function preparePublishedPrRebase(
     throw new PrMaintenanceConflictError(
       "Persisted preparation is missing the fetched base identity",
     );
+  if (baseHead !== operation.targetBaseHead)
+    throw new PrMaintenanceConflictError(
+      "Current fetched base differs from the pinned maintenance base; refusing to rebase or publish",
+    );
   if (await git.isAncestor(worktreePath, baseHead, originalHead)) {
     operation = maintenanceStore.recordLocalPreparation(
       operationId,
