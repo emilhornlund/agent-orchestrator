@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { implementationReviewResultSchema } from "./implementation-review-result.js";
 
 const taskExecutionPhases = [
   "planning",
@@ -18,6 +19,7 @@ export const taskExecutionEventTypes = [
   "validation-passed",
   "validation-failed",
   "review-passed",
+  "review-exhausted",
   "review-failed",
   "publication-completed",
   "ci-passed-awaiting-human",
@@ -111,6 +113,8 @@ const validationRepairSchema = z.strictObject({
 const reviewRepairSchema = z.strictObject({
   cycleId: nonBlankIdentifier,
   status: z.enum(["active", "passed", "exhausted"]),
+  maxAttempts: z.number().int().nonnegative().safe().optional(),
+  finalReview: implementationReviewResultSchema.optional(),
 });
 
 const ciRepairSchema = z.strictObject({
@@ -364,7 +368,7 @@ const taskExecutionRecordSchema = z
         record.reviewRepair.status !== "active" &&
         record.phase !== "review" &&
         !(
-          record.reviewRepair.status === "passed" &&
+          ["passed", "exhausted"].includes(record.reviewRepair.status) &&
           [
             "publication",
             "ci",
@@ -382,22 +386,40 @@ const taskExecutionRecordSchema = z
         });
       }
 
-      if (record.retryCounters.review > 2) {
+      const { maxAttempts, finalReview } = record.reviewRepair;
+      if (
+        maxAttempts !== undefined &&
+        record.retryCounters.review > maxAttempts
+      ) {
         ctx.addIssue({
           code: "custom",
           path: ["retryCounters", "review"],
-          message: "Review repair attempts cannot exceed two per cycle",
+          message: "Review repair attempts exceeded the configured maximum",
         });
       }
-
       if (
         record.reviewRepair.status === "exhausted" &&
-        record.retryCounters.review !== 2
+        maxAttempts !== undefined &&
+        record.retryCounters.review !== maxAttempts
       ) {
         ctx.addIssue({
           code: "custom",
           path: ["reviewRepair", "status"],
-          message: "Exhausted review repair requires two attempts",
+          message:
+            "Exhausted review repair requires the configured number of attempts",
+        });
+      }
+      if (
+        finalReview !== undefined &&
+        (finalReview.projectId !== record.projectId ||
+          finalReview.cardId !== record.cardId ||
+          (record.reviewRepair.status === "passed") !==
+            (finalReview.verdict === "pass"))
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["reviewRepair", "finalReview"],
+          message: "Final review must match task ownership and repair outcome",
         });
       }
     }

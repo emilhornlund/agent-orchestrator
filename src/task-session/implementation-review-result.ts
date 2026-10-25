@@ -38,7 +38,7 @@ const blockingFindingSchema = z.strictObject({
   location: reviewLocationSchema.optional(),
 });
 
-const implementationReviewResultSchema = z
+export const implementationReviewResultSchema = z
   .strictObject({
     version: z.literal(1),
     projectId: stableId,

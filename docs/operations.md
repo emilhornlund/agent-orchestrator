@@ -510,8 +510,18 @@ A queued event does not mutate a repository. A failed or uncertain event retains
 recovery; it blocks later mutations for that project rather than being discarded or automatically retried. Preserve its record,
 inspect the affected task and external state, and follow the task-session recovery guide before resuming.
 
-Validation repair, independent review repair, and CI repair each have a finite limit of two attempts per cycle. Complete CI
-failures are collected together; pending or uncertain expected checks remain waiting without consuming repair attempts. Local
+Validation and CI repair each retain their finite two-attempt limit. Implementation review
+repair instead honors `opencode.remediation.maxPasses` (default one). On
+exhaustion, the last structured failed review and its source identity are
+persisted and the implementation can be published for Human Review after current
+local validation and coverage pass. No Attention Required email is generated
+for review exhaustion alone; polling and restart reuse the persisted final
+review without consuming more attempts. Legacy exhausted records lacking final
+review evidence perform at most one read-only verification review during
+recovery, persist it, and continue without a new repair cycle. PRs with
+unresolved automated review findings are never automatically merged.
+
+Complete CI failures are collected together; pending or uncertain expected checks remain waiting without consuming repair attempts. Local
 gates and review are rerun after each correction. `autoMerge` defaults to `false`; when enabled it still requires complete
 current-head CI and passing local evidence. Exhaustion or ambiguous state is preserved for operator attention rather than retried
 indefinitely. Replies are published only for independently verified items after the correcting commit and a complete passing CI

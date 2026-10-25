@@ -33,6 +33,7 @@ const taskExecutionEventSchema = z.discriminatedUnion("type", [
   eventIdentitySchema.extend({ type: z.literal("validation-passed") }),
   eventIdentitySchema.extend({ type: z.literal("validation-failed") }),
   eventIdentitySchema.extend({ type: z.literal("review-passed") }),
+  eventIdentitySchema.extend({ type: z.literal("review-exhausted") }),
   eventIdentitySchema.extend({ type: z.literal("review-failed") }),
   eventIdentitySchema.extend({
     type: z.literal("publication-completed"),
@@ -77,6 +78,7 @@ const phaseTransitions: Record<
   "validation-passed": { from: "validation", to: "review" },
   "validation-failed": { from: "validation", to: "implementation" },
   "review-passed": { from: "review", to: "publication" },
+  "review-exhausted": { from: "review", to: "publication" },
   "review-failed": { from: "review", to: "implementation" },
   "publication-completed": { from: "publication", to: "ci" },
   "ci-passed-awaiting-human": { from: "ci", to: "human-feedback" },

@@ -45,6 +45,7 @@ import { runTaskSessionFeedbackCycle } from "./run-task-session-feedback-cycle.j
 import { FeedbackLedgerStore } from "../task-session/feedback-ledger-store.js";
 import {
   decideVerifiedPublication,
+  decideHumanReviewPublication,
   type VerifiedPublicationDecisionInput,
 } from "../task-session/verified-publication-decision.js";
 import { TaskExecutionStore } from "../task-session/task-execution-store.js";
@@ -890,7 +891,7 @@ export async function runTaskSessionWorkflow(
             approvedPlan: plan.plan,
             review,
             attempt,
-            maxAttempts: 2,
+            maxAttempts: project.opencode.remediation.maxPasses,
           });
           const repaired = await runWithPrimaryTaskSession(
             taskStore,
@@ -930,7 +931,8 @@ export async function runTaskSessionWorkflow(
           });
         };
         let roundIndex = 0;
-        await runTaskSessionReviewWithRepairs({
+        const ciReviewResult = await runTaskSessionReviewWithRepairs({
+          maxAttempts: project.opencode.remediation.maxPasses,
           store: taskStore,
           projectId: project.id,
           cardId: card.id,
@@ -968,6 +970,10 @@ export async function runTaskSessionWorkflow(
             getTaskSessionSourceSnapshotIdentity(git, worktreePath),
         });
         latestReview = first;
+        if (ciReviewResult.review.verdict !== "pass")
+          throw new Error(
+            "CI repair review remains blocking after the configured repair limit",
+          );
         const latest = taskStore.read(card.id);
         if (latest === null)
           throw new Error("Task state disappeared after CI review");
@@ -1324,7 +1330,11 @@ export async function runTaskSessionWorkflow(
     }
     const checksPassed = observation.ciEvaluation.status === "passed";
     if (!checksPassed) continue;
-    if (!project.autoMerge || observation.feedbackIds.length > 0) {
+    if (
+      !project.autoMerge ||
+      observation.feedbackIds.length > 0 ||
+      record.reviewRepair?.status === "exhausted"
+    ) {
       taskStore.compareAndSwap(
         record.cardId,
         record.revision,
@@ -2414,38 +2424,73 @@ export async function runTaskSessionWorkflow(
       ReturnType<typeof runTaskSessionReviewWithRepairs>
     >;
     if (phaseRecord.phase === "publication") {
-      const review = await runReview();
-      if (review.review.verdict !== "pass")
-        throw new Error(
-          "Interrupted publication has no persisted repair findings; manual attention is required",
-        );
-      const current = taskStore.read(activeCard.id);
+      let current = taskStore.read(activeCard.id);
       if (current === null)
         throw new Error("Task record disappeared during publication recovery");
+      const persistedReview = current.reviewRepair?.finalReview;
+      let review: Awaited<ReturnType<typeof runReview>>;
+      if (persistedReview !== undefined) {
+        const identity = await getTaskSessionSourceSnapshotIdentity(
+          git,
+          worktreePath,
+        );
+        if (persistedReview.reviewedContentIdentity === identity) {
+          review = { review: persistedReview, contentIdentity: identity };
+        } else if (current.reviewRepair?.status === "exhausted") {
+          // Exhausted reviews may not silently authorize changed content or
+          // trigger further AI review rounds after the configured limit.
+          throw new Error(
+            "Persisted exhausted review is stale after publication",
+          );
+        } else {
+          // A successful pre-commit review may need refresh if a commit
+          // changes the source snapshot identity used by the reviewer.
+          review = await runReview();
+          if (review.review.verdict !== "pass")
+            throw new Error("Publication recovery review did not pass");
+          current = updateRecord(taskStore, current, {
+            reviewRepair: {
+              ...current.reviewRepair!,
+              finalReview: review.review,
+            },
+          });
+        }
+      } else {
+        // Legacy publication records may predate the durable final review.
+        review = await runReview();
+        if (
+          review.review.verdict !== "pass" &&
+          current.reviewRepair?.status !== "exhausted"
+        )
+          throw new Error(
+            "Interrupted publication has no accepted review evidence",
+          );
+        current = updateRecord(taskStore, current, {
+          reviewRepair: {
+            cycleId: operationKey,
+            status: review.review.verdict === "pass" ? "passed" : "exhausted",
+            maxAttempts: Math.max(
+              current.retryCounters.review,
+              project.opencode.remediation.maxPasses,
+            ),
+            finalReview: review.review,
+          },
+        });
+      }
       finalReview = {
         ...review,
         attempts: current.retryCounters.review,
         record: current,
       };
     } else {
-      let initialReviewRound: Awaited<ReturnType<typeof runReview>> | undefined;
-      const firstReview = await runReview();
-      initialReviewRound = firstReview;
-      const runReviewRounds = async () => {
-        if (initialReviewRound !== undefined) {
-          const round = initialReviewRound;
-          initialReviewRound = undefined;
-          return round;
-        }
-        return runReview();
-      };
       finalReview = await runTaskSessionReviewWithRepairs({
+        maxAttempts: project.opencode.remediation.maxPasses,
         store: taskStore,
         projectId: project.id,
         cardId: activeCard.id,
         operationKey,
         expectedPrimarySessionId: expectedSession,
-        runReview: runReviewRounds,
+        runReview,
         repair: async (review, attempt) => {
           cardLog.event(`Review repair attempt ${attempt} started`);
           let current = taskStore.read(activeCard.id);
@@ -2469,7 +2514,7 @@ export async function runTaskSessionWorkflow(
             approvedPlan: plan.plan,
             review,
             attempt,
-            maxAttempts: 2,
+            maxAttempts: project.opencode.remediation.maxPasses,
             ...(attachmentContext === undefined ? {} : { attachmentContext }),
           });
           const repaired = await runWithPrimaryTaskSession(
@@ -2524,7 +2569,11 @@ export async function runTaskSessionWorkflow(
       coverage: currentCoverage,
       review: finalReview.review,
     };
-    if (!decideVerifiedPublication(initialEvidence).allowed)
+    const exhaustedReview =
+      finalReview.record.reviewRepair?.status === "exhausted"
+        ? finalReview.record.reviewRepair.finalReview
+        : undefined;
+    if (!decideHumanReviewPublication(initialEvidence, exhaustedReview).allowed)
       throw new Error(
         "Final local evidence does not allow task-session publication",
       );
@@ -2578,7 +2627,12 @@ export async function runTaskSessionWorkflow(
       if (latest.phase === "review") {
         const publication = transitionTaskExecutionRecord(
           latest,
-          event(latest, "review-passed"),
+          event(
+            latest,
+            exhaustedReview === undefined
+              ? "review-passed"
+              : "review-exhausted",
+          ),
         );
         taskStore.compareAndSwap(activeCard.id, latest.revision, publication);
       } else if (latest.phase !== "publication") {
@@ -2610,25 +2664,34 @@ export async function runTaskSessionWorkflow(
         freshValidation,
         freshCoverage,
       );
-      const freshReview = await runTaskSessionReview({
-        project,
-        card: activeCard,
-        expectedBranch: worktree.branch,
-        operationKey,
-        worktreePath,
-        taskRecordStore: taskStore,
-        planStore,
-        git,
-        openCode,
-        validation: freshValidation,
-        coverage: freshCoverage,
-        runOptions: {
-          model: project.opencode.review.model,
-          variant: project.opencode.review.variant,
-          timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
-          signal,
-        },
-      });
+      // Do not consume further AI review rounds after the configured limit.
+      // A rebased snapshot may be published with the persisted failed review
+      // only if its content identity remains exactly the same.
+      const freshReview =
+        finalReview.review.reviewedContentIdentity ===
+        (await getTaskSessionSourceSnapshotIdentity(git, worktreePath))
+          ? { review: finalReview.review }
+          : exhaustedReview === undefined
+            ? await runTaskSessionReview({
+                project,
+                card: activeCard,
+                expectedBranch: worktree.branch,
+                operationKey,
+                worktreePath,
+                taskRecordStore: taskStore,
+                planStore,
+                git,
+                openCode,
+                validation: freshValidation,
+                coverage: freshCoverage,
+                runOptions: {
+                  model: project.opencode.review.model,
+                  variant: project.opencode.review.variant,
+                  timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
+                  signal,
+                },
+              })
+            : { review: exhaustedReview };
       const freshIdentity = await getTaskSessionSourceSnapshotIdentity(
         git,
         worktreePath,
@@ -2689,8 +2752,12 @@ export async function runTaskSessionWorkflow(
         worktreePath,
         branch: worktree.branch,
         commitSha: recoveredTrustedCommit.commitSha,
-        reviewResult: "Passed",
+        reviewResult:
+          exhaustedReview === undefined
+            ? "Passed"
+            : "Failed (human review required; automatic repairs exhausted)",
         remediationResult: `${finalReview.attempts} review repair(s)`,
+        ...(exhaustedReview === undefined ? {} : { exhaustedReview }),
         verifiedDescriptionFacts: () => [
           `Approved implementation plan: ${JSON.stringify(planStore.read(activeCard.id)?.plan ?? "unavailable")}`,
           `Verified validation result: ${JSON.stringify(preparedEvidence.validation)}`,
@@ -2707,6 +2774,13 @@ export async function runTaskSessionWorkflow(
           : { expectedExistingPullRequestUrl: recoveryRecord.pullRequest.url }),
         beforePushVerification: async () => {
           preparedEvidence = await verifyPreparedContent();
+          if (
+            !decideHumanReviewPublication(preparedEvidence, exhaustedReview)
+              .allowed
+          )
+            throw new Error(
+              "Prepared human-review publication evidence is invalid",
+            );
         },
       });
       publishedSha = await git.getHeadSha(worktreePath);
@@ -2725,8 +2799,11 @@ export async function runTaskSessionWorkflow(
         branch: worktree.branch,
         commitMessage,
         reviewResult:
-          finalReview.review.verdict === "pass" ? "Passed" : "Failed",
+          finalReview.review.verdict === "pass"
+            ? "Passed"
+            : "Failed (human review required; automatic repairs exhausted)",
         remediationResult: `${finalReview.attempts} review repair(s)`,
+        ...(exhaustedReview === undefined ? {} : { exhaustedReview }),
         verifiedDescriptionFacts: () => [
           `Approved implementation plan: ${JSON.stringify(planStore.read(activeCard.id)?.plan ?? "unavailable")}`,
           `Verified validation result: ${JSON.stringify(preparedEvidence.validation)}`,
@@ -2775,7 +2852,7 @@ export async function runTaskSessionWorkflow(
       pullRequest: { number: prNumber, url: pr.url, headSha: pr.headRefOid },
     });
     taskStore.compareAndSwap(activeCard.id, current.revision, ci);
-    if (project.autoMerge) {
+    if (project.autoMerge && exhaustedReview === undefined) {
       const ciObservation = await github.getCiObservations({
         cwd: project.repository.path,
         repository: project.repository.github,

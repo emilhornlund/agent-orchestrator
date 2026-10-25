@@ -88,3 +88,28 @@ export function decideVerifiedPublication(
 
   return { allowed: reasons.length === 0, reasons, contentIdentity: identity };
 }
+
+/**
+ * Human-review publication may retain a failed final AI review only after
+ * the configured remediation limit was exhausted and its exact result was
+ * durably recorded. All other quality gates remain mandatory. Auto-merge
+ * must always use the stricter decideVerifiedPublication gate.
+ */
+export function decideHumanReviewPublication(
+  input: VerifiedPublicationDecisionInput,
+  exhaustedReview: ImplementationReviewResult | undefined,
+): VerifiedPublicationDecision {
+  const decision = decideVerifiedPublication(input);
+  if (
+    exhaustedReview === undefined ||
+    exhaustedReview.verdict !== "fail" ||
+    input.review?.verdict !== "fail" ||
+    JSON.stringify(input.review) !== JSON.stringify(exhaustedReview)
+  )
+    return decision;
+
+  const reasons = decision.reasons.filter(
+    (reason) => reason !== "Final implementation review did not pass",
+  );
+  return { ...decision, allowed: reasons.length === 0, reasons };
+}

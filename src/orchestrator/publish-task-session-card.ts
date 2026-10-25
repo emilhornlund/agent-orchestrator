@@ -3,8 +3,9 @@ import os from "node:os";
 import path from "node:path";
 
 import type { GitClient } from "../git/git-client.js";
+import type { ImplementationReviewResult } from "../task-session/implementation-review-result.js";
 import {
-  decideVerifiedPublication,
+  decideHumanReviewPublication,
   type VerifiedPublicationDecisionInput,
 } from "../task-session/verified-publication-decision.js";
 import { writeTrustedCommitState } from "./trusted-commit-state.js";
@@ -18,12 +19,14 @@ export interface PublishTaskSessionCardOptions extends Omit<
   commitMessage: string;
   initialEvidence: VerifiedPublicationDecisionInput;
   verifyPreparedContent: () => Promise<VerifiedPublicationDecisionInput>;
+  exhaustedReview?: ImplementationReviewResult;
 }
 
 function assertPublicationEvidence(
   input: VerifiedPublicationDecisionInput,
+  exhaustedReview: ImplementationReviewResult | undefined,
 ): void {
-  const decision = decideVerifiedPublication(input);
+  const decision = decideHumanReviewPublication(input, exhaustedReview);
   if (!decision.allowed) {
     throw new Error(
       `Task-session publication is blocked: ${decision.reasons.join("; ")}`,
@@ -35,7 +38,7 @@ function assertPublicationEvidence(
 export async function publishTaskSessionCard(
   options: PublishTaskSessionCardOptions,
 ): Promise<string> {
-  assertPublicationEvidence(options.initialEvidence);
+  assertPublicationEvidence(options.initialEvidence, options.exhaustedReview);
   const headBefore = await options.git.getHeadSha(options.worktreePath);
   const temporaryDirectory = fs.mkdtempSync(
     path.join(os.tmpdir(), "agent-orchestrator-task-session-commit-"),
@@ -95,7 +98,7 @@ export async function publishTaskSessionCard(
     commitSha,
     beforePushVerification: async () => {
       const preparedEvidence = await options.verifyPreparedContent();
-      assertPublicationEvidence(preparedEvidence);
+      assertPublicationEvidence(preparedEvidence, options.exhaustedReview);
     },
   });
   return options.git.getHeadSha(options.worktreePath);

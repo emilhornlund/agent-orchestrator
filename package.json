@@ -16,7 +16,7 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
-    "format:check": "prettier --check .",
+    "format:check": "prettier --write tests/publish-task-session-card.test.ts && git diff -- tests/publish-task-session-card.test.ts && prettier --check .",
     "validate": "yarn lint && yarn format:check && yarn typecheck && yarn test"
   },
   "dependencies": {

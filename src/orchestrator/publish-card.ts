@@ -2,6 +2,7 @@ import type { ProjectConfig } from "../config/config.js";
 import type { GitClient } from "../git/git-client.js";
 import type { GitHubClient } from "../github/github-client.js";
 import { buildPullRequestAttributionFooter } from "../github/pull-request-attribution.js";
+import type { ImplementationReviewResult } from "../task-session/implementation-review-result.js";
 import { enrichPullRequestDescription } from "../github/enrich-pull-request-description.js";
 import { logger } from "../logging/logger.js";
 import { getSessionLogPath } from "../logging/session-log.js";
@@ -51,6 +52,7 @@ export interface PublishCardOptions {
   commitSha: string;
   reviewResult: string;
   remediationResult: string;
+  exhaustedReview?: ImplementationReviewResult;
   pullRequestDescription?: PullRequestDescription;
   sessionLogPath?: string;
   emailNotifier?: EmailNotifier;
@@ -391,6 +393,7 @@ export async function publishCard({
   commitSha,
   reviewResult,
   remediationResult,
+  exhaustedReview,
   verifiedDescriptionFacts: verifiedDescriptionFactsOption,
   pullRequestDescription,
   sessionLogPath,
@@ -732,6 +735,29 @@ export async function publishCard({
         } catch (error) {
           logDescriptionFallback(cardLog, "Markdown rendering", error);
         }
+      }
+
+      if (exhaustedReview !== undefined) {
+        // This section is authored by the orchestrator and is not delegated
+        // to AI-generated PR description text.
+        const findings = exhaustedReview.blockingFindings
+          .map((finding) => [finding.summary, finding.detail].join(": "))
+          .slice(0, 20);
+        const unsatisfied = exhaustedReview.requirementAssessments
+          .filter((assessment) => assessment.status === "unsatisfied")
+          .map((assessment) => assessment.requirementId);
+        const detail = [
+          ...findings,
+          ...unsatisfied.map((id) => `Unsatisfied requirement: ${id}`),
+        ]
+          .map((entry) => `> ${entry.replace(/\s+/gu, " ").slice(0, 400)}`)
+          .join("\n");
+        body += [
+          "",
+          "## Automated review — human action required",
+          "The independent AI review still reported blocking findings after the configured remediation limit. This PR has **not** passed automated review. Please inspect the changes and findings before merging.",
+          ...(detail.length > 0 ? [detail] : []),
+        ].join("\n");
       }
 
       pullRequest = await github.createPullRequest({

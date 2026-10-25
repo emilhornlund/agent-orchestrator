@@ -2,8 +2,6 @@ import type { ImplementationReviewResult } from "./implementation-review-result.
 import type { TaskExecutionRecord } from "./task-execution-record.js";
 import { TaskExecutionStore } from "./task-execution-store.js";
 
-export const MAX_REVIEW_REPAIR_ATTEMPTS = 2;
-
 export interface TaskSessionReviewRound {
   review: ImplementationReviewResult;
   contentIdentity: string;
@@ -22,6 +20,7 @@ export interface RunTaskSessionReviewRepairsOptions {
   ) => Promise<void>;
   rerunQuality: () => Promise<void>;
   getCurrentContentIdentity: () => Promise<string>;
+  maxAttempts: number;
 }
 
 export interface TaskSessionReviewRepairResult extends TaskSessionReviewRound {
@@ -70,7 +69,7 @@ function assertOwner(
     record.cardId !== options.cardId ||
     record.operationKey !== options.operationKey ||
     record.primarySessionId !== options.expectedPrimarySessionId ||
-    record.phase !== "review"
+    (record.phase !== "review" && record.phase !== "validation")
   ) {
     throw new TaskSessionReviewRepairError(
       "Review repair requires the owned review-phase task and exact primary session",
@@ -81,21 +80,73 @@ function assertOwner(
 export async function runTaskSessionReviewWithRepairs(
   options: RunTaskSessionReviewRepairsOptions,
 ): Promise<TaskSessionReviewRepairResult> {
+  if (!Number.isSafeInteger(options.maxAttempts) || options.maxAttempts < 0)
+    throw new TaskSessionReviewRepairError(
+      "Invalid configured review repair limit",
+    );
   let record = options.store.read(options.cardId);
   assertOwner(record, options);
   const cycleId = options.operationKey;
 
   if (record.reviewRepair?.cycleId !== cycleId) {
-    updateRecord(options.store, record, {
+    record = updateRecord(options.store, record, {
       retryCounters: { ...record.retryCounters, review: 0 },
-      reviewRepair: { cycleId, status: "active" },
+      reviewRepair: {
+        cycleId,
+        status: "active",
+        maxAttempts: options.maxAttempts,
+      },
     });
   }
 
-  if (record.reviewRepair?.status === "exhausted") {
-    throw new TaskSessionReviewRepairExhaustedError(
-      record.retryCounters.review,
-    );
+  // A completed review round is durable. Recovery must not consume another
+  // repair or run another review when its source snapshot is unchanged.
+  if (
+    record.reviewRepair?.status === "exhausted" ||
+    record.reviewRepair?.status === "passed"
+  ) {
+    const previous = record.reviewRepair.finalReview;
+    if (previous !== undefined) {
+      const contentIdentity = await options.getCurrentContentIdentity();
+      if (previous.reviewedContentIdentity !== contentIdentity)
+        throw new TaskSessionReviewRepairError(
+          "Persisted final review belongs to a stale source snapshot",
+        );
+      return {
+        review: previous,
+        contentIdentity,
+        attempts: record.retryCounters.review,
+        record,
+      };
+    }
+    // Pre-upgrade exhausted records have no final review evidence. Perform
+    // one read-only recovery review, persist it, and never repeat it on restart.
+    const round = await options.runReview();
+    const currentIdentity = await options.getCurrentContentIdentity();
+    if (
+      round.contentIdentity !== currentIdentity ||
+      round.review.reviewedContentIdentity !== currentIdentity
+    )
+      throw new TaskSessionReviewRepairError(
+        "Recovered review belongs to a stale source snapshot",
+      );
+    record = updateRecord(options.store, record, {
+      reviewRepair: {
+        cycleId,
+        status: round.review.verdict === "pass" ? "passed" : "exhausted",
+        finalReview: round.review,
+        // The old hardcoded limit was two; do not retroactively change it.
+        maxAttempts:
+          round.review.verdict === "fail"
+            ? record.retryCounters.review
+            : Math.max(record.retryCounters.review, options.maxAttempts),
+      },
+    });
+    return {
+      ...round,
+      attempts: record.retryCounters.review,
+      record,
+    };
   }
 
   for (;;) {
@@ -115,24 +166,36 @@ export async function runTaskSessionReviewWithRepairs(
 
     if (round.review.verdict === "pass") {
       record = updateRecord(options.store, record, {
-        reviewRepair: { cycleId, status: "passed" },
+        reviewRepair: {
+          cycleId,
+          status: "passed",
+          maxAttempts: record.reviewRepair?.maxAttempts ?? options.maxAttempts,
+          finalReview: round.review,
+        },
       });
       return { ...round, attempts: record.retryCounters.review, record };
     }
 
     const attempts = record.retryCounters.review;
-    if (attempts >= MAX_REVIEW_REPAIR_ATTEMPTS) {
-      updateRecord(options.store, record, {
-        reviewRepair: { cycleId, status: "exhausted" },
+    if (attempts >= (record.reviewRepair?.maxAttempts ?? options.maxAttempts)) {
+      record = updateRecord(options.store, record, {
+        reviewRepair: {
+          cycleId,
+          status: "exhausted",
+          maxAttempts: record.reviewRepair?.maxAttempts ?? options.maxAttempts,
+          finalReview: round.review,
+        },
       });
-      throw new TaskSessionReviewRepairExhaustedError(
-        record.retryCounters.review,
-      );
+      return { ...round, attempts, record };
     }
 
     updateRecord(options.store, record, {
       retryCounters: { ...record.retryCounters, review: attempts + 1 },
-      reviewRepair: { cycleId, status: "active" },
+      reviewRepair: {
+        cycleId,
+        status: "active",
+        maxAttempts: record.reviewRepair?.maxAttempts ?? options.maxAttempts,
+      },
     });
     try {
       await options.repair(round.review, attempts + 1);
