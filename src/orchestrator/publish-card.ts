@@ -756,6 +756,11 @@ export async function publishCard({
           "",
           "## Automated review — human action required",
           "The independent AI review still reported blocking findings after the configured remediation limit. This PR has **not** passed automated review. Please inspect the changes and findings before merging.",
+          ...(publishedCommitSha !== commitSha
+            ? [
+                "**Post-rebase disclosure:** The published commit differs from the originally reviewed commit. Existing findings refer to the pre-rebase snapshot; the rebased content passed required local validation but has not received another AI review. Human review is mandatory.",
+              ]
+            : []),
           ...(detail.length > 0 ? [detail] : []),
         ].join("\n");
       }

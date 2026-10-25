@@ -98,6 +98,7 @@ import { reconcileUnobservedTerminalPrEvents } from "./reconcile-unobserved-term
 
 const lastLoggedCiState = new Map<string, string>();
 const reportedMissingMaintenancePlans = new Set<string>();
+const reportedLegacyAttentionRequired = new Set<string>();
 
 export interface RunTaskSessionWorkflowOptions {
   project: ProjectConfig & { contextRoot?: string };
@@ -1699,10 +1700,23 @@ export async function runTaskSessionWorkflow(
       (candidate) => candidate.id === strandedMutation.cardId,
     );
     if (!alreadyFailed) {
-      if (strandedRecord.terminalFailure?.kind !== "implementation")
-        throw new Error(
-          "Legacy attention-required task needs an explicitly authorized Trello move to Failed before queue retirement",
-        );
+      if (strandedRecord.terminalFailure?.kind !== "implementation") {
+        // This state predates the terminal-failure protocol. Keep the task,
+        // queue and worktree intact, but never throw the same un-actionable
+        // error every poll (which sends repeated attention emails).
+        if (!reportedLegacyAttentionRequired.has(strandedMutation.eventId)) {
+          reportedLegacyAttentionRequired.add(strandedMutation.eventId);
+          logger
+            .child({
+              projectId: project.id,
+              cardId: strandedMutation.cardId,
+            })
+            .warn(
+              "Legacy attention-required publication remains preserved and blocked. Explicit operator recovery is required; no automatic Trello move, queue retirement, or repeated failure notification.",
+            );
+        }
+        return;
+      }
       const working = await getCardsForDiscovery(
         trello,
         project.id,
@@ -2774,12 +2788,25 @@ export async function runTaskSessionWorkflow(
           : { expectedExistingPullRequestUrl: recoveryRecord.pullRequest.url }),
         beforePushVerification: async () => {
           preparedEvidence = await verifyPreparedContent();
+          const rebasedHead = await git.getHeadSha(worktreePath);
+          const allowStaleExhaustedReview =
+            exhaustedReview !== undefined &&
+            rebasedHead !== recoveredTrustedCommit.commitSha;
           if (
-            !decideHumanReviewPublication(preparedEvidence, exhaustedReview)
-              .allowed
+            allowStaleExhaustedReview &&
+            (await git.getStatus(worktreePath)).trim().length > 0
           )
             throw new Error(
-              "Prepared human-review publication evidence is invalid",
+              "Refusing exhausted-review publication from a dirty rebased worktree",
+            );
+          const decision = decideHumanReviewPublication(
+            preparedEvidence,
+            exhaustedReview,
+            { allowStaleExhaustedReview },
+          );
+          if (!decision.allowed)
+            throw new Error(
+              `Prepared human-review publication evidence is invalid: ${decision.reasons.join("; ")}`,
             );
         },
       });

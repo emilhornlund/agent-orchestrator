@@ -98,6 +98,7 @@ export function decideVerifiedPublication(
 export function decideHumanReviewPublication(
   input: VerifiedPublicationDecisionInput,
   exhaustedReview: ImplementationReviewResult | undefined,
+  options: { allowStaleExhaustedReview?: boolean } = {},
 ): VerifiedPublicationDecision {
   const decision = decideVerifiedPublication(input);
   if (
@@ -109,7 +110,12 @@ export function decideHumanReviewPublication(
     return decision;
 
   const reasons = decision.reasons.filter(
-    (reason) => reason !== "Final implementation review did not pass",
+    (reason) =>
+      reason !== "Final implementation review did not pass" &&
+      !(
+        options.allowStaleExhaustedReview === true &&
+        reason === "Final implementation review is stale"
+      ),
   );
   return { ...decision, allowed: reasons.length === 0, reasons };
 }

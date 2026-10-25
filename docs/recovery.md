@@ -81,6 +81,27 @@ The expected remote branch is deleted only for a verified merged PR and only aft
 local worktree cleanup is restricted to the expected path and branch and refuses symlinks, dirty trees, active rebases, conflicts,
 or unknown paths. A cleanup failure preserves the terminal event so the operation can be retried without losing ownership.
 
+## Exhausted review after a publication rebase
+
+When implementation review repairs reach `opencode.remediation.maxPasses`,
+the validated implementation is eligible for **Human Review publication only**.
+If a subsequent publication rebase changes the source snapshot, the old failed
+review must not be presented as current or re-run indefinitely. The
+orchestrator may publish the rebased, clean trusted commit only when **fresh
+validation and configured coverage both pass on its exact current snapshot**.
+The PR must identify that its unresolved review findings describe the
+pre-rebase version and that the rebased result still requires human review.
+Automatic merging remains prohibited. Changed or missing validation/coverage
+evidence, a dirty worktree, or uncertain Git state must remain blocked.
+
+A legacy `attention-required` record without a persisted `terminalFailure`
+cannot be automatically moved to Failed or discarded. Polling now logs the
+blocked condition once per process without emitting the same Attention
+Required email every 15 seconds; its queue event and files remain intact
+for explicit operator recovery. This is **not automatic restoration** of an
+existing dirty publication worktree: inspect its Git status, trusted commit,
+and persisted task state before deciding how to resume or salvage the PR.
+
 ## Failed, unpublished PR maintenance and removed tasks
 
 A deterministic PR-maintenance quality failure (including an invalid review

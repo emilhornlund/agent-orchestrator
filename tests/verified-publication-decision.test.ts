@@ -136,6 +136,41 @@ describe("human-review publication after configured repair exhaustion", () => {
     ],
   };
 
+  it("permits stale exhausted review only for an explicitly verified rebase and current validation", () => {
+    const newIdentity = `sha256:${"c".repeat(64)}`;
+    const rebased = input({
+      currentContentIdentity: newIdentity,
+      validation: { ...validation, contentIdentity: newIdentity },
+      review: failedReview,
+    });
+    expect(
+      decideHumanReviewPublication(rebased, failedReview).reasons,
+    ).toContain("Final implementation review is stale");
+    expect(
+      decideHumanReviewPublication(rebased, failedReview, {
+        allowStaleExhaustedReview: true,
+      }).allowed,
+    ).toBe(true);
+    expect(decideVerifiedPublication(rebased).allowed).toBe(false);
+    expect(
+      decideHumanReviewPublication({ ...rebased, validation }, failedReview, {
+        allowStaleExhaustedReview: true,
+      }).reasons,
+    ).toContain("Local validation evidence is stale");
+    expect(
+      decideHumanReviewPublication(
+        { ...rebased, coverageCommand: "yarn coverage", coverage: null },
+        failedReview,
+        { allowStaleExhaustedReview: true },
+      ).reasons,
+    ).toContain("Configured coverage evidence is missing");
+    expect(
+      decideHumanReviewPublication({ ...rebased, review }, failedReview, {
+        allowStaleExhaustedReview: true,
+      }).allowed,
+    ).toBe(false);
+  });
+
   it("allows only the exact persisted exhausted review with passed current validation", () => {
     expect(
       decideHumanReviewPublication(

@@ -222,12 +222,8 @@ describe("terminal failure recovery", () => {
         prepareAttachmentContext: async () => undefined,
       });
     const lifecycleEvent = vi.spyOn(Logger.prototype, "event");
-    await expect(poll()).rejects.toThrow(
-      "Legacy attention-required task needs an explicitly authorized Trello move to Failed before queue retirement",
-    );
-    await expect(poll()).rejects.toThrow(
-      "Legacy attention-required task needs an explicitly authorized Trello move to Failed before queue retirement",
-    );
+    await expect(poll()).resolves.toBeUndefined();
+    await expect(poll()).resolves.toBeUndefined();
     expect(queue.getActive()).toMatchObject({
       eventId: "implementation:pilot",
       status: "failed",
