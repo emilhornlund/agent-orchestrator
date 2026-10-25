@@ -19,6 +19,22 @@ const id = z
     "Must be a safe non-blank identifier",
   );
 const gitSha = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i);
+export const localPreparationSchema = z.strictObject({
+  status: z.enum([
+    "fetching-base",
+    "base-fetched",
+    "backing-up",
+    "rebasing",
+    "conflicted",
+    "prepared",
+  ]),
+  originalHead: gitSha,
+  baseHead: gitSha.optional(),
+  backupRef: z.string().min(1).optional(),
+  resultingHead: gitSha.optional(),
+  conflictedPaths: z.array(z.string().min(1)).optional(),
+  updatedAt: z.string().datetime(),
+});
 
 export const prMaintenanceOperationSchema = z
   .strictObject({
@@ -35,6 +51,7 @@ export const prMaintenanceOperationSchema = z
     status: z.enum(["prepared", "active", "uncertain", "completed"]),
     ownerToken: z.uuid().optional(),
     ownerPid: z.number().int().positive().optional(),
+    localPreparation: localPreparationSchema.optional(),
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
   })
@@ -68,6 +85,7 @@ export const prMaintenanceOperationSchema = z
 export type PrMaintenanceOperation = z.infer<
   typeof prMaintenanceOperationSchema
 >;
+export type LocalPreparationProgress = z.infer<typeof localPreparationSchema>;
 
 export function parsePrMaintenanceOperation(
   value: unknown,
