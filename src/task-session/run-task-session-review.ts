@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { ZodError } from "zod";
 
 import type { ProjectConfig } from "../config/config.js";
 import type { CardAttachmentPromptContext } from "../context/card-attachment-prompt.js";
@@ -67,6 +68,8 @@ export interface TaskSessionReviewOperationResult {
   runResult: OpenCodeRunResult;
   contentIdentity: string;
 }
+
+const MAX_FORMAT_ONLY_RETRIES = 1;
 
 function assertUntrackedPath(worktreePath: string, filePath: string): string {
   if (path.isAbsolute(filePath) || path.win32.isAbsolute(filePath)) {
@@ -284,39 +287,71 @@ export async function runTaskSessionReview(
     taskRecordStore.compareAndSwap(card.id, record.revision, reviewedRecord);
   }
 
-  const runResult = await openCode.run({
-    ...runOptions,
-    cwd: worktreePath,
-    prompt,
-    readOnly: true,
-  });
+  let runResult: OpenCodeRunResult | undefined;
+  let review: ImplementationReviewResult;
+  let previousOutput = "";
+  let formatErrorMessage = "";
 
-  if (runResult.exitCode !== 0) {
-    throw new TaskSessionReviewError(
-      `Independent implementation review exited with code ${runResult.exitCode}`,
-      runResult,
-    );
+  for (let formatRetry = 0; ; formatRetry += 1) {
+    const attemptPrompt =
+      formatRetry === 0
+        ? prompt
+        : [
+            prompt,
+            "FORMAT-ONLY CORRECTION: Your previous response did not match the required JSON contract. Return only corrected JSON for the same review and same reviewed content. Preserve the prior verdict, assessments, evidence, and findings; only correct JSON syntax or schema-format issues. Do not re-review, change files, run commands, or perform other actions.",
+            `Contract error: ${formatErrorMessage}`,
+            "Previous response:",
+            previousOutput,
+          ].join("\n\n");
+    runResult = await openCode.run({
+      ...runOptions,
+      cwd: worktreePath,
+      prompt: attemptPrompt,
+      readOnly: true,
+    });
+    previousOutput = runResult.output;
+
+    if (runResult.exitCode !== 0) {
+      throw new TaskSessionReviewError(
+        `Independent implementation review exited with code ${runResult.exitCode}`,
+        runResult,
+      );
+    }
+
+    try {
+      review = parseImplementationReviewResult(
+        JSON.parse(runResult.output) as unknown,
+        {
+          projectId: project.id,
+          cardId: card.id,
+          requirementIds: storedPlan.plan.requirements.map(
+            (requirement) => requirement.id,
+          ),
+          contentIdentity,
+        },
+      );
+      break;
+    } catch (error) {
+      const formatError =
+        error instanceof SyntaxError || error instanceof ZodError;
+
+      if (formatError && formatRetry < MAX_FORMAT_ONLY_RETRIES) {
+        formatErrorMessage =
+          error instanceof Error ? error.message : "Invalid JSON response";
+        continue;
+      }
+
+      throw new TaskSessionReviewError(
+        "Independent implementation review returned a malformed, stale, or out-of-scope result",
+        runResult,
+        { cause: error },
+      );
+    }
   }
 
-  let review: ImplementationReviewResult;
-
-  try {
-    review = parseImplementationReviewResult(
-      JSON.parse(runResult.output) as unknown,
-      {
-        projectId: project.id,
-        cardId: card.id,
-        requirementIds: storedPlan.plan.requirements.map(
-          (requirement) => requirement.id,
-        ),
-        contentIdentity,
-      },
-    );
-  } catch (error) {
+  if (runResult === undefined) {
     throw new TaskSessionReviewError(
-      "Independent implementation review returned a malformed or stale result",
-      runResult,
-      { cause: error },
+      "Independent implementation review did not run",
     );
   }
 
