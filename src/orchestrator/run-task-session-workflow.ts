@@ -1422,7 +1422,7 @@ export async function runTaskSessionWorkflow(
     cwd: project.repository.path,
   });
   const maintenanceHandledCardIds = new Set<string>();
-  if (project.maintenance?.enabled !== false) {
+  if (project.maintenance?.enabled === true) {
     const maintenanceStore = new PrMaintenanceStore(root, project);
     for (const observation of latestObservations) {
       if (
