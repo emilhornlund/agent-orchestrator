@@ -9,6 +9,7 @@ import type { GitHubClient } from "../src/github/github-client.js";
 import { OpenCodeClient } from "../src/opencode/opencode-client.js";
 import { CommandRunner } from "../src/process/command-runner.js";
 import { runTaskSessionWorkflow } from "../src/orchestrator/run-task-session-workflow.js";
+import { Logger } from "../src/logging/logger.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
 import type { TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
 
@@ -146,6 +147,7 @@ describe("task-session terminal PR reconciliation", () => {
           signal: new AbortController().signal,
           prepareAttachmentContext: async () => undefined,
         });
+      const lifecycleEvent = vi.spyOn(Logger.prototype, "event");
 
       if (state === "MERGED") {
         await expect(poll()).rejects.toThrow(
@@ -154,6 +156,16 @@ describe("task-session terminal PR reconciliation", () => {
         expect(currentList).toBe(project.trello.doneListId);
       }
       await poll();
+
+      const destinationEvent =
+        state === "MERGED"
+          ? "Merged pull request transitioned card to Done: https://github.com/owner/repo/pull/7"
+          : "Closed pull request returned card to Backlog: https://github.com/owner/repo/pull/7";
+      expect(
+        lifecycleEvent.mock.calls.filter(
+          ([message]) => message === destinationEvent,
+        ),
+      ).toHaveLength(1);
 
       expect(currentList).toBe(
         project.trello[destination === "done" ? "doneListId" : "backlogListId"],

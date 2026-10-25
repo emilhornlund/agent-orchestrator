@@ -10,6 +10,7 @@ import { OpenCodeClient } from "../src/opencode/opencode-client.js";
 import { CommandRunner } from "../src/process/command-runner.js";
 import { TaskMutationQueue } from "../src/task-session/task-mutation-queue.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
+import { Logger } from "../src/logging/logger.js";
 import type { TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
 
 let root: string | undefined;
@@ -124,10 +125,17 @@ describe("terminal implementation failure recovery", () => {
         signal: new AbortController().signal,
         prepareAttachmentContext: async () => undefined,
       });
+    const lifecycleEvent = vi.spyOn(Logger.prototype, "event");
     await poll();
 
     expect(currentList).toBe(project.trello.failedListId);
     expect(trello.moveCard).toHaveBeenCalledTimes(1);
+    expect(lifecycleEvent).toHaveBeenCalledWith(
+      "Terminal failure transition to Failed confirmed",
+    );
+    expect(lifecycleEvent).not.toHaveBeenCalledWith(
+      "Card claimed; transition to Working succeeded",
+    );
     expect(queue.getActive()).toBeNull();
     expect(store.read(cardId)).toMatchObject({
       phase: "attention-required",

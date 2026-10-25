@@ -4,6 +4,7 @@ import type { CardAttachmentPromptContext } from "../context/card-attachment-pro
 import type { GitClient } from "../git/git-client.js";
 import type { GitHubClient } from "../github/github-client.js";
 import { getSessionLogPath } from "../logging/session-log.js";
+import { logger } from "../logging/logger.js";
 import type { OpenCodeClient } from "../opencode/opencode-client.js";
 import { buildCommitPrompt } from "../opencode/build-commit-prompt.js";
 import {
@@ -231,6 +232,7 @@ export async function runTaskSessionFeedbackCycle(
     signal,
   } = options;
   const record = taskStore.read(card.id);
+  const cardLog = logger.child({ projectId: project.id, cardId: card.id });
   if (
     record === null ||
     record.phase !== "human-feedback" ||
@@ -514,6 +516,9 @@ export async function runTaskSessionFeedbackCycle(
       item.actionability === "actionable",
   );
   if (actionableFeedback.length === 0) return "idle";
+  cardLog.event(
+    `Requested-changes remediation started (${actionableFeedback.length} actionable item(s))`,
+  );
   const operationId = `feedback:${observation.headSha}:${createHash("sha256")
     .update(
       actionableFeedback
@@ -565,6 +570,7 @@ export async function runTaskSessionFeedbackCycle(
         signal,
       },
     });
+    cardLog.event(`Requested-changes remediation ${remediation.status}`);
     if (remediation.status === "no-op") {
       options.mutationQueue.complete(operationId);
       return "remediated";
@@ -1132,6 +1138,7 @@ export async function runTaskSessionFeedbackCycle(
     options.mutationQueue.complete(operationId);
     return "published";
   } catch (error) {
+    cardLog.event("Requested-changes workflow failed");
     if (options.mutationQueue.ownsActive(operationId)) {
       options.mutationQueue.fail(operationId);
     }
