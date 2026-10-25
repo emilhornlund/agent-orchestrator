@@ -205,6 +205,13 @@ function validateMetadata(
   );
 }
 
+function manifestsEqual(
+  left: CardAttachmentManifest | undefined,
+  right: CardAttachmentManifest,
+): boolean {
+  return left !== undefined && JSON.stringify(left) === JSON.stringify(right);
+}
+
 function normalizeFilename(name: string): string {
   const components = name.replaceAll("\\", "/").split("/");
   let leaf = "";
@@ -1305,8 +1312,11 @@ export async function materializeCardAttachments(
       existingManifest,
       manifest,
     );
-    await publishManifest(paths, manifest);
-    manifestPublished = true;
+    const manifestChanged = !manifestsEqual(existingManifest, manifest);
+    if (manifestChanged) {
+      await publishManifest(paths, manifest);
+      manifestPublished = true;
+    }
 
     if (staleCleanup !== undefined) {
       await commitStaleCleanup(staleCleanup);
@@ -1345,19 +1355,27 @@ export async function materializeCardAttachments(
     throw failure;
   }
 
-  options.onSuccessfulReconciliation?.({
-    reusedUploadedAttachments: plannedAttachments.filter(
-      (planned) => planned.attachment.isUpload && planned.reuse,
-    ).length,
-    downloadedUploadedAttachments: plannedAttachments.filter(
-      (planned) => planned.attachment.isUpload && !planned.reuse,
-    ).length,
-    removedStaleManagedAttachments: staleCleanup?.backups.length ?? 0,
-    externalUrlAttachments: manifest.attachments.filter(
-      (attachment) => !attachment.isUpload,
-    ).length,
-    totalCurrentAttachments: manifest.attachments.length,
-  });
+  const downloadedUploadedAttachments = plannedAttachments.filter(
+    (planned) => planned.attachment.isUpload && !planned.reuse,
+  ).length;
+  const removedStaleManagedAttachments = staleCleanup?.backups.length ?? 0;
+  if (
+    !manifestsEqual(existingManifest, manifest) ||
+    downloadedUploadedAttachments > 0 ||
+    removedStaleManagedAttachments > 0
+  ) {
+    options.onSuccessfulReconciliation?.({
+      reusedUploadedAttachments: plannedAttachments.filter(
+        (planned) => planned.attachment.isUpload && planned.reuse,
+      ).length,
+      downloadedUploadedAttachments,
+      removedStaleManagedAttachments,
+      externalUrlAttachments: manifest.attachments.filter(
+        (attachment) => !attachment.isUpload,
+      ).length,
+      totalCurrentAttachments: manifest.attachments.length,
+    });
+  }
 
   return manifest;
 }

@@ -1409,7 +1409,6 @@ export async function runTaskSessionWorkflow(
       throw new Error(
         `Observed task-session review card disappeared: ${record.cardId}`,
       );
-    const attachmentContext = await options.prepareAttachmentContext(card);
     const feedbackResult = await runTaskSessionFeedbackCycle({
       project,
       card,
@@ -1424,7 +1423,7 @@ export async function runTaskSessionWorkflow(
       openCode,
       commands,
       worktreePath: path.join(project.repository.worktreeRoot, card.id),
-      ...(attachmentContext === undefined ? {} : { attachmentContext }),
+      prepareAttachmentContext: () => options.prepareAttachmentContext(card),
       signal,
     });
     if (feedbackResult === "attention-required") feedbackNeedsAttention = true;
