@@ -110,5 +110,63 @@ worktree branch/head/status, trusted commit, primary session, complete CI eviden
 task in the project while the current task has ambiguous ownership. Contact a human when the available evidence does not establish
 a safe deterministic continuation.
 
+### Retire a legacy terminal failure without editing runtime state
+
+For a task produced by a release that left `phase: attention-required` and a failed active implementation event, the queue is
+intentionally still owned. The supported retirement is an explicit, audited Trello move to `Failed`; the next poll verifies the
+project/card/operation/expected-branch identity, verifies that the prior worker no longer owns the queue, and releases only that
+matching event. The task record, plan, session binding/log, worktree, branch, queue history, and all working-tree changes remain in
+place. No retry is started by this procedure.
+
+Before authorizing that Trello move, an operator must:
+
+1. Stop or pause the orchestrator worker for this project. Confirm the queue's `ownerPid` is no longer alive (`kill -0 <pid>` must
+   fail); if it succeeds or its outcome is unclear, stop and wait. Do not use a second worker to recover it.
+2. Verify the task record and active queue event identify the configured project, the exact Trello card, the same operation key,
+   and `agent/<card-id>`. Verify Trello currently has that exact card in `Working`. If any identity differs, stop.
+   Read-only checks against the configured context root can establish the persisted identity:
+
+   ```sh
+   jq -e --arg project "$PROJECT_ID" --arg card "$CARD_ID" --arg branch "agent/$CARD_ID" \
+     '.projectId == $project and .cardId == $card and .expectedBranch == $branch and .phase == "attention-required"' \
+     "$CONTEXT_ROOT/task-executions/$PROJECT_ID/$CARD_ID.json"
+   jq -e --arg card "$CARD_ID" \
+     '[.events[] | select(.cardId == $card and .status == "failed")] | length == 1' \
+     "$CONTEXT_ROOT/task-mutation-queues/$PROJECT_ID.json"
+   ```
+
+   Compare the selected event's `operationKey` to the task record's `operationKey` and verify its `activeEventId` matches its
+   `eventId`. These commands only read state; never use `jq` to rewrite it.
+
+3. Verify the worktree resolves to `<worktreeRoot>/<card-id>` and is on `agent/<card-id>`. Preserve the current state before
+   proceeding:
+
+   ```sh
+   tar -C "$CONTEXT_ROOT" -czf "$BACKUP_DIR/context-before-retirement.tgz" task-executions task-plans task-mutation-queues
+   git -C "$WORKTREE" status --short --branch
+   git -C "$WORKTREE" diff --binary > "$BACKUP_DIR/worktree.patch"
+   git -C "$WORKTREE" ls-files --others --exclude-standard -z > "$BACKUP_DIR/untracked-files.list"
+   ```
+
+   Copy every listed untracked file and any relevant ignored/untracked data into the backup directory. Do not clean, reset, stash,
+   or remove the worktree.
+
+4. Inspect local commits (`git -C "$WORKTREE" log --oneline --decorate -10`), remote branch state
+   (`git ls-remote origin "refs/heads/agent/<card-id>"`), and GitHub PRs
+   (`gh pr list --head "agent/<card-id>" --state all`). Confirm whether each result is absent or belongs to this task; unknown or
+   mismatched commits/branches/PRs mean stop and escalate. Record the results with the incident.
+5. Obtain explicit operator authorization to retire this failed attempt. Only then move the card once in Trello from `Working` to
+   the configured `Failed` list. This Trello action is the authorization signal; do not edit the queue or task JSON.
+6. Restart the project worker with the normal deployment/start command. For a local installation this is `yarn dev` from the
+   repository with its normal environment loaded. Polling verifies the card is in `Failed`, checks the matching dead queue owner,
+   and marks only that queue event completed. Confirm the event is no longer active and verify the task record/worktree still
+   exist. A mismatch, failed lookup, or uncertain transition leaves ownership in place for investigation.
+
+For newly recorded, confirmed nonzero implementation exits, polling performs the `Working` → `Failed` transition itself and
+completes the mutation event only after Trello confirms `Failed`. A lost response is reconciled by checking the Failed list before
+retrying the move. The durable task record and worktree are preserved in either case. To request a later deliberate retry, follow
+the separate retry process only after the failed attempt has been retired and its retained work has been reviewed; never move a
+card back to `Ready for Agent` while its old task record or queue identity remains unresolved.
+
 Recovery has been tested only with local fixtures and mocked services. No live Trello/GitHub pilot, real OpenCode session restart,
 or external API availability test has been performed.

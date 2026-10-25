@@ -315,6 +315,11 @@ describe("runTaskSessionImplementation", () => {
     expect(fixture.taskRecordStore.read(card.id)).toMatchObject({
       phase: "attention-required",
       lastEvent: { type: "attention-required" },
+      terminalFailure: {
+        kind: "implementation",
+        reason: "OpenCode implementation exited with code 1",
+        outcome: "pending",
+      },
     });
     expect(fs.readFileSync(fixture.repositorySentinel, "utf8")).toBe(
       "source-checkout-unchanged",

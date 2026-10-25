@@ -141,6 +141,7 @@ function persistAttentionRequired(
   cardId: string,
   operationKey: string,
   eventId: string,
+  terminalFailure?: string,
 ): void {
   const current = store.read(cardId);
 
@@ -160,7 +161,18 @@ function persistAttentionRequired(
     current,
     createEvent(current, "attention-required", eventId),
   );
-  store.compareAndSwap(cardId, current.revision, nextRecord);
+  store.compareAndSwap(cardId, current.revision, {
+    ...nextRecord,
+    ...(terminalFailure === undefined
+      ? {}
+      : {
+          terminalFailure: {
+            kind: "implementation" as const,
+            reason: terminalFailure.slice(0, 4_000),
+            outcome: "pending" as const,
+          },
+        }),
+  });
 }
 
 function isAbort(error: unknown): boolean {
@@ -279,6 +291,7 @@ export async function runTaskSessionImplementation(
         card.id,
         operationKey,
         `${operationKey}:implementation-failed`,
+        error.message,
       );
       throw new TaskSessionImplementationError(
         error.message,
