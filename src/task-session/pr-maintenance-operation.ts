@@ -64,6 +64,13 @@ export const prMaintenanceOperationSchema = z
     ownerPid: z.number().int().positive().optional(),
     localPreparation: localPreparationSchema.optional(),
     qualityVerification: maintenanceQualityEvidenceSchema.optional(),
+    publication: z
+      .strictObject({
+        status: z.enum(["not-started", "push-intended", "verified"]),
+        resultingHead: gitSha,
+        updatedAt: z.string().datetime(),
+      })
+      .optional(),
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
   })

@@ -211,6 +211,7 @@ export interface PullRequestState extends PullRequest {
   state: PullRequestStatus;
   mergedAt: string | null;
   headRefOid?: string;
+  baseRefOid?: string;
   baseRefName?: string;
   headRefName?: string;
   headRepository?: PullRequestHeadRepository | null;
@@ -432,6 +433,7 @@ function validatePullRequestStateList(
     const mergeable = item.mergeable;
     const mergeStateStatus = item.mergeStateStatus;
     const headRefOid = item.headRefOid;
+    const baseRefOid = item.baseRefOid;
     const requiresMaintenanceFacts =
       requireMaintenanceFacts && state === "OPEN";
     const hasHeadRepositoryIdentity =
@@ -472,6 +474,7 @@ function validatePullRequestStateList(
       state,
       mergedAt,
       ...(typeof headRefOid === "string" ? { headRefOid } : {}),
+      ...(typeof baseRefOid === "string" ? { baseRefOid } : {}),
       ...(headRepository === undefined ? {} : { headRepository }),
       ...(headRepositoryOwner === undefined ? {} : { headRepositoryOwner }),
       ...(typeof baseRefName === "string" &&

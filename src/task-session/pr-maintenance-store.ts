@@ -330,6 +330,73 @@ export class PrMaintenanceStore {
     }, operationId);
   }
 
+  recordPublication(
+    operationId: string,
+    identity: Pick<
+      PrMaintenanceOperation,
+      | "projectId"
+      | "cardId"
+      | "pullRequest"
+      | "expectedRemoteHead"
+      | "targetBaseHead"
+    >,
+    status: "push-intended" | "verified",
+    resultingHead: string,
+  ): PrMaintenanceOperation {
+    return this.update((record) => {
+      const index = record.operations.findIndex(
+        (item) => item.operationId === operationId,
+      );
+      const current = record.operations[index];
+      if (current === undefined)
+        throw new PrMaintenanceConflictError(
+          `Unknown maintenance operation: ${operationId}`,
+        );
+      this.assertIdentity(current, identity);
+      if (
+        current.status !== "active" ||
+        current.ownerToken !== this.ownerToken ||
+        !liveOwners.has(this.ownerToken) ||
+        current.qualityVerification?.status !== "passed" ||
+        current.qualityVerification.preparedHead !== resultingHead ||
+        current.localPreparation?.resultingHead !== resultingHead
+      ) {
+        throw new PrMaintenanceConflictError(
+          "Verified exclusive ownership and complete quality evidence are required to publish",
+        );
+      }
+      if (
+        current.publication?.status === "push-intended" &&
+        status === "push-intended"
+      ) {
+        throw new PrMaintenanceConflictError(
+          "Maintenance push was already intended; an ambiguous push must never be repeated",
+        );
+      }
+      if (
+        current.publication?.status === "verified" &&
+        (current.publication.resultingHead !== resultingHead ||
+          status !== "verified")
+      ) {
+        throw new PrMaintenanceConflictError(
+          "Verified maintenance publication cannot be changed or regressed",
+        );
+      }
+      const updated = parsePrMaintenanceOperation({
+        ...current,
+        publication: {
+          status,
+          resultingHead,
+          updatedAt: new Date().toISOString(),
+        },
+        updatedAt: new Date().toISOString(),
+      });
+      const operations = [...record.operations];
+      operations[index] = updated;
+      return { ...record, operations };
+    }, operationId);
+  }
+
   create(
     input: Omit<
       PrMaintenanceOperation,

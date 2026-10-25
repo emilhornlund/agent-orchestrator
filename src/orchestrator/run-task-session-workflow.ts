@@ -83,6 +83,11 @@ import {
   readTrustedCommitState,
 } from "./trusted-commit-state.js";
 import { logger } from "../logging/logger.js";
+import { PrMaintenanceStore } from "../task-session/pr-maintenance-store.js";
+import {
+  maintainOutdatedPr,
+  reconcileInterruptedPrMaintenance,
+} from "./maintain-outdated-pr.js";
 
 const lastLoggedCiState = new Map<string, string>();
 
@@ -530,6 +535,13 @@ export async function runTaskSessionWorkflow(
   const planStore = new TaskPlanStore(root, project);
   const queue = new TaskMutationQueue(root, project);
   const feedbackLedgerStore = new FeedbackLedgerStore(root, project);
+  await reconcileInterruptedPrMaintenance({
+    project,
+    taskStore,
+    maintenanceStore: new PrMaintenanceStore(root, project),
+    mutationQueue: queue,
+    github,
+  });
   const humanReviewCards = await getCardsForDiscovery(
     trello,
     project.id,
@@ -1409,9 +1421,87 @@ export async function runTaskSessionWorkflow(
     github,
     cwd: project.repository.path,
   });
+  const maintenanceHandledCardIds = new Set<string>();
+  if (project.maintenance?.enabled === true) {
+    const maintenanceStore = new PrMaintenanceStore(root, project);
+    for (const observation of latestObservations) {
+      if (observation.state !== "OPEN" || observation.baseRelation !== "behind")
+        continue;
+      const task = taskStore.read(observation.cardId);
+      const card = latestHumanReviewCards.find(
+        (candidate) => candidate.id === observation.cardId,
+      );
+      const storedPlan = planStore.read(observation.cardId);
+      if (task === null || card === undefined || storedPlan === null) continue;
+      const maintenanceResult = await maintainOutdatedPr({
+        project,
+        card,
+        task,
+        worktreePath: path.join(project.repository.worktreeRoot, card.id),
+        git,
+        github,
+        commands,
+        mutationQueue: queue,
+        taskStore,
+        maintenanceStore,
+        signal,
+        eligible: observation.baseRelation === "behind",
+        hasRequestedChanges: observation.requestedChanges !== null,
+        hasUnresolvedFeedback: observation.feedbackIds.length > 0,
+        requirementIds: storedPlan.plan.requirements.map(
+          (requirement) => requirement.id,
+        ),
+        review: async ({
+          contentIdentity,
+          preparedHead,
+          requirementIds,
+          signal: reviewSignal,
+        }) => {
+          const result = await openCode.run({
+            cwd: path.join(project.repository.worktreeRoot, card.id),
+            model: project.opencode.review.model,
+            variant: project.opencode.review.variant,
+            timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
+            signal: reviewSignal,
+            readOnly: true,
+            sessionLabel: "PR maintenance independent review",
+            prompt: [
+              "Independently review this rebased implementation against every approved requirement.",
+              "Inspect the complete current repository content and report only the specified JSON schema.",
+              `Project: ${project.id}; card: ${card.id}; prepared commit: ${preparedHead}; content identity: ${contentIdentity}`,
+              `Approved requirements (review every one): ${JSON.stringify(storedPlan.plan.requirements)}`,
+              `Every requirement must have one concrete assessment: ${JSON.stringify(requirementIds)}`,
+              'Schema: {"version":1,"projectId":"...","cardId":"...","verdict":"pass|fail","requirementAssessments":[{"requirementId":"...","status":"satisfied|unsatisfied","details":"...","evidence":["..."]}],"blockingFindings":[],"reviewedContentIdentity":"..."}',
+            ].join("\n\n"),
+          });
+          if (result.exitCode !== 0)
+            throw new Error(
+              `Maintenance review exited with code ${result.exitCode}`,
+            );
+          return parseImplementationReviewResult(
+            JSON.parse(result.output) as unknown,
+            {
+              projectId: project.id,
+              cardId: card.id,
+              requirementIds,
+              contentIdentity,
+            },
+          );
+        },
+      });
+      if (
+        maintenanceResult === "published" ||
+        maintenanceResult === "reconciled" ||
+        maintenanceResult === "conflicted"
+      ) {
+        maintenanceHandledCardIds.add(observation.cardId);
+      }
+    }
+  }
   let feedbackNeedsAttention = false;
   for (const observation of latestObservations) {
     if (observation.state !== "OPEN") continue;
+    if (maintenanceHandledCardIds.has(observation.cardId)) continue;
     const record = taskStore.read(observation.cardId);
     if (record === null || record.phase !== "human-feedback") continue;
     const card = latestHumanReviewCards.find(
