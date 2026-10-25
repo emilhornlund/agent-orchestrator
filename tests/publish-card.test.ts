@@ -107,6 +107,9 @@ function createPublicationGit(
 ): GitClient {
   return {
     getCurrentBranch: vi.fn().mockResolvedValue("agent/card-1"),
+    getStatus: vi.fn().mockResolvedValue(""),
+    getDiff: vi.fn().mockResolvedValue(""),
+    getUntrackedFiles: vi.fn().mockResolvedValue([]),
     fetch: vi.fn().mockResolvedValue(undefined),
     rebase: vi.fn().mockResolvedValue(undefined),
     getHeadSha: vi.fn().mockResolvedValue("abc123"),
@@ -634,6 +637,7 @@ describe("publishCard", () => {
       commitSha: "stale-sha",
       reviewResult: "Passed",
       remediationResult: "Not required",
+      verifiedDescriptionFacts: () => ["yarn validate passed."],
     });
 
     expect(events.slice(0, 3)).toEqual(["rebase", "description", "push"]);
@@ -671,9 +675,13 @@ describe("publishCard", () => {
         ),
       }),
     );
+    expect(runDescription).toHaveBeenCalledWith(
+      expect.objectContaining({ readOnly: true }),
+    );
     expect(createPullRequest).toHaveBeenCalledWith(
       expect.objectContaining({
         body: [
+          "<!-- agent-orchestrator-description:start -->",
           "## Summary",
           "Described the published implementation.",
           "",
@@ -681,7 +689,8 @@ describe("publishCard", () => {
           "- Added structured PR content.",
           "",
           "## Validation",
-          "- Configured validation command `yarn validate` was supplied to modifying OpenCode sessions, but the orchestrator did not execute it; its result is unavailable.",
+          "- yarn validate passed.",
+          "<!-- agent-orchestrator-description:end -->",
           "",
           "## Task",
           "[Trello card: Example task](https://trello.com/c/card-1)",
@@ -730,7 +739,7 @@ describe("publishCard", () => {
     expect(createPullRequest).toHaveBeenCalledWith(
       expect.objectContaining({
         body: expect.stringContaining(
-          "No validation command was configured; no validation or test result is available.",
+          "No verified validation or test results are available.",
         ),
       }),
     );
@@ -739,6 +748,127 @@ describe("publishCard", () => {
         body: expect.not.stringContaining("yarn validate passed."),
       }),
     );
+  });
+
+  it("enriches the exact existing static fallback without replacing a PR", async () => {
+    const run = vi.fn().mockResolvedValue({
+      exitCode: 0,
+      output: JSON.stringify({
+        summary: "Completed implementation.",
+        changes: ["Updated the task workflow."],
+        validation: ["yarn validate passed with exit code 0."],
+      }),
+      errorOutput: "",
+    });
+    const currentBody = [
+      "Trello: https://trello.com/c/card-1",
+      "",
+      "Implemented automatically by Configured Git Author.",
+    ].join("\n");
+    const editPullRequestDescription = vi.fn();
+    const github = {
+      findPullRequest: vi.fn().mockResolvedValue({
+        url: "https://github.com/example/repository/pull/142",
+      }),
+      getPullRequestDescription: vi.fn().mockResolvedValue(currentBody),
+      editPullRequestDescription,
+      createPullRequest: vi.fn(),
+    } as unknown as GitHubClient;
+    const trello = {
+      moveCard: vi.fn().mockResolvedValue(createCard()),
+      getListTransitions: vi.fn().mockResolvedValue([]),
+      addComment: vi.fn().mockResolvedValue(undefined),
+    } as unknown as TrelloClient;
+
+    await publishCard({
+      trello,
+      git: createPublicationGit({
+        getChangedFiles: vi.fn().mockResolvedValue("src/task.ts"),
+        getCommitMessage: vi.fn().mockResolvedValue("fix(task): complete task"),
+      }),
+      github,
+      opencode: { run } as unknown as OpenCodeClient,
+      project: createProject(),
+      card: createCard(),
+      worktreePath: "/worktree",
+      branch: "agent/card-1",
+      expectedExistingPullRequestUrl:
+        "https://github.com/example/repository/pull/142",
+      commitSha: "abc123",
+      reviewResult: "Passed",
+      remediationResult: "Not required",
+      verifiedDescriptionFacts: () => [
+        "yarn validate passed with exit code 0.",
+      ],
+    });
+
+    expect(github.createPullRequest).not.toHaveBeenCalled();
+    expect(editPullRequestDescription).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pullRequestUrl: "https://github.com/example/repository/pull/142",
+        body: expect.stringContaining("Completed implementation."),
+      }),
+    );
+  });
+
+  it("rejects generated text when read-only source verification detects a mutation", async () => {
+    const git = createPublicationGit({
+      getStatus: vi
+        .fn()
+        .mockResolvedValueOnce("")
+        .mockResolvedValueOnce(" M src/task.ts"),
+      getChangedFiles: vi.fn().mockResolvedValue("src/task.ts"),
+      getCommitMessage: vi.fn().mockResolvedValue("fix(task): complete task"),
+    });
+    const createPullRequest = vi.fn().mockResolvedValue({
+      url: "https://github.com/example/repository/pull/123",
+    });
+    const github = {
+      findPullRequest: vi.fn().mockResolvedValue(null),
+      createPullRequest,
+    } as unknown as GitHubClient;
+    const trello = {
+      moveCard: vi.fn().mockResolvedValue(createCard()),
+      getListTransitions: vi.fn().mockResolvedValue([]),
+      addComment: vi.fn().mockResolvedValue(undefined),
+    } as unknown as TrelloClient;
+
+    await publishCard({
+      trello,
+      git,
+      github,
+      opencode: {
+        run: vi.fn().mockResolvedValue({
+          exitCode: 0,
+          output: JSON.stringify({
+            summary: "Generated",
+            changes: ["Change"],
+            validation: [],
+          }),
+          errorOutput: "",
+        }),
+      } as unknown as OpenCodeClient,
+      project: createProject(),
+      card: createCard(),
+      worktreePath: "/worktree",
+      branch: "agent/card-1",
+      commitSha: "abc123",
+      reviewResult: "Passed",
+      remediationResult: "Not required",
+    });
+
+    expect(createPullRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.stringContaining("Trello: https://trello.com/c/card-1"),
+      }),
+    );
+    expect(createPullRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.not.stringContaining("Generated"),
+      }),
+    );
+    expect(git.push).toHaveBeenCalled();
+    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "review-list");
   });
 
   it("retries conversational description output once with a corrective prompt", async () => {
@@ -1202,7 +1332,11 @@ describe("publishCard", () => {
     temporaryDirectories.push(worktreeRoot);
     const project = {
       ...createProject(),
-      repository: { ...createProject().repository, worktreeRoot },
+      repository: {
+        ...createProject().repository,
+        worktreeRoot,
+        setupCommand: "yarn install",
+      },
     };
     const card = createCard();
     fs.mkdirSync(path.join(worktreeRoot, card.id));
@@ -1257,6 +1391,7 @@ describe("publishCard", () => {
       getListTransitions: vi.fn().mockResolvedValue([]),
       addComment: vi.fn().mockResolvedValue(undefined),
     } as unknown as TrelloClient;
+    const commands = { run: vi.fn().mockResolvedValue({ exitCode: 0 }) };
 
     await publishCard({
       trello,
@@ -1270,6 +1405,7 @@ describe("publishCard", () => {
       commitSha: taskSha,
       reviewResult: "Passed",
       remediationResult: "Not required",
+      commands: commands as never,
     });
 
     expect(runOpenCode).toHaveBeenCalledWith(
@@ -1277,6 +1413,9 @@ describe("publishCard", () => {
         sessionLabel: "OpenCode conflict remediation",
         prompt: expect.stringContaining("src/example.ts"),
       }),
+    );
+    expect(commands.run).toHaveBeenCalledWith(
+      expect.objectContaining({ command: "yarn install" }),
     );
     expect(git.push).toHaveBeenCalled();
     expect(createPullRequest).toHaveBeenCalledOnce();

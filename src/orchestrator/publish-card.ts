@@ -2,6 +2,7 @@ import type { ProjectConfig } from "../config/config.js";
 import type { GitClient } from "../git/git-client.js";
 import type { GitHubClient } from "../github/github-client.js";
 import { buildPullRequestAttributionFooter } from "../github/pull-request-attribution.js";
+import { enrichPullRequestDescription } from "../github/enrich-pull-request-description.js";
 import { logger } from "../logging/logger.js";
 import { getSessionLogPath } from "../logging/session-log.js";
 import {
@@ -14,6 +15,10 @@ import {
   type TrelloClient,
 } from "../trello/trello-client.js";
 import { buildPullRequestDescriptionPrompt } from "../opencode/build-pull-request-description-prompt.js";
+import {
+  captureRepositorySnapshot,
+  repositorySnapshotsEqual,
+} from "../opencode/commit-result.js";
 import {
   type OpenCodeClient,
   type OpenCodeRunResult,
@@ -54,6 +59,7 @@ export interface PublishCardOptions {
   rebaseAlreadyCompleted?: boolean;
   beforePushVerification?: () => Promise<void>;
   expectedExistingPullRequestUrl?: string;
+  verifiedDescriptionFacts?: () => readonly string[];
 }
 
 function getErrorMessage(error: unknown): string {
@@ -69,23 +75,6 @@ function renderDeterministicPullRequestBody(
     "",
     buildPullRequestAttributionFooter(gitIdentityName),
   ].join("\n");
-}
-
-function replaceUnverifiedValidation(
-  description: PullRequestDescription,
-  validationCommand?: string,
-): PullRequestDescription {
-  return {
-    ...description,
-    validation:
-      validationCommand === undefined
-        ? [
-            "No validation command was configured; no validation or test result is available.",
-          ]
-        : [
-            `Configured validation command \`${validationCommand}\` was supplied to modifying OpenCode sessions, but the orchestrator did not execute it; its result is unavailable.`,
-          ],
-  };
 }
 
 function logDescriptionFallback(
@@ -116,6 +105,7 @@ async function generatePullRequestDescription(options: {
   remediationResult: string;
   signal: AbortSignal;
   sessionLogPath?: string;
+  verifiedFacts: readonly string[];
   cardLog: ReturnType<typeof logger.child>;
 }): Promise<PullRequestDescription | undefined> {
   const {
@@ -127,6 +117,7 @@ async function generatePullRequestDescription(options: {
     commitSha,
     reviewResult,
     remediationResult,
+    verifiedFacts,
     signal,
     sessionLogPath,
     cardLog,
@@ -163,6 +154,7 @@ async function generatePullRequestDescription(options: {
       `Automated review result: ${reviewResult}.`,
       `Automated remediation result: ${remediationResult}.`,
     ],
+    verifiedFacts,
   });
 
   const runDescription = async (
@@ -180,6 +172,7 @@ async function generatePullRequestDescription(options: {
         timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
         prompt,
         signal,
+        readOnly: true,
         sessionLogPath:
           sessionLogPath ?? getSessionLogPath(project.id, card.id),
         sessionLabel: "OpenCode pull request description",
@@ -213,25 +206,50 @@ async function generatePullRequestDescription(options: {
     return result;
   };
 
+  let snapshotBeforeGeneration;
+  try {
+    snapshotBeforeGeneration = await captureRepositorySnapshot(
+      git,
+      worktreePath,
+    );
+  } catch (error) {
+    logDescriptionFallback(cardLog, "read-only source snapshot", error);
+    return undefined;
+  }
+
   const result = await runDescription(
     descriptionPrompt,
     "OpenCode execution",
     "initial attempt",
   );
 
-  if (result === undefined) {
+  try {
+    const snapshotAfterGeneration = await captureRepositorySnapshot(
+      git,
+      worktreePath,
+    );
+    if (
+      !repositorySnapshotsEqual(
+        snapshotBeforeGeneration,
+        snapshotAfterGeneration,
+      )
+    ) {
+      throw new Error(
+        "Read-only pull request description generation modified source files",
+      );
+    }
+  } catch (error) {
+    logDescriptionFallback(cardLog, "read-only source verification", error);
     return undefined;
   }
+  if (result === undefined) return undefined;
 
   try {
     const description = parsePullRequestDescription(result.output);
 
     cardLog.event("OpenCode pull request description generated");
 
-    return replaceUnverifiedValidation(
-      description,
-      project.repository.validationCommand,
-    );
+    return description;
   } catch (error) {
     if (signal.aborted) {
       throw new TrelloRequestAbortedError();
@@ -241,6 +259,10 @@ async function generatePullRequestDescription(options: {
       `Pull request description generation failed on initial attempt during structured output parsing${error instanceof PullRequestDescriptionParseError ? ` (${error.failureType})` : ""}: ${getErrorMessage(error)}. Requesting one corrective retry.`,
     );
 
+    const snapshotBeforeRetry = await captureRepositorySnapshot(
+      git,
+      worktreePath,
+    );
     const correctiveResult = await runDescription(
       [
         descriptionPrompt,
@@ -254,19 +276,23 @@ async function generatePullRequestDescription(options: {
       "corrective retry",
     );
 
-    if (correctiveResult === undefined) {
-      return undefined;
-    }
-
     try {
+      const snapshotAfterRetry = await captureRepositorySnapshot(
+        git,
+        worktreePath,
+      );
+      if (!repositorySnapshotsEqual(snapshotBeforeRetry, snapshotAfterRetry)) {
+        throw new Error(
+          "Read-only pull request description retry modified source files",
+          { cause: error },
+        );
+      }
+      if (correctiveResult === undefined) return undefined;
       const description = parsePullRequestDescription(correctiveResult.output);
 
       cardLog.event("OpenCode pull request description generated");
 
-      return replaceUnverifiedValidation(
-        description,
-        project.repository.validationCommand,
-      );
+      return description;
     } catch (retryError) {
       if (signal.aborted) {
         throw new TrelloRequestAbortedError();
@@ -295,6 +321,7 @@ export async function publishCard({
   commitSha,
   reviewResult,
   remediationResult,
+  verifiedDescriptionFacts: verifiedDescriptionFactsOption,
   pullRequestDescription,
   sessionLogPath,
   emailNotifier,
@@ -312,6 +339,7 @@ export async function publishCard({
   let pullRequest;
   let publishedCommitSha: string;
   let finalPullRequestDescription = pullRequestDescription;
+  let verifiedDescriptionFacts: readonly string[] = [];
 
   try {
     if (signal?.aborted) {
@@ -468,6 +496,7 @@ export async function publishCard({
     }
 
     if (opencode !== undefined) {
+      verifiedDescriptionFacts = verifiedDescriptionFactsOption?.() ?? [];
       finalPullRequestDescription = await generatePullRequestDescription({
         git,
         opencode,
@@ -477,6 +506,7 @@ export async function publishCard({
         commitSha: publishedCommitSha,
         reviewResult,
         remediationResult,
+        verifiedFacts: verifiedDescriptionFacts,
         signal: signal ?? new AbortController().signal,
         cardLog,
         sessionLogPath:
@@ -549,6 +579,58 @@ export async function publishCard({
 
     if (pullRequest) {
       cardLog.event(`Existing pull request found: ${pullRequest.url}`);
+      if (
+        finalPullRequestDescription !== undefined &&
+        typeof github.getPullRequestDescription === "function" &&
+        typeof github.editPullRequestDescription === "function"
+      ) {
+        try {
+          const publishableDescription =
+            verifiedDescriptionFacts.length === 0
+              ? {
+                  ...finalPullRequestDescription,
+                  validation: [
+                    "No verified validation or test results are available.",
+                  ],
+                }
+              : finalPullRequestDescription;
+          const generatedBody = renderPullRequestDescription(
+            publishableDescription,
+            card,
+            project.repository.gitIdentity.name,
+          );
+          const currentBody = await github.getPullRequestDescription({
+            cwd: worktreePath,
+            repository: project.repository.github,
+            pullRequestUrl: pullRequest.url,
+            project,
+          });
+          const enrichedBody = enrichPullRequestDescription(
+            currentBody,
+            generatedBody,
+            card,
+            project.repository.gitIdentity.name,
+          );
+          if (enrichedBody !== null && enrichedBody !== currentBody) {
+            await github.editPullRequestDescription({
+              cwd: worktreePath,
+              repository: project.repository.github,
+              pullRequestUrl: pullRequest.url,
+              body: enrichedBody,
+              project,
+            });
+            cardLog.event(
+              `Pull request description enriched: ${pullRequest.url}`,
+            );
+          }
+        } catch (error) {
+          logDescriptionFallback(
+            cardLog,
+            "existing pull request enrichment",
+            error,
+          );
+        }
+      }
     } else {
       if (signal?.aborted) {
         throw new TrelloRequestAbortedError();
@@ -563,11 +645,17 @@ export async function publishCard({
 
       if (finalPullRequestDescription !== undefined) {
         try {
+          const publishableDescription =
+            verifiedDescriptionFacts.length === 0
+              ? {
+                  ...finalPullRequestDescription,
+                  validation: [
+                    "No verified validation or test results are available.",
+                  ],
+                }
+              : finalPullRequestDescription;
           body = renderPullRequestDescription(
-            replaceUnverifiedValidation(
-              finalPullRequestDescription,
-              project.repository.validationCommand,
-            ),
+            publishableDescription,
             card,
             project.repository.gitIdentity.name,
           );

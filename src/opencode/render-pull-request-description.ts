@@ -9,6 +9,11 @@ import type { PullRequestDescription } from "./pull-request-description.js";
 
 export type PullRequestTaskContext = Pick<TrelloCard, "name" | "url">;
 
+export const AGENT_ORCHESTRATOR_DESCRIPTION_START =
+  "<!-- agent-orchestrator-description:start -->";
+export const AGENT_ORCHESTRATOR_DESCRIPTION_END =
+  "<!-- agent-orchestrator-description:end -->";
+
 function normalizeGeneratedText(
   value: string,
   attributionFooter: string,
@@ -18,6 +23,11 @@ function normalizeGeneratedText(
     .trim()
     .replaceAll(AGENT_ORCHESTRATOR_STATUS_START, "[status start marker]")
     .replaceAll(AGENT_ORCHESTRATOR_STATUS_END, "[status end marker]")
+    .replaceAll(
+      AGENT_ORCHESTRATOR_DESCRIPTION_START,
+      "[description start marker]",
+    )
+    .replaceAll(AGENT_ORCHESTRATOR_DESCRIPTION_END, "[description end marker]")
     .replaceAll(attributionFooter, "[application footer text]")
     .replace(
       /^((?:(?:>\s*)|(?:(?:[-+*]|\d+[.)])\s+))*)(#{1,6})(?=\s)/,
@@ -32,6 +42,11 @@ function normalizeTaskName(value: string, attributionFooter: string): string {
     .trim()
     .replaceAll(AGENT_ORCHESTRATOR_STATUS_START, "[status start marker]")
     .replaceAll(AGENT_ORCHESTRATOR_STATUS_END, "[status end marker]")
+    .replaceAll(
+      AGENT_ORCHESTRATOR_DESCRIPTION_START,
+      "[description start marker]",
+    )
+    .replaceAll(AGENT_ORCHESTRATOR_DESCRIPTION_END, "[description end marker]")
     .replaceAll(attributionFooter, "[application footer text]");
 
   return name.length > 0 ? name : "Trello card";
@@ -54,6 +69,7 @@ function renderPullRequestDescriptionBody(
         );
 
   return [
+    AGENT_ORCHESTRATOR_DESCRIPTION_START,
     "## Summary",
     normalizeGeneratedText(description.summary, attributionFooter),
     "",
@@ -62,6 +78,7 @@ function renderPullRequestDescriptionBody(
     "",
     "## Validation",
     ...validation,
+    AGENT_ORCHESTRATOR_DESCRIPTION_END,
     "",
     "## Task",
     `[Trello card: ${normalizeTaskName(task.name, attributionFooter)}](${task.url})`,
