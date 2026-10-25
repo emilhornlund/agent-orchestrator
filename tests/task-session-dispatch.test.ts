@@ -363,36 +363,35 @@ describe("task-session production dispatch", () => {
         const observedHead =
           endpoint.match(/\/commits\/([0-9a-f]+)\/check-runs/u)?.[1] ?? "";
         return JSON.stringify([
-          [
-            {
-              check_runs: [
-                {
-                  id: 42,
-                  name: "Build",
-                  head_sha: observedHead,
-                  status: "completed",
-                  conclusion:
-                    observedHead === "b".repeat(40) || failAllChecks
-                      ? "failure"
-                      : "success",
-                  created_at: "2026-10-24T10:00:00Z",
-                  html_url: "https://github.com/owner/repo/actions/runs/42",
-                },
-                {
-                  id: 43,
-                  name: "Tests",
-                  head_sha: observedHead,
-                  status: "completed",
-                  conclusion:
-                    observedHead === "b".repeat(40) || failAllChecks
-                      ? "failure"
-                      : "success",
-                  created_at: "2026-10-24T10:00:01Z",
-                  html_url: "https://github.com/owner/repo/actions/runs/43",
-                },
-              ],
-            },
-          ],
+          {
+            total_count: 2,
+            check_runs: [
+              {
+                id: 42,
+                name: "Build",
+                head_sha: observedHead,
+                status: "completed",
+                conclusion:
+                  observedHead === "b".repeat(40) || failAllChecks
+                    ? "failure"
+                    : "success",
+                created_at: "2026-10-24T10:00:00Z",
+                html_url: "https://github.com/owner/repo/actions/runs/42",
+              },
+              {
+                id: 43,
+                name: "Tests",
+                head_sha: observedHead,
+                status: "completed",
+                conclusion:
+                  observedHead === "b".repeat(40) || failAllChecks
+                    ? "failure"
+                    : "success",
+                created_at: "2026-10-24T10:00:01Z",
+                html_url: "https://github.com/owner/repo/actions/runs/43",
+              },
+            ],
+          },
         ]);
       }
       if (
