@@ -1,0 +1,76 @@
+import { z } from "zod";
+
+const id = z
+  .string()
+  .min(1)
+  .refine(
+    (value) =>
+      value.trim() === value &&
+      value !== "." &&
+      value !== ".." &&
+      !value.includes("/") &&
+      !value.includes("\\") &&
+      !Array.from(value).some((character) => {
+        const code = character.codePointAt(0);
+        return (
+          code !== undefined && (code <= 0x1f || (code >= 0x7f && code <= 0x9f))
+        );
+      }),
+    "Must be a safe non-blank identifier",
+  );
+const gitSha = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i);
+
+export const prMaintenanceOperationSchema = z
+  .strictObject({
+    version: z.literal(1),
+    projectId: id,
+    cardId: id,
+    pullRequest: z.strictObject({
+      number: z.number().int().positive(),
+      url: z.url(),
+    }),
+    expectedRemoteHead: gitSha,
+    targetBaseHead: gitSha,
+    operationId: id,
+    status: z.enum(["prepared", "active", "uncertain", "completed"]),
+    ownerToken: z.uuid().optional(),
+    ownerPid: z.number().int().positive().optional(),
+    createdAt: z.string().datetime(),
+    updatedAt: z.string().datetime(),
+  })
+  .superRefine((operation, ctx) => {
+    if (
+      (operation.ownerToken === undefined) !==
+      (operation.ownerPid === undefined)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["ownerToken"],
+        message: "Owner token and PID must be stored together",
+      });
+    }
+    if (operation.status !== "active" && operation.ownerToken !== undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["ownerToken"],
+        message: "Only active operations may have a live owner",
+      });
+    }
+    if (Date.parse(operation.updatedAt) < Date.parse(operation.createdAt)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["updatedAt"],
+        message: "Must not be earlier than createdAt",
+      });
+    }
+  });
+
+export type PrMaintenanceOperation = z.infer<
+  typeof prMaintenanceOperationSchema
+>;
+
+export function parsePrMaintenanceOperation(
+  value: unknown,
+): PrMaintenanceOperation {
+  return prMaintenanceOperationSchema.parse(value);
+}
