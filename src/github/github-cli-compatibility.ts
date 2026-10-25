@@ -24,6 +24,7 @@ export const GITHUB_CLI_PR_STATE_JSON_FIELDS = [
 export const GITHUB_CLI_PR_MAINTENANCE_JSON_FIELDS = [
   ...GITHUB_CLI_PR_STATE_JSON_FIELDS,
   "headRefOid",
+  "baseRefOid",
   "baseRefName",
   "headRefName",
   "headRepository",

@@ -229,6 +229,11 @@ const emailNotificationSchema = z
 const projectSchema = z.strictObject({
   id: pathComponent,
   autoMerge: z.boolean().default(false),
+  maintenance: z
+    .strictObject({
+      enabled: z.boolean().default(false),
+    })
+    .optional(),
   trello: trelloSchema,
   repository: repositorySchema,
   opencode: openCodeSchema,

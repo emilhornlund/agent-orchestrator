@@ -184,6 +184,7 @@ describe("parseConfig", () => {
     expect(project).toBeDefined();
     expect(project!.id).toBe("project-one");
     expect(project!.autoMerge).toBe(false);
+    expect(project!.maintenance?.enabled ?? false).toBe(false);
     expect(project!.trello).toEqual({
       boardId: "board-one",
       backlogListId: "backlog",
@@ -228,6 +229,16 @@ describe("parseConfig", () => {
     expect(config.workflow.contextRetentionDays).toBe(14);
     expect(config.workflow.contextRoot).toBe("/opt/.agent-context");
     expect(config.notifications).toBeUndefined();
+  });
+
+  it("accepts opt-in pull request maintenance", () => {
+    const config = parseConfig(
+      validConfig.replace(
+        'id: "project-one"',
+        'id: "project-one"\n    maintenance:\n      enabled: true',
+      ),
+    );
+    expect(config.projects[0]?.maintenance?.enabled).toBe(true);
   });
 
   it("rejects the retired executionMode setting regardless of value", () => {
