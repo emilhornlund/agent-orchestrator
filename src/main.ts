@@ -60,7 +60,7 @@ export async function main(
   const git = new GitClient(undefined, githubCredentials);
   const github = new GitHubClient(undefined, githubCredentials);
 
-  const opencode = new OpenCodeClient();
+  const opencode = new OpenCodeClient(undefined, lifecycle.getSecretValues());
 
   const commands = new CommandRunner();
 

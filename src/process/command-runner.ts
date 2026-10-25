@@ -8,7 +8,10 @@ import {
   createSecretRedactor,
   redactSecrets,
 } from "../security/redact-secrets.js";
-import { presentExternalDiagnostic } from "../security/bounded-diagnostic.js";
+import {
+  MAX_EXTERNAL_DIAGNOSTIC_LENGTH,
+  presentExternalDiagnostic,
+} from "../security/bounded-diagnostic.js";
 
 const commandTerminationGraceMilliseconds = 5_000;
 
@@ -123,6 +126,16 @@ const defaultRunCommand: RunCommand = async ({
     let capturedOutput: string | undefined;
     let capturedErrorOutput: string | undefined;
 
+    function capture(
+      text: string,
+      current: string | undefined,
+    ): string | undefined {
+      if (captureOutput !== true || text.length === 0) return current;
+      const limit =
+        (maxCaptureOutputLength ?? MAX_EXTERNAL_DIAGNOSTIC_LENGTH) + 1;
+      return `${current ?? ""}${text}`.slice(0, limit);
+    }
+
     function writeOutput(text: string, stream: NodeJS.WriteStream): void {
       if (text.length === 0) {
         return;
@@ -147,19 +160,8 @@ const defaultRunCommand: RunCommand = async ({
       const stderr = stderrRedactor.flush();
       writeOutput(stdout, process.stdout);
       writeOutput(stderr, process.stderr);
-
-      if (captureOutput === true) {
-        capturedOutput = presentExternalDiagnostic(
-          stdout,
-          secretValues,
-          maxCaptureOutputLength,
-        );
-        capturedErrorOutput = presentExternalDiagnostic(
-          stderr,
-          secretValues,
-          maxCaptureOutputLength,
-        );
-      }
+      capturedOutput = capture(stdout, capturedOutput);
+      capturedErrorOutput = capture(stderr, capturedErrorOutput);
     }
 
     function settle(): void {
@@ -221,12 +223,16 @@ const defaultRunCommand: RunCommand = async ({
 
     child.stdout.on("data", (chunk: Buffer) => {
       const text = chunk.toString();
-      writeOutput(stdoutRedactor.push(text), process.stdout);
+      const redacted = stdoutRedactor.push(text);
+      writeOutput(redacted, process.stdout);
+      capturedOutput = capture(redacted, capturedOutput);
     });
 
     child.stderr.on("data", (chunk: Buffer) => {
       const text = chunk.toString();
-      writeOutput(stderrRedactor.push(text), process.stderr);
+      const redacted = stderrRedactor.push(text);
+      writeOutput(redacted, process.stderr);
+      capturedErrorOutput = capture(redacted, capturedErrorOutput);
     });
 
     child.once("error", (error) => {
@@ -266,8 +272,16 @@ const defaultRunCommand: RunCommand = async ({
         exitCode: code ?? 1,
         ...(captureOutput === true
           ? {
-              output: capturedOutput ?? "",
-              errorOutput: capturedErrorOutput ?? "",
+              output: presentExternalDiagnostic(
+                capturedOutput ?? "",
+                secretValues,
+                maxCaptureOutputLength,
+              ),
+              errorOutput: presentExternalDiagnostic(
+                capturedErrorOutput ?? "",
+                secretValues,
+                maxCaptureOutputLength,
+              ),
             }
           : {}),
       });
