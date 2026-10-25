@@ -309,6 +309,68 @@ async function generatePullRequestDescription(options: {
   }
 }
 
+/**
+ * Safely enrich a previously published, independently verified maintenance PR.
+ * A description failure is presentation-only and must not undo the published head.
+ */
+export async function enrichMaintainedPullRequestDescription(options: {
+  git: GitClient;
+  github: GitHubClient;
+  opencode: OpenCodeClient;
+  project: ProjectConfig;
+  card: TrelloCard;
+  worktreePath: string;
+  pullRequestUrl: string;
+  commitSha: string;
+  verifiedFacts: readonly string[];
+  signal: AbortSignal;
+}): Promise<boolean> {
+  const { project, card, worktreePath } = options;
+  if (options.signal.aborted) return false;
+  const cardLog = logger.child({ projectId: project.id, cardId: card.id });
+  const description = await generatePullRequestDescription({
+    git: options.git,
+    opencode: options.opencode,
+    project,
+    card,
+    worktreePath,
+    commitSha: options.commitSha,
+    reviewResult: "Passed",
+    remediationResult: "Verified rebase maintenance",
+    signal: options.signal,
+    verifiedFacts: options.verifiedFacts,
+    sessionLogPath: getSessionLogPath(project.id, card.id),
+    cardLog,
+  });
+  if (description === undefined || options.signal.aborted) return false;
+  const generatedBody = renderPullRequestDescription(
+    description,
+    card,
+    project.repository.gitIdentity.name,
+  );
+  const request = {
+    cwd: worktreePath,
+    repository: project.repository.github,
+    pullRequestUrl: options.pullRequestUrl,
+    project,
+  };
+  const currentBody = await options.github.getPullRequestDescription(request);
+  const nextBody = enrichPullRequestDescription(
+    currentBody,
+    generatedBody,
+    card,
+    project.repository.gitIdentity.name,
+  );
+  if (nextBody === null || nextBody === currentBody || options.signal.aborted)
+    return false;
+  await options.github.editPullRequestDescription({
+    ...request,
+    body: nextBody,
+  });
+  cardLog.event(`Pull request description enriched: ${options.pullRequestUrl}`);
+  return true;
+}
+
 export async function publishCard({
   trello,
   git,
