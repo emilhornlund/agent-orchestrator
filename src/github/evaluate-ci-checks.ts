@@ -147,7 +147,17 @@ export function evaluateCiChecks(input: {
     };
   }
 
-  const dispositions = input.checks.map(classify);
+  const dispositions = input.checks
+    .filter(
+      (check) =>
+        !(
+          check.source === "check-run" &&
+          check.status === "completed" &&
+          check.conclusion === "skipped" &&
+          !expectedNames.includes(checkName(check))
+        ),
+    )
+    .map(classify);
   const uncertainChecks = dispositions.filter(
     ({ kind }) => kind === "uncertain",
   );

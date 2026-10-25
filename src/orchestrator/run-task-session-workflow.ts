@@ -406,6 +406,9 @@ async function readTaskSessionRecoverySnapshot(options: {
           repository: project.repository.github,
           defaultBranch: project.repository.defaultBranch,
           headSha: authoritativeHead,
+          ...(pullRequest === null
+            ? {}
+            : { pullRequestNumber: pullRequest.number }),
           project,
         })
       : null;
@@ -916,6 +919,9 @@ export async function runTaskSessionWorkflow(
               repository: project.repository.github,
               defaultBranch: project.repository.defaultBranch,
               headSha,
+              ...(record.pullRequest == null
+                ? {}
+                : { pullRequestNumber: record.pullRequest.number }),
               project,
             });
             return evaluateCiChecks({
@@ -2286,6 +2292,7 @@ export async function runTaskSessionWorkflow(
         repository: project.repository.github,
         defaultBranch: project.repository.defaultBranch,
         headSha: publishedSha,
+        pullRequestNumber: prNumber,
         project,
       });
       const ciEvaluation = evaluateCiChecks({
