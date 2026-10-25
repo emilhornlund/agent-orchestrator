@@ -1138,6 +1138,7 @@ export async function runTaskSessionFeedbackCycle(
     options.mutationQueue.complete(operationId);
     return "published";
   } catch (error) {
+    cardLog.event("Requested-changes workflow failed");
     if (options.mutationQueue.ownsActive(operationId)) {
       options.mutationQueue.fail(operationId);
     }
