@@ -1309,7 +1309,7 @@ export class GitHubClient {
           headSha: options.headSha,
           credential,
         });
-        if (runtime.complete) {
+        if (runtime.discovered) {
           const resolvedIds = new Set(
             incompleteWorkflows.map(({ sourceId }) => sourceId),
           );
@@ -1320,8 +1320,15 @@ export class GitHubClient {
             {
               kind: "workflow-contract",
               sourceId: `workflow-runs:pull-request:${options.pullRequestNumber}:${options.headSha}`,
-              complete: true,
+              complete: runtime.complete,
               checkNames: runtime.expectedNames,
+              ...(runtime.complete
+                ? {}
+                : {
+                    uncertainty:
+                      runtime.uncertainty ??
+                      "Applicable workflow jobs have not all reached a terminal state",
+                  }),
             },
           );
         } else {
@@ -1353,7 +1360,12 @@ export class GitHubClient {
     pullRequestNumber: number;
     headSha: string;
     credential: GitHubCredential;
-  }): Promise<{ complete: boolean; expectedNames: string[] }> {
+  }): Promise<{
+    discovered: boolean;
+    complete: boolean;
+    expectedNames: string[];
+    uncertainty?: string;
+  }> {
     const query = new URLSearchParams({
       head_sha: options.headSha,
       per_page: "100",
@@ -1394,9 +1406,15 @@ export class GitHubClient {
         }
       }
     }
-    if (runs.length === 0) return { complete: false, expectedNames: [] };
+    if (runs.length === 0)
+      return {
+        discovered: false,
+        complete: false,
+        expectedNames: [],
+      };
 
     const expectedNames = new Set<string>();
+    let allJobsTerminal = true;
     for (const run of runs) {
       const jobsOutput = await this.run(
         options.cwd,
@@ -1420,6 +1438,7 @@ export class GitHubClient {
           if (
             !isRecord(job) ||
             typeof job.name !== "string" ||
+            job.name.trim().length === 0 ||
             typeof job.status !== "string" ||
             (job.conclusion !== null && typeof job.conclusion !== "string")
           )
@@ -1427,13 +1446,43 @@ export class GitHubClient {
           jobCount += 1;
           // A skipped job is authoritative evidence that this conditional branch did not apply.
           if (job.conclusion !== "skipped") expectedNames.add(job.name);
+          if (
+            job.status !== "completed" ||
+            (job.conclusion !== "success" &&
+              job.conclusion !== "failure" &&
+              job.conclusion !== "cancelled" &&
+              job.conclusion !== "skipped" &&
+              job.conclusion !== "neutral" &&
+              job.conclusion !== "timed_out" &&
+              job.conclusion !== "action_required" &&
+              job.conclusion !== "startup_failure")
+          ) {
+            allJobsTerminal = false;
+          }
         }
       }
-      if (jobCount === 0) return { complete: false, expectedNames: [] };
+      if (jobCount === 0)
+        return {
+          discovered: false,
+          complete: false,
+          expectedNames: [],
+        };
     }
+    const complete =
+      allRunsCompleted && allJobsTerminal && expectedNames.size > 0;
     return {
-      complete: allRunsCompleted && expectedNames.size > 0,
+      discovered: true,
+      complete,
       expectedNames: [...expectedNames],
+      ...(complete
+        ? {}
+        : {
+            uncertainty: !allRunsCompleted
+              ? "An applicable workflow run is still in progress"
+              : !allJobsTerminal
+                ? "An applicable workflow job is still in progress"
+                : "Applicable workflow runs did not establish a non-skipped job set",
+          }),
     };
   }
 
