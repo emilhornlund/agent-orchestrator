@@ -78,6 +78,18 @@ describe("evaluateCiChecks", () => {
     ).toMatchObject({ status: "passed", expectedHeadSha: headSha });
   });
 
+  it("ignores an authoritatively skipped conditional job absent from the expected set", () => {
+    expect(
+      evaluate(
+        ["Build"],
+        [
+          checkRun("Build", "completed", "success"),
+          checkRun("Optional deployment", "completed", "skipped"),
+        ],
+      ),
+    ).toMatchObject({ status: "passed" });
+  });
+
   it("waits for delayed check registration even when visible checks pass", () => {
     expect(
       evaluate(["Build", "Tests"], [checkRun("Build", "completed", "success")]),

@@ -129,6 +129,9 @@ export async function observeTaskSessionReviewCards(
           repository: project.repository.github,
           defaultBranch: project.repository.defaultBranch,
           headSha,
+          pullRequestNumber: Number(
+            new URL(record.pullRequest.url).pathname.split("/").at(-1),
+          ),
           project,
         }),
         github.findChangesRequestedPullRequest(lookup),

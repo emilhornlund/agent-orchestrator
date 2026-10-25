@@ -152,6 +152,7 @@ export interface CiObservationsOptions {
   defaultBranch: string;
   baseBranch?: string;
   headSha: string;
+  pullRequestNumber?: number;
   project?: ProjectConfig;
 }
 
@@ -1290,12 +1291,45 @@ export class GitHubClient {
     }
 
     try {
-      expectationSources.push(
-        ...collectCiWorkflowExpectationSources(
-          options.cwd,
-          options.baseBranch ?? options.defaultBranch,
-        ),
+      const workflowSources = collectCiWorkflowExpectationSources(
+        options.cwd,
+        options.baseBranch ?? options.defaultBranch,
       );
+      const incompleteWorkflows = workflowSources.filter(
+        (source) => !source.complete,
+      );
+      if (
+        incompleteWorkflows.length > 0 &&
+        options.pullRequestNumber !== undefined
+      ) {
+        const runtime = await this.getWorkflowRunJobs({
+          cwd: options.cwd,
+          repository: options.repository,
+          pullRequestNumber: options.pullRequestNumber,
+          headSha: options.headSha,
+          credential,
+        });
+        if (runtime.complete) {
+          const resolvedIds = new Set(
+            incompleteWorkflows.map(({ sourceId }) => sourceId),
+          );
+          expectationSources.push(
+            ...workflowSources.filter(
+              (source) => !resolvedIds.has(source.sourceId),
+            ),
+            {
+              kind: "workflow-contract",
+              sourceId: `workflow-runs:pull-request:${options.pullRequestNumber}:${options.headSha}`,
+              complete: true,
+              checkNames: runtime.expectedNames,
+            },
+          );
+        } else {
+          expectationSources.push(...workflowSources);
+        }
+      } else {
+        expectationSources.push(...workflowSources);
+      }
     } catch {
       expectationSources.push({
         kind: "workflow-contract",
@@ -1310,6 +1344,96 @@ export class GitHubClient {
       headSha: options.headSha,
       checks,
       expectationSources,
+    };
+  }
+
+  private async getWorkflowRunJobs(options: {
+    cwd: string;
+    repository: string;
+    pullRequestNumber: number;
+    headSha: string;
+    credential: GitHubCredential;
+  }): Promise<{ complete: boolean; expectedNames: string[] }> {
+    const query = new URLSearchParams({
+      head_sha: options.headSha,
+      per_page: "100",
+    });
+    const output = await this.run(
+      options.cwd,
+      [
+        "api",
+        "--paginate",
+        "--slurp",
+        `repos/${options.repository}/actions/runs?${query}`,
+      ],
+      options.credential,
+    );
+    const pages = parsePaginatedGitHubResponse(output, "workflow runs");
+    const runs: Record<string, unknown>[] = [];
+    let allRunsCompleted = true;
+    for (const page of pages) {
+      if (!isRecord(page) || !Array.isArray(page.workflow_runs))
+        throw new Error("GitHub returned malformed workflow runs");
+      for (const run of page.workflow_runs) {
+        if (
+          !isRecord(run) ||
+          typeof run.id !== "number" ||
+          typeof run.head_sha !== "string" ||
+          typeof run.status !== "string" ||
+          !Array.isArray(run.pull_requests)
+        )
+          throw new Error("GitHub returned a malformed workflow run");
+        if (run.head_sha !== options.headSha) continue;
+        const associated = run.pull_requests.some(
+          (pr) =>
+            isRecord(pr) && Number(pr.number) === options.pullRequestNumber,
+        );
+        if (associated) {
+          runs.push(run);
+          if (run.status !== "completed") allRunsCompleted = false;
+        }
+      }
+    }
+    if (runs.length === 0) return { complete: false, expectedNames: [] };
+
+    const expectedNames = new Set<string>();
+    for (const run of runs) {
+      const jobsOutput = await this.run(
+        options.cwd,
+        [
+          "api",
+          "--paginate",
+          "--slurp",
+          `repos/${options.repository}/actions/runs/${run.id}/jobs?per_page=100`,
+        ],
+        options.credential,
+      );
+      const jobPages = parsePaginatedGitHubResponse(
+        jobsOutput,
+        "workflow jobs",
+      );
+      let jobCount = 0;
+      for (const page of jobPages) {
+        if (!isRecord(page) || !Array.isArray(page.jobs))
+          throw new Error("GitHub returned malformed workflow jobs");
+        for (const job of page.jobs) {
+          if (
+            !isRecord(job) ||
+            typeof job.name !== "string" ||
+            typeof job.status !== "string" ||
+            (job.conclusion !== null && typeof job.conclusion !== "string")
+          )
+            throw new Error("GitHub returned a malformed workflow job");
+          jobCount += 1;
+          // A skipped job is authoritative evidence that this conditional branch did not apply.
+          if (job.conclusion !== "skipped") expectedNames.add(job.name);
+        }
+      }
+      if (jobCount === 0) return { complete: false, expectedNames: [] };
+    }
+    return {
+      complete: allRunsCompleted && expectedNames.size > 0,
+      expectedNames: [...expectedNames],
     };
   }
 

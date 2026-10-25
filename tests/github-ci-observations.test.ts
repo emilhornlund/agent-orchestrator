@@ -307,4 +307,145 @@ describe("GitHubClient.getCiObservations", () => {
     expect(result.checks).toEqual([]);
     expect(result.expectationSources).toEqual([]);
   });
+
+  it("resolves matrix and reusable workflow contracts from PR-associated runtime jobs", async () => {
+    const cwd = workingDirectory();
+    const workflows = path.join(cwd, ".github", "workflows");
+    fs.mkdirSync(workflows, { recursive: true });
+    fs.writeFileSync(
+      path.join(workflows, "ci.yml"),
+      `name: CI\non: [pull_request]\njobs:\n  matrix:\n    strategy:\n      matrix:\n        node: [20, 22]\n  conditional:\n    if: github.event.pull_request.draft == false\n  reusable:\n    uses: ./.github/workflows/reusable.yml\n`,
+    );
+    const command = vi.fn<RunGitHubCommand>(async (_cwd, args) => {
+      if (args.some((arg) => arg.includes("/check-runs?")))
+        return JSON.stringify([[{ check_runs: [] }]]);
+      if (args.some((arg) => arg.includes("/statuses?")))
+        return JSON.stringify([[]]);
+      if (
+        args.some((arg) => arg.includes("/protection/required_status_checks"))
+      )
+        throw new Error("HTTP 404: not found");
+      if (args.some((arg) => arg.includes("/actions/runs?")))
+        return JSON.stringify([
+          [
+            {
+              workflow_runs: [
+                {
+                  id: 100,
+                  head_sha: headSha,
+                  status: "completed",
+                  pull_requests: [{ number: 7 }],
+                },
+              ],
+            },
+          ],
+        ]);
+      if (args.some((arg) => arg.includes("/actions/runs/100/jobs?")))
+        return JSON.stringify([
+          [
+            {
+              jobs: [
+                {
+                  name: "CI / test (ubuntu, 20)",
+                  status: "completed",
+                  conclusion: "success",
+                },
+                {
+                  name: "CI / test (ubuntu, 22)",
+                  status: "completed",
+                  conclusion: "success",
+                },
+                {
+                  name: "CI / conditional",
+                  status: "completed",
+                  conclusion: "skipped",
+                },
+                {
+                  name: "CI / reusable / build",
+                  status: "completed",
+                  conclusion: "success",
+                },
+              ],
+            },
+          ],
+        ]);
+      throw new Error(`Unexpected GitHub query: ${args.join(" ")}`);
+    });
+
+    const result = await new GitHubClient(command).getCiObservations({
+      cwd,
+      repository: "owner/repo",
+      defaultBranch: "main",
+      headSha,
+      pullRequestNumber: 7,
+    });
+
+    expect(result.expectationSources).toContainEqual(
+      expect.objectContaining({
+        sourceId: `workflow-runs:pull-request:7:${headSha}`,
+        complete: true,
+        checkNames: [
+          "CI / test (ubuntu, 20)",
+          "CI / test (ubuntu, 22)",
+          "CI / reusable / build",
+        ],
+      }),
+    );
+  });
+
+  it("does not use runtime jobs associated with a different PR", async () => {
+    const cwd = workingDirectory();
+    const workflows = path.join(cwd, ".github", "workflows");
+    fs.mkdirSync(workflows, { recursive: true });
+    fs.writeFileSync(
+      path.join(workflows, "ci.yml"),
+      "on: [pull_request]\njobs:\n  test:\n    if: always()\n",
+    );
+    const command = vi.fn<RunGitHubCommand>(async (_cwd, args) => {
+      if (args.some((arg) => arg.includes("/check-runs?")))
+        return JSON.stringify([[{ check_runs: [] }]]);
+      if (args.some((arg) => arg.includes("/statuses?")))
+        return JSON.stringify([[]]);
+      if (
+        args.some((arg) => arg.includes("/protection/required_status_checks"))
+      )
+        throw new Error("HTTP 404: not found");
+      if (args.some((arg) => arg.includes("/actions/runs?")))
+        return JSON.stringify([
+          [
+            {
+              workflow_runs: [
+                {
+                  id: 101,
+                  head_sha: headSha,
+                  status: "completed",
+                  pull_requests: [{ number: 8 }],
+                },
+              ],
+            },
+          ],
+        ]);
+      throw new Error(`Unexpected GitHub query: ${args.join(" ")}`);
+    });
+
+    const result = await new GitHubClient(command).getCiObservations({
+      cwd,
+      repository: "owner/repo",
+      defaultBranch: "main",
+      headSha,
+      pullRequestNumber: 7,
+    });
+
+    expect(result.expectationSources).toContainEqual(
+      expect.objectContaining({
+        complete: false,
+        uncertainty: expect.stringContaining("conditional"),
+      }),
+    );
+    expect(
+      command.mock.calls.some(([, args]) =>
+        args.some((arg) => arg.includes("/actions/runs/101/jobs")),
+      ),
+    ).toBe(false);
+  });
 });
