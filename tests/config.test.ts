@@ -184,7 +184,7 @@ describe("parseConfig", () => {
     expect(project).toBeDefined();
     expect(project!.id).toBe("project-one");
     expect(project!.autoMerge).toBe(false);
-    expect(project!.maintenance?.enabled ?? false).toBe(false);
+    expect(project!.maintenance?.enabled ?? true).toBe(true);
     expect(project!.trello).toEqual({
       boardId: "board-one",
       backlogListId: "backlog",
@@ -231,14 +231,24 @@ describe("parseConfig", () => {
     expect(config.notifications).toBeUndefined();
   });
 
-  it("accepts opt-in pull request maintenance", () => {
-    const config = parseConfig(
+  it("enables maintenance by default with an explicit opt-out", () => {
+    expect(
+      parseConfig(validConfig).projects[0]?.maintenance?.enabled ?? true,
+    ).toBe(true);
+    const enabled = parseConfig(
       validConfig.replace(
         'id: "project-one"',
         'id: "project-one"\n    maintenance:\n      enabled: true',
       ),
     );
-    expect(config.projects[0]?.maintenance?.enabled).toBe(true);
+    expect(enabled.projects[0]?.maintenance?.enabled).toBe(true);
+    const disabled = parseConfig(
+      validConfig.replace(
+        'id: "project-one"',
+        'id: "project-one"\n    maintenance:\n      enabled: false',
+      ),
+    );
+    expect(disabled.projects[0]?.maintenance?.enabled).toBe(false);
   });
 
   it("rejects the retired executionMode setting regardless of value", () => {

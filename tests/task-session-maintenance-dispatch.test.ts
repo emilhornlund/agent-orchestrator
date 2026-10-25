@@ -145,11 +145,11 @@ async function pollReview(
   });
 }
 
-describe("opt-in maintenance in the production Human Review polling path", () => {
+describe("default-enabled maintenance in the production Human Review polling path", () => {
   it.each(["behind", "diverged"] as const)(
-    "dispatches %s owned PRs when maintenance is explicitly enabled",
+    "dispatches %s owned PRs with maintenance omitted",
     async (relation) => {
-      await pollReview(relation, { enabled: true });
+      await pollReview(relation);
       expect(maintainOutdatedPr).toHaveBeenCalledOnce();
       expect(vi.mocked(maintainOutdatedPr).mock.calls[0]?.[0]).toMatchObject({
         eligible: true,
@@ -167,9 +167,9 @@ describe("opt-in maintenance in the production Human Review polling path", () =>
     },
   );
 
-  it("does not dispatch maintenance when omitted", async () => {
-    await pollReview("diverged");
-    expect(maintainOutdatedPr).not.toHaveBeenCalled();
+  it("dispatches when maintenance is explicitly enabled", async () => {
+    await pollReview("diverged", { enabled: true });
+    expect(maintainOutdatedPr).toHaveBeenCalledOnce();
   });
 
   it("honors an explicit maintenance opt-out", async () => {

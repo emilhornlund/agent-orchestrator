@@ -2,6 +2,9 @@ projects:
   - id: "project"
     # Keep disabled to require human approval before merging implementation PRs.
     autoMerge: false
+    # Owned PRs are kept up to date automatically. To opt out:
+    # maintenance:
+    #   enabled: false
 
     trello:
       boardId: "board-id"
