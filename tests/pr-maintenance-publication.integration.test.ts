@@ -113,7 +113,8 @@ describe("PR maintenance publication integration", () => {
       state: "OPEN",
       mergedAt: null,
       headRefOid: currentHead(),
-      baseRefOid: newBase,
+      // GitHub may keep returning the historical PR creation base here.
+      baseRefOid: oldBase,
       headRefName: "agent/card-1",
       baseRefName: "main",
       headRepository: { name: "repository" },
@@ -121,6 +122,7 @@ describe("PR maintenance publication integration", () => {
     });
     const github = {
       findPullRequestState: vi.fn(async () => prState()),
+      getBaseBranchHeadSha: vi.fn(async () => newBase),
       findChangesRequestedPullRequest: vi.fn(async () => null),
       getPullRequestConversationComments: vi.fn(async () => []),
     };
@@ -203,6 +205,7 @@ describe("PR maintenance publication integration", () => {
     ).rejects.toThrow("simulated interrupted local persistence");
     expect(currentHead()).not.toBe(oldHead);
     expect(leasedPush).toHaveBeenCalledTimes(1);
+    expect(github.getBaseBranchHeadSha).toHaveBeenCalledTimes(2);
     expect(runValidation).toHaveBeenCalledWith(
       expect.objectContaining({ timeoutMilliseconds: 360 * 60_000 }),
     );

@@ -25,6 +25,7 @@ export interface MaintainOutdatedPrOptions {
   github: Pick<
     GitHubClient,
     | "findPullRequestState"
+    | "getBaseBranchHeadSha"
     | "findChangesRequestedPullRequest"
     | "getPullRequestConversationComments"
   >;
@@ -64,7 +65,6 @@ function assertPrIdentity(
   options: MaintainOutdatedPrOptions,
   pr: NonNullable<Awaited<ReturnType<GitHubClient["findPullRequestState"]>>>,
   expectedHead: string,
-  expectedBase: string,
 ): void {
   const [owner, repository] = options.project.repository.github.split("/");
   if (
@@ -73,7 +73,6 @@ function assertPrIdentity(
     pr.headRefName !== `agent/${options.card.id}` ||
     pr.baseRefName !== options.project.repository.defaultBranch ||
     pr.headRefOid !== expectedHead ||
-    pr.baseRefOid !== expectedBase ||
     pr.headRepository?.name !== repository ||
     pr.headRepositoryOwner?.login !== owner
   ) {
@@ -146,21 +145,17 @@ export async function maintainOutdatedPr(
     baseBranch: project.repository.defaultBranch,
     project,
   });
-  if (
-    initial === null ||
-    initial.baseRefOid === undefined ||
-    initial.headRefOid === undefined
-  )
-    return "deferred";
-  assertPrIdentity(
-    options,
-    initial,
-    task.pullRequest.headSha,
-    initial.baseRefOid,
-  );
+  if (initial === null || initial.headRefOid === undefined) return "deferred";
+  assertPrIdentity(options, initial, task.pullRequest.headSha);
 
   const currentHead = task.pullRequest.headSha;
-  const currentBase = initial.baseRefOid;
+  // GitHub PR baseRefOid can remain pinned to the PR's creation base.
+  const currentBase = await options.github.getBaseBranchHeadSha({
+    cwd: project.repository.path,
+    repository: project.repository.github,
+    baseBranch: project.repository.defaultBranch,
+    project,
+  });
   const identity: MaintenanceIdentity = {
     projectId: project.id,
     cardId: card.id,
@@ -245,12 +240,7 @@ export async function maintainOutdatedPr(
         mutationQueue.fail(eventId);
         return "deferred";
       }
-      assertPrIdentity(
-        options,
-        remote,
-        owned.publication.resultingHead,
-        currentBase,
-      );
+      assertPrIdentity(options, remote, owned.publication.resultingHead);
       maintenanceStore.recordPublication(
         owned.operationId,
         identity,
@@ -405,7 +395,18 @@ export async function maintainOutdatedPr(
       throw new Error(
         "Authoritative PR disappeared before maintenance publication",
       );
-    assertPrIdentity(options, beforePush, currentHead, currentBase);
+    assertPrIdentity(options, beforePush, currentHead);
+    if (
+      (await options.github.getBaseBranchHeadSha({
+        cwd: project.repository.path,
+        repository: project.repository.github,
+        baseBranch: project.repository.defaultBranch,
+        project,
+      })) !== currentBase
+    )
+      throw new Error(
+        "Default branch advanced during PR maintenance; refusing stale-base publication",
+      );
     const feedbackLookup = {
       cwd: project.repository.path,
       repository: project.repository.github,
@@ -469,7 +470,7 @@ export async function maintainOutdatedPr(
       throw new Error(
         "Authoritative PR disappeared after maintenance publication",
       );
-    assertPrIdentity(options, afterPush, resultingHead, currentBase);
+    assertPrIdentity(options, afterPush, resultingHead);
     maintenanceStore.recordPublication(
       owned.operationId,
       identity,
@@ -552,10 +553,7 @@ export async function reconcileInterruptedPrMaintenance(options: {
       throw new Error(
         "Interrupted PR maintenance publication identity is ambiguous",
       );
-    if (
-      remote.headRefOid !== stored.publication.resultingHead ||
-      remote.baseRefOid !== stored.targetBaseHead
-    ) {
+    if (remote.headRefOid !== stored.publication.resultingHead) {
       // A recorded push intent is never retried, even if the remote still shows the old head.
       if (stored.publication.status === "push-intended") {
         if (stored.status === "active")

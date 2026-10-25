@@ -93,6 +93,7 @@ import {
 } from "./maintain-outdated-pr.js";
 
 const lastLoggedCiState = new Map<string, string>();
+const reportedMissingMaintenancePlans = new Set<string>();
 
 export interface RunTaskSessionWorkflowOptions {
   project: ProjectConfig & { contextRoot?: string };
@@ -1439,7 +1440,19 @@ export async function runTaskSessionWorkflow(
         (candidate) => candidate.id === observation.cardId,
       );
       const storedPlan = planStore.read(observation.cardId);
-      if (task === null || card === undefined || storedPlan === null) continue;
+      if (task === null || card === undefined) continue;
+      if (storedPlan === null) {
+        const diagnosticKey = `${project.id}:${observation.cardId}:${observation.headSha}`;
+        if (!reportedMissingMaintenancePlans.has(diagnosticKey)) {
+          logger
+            .child({ projectId: project.id, cardId: observation.cardId })
+            .warn(
+              "PR maintenance skipped: approved task plan is missing from context storage; cannot verify original requirements safely",
+            );
+          reportedMissingMaintenancePlans.add(diagnosticKey);
+        }
+        continue;
+      }
       const maintenanceResult = await maintainOutdatedPr({
         project,
         card,

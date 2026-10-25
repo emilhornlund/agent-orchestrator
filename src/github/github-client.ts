@@ -2059,6 +2059,38 @@ export class GitHubClient {
     );
   }
 
+  /** Resolve the actual current default-branch HEAD, not the PR's historical baseRefOid. */
+  async getBaseBranchHeadSha(options: {
+    cwd: string;
+    repository: string;
+    baseBranch: string;
+    project?: ProjectConfig;
+  }): Promise<string> {
+    const credential = await this.resolveCredential(options.project);
+    const output = await this.run(
+      options.cwd,
+      [
+        "api",
+        `repos/${options.repository}/branches/${encodeURIComponent(options.baseBranch)}`,
+      ],
+      credential,
+    );
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(output);
+    } catch {
+      throw new Error("GitHub returned invalid branch HEAD metadata");
+    }
+    if (
+      !isRecord(parsed) ||
+      !isRecord(parsed.commit) ||
+      typeof parsed.commit.sha !== "string" ||
+      !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu.test(parsed.commit.sha)
+    )
+      throw new Error("GitHub returned invalid branch HEAD metadata");
+    return parsed.commit.sha;
+  }
+
   /** Compares the configured base with an exact PR head using GitHub's authoritative compare API. */
   async comparePullRequestHeadToBase(
     options: PullRequestBaseRelationOptions,
@@ -2086,8 +2118,16 @@ export class GitHubClient {
     }
     if (
       !isRecord(parsed) ||
-      !isRecord(parsed.head_commit) ||
-      parsed.head_commit.sha !== options.headSha ||
+      !isRecord(parsed.base_commit) ||
+      typeof parsed.base_commit.sha !== "string" ||
+      !/^[0-9a-f]{40}$/iu.test(parsed.base_commit.sha) ||
+      !isRecord(parsed.merge_base_commit) ||
+      typeof parsed.merge_base_commit.sha !== "string" ||
+      !/^[0-9a-f]{40}$/iu.test(parsed.merge_base_commit.sha) ||
+      !Number.isSafeInteger(parsed.ahead_by) ||
+      !Number.isSafeInteger(parsed.behind_by) ||
+      (parsed.ahead_by as number) < 0 ||
+      (parsed.behind_by as number) < 0 ||
       typeof parsed.status !== "string"
     ) {
       return "uncertain";
