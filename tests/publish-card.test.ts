@@ -940,6 +940,62 @@ describe("publishCard", () => {
     );
   });
 
+  it("retains verified publication when the corrective description snapshot fails", async () => {
+    const git = createPublicationGit({
+      getChangedFiles: vi.fn().mockResolvedValue("src/task.ts"),
+      getCommitMessage: vi.fn().mockResolvedValue("fix(task): implement"),
+      getUntrackedFiles: vi
+        .fn()
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockRejectedValueOnce(new Error("retry snapshot unavailable")),
+    });
+    const createPullRequest = vi.fn().mockResolvedValue({
+      url: "https://github.com/example/repository/pull/123",
+    });
+    const trello = {
+      moveCard: vi.fn().mockResolvedValue(createCard()),
+      getListTransitions: vi.fn().mockResolvedValue([]),
+      addComment: vi.fn().mockResolvedValue(undefined),
+    } as unknown as TrelloClient;
+    const github = {
+      findPullRequest: vi.fn().mockResolvedValue(null),
+      createPullRequest,
+    } as unknown as GitHubClient;
+    const opencode = {
+      run: vi.fn().mockResolvedValue({
+        exitCode: 0,
+        output: "not structured output",
+        errorOutput: "",
+      }),
+    } as unknown as OpenCodeClient;
+    await publishCard({
+      trello,
+      git,
+      github,
+      opencode,
+      project: createProject(),
+      card: createCard(),
+      worktreePath: "/worktree",
+      branch: "agent/card-1",
+      commitSha: "abc123",
+      reviewResult: "Passed",
+      remediationResult: "Not required",
+    });
+    expect(opencode.run).toHaveBeenCalledTimes(1);
+    expect(git.push).toHaveBeenCalled();
+    expect(createPullRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: [
+          "Trello: https://trello.com/c/card-1",
+          "",
+          "Implemented automatically by Configured Git Author.",
+        ].join("\n"),
+      }),
+    );
+    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "review-list");
+  });
+
   it("uses the deterministic body when final description context collection fails", async () => {
     const contextError = new Error("could not read final changed files");
     const git = createPublicationGit({

@@ -259,10 +259,18 @@ async function generatePullRequestDescription(options: {
       `Pull request description generation failed on initial attempt during structured output parsing${error instanceof PullRequestDescriptionParseError ? ` (${error.failureType})` : ""}: ${getErrorMessage(error)}. Requesting one corrective retry.`,
     );
 
-    const snapshotBeforeRetry = await captureRepositorySnapshot(
-      git,
-      worktreePath,
-    );
+    let snapshotBeforeRetry;
+    try {
+      snapshotBeforeRetry = await captureRepositorySnapshot(git, worktreePath);
+    } catch (snapshotError) {
+      if (signal.aborted) throw new TrelloRequestAbortedError();
+      logDescriptionFallback(
+        cardLog,
+        "corrective retry read-only source snapshot",
+        snapshotError,
+      );
+      return undefined;
+    }
     const correctiveResult = await runDescription(
       [
         descriptionPrompt,
