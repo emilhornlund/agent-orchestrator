@@ -153,6 +153,33 @@ describe("materializeCardAttachments", () => {
     });
   });
 
+  it("does not rewrite or report an unchanged attachment manifest", async () => {
+    const root = makeTemporaryRoot();
+    const attachment = upload("file-1", "design.bin", "4");
+    const attachments = source([attachment], {
+      "file-1": new Response(new Uint8Array([1, 2, 3, 4])),
+    });
+    await materializeCardAttachments(
+      attachments,
+      root,
+      "project-one",
+      "card-1",
+    );
+
+    const rename = vi.spyOn(fs.promises, "rename");
+    const onSuccessfulReconciliation = vi.fn();
+    await materializeCardAttachments(
+      attachments,
+      root,
+      "project-one",
+      "card-1",
+      { onSuccessfulReconciliation },
+    );
+
+    expect(rename).not.toHaveBeenCalled();
+    expect(onSuccessfulReconciliation).not.toHaveBeenCalled();
+  });
+
   it("does not report a successful refresh when attachment retrieval fails", async () => {
     const root = makeTemporaryRoot();
     const attachments = source([]);

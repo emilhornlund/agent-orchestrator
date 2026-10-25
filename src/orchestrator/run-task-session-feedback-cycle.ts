@@ -62,6 +62,9 @@ export interface RunTaskSessionFeedbackCycleOptions {
   commands: CommandRunner;
   worktreePath: string;
   attachmentContext?: CardAttachmentPromptContext;
+  prepareAttachmentContext?: () => Promise<
+    CardAttachmentPromptContext | undefined
+  >;
   signal: AbortSignal;
 }
 
@@ -547,7 +550,10 @@ export async function runTaskSessionFeedbackCycle(
   const mutation = options.mutationQueue.claimForRecovery(operationId);
   if (mutation === null || mutation.eventId !== operationId) return "idle";
   try {
-    const attachmentContext = options.attachmentContext;
+    const attachmentContext =
+      options.prepareAttachmentContext === undefined
+        ? options.attachmentContext
+        : await options.prepareAttachmentContext();
     const remediation = await runTaskSessionFeedbackRemediation({
       project,
       card,
