@@ -317,6 +317,26 @@ export class TaskExecutionStore {
     });
   }
 
+  claimHumanReviewNotification(cardId: string, commitSha: string): boolean {
+    const current = this.read(cardId);
+    if (current === null) {
+      throw new TaskExecutionRecordConflictError(
+        `Task execution record does not exist for Human Review notification: ${cardId}`,
+      );
+    }
+    const notifiedCommitShas = current.humanReviewNotificationCommitShas ?? [];
+    if (notifiedCommitShas.includes(commitSha)) return false;
+    this.compareAndSwap(cardId, current.revision, {
+      ...current,
+      humanReviewNotificationCommitShas: [...notifiedCommitShas, commitSha],
+      revision: current.revision + 1,
+      updatedAt: new Date(
+        Math.max(Date.now(), Date.parse(current.updatedAt) + 1),
+      ).toISOString(),
+    });
+    return true;
+  }
+
   private get projectId(): string {
     return path.basename(this.directoryPath);
   }

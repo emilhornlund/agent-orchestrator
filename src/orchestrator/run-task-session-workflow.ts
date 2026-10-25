@@ -1171,6 +1171,9 @@ export async function runTaskSessionWorkflow(
               commitMessage,
               reviewResult: "Passed",
               remediationResult: `CI repair attempt ${taskStore.read(card.id)?.retryCounters.ci ?? 1}`,
+              ...(emailNotifier === undefined ? {} : { emailNotifier }),
+              claimHumanReviewNotification: (commitSha) =>
+                taskStore.claimHumanReviewNotification(card.id, commitSha),
               verifiedDescriptionFacts: () => [
                 `Approved implementation plan: ${JSON.stringify(planStore.read(card.id)?.plan ?? "unavailable")}`,
                 `Verified validation result: ${JSON.stringify(preparedGate.validation)}`,
@@ -1666,6 +1669,7 @@ export async function runTaskSessionWorkflow(
       commands,
       worktreePath: path.join(project.repository.worktreeRoot, card.id),
       prepareAttachmentContext: () => options.prepareAttachmentContext(card),
+      ...(emailNotifier === undefined ? {} : { emailNotifier }),
       signal,
     });
     if (feedbackResult === "attention-required") feedbackNeedsAttention = true;
@@ -2772,6 +2776,9 @@ export async function runTaskSessionWorkflow(
             : "Failed (human review required; automatic repairs exhausted)",
         remediationResult: `${finalReview.attempts} review repair(s)`,
         ...(exhaustedReview === undefined ? {} : { exhaustedReview }),
+        ...(emailNotifier === undefined ? {} : { emailNotifier }),
+        claimHumanReviewNotification: (commitSha) =>
+          taskStore.claimHumanReviewNotification(activeCard.id, commitSha),
         verifiedDescriptionFacts: () => [
           `Approved implementation plan: ${JSON.stringify(planStore.read(activeCard.id)?.plan ?? "unavailable")}`,
           `Verified validation result: ${JSON.stringify(preparedEvidence.validation)}`,
@@ -2831,6 +2838,9 @@ export async function runTaskSessionWorkflow(
             : "Failed (human review required; automatic repairs exhausted)",
         remediationResult: `${finalReview.attempts} review repair(s)`,
         ...(exhaustedReview === undefined ? {} : { exhaustedReview }),
+        ...(emailNotifier === undefined ? {} : { emailNotifier }),
+        claimHumanReviewNotification: (commitSha) =>
+          taskStore.claimHumanReviewNotification(activeCard.id, commitSha),
         verifiedDescriptionFacts: () => [
           `Approved implementation plan: ${JSON.stringify(planStore.read(activeCard.id)?.plan ?? "unavailable")}`,
           `Verified validation result: ${JSON.stringify(preparedEvidence.validation)}`,

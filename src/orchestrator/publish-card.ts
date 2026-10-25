@@ -56,6 +56,7 @@ export interface PublishCardOptions {
   pullRequestDescription?: PullRequestDescription;
   sessionLogPath?: string;
   emailNotifier?: EmailNotifier;
+  claimHumanReviewNotification?: (commitSha: string) => boolean;
   signal?: AbortSignal;
   commands?: CommandRunner;
   rebaseAlreadyCompleted?: boolean;
@@ -398,6 +399,7 @@ export async function publishCard({
   pullRequestDescription,
   sessionLogPath,
   emailNotifier,
+  claimHumanReviewNotification,
   signal,
   commands,
   rebaseAlreadyCompleted = false,
@@ -823,21 +825,28 @@ export async function publishCard({
     cardLog,
   );
 
-  await notifyHumanReview(
-    emailNotifier,
-    {
-      project,
-      card,
-      pullRequestUrl: pullRequest.url,
-      commitSha: publishedCommitSha,
-      reviewResult,
-      remediationResult,
-      ...(elapsedWorkflowTime === undefined ? {} : { elapsedWorkflowTime }),
-      publicationContext:
-        "The pull request was published and the card was moved to Human Review by the implementation workflow.",
-    },
-    cardLog,
-  );
+  if (
+    emailNotifier !== undefined &&
+    (emailNotifier.isEventEnabled?.("humanReview") ?? true) &&
+    (claimHumanReviewNotification === undefined ||
+      claimHumanReviewNotification(publishedCommitSha))
+  ) {
+    await notifyHumanReview(
+      emailNotifier,
+      {
+        project,
+        card,
+        pullRequestUrl: pullRequest.url,
+        commitSha: publishedCommitSha,
+        reviewResult,
+        remediationResult,
+        ...(elapsedWorkflowTime === undefined ? {} : { elapsedWorkflowTime }),
+        publicationContext:
+          "The pull request was published and the card was moved to Human Review by the implementation workflow.",
+      },
+      cardLog,
+    );
+  }
 
   const comment = [
     "Agent Orchestrator completed successfully.",
