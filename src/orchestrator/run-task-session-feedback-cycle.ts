@@ -935,6 +935,8 @@ export async function runTaskSessionFeedbackCycle(
       trello,
       git,
       github,
+      opencode: openCode,
+      commands,
       project: { ...project, autoMerge: false },
       card,
       worktreePath,
@@ -943,6 +945,17 @@ export async function runTaskSessionFeedbackCycle(
       commitMessage,
       reviewResult: "Passed",
       remediationResult: "Verified human feedback correction",
+      verifiedDescriptionFacts: () => [
+        `Approved implementation plan: ${JSON.stringify(storedPlan.plan)}`,
+        `Verified validation result: ${JSON.stringify(preparedEvidence.validation)}`,
+        ...(preparedEvidence.coverage === null
+          ? []
+          : [
+              `Verified coverage result: ${JSON.stringify(preparedEvidence.coverage)}`,
+            ]),
+        `Independent review result: ${JSON.stringify(preparedEvidence.review)}`,
+        "Remediation outcome: human feedback correction was independently validated and reviewed.",
+      ],
       signal,
       initialEvidence: qualityEvidence,
       verifyPreparedContent: async () => {

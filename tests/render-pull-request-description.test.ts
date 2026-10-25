@@ -5,7 +5,11 @@ import {
   AGENT_ORCHESTRATOR_STATUS_START,
 } from "../src/github/pull-request-status.js";
 import { buildPullRequestAttributionFooter } from "../src/github/pull-request-attribution.js";
-import { renderPullRequestDescription } from "../src/opencode/render-pull-request-description.js";
+import {
+  AGENT_ORCHESTRATOR_DESCRIPTION_END,
+  AGENT_ORCHESTRATOR_DESCRIPTION_START,
+  renderPullRequestDescription,
+} from "../src/opencode/render-pull-request-description.js";
 import type { PullRequestDescription } from "../src/opencode/pull-request-description.js";
 import type { TrelloCard } from "../src/trello/trello-client.js";
 
@@ -28,6 +32,7 @@ describe("renderPullRequestDescription", () => {
       renderPullRequestDescription(description, task, gitIdentityName),
     ).toBe(
       [
+        AGENT_ORCHESTRATOR_DESCRIPTION_START,
         "## Summary",
         "The application now renders structured pull request content.",
         "",
@@ -37,6 +42,7 @@ describe("renderPullRequestDescription", () => {
         "",
         "## Validation",
         "- yarn validate passed.",
+        AGENT_ORCHESTRATOR_DESCRIPTION_END,
         "",
         "## Task",
         "[Trello card: Add structured descriptions](https://trello.example/card-1)",

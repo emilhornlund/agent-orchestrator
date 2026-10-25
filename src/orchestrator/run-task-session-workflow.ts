@@ -1103,6 +1103,8 @@ export async function runTaskSessionWorkflow(
               trello,
               git,
               github,
+              opencode: openCode,
+              commands,
               project: { ...project, autoMerge: false },
               card,
               worktreePath,
@@ -1111,6 +1113,16 @@ export async function runTaskSessionWorkflow(
               commitMessage,
               reviewResult: "Passed",
               remediationResult: `CI repair attempt ${taskStore.read(card.id)?.retryCounters.ci ?? 1}`,
+              verifiedDescriptionFacts: () => [
+                `Approved implementation plan: ${JSON.stringify(planStore.read(card.id)?.plan ?? "unavailable")}`,
+                `Verified validation result: ${JSON.stringify(preparedGate.validation)}`,
+                ...(preparedGate.coverage === null
+                  ? []
+                  : [
+                      `Verified coverage result: ${JSON.stringify(preparedGate.coverage)}`,
+                    ]),
+                `Independent review result: ${JSON.stringify(preparedGate.review)}`,
+              ],
               signal,
               initialEvidence: gateInput,
               verifyPreparedContent: async () => {
@@ -2451,6 +2463,8 @@ export async function runTaskSessionWorkflow(
         trello,
         git,
         github,
+        opencode: openCode,
+        commands,
         project: { ...project, autoMerge: false },
         card: activeCard,
         worktreePath,
@@ -2458,8 +2472,17 @@ export async function runTaskSessionWorkflow(
         commitSha: recoveredTrustedCommit.commitSha,
         reviewResult: "Passed",
         remediationResult: `${finalReview.attempts} review repair(s)`,
+        verifiedDescriptionFacts: () => [
+          `Approved implementation plan: ${JSON.stringify(planStore.read(activeCard.id)?.plan ?? "unavailable")}`,
+          `Verified validation result: ${JSON.stringify(preparedEvidence.validation)}`,
+          ...(preparedEvidence.coverage === null
+            ? []
+            : [
+                `Verified coverage result: ${JSON.stringify(preparedEvidence.coverage)}`,
+              ]),
+          `Independent review result: ${JSON.stringify(preparedEvidence.review)}`,
+        ],
         signal,
-        commands,
         ...(recoveryRecord?.pullRequest?.url === undefined
           ? {}
           : { expectedExistingPullRequestUrl: recoveryRecord.pullRequest.url }),
@@ -2475,6 +2498,8 @@ export async function runTaskSessionWorkflow(
         trello,
         git,
         github,
+        opencode: openCode,
+        commands,
         project: { ...project, autoMerge: false },
         card: activeCard,
         worktreePath,
@@ -2483,6 +2508,16 @@ export async function runTaskSessionWorkflow(
         reviewResult:
           finalReview.review.verdict === "pass" ? "Passed" : "Failed",
         remediationResult: `${finalReview.attempts} review repair(s)`,
+        verifiedDescriptionFacts: () => [
+          `Approved implementation plan: ${JSON.stringify(planStore.read(activeCard.id)?.plan ?? "unavailable")}`,
+          `Verified validation result: ${JSON.stringify(preparedEvidence.validation)}`,
+          ...(preparedEvidence.coverage === null
+            ? []
+            : [
+                `Verified coverage result: ${JSON.stringify(preparedEvidence.coverage)}`,
+              ]),
+          `Independent review result: ${JSON.stringify(preparedEvidence.review)}`,
+        ],
         signal,
         initialEvidence,
         verifyPreparedContent,

@@ -87,6 +87,8 @@ function fixture() {
     trello: {} as never,
     git,
     github: {} as never,
+    opencode: { run: vi.fn() } as never,
+    commands: { run: vi.fn() } as never,
     project,
     card,
     worktreePath: "/task-worktree",
@@ -121,6 +123,8 @@ describe("publishTaskSessionCard", () => {
     expect(publishCard).toHaveBeenCalledWith(
       expect.objectContaining({
         beforePushVerification: expect.any(Function),
+        opencode: base.opencode,
+        commands: base.commands,
       }),
     );
     expect(vi.mocked(publishCard).mock.calls[0]?.[0]).not.toHaveProperty(

@@ -27,6 +27,7 @@ const context: PullRequestDescriptionPromptContext = {
   commitSha: "abc123",
   commitMessage: "feat(workflow): describe completed changes",
   validationCommand: "yarn validate",
+  verifiedFacts: ["yarn validate passed with exit code 0."],
   workflowResults: ["Automated review result: Passed."],
 };
 
@@ -45,13 +46,11 @@ describe("buildPullRequestDescriptionPrompt", () => {
       "Commit message:\nfeat(workflow): describe completed changes",
     );
     expect(prompt).toContain(
-      "Validation evidence captured by the orchestrator:\n- None; validation execution was delegated to modifying OpenCode sessions, and the orchestrator did not observe its result. Do not infer or claim success.",
+      "Independently verified workflow evidence:\n- yarn validate passed with exit code 0.",
     );
+    expect(prompt).toContain("Configured validation command:\n- yarn validate");
     expect(prompt).toContain(
-      "Validation command supplied to modifying OpenCode sessions:\n- Configured validation command `yarn validate` was supplied to modifying OpenCode sessions, but the orchestrator did not execute it; its result is unavailable. This does not establish that validation passed.",
-    );
-    expect(prompt).toContain(
-      "Workflow outcomes (separate from validation evidence):\n- Automated review result: Passed.",
+      "Workflow outcomes:\n- Automated review result: Passed.",
     );
     expect(prompt).toContain("Return exactly one JSON object.");
     expect(prompt).toContain(
@@ -72,10 +71,10 @@ describe("buildPullRequestDescriptionPrompt", () => {
     });
 
     expect(prompt).toContain(
-      "- None; validation execution was delegated to modifying OpenCode sessions, and the orchestrator did not observe its result. Do not infer or claim success.",
+      "- No independently verified validation or review details were supplied.",
     );
     expect(prompt).toContain(
-      "Validation command supplied to modifying OpenCode sessions:\n- No validation command was configured.",
+      "Configured validation command:\n- No validation command was configured.",
     );
     expect(prompt).not.toContain("validation passed");
   });
@@ -90,10 +89,10 @@ describe("buildPullRequestDescriptionPrompt", () => {
     });
 
     expect(prompt).toContain(
-      "Validation evidence captured by the orchestrator:\n- None;",
+      "Independently verified workflow evidence:\n- No independently verified validation or review details were supplied.",
     );
     expect(prompt).toContain(
-      "Workflow outcomes (separate from validation evidence):\n- Automated remediation result: Applied.",
+      "Workflow outcomes:\n- Automated remediation result: Applied.",
     );
     expect(prompt).not.toContain(
       "Known validation or test results:\n- Automated remediation result: Applied.",

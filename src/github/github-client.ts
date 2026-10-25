@@ -1895,6 +1895,54 @@ export class GitHubClient {
     };
   }
 
+  async getPullRequestDescription(options: {
+    cwd: string;
+    repository: string;
+    pullRequestUrl: string;
+    project?: ProjectConfig;
+  }): Promise<string> {
+    const credential = await this.resolveCredential(options.project);
+    const pullRequestUrl = parsePullRequestUrl(options.pullRequestUrl);
+    const output = await this.run(
+      options.cwd,
+      [
+        "pr",
+        "view",
+        pullRequestUrl,
+        "--repo",
+        options.repository,
+        "--json",
+        "body",
+      ],
+      credential,
+    );
+    return parsePullRequestBody(output);
+  }
+
+  async editPullRequestDescription(options: {
+    cwd: string;
+    repository: string;
+    pullRequestUrl: string;
+    body: string;
+    project?: ProjectConfig;
+  }): Promise<void> {
+    const credential = await this.resolveCredential(options.project);
+    const pullRequestUrl = parsePullRequestUrl(options.pullRequestUrl);
+    await this.run(
+      options.cwd,
+      [
+        "pr",
+        "edit",
+        pullRequestUrl,
+        "--repo",
+        options.repository,
+        "--body",
+        options.body,
+      ],
+      credential,
+    );
+  }
+
   async updatePullRequestDescriptionStatus(
     options: PullRequestDescriptionStatusOptions,
   ): Promise<boolean> {

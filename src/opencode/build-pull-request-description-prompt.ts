@@ -12,6 +12,7 @@ export interface PullRequestDescriptionPromptContext {
   commitSha: string;
   commitMessage: string;
   validationCommand?: string;
+  verifiedFacts?: readonly string[];
   workflowResults: readonly string[];
 }
 
@@ -40,13 +41,17 @@ export function buildPullRequestDescriptionPrompt(
       ? `Commit message:\n${commitMessage}`
       : "Commit message: Unavailable; do not invent commit details.",
     "",
-    "Validation evidence captured by the orchestrator:",
-    "- None; validation execution was delegated to modifying OpenCode sessions, and the orchestrator did not observe its result. Do not infer or claim success.",
-    "Validation command supplied to modifying OpenCode sessions:",
+    "Independently verified workflow evidence:",
+    ...((context.verifiedFacts ?? []).length === 0
+      ? [
+          "- No independently verified validation or review details were supplied.",
+        ]
+      : (context.verifiedFacts ?? []).map((fact) => `- ${fact}`)),
+    "Configured validation command:",
     context.validationCommand === undefined
       ? "- No validation command was configured."
-      : `- Configured validation command \`${context.validationCommand}\` was supplied to modifying OpenCode sessions, but the orchestrator did not execute it; its result is unavailable. This does not establish that validation passed.`,
-    "Workflow outcomes (separate from validation evidence):",
+      : `- ${context.validationCommand}`,
+    "Workflow outcomes:",
     ...context.workflowResults.map((result) => `- ${result}`),
     "",
     "Base the response only on the supplied task and the actual final repository state.",
@@ -60,6 +65,6 @@ export function buildPullRequestDescriptionPrompt(
     '- "changes": an array of non-blank strings describing the actual changes,',
     '- "validation": an array of non-blank strings describing validation or test results independently known to the orchestrator.',
     `The summary must be at most ${MAX_PULL_REQUEST_DESCRIPTION_SUMMARY_LENGTH} characters; changes and validation may each contain at most ${MAX_PULL_REQUEST_DESCRIPTION_CHANGES} and ${MAX_PULL_REQUEST_DESCRIPTION_VALIDATION} items respectively, and every item must be at most ${MAX_PULL_REQUEST_DESCRIPTION_ITEM_LENGTH} characters.`,
-    "Use an empty validation array because the orchestrator has no independently captured validation or test result.",
+    "Report only evidence explicitly supplied above. Never claim a check passed unless its verified result says it passed.",
   ].join("\n");
 }
