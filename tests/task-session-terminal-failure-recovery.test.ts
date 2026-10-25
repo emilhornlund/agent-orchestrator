@@ -19,8 +19,109 @@ afterEach(() => {
   root = undefined;
 });
 
-describe("terminal implementation failure recovery", () => {
-  it("reconciles the saved pilot state once and releases only its verified queue owner", async () => {
+describe("terminal failure recovery", () => {
+  it("reconciles implementation failures and retires only after Failed is confirmed", async () => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "terminal-failure-recovery-"));
+    const projectId = "agent-orchestrator";
+    const cardId = "6addc5c65599982e28a0c6b9";
+    const contextRoot = path.join(root, "state");
+    const project = {
+      id: projectId,
+      autoMerge: false,
+      contextRoot,
+      trello: {
+        boardId: "board",
+        backlogListId: "backlog",
+        readyListId: "ready",
+        workingListId: "working",
+        reviewListId: "review",
+        failedListId: "failed",
+        doneListId: "done",
+      },
+      repository: {
+        path: path.join(root, "repo"),
+        github: "owner/repo",
+        defaultBranch: "main",
+        worktreeRoot: path.join(root, "worktrees"),
+        validationCommand: "yarn validate",
+      },
+      opencode: { timeoutMinutes: 1 },
+    } as unknown as ProjectConfig & { contextRoot: string };
+    fs.mkdirSync(project.repository.path, { recursive: true });
+    fs.mkdirSync(project.repository.worktreeRoot, { recursive: true });
+    const card: TrelloCard = {
+      id: cardId,
+      name: "Implementation failure",
+      desc: "Saved failure fixture",
+      idList: project.trello.workingListId,
+      idLabels: [],
+      url: "https://trello.example/card",
+    };
+    let currentList = project.trello.workingListId;
+    const trello = {
+      getCards: vi.fn(async (listId: string) =>
+        listId === currentList ? [{ ...card, idList: currentList }] : [],
+      ),
+      moveCard: vi.fn(async (_id: string, listId: string) => {
+        currentList = listId;
+        return { ...card, idList: listId };
+      }),
+    } as unknown as TrelloClient;
+    const store = new TaskExecutionStore(contextRoot, project);
+    store.create({
+      version: 1,
+      projectId,
+      cardId,
+      phase: "attention-required",
+      primarySessionId: "session-preserved",
+      sessionCreationStatus: "bound",
+      expectedBranch: `agent/${cardId}`,
+      operationKey: "implementation-operation",
+      terminalFailure: {
+        kind: "implementation",
+        reason: "Implementation exited unsuccessfully",
+        outcome: "pending",
+      },
+      revision: 1,
+      retryCounters: { validation: 0, review: 0, ci: 0, humanFeedback: 0 },
+      createdAt: "2026-10-24T09:00:00.000Z",
+      updatedAt: "2026-10-24T09:00:00.000Z",
+    });
+    const queue = new TaskMutationQueue(contextRoot, project);
+    queue.enqueue({
+      projectId,
+      cardId,
+      eventId: "implementation:failure",
+      operationKey: "implementation-operation",
+      kind: "implementation",
+      enqueuedAt: "2026-10-24T09:00:00.000Z",
+    });
+    queue.claimNext();
+    queue.fail("implementation:failure");
+
+    await runTaskSessionWorkflow({
+      project,
+      trello,
+      git: {} as GitClient,
+      github: {} as GitHubClient,
+      openCode: new OpenCodeClient(vi.fn()),
+      commands: new CommandRunner(vi.fn()),
+      signal: new AbortController().signal,
+      prepareAttachmentContext: async () => undefined,
+    });
+
+    expect(trello.moveCard).toHaveBeenCalledWith(
+      cardId,
+      project.trello.failedListId,
+    );
+    expect(queue.getActive()).toBeNull();
+    expect(store.read(cardId)).toMatchObject({
+      primarySessionId: "session-preserved",
+      terminalFailure: { outcome: "confirmed" },
+    });
+  });
+
+  it("leaves a legacy failed mutation untouched until Trello authorizes retirement", async () => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), "terminal-failure-recovery-"));
     const projectId = "agent-orchestrator";
     const cardId = "6addc5c65599982e28a0c6b9";
@@ -82,11 +183,6 @@ describe("terminal implementation failure recovery", () => {
       sessionCreationStatus: "bound",
       expectedBranch: `agent/${cardId}`,
       operationKey: "pilot-operation",
-      terminalFailure: {
-        kind: "implementation",
-        reason: "OpenCode implementation exited with code 1",
-        outcome: "pending",
-      },
       revision: 1,
       retryCounters: { validation: 0, review: 0, ci: 0, humanFeedback: 0 },
       createdAt: "2026-10-24T09:00:00.000Z",
@@ -126,13 +222,25 @@ describe("terminal implementation failure recovery", () => {
         prepareAttachmentContext: async () => undefined,
       });
     const lifecycleEvent = vi.spyOn(Logger.prototype, "event");
+    await expect(poll()).rejects.toThrow(
+      "Legacy attention-required task needs an explicitly authorized Trello move to Failed before queue retirement",
+    );
+    await expect(poll()).rejects.toThrow(
+      "Legacy attention-required task needs an explicitly authorized Trello move to Failed before queue retirement",
+    );
+    expect(queue.getActive()).toMatchObject({
+      eventId: "implementation:pilot",
+      status: "failed",
+    });
+    expect(queue.getActive()?.ownerToken).toBeUndefined();
+    expect(trello.moveCard).not.toHaveBeenCalled();
+    expect(currentList).toBe(project.trello.workingListId);
+
+    // The operator's move is the authorization for retiring this legacy event.
+    currentList = project.trello.failedListId;
     await poll();
 
-    expect(currentList).toBe(project.trello.failedListId);
-    expect(trello.moveCard).toHaveBeenCalledTimes(1);
-    expect(lifecycleEvent).toHaveBeenCalledWith(
-      "Terminal failure transition to Failed confirmed",
-    );
+    expect(trello.moveCard).not.toHaveBeenCalled();
     expect(lifecycleEvent).not.toHaveBeenCalledWith(
       "Card claimed; transition to Working succeeded",
     );
@@ -140,12 +248,11 @@ describe("terminal implementation failure recovery", () => {
     expect(store.read(cardId)).toMatchObject({
       phase: "attention-required",
       primarySessionId: "ses_e8db2e6edffezePNR3A6EPnlR5",
-      terminalFailure: { outcome: "confirmed" },
     });
     expect(fs.readFileSync(path.join(worktree, "preserved.txt"), "utf8")).toBe(
       "keep me",
     );
     await poll();
-    expect(trello.moveCard).toHaveBeenCalledTimes(1);
+    expect(trello.moveCard).not.toHaveBeenCalled();
   });
 });

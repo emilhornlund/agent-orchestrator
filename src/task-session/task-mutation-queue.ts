@@ -74,6 +74,12 @@ const liveMutationOwners = new Set<string>();
 
 function isProcessAlive(pid: number | undefined): boolean {
   if (pid === undefined) return false;
+  // A PID is only unique within the current process namespace lifetime. In
+  // containers, a restarted Node process commonly reuses PID 1. If the owner
+  // PID is ours but its token is not in liveMutationOwners, it belongs to an
+  // earlier process instance and is stale. Same-process competing queue
+  // instances are still protected by the token check in claimForRecovery.
+  if (pid === process.pid) return false;
   try {
     process.kill(pid, 0);
     return true;

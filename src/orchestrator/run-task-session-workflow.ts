@@ -1448,11 +1448,6 @@ export async function runTaskSessionWorkflow(
       throw new Error(
         "Terminal failure record and queue identity do not match",
       );
-    const owner = queue.claimForRecovery(strandedMutation.eventId);
-    if (owner === null)
-      throw new Error(
-        `Terminal failure recovery cannot claim the verified queue event for ${strandedMutation.cardId}`,
-      );
     const failedCards = await getCardsForDiscovery(
       trello,
       project.id,
@@ -1502,6 +1497,14 @@ export async function runTaskSessionWorkflow(
         .child({ projectId: project.id, cardId: strandedMutation.cardId })
         .event("Terminal failure transition to Failed confirmed");
     }
+    // Establish the operator-authorized terminal state before mutating queue
+    // ownership. A missing authorization must leave a failed event recoverable
+    // on the next poll without stranding it as an active claim.
+    const owner = queue.claimForRecovery(strandedMutation.eventId);
+    if (owner === null)
+      throw new Error(
+        `Terminal failure recovery cannot claim the verified queue event for ${strandedMutation.cardId}`,
+      );
     const currentRecord = taskStore.read(strandedMutation.cardId);
     if (
       currentRecord === null ||

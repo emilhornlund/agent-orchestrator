@@ -168,6 +168,41 @@ describe("TaskMutationQueue", () => {
     expect(restarted.ownsActive("orphaned")).toBe(true);
   });
 
+  it("reclaims a stale owner whose PID was reused by the restarted process", () => {
+    const original = queueFor("project-a");
+    original.enqueue(
+      task("project-a", "reused-pid", "card-one", "2026-10-24T09:00:00.000Z"),
+    );
+    original.claimNext();
+
+    const statePath = path.join(
+      root!,
+      "state",
+      "task-mutation-queues",
+      "project-a.json",
+    );
+    const persisted = JSON.parse(fs.readFileSync(statePath, "utf8")) as {
+      events: Array<{
+        ownerToken?: string;
+        ownerPid?: number;
+      }>;
+    };
+    // Model a prior container instance that owned PID 1. The new process has
+    // the same PID but cannot have the old owner's in-memory token.
+    persisted.events[0]!.ownerToken = "00000000-0000-4000-8000-000000000002";
+    persisted.events[0]!.ownerPid = process.pid;
+    fs.writeFileSync(statePath, JSON.stringify(persisted), "utf8");
+
+    const restarted = queueFor("project-a");
+    expect(restarted.claimForRecovery("reused-pid")).toMatchObject({
+      eventId: "reused-pid",
+      status: "active",
+    });
+    expect(restarted.ownsActive("reused-pid")).toBe(true);
+    restarted.complete("reused-pid");
+    expect(restarted.getActive()).toBeNull();
+  });
+
   it("keeps independent project queues isolated and rejects reused event identities", () => {
     const first = queueFor("project-a");
     const second = queueFor("project-b");
