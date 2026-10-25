@@ -72,6 +72,7 @@ describe("PR maintenance publication integration", () => {
       id: "project-a",
       autoMerge: false,
       maintenance: { enabled: true },
+      opencode: { timeoutMinutes: 360 },
       repository: {
         path: repo,
         worktreeRoot,
@@ -152,6 +153,11 @@ describe("PR maintenance publication integration", () => {
     const maintenanceStore = new PrMaintenanceStore(context, project);
     const gitClient = new GitClient();
     const leasedPush = vi.spyOn(gitClient, "pushWithLease");
+    const runValidation = vi.fn(async () => ({
+      exitCode: 0,
+      output: "passed",
+      errorOutput: "",
+    }));
     const compareAndSwap = taskStore.compareAndSwap.bind(taskStore);
     vi.spyOn(taskStore, "compareAndSwap").mockImplementationOnce(() => {
       throw new Error("simulated interrupted local persistence");
@@ -165,11 +171,7 @@ describe("PR maintenance publication integration", () => {
         git: gitClient,
         github,
         commands: {
-          run: vi.fn(async () => ({
-            exitCode: 0,
-            output: "passed",
-            errorOutput: "",
-          })),
+          run: runValidation,
         } as never,
         mutationQueue,
         taskStore,
@@ -201,6 +203,9 @@ describe("PR maintenance publication integration", () => {
     ).rejects.toThrow("simulated interrupted local persistence");
     expect(currentHead()).not.toBe(oldHead);
     expect(leasedPush).toHaveBeenCalledTimes(1);
+    expect(runValidation).toHaveBeenCalledWith(
+      expect.objectContaining({ timeoutMilliseconds: 360 * 60_000 }),
+    );
     vi.spyOn(taskStore, "compareAndSwap").mockImplementation(compareAndSwap);
     await reconcileInterruptedPrMaintenance({
       project,

@@ -389,7 +389,7 @@ export async function maintainOutdatedPr(
       git: options.git,
       commands: options.commands,
       signal: options.signal,
-      timeoutMilliseconds: 60 * 60 * 1000,
+      timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
       requirementIds: options.requirementIds,
       review: options.review,
     });
