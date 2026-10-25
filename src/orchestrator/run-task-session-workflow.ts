@@ -1422,10 +1422,14 @@ export async function runTaskSessionWorkflow(
     cwd: project.repository.path,
   });
   const maintenanceHandledCardIds = new Set<string>();
-  if (project.maintenance?.enabled === true) {
+  if (project.maintenance?.enabled !== false) {
     const maintenanceStore = new PrMaintenanceStore(root, project);
     for (const observation of latestObservations) {
-      if (observation.state !== "OPEN" || observation.baseRelation !== "behind")
+      if (
+        observation.state !== "OPEN" ||
+        (observation.baseRelation !== "behind" &&
+          observation.baseRelation !== "diverged")
+      )
         continue;
       const task = taskStore.read(observation.cardId);
       const card = latestHumanReviewCards.find(
@@ -1445,7 +1449,9 @@ export async function runTaskSessionWorkflow(
         taskStore,
         maintenanceStore,
         signal,
-        eligible: observation.baseRelation === "behind",
+        eligible:
+          observation.baseRelation === "behind" ||
+          observation.baseRelation === "diverged",
         hasRequestedChanges: observation.requestedChanges !== null,
         hasUnresolvedFeedback: observation.feedbackIds.length > 0,
         requirementIds: storedPlan.plan.requirements.map(
