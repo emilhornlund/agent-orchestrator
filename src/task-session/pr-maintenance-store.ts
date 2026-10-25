@@ -5,6 +5,8 @@ import { z } from "zod";
 import type { ProjectConfig } from "../config/config.js";
 import {
   parsePrMaintenanceOperation,
+  localPreparationSchema,
+  type LocalPreparationProgress,
   type PrMaintenanceOperation,
 } from "./pr-maintenance-operation.js";
 
@@ -137,6 +139,153 @@ export class PrMaintenanceStore {
       operations.find((operation) => operation.operationId === operationId) ??
       null
     );
+  }
+
+  requireOwnedActive(
+    operationId: string,
+    identity: Pick<
+      PrMaintenanceOperation,
+      | "projectId"
+      | "cardId"
+      | "pullRequest"
+      | "expectedRemoteHead"
+      | "targetBaseHead"
+    >,
+  ): PrMaintenanceOperation {
+    const operation = this.inspect(operationId);
+    if (operation === null)
+      throw new PrMaintenanceConflictError(
+        `Unknown maintenance operation: ${operationId}`,
+      );
+    this.assertIdentity(operation, identity);
+    if (
+      operation.status !== "active" ||
+      operation.ownerToken !== this.ownerToken ||
+      !liveOwners.has(this.ownerToken)
+    ) {
+      throw new PrMaintenanceConflictError(
+        "Verified exclusive maintenance ownership is required",
+      );
+    }
+    return operation;
+  }
+
+  claimForRecovery(
+    operationId: string,
+    identity: Pick<
+      PrMaintenanceOperation,
+      | "projectId"
+      | "cardId"
+      | "pullRequest"
+      | "expectedRemoteHead"
+      | "targetBaseHead"
+    >,
+  ): PrMaintenanceOperation {
+    return this.update((record) => {
+      const index = record.operations.findIndex(
+        (item) => item.operationId === operationId,
+      );
+      const current = record.operations[index];
+      if (current === undefined)
+        throw new PrMaintenanceConflictError(
+          `Unknown maintenance operation: ${operationId}`,
+        );
+      this.assertIdentity(current, identity);
+      if (current.status === "active") {
+        if (
+          current.ownerToken === this.ownerToken &&
+          liveOwners.has(this.ownerToken)
+        )
+          return record;
+        if (
+          current.ownerToken !== undefined &&
+          (liveOwners.has(current.ownerToken) ||
+            isProcessAlive(current.ownerPid!))
+        ) {
+          throw new PrMaintenanceConflictError(
+            "Maintenance operation still has a live owner",
+          );
+        }
+      } else if (current.status !== "uncertain") {
+        throw new PrMaintenanceConflictError(
+          "Only an interrupted active or uncertain operation can be reclaimed",
+        );
+      }
+      const reclaimed = parsePrMaintenanceOperation({
+        ...current,
+        status: "active",
+        ownerToken: this.ownerToken,
+        ownerPid: process.pid,
+        updatedAt: new Date().toISOString(),
+      });
+      liveOwners.add(this.ownerToken);
+      const operations = [...record.operations];
+      operations[index] = reclaimed;
+      return { ...record, operations };
+    }, operationId);
+  }
+
+  recordLocalPreparation(
+    operationId: string,
+    identity: Pick<
+      PrMaintenanceOperation,
+      | "projectId"
+      | "cardId"
+      | "pullRequest"
+      | "expectedRemoteHead"
+      | "targetBaseHead"
+    >,
+    progress: LocalPreparationProgress,
+  ): PrMaintenanceOperation {
+    const validated = localPreparationSchema.parse(progress);
+    return this.update((record) => {
+      const index = record.operations.findIndex(
+        (item) => item.operationId === operationId,
+      );
+      const current = record.operations[index];
+      if (current === undefined)
+        throw new PrMaintenanceConflictError(
+          `Unknown maintenance operation: ${operationId}`,
+        );
+      this.assertIdentity(current, identity);
+      if (
+        current.status !== "active" ||
+        current.ownerToken !== this.ownerToken ||
+        !liveOwners.has(this.ownerToken)
+      ) {
+        throw new PrMaintenanceConflictError(
+          "Verified exclusive maintenance ownership is required to record preparation progress",
+        );
+      }
+      const previous = current.localPreparation;
+      const allowedNext: Record<
+        LocalPreparationProgress["status"],
+        LocalPreparationProgress["status"][]
+      > = {
+        "fetching-base": ["fetching-base", "base-fetched"],
+        "base-fetched": ["base-fetched", "backing-up", "prepared"],
+        "backing-up": ["backing-up", "rebasing"],
+        rebasing: ["rebasing", "conflicted", "prepared"],
+        conflicted: ["conflicted"],
+        prepared: ["prepared"],
+      };
+      if (
+        previous !== undefined &&
+        !allowedNext[previous.status].includes(validated.status)
+      ) {
+        throw new PrMaintenanceConflictError(
+          `Invalid preparation progress transition: ${previous.status} -> ${validated.status}`,
+        );
+      }
+      const updated = parsePrMaintenanceOperation({
+        ...current,
+        localPreparation: validated,
+        updatedAt: new Date().toISOString(),
+      });
+      const operations = [...record.operations];
+      operations[index] = updated;
+      return { ...record, operations };
+    }, operationId);
   }
 
   create(

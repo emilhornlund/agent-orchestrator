@@ -411,6 +411,45 @@ export class GitClient {
     return this.runGit(repositoryPath, ["rev-parse", "HEAD"]);
   }
 
+  async getCommonGitDirectory(repositoryPath: string): Promise<string> {
+    const directory = await this.runGit(repositoryPath, [
+      "rev-parse",
+      "--path-format=absolute",
+      "--git-common-dir",
+    ]);
+    return path.resolve(repositoryPath, directory);
+  }
+
+  async resolveCommitSha(
+    repositoryPath: string,
+    revision: string,
+  ): Promise<string> {
+    return this.runGit(repositoryPath, [
+      "rev-parse",
+      "--verify",
+      `${revision}^{commit}`,
+    ]);
+  }
+
+  async getRefSha(repositoryPath: string, ref: string): Promise<string | null> {
+    const name = await this.runGit(repositoryPath, [
+      "for-each-ref",
+      "--format=%(refname)",
+      ref,
+    ]);
+    if (name.trim() !== ref) return null;
+    return this.resolveCommitSha(repositoryPath, ref);
+  }
+
+  async createRefIfAbsent(
+    repositoryPath: string,
+    ref: string,
+    sha: string,
+  ): Promise<void> {
+    const zero = "0".repeat(sha.length);
+    await this.runGit(repositoryPath, ["update-ref", ref, sha, zero]);
+  }
+
   async getCommitMessage(repositoryPath: string): Promise<string> {
     return this.runGit(repositoryPath, ["log", "-1", "--format=%B"]);
   }
