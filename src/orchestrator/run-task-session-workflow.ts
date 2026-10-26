@@ -3032,11 +3032,19 @@ export async function runTaskSessionWorkflow(
           commitVerified = false;
         }
       }
+      const staleReviewFailure =
+        error instanceof Error &&
+        (error.message.includes(
+          "Persisted exhausted review is stale after publication",
+        ) ||
+          error.message.includes(
+            "Task-session publication is blocked: Final implementation review is stale",
+          ));
       if (
         latest !== null &&
         latest.phase !== "attention-required" &&
         latest.phase !== "done" &&
-        !commitVerified
+        (!commitVerified || staleReviewFailure)
       ) {
         try {
           taskStore.compareAndSwap(
