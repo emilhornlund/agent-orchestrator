@@ -195,6 +195,8 @@ const taskExecutionRecordSchema = z
       .optional(),
     ciRepair: ciRepairSchema.optional(),
     feedbackRemediation: feedbackRemediationSchema.optional(),
+    /** Consumed before an operator-authorized failed feedback checkpoint is resumed. */
+    feedbackRecoveryAttemptEventId: nonBlankIdentifier.optional(),
     reviewObservation: reviewObservationSchema.optional(),
     publicationQuality: publicationQualitySchema.optional(),
     humanReviewNotificationCommitShas: z.array(gitSha).optional(),

@@ -431,7 +431,28 @@ export async function publishCard({
 
     const defaultBranchRef = `origin/${project.repository.defaultBranch}`;
 
-    if (!rebaseAlreadyCompleted) {
+    if (expectedExistingPullRequestUrl !== undefined) {
+      // Never rewrite the already-published history of an existing PR merely
+      // because its base advanced. Its remediation commit must fast-forward
+      // from the authoritative remote task head instead.
+      const existing = await github.findPullRequest({
+        cwd: worktreePath,
+        repository: project.repository.github,
+        headBranch: branch,
+        project,
+      });
+      if (existing?.url !== expectedExistingPullRequestUrl) {
+        throw new WorkflowError(
+          "Git/GitHub",
+          `Existing PR ownership changed before publication: expected ${expectedExistingPullRequestUrl}`,
+        );
+      }
+    }
+
+    if (
+      !rebaseAlreadyCompleted &&
+      expectedExistingPullRequestUrl === undefined
+    ) {
       cardLog.event(
         `Fetching latest ${defaultBranchRef} before publishing ${branch}...`,
       );

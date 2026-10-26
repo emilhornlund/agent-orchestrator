@@ -66,7 +66,9 @@ export async function observeTaskSessionReviewCards(
     const failedFeedbackReview =
       record.phase === "review" &&
       record.reviewRepair?.status === "exhausted" &&
-      record.feedbackRemediation?.status === "changed";
+      record.feedbackRemediation?.status === "changed" &&
+      record.feedbackRecoveryAttemptEventId !==
+        record.feedbackRemediation.operationId;
     if (
       record.phase !== "human-feedback" &&
       record.phase !== "ci" &&

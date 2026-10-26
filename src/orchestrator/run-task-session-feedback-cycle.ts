@@ -19,7 +19,7 @@ import type { CommandRunner } from "../process/command-runner.js";
 import type { TrelloCard, TrelloClient } from "../trello/trello-client.js";
 import type { ObservedTaskSessionReviewCard } from "./observe-task-session-review-cards.js";
 import { runTaskSessionFeedbackRemediation } from "../task-session/run-task-session-feedback-remediation.js";
-import { runTaskSessionFeedbackVerification } from "../task-session/run-task-session-feedback-verification.js";
+import { runAdvisoryTaskSessionFeedbackVerification } from "../task-session/run-task-session-feedback-verification.js";
 import { publishVerifiedFeedbackReplies } from "../task-session/publish-verified-feedback-replies.js";
 import type { FeedbackVerificationResult } from "../task-session/feedback-verification.js";
 import { reconcileFeedbackRound } from "../task-session/reconcile-feedback-round.js";
@@ -40,7 +40,10 @@ import { runTaskSessionValidationWithRepairs } from "../task-session/run-task-se
 import type { TaskSessionValidationResult } from "../task-session/run-task-session-validation.js";
 import { runTaskSessionValidation } from "../task-session/run-task-session-validation.js";
 import { runTaskSessionCoverage } from "../task-session/run-task-session-coverage.js";
-import { runTaskSessionReview } from "../task-session/run-task-session-review.js";
+import {
+  runTaskSessionReview,
+  TaskSessionReviewUnavailableError,
+} from "../task-session/run-task-session-review.js";
 import { runTaskSessionReviewWithRepairs } from "../task-session/run-task-session-review-repairs.js";
 import {
   decideValidatedHumanReviewPublication,
@@ -563,6 +566,7 @@ export async function runTaskSessionFeedbackCycle(
       active.status !== "failed" ||
       record.feedbackRemediation?.operationId !== operationId ||
       record.feedbackRemediation.status !== "changed" ||
+      record.feedbackRecoveryAttemptEventId !== operationId ||
       (await git.getCurrentBranch(worktreePath)) !== record.expectedBranch ||
       (await git.getHeadSha(worktreePath)) !== observation.headSha ||
       (await git.getStatus(worktreePath)).trim().length === 0 ||
@@ -903,7 +907,7 @@ export async function runTaskSessionFeedbackCycle(
         entries,
       });
     };
-    let verification = await runTaskSessionFeedbackVerification({
+    let verification = await runAdvisoryTaskSessionFeedbackVerification({
       project,
       card,
       expectedBranch: record.expectedBranch!,
@@ -927,26 +931,39 @@ export async function runTaskSessionFeedbackCycle(
       worktreePath,
     );
     clearCommitResult(worktreePath);
-    const commitResult = await runWithPrimaryTaskSession(
-      taskStore,
-      openCode,
-      project.id,
-      card.id,
-      {
-        model: project.opencode.commit.model,
-        variant: project.opencode.commit.variant,
-        timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
-        signal,
-        sessionLogPath: getSessionLogPath(project.id, card.id),
-        sessionLabel: "Task-session feedback commit message",
-        cwd: worktreePath,
-        prompt: buildCommitPrompt(card),
-      },
-    );
-    if (commitResult.exitCode !== 0)
-      throw new Error("Feedback commit-message session failed");
-    const commitMessage = readCommitResult(worktreePath).message;
-    clearCommitResult(worktreePath);
+    let commitMessage = "fix(feedback): address requested changes";
+    try {
+      const commitResult = await runWithPrimaryTaskSession(
+        taskStore,
+        openCode,
+        project.id,
+        card.id,
+        {
+          model: project.opencode.commit.model,
+          variant: project.opencode.commit.variant,
+          timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
+          signal,
+          sessionLogPath: getSessionLogPath(project.id, card.id),
+          sessionLabel: "Task-session feedback commit message",
+          cwd: worktreePath,
+          prompt: buildCommitPrompt(card),
+        },
+      );
+      if (commitResult.exitCode === 0) {
+        commitMessage = readCommitResult(worktreePath).message;
+      } else {
+        cardLog.warn(
+          "Feedback commit-message agent unavailable; using deterministic message",
+        );
+      }
+    } catch (error) {
+      if (signal.aborted) throw error;
+      cardLog.warn(
+        "Feedback commit-message generation unavailable; using deterministic message",
+      );
+    } finally {
+      clearCommitResult(worktreePath);
+    }
     if (
       !repositorySnapshotsEqual(
         snapshotBeforeCommitMessage,
@@ -1048,21 +1065,37 @@ export async function runTaskSessionFeedbackCycle(
           validation,
           coverage,
         );
-        const review = await runTaskSessionReview({
-          project,
-          card,
-          expectedBranch: record.expectedBranch!,
-          operationKey: record.operationKey,
-          worktreePath,
-          taskRecordStore: taskStore,
-          planStore,
-          git,
-          openCode,
-          validation,
-          coverage,
-          ...(attachmentContext === undefined ? {} : { attachmentContext }),
-          runOptions: reviewRunOptions(project, signal),
-        });
+        let review: { review: ImplementationReviewResult } = {
+          review: finalReview.review,
+        };
+        try {
+          review = await runTaskSessionReview({
+            project,
+            card,
+            expectedBranch: record.expectedBranch!,
+            operationKey: record.operationKey,
+            worktreePath,
+            taskRecordStore: taskStore,
+            planStore,
+            git,
+            openCode,
+            validation,
+            coverage,
+            ...(attachmentContext === undefined ? {} : { attachmentContext }),
+            runOptions: reviewRunOptions(project, signal),
+          });
+        } catch (error) {
+          if (!(error instanceof TaskSessionReviewUnavailableError))
+            throw error;
+          const currentSource = await getTaskSessionSourceSnapshotIdentity(
+            git,
+            worktreePath,
+          );
+          if (currentSource !== validation.contentIdentity) throw error;
+          cardLog.warn(
+            "Prepared AI review unavailable; retaining advisory review findings",
+          );
+        }
         const latestIdentity = await getTaskSessionSourceSnapshotIdentity(
           git,
           worktreePath,
@@ -1080,19 +1113,20 @@ export async function runTaskSessionFeedbackCycle(
         if (!decideValidatedHumanReviewPublication(latestQuality).allowed)
           throw new Error("Prepared feedback publication review failed");
         const preparedHeadSha = await git.getHeadSha(worktreePath);
-        const latestVerification = await runTaskSessionFeedbackVerification({
-          project,
-          card,
-          expectedBranch: record.expectedBranch!,
-          expectedHeadSha: preparedHeadSha,
-          worktreePath,
-          approvedPlan: storedPlan.plan,
-          actionableFeedback,
-          qualityEvidence: latestQuality,
-          git,
-          openCode,
-          runOptions: reviewRunOptions(project, signal),
-        });
+        const latestVerification =
+          await runAdvisoryTaskSessionFeedbackVerification({
+            project,
+            card,
+            expectedBranch: record.expectedBranch!,
+            expectedHeadSha: preparedHeadSha,
+            worktreePath,
+            approvedPlan: storedPlan.plan,
+            actionableFeedback,
+            qualityEvidence: latestQuality,
+            git,
+            openCode,
+            runOptions: reviewRunOptions(project, signal),
+          });
         verification = latestVerification;
         persistVerification(latestVerification);
         const afterVerification = taskStore.read(card.id);

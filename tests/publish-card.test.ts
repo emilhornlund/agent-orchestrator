@@ -1340,6 +1340,84 @@ describe("publishCard", () => {
     expect(trello.moveCard).toHaveBeenCalledWith("card-1", "review-list");
   });
 
+  it("refuses a mismatched existing PR before any branch push", async () => {
+    const git = createPublicationGit({ push: vi.fn() });
+    const github = {
+      findPullRequest: vi.fn().mockResolvedValue({
+        url: "https://github.com/example/repository/pull/999",
+      }),
+    } as unknown as GitHubClient;
+    const trello = { moveCard: vi.fn() } as unknown as TrelloClient;
+
+    await expect(
+      publishCard({
+        trello,
+        git,
+        github,
+        project: createProject(),
+        card: createCard(),
+        worktreePath: "/worktree",
+        branch: "agent/card-1",
+        commitSha: "new-commit",
+        expectedExistingPullRequestUrl:
+          "https://github.com/example/repository/pull/123",
+        reviewResult: "Passed",
+        remediationResult: "Feedback remediation",
+      }),
+    ).rejects.toThrow("Existing PR ownership changed before publication");
+    expect(git.push).not.toHaveBeenCalled();
+    expect(git.rebase).not.toHaveBeenCalled();
+    expect(trello.moveCard).not.toHaveBeenCalled();
+  });
+
+  it("updates an existing PR by fast-forward without rebasing its published head", async () => {
+    const url = "https://github.com/example/repository/pull/123";
+    const git = createPublicationGit({
+      getHeadSha: vi.fn().mockResolvedValue("new-commit"),
+      getRemoteBranchSha: vi.fn().mockResolvedValue("published-head"),
+      isAncestor: vi.fn().mockResolvedValue(true),
+    });
+    const github = {
+      findPullRequest: vi.fn().mockResolvedValue({ url }),
+      createPullRequest: vi.fn(),
+    } as unknown as GitHubClient;
+    const trello = {
+      moveCard: vi.fn().mockResolvedValue({
+        ...createCard(),
+        idList: "review-list",
+      }),
+    } as unknown as TrelloClient;
+
+    await publishCard({
+      trello,
+      git,
+      github,
+      project: createProject(),
+      card: createCard(),
+      worktreePath: "/worktree",
+      branch: "agent/card-1",
+      commitSha: "new-commit",
+      expectedExistingPullRequestUrl: url,
+      reviewResult: "Passed",
+      remediationResult: "Feedback remediation",
+    });
+
+    expect(git.fetch).not.toHaveBeenCalled();
+    expect(git.rebase).not.toHaveBeenCalled();
+    expect(git.isAncestor).toHaveBeenCalledWith(
+      "/worktree",
+      "published-head",
+      "new-commit",
+    );
+    expect(git.push).toHaveBeenCalledWith(
+      "/worktree",
+      "origin",
+      "agent/card-1",
+      createProject(),
+    );
+    expect(github.createPullRequest).not.toHaveBeenCalled();
+  });
+
   it("does not push when rebasing an already-current branch leaves HEAD unchanged", async () => {
     const commitSha = "current-commit";
     const git = createPublicationGit({

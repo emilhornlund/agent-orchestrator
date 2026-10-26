@@ -49,6 +49,7 @@ import {
 import { runTaskSessionCiRepairs } from "../task-session/run-task-session-ci-repairs.js";
 import { runTaskSessionFeedbackCycle } from "./run-task-session-feedback-cycle.js";
 import { FeedbackLedgerStore } from "../task-session/feedback-ledger-store.js";
+import { canResumeFailedFeedbackReview } from "../task-session/can-resume-failed-feedback-review.js";
 import {
   decideValidatedHumanReviewPublication,
   decideHumanReviewPublication,
@@ -1714,12 +1715,10 @@ export async function runTaskSessionWorkflow(
     if (maintenanceHandledCardIds.has(observation.cardId)) continue;
     const record = taskStore.read(observation.cardId);
     if (record === null) continue;
-    const resumableFeedbackReview =
-      record.phase === "review" &&
-      record.reviewRepair?.status === "exhausted" &&
-      queue.getActive()?.cardId === record.cardId &&
-      queue.getActive()?.kind === "feedback" &&
-      queue.getActive()?.status === "failed";
+    const resumableFeedbackReview = canResumeFailedFeedbackReview(
+      record,
+      queue.getActive(),
+    );
     if (record.phase !== "human-feedback" && !resumableFeedbackReview) continue;
     const card = latestHumanReviewCards.find(
       (candidate) => candidate.id === record.cardId,
@@ -1728,6 +1727,16 @@ export async function runTaskSessionWorkflow(
       throw new Error(
         `Observed task-session review card disappeared: ${record.cardId}`,
       );
+    if (resumableFeedbackReview) {
+      // Durable one-shot authorization. An unsuccessful retry must not be
+      // reattempted by every poll or by a fresh worker after restart.
+      taskStore.compareAndSwap(record.cardId, record.revision, {
+        ...record,
+        feedbackRecoveryAttemptEventId: queue.getActive()!.eventId,
+        revision: record.revision + 1,
+        updatedAt: timestamp(record),
+      });
+    }
     const feedbackResult = await runTaskSessionFeedbackCycle({
       project,
       card,
