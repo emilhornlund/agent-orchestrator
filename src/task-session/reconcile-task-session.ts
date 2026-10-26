@@ -234,7 +234,8 @@ export async function reconcileTaskSession(
       );
     }
     const uncommitted =
-      record.validationRepair?.status === "exhausted" &&
+      (record.validationRepair?.status === "exhausted" ||
+        record.reviewUnavailable !== undefined) &&
       record.reviewRepair?.finalReview === undefined &&
       snapshot.verifiedUncommittedPublication === true &&
       snapshot.trustedCommitSha === null &&
