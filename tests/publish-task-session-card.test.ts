@@ -103,15 +103,15 @@ function fixture() {
 }
 
 describe("publishTaskSessionCard", () => {
-  it("blocks before staging when required evidence is absent", async () => {
+  it("creates a human-review commit when final review evidence is missing", async () => {
     const { base, git } = fixture();
     await expect(
       publishTaskSessionCard({
         ...base,
         initialEvidence: { ...evidence, review: null },
       } as never),
-    ).rejects.toThrow("final implementation review is missing");
-    expect(git.stageAll).not.toHaveBeenCalled();
+    ).resolves.toBe("after");
+    expect(git.stageAll).toHaveBeenCalledOnce();
   });
 
   it("creates one trusted commit and asks for a fresh gate before push", async () => {
@@ -171,7 +171,7 @@ describe("publishTaskSessionCard", () => {
     );
   });
 
-  it("blocks failed-review publication when it lacks verified exhaustion evidence", async () => {
+  it("publishes a failed review without exhaustion evidence for human review", async () => {
     const { base, git } = fixture();
     await expect(
       publishTaskSessionCard({
@@ -191,8 +191,8 @@ describe("publishTaskSessionCard", () => {
           },
         },
       } as never),
-    ).rejects.toThrow("Final implementation review did not pass");
-    expect(git.stageAll).not.toHaveBeenCalled();
+    ).resolves.toBe("after");
+    expect(git.stageAll).toHaveBeenCalledOnce();
   });
 
   it("publishes a rebased exhausted review only when the new head passes current validation", async () => {

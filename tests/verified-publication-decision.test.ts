@@ -127,7 +127,7 @@ describe("decideVerifiedPublication", () => {
   });
 });
 
-describe("human-review publication after configured repair exhaustion", () => {
+describe("PR-first human-review publication", () => {
   const failedReview: ImplementationReviewResult = {
     ...review,
     verdict: "fail",
@@ -136,75 +136,46 @@ describe("human-review publication after configured repair exhaustion", () => {
     ],
   };
 
-  it("permits stale exhausted review only for an explicitly verified rebase and current validation", () => {
-    const newIdentity = `sha256:${"c".repeat(64)}`;
-    const rebased = input({
-      currentContentIdentity: newIdentity,
-      validation: { ...validation, contentIdentity: newIdentity },
+  it("allows a human-review PR despite missing or failed quality evidence", () => {
+    const failing = input({
+      validation: { ...validation, status: "failed", exitCode: 1 },
+      coverageCommand: "yarn coverage",
+      coverage: null,
       review: failedReview,
     });
-    expect(
-      decideHumanReviewPublication(rebased, failedReview).reasons,
-    ).toContain("Final implementation review is stale");
-    expect(
-      decideHumanReviewPublication(rebased, failedReview, {
-        allowStaleExhaustedReview: true,
-      }).allowed,
-    ).toBe(true);
-    expect(decideVerifiedPublication(rebased).allowed).toBe(false);
-    expect(
-      decideHumanReviewPublication({ ...rebased, validation }, failedReview, {
-        allowStaleExhaustedReview: true,
-      }).reasons,
-    ).toContain("Local validation evidence is stale");
-    expect(
-      decideHumanReviewPublication(
-        { ...rebased, coverageCommand: "yarn coverage", coverage: null },
-        failedReview,
-        { allowStaleExhaustedReview: true },
-      ).reasons,
-    ).toContain("Configured coverage evidence is missing");
-    expect(
-      decideHumanReviewPublication({ ...rebased, review }, failedReview, {
-        allowStaleExhaustedReview: true,
-      }).allowed,
-    ).toBe(false);
+    const decision = decideHumanReviewPublication(failing, failedReview);
+    expect(decision.allowed).toBe(true);
+    expect(decision.reasons).toContain("Local validation did not pass");
+    expect(decision.reasons).toContain(
+      "Configured coverage evidence is missing",
+    );
+    expect(decision.reasons).toContain(
+      "Final implementation review did not pass",
+    );
+    expect(decideVerifiedPublication(failing).allowed).toBe(false);
   });
 
-  it("allows only the exact persisted exhausted review with passed current validation", () => {
-    expect(
-      decideHumanReviewPublication(
-        input({ review: failedReview }),
-        failedReview,
-      ),
-    ).toMatchObject({ allowed: true, reasons: [] });
-    expect(
-      decideVerifiedPublication(input({ review: failedReview })).allowed,
-    ).toBe(false);
+  it("allows a PR with missing, stale, or non-exhausted review evidence", () => {
+    const newIdentity = `sha256:${"c".repeat(64)}`;
+    const incomplete = input({
+      currentContentIdentity: newIdentity,
+      validation: null,
+      review: null,
+    });
+    expect(decideHumanReviewPublication(incomplete, undefined).allowed).toBe(
+      true,
+    );
     expect(
       decideHumanReviewPublication(input({ review: failedReview }), undefined)
         .allowed,
-    ).toBe(false);
+    ).toBe(true);
+    expect(decideVerifiedPublication(incomplete).allowed).toBe(false);
+  });
+
+  it("still requires a usable source identity to authorize publication", () => {
+    const missingIdentity = input({ currentContentIdentity: " " });
     expect(
-      decideHumanReviewPublication(input({ review: failedReview }), {
-        ...failedReview,
-        blockingFindings: [],
-      }).allowed,
-    ).toBe(false);
-    expect(
-      decideHumanReviewPublication(
-        input({ review: failedReview, validation: null }),
-        failedReview,
-      ).allowed,
-    ).toBe(false);
-    expect(
-      decideHumanReviewPublication(
-        input({
-          review: failedReview,
-          currentContentIdentity: `sha256:${"b".repeat(64)}`,
-        }),
-        failedReview,
-      ).allowed,
+      decideHumanReviewPublication(missingIdentity, undefined).allowed,
     ).toBe(false);
   });
 });
