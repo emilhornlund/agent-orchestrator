@@ -548,6 +548,26 @@ describe("GitHubClient", () => {
     });
   });
 
+  it("creates a draft PR when publication requires human review", async () => {
+    const runGitHubCommand = vi.fn<RunGitHubCommand>(
+      async () => "https://github.com/example/repository/pull/123",
+    );
+    const github = new GitHubClient(runGitHubCommand);
+    await github.createPullRequest({
+      cwd: "/tmp/repository",
+      repository: "example/repository",
+      baseBranch: "main",
+      headBranch: "agent/example",
+      title: "Needs human review",
+      body: "Failed automated checks",
+      draft: true,
+    });
+    expect(runGitHubCommand).toHaveBeenCalledWith(
+      "/tmp/repository",
+      expect.arrayContaining(["pr", "create", "--draft"]),
+    );
+  });
+
   it("reads the latest pull request body before updating its managed status", async () => {
     const runGitHubCommand = vi
       .fn<RunGitHubCommand>()
