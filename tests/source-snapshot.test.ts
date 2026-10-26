@@ -7,6 +7,9 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { GitClient } from "../src/git/git-client.js";
 import { getTaskSessionSourceSnapshotIdentity } from "../src/task-session/source-snapshot.js";
+import { decideHumanReviewPublication } from "../src/task-session/verified-publication-decision.js";
+import type { ImplementationReviewResult } from "../src/task-session/implementation-review-result.js";
+import type { TaskSessionValidationResult } from "../src/task-session/run-task-session-validation.js";
 
 let temporaryRoot: string | undefined;
 
@@ -179,6 +182,69 @@ describe("getTaskSessionSourceSnapshotIdentity", () => {
     expect(
       await getTaskSessionSourceSnapshotIdentity(git, repositoryPath),
     ).toBe(beforeCommit);
+  });
+
+  it("preserves exhausted reviews across commits", async () => {
+    const { repositoryPath, runGit } = createRepository();
+    const git = new GitClient();
+    fs.writeFileSync(
+      path.join(repositoryPath, "tracked.txt"),
+      "feature change\n",
+    );
+    const identity = await getTaskSessionSourceSnapshotIdentity(
+      git,
+      repositoryPath,
+    );
+    const validation: TaskSessionValidationResult = {
+      command: "yarn validate",
+      startedAt: "2026-10-26T07:00:00.000Z",
+      completedAt: "2026-10-26T07:01:00.000Z",
+      exitCode: 0,
+      status: "passed",
+      timedOut: false,
+      aborted: false,
+      diagnostic: "passed",
+      contentIdentity: identity,
+    };
+    const review: ImplementationReviewResult = {
+      version: 1,
+      projectId: "project",
+      cardId: "card",
+      verdict: "fail",
+      reviewedContentIdentity: identity,
+      requirementAssessments: [],
+      blockingFindings: [
+        {
+          kind: "defect",
+          summary: "Requires human review",
+          detail: "Unresolved",
+        },
+      ],
+    };
+    const decision = async () =>
+      decideHumanReviewPublication(
+        {
+          currentContentIdentity: await getTaskSessionSourceSnapshotIdentity(
+            git,
+            repositoryPath,
+          ),
+          validationCommand: validation.command,
+          validation,
+          coverage: null,
+          review,
+        },
+        review,
+      );
+
+    expect((await decision()).allowed).toBe(true);
+    runGit("add", "tracked.txt");
+    runGit("commit", "-m", "feature");
+    expect((await decision()).allowed).toBe(true);
+    fs.writeFileSync(
+      path.join(repositoryPath, "tracked.txt"),
+      "unauthorized\n",
+    );
+    expect((await decision()).allowed).toBe(false);
   });
 
   it("invalidates a snapshot after a local rebase", async () => {
