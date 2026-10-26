@@ -37,6 +37,7 @@ export interface CreatePullRequestOptions {
   headBranch: string;
   title: string;
   body: string;
+  draft?: boolean;
   project?: ProjectConfig;
 }
 
@@ -2455,6 +2456,7 @@ export class GitHubClient {
       [
         "pr",
         "create",
+        ...(options.draft === true ? ["--draft"] : []),
         "--repo",
         options.repository,
         "--base",

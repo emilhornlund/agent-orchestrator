@@ -774,6 +774,7 @@ export async function publishCard({
         headBranch: branch,
         title: card.name,
         body,
+        draft: exhaustedReview !== undefined || reviewResult !== "Passed",
         project,
       });
 
