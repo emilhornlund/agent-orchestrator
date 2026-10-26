@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
@@ -11,6 +12,7 @@ import {
   redactError,
   redactSecrets,
 } from "../security/redact-secrets.js";
+import { haveEquivalentImplementationChanges } from "./implementation-change-equivalence.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -413,6 +415,108 @@ export class GitClient {
 
   async getCommitParentSha(repositoryPath: string): Promise<string> {
     return this.runGit(repositoryPath, ["rev-parse", "HEAD^"]);
+  }
+
+  /** Verify content-equivalent single-commit implementations in an isolated repo. */
+  async hasEquivalentImplementationCommit(options: {
+    project: ProjectConfig;
+    implementationCommit: string;
+    pullRequestNumber: number;
+    pullRequestHeadSha: string;
+  }): Promise<boolean> {
+    const shaPattern = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu;
+    if (
+      !shaPattern.test(options.implementationCommit) ||
+      !shaPattern.test(options.pullRequestHeadSha) ||
+      !Number.isSafeInteger(options.pullRequestNumber) ||
+      options.pullRequestNumber < 1
+    ) {
+      throw new Error(
+        "Implementation comparison requires identified commits and pull request",
+      );
+    }
+
+    const temporaryRepository = fs.mkdtempSync(
+      path.join(os.tmpdir(), "agent-orchestrator-recovery-git-"),
+    );
+    try {
+      await this.runAuthenticated(
+        temporaryRepository,
+        ["init", "--quiet"],
+        options.project,
+      );
+      await this.runAuthenticated(
+        temporaryRepository,
+        [
+          "remote",
+          "add",
+          "origin",
+          `https://github.com/${options.project.repository.github}.git`,
+        ],
+        options.project,
+      );
+      await this.runAuthenticated(
+        temporaryRepository,
+        [
+          "fetch",
+          "--no-tags",
+          "--no-recurse-submodules",
+          "origin",
+          options.implementationCommit,
+          `+refs/pull/${options.pullRequestNumber}/head:refs/recovery/pull-request`,
+        ],
+        options.project,
+      );
+      const fetchedHead = await this.runAuthenticated(
+        temporaryRepository,
+        ["rev-parse", "refs/recovery/pull-request"],
+        options.project,
+      );
+      if (
+        fetchedHead.toLowerCase() !== options.pullRequestHeadSha.toLowerCase()
+      )
+        return false;
+
+      const originalParent = await this.runAuthenticated(
+        temporaryRepository,
+        ["rev-parse", `${options.implementationCommit}^`],
+        options.project,
+      );
+      const recoveredParent = await this.runAuthenticated(
+        temporaryRepository,
+        ["rev-parse", `${options.pullRequestHeadSha}^`],
+        options.project,
+      );
+      const originalPatch = await this.runAuthenticated(
+        temporaryRepository,
+        [
+          "diff",
+          "--no-ext-diff",
+          "--no-renames",
+          "--no-color",
+          "--unified=0",
+          originalParent,
+          options.implementationCommit,
+        ],
+        options.project,
+      );
+      const recoveredPatch = await this.runAuthenticated(
+        temporaryRepository,
+        [
+          "diff",
+          "--no-ext-diff",
+          "--no-renames",
+          "--no-color",
+          "--unified=0",
+          recoveredParent,
+          options.pullRequestHeadSha,
+        ],
+        options.project,
+      );
+      return haveEquivalentImplementationChanges(originalPatch, recoveredPatch);
+    } finally {
+      fs.rmSync(temporaryRepository, { recursive: true, force: true });
+    }
   }
 
   async getCommonGitDirectory(repositoryPath: string): Promise<string> {

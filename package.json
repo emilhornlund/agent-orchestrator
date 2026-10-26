@@ -9,6 +9,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx src/main.ts",
+    "reconcile:external-pr": "tsx src/operator/reconcile-external-task-session-pr.ts",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

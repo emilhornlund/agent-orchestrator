@@ -27,6 +27,7 @@ export const taskExecutionEventTypes = [
   "ci-passed-awaiting-human",
   "ci-passed-completed",
   "pull-request-merged",
+  "external-pull-request-reconciled",
   "ci-failed",
   "feedback-received",
   "feedback-ci-failed",
@@ -85,6 +86,15 @@ const terminalFailureState = z.strictObject({
   kind: z.literal("implementation"),
   reason: z.string().min(1).max(4_000),
   outcome: z.enum(["confirmed", "pending"]),
+});
+
+const externalRecoveryState = z.strictObject({
+  implementationCommit: gitSha,
+  recoveryBranch: nonBlankIdentifier,
+  pullRequestNumber: z.number().int().positive(),
+  pullRequestUrl: z.url(),
+  status: z.enum(["verified", "move-pending", "card-moved"]),
+  requestedAt: z.string().datetime(),
 });
 
 const retryCountersSchema = z.strictObject({
@@ -163,6 +173,7 @@ const taskExecutionRecordSchema = z
     sessionCreationStatus: sessionCreationStatus.optional(),
     setup: taskSetupState.optional(),
     terminalFailure: terminalFailureState.optional(),
+    externalRecovery: externalRecoveryState.optional(),
     expectedBranch: nonBlankIdentifier.optional(),
     pullRequest: pullRequestSchema.optional(),
     operationKey: nonBlankIdentifier,
