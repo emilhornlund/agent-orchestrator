@@ -3,6 +3,7 @@ import type { ImplementationReviewResult } from "../src/task-session/implementat
 import type { TaskSessionValidationResult } from "../src/task-session/run-task-session-validation.js";
 import {
   decideHumanReviewPublication,
+  decideValidatedHumanReviewPublication,
   decideVerifiedPublication,
 } from "../src/task-session/verified-publication-decision.js";
 
@@ -176,6 +177,37 @@ describe("PR-first human-review publication", () => {
     const missingIdentity = input({ currentContentIdentity: " " });
     expect(
       decideHumanReviewPublication(missingIdentity, undefined).allowed,
+    ).toBe(false);
+  });
+});
+
+describe("validated advisory review policy", () => {
+  it("permits missing and failing AI reviews without weakening automated approval", () => {
+    for (const result of [null, { ...review, verdict: "fail" as const }]) {
+      expect(
+        decideValidatedHumanReviewPublication(input({ review: result }))
+          .allowed,
+      ).toBe(true);
+      expect(decideVerifiedPublication(input({ review: result })).allowed).toBe(
+        false,
+      );
+    }
+  });
+
+  it("requires passing local validation and configured coverage", () => {
+    expect(
+      decideValidatedHumanReviewPublication(input({ validation: null }))
+        .allowed,
+    ).toBe(false);
+    expect(
+      decideValidatedHumanReviewPublication(
+        input({ validation: { ...validation, status: "failed", exitCode: 1 } }),
+      ).allowed,
+    ).toBe(false);
+    expect(
+      decideValidatedHumanReviewPublication(
+        input({ coverageCommand: "yarn coverage", coverage: null }),
+      ).allowed,
     ).toBe(false);
   });
 });

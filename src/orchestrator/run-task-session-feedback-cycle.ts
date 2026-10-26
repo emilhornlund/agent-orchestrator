@@ -42,7 +42,7 @@ import { runTaskSessionCoverage } from "../task-session/run-task-session-coverag
 import { runTaskSessionReview } from "../task-session/run-task-session-review.js";
 import { runTaskSessionReviewWithRepairs } from "../task-session/run-task-session-review-repairs.js";
 import {
-  decideVerifiedPublication,
+  decideValidatedHumanReviewPublication,
   type VerifiedPublicationDecisionInput,
 } from "../task-session/verified-publication-decision.js";
 import { getTaskSessionSourceSnapshotIdentity } from "../task-session/source-snapshot.js";
@@ -791,6 +791,7 @@ export async function runTaskSessionFeedbackCycle(
         getTaskSessionSourceSnapshotIdentity(git, worktreePath),
     });
 
+    const reviewPassed = finalReview.review.verdict === "pass";
     const currentIdentity = await getTaskSessionSourceSnapshotIdentity(
       git,
       worktreePath,
@@ -841,7 +842,7 @@ export async function runTaskSessionFeedbackCycle(
         entries,
       });
     };
-    const verification = await runTaskSessionFeedbackVerification({
+    let verification = await runTaskSessionFeedbackVerification({
       project,
       card,
       expectedBranch: record.expectedBranch!,
@@ -855,30 +856,7 @@ export async function runTaskSessionFeedbackCycle(
       runOptions: reviewRunOptions(project, signal),
     });
     persistVerification(verification);
-    if (
-      verification.dispositions.some((item) => item.status === "unresolved")
-    ) {
-      const latest = taskStore.read(card.id);
-      if (latest !== null && latest.phase === "review") {
-        taskStore.compareAndSwap(
-          card.id,
-          latest.revision,
-          transitionTaskExecutionRecord(latest, {
-            type: "attention-required",
-            eventId: `${operationId}:feedback-unresolved`,
-            projectId: project.id,
-            cardId: card.id,
-            operationKey: latest.operationKey,
-            occurredAt: new Date(
-              Math.max(Date.now(), Date.parse(latest.updatedAt) + 1),
-            ).toISOString(),
-          }),
-        );
-      }
-      options.mutationQueue.fail(operationId);
-      return "attention-required";
-    }
-    if (!decideVerifiedPublication(qualityEvidence).allowed) {
+    if (!decideValidatedHumanReviewPublication(qualityEvidence).allowed) {
       throw new Error(
         "Feedback remediation has not passed current local quality and review gates",
       );
@@ -923,8 +901,8 @@ export async function runTaskSessionFeedbackCycle(
       card.id,
       latest.revision,
       transitionTaskExecutionRecord(latest, {
-        type: "review-passed",
-        eventId: `${operationId}:review-passed`,
+        type: reviewPassed ? "review-passed" : "review-exhausted",
+        eventId: `${operationId}:review-completed`,
         projectId: project.id,
         cardId: card.id,
         operationKey: latest.operationKey,
@@ -946,8 +924,8 @@ export async function runTaskSessionFeedbackCycle(
       branch: record.expectedBranch!,
       expectedExistingPullRequestUrl: record.pullRequest!.url,
       commitMessage,
-      reviewResult: "Passed",
-      remediationResult: "Verified human feedback correction",
+      reviewResult: reviewPassed ? "Passed" : "Failed",
+      remediationResult: "Validated feedback corrections for human review",
       ...(options.emailNotifier === undefined
         ? {}
         : { emailNotifier: options.emailNotifier }),
@@ -962,7 +940,7 @@ export async function runTaskSessionFeedbackCycle(
               `Verified coverage result: ${JSON.stringify(preparedEvidence.coverage)}`,
             ]),
         `Independent review result: ${JSON.stringify(preparedEvidence.review)}`,
-        "Remediation outcome: human feedback correction was independently validated and reviewed.",
+        "Remediation outcome: validated corrections delivered to human review; unresolved findings remain disclosed.",
       ],
       signal,
       initialEvidence: qualityEvidence,
@@ -1038,7 +1016,7 @@ export async function runTaskSessionFeedbackCycle(
           coverage,
           review: review.review,
         };
-        if (!decideVerifiedPublication(latestQuality).allowed)
+        if (!decideValidatedHumanReviewPublication(latestQuality).allowed)
           throw new Error("Prepared feedback publication review failed");
         const preparedHeadSha = await git.getHeadSha(worktreePath);
         const latestVerification = await runTaskSessionFeedbackVerification({
@@ -1054,15 +1032,7 @@ export async function runTaskSessionFeedbackCycle(
           openCode,
           runOptions: reviewRunOptions(project, signal),
         });
-        if (
-          latestVerification.dispositions.some(
-            (item) => item.status === "unresolved",
-          )
-        ) {
-          throw new Error(
-            "Prepared feedback review no longer verifies every requested correction",
-          );
-        }
+        verification = latestVerification;
         persistVerification(latestVerification);
         const afterVerification = taskStore.read(card.id);
         if (afterVerification === null)
