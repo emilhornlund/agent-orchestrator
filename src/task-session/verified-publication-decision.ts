@@ -90,32 +90,33 @@ export function decideVerifiedPublication(
 }
 
 /**
- * Human-review publication may retain a failed final AI review only after
- * the configured remediation limit was exhausted and its exact result was
- * durably recorded. All other quality gates remain mandatory. Auto-merge
- * must always use the stricter decideVerifiedPublication gate.
+ * Human-review PR creation is delivery, not quality approval. Report failed,
+ * missing, or stale gates in the decision reasons, but do not use them to
+ * prevent a safely owned implementation from reaching human review.
+ *
+ * Callers must independently verify Git ownership, commit integrity, and
+ * destination. Auto-merge must use decideVerifiedPublication instead.
  */
 export function decideHumanReviewPublication(
   input: VerifiedPublicationDecisionInput,
-  exhaustedReview: ImplementationReviewResult | undefined,
-  options: { allowStaleExhaustedReview?: boolean } = {},
+  _exhaustedReview: ImplementationReviewResult | undefined,
+  _options: { allowStaleExhaustedReview?: boolean } = {},
 ): VerifiedPublicationDecision {
   const decision = decideVerifiedPublication(input);
-  if (
-    exhaustedReview === undefined ||
-    exhaustedReview.verdict !== "fail" ||
-    input.review?.verdict !== "fail" ||
-    JSON.stringify(input.review) !== JSON.stringify(exhaustedReview)
-  )
-    return decision;
-
-  const reasons = decision.reasons.filter(
-    (reason) =>
-      reason !== "Final implementation review did not pass" &&
-      !(
-        options.allowStaleExhaustedReview === true &&
-        reason === "Final implementation review is stale"
-      ),
-  );
-  return { ...decision, allowed: reasons.length === 0, reasons };
+  const staleReasons = [
+    "Local validation evidence is stale",
+    "Coverage evidence is stale",
+    ...(_options.allowStaleExhaustedReview === true &&
+    _exhaustedReview !== undefined &&
+    input.review !== null &&
+    JSON.stringify(input.review) === JSON.stringify(_exhaustedReview)
+      ? []
+      : ["Final implementation review is stale"]),
+  ];
+  return {
+    ...decision,
+    allowed:
+      input.currentContentIdentity.trim().length > 0 &&
+      !decision.reasons.some((reason) => staleReasons.includes(reason)),
+  };
 }
