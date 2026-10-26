@@ -177,6 +177,12 @@ const taskExecutionRecordSchema = z
       .optional(),
     validationRepair: validationRepairSchema.optional(),
     reviewRepair: reviewRepairSchema.optional(),
+    reviewUnavailable: z
+      .strictObject({
+        contentIdentity: taskSessionContentIdentity,
+        diagnostic: z.string().min(1).max(500),
+      })
+      .optional(),
     ciRepair: ciRepairSchema.optional(),
     feedbackRemediation: feedbackRemediationSchema.optional(),
     reviewObservation: reviewObservationSchema.optional(),

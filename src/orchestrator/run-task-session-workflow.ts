@@ -38,7 +38,10 @@ import {
 } from "../task-session/run-task-session-validation.js";
 import { runTaskSessionCoverage } from "../task-session/run-task-session-coverage.js";
 import { runTaskSessionValidationWithRepairs } from "../task-session/run-task-session-validation-repairs.js";
-import { runTaskSessionReview } from "../task-session/run-task-session-review.js";
+import {
+  runTaskSessionReview,
+  TaskSessionReviewUnavailableError,
+} from "../task-session/run-task-session-review.js";
 import { runTaskSessionReviewWithRepairs } from "../task-session/run-task-session-review-repairs.js";
 import { runTaskSessionCiRepairs } from "../task-session/run-task-session-ci-repairs.js";
 import { runTaskSessionFeedbackCycle } from "./run-task-session-feedback-cycle.js";
@@ -349,7 +352,8 @@ async function readTaskSessionRecoverySnapshot(options: {
     record.phase === "publication" &&
     (await git.getStatus(worktreePath)).trim().length > 0 &&
     !(
-      record.validationRepair?.status === "exhausted" &&
+      (record.validationRepair?.status === "exhausted" ||
+        record.reviewUnavailable !== undefined) &&
       record.reviewRepair?.finalReview === undefined &&
       readTrustedCommitState(project, card.id) === null
     )
@@ -362,7 +366,8 @@ async function readTaskSessionRecoverySnapshot(options: {
   let trusted = readTrustedCommitState(project, card.id);
   const trustedExhaustedPublication =
     record.phase === "publication" &&
-    record.reviewRepair?.status === "exhausted" &&
+    (record.reviewRepair?.status === "exhausted" ||
+      record.reviewUnavailable !== undefined) &&
     trusted !== null &&
     worktreeHeadSha === trusted.commitSha &&
     isDirectory &&
@@ -486,7 +491,8 @@ async function readTaskSessionRecoverySnapshot(options: {
     if (
       trusted !== null &&
       worktreeHeadSha === trusted.commitSha &&
-      record.validationRepair?.status === "exhausted" &&
+      (record.validationRepair?.status === "exhausted" ||
+        record.reviewUnavailable !== undefined) &&
       record.reviewRepair?.finalReview === undefined
     )
       primarySessionAccessible = true;
@@ -494,7 +500,8 @@ async function readTaskSessionRecoverySnapshot(options: {
 
   const verifiedUncommittedPublication =
     record.phase === "publication" &&
-    record.validationRepair?.status === "exhausted" &&
+    (record.validationRepair?.status === "exhausted" ||
+      record.reviewUnavailable !== undefined) &&
     record.reviewRepair?.finalReview === undefined &&
     trusted === null &&
     pullRequest === null &&
@@ -2577,12 +2584,11 @@ export async function runTaskSessionWorkflow(
         `Cannot resume local task-session work from phase ${phaseRecord.phase}`,
       );
     }
-    if (
-      (phaseRecord.phase === "validation" ||
-        phaseRecord.phase === "publication") &&
-      quality.record.validationRepair?.status === "exhausted" &&
-      quality.record.reviewRepair?.finalReview === undefined
-    ) {
+    const publicationMutationEventId = mutation.eventId;
+    const publishWithoutReview = async (
+      reason: "validation-exhausted" | "review-unavailable",
+      unavailableDiagnostic = "",
+    ): Promise<void> => {
       // Quality exhaustion is not a successful AI review. Publish its actual
       // failed diagnostics directly, rather than inventing a review verdict.
       const currentIdentity = await getTaskSessionSourceSnapshotIdentity(
@@ -2599,16 +2605,32 @@ export async function runTaskSessionWorkflow(
         coverage: quality.coverage,
         review: null,
       };
-      if (phaseRecord.phase === "validation") {
+      const beforePublication = taskStore.read(activeCard.id);
+      if (beforePublication === null)
+        throw new Error("Task record missing before no-review publication");
+      if (beforePublication.phase !== "publication") {
         const publication = transitionTaskExecutionRecord(
-          quality.record,
-          event(quality.record, "validation-exhausted"),
+          beforePublication,
+          event(
+            beforePublication,
+            reason === "review-unavailable"
+              ? "review-unavailable"
+              : "validation-exhausted",
+          ),
         );
-        taskStore.compareAndSwap(
+        const publishedPhase = taskStore.compareAndSwap(
           activeCard.id,
-          quality.record.revision,
+          beforePublication.revision,
           publication,
         );
+        if (reason === "review-unavailable") {
+          updateRecord(taskStore, publishedPhase, {
+            reviewUnavailable: {
+              contentIdentity: failedEvidence.currentContentIdentity,
+              diagnostic: unavailableDiagnostic,
+            },
+          });
+        }
       }
       let preparedEvidence = failedEvidence;
       const publishOptions = {
@@ -2621,8 +2643,14 @@ export async function runTaskSessionWorkflow(
         card: activeCard,
         worktreePath,
         branch: worktree.branch,
-        reviewResult: "Not run (local validation exhausted)",
-        remediationResult: `${quality.attempts} validation repair(s); local quality failed`,
+        reviewResult:
+          reason === "review-unavailable"
+            ? "Unavailable (AI review execution failed)"
+            : "Not run (local validation exhausted)",
+        remediationResult:
+          reason === "review-unavailable"
+            ? "Not completed: AI review unavailable"
+            : `${quality.attempts} validation repair(s); local quality failed`,
         ...(emailNotifier === undefined ? {} : { emailNotifier }),
         claimHumanReviewNotification: (commitSha: string) =>
           taskStore.claimHumanReviewNotification(activeCard.id, commitSha),
@@ -2630,7 +2658,9 @@ export async function runTaskSessionWorkflow(
           `Approved implementation plan: ${JSON.stringify(planStore.read(activeCard.id)?.plan ?? "unavailable")}`,
           `Validation result: ${JSON.stringify(preparedEvidence.validation)}`,
           `Coverage result: ${JSON.stringify(preparedEvidence.coverage)}`,
-          "AI implementation review: not run because validation was exhausted",
+          reason === "review-unavailable"
+            ? `AI implementation review unavailable: ${unavailableDiagnostic}`
+            : "AI implementation review: not run because validation was exhausted",
         ],
         signal,
         beforePushVerification: async () => {
@@ -2651,12 +2681,12 @@ export async function runTaskSessionWorkflow(
           );
           if (!decision.allowed)
             throw new Error(
-              `Prepared validation-exhausted publication is unsafe: ${decision.reasons.join("; ")}`,
+              `Prepared unreviewed publication is unsafe: ${decision.reasons.join("; ")}`,
             );
         },
       };
       const trusted = readTrustedCommitState(project, activeCard.id);
-      if (phaseRecord.phase === "publication" && trusted === null) {
+      if (beforePublication.phase === "publication" && trusted === null) {
         const freshHead = await git.getHeadSha(worktreePath);
         const remoteTaskBranch = await git.getRemoteBranchSha(
           project.repository.path,
@@ -2682,7 +2712,7 @@ export async function runTaskSessionWorkflow(
           (await git.getStatus(worktreePath)).trim().length === 0
         )
           throw new Error(
-            "Interrupted validation-exhausted publication has ambiguous untrusted Git state",
+            "Interrupted unreviewed publication has ambiguous untrusted Git state",
           );
       }
       if (
@@ -2691,7 +2721,7 @@ export async function runTaskSessionWorkflow(
           (await git.getStatus(worktreePath)).trim().length > 0)
       )
         throw new Error(
-          "Interrupted validation-exhausted publication does not match trusted clean commit",
+          "Interrupted unreviewed publication does not match trusted clean commit",
         );
       let publishedSha: string;
       if (trusted !== null) {
@@ -2743,11 +2773,25 @@ export async function runTaskSessionWorkflow(
         pullRequest: { number: prNumber, url: pr.url, headSha: publishedSha },
       });
       taskStore.compareAndSwap(activeCard.id, current.revision, ci);
-      cardLog.event(
-        `Exhausted-validation PR published for human review: ${pr.url}`,
-      );
-      queue.complete(mutation.eventId);
+      cardLog.event(`Unreviewed PR published for human review: ${pr.url}`);
+      queue.complete(publicationMutationEventId);
       mutation = null;
+      return;
+    };
+    if (
+      ((phaseRecord.phase === "validation" ||
+        phaseRecord.phase === "publication") &&
+        quality.record.validationRepair?.status === "exhausted" &&
+        quality.record.reviewRepair?.finalReview === undefined) ||
+      (phaseRecord.phase === "publication" &&
+        phaseRecord.reviewUnavailable !== undefined)
+    ) {
+      await publishWithoutReview(
+        phaseRecord.reviewUnavailable === undefined
+          ? "validation-exhausted"
+          : "review-unavailable",
+        phaseRecord.reviewUnavailable?.diagnostic,
+      );
       return;
     }
     let currentValidation = quality.validation;
@@ -2873,77 +2917,100 @@ export async function runTaskSessionWorkflow(
         record: current,
       };
     } else {
-      finalReview = await runTaskSessionReviewWithRepairs({
-        maxAttempts: project.opencode.remediation.maxPasses,
-        store: taskStore,
-        projectId: project.id,
-        cardId: activeCard.id,
-        operationKey,
-        expectedPrimarySessionId: expectedSession,
-        runReview,
-        repair: async (review, attempt) => {
-          cardLog.event(`Review repair attempt ${attempt} started`);
-          let current = taskStore.read(activeCard.id);
-          if (current === null)
-            throw new Error(
-              "Task record disappeared during review remediation",
+      try {
+        finalReview = await runTaskSessionReviewWithRepairs({
+          maxAttempts: project.opencode.remediation.maxPasses,
+          store: taskStore,
+          projectId: project.id,
+          cardId: activeCard.id,
+          operationKey,
+          expectedPrimarySessionId: expectedSession,
+          runReview,
+          repair: async (review, attempt) => {
+            cardLog.event(`Review repair attempt ${attempt} started`);
+            let current = taskStore.read(activeCard.id);
+            if (current === null)
+              throw new Error(
+                "Task record disappeared during review remediation",
+              );
+            const failed = transitionTaskExecutionRecord(
+              current,
+              event(current, "review-failed"),
             );
-          const failed = transitionTaskExecutionRecord(
-            current,
-            event(current, "review-failed"),
-          );
-          taskStore.compareAndSwap(activeCard.id, current.revision, failed);
-          const plan = planStore.read(activeCard.id);
-          if (plan === null)
-            throw new Error(
-              "Approved plan disappeared during review remediation",
+            taskStore.compareAndSwap(activeCard.id, current.revision, failed);
+            const plan = planStore.read(activeCard.id);
+            if (plan === null)
+              throw new Error(
+                "Approved plan disappeared during review remediation",
+              );
+            const prompt = buildTaskSessionReviewRepairPrompt({
+              projectId: project.id,
+              card: activeCard,
+              approvedPlan: plan.plan,
+              review,
+              attempt,
+              maxAttempts: project.opencode.remediation.maxPasses,
+              ...(attachmentContext === undefined ? {} : { attachmentContext }),
+            });
+            const repaired = await runWithPrimaryTaskSession(
+              taskStore,
+              openCode,
+              project.id,
+              activeCard.id,
+              {
+                ...commonRunOptions,
+                cwd: worktreePath,
+                prompt,
+              },
             );
-          const prompt = buildTaskSessionReviewRepairPrompt({
-            projectId: project.id,
-            card: activeCard,
-            approvedPlan: plan.plan,
-            review,
-            attempt,
-            maxAttempts: project.opencode.remediation.maxPasses,
-            ...(attachmentContext === undefined ? {} : { attachmentContext }),
-          });
-          const repaired = await runWithPrimaryTaskSession(
-            taskStore,
-            openCode,
-            project.id,
-            activeCard.id,
-            {
-              ...commonRunOptions,
-              cwd: worktreePath,
-              prompt,
-            },
-          );
-          if (repaired.exitCode !== 0)
-            throw new Error(
-              `Primary review repair exited with code ${repaired.exitCode}`,
+            if (repaired.exitCode !== 0)
+              throw new Error(
+                `Primary review repair exited with code ${repaired.exitCode}`,
+              );
+            cardLog.event(`Review repair attempt ${attempt} completed`);
+            current = taskStore.read(activeCard.id);
+            if (current === null)
+              throw new Error("Task record disappeared after review repair");
+            const implemented = transitionTaskExecutionRecord(
+              current,
+              event(current, "implementation-completed"),
             );
-          cardLog.event(`Review repair attempt ${attempt} completed`);
-          current = taskStore.read(activeCard.id);
-          if (current === null)
-            throw new Error("Task record disappeared after review repair");
-          const implemented = transitionTaskExecutionRecord(
-            current,
-            event(current, "implementation-completed"),
+            const inValidation = taskStore.compareAndSwap(
+              activeCard.id,
+              current.revision,
+              implemented,
+            );
+            updateRecord(taskStore, inValidation, {
+              retryCounters: { ...inValidation.retryCounters, validation: 0 },
+              validationRepair: { cycleId: operationKey, status: "active" },
+            });
+          },
+          rerunQuality: runQualityAgain,
+          getCurrentContentIdentity: () =>
+            getTaskSessionSourceSnapshotIdentity(git, worktreePath),
+        });
+      } catch (error) {
+        if (!(error instanceof TaskSessionReviewUnavailableError)) throw error;
+        if (signal.aborted) throw error;
+        const identity = await getTaskSessionSourceSnapshotIdentity(
+          git,
+          worktreePath,
+        );
+        if (
+          identity !== currentValidation.contentIdentity ||
+          (currentCoverage !== null &&
+            identity !== currentCoverage.contentIdentity)
+        )
+          throw new Error(
+            "Refusing unavailable-review publication after source change",
+            { cause: error },
           );
-          const inValidation = taskStore.compareAndSwap(
-            activeCard.id,
-            current.revision,
-            implemented,
-          );
-          updateRecord(taskStore, inValidation, {
-            retryCounters: { ...inValidation.retryCounters, validation: 0 },
-            validationRepair: { cycleId: operationKey, status: "active" },
-          });
-        },
-        rerunQuality: runQualityAgain,
-        getCurrentContentIdentity: () =>
-          getTaskSessionSourceSnapshotIdentity(git, worktreePath),
-      });
+        await publishWithoutReview(
+          "review-unavailable",
+          error.message.slice(0, 500),
+        );
+        return;
+      }
     }
     const identity = await getTaskSessionSourceSnapshotIdentity(
       git,

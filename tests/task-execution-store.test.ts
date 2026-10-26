@@ -97,6 +97,37 @@ describe("TaskExecutionStore", () => {
     expect(store.read("missing-card")).toBeNull();
   });
 
+  it("persists unavailable AI review provenance across a publication restart", () => {
+    const { store, storageRoot, project } = createFixture();
+    const marker = {
+      contentIdentity: `sha256:${"a".repeat(64)}`,
+      diagnostic: "Independent implementation review exited with code 1",
+    };
+    const record = createRecord({
+      phase: "publication",
+      primarySessionId: "ses-1",
+      sessionCreationStatus: "bound",
+      expectedBranch: "agent/card-one",
+      validationRepair: {
+        cycleId: "initial-plan-1",
+        status: "passed",
+        evidence: {
+          command: "yarn validate",
+          startedAt: "2026-10-24T09:00:00.000Z",
+          completedAt: "2026-10-24T09:01:00.000Z",
+          exitCode: 0,
+          diagnostic: "passed",
+          contentIdentity: marker.contentIdentity,
+        },
+      },
+      reviewUnavailable: marker,
+    });
+    store.create(record);
+    const reloaded = new TaskExecutionStore(storageRoot, project);
+    expect(reloaded.read("card-one")?.reviewUnavailable).toEqual(marker);
+    expect(reloaded.read("card-one")?.phase).toBe("publication");
+  });
+
   it("claims each Human Review notification commit only once across store reloads", () => {
     const { store } = createFixture();
     store.create(createRecord());
