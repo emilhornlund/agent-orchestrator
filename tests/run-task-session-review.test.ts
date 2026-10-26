@@ -10,7 +10,11 @@ import {
   OpenCodeClient,
   type RunOpenCode,
 } from "../src/opencode/opencode-client.js";
-import { runTaskSessionReview } from "../src/task-session/run-task-session-review.js";
+import {
+  runTaskSessionReview,
+  TaskSessionReviewUnavailableError,
+  TaskSessionReviewError,
+} from "../src/task-session/run-task-session-review.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
 import { TaskPlanStore } from "../src/task-session/task-plan-store.js";
 import type { TaskPlan } from "../src/task-session/task-plan.js";
@@ -277,6 +281,65 @@ function reviewOptions(
 }
 
 describe("runTaskSessionReview", () => {
+  it("classifies a nonzero OpenCode review exit as unavailable", async () => {
+    const fixture = createFixture();
+    const identity = await fixture.createStoredPlan();
+    const run = vi.fn<RunOpenCode>().mockResolvedValue({
+      exitCode: 1,
+      output: "",
+      errorOutput: "review backend unavailable",
+    });
+    await expect(
+      runTaskSessionReview(
+        reviewOptions(
+          fixture,
+          new OpenCodeClient(run),
+          successfulQualityEvidence(identity).validation,
+        ),
+      ),
+    ).rejects.toBeInstanceOf(TaskSessionReviewUnavailableError);
+  });
+
+  it("classifies malformed review output as unavailable after retry", async () => {
+    const fixture = createFixture();
+    const identity = await fixture.createStoredPlan();
+    const run = vi.fn<RunOpenCode>().mockResolvedValue({
+      exitCode: 0,
+      output: "{broken",
+      errorOutput: "",
+    });
+    await expect(
+      runTaskSessionReview(
+        reviewOptions(
+          fixture,
+          new OpenCodeClient(run),
+          successfulQualityEvidence(identity).validation,
+        ),
+      ),
+    ).rejects.toBeInstanceOf(TaskSessionReviewUnavailableError);
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not classify source integrity failures as an unavailable AI review", async () => {
+    const fixture = createFixture();
+    const identity = await fixture.createStoredPlan();
+    const run = vi.fn<RunOpenCode>();
+    fs.writeFileSync(
+      path.join(fixture.worktreePath, "src.ts"),
+      "source changed after validation\\n",
+    );
+    await expect(
+      runTaskSessionReview(
+        reviewOptions(
+          fixture,
+          new OpenCodeClient(run),
+          successfulQualityEvidence(identity).validation,
+        ),
+      ),
+    ).rejects.toBeInstanceOf(TaskSessionReviewError);
+    expect(run).not.toHaveBeenCalled();
+  });
+
   it("independently reviews the current diff with evidence and a read-only session", async () => {
     const fixture = createFixture();
     const contentIdentity = await fixture.createStoredPlan();
@@ -463,7 +526,7 @@ describe("runTaskSessionReview", () => {
           successfulQualityEvidence(contentIdentity).validation,
         ),
       ),
-    ).rejects.toThrow("malformed, stale, or out-of-scope result");
+    ).rejects.toBeInstanceOf(TaskSessionReviewUnavailableError);
     expect(fixture.taskRecordStore.read(card.id)?.phase).toBe("review");
     expect(runOpenCode).toHaveBeenCalledTimes(2);
     expect(runOpenCode.mock.calls[1]?.[0].prompt).toContain(

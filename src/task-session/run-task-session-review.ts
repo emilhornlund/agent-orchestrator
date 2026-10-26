@@ -37,6 +37,18 @@ export class TaskSessionReviewError extends Error {
   }
 }
 
+/** Only execution and format failures qualify for the missing-review fallback. */
+export class TaskSessionReviewUnavailableError extends TaskSessionReviewError {
+  constructor(
+    message: string,
+    runResult?: OpenCodeRunResult,
+    options?: ErrorOptions,
+  ) {
+    super(message, runResult, options);
+    this.name = "TaskSessionReviewUnavailableError";
+  }
+}
+
 export interface RunTaskSessionReviewOptions {
   project: ProjectConfig;
   card: TrelloCard;
@@ -304,20 +316,29 @@ export async function runTaskSessionReview(
             "Previous response:",
             previousOutput,
           ].join("\n\n");
-    runResult = await openCode.run({
-      ...runOptions,
-      sessionLogPath:
-        runOptions.sessionLogPath ?? getSessionLogPath(project.id, card.id),
-      sessionLabel:
-        runOptions.sessionLabel ?? "Task-session implementation review",
-      cwd: worktreePath,
-      prompt: attemptPrompt,
-      readOnly: true,
-    });
+    try {
+      runResult = await openCode.run({
+        ...runOptions,
+        sessionLogPath:
+          runOptions.sessionLogPath ?? getSessionLogPath(project.id, card.id),
+        sessionLabel:
+          runOptions.sessionLabel ?? "Task-session implementation review",
+        cwd: worktreePath,
+        prompt: attemptPrompt,
+        readOnly: true,
+      });
+    } catch (error) {
+      if (runOptions.signal?.aborted) throw error;
+      throw new TaskSessionReviewUnavailableError(
+        "Independent implementation review execution failed",
+        undefined,
+        { cause: error },
+      );
+    }
     previousOutput = runResult.output;
 
     if (runResult.exitCode !== 0) {
-      throw new TaskSessionReviewError(
+      throw new TaskSessionReviewUnavailableError(
         `Independent implementation review exited with code ${runResult.exitCode}`,
         runResult,
       );
@@ -346,6 +367,12 @@ export async function runTaskSessionReview(
         continue;
       }
 
+      if (error instanceof SyntaxError)
+        throw new TaskSessionReviewUnavailableError(
+          "Independent implementation review returned malformed JSON",
+          runResult,
+          { cause: error },
+        );
       throw new TaskSessionReviewError(
         "Independent implementation review returned a malformed, stale, or out-of-scope result",
         runResult,
