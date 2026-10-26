@@ -6,7 +6,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProjectConfig } from "../src/config/config.js";
 import type { TaskExecutionRecord } from "../src/task-session/task-execution-record.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
-import { runTaskSessionReviewWithRepairs } from "../src/task-session/run-task-session-review-repairs.js";
+import {
+  runTaskSessionReviewWithRepairs,
+  TaskSessionReviewRepairError,
+} from "../src/task-session/run-task-session-review-repairs.js";
 
 let root: string;
 afterEach(() => {
@@ -150,6 +153,82 @@ describe("runTaskSessionReviewWithRepairs", () => {
     expect(op.reviewRun).toHaveBeenCalledOnce();
     expect(op.repair).not.toHaveBeenCalled();
     expect(f.store.read("card")?.reviewRepair?.maxAttempts).toBe(2);
+  });
+
+  it.each([
+    ["unchanged", false],
+    ["changed", true],
+  ] as const)(
+    "captures %s source identity after a failed repair without publishing",
+    async (_label, changed) => {
+      const f = fixture();
+      const changedIdentity = `sha256:${"b".repeat(64)}`;
+      let currentIdentity = f.identity;
+      const repair = vi.fn(async () => {
+        if (changed) currentIdentity = changedIdentity;
+        throw new Error("OpenCode remediation interrupted");
+      });
+      let failure: unknown;
+      try {
+        await runTaskSessionReviewWithRepairs({
+          store: f.store,
+          maxAttempts: 1,
+          projectId: "project",
+          cardId: "card",
+          operationKey: "operation",
+          expectedPrimarySessionId: "primary-session",
+          runReview: async () => ({
+            review: f.makeReview("fail"),
+            contentIdentity: f.identity,
+          }),
+          repair,
+          rerunQuality: async () => undefined,
+          getCurrentContentIdentity: async () => currentIdentity,
+        });
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(TaskSessionReviewRepairError);
+      const diagnostic = (failure as TaskSessionReviewRepairError)
+        .sourceIdentity;
+      expect(diagnostic).toEqual({
+        before: f.identity,
+        after: currentIdentity,
+        unchanged: !changed,
+      });
+      expect(repair).toHaveBeenCalledOnce();
+      expect(f.store.read("card")?.reviewRepair?.status).toBe("active");
+      expect(f.store.read("card")?.retryCounters.review).toBe(1);
+    },
+  );
+
+  it("fails closed when source identity cannot be rechecked after repair failure", async () => {
+    const f = fixture();
+    let checks = 0;
+    await expect(
+      runTaskSessionReviewWithRepairs({
+        store: f.store,
+        maxAttempts: 1,
+        projectId: "project",
+        cardId: "card",
+        operationKey: "operation",
+        expectedPrimarySessionId: "primary-session",
+        runReview: async () => ({
+          review: f.makeReview("fail"),
+          contentIdentity: f.identity,
+        }),
+        repair: async () => {
+          throw new Error("remediation failed");
+        },
+        rerunQuality: async () => undefined,
+        getCurrentContentIdentity: async () => {
+          if (++checks > 1) throw new Error("unreadable worktree");
+          return f.identity;
+        },
+      }),
+    ).rejects.toMatchObject({
+      sourceIdentity: { before: f.identity, after: null, unchanged: false },
+    });
   });
 
   it("rejects stale review evidence before remediation", async () => {
