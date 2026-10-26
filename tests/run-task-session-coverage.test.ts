@@ -197,7 +197,10 @@ describe("runTaskSessionCoverage", () => {
       throw new Error("Expected configured coverage result");
     }
 
-    fixture.setHeadSha("b".repeat(40));
+    fs.writeFileSync(
+      path.join(fixture.worktreePath, "src.ts"),
+      "changed source\n",
+    );
     const currentIdentity = await getTaskSessionSourceSnapshotIdentity(
       fixture.git,
       fixture.worktreePath,
