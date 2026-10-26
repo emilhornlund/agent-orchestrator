@@ -199,6 +199,23 @@ describe("runTaskSessionReviewWithRepairs", () => {
       expect(repair).toHaveBeenCalledOnce();
       expect(f.store.read("card")?.reviewRepair?.status).toBe("active");
       expect(f.store.read("card")?.retryCounters.review).toBe(1);
+      expect(f.store.read("card")?.reviewRemediationFailure).toMatchObject({
+        cycleId: "operation",
+        attempt: 1,
+        before: f.identity,
+        after: currentIdentity,
+        unchanged: !changed,
+      });
+      const restored = new TaskExecutionStore(path.join(root, "state"), {
+        id: "project",
+        repository: {
+          path: path.join(root, "repo"),
+          worktreeRoot: path.join(root, "worktrees"),
+        },
+      } as ProjectConfig);
+      expect(restored.read("card")?.reviewRemediationFailure?.unchanged).toBe(
+        !changed,
+      );
     },
   );
 

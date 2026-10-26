@@ -219,6 +219,28 @@ export async function runTaskSessionReviewWithRepairs(
       }
       const before = currentIdentity;
       const unchanged = after !== null && before === after;
+      const latest = options.store.read(options.cardId);
+      if (
+        latest === null ||
+        latest.projectId !== options.projectId ||
+        latest.operationKey !== options.operationKey ||
+        latest.primarySessionId !== options.expectedPrimarySessionId
+      )
+        throw new TaskSessionReviewRepairError(
+          "Review remediation failed and task ownership changed",
+          { cause: error },
+          { before, after, unchanged: false },
+        );
+      updateRecord(options.store, latest, {
+        reviewRemediationFailure: {
+          cycleId,
+          attempt: attempts + 1,
+          before,
+          after,
+          unchanged,
+          diagnostic: "Review remediation did not complete",
+        },
+      });
       throw new TaskSessionReviewRepairError(
         `Review repair attempt ${attempts + 1} did not complete; ${unchanged ? "source identity unchanged" : "source may have changed or could not be verified"}; task state is preserved`,
         { cause: error },
