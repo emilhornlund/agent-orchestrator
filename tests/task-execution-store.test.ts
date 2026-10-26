@@ -128,6 +128,64 @@ describe("TaskExecutionStore", () => {
     expect(reloaded.read("card-one")?.phase).toBe("publication");
   });
 
+  it("persists a consumed feedback recovery attempt across a worker restart", () => {
+    const { store, storageRoot, project } = createFixture();
+    const headSha = "a".repeat(40);
+    const eventId = "feedback:head:round";
+    const record = createRecord({
+      phase: "review",
+      primarySessionId: "session-1",
+      sessionCreationStatus: "bound",
+      expectedBranch: "agent/card-one",
+      pullRequest: {
+        number: 194,
+        url: "https://github.com/owner/repo/pull/194",
+        headSha,
+      },
+      feedbackRemediation: {
+        operationId: eventId,
+        status: "changed",
+        headSha,
+        ledgerRevision: 1,
+      },
+      reviewRepair: {
+        cycleId: "initial-plan-1",
+        status: "exhausted",
+        maxAttempts: 1,
+        finalReview: {
+          version: 1,
+          projectId: "project-one",
+          cardId: "card-one",
+          verdict: "fail",
+          requirementAssessments: [
+            {
+              requirementId: "REQ-1",
+              status: "unsatisfied",
+              details: "Human review required",
+              evidence: [],
+            },
+          ],
+          blockingFindings: [
+            { kind: "defect", summary: "Unresolved", detail: "Needs review" },
+          ],
+          reviewedContentIdentity: `sha256:${"b".repeat(64)}`,
+        },
+      },
+      retryCounters: { validation: 0, review: 1, ci: 0, humanFeedback: 0 },
+    });
+    store.create(record);
+    store.compareAndSwap(record.cardId, record.revision, {
+      ...record,
+      feedbackRecoveryAttemptEventId: eventId,
+      revision: record.revision + 1,
+      updatedAt: "2026-10-24T09:00:01.000Z",
+    });
+    const restarted = new TaskExecutionStore(storageRoot, project);
+    expect(restarted.read(record.cardId)?.feedbackRecoveryAttemptEventId).toBe(
+      eventId,
+    );
+  });
+
   it("claims each Human Review notification commit only once across store reloads", () => {
     const { store } = createFixture();
     store.create(createRecord());

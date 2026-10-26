@@ -114,17 +114,25 @@ export async function runTaskSessionFeedbackVerification(
     actionableFeedback: options.actionableFeedback,
     qualityEvidence: options.qualityEvidence,
   });
-  const response = await options.openCode.run({
-    ...options.runOptions,
-    sessionLogPath:
-      options.runOptions.sessionLogPath ??
-      getSessionLogPath(options.project.id, options.card.id),
-    sessionLabel:
-      options.runOptions.sessionLabel ?? "Task-session feedback verification",
-    cwd: options.worktreePath,
-    prompt,
-    readOnly: true,
-  });
+  let response: Awaited<ReturnType<typeof options.openCode.run>>;
+  try {
+    response = await options.openCode.run({
+      ...options.runOptions,
+      sessionLogPath:
+        options.runOptions.sessionLogPath ??
+        getSessionLogPath(options.project.id, options.card.id),
+      sessionLabel:
+        options.runOptions.sessionLabel ?? "Task-session feedback verification",
+      cwd: options.worktreePath,
+      prompt,
+      readOnly: true,
+    });
+  } catch (error) {
+    throw new TaskSessionFeedbackVerificationError(
+      "Independent feedback verification execution unavailable",
+      { cause: error },
+    );
+  }
   if (response.exitCode !== 0) {
     throw new TaskSessionFeedbackVerificationError(
       `Independent feedback verification exited with code ${response.exitCode}`,
@@ -166,5 +174,55 @@ export async function runTaskSessionFeedbackVerification(
       "Independent feedback verifier returned incomplete, invented, or stale dispositions",
       { cause: error },
     );
+  }
+}
+
+/** AI feedback verification is advisory; source and validation evidence are not. */
+export async function runAdvisoryTaskSessionFeedbackVerification(
+  options: RunTaskSessionFeedbackVerificationOptions,
+): Promise<FeedbackVerificationResult> {
+  try {
+    return await runTaskSessionFeedbackVerification(options);
+  } catch (error) {
+    if (
+      !(error instanceof TaskSessionFeedbackVerificationError) ||
+      !(
+        error.message.startsWith("Independent feedback verifier returned") ||
+        error.message.startsWith("Independent feedback verification exited") ||
+        error.message.startsWith(
+          "Independent feedback verification execution unavailable",
+        )
+      )
+    )
+      throw error;
+    const [identity, head, branch] = await Promise.all([
+      getTaskSessionSourceSnapshotIdentity(options.git, options.worktreePath),
+      options.git.getHeadSha(options.worktreePath),
+      options.git.getCurrentBranch(options.worktreePath),
+    ]);
+    if (
+      identity !== options.qualityEvidence.currentContentIdentity ||
+      head !== options.expectedHeadSha ||
+      branch !== options.expectedBranch ||
+      !decideValidatedHumanReviewPublication(options.qualityEvidence).allowed
+    ) {
+      throw new TaskSessionFeedbackVerificationError(
+        "Cannot use advisory feedback fallback after source, branch, head, or validation changed",
+        { cause: error },
+      );
+    }
+    return {
+      version: 1,
+      projectId: options.project.id,
+      cardId: options.card.id,
+      headSha: head,
+      contentIdentity: identity,
+      dispositions: options.actionableFeedback.map((entry) => ({
+        feedbackId: `${entry.kind}:${entry.id}`,
+        status: "unresolved" as const,
+        reason:
+          "Independent AI feedback verification was inconclusive; human review required",
+      })),
+    };
   }
 }
