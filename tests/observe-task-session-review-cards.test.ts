@@ -147,6 +147,62 @@ function fixture() {
 }
 
 describe("observeTaskSessionReviewCards", () => {
+  it("observes only eligible exhausted feedback-review checkpoints", async () => {
+    const f = fixture();
+    const first = f.store.read("card-one")!;
+    f.store.compareAndSwap(first.cardId, first.revision, {
+      ...first,
+      phase: "review",
+      retryCounters: { ...first.retryCounters, review: 1 },
+      feedbackRemediation: {
+        operationId: "feedback:checkpoint",
+        headSha: first.pullRequest!.headSha!,
+        ledgerRevision: 1,
+        status: "changed",
+      },
+      reviewRepair: {
+        cycleId: first.operationKey,
+        status: "exhausted",
+        maxAttempts: 1,
+        finalReview: {
+          version: 1,
+          projectId: first.projectId,
+          cardId: first.cardId,
+          verdict: "fail",
+          requirementAssessments: [
+            {
+              requirementId: "REQ-1",
+              status: "unsatisfied",
+              details: "Needs review",
+              evidence: [],
+            },
+          ],
+          blockingFindings: [
+            { kind: "defect", summary: "Bug", detail: "Unresolved" },
+          ],
+          reviewedContentIdentity: `sha256:${"a".repeat(64)}`,
+        },
+      },
+      revision: first.revision + 1,
+      updatedAt: "2026-10-24T09:00:01.000Z",
+    });
+    const second = f.store.read("card-two")!;
+    f.store.compareAndSwap(second.cardId, second.revision, {
+      ...second,
+      phase: "review",
+      revision: second.revision + 1,
+      updatedAt: "2026-10-24T09:00:01.000Z",
+    });
+    const observed = await observeTaskSessionReviewCards({
+      project: f.project,
+      cards: f.cards,
+      taskRecordStore: f.store,
+      github: f.github,
+    });
+    expect(observed.map((entry) => entry.cardId)).toEqual(["card-one"]);
+    expect(observed[0]?.state).toBe("OPEN");
+  });
+
   it("observes multiple owned review cards independently without repository writes", async () => {
     const f = fixture();
     const observed = await observeTaskSessionReviewCards({

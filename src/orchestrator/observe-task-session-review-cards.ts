@@ -62,9 +62,15 @@ export async function observeTaskSessionReviewCards(
   const observed: TaskSessionPullRequestObservation[] = [];
   for (const card of cards) {
     const record = taskRecordStore.read(card.id);
+    if (record === null) continue;
+    const failedFeedbackReview =
+      record.phase === "review" &&
+      record.reviewRepair?.status === "exhausted" &&
+      record.feedbackRemediation?.status === "changed";
     if (
-      record === null ||
-      (record.phase !== "human-feedback" && record.phase !== "ci")
+      record.phase !== "human-feedback" &&
+      record.phase !== "ci" &&
+      !failedFeedbackReview
     ) {
       continue;
     }
@@ -233,11 +239,27 @@ export async function observeTaskSessionReviewCards(
     if (
       latest === null ||
       latest.revision !== record.revision ||
-      (latest.phase !== "human-feedback" && latest.phase !== "ci")
+      latest.phase !== record.phase
     ) {
       throw new Error(
         `Task record changed during read-only review monitoring for card ${card.id}`,
       );
+    }
+    const openObservation: ObservedTaskSessionReviewCard = {
+      state: "OPEN",
+      cardId: card.id,
+      pullRequestUrl: record.pullRequest.url,
+      headSha,
+      ciEvaluation,
+      expectedCheckNames: expectationDecision.expectedCheckNames,
+      feedbackIds,
+      requestedChanges,
+      conversationComments,
+      baseRelation,
+    };
+    if (failedFeedbackReview) {
+      observed.push(openObservation);
+      continue;
     }
     taskRecordStore.compareAndSwap(card.id, latest.revision, {
       ...latest,
@@ -271,18 +293,7 @@ export async function observeTaskSessionReviewCards(
       revision: latest.revision + 1,
       updatedAt: nextTimestamp(latest.updatedAt),
     });
-    observed.push({
-      state: "OPEN",
-      cardId: card.id,
-      pullRequestUrl: record.pullRequest.url,
-      headSha,
-      ciEvaluation,
-      expectedCheckNames: expectationDecision.expectedCheckNames,
-      feedbackIds,
-      requestedChanges,
-      conversationComments,
-      baseRelation,
-    });
+    observed.push(openObservation);
   }
   return observed;
 }

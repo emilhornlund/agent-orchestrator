@@ -1713,7 +1713,14 @@ export async function runTaskSessionWorkflow(
     if (observation.state !== "OPEN") continue;
     if (maintenanceHandledCardIds.has(observation.cardId)) continue;
     const record = taskStore.read(observation.cardId);
-    if (record === null || record.phase !== "human-feedback") continue;
+    if (record === null) continue;
+    const resumableFeedbackReview =
+      record.phase === "review" &&
+      record.reviewRepair?.status === "exhausted" &&
+      queue.getActive()?.cardId === record.cardId &&
+      queue.getActive()?.kind === "feedback" &&
+      queue.getActive()?.status === "failed";
+    if (record.phase !== "human-feedback" && !resumableFeedbackReview) continue;
     const card = latestHumanReviewCards.find(
       (candidate) => candidate.id === record.cardId,
     );
