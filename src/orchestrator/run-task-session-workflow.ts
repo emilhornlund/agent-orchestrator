@@ -1861,9 +1861,49 @@ export async function runTaskSessionWorkflow(
       );
     }
     const card = workingCards[0]!;
-    const record = taskStore.read(card.id);
+    let record = taskStore.read(card.id);
     if (record === null)
       throw new Error(`Task execution record disappeared for ${card.id}`);
+    // A stale-review publication failure is recoverable when its exact
+    // committed implementation and final review remain durably recorded.
+    // Reopening this checkpoint must never rerun implementation or repairs.
+    if (
+      record.phase === "attention-required" &&
+      record.terminalFailure === undefined &&
+      record.reviewRepair?.finalReview !== undefined &&
+      record.publicationQuality !== undefined
+    ) {
+      const trusted = readTrustedCommitState(project, card.id);
+      const ownedPath = path.join(project.repository.worktreeRoot, card.id);
+      if (
+        trusted !== null &&
+        (await git.getCurrentBranch(ownedPath)) === trusted.taskBranch &&
+        (await git.getHeadSha(ownedPath)) === trusted.commitSha &&
+        (await git.getStatus(ownedPath)).trim().length === 0
+      ) {
+        const identity = await getTaskSessionSourceSnapshotIdentity(
+          git,
+          ownedPath,
+        );
+        if (
+          record.publicationQuality.contentIdentity === identity &&
+          JSON.stringify(record.publicationQuality.review) ===
+            JSON.stringify(record.reviewRepair.finalReview)
+        ) {
+          record = taskStore.compareAndSwap(card.id, record.revision, {
+            ...record,
+            phase: "publication",
+            revision: record.revision + 1,
+            updatedAt: timestamp(record),
+          });
+          logger
+            .child({ projectId: project.id, cardId: card.id })
+            .event(
+              "Restored verified publication checkpoint from attention-required",
+            );
+        }
+      }
+    }
     if (record.phase === "attention-required" && record.terminalFailure) {
       const matching = queue
         .list()
