@@ -250,4 +250,72 @@ describe("runTaskSessionValidation", () => {
     );
     expect(branchFixture.runCommand).not.toHaveBeenCalled();
   });
+
+  it("allows only explicitly identified exhausted feedback review validation", async () => {
+    const fixture = createFixture();
+    const previous = fixture.taskRecordStore.read("card-one")!;
+    const changed = fixture.taskRecordStore.compareAndSwap(
+      "card-one",
+      previous.revision,
+      {
+        ...previous,
+        phase: "review",
+        feedbackRemediation: {
+          operationId: "feedback:head:round",
+          headSha: "a".repeat(40),
+          ledgerRevision: 1,
+          status: "changed",
+        },
+        retryCounters: { ...previous.retryCounters, review: 1 },
+        reviewRepair: {
+          cycleId: previous.operationKey,
+          status: "exhausted",
+          maxAttempts: 1,
+          finalReview: {
+            version: 1,
+            projectId: "project-one",
+            cardId: "card-one",
+            verdict: "fail",
+            requirementAssessments: [
+              {
+                requirementId: "REQ-1",
+                status: "unsatisfied",
+                details: "Remains for human review",
+                evidence: [],
+              },
+            ],
+            blockingFindings: [
+              {
+                kind: "defect",
+                summary: "Unresolved",
+                detail: "Needs human review",
+              },
+            ],
+            reviewedContentIdentity: `sha256:${"a".repeat(64)}`,
+          },
+        },
+        revision: previous.revision + 1,
+        updatedAt: "2026-10-24T09:00:01.000Z",
+      },
+    );
+    expect(changed.phase).toBe("review");
+    await expect(runValidation(fixture)).rejects.toThrow(
+      "requires validation or publication",
+    );
+    await expect(
+      runTaskSessionValidation({
+        project: fixture.project,
+        cardId: "card-one",
+        expectedBranch: "agent/card-one",
+        operationKey: "implementation-one",
+        worktreePath: fixture.worktreePath,
+        taskRecordStore: fixture.taskRecordStore,
+        git: fixture.git,
+        commands: fixture.commands,
+        signal: new AbortController().signal,
+        timeoutMilliseconds: 30_000,
+        feedbackReviewRecovery: true,
+      }),
+    ).resolves.toMatchObject({ status: "passed" });
+  });
 });
