@@ -568,6 +568,56 @@ describe("GitHubClient", () => {
     );
   });
 
+  it("converts a reused ready PR to draft and verifies it", async () => {
+    const runGitHubCommand = vi
+      .fn<RunGitHubCommand>()
+      .mockResolvedValueOnce("false")
+      .mockResolvedValueOnce("")
+      .mockResolvedValueOnce("true");
+    const github = new GitHubClient(runGitHubCommand);
+    await github.ensurePullRequestDraft({
+      cwd: "/repo",
+      repository: "example/repository",
+      pullRequestUrl: "https://github.com/example/repository/pull/123",
+    });
+    expect(runGitHubCommand).toHaveBeenNthCalledWith(2, "/repo", [
+      "pr",
+      "ready",
+      "https://github.com/example/repository/pull/123",
+      "--undo",
+      "--repo",
+      "example/repository",
+    ]);
+    expect(runGitHubCommand).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not mutate an existing draft PR", async () => {
+    const runGitHubCommand = vi
+      .fn<RunGitHubCommand>()
+      .mockResolvedValue("true");
+    await new GitHubClient(runGitHubCommand).ensurePullRequestDraft({
+      cwd: "/repo",
+      repository: "example/repository",
+      pullRequestUrl: "https://github.com/example/repository/pull/123",
+    });
+    expect(runGitHubCommand).toHaveBeenCalledOnce();
+  });
+
+  it("fails closed if GitHub does not confirm draft status", async () => {
+    const runGitHubCommand = vi
+      .fn<RunGitHubCommand>()
+      .mockResolvedValueOnce("false")
+      .mockResolvedValueOnce("")
+      .mockResolvedValueOnce("false");
+    await expect(
+      new GitHubClient(runGitHubCommand).ensurePullRequestDraft({
+        cwd: "/repo",
+        repository: "example/repository",
+        pullRequestUrl: "https://github.com/example/repository/pull/123",
+      }),
+    ).rejects.toThrow("did not confirm draft");
+  });
+
   it("reads the latest pull request body before updating its managed status", async () => {
     const runGitHubCommand = vi
       .fn<RunGitHubCommand>()
