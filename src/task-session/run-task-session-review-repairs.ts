@@ -29,7 +29,15 @@ export interface TaskSessionReviewRepairResult extends TaskSessionReviewRound {
 }
 
 export class TaskSessionReviewRepairError extends Error {
-  constructor(message: string, options?: ErrorOptions) {
+  constructor(
+    message: string,
+    options?: ErrorOptions,
+    public readonly sourceIdentity?: {
+      before: string;
+      after: string | null;
+      unchanged: boolean;
+    },
+  ) {
     super(message, options);
     this.name = "TaskSessionReviewRepairError";
   }
@@ -201,9 +209,20 @@ export async function runTaskSessionReviewWithRepairs(
       await options.repair(round.review, attempts + 1);
       await options.rerunQuality();
     } catch (error) {
+      // Failed remediation can leave partial source changes. Inspect rather
+      // than interpreting an incomplete repair as an exhausted review verdict.
+      let after: string | null = null;
+      try {
+        after = await options.getCurrentContentIdentity();
+      } catch {
+        // A failed identity check must never make recovery appear safe.
+      }
+      const before = currentIdentity;
+      const unchanged = after !== null && before === after;
       throw new TaskSessionReviewRepairError(
-        `Review repair attempt ${attempts + 1} did not complete; task state is preserved`,
+        `Review repair attempt ${attempts + 1} did not complete; ${unchanged ? "source identity unchanged" : "source may have changed or could not be verified"}; task state is preserved`,
         { cause: error },
+        { before, after, unchanged },
       );
     }
   }
