@@ -2517,6 +2517,109 @@ export async function runTaskSessionWorkflow(
         `Cannot resume local task-session work from phase ${phaseRecord.phase}`,
       );
     }
+    if (
+      phaseRecord.phase === "validation" &&
+      quality.record.validationRepair?.status === "exhausted"
+    ) {
+      // Quality exhaustion is not a successful AI review. Publish its actual
+      // failed diagnostics directly, rather than inventing a review verdict.
+      const currentIdentity = await getTaskSessionSourceSnapshotIdentity(
+        git,
+        worktreePath,
+      );
+      const failedEvidence: VerifiedPublicationDecisionInput = {
+        currentContentIdentity: currentIdentity,
+        validationCommand,
+        validation: quality.validation,
+        ...(project.repository.coverageCommand === undefined
+          ? {}
+          : { coverageCommand: project.repository.coverageCommand }),
+        coverage: quality.coverage,
+        review: null,
+      };
+      const publication = transitionTaskExecutionRecord(
+        quality.record,
+        event(quality.record, "validation-exhausted"),
+      );
+      taskStore.compareAndSwap(
+        activeCard.id,
+        quality.record.revision,
+        publication,
+      );
+      let preparedEvidence = failedEvidence;
+      const publishedSha = await publishTaskSessionCard({
+        trello,
+        git,
+        github,
+        opencode: openCode,
+        commands,
+        project: { ...project, autoMerge: false },
+        card: activeCard,
+        worktreePath,
+        branch: worktree.branch,
+        commitMessage: `chore(task): implement Trello card ${activeCard.id}`,
+        reviewResult: "Not run (local validation exhausted)",
+        remediationResult: `${quality.attempts} validation repair(s); local quality failed`,
+        ...(emailNotifier === undefined ? {} : { emailNotifier }),
+        claimHumanReviewNotification: (commitSha) =>
+          taskStore.claimHumanReviewNotification(activeCard.id, commitSha),
+        verifiedDescriptionFacts: () => [
+          `Approved implementation plan: ${JSON.stringify(planStore.read(activeCard.id)?.plan ?? "unavailable")}`,
+          `Validation result: ${JSON.stringify(preparedEvidence.validation)}`,
+          `Coverage result: ${JSON.stringify(preparedEvidence.coverage)}`,
+          "AI implementation review: not run because validation was exhausted",
+        ],
+        signal,
+        initialEvidence: failedEvidence,
+        verifyPreparedContent: async () => {
+          const validation = await runTaskSessionValidation(validationOptions);
+          const coverage = await runTaskSessionCoverage(validationOptions);
+          preparedEvidence = {
+            ...failedEvidence,
+            currentContentIdentity: await getTaskSessionSourceSnapshotIdentity(
+              git,
+              worktreePath,
+            ),
+            validation,
+            coverage,
+          };
+          return preparedEvidence;
+        },
+      });
+      const pr = await github.findPullRequestState({
+        cwd: project.repository.path,
+        repository: project.repository.github,
+        headBranch: worktree.branch,
+        baseBranch: project.repository.defaultBranch,
+        project,
+      });
+      if (pr === null || pr.state !== "OPEN" || pr.headRefOid !== publishedSha)
+        throw new Error(
+          "Exhausted-validation publication could not verify the PR head",
+        );
+      const prNumber = Number(new URL(pr.url).pathname.split("/").at(-1));
+      if (!Number.isSafeInteger(prNumber) || prNumber < 1)
+        throw new Error("Published PR URL contains an invalid number");
+      const current = taskStore.read(activeCard.id);
+      if (current === null)
+        throw new Error("Task record disappeared after publication");
+      const ci = transitionTaskExecutionRecord(current, {
+        type: "publication-completed",
+        eventId: `${operationKey}:publication-completed`,
+        projectId: project.id,
+        cardId: activeCard.id,
+        operationKey,
+        occurredAt: timestamp(current),
+        pullRequest: { number: prNumber, url: pr.url, headSha: publishedSha },
+      });
+      taskStore.compareAndSwap(activeCard.id, current.revision, ci);
+      cardLog.event(
+        `Exhausted-validation PR published for human review: ${pr.url}`,
+      );
+      queue.complete(mutation.eventId);
+      mutation = null;
+      return;
+    }
     let currentValidation = quality.validation;
     let currentCoverage = quality.coverage;
     const expectedSession = taskStore.read(activeCard.id)!.primarySessionId!;
