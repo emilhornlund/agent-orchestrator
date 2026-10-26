@@ -167,6 +167,83 @@ describe("reconcileTaskSession", () => {
     ).toBe("attention-required");
   });
 
+  it("resumes an unreviewed publication after review execution failure without inventing a verdict", async () => {
+    const f = fixture("publication");
+    const record = f.store.read("card")!;
+    const identity = `sha256:${"a".repeat(64)}`;
+    f.store.compareAndSwap("card", record.revision, {
+      ...record,
+      reviewUnavailable: {
+        contentIdentity: identity,
+        diagnostic: "OpenCode review execution failed",
+      },
+      validationRepair: {
+        cycleId: "operation",
+        status: "passed",
+        evidence: {
+          command: "yarn validate",
+          startedAt: record.createdAt,
+          completedAt: record.updatedAt,
+          exitCode: 0,
+          diagnostic: "pass",
+          contentIdentity: identity,
+        },
+      },
+      revision: record.revision + 1,
+      updatedAt: "2026-10-24T09:00:01.000Z",
+    });
+    const restarted = await f.reconcile({
+      verifiedUncommittedPublication: true,
+    });
+    expect(restarted.status).toBe("resume");
+    expect(f.store.read("card")?.reviewRepair?.finalReview).toBeUndefined();
+    expect(f.store.read("card")?.reviewUnavailable?.diagnostic).toContain(
+      "execution failed",
+    );
+    const sameRestart = await f.reconcile({
+      verifiedUncommittedPublication: true,
+    });
+    expect(sameRestart.status).toBe("resume");
+    expect(f.store.read("card")?.pullRequest).toBeUndefined();
+  });
+
+  it.each([
+    ["a remote task branch", { remoteBranchHeadSha: "b".repeat(40) }],
+    [
+      "an unowned pull request",
+      {
+        pullRequest: {
+          number: 9,
+          url: "https://github.com/o/r/pull/9",
+          headSha: "b".repeat(40),
+          state: "OPEN" as const,
+        },
+      },
+    ],
+    ["an active rebase", { worktreeRebaseActive: true }],
+  ] as const)(
+    "refuses an unreviewed publication restart with %s",
+    async (_case, unsafeSnapshot) => {
+      const f = fixture("publication");
+      const record = f.store.read("card")!;
+      f.store.compareAndSwap("card", record.revision, {
+        ...record,
+        reviewUnavailable: {
+          contentIdentity: `sha256:${"b".repeat(64)}`,
+          diagnostic: "AI review unavailable",
+        },
+        revision: record.revision + 1,
+        updatedAt: "2026-10-24T09:00:01.000Z",
+      });
+      const result = await f.reconcile({
+        verifiedUncommittedPublication: true,
+        ...unsafeSnapshot,
+      });
+      expect(result.status).toBe("attention-required");
+      expect(f.store.read("card")?.phase).toBe("attention-required");
+    },
+  );
+
   it("resumes an unambiguously prepared publication but blocks mismatched CI and reply outcomes", async () => {
     const publication = fixture("publication");
     expect(
