@@ -2387,6 +2387,19 @@ export async function runTaskSessionWorkflow(
         throw error;
       }
     } else if (
+      phaseRecord.phase === "publication" &&
+      phaseRecord.validationRepair?.status === "exhausted" &&
+      phaseRecord.reviewRepair?.finalReview === undefined
+    ) {
+      // An interrupted validation-exhausted publication has no AI review.
+      // Recompute diagnostics without consuming further remediation attempts.
+      quality = {
+        validation: await runTaskSessionValidation(validationOptions),
+        coverage: await runTaskSessionCoverage(validationOptions),
+        attempts: phaseRecord.retryCounters.validation,
+        record: phaseRecord,
+      };
+    } else if (
       phaseRecord.phase === "review" ||
       phaseRecord.phase === "publication"
     ) {
@@ -2518,8 +2531,10 @@ export async function runTaskSessionWorkflow(
       );
     }
     if (
-      phaseRecord.phase === "validation" &&
-      quality.record.validationRepair?.status === "exhausted"
+      (phaseRecord.phase === "validation" ||
+        phaseRecord.phase === "publication") &&
+      quality.record.validationRepair?.status === "exhausted" &&
+      quality.record.reviewRepair?.finalReview === undefined
     ) {
       // Quality exhaustion is not a successful AI review. Publish its actual
       // failed diagnostics directly, rather than inventing a review verdict.
@@ -2537,17 +2552,19 @@ export async function runTaskSessionWorkflow(
         coverage: quality.coverage,
         review: null,
       };
-      const publication = transitionTaskExecutionRecord(
-        quality.record,
-        event(quality.record, "validation-exhausted"),
-      );
-      taskStore.compareAndSwap(
-        activeCard.id,
-        quality.record.revision,
-        publication,
-      );
+      if (phaseRecord.phase === "validation") {
+        const publication = transitionTaskExecutionRecord(
+          quality.record,
+          event(quality.record, "validation-exhausted"),
+        );
+        taskStore.compareAndSwap(
+          activeCard.id,
+          quality.record.revision,
+          publication,
+        );
+      }
       let preparedEvidence = failedEvidence;
-      const publishedSha = await publishTaskSessionCard({
+      const publishOptions = {
         trello,
         git,
         github,
@@ -2557,11 +2574,10 @@ export async function runTaskSessionWorkflow(
         card: activeCard,
         worktreePath,
         branch: worktree.branch,
-        commitMessage: `chore(task): implement Trello card ${activeCard.id}`,
         reviewResult: "Not run (local validation exhausted)",
         remediationResult: `${quality.attempts} validation repair(s); local quality failed`,
         ...(emailNotifier === undefined ? {} : { emailNotifier }),
-        claimHumanReviewNotification: (commitSha) =>
+        claimHumanReviewNotification: (commitSha: string) =>
           taskStore.claimHumanReviewNotification(activeCard.id, commitSha),
         verifiedDescriptionFacts: () => [
           `Approved implementation plan: ${JSON.stringify(planStore.read(activeCard.id)?.plan ?? "unavailable")}`,
@@ -2570,8 +2586,7 @@ export async function runTaskSessionWorkflow(
           "AI implementation review: not run because validation was exhausted",
         ],
         signal,
-        initialEvidence: failedEvidence,
-        verifyPreparedContent: async () => {
+        beforePushVerification: async () => {
           const validation = await runTaskSessionValidation(validationOptions);
           const coverage = await runTaskSessionCoverage(validationOptions);
           preparedEvidence = {
@@ -2583,9 +2598,52 @@ export async function runTaskSessionWorkflow(
             validation,
             coverage,
           };
-          return preparedEvidence;
+          const decision = decideHumanReviewPublication(
+            preparedEvidence,
+            undefined,
+          );
+          if (!decision.allowed)
+            throw new Error(
+              `Prepared validation-exhausted publication is unsafe: ${decision.reasons.join("; ")}`,
+            );
         },
-      });
+      };
+      const trusted = readTrustedCommitState(project, activeCard.id);
+      if (phaseRecord.phase === "publication" && trusted === null)
+        throw new Error(
+          "Interrupted validation-exhausted publication has no trusted commit",
+        );
+      if (
+        trusted !== null &&
+        ((await git.getHeadSha(worktreePath)) !== trusted.commitSha ||
+          (await git.getStatus(worktreePath)).trim().length > 0)
+      )
+        throw new Error(
+          "Interrupted validation-exhausted publication does not match trusted clean commit",
+        );
+      let publishedSha: string;
+      if (trusted !== null) {
+        await publishCard({
+          ...publishOptions,
+          commitSha: trusted.commitSha,
+          ...(recoveryRecord?.pullRequest?.url === undefined
+            ? {}
+            : {
+                expectedExistingPullRequestUrl: recoveryRecord.pullRequest.url,
+              }),
+        });
+        publishedSha = await git.getHeadSha(worktreePath);
+      } else {
+        publishedSha = await publishTaskSessionCard({
+          ...publishOptions,
+          commitMessage: `chore(task): implement Trello card ${activeCard.id}`,
+          initialEvidence: failedEvidence,
+          verifyPreparedContent: async () => {
+            await publishOptions.beforePushVerification();
+            return preparedEvidence;
+          },
+        });
+      }
       const pr = await github.findPullRequestState({
         cwd: project.repository.path,
         repository: project.repository.github,
