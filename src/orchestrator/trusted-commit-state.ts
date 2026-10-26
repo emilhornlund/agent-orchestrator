@@ -3,6 +3,7 @@ import path from "node:path";
 import { z } from "zod";
 
 import type { ProjectConfig } from "../config/config.js";
+import type { GitClient } from "../git/git-client.js";
 import {
   PersistedStateFileTooLargeError,
   readPersistedStateJson,
@@ -135,6 +136,58 @@ export function writePendingCommitState(
   } finally {
     fs.rmSync(temporaryPath, { force: true });
   }
+}
+
+/**
+ * Adopt a task commit only when an on-disk intent proves its exact parent and
+ * the worktree is clean on the owned branch. Never infer ownership merely
+ * from an arbitrary HEAD or remote PR.
+ */
+export async function recoverPendingTaskCommit(options: {
+  project: ProjectConfig;
+  cardId: string;
+  worktreePath: string;
+  git: Pick<
+    GitClient,
+    "getCurrentBranch" | "getHeadSha" | "getCommitParentSha" | "getStatus"
+  >;
+  remoteHeadSha: string | null;
+  pullRequestExists: boolean;
+}): Promise<TrustedCommitState | null> {
+  const { project, cardId, worktreePath, git } = options;
+  const pending = readPendingCommitState(project, cardId);
+  if (pending === null) return readTrustedCommitState(project, cardId);
+  const trusted = readTrustedCommitState(project, cardId);
+  const head = await git.getHeadSha(worktreePath);
+  if (trusted !== null) {
+    if (trusted.commitSha !== head)
+      throw new Error("Pending commit intent conflicts with trusted commit");
+    clearPendingCommitState(project, cardId);
+    return trusted;
+  }
+  if (
+    options.pullRequestExists ||
+    options.remoteHeadSha !== null ||
+    (await git.getCurrentBranch(worktreePath)) !== pending.taskBranch ||
+    (await git.getStatus(worktreePath)).trim().length !== 0 ||
+    head === pending.parentSha ||
+    (await git.getCommitParentSha(worktreePath)) !== pending.parentSha
+  )
+    throw new Error(
+      "Pending task commit cannot be adopted from ambiguous Git state",
+    );
+  const adopted: TrustedCommitState = {
+    version: 1,
+    kind: "trusted-commit",
+    projectId: project.id,
+    cardId,
+    taskBranch: pending.taskBranch,
+    defaultBranch: pending.defaultBranch,
+    commitSha: head,
+  };
+  writeTrustedCommitState(project, cardId, adopted);
+  clearPendingCommitState(project, cardId);
+  return adopted;
 }
 
 export function clearPendingCommitState(

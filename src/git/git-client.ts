@@ -411,6 +411,10 @@ export class GitClient {
     return this.runGit(repositoryPath, ["rev-parse", "HEAD"]);
   }
 
+  async getCommitParentSha(repositoryPath: string): Promise<string> {
+    return this.runGit(repositoryPath, ["rev-parse", "HEAD^"]);
+  }
+
   async getCommonGitDirectory(repositoryPath: string): Promise<string> {
     const directory = await this.runGit(repositoryPath, [
       "rev-parse",
