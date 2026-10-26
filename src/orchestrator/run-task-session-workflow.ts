@@ -2039,6 +2039,27 @@ export async function runTaskSessionWorkflow(
       return;
     }
     const worktreePath = path.join(project.repository.worktreeRoot, card.id);
+    if (record.reviewRemediationFailure !== undefined) {
+      const failure = record.reviewRemediationFailure;
+      const identity = await getTaskSessionSourceSnapshotIdentity(
+        git,
+        worktreePath,
+      );
+      if (
+        !failure.unchanged ||
+        failure.after === null ||
+        failure.after !== failure.before ||
+        identity !== failure.after
+      )
+        throw new Error(
+          "Interrupted review remediation has changed or unverified source; refusing automatic restart",
+        );
+      // Even unchanged source needs an explicit reviewed handoff decision.
+      // Preserve the diagnostic without replaying the uncertain repair.
+      throw new Error(
+        "Interrupted review remediation is unchanged but not yet reconciled for human-review publication",
+      );
+    }
     const recovery = await reconcileTaskSession({
       project,
       cardId: card.id,
