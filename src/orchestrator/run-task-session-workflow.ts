@@ -2773,23 +2773,36 @@ export async function runTaskSessionWorkflow(
       );
       clearCommitResult(worktreePath);
       const snapshotBefore = await captureRepositorySnapshot(git, worktreePath);
-      const commitMessageResult = await runWithPrimaryTaskSession(
-        taskStore,
-        openCode,
-        project.id,
-        activeCard.id,
-        {
-          ...commitOptions,
-          cwd: worktreePath,
-          prompt: buildCommitPrompt(activeCard),
-        },
-      );
-      if (commitMessageResult.exitCode !== 0)
-        throw new Error(
-          `Commit message session exited with code ${commitMessageResult.exitCode}`,
+      // AI commit-message generation is optional presentation metadata. Never
+      // let it strand a usable implementation, but retain the repository
+      // snapshot safety check below even when generation fails.
+      const fallbackCommitMessage = `chore(task): implement Trello card ${activeCard.id}`;
+      try {
+        const commitMessageResult = await runWithPrimaryTaskSession(
+          taskStore,
+          openCode,
+          project.id,
+          activeCard.id,
+          {
+            ...commitOptions,
+            cwd: worktreePath,
+            prompt: buildCommitPrompt(activeCard),
+          },
         );
-      commitMessage = readCommitResult(worktreePath).message;
-      clearCommitResult(worktreePath);
+        if (commitMessageResult.exitCode !== 0)
+          throw new Error(
+            `Commit message session exited with code ${commitMessageResult.exitCode}`,
+          );
+        commitMessage = readCommitResult(worktreePath).message;
+      } catch (error) {
+        if (signal.aborted) throw error;
+        cardLog.warn(
+          `Commit message generation failed: ${error instanceof Error ? error.message : String(error)}. Using deterministic fallback.`,
+        );
+        commitMessage = fallbackCommitMessage;
+      } finally {
+        clearCommitResult(worktreePath);
+      }
       const snapshotAfter = await captureRepositorySnapshot(git, worktreePath);
       if (!repositorySnapshotsEqual(snapshotBefore, snapshotAfter))
         throw new Error("Commit message generation changed source files");
