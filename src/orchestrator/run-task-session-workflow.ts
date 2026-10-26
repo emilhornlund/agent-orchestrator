@@ -42,7 +42,10 @@ import {
   runTaskSessionReview,
   TaskSessionReviewUnavailableError,
 } from "../task-session/run-task-session-review.js";
-import { runTaskSessionReviewWithRepairs } from "../task-session/run-task-session-review-repairs.js";
+import {
+  runTaskSessionReviewWithRepairs,
+  TaskSessionReviewRepairError,
+} from "../task-session/run-task-session-review-repairs.js";
 import { runTaskSessionCiRepairs } from "../task-session/run-task-session-ci-repairs.js";
 import { runTaskSessionFeedbackCycle } from "./run-task-session-feedback-cycle.js";
 import { FeedbackLedgerStore } from "../task-session/feedback-ledger-store.js";
@@ -2054,11 +2057,74 @@ export async function runTaskSessionWorkflow(
         throw new Error(
           "Interrupted review remediation has changed or unverified source; refusing automatic restart",
         );
-      // Even unchanged source needs an explicit reviewed handoff decision.
-      // Preserve the diagnostic without replaying the uncertain repair.
-      throw new Error(
-        "Interrupted review remediation is unchanged but not yet reconciled for human-review publication",
-      );
+      const validation = record.validationRepair;
+      if (
+        signal.aborted ||
+        !["implementation", "validation", "review", "publication"].includes(
+          record.phase,
+        ) ||
+        record.expectedBranch !== `agent/${card.id}` ||
+        record.primarySessionId === undefined ||
+        failure.cycleId !== record.operationKey ||
+        validation?.status !== "passed" ||
+        validation.evidence?.contentIdentity !== identity ||
+        validation.evidence.command !== project.repository.validationCommand ||
+        (project.repository.coverageCommand === undefined
+          ? validation.coverageEvidence !== undefined
+          : validation.coverageEvidence?.command !==
+              project.repository.coverageCommand ||
+            validation.coverageEvidence.contentIdentity !== identity) ||
+        (await git.getCurrentBranch(worktreePath)) !== record.expectedBranch ||
+        (await git.getCommitCountBetween(
+          worktreePath,
+          `origin/${project.repository.defaultBranch}`,
+          await git.getHeadSha(worktreePath),
+        )) !== 0 ||
+        (await git.getStatus(worktreePath)).trim().length === 0 ||
+        (await git.getRebaseState(worktreePath)) !== null ||
+        (await git.getRemoteBranchSha(
+          project.repository.path,
+          "origin",
+          record.expectedBranch,
+          project,
+        )) !== null ||
+        (await github.findPullRequestState({
+          cwd: project.repository.path,
+          repository: project.repository.github,
+          headBranch: record.expectedBranch,
+          baseBranch: project.repository.defaultBranch,
+          project,
+        })) !== null
+      )
+        throw new Error(
+          "Interrupted review remediation lacks safe owned quality/branch evidence for handoff",
+        );
+      let restored = record;
+      for (const [phase, type] of [
+        ["implementation", "implementation-completed"],
+        ["validation", "validation-passed"],
+        ["review", "review-unavailable"],
+      ] as const) {
+        if (restored.phase === phase) {
+          restored = taskStore.compareAndSwap(
+            card.id,
+            restored.revision,
+            transitionTaskExecutionRecord(restored, event(restored, type)),
+          );
+        }
+      }
+      if (restored.phase !== "publication")
+        throw new Error(
+          "Interrupted remediation has an invalid recovery phase",
+        );
+      updateRecord(taskStore, restored, {
+        reviewUnavailable: {
+          contentIdentity: identity,
+          diagnostic:
+            "Review remediation interrupted; unchanged implementation requires human review",
+        },
+        reviewRemediationFailure: undefined,
+      });
     }
     const recovery = await reconcileTaskSession({
       project,
@@ -3011,6 +3077,75 @@ export async function runTaskSessionWorkflow(
             getTaskSessionSourceSnapshotIdentity(git, worktreePath),
         });
       } catch (error) {
+        if (error instanceof TaskSessionReviewRepairError) {
+          const failure = error.sourceIdentity;
+          const current = taskStore.read(activeCard.id);
+          const identity = await getTaskSessionSourceSnapshotIdentity(
+            git,
+            worktreePath,
+          );
+          if (
+            signal.aborted ||
+            current === null ||
+            current.phase !== "implementation" ||
+            current.reviewRemediationFailure?.unchanged !== true ||
+            current.reviewRemediationFailure.after !== identity ||
+            failure?.unchanged !== true ||
+            failure.after !== identity ||
+            identity !== currentValidation.contentIdentity ||
+            (currentCoverage !== null &&
+              identity !== currentCoverage.contentIdentity) ||
+            (await git.getCurrentBranch(worktreePath)) !== worktree.branch ||
+            (await git.getRebaseState(worktreePath)) !== null ||
+            (await git.getCommitCountBetween(
+              worktreePath,
+              `origin/${project.repository.defaultBranch}`,
+              await git.getHeadSha(worktreePath),
+            )) !== 0 ||
+            (await git.getStatus(worktreePath)).trim().length === 0 ||
+            (await git.getRemoteBranchSha(
+              project.repository.path,
+              "origin",
+              worktree.branch,
+              project,
+            )) !== null ||
+            (await github.findPullRequestState({
+              cwd: project.repository.path,
+              repository: project.repository.github,
+              headBranch: worktree.branch,
+              baseBranch: project.repository.defaultBranch,
+              project,
+            })) !== null
+          )
+            throw error;
+          let handoff = current;
+          for (const [phase, type] of [
+            ["implementation", "implementation-completed"],
+            ["validation", "validation-passed"],
+            ["review", "review-unavailable"],
+          ] as const) {
+            if (handoff.phase === phase) {
+              handoff = taskStore.compareAndSwap(
+                activeCard.id,
+                handoff.revision,
+                transitionTaskExecutionRecord(handoff, event(handoff, type)),
+              );
+            }
+          }
+          updateRecord(taskStore, handoff, {
+            reviewUnavailable: {
+              contentIdentity: identity,
+              diagnostic:
+                "Review remediation failed; unchanged implementation requires human review",
+            },
+            reviewRemediationFailure: undefined,
+          });
+          await publishWithoutReview(
+            "review-unavailable",
+            "Review remediation failed; unchanged implementation requires human review",
+          );
+          return;
+        }
         if (!(error instanceof TaskSessionReviewUnavailableError)) throw error;
         if (signal.aborted) throw error;
         const identity = await getTaskSessionSourceSnapshotIdentity(

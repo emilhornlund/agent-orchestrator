@@ -67,6 +67,28 @@ function createEvent(
 }
 
 describe("transitionTaskExecutionRecord", () => {
+  it("hands off unchanged interrupted review repair without inventing a verdict", () => {
+    let record = createRecord("implementation");
+    for (const type of [
+      "implementation-completed",
+      "validation-passed",
+      "review-unavailable",
+    ] as const) {
+      record = transitionTaskExecutionRecord(
+        record,
+        createEvent(type, {
+          eventId: `recovery-${type}`,
+          occurredAt: new Date(
+            Date.parse(record.updatedAt) + 1_000,
+          ).toISOString(),
+        }),
+      );
+    }
+    expect(record.phase).toBe("publication");
+    expect(record.reviewRepair?.finalReview).toBeUndefined();
+    expect(record.lastEvent?.type).toBe("review-unavailable");
+  });
+
   it.each([
     ["planning", "plan-approved", "implementation"],
     ["implementation", "implementation-completed", "validation"],
