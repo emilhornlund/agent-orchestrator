@@ -74,6 +74,7 @@ describe("transitionTaskExecutionRecord", () => {
     ["validation", "validation-exhausted", "publication"],
     ["validation", "validation-failed", "implementation"],
     ["review", "review-passed", "publication"],
+    ["review", "review-unavailable", "publication"],
     ["review", "review-failed", "implementation"],
     ["publication", "publication-completed", "ci"],
     ["ci", "ci-passed-awaiting-human", "human-feedback"],

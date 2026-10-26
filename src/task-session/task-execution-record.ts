@@ -21,6 +21,7 @@ export const taskExecutionEventTypes = [
   "validation-failed",
   "review-passed",
   "review-exhausted",
+  "review-unavailable",
   "review-failed",
   "publication-completed",
   "ci-passed-awaiting-human",
