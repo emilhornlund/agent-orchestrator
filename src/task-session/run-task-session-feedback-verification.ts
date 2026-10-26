@@ -16,7 +16,7 @@ import {
 import { assertOwnedTaskWorktreePath } from "./run-task-session-implementation.js";
 import { getTaskSessionSourceSnapshotIdentity } from "./source-snapshot.js";
 import {
-  decideVerifiedPublication,
+  decideValidatedHumanReviewPublication,
   type VerifiedPublicationDecisionInput,
 } from "./verified-publication-decision.js";
 
@@ -76,15 +76,14 @@ export async function runTaskSessionFeedbackVerification(
     options.git,
     options.worktreePath,
   );
-  if (
-    identity !== options.qualityEvidence.currentContentIdentity ||
-    options.qualityEvidence.review?.reviewedContentIdentity !== identity
-  ) {
+  if (identity !== options.qualityEvidence.currentContentIdentity) {
     throw new TaskSessionFeedbackVerificationError(
-      "Feedback verification requires current local validation, coverage, and passing independent review evidence",
+      "Feedback verification source identity does not match current validation evidence",
     );
   }
-  const decision = decideVerifiedPublication(options.qualityEvidence);
+  const decision = decideValidatedHumanReviewPublication(
+    options.qualityEvidence,
+  );
   if (!decision.allowed) {
     throw new TaskSessionFeedbackVerificationError(
       `Feedback verification quality gates failed: ${decision.reasons.join("; ")}`,

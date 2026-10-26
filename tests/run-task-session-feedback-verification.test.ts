@@ -217,7 +217,71 @@ describe("runTaskSessionFeedbackVerification", () => {
           signal: new AbortController().signal,
         },
       }),
-    ).rejects.toThrow("requires current local validation");
+    ).rejects.toThrow("quality gates failed");
     expect(run).not.toHaveBeenCalled();
+  });
+  it("runs verification with failed advisory AI review", async () => {
+    const f = fixture();
+    const identity = await getTaskSessionSourceSnapshotIdentity(
+      f.git,
+      f.worktreePath,
+    );
+    const run = vi.fn<RunOpenCode>().mockResolvedValue({
+      exitCode: 0,
+      output: JSON.stringify({
+        version: 1,
+        projectId: "project",
+        cardId: "card",
+        headSha: f.headSha,
+        contentIdentity: identity,
+        dispositions: [
+          {
+            feedbackId: "inline-comment:comment-1",
+            status: "unresolved",
+            reason: "Not verified",
+          },
+        ],
+      }),
+      errorOutput: "",
+    });
+    const result = await runTaskSessionFeedbackVerification({
+      project: f.project,
+      card: f.card,
+      expectedBranch: "agent/card",
+      expectedHeadSha: f.headSha,
+      worktreePath: f.worktreePath,
+      approvedPlan: f.plan,
+      actionableFeedback: f.feedback,
+      qualityEvidence: {
+        currentContentIdentity: identity,
+        validationCommand: "yarn validate",
+        validation: {
+          command: "yarn validate",
+          startedAt: "2026-10-24T09:00:00.000Z",
+          completedAt: "2026-10-24T09:01:00.000Z",
+          exitCode: 0,
+          status: "passed",
+          timedOut: false,
+          aborted: false,
+          diagnostic: "ok",
+          contentIdentity: identity,
+        },
+        coverage: null,
+        review: {
+          ...f.reviewResult,
+          verdict: "fail",
+          reviewedContentIdentity: identity,
+        },
+      },
+      git: f.git,
+      openCode: new OpenCodeClient(run),
+      runOptions: {
+        model: "reviewer",
+        variant: "high",
+        timeoutMilliseconds: 60000,
+        signal: new AbortController().signal,
+      },
+    });
+    expect(result.dispositions[0]?.status).toBe("unresolved");
   });
 });

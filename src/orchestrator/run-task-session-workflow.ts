@@ -50,7 +50,7 @@ import { runTaskSessionCiRepairs } from "../task-session/run-task-session-ci-rep
 import { runTaskSessionFeedbackCycle } from "./run-task-session-feedback-cycle.js";
 import { FeedbackLedgerStore } from "../task-session/feedback-ledger-store.js";
 import {
-  decideVerifiedPublication,
+  decideValidatedHumanReviewPublication,
   decideHumanReviewPublication,
   type VerifiedPublicationDecisionInput,
 } from "../task-session/verified-publication-decision.js";
@@ -1179,7 +1179,7 @@ export async function runTaskSessionWorkflow(
               coverage: quality.coverage,
               review: latestReview.review,
             };
-            if (!decideVerifiedPublication(gateInput).allowed)
+            if (!decideValidatedHumanReviewPublication(gateInput).allowed)
               throw new Error("CI repair publication gates failed");
             const existingPullRequestUrl = taskStore.read(card.id)?.pullRequest
               ?.url;
@@ -1235,7 +1235,8 @@ export async function runTaskSessionWorkflow(
               branch: expectedBranch,
               expectedExistingPullRequestUrl: existingPullRequestUrl,
               commitMessage,
-              reviewResult: "Passed",
+              reviewResult:
+                latestReview.review.verdict === "pass" ? "Passed" : "Failed",
               remediationResult: `CI repair attempt ${taskStore.read(card.id)?.retryCounters.ci ?? 1}`,
               ...(emailNotifier === undefined ? {} : { emailNotifier }),
               claimHumanReviewNotification: (commitSha) =>
