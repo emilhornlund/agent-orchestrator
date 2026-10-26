@@ -16,6 +16,7 @@ export interface TaskSessionRecoverySnapshot {
   worktreeHeadSha: string | null;
   worktreeRebaseActive: boolean;
   trustedCommitSha: string | null;
+  verifiedUncommittedPublication?: boolean;
   remoteBranchHeadSha: string | null;
   trelloListId: string;
   pullRequest: {
@@ -232,9 +233,18 @@ export async function reconcileTaskSession(
         "Partially published pull request does not match the persisted identity",
       );
     }
+    const uncommitted =
+      record.validationRepair?.status === "exhausted" &&
+      record.reviewRepair?.finalReview === undefined &&
+      snapshot.verifiedUncommittedPublication === true &&
+      snapshot.trustedCommitSha === null &&
+      snapshot.remoteBranchHeadSha === null &&
+      snapshot.pullRequest === null &&
+      record.pullRequest === undefined;
     if (
-      snapshot.trustedCommitSha === null ||
-      snapshot.worktreeHeadSha !== snapshot.trustedCommitSha ||
+      (!uncommitted && snapshot.trustedCommitSha === null) ||
+      (!uncommitted &&
+        snapshot.worktreeHeadSha !== snapshot.trustedCommitSha) ||
       (snapshot.remoteBranchHeadSha !== null &&
         snapshot.remoteBranchHeadSha !== snapshot.trustedCommitSha)
     ) {

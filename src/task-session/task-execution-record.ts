@@ -269,14 +269,14 @@ const taskExecutionRecordSchema = z
 
     if (record.validationRepair !== undefined) {
       if (
-        record.validationRepair.status !== "passed" &&
+        record.validationRepair.status === "active" &&
         record.phase !== "validation"
       ) {
         ctx.addIssue({
           code: "custom",
           path: ["validationRepair"],
           message:
-            "Unresolved validation repair state is only valid during validation",
+            "Active validation repair state is only valid during validation",
         });
       }
 

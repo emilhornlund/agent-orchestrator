@@ -132,6 +132,41 @@ describe("reconcileTaskSession", () => {
     expect(partial.status).toBe("attention-required");
   });
 
+  it("recovers only a verified uncommitted validation-exhausted publication", async () => {
+    const f = fixture("publication");
+    const record = f.store.read("card");
+    expect(record).not.toBeNull();
+    f.store.compareAndSwap("card", record!.revision, {
+      ...record!,
+      validationRepair: { cycleId: "operation", status: "exhausted" },
+      retryCounters: { ...record!.retryCounters, validation: 2 },
+      revision: record!.revision + 1,
+      updatedAt: "2026-10-24T09:00:01.000Z",
+    });
+    expect(
+      (await f.reconcile({ verifiedUncommittedPublication: true })).status,
+    ).toBe("resume");
+
+    const withRemote = fixture("publication");
+    const owned = withRemote.store.read("card");
+    expect(owned).not.toBeNull();
+    withRemote.store.compareAndSwap("card", owned!.revision, {
+      ...owned!,
+      validationRepair: { cycleId: "operation", status: "exhausted" },
+      retryCounters: { ...owned!.retryCounters, validation: 2 },
+      revision: owned!.revision + 1,
+      updatedAt: "2026-10-24T09:00:01.000Z",
+    });
+    expect(
+      (
+        await withRemote.reconcile({
+          verifiedUncommittedPublication: true,
+          remoteBranchHeadSha: "b".repeat(40),
+        })
+      ).status,
+    ).toBe("attention-required");
+  });
+
   it("resumes an unambiguously prepared publication but blocks mismatched CI and reply outcomes", async () => {
     const publication = fixture("publication");
     expect(
