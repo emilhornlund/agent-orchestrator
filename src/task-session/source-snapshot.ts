@@ -6,7 +6,7 @@ import type { GitClient } from "../git/git-client.js";
 
 type SnapshotGitClient = Pick<
   GitClient,
-  "getHeadSha" | "getHeadTrackedFiles" | "getIndexEntries" | "getUntrackedFiles"
+  "getHeadTrackedFiles" | "getIndexEntries" | "getUntrackedFiles"
 >;
 
 function updateField(
@@ -73,13 +73,10 @@ function addWorktreeFile(
   filePath: string,
 ): void {
   const resolvedFile = resolveWorktreeFile(worktreePath, filePath);
-  updateField(hash, "path", filePath);
   const stats = fs.lstatSync(resolvedFile, { throwIfNoEntry: false });
 
-  if (stats === undefined) {
-    updateField(hash, "state", "deleted");
-    return;
-  }
+  if (stats === undefined) return;
+  updateField(hash, "path", filePath);
 
   if (stats.isSymbolicLink()) {
     updateField(hash, "state", "symlink");
@@ -102,17 +99,15 @@ export async function getTaskSessionSourceSnapshotIdentity(
   git: SnapshotGitClient,
   worktreePath: string,
 ): Promise<string> {
-  const [headSha, indexEntries, headFiles, untrackedFiles] = await Promise.all([
-    git.getHeadSha(worktreePath),
+  const [indexEntries, headFiles, untrackedFiles] = await Promise.all([
     git.getIndexEntries(worktreePath),
     git.getHeadTrackedFiles(worktreePath),
     git.getUntrackedFiles(worktreePath),
   ]);
   const hash = createHash("sha256");
 
-  updateField(hash, "snapshot-version", "task-session-source-v1");
-  updateField(hash, "head-sha", headSha);
-  updateField(hash, "git-index", indexEntries);
+  // Identical working-tree contents must survive staging and commits.
+  updateField(hash, "snapshot-version", "task-session-source-v2");
 
   const filePaths = new Set([
     ...headFiles,

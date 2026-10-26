@@ -333,7 +333,10 @@ describe("runTaskSessionValidationWithRepairs", () => {
     expect(firstResult.validation.status).toBe("passed");
     expect(fixture.runCommand).toHaveBeenCalledOnce();
 
-    fixture.setHeadSha("b".repeat(40));
+    fs.writeFileSync(
+      path.join(fixture.worktreePath, "src.ts"),
+      "changed source\n",
+    );
 
     await expect(runRepairs(fixture)).rejects.toBeInstanceOf(
       StaleTaskSessionValidationEvidenceError,

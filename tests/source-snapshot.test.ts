@@ -75,7 +75,7 @@ describe("getTaskSessionSourceSnapshotIdentity", () => {
     ).not.toBe(baseIdentity);
   });
 
-  it("includes staged index content even when the working copy matches HEAD", async () => {
+  it("ignores staged index metadata when the working copy matches HEAD", async () => {
     const { repositoryPath, runGit } = createRepository();
     const git = new GitClient();
     const trackedPath = path.join(repositoryPath, "tracked.txt");
@@ -92,7 +92,7 @@ describe("getTaskSessionSourceSnapshotIdentity", () => {
       git,
       repositoryPath,
     );
-    expect(stagedIdentity).not.toBe(baseIdentity);
+    expect(stagedIdentity).toBe(baseIdentity);
 
     runGit("reset", "--quiet", "HEAD");
     expect(
@@ -143,6 +143,42 @@ describe("getTaskSessionSourceSnapshotIdentity", () => {
     expect(
       await getTaskSessionSourceSnapshotIdentity(git, repositoryPath),
     ).not.toBe(firstUntrackedIdentity);
+  });
+
+  it("keeps identical source identity through staging and commit", async () => {
+    const { repositoryPath, runGit } = createRepository();
+    const git = new GitClient();
+    fs.writeFileSync(
+      path.join(repositoryPath, "tracked.txt"),
+      "feature change\n",
+    );
+    const beforeCommit = await getTaskSessionSourceSnapshotIdentity(
+      git,
+      repositoryPath,
+    );
+    runGit("add", "tracked.txt");
+    expect(
+      await getTaskSessionSourceSnapshotIdentity(git, repositoryPath),
+    ).toBe(beforeCommit);
+    runGit("commit", "-m", "feature");
+    expect(
+      await getTaskSessionSourceSnapshotIdentity(git, repositoryPath),
+    ).toBe(beforeCommit);
+  });
+
+  it("keeps identity through a committed deletion", async () => {
+    const { repositoryPath, runGit } = createRepository();
+    const git = new GitClient();
+    fs.unlinkSync(path.join(repositoryPath, "tracked.txt"));
+    const beforeCommit = await getTaskSessionSourceSnapshotIdentity(
+      git,
+      repositoryPath,
+    );
+    runGit("add", "-A");
+    runGit("commit", "-m", "delete tracked");
+    expect(
+      await getTaskSessionSourceSnapshotIdentity(git, repositoryPath),
+    ).toBe(beforeCommit);
   });
 
   it("invalidates a snapshot after a local rebase", async () => {
