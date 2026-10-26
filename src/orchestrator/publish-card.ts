@@ -654,6 +654,17 @@ export async function publishCard({
 
     if (pullRequest) {
       cardLog.event(`Existing pull request found: ${pullRequest.url}`);
+      if (exhaustedReview !== undefined || reviewResult !== "Passed") {
+        await github.ensurePullRequestDraft({
+          cwd: worktreePath,
+          repository: project.repository.github,
+          pullRequestUrl: pullRequest.url,
+          project,
+        });
+        cardLog.event(
+          `Unverified pull request confirmed draft: ${pullRequest.url}`,
+        );
+      }
       if (
         finalPullRequestDescription !== undefined &&
         typeof github.getPullRequestDescription === "function" &&

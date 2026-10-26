@@ -2447,6 +2447,46 @@ export class GitHubClient {
     };
   }
 
+  async ensurePullRequestDraft(options: {
+    cwd: string;
+    repository: string;
+    pullRequestUrl: string;
+    project?: ProjectConfig;
+  }): Promise<void> {
+    const credential = await this.resolveCredential(options.project);
+    const url = parsePullRequestUrl(options.pullRequestUrl);
+    const inspect = async (): Promise<boolean> => {
+      const output = await this.run(
+        options.cwd,
+        [
+          "pr",
+          "view",
+          url,
+          "--repo",
+          options.repository,
+          "--json",
+          "isDraft",
+          "--jq",
+          ".isDraft",
+        ],
+        credential,
+      );
+      if (output.trim() !== "true" && output.trim() !== "false")
+        throw new Error("GitHub did not return a valid PR draft state");
+      return output.trim() === "true";
+    };
+    if (await inspect()) return;
+    await this.run(
+      options.cwd,
+      ["pr", "ready", url, "--undo", "--repo", options.repository],
+      credential,
+    );
+    if (!(await inspect()))
+      throw new Error(
+        "GitHub did not confirm draft status for reused pull request",
+      );
+  }
+
   async createPullRequest(
     options: CreatePullRequestOptions,
   ): Promise<PullRequest> {
