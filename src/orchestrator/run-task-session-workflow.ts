@@ -352,9 +352,19 @@ async function readTaskSessionRecoverySnapshot(options: {
     );
 
   const headSha = record.pullRequest?.headSha;
+  const trusted = readTrustedCommitState(project, card.id);
+  const trustedExhaustedPublication =
+    record.phase === "publication" &&
+    record.reviewRepair?.status === "exhausted" &&
+    trusted !== null &&
+    worktreeHeadSha === trusted.commitSha &&
+    isDirectory &&
+    !worktreeRebaseActive &&
+    (await git.getStatus(worktreePath)).trim().length === 0;
   const sessionId = record.primarySessionId;
-  const primarySessionAccessible =
-    sessionId === undefined
+  const primarySessionAccessible = trustedExhaustedPublication
+    ? true
+    : sessionId === undefined
       ? record.phase === "planning"
         ? true
         : null
@@ -368,7 +378,6 @@ async function readTaskSessionRecoverySnapshot(options: {
             timeoutMilliseconds: 30_000,
           });
 
-  const trusted = readTrustedCommitState(project, card.id);
   const rejected = readRejectedCommitState(project, card.id);
   if (
     rejected !== null &&
@@ -1886,7 +1895,8 @@ export async function runTaskSessionWorkflow(
           ownedPath,
         );
         if (
-          record.publicationQuality.contentIdentity === identity &&
+          (record.publicationQuality.contentIdentity === identity ||
+            record.reviewRepair.status === "exhausted") &&
           JSON.stringify(record.publicationQuality.review) ===
             JSON.stringify(record.reviewRepair.finalReview)
         ) {
@@ -2414,34 +2424,94 @@ export async function runTaskSessionWorkflow(
           "Persisted review/publication phase has incomplete local quality evidence",
         );
       }
-      if (
+      const stale =
         currentIdentity !== validationEvidence.contentIdentity ||
         (coverageEvidence !== undefined &&
-          currentIdentity !== coverageEvidence.contentIdentity)
-      ) {
-        throw new Error(
-          "Persisted local quality evidence is stale after task-session restart",
-        );
+          currentIdentity !== coverageEvidence.contentIdentity);
+      const legacyExhaustedCheckpoint =
+        stale &&
+        phaseRecord.phase === "publication" &&
+        checkpoint !== undefined &&
+        trusted !== null &&
+        phaseRecord.reviewRepair?.status === "exhausted" &&
+        JSON.stringify(checkpoint.review) ===
+          JSON.stringify(phaseRecord.reviewRepair.finalReview) &&
+        (await git.getHeadSha(worktreePath)) === trusted.commitSha &&
+        (await git.getStatus(worktreePath)).trim().length === 0;
+      if (legacyExhaustedCheckpoint) {
+        // The old fingerprint included HEAD and index metadata. Revalidate
+        // the exact trusted commit without relabeling the old AI review as
+        // passing or executing another repair attempt.
+        const freshValidation =
+          await runTaskSessionValidation(validationOptions);
+        const freshCoverage = await runTaskSessionCoverage(validationOptions);
+        if (
+          freshValidation.status !== "passed" ||
+          (freshCoverage !== null && freshCoverage.status !== "passed")
+        )
+          throw new Error(
+            "Legacy publication checkpoint failed fresh validation",
+          );
+        const updated = taskStore.read(activeCard.id);
+        if (updated === null)
+          throw new Error("Task record disappeared during legacy recovery");
+        const refreshed = updateRecord(taskStore, updated, {
+          publicationQuality: {
+            contentIdentity: currentIdentity,
+            validation: {
+              command: freshValidation.command,
+              startedAt: freshValidation.startedAt,
+              completedAt: freshValidation.completedAt,
+              exitCode: 0,
+              diagnostic: freshValidation.diagnostic,
+              contentIdentity: freshValidation.contentIdentity,
+            },
+            ...(freshCoverage === null
+              ? {}
+              : {
+                  coverageEvidence: {
+                    command: freshCoverage.command,
+                    startedAt: freshCoverage.startedAt,
+                    completedAt: freshCoverage.completedAt,
+                    exitCode: 0,
+                    diagnostic: freshCoverage.diagnostic,
+                    contentIdentity: freshCoverage.contentIdentity,
+                  },
+                }),
+            review: checkpoint.review,
+          },
+        });
+        quality = {
+          validation: freshValidation,
+          coverage: freshCoverage,
+          attempts: refreshed.retryCounters.validation,
+          record: refreshed,
+        };
+      } else {
+        if (stale)
+          throw new Error(
+            "Persisted local quality evidence is stale after task-session restart",
+          );
+        const restoreEvidence = (
+          evidence: NonNullable<typeof validationEvidence>,
+        ): TaskSessionValidationResult => ({
+          ...evidence,
+          status: "passed",
+          timedOut: false,
+          aborted: false,
+        });
+        const validation = restoreEvidence(validationEvidence);
+        const coverage =
+          coverageEvidence === undefined
+            ? null
+            : restoreEvidence(coverageEvidence);
+        quality = {
+          validation,
+          coverage,
+          attempts: phaseRecord.retryCounters.validation,
+          record: phaseRecord,
+        };
       }
-      const restoreEvidence = (
-        evidence: NonNullable<typeof validationEvidence>,
-      ): TaskSessionValidationResult => ({
-        ...evidence,
-        status: "passed",
-        timedOut: false,
-        aborted: false,
-      });
-      const validation = restoreEvidence(validationEvidence);
-      const coverage =
-        coverageEvidence === undefined
-          ? null
-          : restoreEvidence(coverageEvidence);
-      quality = {
-        validation,
-        coverage,
-        attempts: phaseRecord.retryCounters.validation,
-        record: phaseRecord,
-      };
     } else {
       throw new Error(
         `Cannot resume local task-session work from phase ${phaseRecord.phase}`,
