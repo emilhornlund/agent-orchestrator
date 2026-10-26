@@ -2340,8 +2340,29 @@ export async function runTaskSessionWorkflow(
       phaseRecord.phase === "review" ||
       phaseRecord.phase === "publication"
     ) {
-      const validationEvidence = phaseRecord.validationRepair?.evidence;
-      const coverageEvidence = phaseRecord.validationRepair?.coverageEvidence;
+      const currentIdentity = await getTaskSessionSourceSnapshotIdentity(
+        git,
+        worktreePath,
+      );
+      const checkpoint = phaseRecord.publicationQuality;
+      const trusted =
+        phaseRecord.phase === "publication"
+          ? readTrustedCommitState(project, activeCard.id)
+          : null;
+      const verifiedCheckpoint =
+        checkpoint !== undefined &&
+        trusted !== null &&
+        (await git.getHeadSha(worktreePath)) === trusted.commitSha &&
+        checkpoint.contentIdentity === currentIdentity &&
+        (await git.getStatus(worktreePath)).trim().length === 0 &&
+        JSON.stringify(checkpoint.review) ===
+          JSON.stringify(phaseRecord.reviewRepair?.finalReview);
+      const validationEvidence = verifiedCheckpoint
+        ? checkpoint.validation
+        : phaseRecord.validationRepair?.evidence;
+      const coverageEvidence = verifiedCheckpoint
+        ? checkpoint.coverageEvidence
+        : phaseRecord.validationRepair?.coverageEvidence;
       if (
         phaseRecord.validationRepair?.status !== "passed" ||
         validationEvidence === undefined ||
@@ -2353,10 +2374,6 @@ export async function runTaskSessionWorkflow(
           "Persisted review/publication phase has incomplete local quality evidence",
         );
       }
-      const currentIdentity = await getTaskSessionSourceSnapshotIdentity(
-        git,
-        worktreePath,
-      );
       if (
         currentIdentity !== validationEvidence.contentIdentity ||
         (coverageEvidence !== undefined &&
@@ -2455,11 +2472,23 @@ export async function runTaskSessionWorkflow(
         if (persistedReview.reviewedContentIdentity === identity) {
           review = { review: persistedReview, contentIdentity: identity };
         } else if (current.reviewRepair?.status === "exhausted") {
-          // Exhausted reviews may not silently authorize changed content or
-          // trigger further AI review rounds after the configured limit.
-          throw new Error(
-            "Persisted exhausted review is stale after publication",
-          );
+          const checkpoint = current.publicationQuality;
+          const trusted = readTrustedCommitState(project, activeCard.id);
+          if (
+            checkpoint?.contentIdentity !== identity ||
+            JSON.stringify(checkpoint.review) !==
+              JSON.stringify(persistedReview) ||
+            trusted === null ||
+            (await git.getHeadSha(worktreePath)) !== trusted.commitSha ||
+            (await git.getStatus(worktreePath)).trim().length > 0
+          ) {
+            throw new Error(
+              "Persisted exhausted review is stale after publication",
+            );
+          }
+          // A previously validated publication checkpoint may retain its
+          // exact exhausted review across a verified committed rebase.
+          review = { review: persistedReview, contentIdentity: identity };
         } else {
           // A successful pre-commit review may need refresh if a commit
           // changes the source snapshot identity used by the reviewer.
@@ -2591,7 +2620,22 @@ export async function runTaskSessionWorkflow(
       finalReview.record.reviewRepair?.status === "exhausted"
         ? finalReview.record.reviewRepair.finalReview
         : undefined;
-    if (!decideHumanReviewPublication(initialEvidence, exhaustedReview).allowed)
+    const trustedCheckpoint = readTrustedCommitState(project, activeCard.id);
+    const allowRecoveredExhaustedReview =
+      phaseRecord.phase === "publication" &&
+      exhaustedReview !== undefined &&
+      finalReview.record.publicationQuality?.contentIdentity ===
+        initialEvidence.currentContentIdentity &&
+      JSON.stringify(finalReview.record.publicationQuality.review) ===
+        JSON.stringify(exhaustedReview) &&
+      trustedCheckpoint !== null &&
+      (await git.getHeadSha(worktreePath)) === trustedCheckpoint.commitSha &&
+      (await git.getStatus(worktreePath)).trim().length === 0;
+    if (
+      !decideHumanReviewPublication(initialEvidence, exhaustedReview, {
+        allowStaleExhaustedReview: allowRecoveredExhaustedReview,
+      }).allowed
+    )
       throw new Error(
         "Final local evidence does not allow task-session publication",
       );
@@ -2798,7 +2842,8 @@ export async function runTaskSessionWorkflow(
           const rebasedHead = await git.getHeadSha(worktreePath);
           const allowStaleExhaustedReview =
             exhaustedReview !== undefined &&
-            rebasedHead !== recoveredTrustedCommit.commitSha;
+            (rebasedHead !== recoveredTrustedCommit.commitSha ||
+              allowRecoveredExhaustedReview);
           if (
             allowStaleExhaustedReview &&
             (await git.getStatus(worktreePath)).trim().length > 0
