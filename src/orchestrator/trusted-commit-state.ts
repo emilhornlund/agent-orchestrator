@@ -23,6 +23,18 @@ const trustedCommitStateSchema = z.strictObject({
 
 export type TrustedCommitState = z.infer<typeof trustedCommitStateSchema>;
 
+const pendingCommitStateSchema = z.strictObject({
+  version: z.literal(1),
+  kind: z.literal("pending-commit"),
+  projectId: z.string().min(1),
+  cardId: z.string().min(1),
+  taskBranch: z.string().min(1),
+  defaultBranch: z.string().min(1),
+  parentSha: z.string().regex(/^[0-9a-f]{40,64}$/i),
+});
+
+export type PendingCommitState = z.infer<typeof pendingCommitStateSchema>;
+
 const rejectedCommitStateSchema = z.strictObject({
   version: z.literal(1),
   kind: z.literal("rejected-commit"),
@@ -62,6 +74,74 @@ function getStatePath(project: ProjectConfig, cardId: string): string {
     project.id,
     `${cardId}.json`,
   );
+}
+
+function getPendingCommitStatePath(
+  project: ProjectConfig,
+  cardId: string,
+): string {
+  assertSafeStateComponent(project.id, "project ID");
+  assertSafeStateComponent(cardId, "card ID");
+  return path.join(
+    project.repository.worktreeRoot,
+    ".orchestrator",
+    "pending-commits",
+    project.id,
+    `${cardId}.json`,
+  );
+}
+
+export function readPendingCommitState(
+  project: ProjectConfig,
+  cardId: string,
+): PendingCommitState | null {
+  const filePath = getPendingCommitStatePath(project, cardId);
+  if (!fs.existsSync(filePath)) return null;
+  const state = pendingCommitStateSchema.parse(
+    readPersistedStateJson(filePath),
+  );
+  if (
+    state.projectId !== project.id ||
+    state.cardId !== cardId ||
+    state.taskBranch !== `agent/${cardId}` ||
+    state.defaultBranch !== project.repository.defaultBranch
+  )
+    throw new Error("Pending commit intent does not match task ownership");
+  return state;
+}
+
+export function writePendingCommitState(
+  project: ProjectConfig,
+  cardId: string,
+  input: PendingCommitState,
+): void {
+  const state = pendingCommitStateSchema.parse(input);
+  if (
+    state.projectId !== project.id ||
+    state.cardId !== cardId ||
+    state.taskBranch !== `agent/${cardId}` ||
+    state.defaultBranch !== project.repository.defaultBranch
+  )
+    throw new Error("Cannot persist mismatched pending commit intent");
+  const filePath = getPendingCommitStatePath(project, cardId);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const temporaryPath = `${filePath}.${process.pid}.tmp`;
+  try {
+    fs.writeFileSync(temporaryPath, `${JSON.stringify(state, null, 2)}\n`, {
+      encoding: "utf8",
+      mode: 0o600,
+    });
+    fs.renameSync(temporaryPath, filePath);
+  } finally {
+    fs.rmSync(temporaryPath, { force: true });
+  }
+}
+
+export function clearPendingCommitState(
+  project: ProjectConfig,
+  cardId: string,
+): void {
+  fs.rmSync(getPendingCommitStatePath(project, cardId), { force: true });
 }
 
 function getRejectedStatePath(project: ProjectConfig, cardId: string): string {

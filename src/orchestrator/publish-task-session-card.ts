@@ -8,7 +8,12 @@ import {
   decideHumanReviewPublication,
   type VerifiedPublicationDecisionInput,
 } from "../task-session/verified-publication-decision.js";
-import { writeTrustedCommitState } from "./trusted-commit-state.js";
+import {
+  clearPendingCommitState,
+  readPendingCommitState,
+  writePendingCommitState,
+  writeTrustedCommitState,
+} from "./trusted-commit-state.js";
 import { publishCard, type PublishCardOptions } from "./publish-card.js";
 
 export interface PublishTaskSessionCardOptions extends Omit<
@@ -43,6 +48,17 @@ export async function publishTaskSessionCard(
 ): Promise<string> {
   assertPublicationEvidence(options.initialEvidence, options.exhaustedReview);
   const headBefore = await options.git.getHeadSha(options.worktreePath);
+  if (readPendingCommitState(options.project, options.card.id) !== null)
+    throw new Error("Unresolved pending task commit intent requires recovery");
+  writePendingCommitState(options.project, options.card.id, {
+    version: 1,
+    kind: "pending-commit",
+    projectId: options.project.id,
+    cardId: options.card.id,
+    taskBranch: options.branch,
+    defaultBranch: options.project.repository.defaultBranch,
+    parentSha: headBefore,
+  });
   const temporaryDirectory = fs.mkdtempSync(
     path.join(os.tmpdir(), "agent-orchestrator-task-session-commit-"),
   );
@@ -95,6 +111,8 @@ export async function publishTaskSessionCard(
     defaultBranch: options.project.repository.defaultBranch,
     commitSha,
   });
+
+  clearPendingCommitState(options.project, options.card.id);
 
   await publishCard({
     ...options,

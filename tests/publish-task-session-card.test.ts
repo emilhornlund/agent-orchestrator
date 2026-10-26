@@ -9,6 +9,10 @@ import {
   type PublishCardOptions,
 } from "../src/orchestrator/publish-card.js";
 import { publishTaskSessionCard } from "../src/orchestrator/publish-task-session-card.js";
+import {
+  readPendingCommitState,
+  readTrustedCommitState,
+} from "../src/orchestrator/trusted-commit-state.js";
 import type { VerifiedPublicationDecisionInput } from "../src/task-session/verified-publication-decision.js";
 import type { TrelloCard } from "../src/trello/trello-client.js";
 
@@ -76,8 +80,8 @@ function fixture() {
   const git = {
     getHeadSha: vi
       .fn()
-      .mockResolvedValueOnce("before")
-      .mockResolvedValue("after"),
+      .mockResolvedValueOnce("a".repeat(40))
+      .mockResolvedValue("b".repeat(40)),
     stageAll: vi.fn(),
     commit: vi.fn(),
     getCommitCountBetween: vi.fn().mockResolvedValue(1),
@@ -103,6 +107,39 @@ function fixture() {
 }
 
 describe("publishTaskSessionCard", () => {
+  it("writes a durable parent intent before Git commit and clears it after trust", async () => {
+    const { base, git } = fixture();
+    vi.mocked(git.commit).mockImplementation(async () => {
+      expect(readPendingCommitState(base.project, base.card.id)).toMatchObject({
+        parentSha: "a".repeat(40),
+        taskBranch: "agent/card",
+      });
+      expect(readTrustedCommitState(base.project, base.card.id)).toBeNull();
+    });
+    await publishTaskSessionCard(base as never);
+    expect(readPendingCommitState(base.project, base.card.id)).toBeNull();
+    expect(readTrustedCommitState(base.project, base.card.id)?.commitSha).toBe(
+      "b".repeat(40),
+    );
+  });
+
+  it("preserves unresolved commit intent when commit execution fails", async () => {
+    const { base, git } = fixture();
+    vi.mocked(git.commit).mockRejectedValueOnce(
+      new Error("commit interrupted"),
+    );
+    await expect(publishTaskSessionCard(base as never)).rejects.toThrow(
+      "commit interrupted",
+    );
+    expect(readPendingCommitState(base.project, base.card.id)).toMatchObject({
+      parentSha: "a".repeat(40),
+    });
+    await expect(publishTaskSessionCard(base as never)).rejects.toThrow(
+      "Unresolved pending task commit intent",
+    );
+    expect(git.commit).toHaveBeenCalledOnce();
+  });
+
   it("creates a human-review commit when final review evidence is missing", async () => {
     const { base, git } = fixture();
     await expect(
@@ -110,7 +147,7 @@ describe("publishTaskSessionCard", () => {
         ...base,
         initialEvidence: { ...evidence, review: null },
       } as never),
-    ).resolves.toBe("after");
+    ).resolves.toBe("b".repeat(40));
     expect(git.stageAll).toHaveBeenCalledOnce();
   });
 
@@ -123,7 +160,7 @@ describe("publishTaskSessionCard", () => {
       emailNotifier,
       claimHumanReviewNotification,
     } as never);
-    expect(commitSha).toBe("after");
+    expect(commitSha).toBe("b".repeat(40));
     expect(git.stageAll).toHaveBeenCalledOnce();
     expect(git.commit).toHaveBeenCalledOnce();
     expect(publishCard).toHaveBeenCalledWith(
@@ -161,7 +198,7 @@ describe("publishTaskSessionCard", () => {
       initialEvidence: withFailure,
       verifyPreparedContent: async () => withFailure,
     } as never);
-    expect(committed).toBe("after");
+    expect(committed).toBe("b".repeat(40));
     expect(git.stageAll).toHaveBeenCalledOnce();
     expect(publishCard).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -191,7 +228,7 @@ describe("publishTaskSessionCard", () => {
           },
         },
       } as never),
-    ).resolves.toBe("after");
+    ).resolves.toBe("b".repeat(40));
     expect(git.stageAll).toHaveBeenCalledOnce();
   });
 
@@ -217,16 +254,16 @@ describe("publishTaskSessionCard", () => {
     };
     vi.mocked(git.getHeadSha)
       .mockReset()
-      .mockResolvedValueOnce("before")
-      .mockResolvedValueOnce("after")
-      .mockResolvedValue("rebased");
+      .mockResolvedValueOnce("a".repeat(40))
+      .mockResolvedValueOnce("b".repeat(40))
+      .mockResolvedValue("c".repeat(40));
     const head = await publishTaskSessionCard({
       ...base,
       exhaustedReview: failed,
       initialEvidence: { ...evidence, review: failed },
       verifyPreparedContent: async () => prepared,
     } as never);
-    expect(head).toBe("rebased");
+    expect(head).toBe("c".repeat(40));
     expect(git.getStatus).toHaveBeenCalled();
     expect(publishCard).toHaveBeenCalledOnce();
   });
@@ -246,9 +283,9 @@ describe("publishTaskSessionCard", () => {
     };
     vi.mocked(git.getHeadSha)
       .mockReset()
-      .mockResolvedValueOnce("before")
-      .mockResolvedValueOnce("after")
-      .mockResolvedValue("rebased");
+      .mockResolvedValueOnce("a".repeat(40))
+      .mockResolvedValueOnce("b".repeat(40))
+      .mockResolvedValue("c".repeat(40));
     await expect(
       publishTaskSessionCard({
         ...base,
