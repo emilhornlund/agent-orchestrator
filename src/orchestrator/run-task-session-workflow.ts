@@ -345,7 +345,12 @@ async function readTaskSessionRecoverySnapshot(options: {
   if (
     isDirectory &&
     record.phase === "publication" &&
-    (await git.getStatus(worktreePath)).trim().length > 0
+    (await git.getStatus(worktreePath)).trim().length > 0 &&
+    !(
+      record.validationRepair?.status === "exhausted" &&
+      record.reviewRepair?.finalReview === undefined &&
+      readTrustedCommitState(project, card.id) === null
+    )
   )
     throw new Error(
       "Publication worktree contains changes not represented by the trusted commit",
@@ -462,7 +467,24 @@ async function readTaskSessionRecoverySnapshot(options: {
         )
       : null;
 
+  const verifiedUncommittedPublication =
+    record.phase === "publication" &&
+    record.validationRepair?.status === "exhausted" &&
+    record.reviewRepair?.finalReview === undefined &&
+    trusted === null &&
+    pullRequest === null &&
+    remoteBranchHeadSha === null &&
+    isDirectory &&
+    !worktreeRebaseActive &&
+    worktreeHeadSha !== null &&
+    (await git.getCommitCountBetween(
+      worktreePath,
+      `origin/${project.repository.defaultBranch}`,
+      worktreeHeadSha,
+    )) === 0 &&
+    (await git.getStatus(worktreePath)).trim().length > 0;
   return {
+    verifiedUncommittedPublication,
     primarySessionAccessible,
     worktreeExists,
     worktreeBranch,
@@ -2609,10 +2631,35 @@ export async function runTaskSessionWorkflow(
         },
       };
       const trusted = readTrustedCommitState(project, activeCard.id);
-      if (phaseRecord.phase === "publication" && trusted === null)
-        throw new Error(
-          "Interrupted validation-exhausted publication has no trusted commit",
+      if (phaseRecord.phase === "publication" && trusted === null) {
+        const freshHead = await git.getHeadSha(worktreePath);
+        const remoteTaskBranch = await git.getRemoteBranchSha(
+          project.repository.path,
+          "origin",
+          worktree.branch,
+          project,
         );
+        const existingPr = await github.findPullRequestState({
+          cwd: project.repository.path,
+          repository: project.repository.github,
+          headBranch: worktree.branch,
+          baseBranch: project.repository.defaultBranch,
+          project,
+        });
+        if (
+          remoteTaskBranch !== null ||
+          existingPr !== null ||
+          (await git.getCommitCountBetween(
+            worktreePath,
+            `origin/${project.repository.defaultBranch}`,
+            freshHead,
+          )) !== 0 ||
+          (await git.getStatus(worktreePath)).trim().length === 0
+        )
+          throw new Error(
+            "Interrupted validation-exhausted publication has ambiguous untrusted Git state",
+          );
+      }
       if (
         trusted !== null &&
         ((await git.getHeadSha(worktreePath)) !== trusted.commitSha ||
