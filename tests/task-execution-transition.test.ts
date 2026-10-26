@@ -71,6 +71,7 @@ describe("transitionTaskExecutionRecord", () => {
     ["planning", "plan-approved", "implementation"],
     ["implementation", "implementation-completed", "validation"],
     ["validation", "validation-passed", "review"],
+    ["validation", "validation-exhausted", "publication"],
     ["validation", "validation-failed", "implementation"],
     ["review", "review-passed", "publication"],
     ["review", "review-failed", "implementation"],
@@ -124,6 +125,15 @@ describe("transitionTaskExecutionRecord", () => {
     );
 
     expect(nextRecord.phase).toBe("attention-required");
+  });
+
+  it("does not allow exhausted validation to bypass implementation ownership", () => {
+    expect(() =>
+      transitionTaskExecutionRecord(
+        createRecord("implementation"),
+        createEvent("validation-exhausted"),
+      ),
+    ).toThrow("not allowed during the implementation phase");
   });
 
   it("treats the same latest event as idempotent", () => {
