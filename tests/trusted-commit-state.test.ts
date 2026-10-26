@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { ProjectConfig } from "../src/config/config.js";
 import {
@@ -10,6 +10,9 @@ import {
   getTrustedCommitStatePath,
   readRejectedCommitState,
   readTrustedCommitState,
+  recoverPendingTaskCommit,
+  readPendingCommitState,
+  writePendingCommitState,
   writeRejectedCommitState,
   writeTrustedCommitState,
 } from "../src/orchestrator/trusted-commit-state.js";
@@ -153,6 +156,70 @@ describe("trusted commit state", () => {
         true,
       );
       expect(readTrustedCommitState(project, "card-1")).toBeNull();
+    } finally {
+      fs.rmSync(worktreeRoot, { recursive: true, force: true });
+    }
+  });
+  it("adopts a clean exact child of a pending task commit and refuses ambiguous state", async () => {
+    const worktreeRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), "agent-orchestrator-pending-commit-"),
+    );
+    const project = createProject(worktreeRoot);
+    const parent = "a".repeat(40);
+    const head = "b".repeat(40);
+    const pending = {
+      version: 1 as const,
+      kind: "pending-commit" as const,
+      projectId: project.id,
+      cardId: "card-1",
+      taskBranch: "agent/card-1",
+      defaultBranch: "main",
+      parentSha: parent,
+    };
+    const git = {
+      getCurrentBranch: vi.fn().mockResolvedValue("agent/card-1"),
+      getHeadSha: vi.fn().mockResolvedValue(head),
+      getCommitParentSha: vi.fn().mockResolvedValue(parent),
+      getStatus: vi.fn().mockResolvedValue(""),
+    };
+    try {
+      writePendingCommitState(project, "card-1", pending);
+      await expect(
+        recoverPendingTaskCommit({
+          project,
+          cardId: "card-1",
+          worktreePath: "/owned-worktree",
+          git: git as never,
+          remoteHeadSha: head,
+          pullRequestExists: false,
+        }),
+      ).rejects.toThrow("ambiguous Git state");
+      expect(readPendingCommitState(project, "card-1")).not.toBeNull();
+
+      git.getCommitParentSha.mockResolvedValueOnce("c".repeat(40));
+      await expect(
+        recoverPendingTaskCommit({
+          project,
+          cardId: "card-1",
+          worktreePath: "/owned-worktree",
+          git: git as never,
+          remoteHeadSha: null,
+          pullRequestExists: false,
+        }),
+      ).rejects.toThrow("ambiguous Git state");
+      expect(readTrustedCommitState(project, "card-1")).toBeNull();
+
+      const adopted = await recoverPendingTaskCommit({
+        project,
+        cardId: "card-1",
+        worktreePath: "/owned-worktree",
+        git: git as never,
+        remoteHeadSha: null,
+        pullRequestExists: false,
+      });
+      expect(adopted?.commitSha).toBe(head);
+      expect(readPendingCommitState(project, "card-1")).toBeNull();
+      expect(readTrustedCommitState(project, "card-1")?.commitSha).toBe(head);
     } finally {
       fs.rmSync(worktreeRoot, { recursive: true, force: true });
     }

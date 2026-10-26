@@ -86,6 +86,8 @@ import { getWorkflowKind } from "./workflow-kind.js";
 import {
   readRejectedCommitState,
   readTrustedCommitState,
+  readPendingCommitState,
+  recoverPendingTaskCommit,
 } from "./trusted-commit-state.js";
 import { logger } from "../logging/logger.js";
 import { PrMaintenanceStore } from "../task-session/pr-maintenance-store.js";
@@ -357,7 +359,7 @@ async function readTaskSessionRecoverySnapshot(options: {
     );
 
   const headSha = record.pullRequest?.headSha;
-  const trusted = readTrustedCommitState(project, card.id);
+  let trusted = readTrustedCommitState(project, card.id);
   const trustedExhaustedPublication =
     record.phase === "publication" &&
     record.reviewRepair?.status === "exhausted" &&
@@ -367,7 +369,7 @@ async function readTaskSessionRecoverySnapshot(options: {
     !worktreeRebaseActive &&
     (await git.getStatus(worktreePath)).trim().length === 0;
   const sessionId = record.primarySessionId;
-  const primarySessionAccessible = trustedExhaustedPublication
+  let primarySessionAccessible = trustedExhaustedPublication
     ? true
     : sessionId === undefined
       ? record.phase === "planning"
@@ -466,6 +468,29 @@ async function readTaskSessionRecoverySnapshot(options: {
           project,
         )
       : null;
+
+  if (
+    record.phase === "publication" &&
+    isDirectory &&
+    !worktreeRebaseActive &&
+    readPendingCommitState(project, card.id) !== null
+  ) {
+    trusted = await recoverPendingTaskCommit({
+      project,
+      cardId: card.id,
+      worktreePath,
+      git,
+      remoteHeadSha: remoteBranchHeadSha,
+      pullRequestExists: pullRequest !== null,
+    });
+    if (
+      trusted !== null &&
+      worktreeHeadSha === trusted.commitSha &&
+      record.validationRepair?.status === "exhausted" &&
+      record.reviewRepair?.finalReview === undefined
+    )
+      primarySessionAccessible = true;
+  }
 
   const verifiedUncommittedPublication =
     record.phase === "publication" &&
