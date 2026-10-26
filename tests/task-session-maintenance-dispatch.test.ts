@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProjectConfig } from "../src/config/config.js";
 import { runTaskSessionWorkflow } from "../src/orchestrator/run-task-session-workflow.js";
+import { runTaskSessionFeedbackCycle } from "../src/orchestrator/run-task-session-feedback-cycle.js";
 import { observeTaskSessionReviewCards } from "../src/orchestrator/observe-task-session-review-cards.js";
 import { maintainOutdatedPr } from "../src/orchestrator/maintain-outdated-pr.js";
 import { enrichMaintainedPullRequestDescription } from "../src/orchestrator/publish-card.js";
@@ -39,6 +40,9 @@ async function pollReview(
   relation: "current" | "behind" | "diverged" | "uncertain",
   maintenance?: { enabled: boolean },
   withPlan = true,
+  emailNotifier?: {
+    send: (message: { subject: string; text: string }) => Promise<void>;
+  },
 ): Promise<void> {
   root = fs.mkdtempSync(path.join(os.tmpdir(), "pr-maintenance-dispatch-"));
   const project = {
@@ -153,6 +157,7 @@ async function pollReview(
     commands: {} as never,
     signal: new AbortController().signal,
     prepareAttachmentContext: async () => undefined,
+    ...(emailNotifier === undefined ? {} : { emailNotifier }),
   });
 }
 
@@ -215,5 +220,14 @@ describe("opt-in maintenance in the production Human Review polling path", () =>
   it("honors an explicit maintenance opt-out", async () => {
     await pollReview("diverged", { enabled: false });
     expect(maintainOutdatedPr).not.toHaveBeenCalled();
+  });
+
+  it("forwards the configured notifier to feedback correction through the coordinator", async () => {
+    const emailNotifier = { send: vi.fn(async () => undefined) };
+    await pollReview("current", undefined, true, emailNotifier);
+    expect(runTaskSessionFeedbackCycle).toHaveBeenCalledOnce();
+    expect(
+      vi.mocked(runTaskSessionFeedbackCycle).mock.calls[0]?.[0],
+    ).toMatchObject({ emailNotifier });
   });
 });

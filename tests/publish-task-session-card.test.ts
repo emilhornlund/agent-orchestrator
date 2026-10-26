@@ -116,7 +116,13 @@ describe("publishTaskSessionCard", () => {
 
   it("creates one trusted commit and asks for a fresh gate before push", async () => {
     const { base, git } = fixture();
-    const commitSha = await publishTaskSessionCard(base as never);
+    const emailNotifier = { send: vi.fn() };
+    const claimHumanReviewNotification = vi.fn(() => true);
+    const commitSha = await publishTaskSessionCard({
+      ...base,
+      emailNotifier,
+      claimHumanReviewNotification,
+    } as never);
     expect(commitSha).toBe("after");
     expect(git.stageAll).toHaveBeenCalledOnce();
     expect(git.commit).toHaveBeenCalledOnce();
@@ -125,6 +131,8 @@ describe("publishTaskSessionCard", () => {
         beforePushVerification: expect.any(Function),
         opencode: base.opencode,
         commands: base.commands,
+        emailNotifier,
+        claimHumanReviewNotification,
       }),
     );
     expect(vi.mocked(publishCard).mock.calls[0]?.[0]).not.toHaveProperty(

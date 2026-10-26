@@ -97,6 +97,31 @@ describe("TaskExecutionStore", () => {
     expect(store.read("missing-card")).toBeNull();
   });
 
+  it("claims each Human Review notification commit only once across store reloads", () => {
+    const { store } = createFixture();
+    store.create(createRecord());
+
+    expect(store.claimHumanReviewNotification("card-one", "a".repeat(40))).toBe(
+      true,
+    );
+    const reloadedStore = new TaskExecutionStore(
+      path.join(temporaryRoot!, "runtime-state"),
+      {
+        id: "project-one",
+        repository: {
+          path: path.join(temporaryRoot!, "repository"),
+          worktreeRoot: path.join(temporaryRoot!, "worktrees"),
+        },
+      } as ProjectConfig,
+    );
+    expect(
+      reloadedStore.claimHumanReviewNotification("card-one", "a".repeat(40)),
+    ).toBe(false);
+    expect(
+      reloadedStore.claimHumanReviewNotification("card-one", "b".repeat(40)),
+    ).toBe(true);
+  });
+
   it("rejects duplicate creation and stale compare-and-swap revisions", () => {
     const { store } = createFixture();
     const original = createRecord();

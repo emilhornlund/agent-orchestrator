@@ -5,6 +5,7 @@ import type { GitClient } from "../git/git-client.js";
 import type { GitHubClient } from "../github/github-client.js";
 import { getSessionLogPath } from "../logging/session-log.js";
 import { logger } from "../logging/logger.js";
+import type { EmailNotifier } from "../notifications/email-notifier.js";
 import type { OpenCodeClient } from "../opencode/opencode-client.js";
 import { buildCommitPrompt } from "../opencode/build-commit-prompt.js";
 import {
@@ -66,6 +67,7 @@ export interface RunTaskSessionFeedbackCycleOptions {
     CardAttachmentPromptContext | undefined
   >;
   signal: AbortSignal;
+  emailNotifier?: EmailNotifier;
 }
 
 function updateRecord(
@@ -946,6 +948,11 @@ export async function runTaskSessionFeedbackCycle(
       commitMessage,
       reviewResult: "Passed",
       remediationResult: "Verified human feedback correction",
+      ...(options.emailNotifier === undefined
+        ? {}
+        : { emailNotifier: options.emailNotifier }),
+      claimHumanReviewNotification: (commitSha) =>
+        taskStore.claimHumanReviewNotification(card.id, commitSha),
       verifiedDescriptionFacts: () => [
         `Approved implementation plan: ${JSON.stringify(storedPlan.plan)}`,
         `Verified validation result: ${JSON.stringify(preparedEvidence.validation)}`,

@@ -233,6 +233,83 @@ describe("publishCard", () => {
     expect(summaryText).toContain("Elapsed workflow time: 1 hour 5 minutes");
   });
 
+  it("does not send a duplicate for a commit already claimed by recovery", async () => {
+    const notifier: EmailNotifier = { send: vi.fn() };
+    const trello = {
+      moveCard: vi.fn().mockResolvedValue({
+        ...createCard(),
+        idList: "review-list",
+      }),
+      getListTransitions: vi.fn().mockResolvedValue([]),
+      addComment: vi.fn().mockResolvedValue(undefined),
+    } as unknown as TrelloClient;
+    const git = createPublicationGit();
+    const github = {
+      findPullRequest: vi.fn().mockResolvedValue({
+        url: "https://github.com/example/repository/pull/123",
+      }),
+    } as unknown as GitHubClient;
+    const claimHumanReviewNotification = vi.fn(() => false);
+
+    await publishCard({
+      trello,
+      git,
+      github,
+      project: createProject(),
+      card: createCard(),
+      worktreePath: "/worktree",
+      branch: "agent/card-1",
+      commitSha: "abc123",
+      reviewResult: "Passed",
+      remediationResult: "Not required",
+      emailNotifier: notifier,
+      claimHumanReviewNotification,
+    });
+
+    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "review-list");
+    expect(claimHumanReviewNotification).toHaveBeenCalledWith("abc123");
+    expect(notifier.send).not.toHaveBeenCalled();
+  });
+
+  it("does not claim notification state when Human Review email is disabled", async () => {
+    const notifier: EmailNotifier = {
+      send: vi.fn(),
+      isEventEnabled: vi.fn(() => false),
+    };
+    const trello = {
+      moveCard: vi.fn().mockResolvedValue({
+        ...createCard(),
+        idList: "review-list",
+      }),
+      getListTransitions: vi.fn().mockResolvedValue([]),
+      addComment: vi.fn().mockResolvedValue(undefined),
+    } as unknown as TrelloClient;
+    const claimHumanReviewNotification = vi.fn(() => true);
+
+    await publishCard({
+      trello,
+      git: createPublicationGit(),
+      github: {
+        findPullRequest: vi.fn().mockResolvedValue({
+          url: "https://github.com/example/repository/pull/123",
+        }),
+      } as unknown as GitHubClient,
+      project: createProject(),
+      card: createCard(),
+      worktreePath: "/worktree",
+      branch: "agent/card-1",
+      commitSha: "abc123",
+      reviewResult: "Passed",
+      remediationResult: "Not required",
+      emailNotifier: notifier,
+      claimHumanReviewNotification,
+    });
+
+    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "review-list");
+    expect(claimHumanReviewNotification).not.toHaveBeenCalled();
+    expect(notifier.send).not.toHaveBeenCalled();
+  });
+
   it("preserves publication artifacts without advancing the card after shutdown", async () => {
     const controller = new AbortController();
     const trello = {

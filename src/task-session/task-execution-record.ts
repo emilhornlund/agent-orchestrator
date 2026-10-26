@@ -179,6 +179,7 @@ const taskExecutionRecordSchema = z
     feedbackRemediation: feedbackRemediationSchema.optional(),
     reviewObservation: reviewObservationSchema.optional(),
     publicationQuality: publicationQualitySchema.optional(),
+    humanReviewNotificationCommitShas: z.array(gitSha).optional(),
     revision: z.number().int().positive().safe(),
     retryCounters: retryCountersSchema,
     createdAt: z.string().datetime(),
