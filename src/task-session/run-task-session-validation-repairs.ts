@@ -232,9 +232,14 @@ export async function runTaskSessionValidationWithRepairs(
   }
 
   if (repairState?.status === "exhausted") {
-    throw new TaskSessionValidationRepairExhaustedError(
-      currentRecord.retryCounters.validation,
-    );
+    // Recovery may observe failed quality again, but must not invoke AI
+    // remediation beyond the durable limit.
+    return {
+      validation: await runTaskSessionValidation(validation),
+      coverage: await runTaskSessionCoverage(validation),
+      attempts: currentRecord.retryCounters.validation,
+      record: currentRecord,
+    };
   }
 
   if (repairState?.status === "passed") {
@@ -365,11 +370,12 @@ export async function runTaskSessionValidationWithRepairs(
       currentRecord = updateRecord(validation.taskRecordStore, currentRecord, {
         validationRepair: { cycleId, status: "exhausted" },
       });
-      throw new TaskSessionValidationRepairExhaustedError(
-        currentRecord.retryCounters.validation,
-        validationResult,
-        coverageResult,
-      );
+      return {
+        validation: validationResult,
+        coverage: coverageResult,
+        attempts: currentRecord.retryCounters.validation,
+        record: currentRecord,
+      };
     }
 
     currentRecord = updateRecord(validation.taskRecordStore, currentRecord, {

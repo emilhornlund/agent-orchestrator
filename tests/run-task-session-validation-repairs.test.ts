@@ -14,7 +14,6 @@ import {
   MAX_VALIDATION_REPAIR_ATTEMPTS,
   runTaskSessionValidationWithRepairs,
   StaleTaskSessionValidationEvidenceError,
-  TaskSessionValidationRepairExhaustedError,
 } from "../src/task-session/run-task-session-validation-repairs.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
 import { transitionTaskExecutionRecord } from "../src/task-session/task-execution-transition.js";
@@ -268,9 +267,9 @@ describe("runTaskSessionValidationWithRepairs", () => {
       errorOutput: "failure diagnostic",
     });
 
-    await expect(runRepairs(fixture)).rejects.toBeInstanceOf(
-      TaskSessionValidationRepairExhaustedError,
-    );
+    await expect(runRepairs(fixture)).resolves.toMatchObject({
+      record: { validationRepair: { status: "exhausted" } },
+    });
     expect(fixture.runCommand).toHaveBeenCalledTimes(
       MAX_VALIDATION_REPAIR_ATTEMPTS + 1,
     );
@@ -282,11 +281,14 @@ describe("runTaskSessionValidationWithRepairs", () => {
       validationRepair: { cycleId: operationKey, status: "exhausted" },
     });
 
-    await expect(runRepairs(fixture)).rejects.toBeInstanceOf(
-      TaskSessionValidationRepairExhaustedError,
-    );
+    await expect(runRepairs(fixture)).resolves.toMatchObject({
+      record: { validationRepair: { status: "exhausted" } },
+    });
     expect(fixture.runCommand).toHaveBeenCalledTimes(
-      MAX_VALIDATION_REPAIR_ATTEMPTS + 1,
+      MAX_VALIDATION_REPAIR_ATTEMPTS + 2,
+    );
+    expect(fixture.runOpenCode).toHaveBeenCalledTimes(
+      MAX_VALIDATION_REPAIR_ATTEMPTS,
     );
   });
 
@@ -436,9 +438,9 @@ describe("runTaskSessionValidationWithRepairs", () => {
         : { exitCode: 1, output: "coverage failed", errorOutput: "" },
     );
 
-    await expect(runRepairs(fixture)).rejects.toBeInstanceOf(
-      TaskSessionValidationRepairExhaustedError,
-    );
+    await expect(runRepairs(fixture)).resolves.toMatchObject({
+      record: { validationRepair: { status: "exhausted" } },
+    });
     expect(
       fixture.runCommand.mock.calls.filter(
         ([options]) => options.command === "yarn validate",
@@ -461,9 +463,9 @@ describe("runTaskSessionValidationWithRepairs", () => {
       output: "failure",
       errorOutput: "",
     });
-    await expect(runRepairs(fixture)).rejects.toBeInstanceOf(
-      TaskSessionValidationRepairExhaustedError,
-    );
+    await expect(runRepairs(fixture)).resolves.toMatchObject({
+      record: { validationRepair: { status: "exhausted" } },
+    });
 
     const record = fixture.executionStore.read(card.id);
 
@@ -480,7 +482,9 @@ describe("runTaskSessionValidationWithRepairs", () => {
 
     await expect(
       runRepairs(fixture, primarySessionId, "validation-cycle-two"),
-    ).rejects.toBeInstanceOf(TaskSessionValidationRepairExhaustedError);
+    ).resolves.toMatchObject({
+      record: { validationRepair: { status: "exhausted" } },
+    });
     expect(fixture.runCommand).toHaveBeenCalledTimes(
       2 * (MAX_VALIDATION_REPAIR_ATTEMPTS + 1),
     );
