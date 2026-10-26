@@ -2818,24 +2818,26 @@ export async function runTaskSessionWorkflow(
     const verifyPreparedContent = async () => {
       const freshValidation = await runTaskSessionValidation(validationOptions);
       const freshCoverage = await runTaskSessionCoverage(validationOptions);
-      if (
-        freshValidation.status !== "passed" ||
-        (freshCoverage !== null && freshCoverage.status !== "passed")
-      ) {
+      const preparedQualityPassed =
+        freshValidation.status === "passed" &&
+        (freshCoverage === null || freshCoverage.status === "passed");
+      // A failed fresh check is a merge blocker, not a reason to discard
+      // a safely owned implementation after exhausted AI review.
+      if (!preparedQualityPassed && exhaustedReview === undefined)
         throw new Error("Prepared publication quality checks failed");
-      }
       const current = taskStore.read(activeCard.id);
       if (current === null)
         throw new Error(
           "Task record disappeared during publication preparation",
         );
-      persistQualityEvidence(
-        taskStore,
-        current,
-        operationKey,
-        freshValidation,
-        freshCoverage,
-      );
+      if (preparedQualityPassed)
+        persistQualityEvidence(
+          taskStore,
+          current,
+          operationKey,
+          freshValidation,
+          freshCoverage,
+        );
       // Do not consume further AI review rounds after the configured limit.
       // A rebased snapshot may be published with the persisted failed review
       // only if its content identity remains exactly the same.
@@ -2883,32 +2885,33 @@ export async function runTaskSessionWorkflow(
         throw new Error(
           "Task record disappeared while persisting final publication evidence",
         );
-      updateRecord(taskStore, preparedRecord, {
-        publicationQuality: {
-          contentIdentity: freshIdentity,
-          validation: {
-            command: freshValidation.command,
-            startedAt: freshValidation.startedAt,
-            completedAt: freshValidation.completedAt,
-            exitCode: 0,
-            diagnostic: freshValidation.diagnostic,
-            contentIdentity: freshValidation.contentIdentity,
+      if (preparedQualityPassed)
+        updateRecord(taskStore, preparedRecord, {
+          publicationQuality: {
+            contentIdentity: freshIdentity,
+            validation: {
+              command: freshValidation.command,
+              startedAt: freshValidation.startedAt,
+              completedAt: freshValidation.completedAt,
+              exitCode: 0,
+              diagnostic: freshValidation.diagnostic,
+              contentIdentity: freshValidation.contentIdentity,
+            },
+            ...(freshCoverage === null
+              ? {}
+              : {
+                  coverageEvidence: {
+                    command: freshCoverage.command,
+                    startedAt: freshCoverage.startedAt,
+                    completedAt: freshCoverage.completedAt,
+                    exitCode: 0,
+                    diagnostic: freshCoverage.diagnostic,
+                    contentIdentity: freshCoverage.contentIdentity,
+                  },
+                }),
+            review: freshReview.review,
           },
-          ...(freshCoverage === null
-            ? {}
-            : {
-                coverageEvidence: {
-                  command: freshCoverage.command,
-                  startedAt: freshCoverage.startedAt,
-                  completedAt: freshCoverage.completedAt,
-                  exitCode: 0,
-                  diagnostic: freshCoverage.diagnostic,
-                  contentIdentity: freshCoverage.contentIdentity,
-                },
-              }),
-          review: freshReview.review,
-        },
-      });
+        });
       return preparedEvidence;
     };
     let publishedSha: string;
@@ -2935,11 +2938,11 @@ export async function runTaskSessionWorkflow(
           taskStore.claimHumanReviewNotification(activeCard.id, commitSha),
         verifiedDescriptionFacts: () => [
           `Approved implementation plan: ${JSON.stringify(planStore.read(activeCard.id)?.plan ?? "unavailable")}`,
-          `Verified validation result: ${JSON.stringify(preparedEvidence.validation)}`,
+          `Validation result: ${JSON.stringify(preparedEvidence.validation)}`,
           ...(preparedEvidence.coverage === null
             ? []
             : [
-                `Verified coverage result: ${JSON.stringify(preparedEvidence.coverage)}`,
+                `Coverage result: ${JSON.stringify(preparedEvidence.coverage)}`,
               ]),
           `Independent review result: ${JSON.stringify(preparedEvidence.review)}`,
         ],
