@@ -80,13 +80,18 @@ describe("runPrMaintenanceReview", () => {
     expect(call.prompt).toContain("1163 tests passed");
     expect(call.prompt).toContain("tests/card-start-eligibility.test.ts");
     expect(call.prompt).toContain("Do NOT mark tests or validation unverified");
+    expect(call.prompt).toContain(
+      "explain concrete evidence demonstrating why it blocks",
+    );
+    expect(call.prompt).toContain("Unsupported speculation");
   });
 
   it("retries a malformed blockingFindings array once without silently discarding findings", async () => {
     const structuredFinding = {
       kind: "incomplete",
       summary: "Missing behavior",
-      detail: "The required behavior is missing",
+      detail:
+        "Defect: the requested behavior is absent. Requirement: REQ-1 requires it. Evidence: src/example.ts returns without applying the behavior. Expected behavior: apply it for the required input.",
     };
     const f = fixture([
       review("fail", ["The required behavior is missing"]),

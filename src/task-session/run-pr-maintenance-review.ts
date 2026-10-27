@@ -63,7 +63,7 @@ export async function runPrMaintenanceReview(
     "The orchestrator already ran these commands and verified their exact-source identities. Do NOT mark tests or validation unverified merely because your read-only session cannot execute commands. Assess actual code coverage and correctness independently; successful tests do not automatically imply the requirements are satisfied.",
     "Return ONLY one JSON object with exactly: version, projectId, cardId, verdict ('pass'|'fail'), requirementAssessments, blockingFindings, reviewedContentIdentity.",
     "Every requirementAssessments item has requirementId, status ('satisfied'|'unsatisfied'), details (nonblank string), evidence (array of nonblank strings). Include each requested ID exactly once.",
-    "Every blockingFindings entry MUST be an object, NEVER a string: {kind: 'defect'|'incomplete'|'contract-violation', summary: nonblank string, detail: nonblank string, location?: {filePath: repository-relative string, line?: positive integer}}.",
+    "Every blockingFindings entry MUST be an object, NEVER a string: {kind: 'defect'|'incomplete'|'contract-violation', summary: nonblank string, detail: nonblank string, location?: {filePath: repository-relative string, line?: positive integer}}. In detail, identify the specific defect or missing behavior, cite the violated approved requirement or repository contract when applicable, explain concrete evidence demonstrating why it blocks, and state the expected correct behavior. Include the relevant source location when identifiable. Unsupported speculation, hypothetical risks without evidence, and subjective preferences are not blocking defects.",
     "Verdict 'pass' requires all requirements satisfied and no blocking findings. A valid 'fail' requires an unsatisfied requirement or a structured blocking finding. Never change a genuine finding just to pass.",
     `Example structured failure: ${JSON.stringify({
       ...identity,
@@ -80,7 +80,8 @@ export async function runPrMaintenanceReview(
         {
           kind: "incomplete",
           summary: "Missing behavior",
-          detail: "The required case is not covered.",
+          detail:
+            "Defect: the required case is not handled. Requirement: the approved requirement calls for this case. Evidence: src/example.ts returns before applying the required behavior for this input. Expected behavior: apply the requested behavior for this case.",
         },
       ],
     })}`,

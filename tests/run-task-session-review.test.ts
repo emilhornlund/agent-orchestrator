@@ -377,6 +377,11 @@ describe("runTaskSessionReview", () => {
     expect(run?.prompt).toContain(
       "kind (string enum 'defect', 'incomplete', or 'contract-violation')",
     );
+    expect(run?.prompt).toContain(
+      "explain concrete evidence demonstrating why it blocks",
+    );
+    expect(run?.prompt).toContain("unsupported speculation");
+    expect(run?.prompt).toContain("do not run tests or other commands");
     expect(run?.prompt).toContain("Valid pass example:");
     expect(run?.prompt).toContain("Valid fail example:");
     expect(run?.prompt).toContain(
@@ -388,6 +393,32 @@ describe("runTaskSessionReview", () => {
       true,
     );
     expect(fixture.git.getDiff).toHaveBeenCalledWith(fixture.worktreePath);
+  });
+
+  it("instructs reviewers not to block on unsupported speculation or preferences", async () => {
+    const fixture = createFixture();
+    const contentIdentity = await fixture.createStoredPlan();
+    const runOpenCode = vi.fn<RunOpenCode>().mockResolvedValue({
+      exitCode: 0,
+      output: JSON.stringify(passingReview(contentIdentity)),
+      errorOutput: "",
+    });
+
+    await runTaskSessionReview(
+      reviewOptions(
+        fixture,
+        new OpenCodeClient(runOpenCode),
+        successfulQualityEvidence(contentIdentity).validation,
+      ),
+    );
+
+    const prompt = runOpenCode.mock.calls[0]?.[0].prompt;
+    expect(prompt).toContain(
+      "Do not treat unsupported speculation, hypothetical risks without evidence, or subjective preferences as blocking defects.",
+    );
+    expect(prompt).toContain(
+      "a preference for a different naming or formatting style without a violated repository convention, must not be reported as blocking",
+    );
   });
 
   it("returns blocking omitted-requirement and serious-defect findings without publication", async () => {
@@ -407,7 +438,8 @@ describe("runTaskSessionReview", () => {
         {
           kind: "defect",
           summary: "Settings are not persisted after reload.",
-          detail: "The state is held only in memory.",
+          detail:
+            "Defect: settings are held only in memory. Requirement: REQ-1 requires persistence. Evidence: src.ts:12 initializes local state without reading saved data, so a reload loses the setting. Expected behavior: restore the saved setting after reload.",
           location: { filePath: "src.ts", line: 12 },
         },
       ],
