@@ -223,3 +223,12 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - Failed or unsupported migrations must preserve the original state and report the problem rather than corrupting it. Unaffected projects continue where safe.
 - On shutdown or deployment restart, including Docker termination signals, stop claiming new tasks, safely interrupt active child processes, and preserve the execution state necessary for recovery.
 - Release resources only when safe and automatically resume interrupted work on the next startup.
+
+## Configuration and instance ownership
+
+- Validate configuration before any tasks are processed. At least one valid project must be configured; missing required settings, invalid values, and unsupported options cause startup to fail with a clear, actionable error.
+- Verify required configured external resources, including Trello boards and lists, before processing tasks. Invalid configuration must not result in partial task execution.
+- Support Trello Free only; no required functionality may depend on paid Trello features.
+- Only one orchestrator instance may actively own and process a given project at a time, including when another instance is running locally or in Docker on the same machine.
+- A second instance must respect existing project ownership rather than claiming tasks. Crash recovery and ownership release must be safe; ambiguous ownership must prevent competing execution.
+- Multiple-machine coordination is out of scope for now and can be considered later. Ordinary single-machine operation must not require a shared database.
