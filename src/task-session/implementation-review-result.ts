@@ -32,11 +32,32 @@ const reviewLocationSchema = z.strictObject({
 });
 
 const blockingFindingSchema = z.strictObject({
+  id: stableId.optional(),
+  sourceContentIdentity: contentIdentity.optional(),
   kind: z.enum(["defect", "incomplete", "contract-violation"]),
   summary: nonEmptyText,
   detail: nonEmptyText,
   location: reviewLocationSchema.optional(),
 });
+
+const previousFindingAssessmentSchema = z
+  .strictObject({
+    findingId: stableId,
+    status: z.enum(["resolved", "unresolved", "superseded"]),
+    justification: nonEmptyText.optional(),
+  })
+  .superRefine((assessment, ctx) => {
+    if (
+      assessment.status === "superseded" &&
+      assessment.justification === undefined
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["justification"],
+        message: "Superseded findings require justification",
+      });
+    }
+  });
 
 export const implementationReviewResultSchema = z
   .strictObject({
@@ -46,6 +67,9 @@ export const implementationReviewResultSchema = z
     verdict: z.enum(["pass", "fail"]),
     requirementAssessments: z.array(requirementAssessmentSchema).min(1),
     blockingFindings: z.array(blockingFindingSchema),
+    previousFindingAssessments: z
+      .array(previousFindingAssessmentSchema)
+      .optional(),
     reviewedContentIdentity: contentIdentity,
   })
   .superRefine((result, ctx) => {
@@ -114,6 +138,7 @@ export interface ImplementationReviewExpectations {
   cardId: string;
   requirementIds: readonly string[];
   contentIdentity: string;
+  previousFindingIds?: readonly string[];
 }
 
 export function parseImplementationReviewResult(
@@ -121,6 +146,72 @@ export function parseImplementationReviewResult(
   expected: ImplementationReviewExpectations,
 ): ImplementationReviewResult {
   const result = implementationReviewResultSchema.parse(value);
+
+  const expectedPreviousIds = expected.previousFindingIds ?? [];
+  const assessments = result.previousFindingAssessments ?? [];
+  const assessedPreviousIds = new Set(
+    assessments.map(({ findingId }) => findingId),
+  );
+  if (assessedPreviousIds.size !== assessments.length) {
+    throw new Error(
+      "Implementation review duplicated a previous finding assessment",
+    );
+  }
+  const missingFindingId = expectedPreviousIds.find(
+    (id) => !assessedPreviousIds.has(id),
+  );
+  if (missingFindingId !== undefined) {
+    throw new Error(
+      `Implementation review omitted previous finding assessment: ${missingFindingId}`,
+    );
+  }
+  const unexpectedFindingId = [...assessedPreviousIds].find(
+    (id) => !expectedPreviousIds.includes(id),
+  );
+  if (unexpectedFindingId !== undefined) {
+    throw new Error(
+      `Implementation review assessed unknown previous finding: ${unexpectedFindingId}`,
+    );
+  }
+  if (
+    expectedPreviousIds.length > 0 &&
+    result.previousFindingAssessments === undefined
+  ) {
+    throw new Error(
+      "Implementation review omitted previous finding assessments",
+    );
+  }
+
+  const previousAssessments = new Map(
+    assessments.map(({ findingId, status }) => [findingId, status]),
+  );
+  for (const finding of result.blockingFindings) {
+    if (finding.id === undefined) continue;
+    const status = previousAssessments.get(finding.id);
+    if (status === undefined) {
+      throw new Error(
+        `Implementation review blocking finding references unknown prior finding: ${finding.id}`,
+      );
+    }
+    if (status !== "unresolved") {
+      throw new Error(
+        `Implementation review lists ${status} prior finding as currently blocking: ${finding.id}`,
+      );
+    }
+  }
+
+  for (const assessment of assessments) {
+    if (
+      assessment.status === "unresolved" &&
+      !result.blockingFindings.some(
+        (finding) => finding.id === assessment.findingId,
+      )
+    ) {
+      throw new Error(
+        `Unresolved prior finding must remain in blockingFindings: ${assessment.findingId}`,
+      );
+    }
+  }
 
   if (
     result.projectId !== expected.projectId ||

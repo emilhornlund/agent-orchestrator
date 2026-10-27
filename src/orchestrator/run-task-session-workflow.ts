@@ -1131,7 +1131,11 @@ export async function runTaskSessionWorkflow(
               signal,
             },
           });
-          const runReview = async () =>
+          const runReview = async (
+            previousFindings: readonly NonNullable<
+              NonNullable<TaskExecutionRecord["reviewRepair"]>["findings"]
+            >[number][],
+          ) =>
             runTaskSessionReview({
               project,
               card,
@@ -1144,6 +1148,7 @@ export async function runTaskSessionWorkflow(
               openCode,
               validation: quality.validation,
               coverage: quality.coverage,
+              previousFindings,
               runOptions: {
                 model: project.opencode.review.model,
                 variant: project.opencode.review.variant,
@@ -1151,7 +1156,12 @@ export async function runTaskSessionWorkflow(
                 signal,
               },
             });
-          let first = await runReview();
+          const existingRepair = taskStore.read(card.id)?.reviewRepair;
+          let first = await runReview(
+            existingRepair?.cycleId === operationKey
+              ? (existingRepair.findings ?? [])
+              : [],
+          );
           const repairReview = async (
             review: typeof first.review,
             attempt: number,
@@ -1220,13 +1230,13 @@ export async function runTaskSessionWorkflow(
             cardId: card.id,
             operationKey,
             expectedPrimarySessionId: record.primarySessionId!,
-            runReview: async () => {
+            runReview: async (previousFindings) => {
               if (roundIndex++ === 0)
                 return {
                   review: first.review,
                   contentIdentity: first.contentIdentity,
                 };
-              first = await runReview();
+              first = await runReview(previousFindings);
               return {
                 review: first.review,
                 contentIdentity: first.contentIdentity,
@@ -3288,7 +3298,14 @@ export async function runTaskSessionWorkflow(
     let currentValidation = quality.validation;
     let currentCoverage = quality.coverage;
     const expectedSession = taskStore.read(activeCard.id)!.primarySessionId!;
-    const runReview = async () => {
+    const runReview = async (
+      previousFindings: readonly NonNullable<
+        NonNullable<TaskExecutionRecord["reviewRepair"]>["findings"]
+      >[number][] = taskStore.read(activeCard.id)?.reviewRepair?.cycleId ===
+      operationKey
+        ? (taskStore.read(activeCard.id)?.reviewRepair?.findings ?? [])
+        : [],
+    ) => {
       cardLog.event("Review started");
       const result = await runTaskSessionReview({
         project,
@@ -3302,6 +3319,7 @@ export async function runTaskSessionWorkflow(
         openCode,
         validation: currentValidation,
         coverage: currentCoverage,
+        previousFindings,
         ...(attachmentContext === undefined ? {} : { attachmentContext }),
         runOptions: {
           model: project.opencode.review.model,

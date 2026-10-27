@@ -73,10 +73,41 @@ function fixture() {
   });
   const run = (verdicts: ("pass" | "fail")[], maxAttempts = 2) => {
     let index = 0;
-    const reviewRun = vi.fn(async () => ({
-      review: makeReview(verdicts[index++] ?? "fail"),
-      contentIdentity: identity,
-    }));
+    const reviewRun = vi.fn(
+      async (
+        previousFindings: readonly NonNullable<
+          NonNullable<TaskExecutionRecord["reviewRepair"]>["findings"]
+        >[number][] = [],
+      ) => {
+        const verdict = verdicts[index++] ?? "fail";
+        const review = makeReview(verdict);
+        return {
+          review: {
+            ...review,
+            blockingFindings:
+              verdict === "fail" && previousFindings.length > 0
+                ? previousFindings.map(
+                    ({ id, kind, summary, detail, location }) => ({
+                      id,
+                      kind,
+                      summary,
+                      detail,
+                      ...(location === undefined ? {} : { location }),
+                    }),
+                  )
+                : review.blockingFindings,
+            previousFindingAssessments: previousFindings.map(({ id }) => ({
+              findingId: id,
+              status:
+                verdict === "pass"
+                  ? ("resolved" as const)
+                  : ("unresolved" as const),
+            })),
+          },
+          contentIdentity: identity,
+        };
+      },
+    );
     const repair = vi.fn(async () => undefined);
     const rerunQuality = vi.fn(async () => undefined);
     return {
@@ -113,6 +144,100 @@ describe("runTaskSessionReviewWithRepairs", () => {
     expect(result.record.reviewRepair?.status).toBe("passed");
   });
 
+  it("keeps earlier findings traceable while recording newly discovered defects", async () => {
+    const f = fixture();
+    let pass = 0;
+    const result = await runTaskSessionReviewWithRepairs({
+      store: f.store,
+      maxAttempts: 1,
+      projectId: "project",
+      cardId: "card",
+      operationKey: "operation",
+      expectedPrimarySessionId: "primary-session",
+      runReview: async (previousFindings) => {
+        const review = f.makeReview("fail");
+        const finding =
+          pass++ === 0
+            ? {
+                kind: "incomplete" as const,
+                summary: "First defect",
+                detail: "First defect remains.",
+              }
+            : {
+                kind: "defect" as const,
+                summary: "Regression",
+                detail: "A new regression appeared.",
+              };
+        return {
+          review: {
+            ...review,
+            blockingFindings: [
+              ...previousFindings.map(
+                ({ id, kind, summary, detail, location }) => ({
+                  id,
+                  kind,
+                  summary,
+                  detail,
+                  ...(location === undefined ? {} : { location }),
+                }),
+              ),
+              finding,
+            ],
+            previousFindingAssessments: previousFindings.map(({ id }) => ({
+              findingId: id,
+              status: "unresolved" as const,
+            })),
+          },
+          contentIdentity: f.identity,
+        };
+      },
+      repair: async () => undefined,
+      rerunQuality: async () => undefined,
+      getCurrentContentIdentity: async () => f.identity,
+    });
+
+    expect(result.record.reviewRepair?.findings).toHaveLength(2);
+    expect(
+      result.record.reviewRepair?.findings?.map(({ summary }) => summary),
+    ).toEqual(["First defect", "Regression"]);
+    expect(result.review.blockingFindings[0]?.id).toMatch(/^finding-/);
+    expect(result.record.reviewRepair?.findings?.[0]?.sourceIdentities).toEqual(
+      [f.identity],
+    );
+  });
+
+  it("cannot complete a cycle while a prior finding is classified unresolved", async () => {
+    const f = fixture();
+    let pass = 0;
+    await expect(
+      runTaskSessionReviewWithRepairs({
+        store: f.store,
+        maxAttempts: 1,
+        projectId: "project",
+        cardId: "card",
+        operationKey: "operation",
+        expectedPrimarySessionId: "primary-session",
+        runReview: async (previousFindings) => {
+          const verdict = pass++ === 0 ? "fail" : "pass";
+          return {
+            review: {
+              ...f.makeReview(verdict),
+              previousFindingAssessments: previousFindings.map(({ id }) => ({
+                findingId: id,
+                status: "unresolved" as const,
+              })),
+            },
+            contentIdentity: f.identity,
+          };
+        },
+        repair: async () => undefined,
+        rerunQuality: async () => undefined,
+        getCurrentContentIdentity: async () => f.identity,
+      }),
+    ).rejects.toThrow("Unresolved prior finding must remain blocking");
+    expect(f.store.read("card")?.reviewRepair?.status).toBe("active");
+  });
+
   it.each([0, 1, 2])(
     "honors maxPasses=%i and returns the final failed review for Human Review publication",
     async (maxPasses) => {
@@ -128,7 +253,22 @@ describe("runTaskSessionReviewWithRepairs", () => {
         status: "exhausted",
         maxAttempts: maxPasses,
         finalReview: { verdict: "fail" },
+        findings: [
+          { id: expect.stringMatching(/^finding-/), status: "unresolved" },
+        ],
       });
+      const persistedFindingId =
+        f.store.read("card")?.reviewRepair?.findings?.[0]?.id;
+      const restored = new TaskExecutionStore(path.join(root, "state"), {
+        id: "project",
+        repository: {
+          path: path.join(root, "repo"),
+          worktreeRoot: path.join(root, "worktrees"),
+        },
+      } as ProjectConfig);
+      expect(restored.read("card")?.reviewRepair?.findings?.[0]?.id).toBe(
+        persistedFindingId,
+      );
       const resumed = await op.run();
       expect(resumed.review.verdict).toBe("fail");
       expect(resumed.attempts).toBe(maxPasses);

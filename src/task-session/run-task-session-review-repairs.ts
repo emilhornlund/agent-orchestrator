@@ -1,6 +1,11 @@
+import { createHash } from "node:crypto";
 import type { ImplementationReviewResult } from "./implementation-review-result.js";
 import type { TaskExecutionRecord } from "./task-execution-record.js";
 import { TaskExecutionStore } from "./task-execution-store.js";
+
+type TrackedFinding = NonNullable<
+  NonNullable<TaskExecutionRecord["reviewRepair"]>["findings"]
+>[number];
 
 export interface TaskSessionReviewRound {
   review: ImplementationReviewResult;
@@ -13,7 +18,9 @@ export interface RunTaskSessionReviewRepairsOptions {
   cardId: string;
   operationKey: string;
   expectedPrimarySessionId: string;
-  runReview: () => Promise<TaskSessionReviewRound>;
+  runReview: (
+    previousFindings: readonly TrackedFinding[],
+  ) => Promise<TaskSessionReviewRound>;
   repair: (
     review: ImplementationReviewResult,
     attempt: number,
@@ -85,6 +92,118 @@ function assertOwner(
   }
 }
 
+function updateFindingLedger(
+  review: ImplementationReviewResult,
+  contentIdentity: string,
+  previous: readonly TrackedFinding[],
+  cycleId: string,
+): { review: ImplementationReviewResult; findings: TrackedFinding[] } {
+  const assessments = review.previousFindingAssessments ?? [];
+  const byId = new Map(
+    assessments.map((assessment) => [assessment.findingId, assessment]),
+  );
+  for (const finding of previous) {
+    if (!byId.has(finding.id)) {
+      throw new TaskSessionReviewRepairError(
+        `Review omitted prior finding ${finding.id}`,
+      );
+    }
+  }
+
+  for (const finding of previous) {
+    const assessment = byId.get(finding.id)!;
+    const isReportedBlocking = review.blockingFindings.some(
+      (blockingFinding) => blockingFinding.id === finding.id,
+    );
+    if (assessment.status === "unresolved" && !isReportedBlocking) {
+      throw new TaskSessionReviewRepairError(
+        `Unresolved prior finding must remain blocking: ${finding.id}`,
+      );
+    }
+    if (assessment.status !== "unresolved" && isReportedBlocking) {
+      throw new TaskSessionReviewRepairError(
+        `Review lists ${assessment.status} prior finding as blocking: ${finding.id}`,
+      );
+    }
+  }
+  if (
+    review.verdict === "pass" &&
+    assessments.some(({ status }) => status === "unresolved")
+  ) {
+    throw new TaskSessionReviewRepairError(
+      "A passing review cannot leave prior blocking findings unresolved",
+    );
+  }
+
+  const updated = previous.map((finding) => {
+    const assessment = byId.get(finding.id)!;
+    return {
+      ...finding,
+      sourceIdentities: finding.sourceIdentities.includes(contentIdentity)
+        ? finding.sourceIdentities
+        : [...finding.sourceIdentities, contentIdentity],
+      status: assessment.status,
+      ...(assessment.justification === undefined
+        ? { justification: undefined }
+        : { justification: assessment.justification }),
+    };
+  });
+  const normalizedFindings: ImplementationReviewResult["blockingFindings"] = [];
+  for (const finding of review.blockingFindings) {
+    const fingerprint = createHash("sha256")
+      .update(
+        JSON.stringify([
+          cycleId,
+          finding.kind,
+          finding.summary,
+          finding.location ?? null,
+        ]),
+      )
+      .digest("hex");
+    const id = finding.id ?? `finding-${fingerprint.slice(0, 32)}`;
+    const old = updated.find((candidate) => candidate.id === id);
+    if (finding.id !== undefined && old === undefined) {
+      throw new TaskSessionReviewRepairError(
+        `Review blocking finding references unknown prior finding: ${finding.id}`,
+      );
+    }
+    if (
+      finding.id !== undefined &&
+      byId.get(finding.id)?.status !== "unresolved"
+    ) {
+      throw new TaskSessionReviewRepairError(
+        `Review lists a non-unresolved prior finding as blocking: ${finding.id}`,
+      );
+    }
+    if (old !== undefined) {
+      old.status = "unresolved";
+      old.justification = undefined;
+      old.sourceIdentities = old.sourceIdentities.includes(contentIdentity)
+        ? old.sourceIdentities
+        : [...old.sourceIdentities, contentIdentity];
+    } else {
+      updated.push({
+        ...finding,
+        id,
+        sourceContentIdentity: contentIdentity,
+        sourceIdentities: [contentIdentity],
+        status: "unresolved",
+        justification: undefined,
+      });
+    }
+    normalizedFindings.push({
+      ...finding,
+      id,
+      sourceContentIdentity: contentIdentity,
+    });
+  }
+
+  return {
+    review: { ...review, blockingFindings: normalizedFindings },
+    findings: updated,
+  };
+}
+
 export async function runTaskSessionReviewWithRepairs(
   options: RunTaskSessionReviewRepairsOptions,
 ): Promise<TaskSessionReviewRepairResult> {
@@ -113,6 +232,16 @@ export async function runTaskSessionReviewWithRepairs(
     record.reviewRepair?.status === "exhausted" ||
     record.reviewRepair?.status === "passed"
   ) {
+    if (
+      record.reviewRepair.status === "passed" &&
+      record.reviewRepair.findings?.some(
+        (finding) => finding.status === "unresolved",
+      )
+    ) {
+      throw new TaskSessionReviewRepairError(
+        "Persisted passing review contains unresolved blocking findings",
+      );
+    }
     const previous = record.reviewRepair.finalReview;
     if (previous !== undefined) {
       const contentIdentity = await options.getCurrentContentIdentity();
@@ -129,7 +258,7 @@ export async function runTaskSessionReviewWithRepairs(
     }
     // Pre-upgrade exhausted records have no final review evidence. Perform
     // one read-only recovery review, persist it, and never repeat it on restart.
-    const round = await options.runReview();
+    const round = await options.runReview(record.reviewRepair?.findings ?? []);
     const currentIdentity = await options.getCurrentContentIdentity();
     if (
       round.contentIdentity !== currentIdentity ||
@@ -158,7 +287,7 @@ export async function runTaskSessionReviewWithRepairs(
   }
 
   for (;;) {
-    const round = await options.runReview();
+    const round = await options.runReview(record.reviewRepair?.findings ?? []);
     const currentIdentity = await options.getCurrentContentIdentity();
     if (
       round.contentIdentity !== currentIdentity ||
@@ -169,6 +298,13 @@ export async function runTaskSessionReviewWithRepairs(
       );
     }
 
+    const ledger = updateFindingLedger(
+      round.review,
+      round.contentIdentity,
+      record.reviewRepair?.findings ?? [],
+      cycleId,
+    );
+    const trackedRound = { ...round, review: ledger.review };
     record = options.store.read(options.cardId);
     assertOwner(record, options);
 
@@ -178,10 +314,11 @@ export async function runTaskSessionReviewWithRepairs(
           cycleId,
           status: "passed",
           maxAttempts: record.reviewRepair?.maxAttempts ?? options.maxAttempts,
-          finalReview: round.review,
+          finalReview: ledger.review,
+          findings: ledger.findings,
         },
       });
-      return { ...round, attempts: record.retryCounters.review, record };
+      return { ...trackedRound, attempts: record.retryCounters.review, record };
     }
 
     const attempts = record.retryCounters.review;
@@ -191,22 +328,24 @@ export async function runTaskSessionReviewWithRepairs(
           cycleId,
           status: "exhausted",
           maxAttempts: record.reviewRepair?.maxAttempts ?? options.maxAttempts,
-          finalReview: round.review,
+          finalReview: ledger.review,
+          findings: ledger.findings,
         },
       });
-      return { ...round, attempts, record };
+      return { ...trackedRound, attempts, record };
     }
 
-    updateRecord(options.store, record, {
+    record = updateRecord(options.store, record, {
       retryCounters: { ...record.retryCounters, review: attempts + 1 },
       reviewRepair: {
         cycleId,
         status: "active",
         maxAttempts: record.reviewRepair?.maxAttempts ?? options.maxAttempts,
+        findings: ledger.findings,
       },
     });
     try {
-      await options.repair(round.review, attempts + 1);
+      await options.repair(ledger.review, attempts + 1);
       await options.rerunQuality();
     } catch (error) {
       // Failed remediation can leave partial source changes. Inspect rather
