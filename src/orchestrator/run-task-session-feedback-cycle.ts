@@ -303,41 +303,43 @@ export async function runTaskSessionFeedbackCycle(
       const owner = options.mutationQueue.claimForRecovery(replyOperationId);
       if (owner === null || owner.eventId !== replyOperationId) return "idle";
     }
-    const publicationQuality = record.publicationQuality as {
-      contentIdentity: string;
-    };
-    const verification: FeedbackVerificationResult = {
-      version: 1,
-      projectId: project.id,
-      cardId: card.id,
-      headSha: observation.headSha,
-      contentIdentity: publicationQuality.contentIdentity,
-      dispositions: ledgerBeforeSync.entries
-        .filter((entry) => entry.actionability === "actionable")
-        .map((entry) => {
-          const feedbackId = `${entry.kind}:${entry.id}`;
-          if (
-            (entry.status === "verified" || entry.status === "published") &&
-            entry.remediationCommitSha === observation.headSha &&
-            entry.verificationEvidence.length > 0
-          ) {
+    let replyResult!: Awaited<
+      ReturnType<typeof publishVerifiedFeedbackReplies>
+    >;
+    try {
+      const publicationQuality = record.publicationQuality as {
+        contentIdentity: string;
+      };
+      const verification: FeedbackVerificationResult = {
+        version: 1,
+        projectId: project.id,
+        cardId: card.id,
+        headSha: observation.headSha,
+        contentIdentity: publicationQuality.contentIdentity,
+        dispositions: ledgerBeforeSync.entries
+          .filter((entry) => entry.actionability === "actionable")
+          .map((entry) => {
+            const feedbackId = `${entry.kind}:${entry.id}`;
+            if (
+              (entry.status === "verified" || entry.status === "published") &&
+              entry.remediationCommitSha === observation.headSha &&
+              entry.verificationEvidence.length > 0
+            ) {
+              return {
+                feedbackId,
+                status: "verified-fixed" as const,
+                evidence: entry.verificationEvidence,
+              };
+            }
             return {
               feedbackId,
-              status: "verified-fixed" as const,
-              evidence: entry.verificationEvidence,
+              status: "unresolved" as const,
+              reason:
+                entry.unresolvedReason ??
+                "This feedback item is not verified on the published PR head.",
             };
-          }
-          return {
-            feedbackId,
-            status: "unresolved" as const,
-            reason:
-              entry.unresolvedReason ??
-              "This feedback item is not verified on the published PR head.",
-          };
-        }),
-    };
-    let replyResult: Awaited<ReturnType<typeof publishVerifiedFeedbackReplies>>;
-    try {
+          }),
+      };
       replyResult = await publishVerifiedFeedbackReplies({
         project,
         cardId: card.id,
@@ -408,6 +410,53 @@ export async function runTaskSessionFeedbackCycle(
           );
         },
       });
+      const cannotReply = replyResult.unresolvedFeedbackIds.find((id) =>
+        verifiedFeedbackIds.includes(id),
+      );
+      if (cannotReply !== undefined) {
+        const latest = taskStore.read(card.id);
+        if (latest !== null && latest.phase === "human-feedback") {
+          taskStore.compareAndSwap(
+            card.id,
+            latest.revision,
+            transitionTaskExecutionRecord(latest, {
+              type: "attention-required",
+              eventId: `${replyOperationId}:unreplyable`,
+              projectId: project.id,
+              cardId: card.id,
+              operationKey: latest.operationKey,
+              occurredAt: new Date(
+                Math.max(Date.now(), Date.parse(latest.updatedAt) + 1),
+              ).toISOString(),
+            }),
+          );
+        }
+        if (verifiedFeedbackIds.length > 0)
+          options.mutationQueue.fail(replyOperationId);
+        return "attention-required";
+      }
+      if (verifiedFeedbackIds.length > 0)
+        options.mutationQueue.complete(replyOperationId);
+      if (replyResult.publishedReplyIds.length > 0) {
+        const latest = taskStore.read(card.id);
+        if (latest !== null && latest.phase === "human-feedback") {
+          taskStore.compareAndSwap(
+            card.id,
+            latest.revision,
+            transitionTaskExecutionRecord(latest, {
+              type: "feedback-replies-published",
+              eventId: `${replyOperationId}:completed`,
+              projectId: project.id,
+              cardId: card.id,
+              operationKey: latest.operationKey,
+              occurredAt: new Date(
+                Math.max(Date.now(), Date.parse(latest.updatedAt) + 1),
+              ).toISOString(),
+            }),
+          );
+        }
+        return "published";
+      }
     } catch (error) {
       if (
         verifiedFeedbackIds.length > 0 &&
@@ -416,53 +465,6 @@ export async function runTaskSessionFeedbackCycle(
         options.mutationQueue.fail(replyOperationId);
       }
       throw error;
-    }
-    const cannotReply = replyResult.unresolvedFeedbackIds.find((id) =>
-      verifiedFeedbackIds.includes(id),
-    );
-    if (cannotReply !== undefined) {
-      const latest = taskStore.read(card.id);
-      if (latest !== null && latest.phase === "human-feedback") {
-        taskStore.compareAndSwap(
-          card.id,
-          latest.revision,
-          transitionTaskExecutionRecord(latest, {
-            type: "attention-required",
-            eventId: `${replyOperationId}:unreplyable`,
-            projectId: project.id,
-            cardId: card.id,
-            operationKey: latest.operationKey,
-            occurredAt: new Date(
-              Math.max(Date.now(), Date.parse(latest.updatedAt) + 1),
-            ).toISOString(),
-          }),
-        );
-      }
-      if (verifiedFeedbackIds.length > 0)
-        options.mutationQueue.fail(replyOperationId);
-      return "attention-required";
-    }
-    if (verifiedFeedbackIds.length > 0)
-      options.mutationQueue.complete(replyOperationId);
-    if (replyResult.publishedReplyIds.length > 0) {
-      const latest = taskStore.read(card.id);
-      if (latest !== null && latest.phase === "human-feedback") {
-        taskStore.compareAndSwap(
-          card.id,
-          latest.revision,
-          transitionTaskExecutionRecord(latest, {
-            type: "feedback-replies-published",
-            eventId: `${replyOperationId}:completed`,
-            projectId: project.id,
-            cardId: card.id,
-            operationKey: latest.operationKey,
-            occurredAt: new Date(
-              Math.max(Date.now(), Date.parse(latest.updatedAt) + 1),
-            ).toISOString(),
-          }),
-        );
-      }
-      return "published";
     }
   }
   const previousHead = record.pullRequest.headSha;

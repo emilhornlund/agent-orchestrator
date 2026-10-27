@@ -11,6 +11,7 @@ import { CommandRunner } from "../src/process/command-runner.js";
 import { runTaskSessionWorkflow } from "../src/orchestrator/run-task-session-workflow.js";
 import { Logger } from "../src/logging/logger.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
+import { TaskMutationQueue } from "../src/task-session/task-mutation-queue.js";
 import type { TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
 
 let root: string;
@@ -19,6 +20,324 @@ afterEach(() => {
 });
 
 describe("task-session terminal PR reconciliation", () => {
+  it("retires a persisted orphan implementation before recovering a queued merged PR", async () => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "terminal-queue-deadlock-"));
+    const repositoryPath = path.join(root, "repo");
+    const worktreeRoot = path.join(root, "worktrees");
+    const contextRoot = path.join(root, "state");
+    fs.mkdirSync(repositoryPath);
+    const project = {
+      id: "agent-orchestrator",
+      autoMerge: false,
+      contextRoot,
+      trello: {
+        boardId: "board",
+        backlogListId: "backlog",
+        readyListId: "ready",
+        workingListId: "working",
+        reviewListId: "review",
+        failedListId: "failed",
+        doneListId: "done",
+        refinementLabelId: "refinement",
+        featureLabelId: "feature",
+        improvementLabelId: "improvement",
+        bugLabelId: "bug",
+      },
+      repository: {
+        path: repositoryPath,
+        github: "owner/repo",
+        defaultBranch: "main",
+        worktreeRoot,
+        validationCommand: "yarn validate",
+        gitIdentity: { name: "Agent", email: "agent@example.test" },
+      },
+      opencode: {
+        refinement: { model: "refine", variant: "high" },
+        implementation: { model: "implement", variant: "high" },
+        review: { model: "review", variant: "high" },
+        remediation: { model: "repair", variant: "high", maxPasses: 1 },
+        commit: { model: "commit", variant: "low" },
+        timeoutMinutes: 1,
+      },
+    } as ProjectConfig & { contextRoot: string };
+    let currentList = project.trello.reviewListId;
+    const card: TrelloCard = {
+      id: "merged-card",
+      name: "Merged task",
+      desc: "Task body",
+      idList: currentList,
+      idLabels: [],
+      url: "https://trello.example/merged-card",
+    };
+    const trello = {
+      getCards: vi.fn(async (listId: string) =>
+        listId === currentList ? [{ ...card, idList: currentList }] : [],
+      ),
+      moveCard: vi.fn(async (_cardId: string, listId: string) => {
+        currentList = listId;
+        return { ...card, idList: listId };
+      }),
+      addComment: vi.fn(async () => undefined),
+    } as unknown as TrelloClient;
+    const headSha = "b".repeat(40);
+    const github = {
+      findPullRequestState: vi.fn(async () => ({
+        url: "https://github.com/owner/repo/pull/203",
+        state: "MERGED" as const,
+        mergedAt: "2026-10-27T12:00:00Z",
+        headRefOid: headSha,
+        baseRefName: "main",
+        headRefName: "agent/merged-card",
+        headRepository: { name: "repo" },
+        headRepositoryOwner: { login: "owner" },
+      })),
+      getPullRequestCommitShas: vi.fn(async () => [headSha]),
+      isAncestorCommit: vi.fn(async () => true),
+      getCiObservations: vi.fn(async () => {
+        throw new Error("CI must not be queried");
+      }),
+    } as unknown as GitHubClient;
+    const git = {
+      remoteBranchExists: vi.fn(async () => false),
+      pruneWorktrees: vi.fn(async () => undefined),
+      branchExists: vi.fn(async () => false),
+    } as unknown as GitClient;
+    const taskStore = new TaskExecutionStore(contextRoot, project);
+    taskStore.create({
+      version: 1,
+      projectId: project.id,
+      cardId: card.id,
+      phase: "ci",
+      primarySessionId: "session",
+      sessionCreationStatus: "bound",
+      expectedBranch: `agent/${card.id}`,
+      pullRequest: {
+        number: 203,
+        url: "https://github.com/owner/repo/pull/203",
+        headSha,
+      },
+      operationKey: "merged-operation",
+      revision: 1,
+      retryCounters: { validation: 0, review: 0, ci: 0, humanFeedback: 0 },
+      createdAt: "2026-10-27T09:00:00.000Z",
+      updatedAt: "2026-10-27T09:00:00.000Z",
+    });
+    const queue = new TaskMutationQueue(contextRoot, project);
+    queue.enqueue({
+      projectId: project.id,
+      cardId: "orphan-card",
+      eventId: "implementation:orphan-card:e84ba7c9750946cc",
+      operationKey: "task-session:orphan-card:e84ba7c9750946cc",
+      kind: "implementation",
+      enqueuedAt: "2026-10-27T09:00:00.000Z",
+    });
+    queue.claimNext();
+    const queuePath = path.join(
+      contextRoot,
+      "task-mutation-queues",
+      `${project.id}.json`,
+    );
+    const persistedQueue = JSON.parse(fs.readFileSync(queuePath, "utf8")) as {
+      events: Array<{
+        eventId: string;
+        ownerToken?: string;
+        ownerPid?: number;
+      }>;
+    };
+    const persistedOrphan = persistedQueue.events.find(
+      (item) => item.eventId === "implementation:orphan-card:e84ba7c9750946cc",
+    )!;
+    // Model the persisted queue after process/container restart: a different
+    // process instance may reuse its PID, but not the in-memory owner token.
+    persistedOrphan.ownerToken = "00000000-0000-4000-8000-000000000001";
+    persistedOrphan.ownerPid = process.pid;
+    fs.writeFileSync(queuePath, JSON.stringify(persistedQueue), "utf8");
+    queue.enqueue({
+      projectId: project.id,
+      cardId: card.id,
+      eventId: `terminal-pr:${card.id}:MERGED:${headSha}`,
+      operationKey: `merged-operation:MERGED:${headSha}`,
+      kind: "terminal-pr",
+      enqueuedAt: "2026-10-27T09:01:00.000Z",
+    });
+    const poll = () =>
+      runTaskSessionWorkflow({
+        project,
+        trello,
+        git,
+        github,
+        openCode: new OpenCodeClient(vi.fn()),
+        commands: new CommandRunner(vi.fn()),
+        signal: new AbortController().signal,
+        prepareAttachmentContext: async () => undefined,
+      });
+
+    await poll();
+
+    expect(
+      queue.list().find((item) => item.cardId === "orphan-card")?.status,
+    ).toBe("completed");
+    expect(
+      queue.list().find((item) => item.kind === "terminal-pr")?.status,
+    ).toBe("completed");
+    expect(currentList).toBe(project.trello.doneListId);
+    expect(trello.moveCard).toHaveBeenCalledTimes(1);
+    expect(taskStore.read(card.id)?.phase).toBe("done");
+  });
+
+  it("defers merged cleanup without callbacks or repeated warnings, then completes once the live owner releases", async () => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "terminal-queue-defer-"));
+    const repositoryPath = path.join(root, "repo");
+    const contextRoot = path.join(root, "state");
+    const worktreeRoot = path.join(root, "worktrees");
+    fs.mkdirSync(repositoryPath);
+    const project = {
+      id: "deferred-project",
+      autoMerge: false,
+      contextRoot,
+      trello: {
+        boardId: "board",
+        backlogListId: "backlog",
+        readyListId: "ready",
+        workingListId: "working",
+        reviewListId: "review",
+        failedListId: "failed",
+        doneListId: "done",
+        refinementLabelId: "refinement",
+        featureLabelId: "feature",
+        improvementLabelId: "improvement",
+        bugLabelId: "bug",
+      },
+      repository: {
+        path: repositoryPath,
+        github: "owner/repo",
+        defaultBranch: "main",
+        worktreeRoot,
+        validationCommand: "yarn validate",
+        gitIdentity: { name: "Agent", email: "agent@example.test" },
+      },
+      opencode: {
+        refinement: { model: "refine", variant: "high" },
+        implementation: { model: "implement", variant: "high" },
+        review: { model: "review", variant: "high" },
+        remediation: { model: "repair", variant: "high", maxPasses: 1 },
+        commit: { model: "commit", variant: "low" },
+        timeoutMinutes: 1,
+      },
+    } as ProjectConfig & { contextRoot: string };
+    const card: TrelloCard = {
+      id: "deferred-card",
+      name: "Merged task",
+      desc: "Task body",
+      idList: "review",
+      idLabels: [],
+      url: "https://trello.example/deferred-card",
+    };
+    let currentList = "review";
+    const trello = {
+      getCards: vi.fn(async (listId: string) =>
+        listId === currentList ? [{ ...card, idList: currentList }] : [],
+      ),
+      moveCard: vi.fn(async (_cardId: string, listId: string) => {
+        currentList = listId;
+        return { ...card, idList: listId };
+      }),
+      addComment: vi.fn(async () => undefined),
+    } as unknown as TrelloClient;
+    const headSha = "c".repeat(40);
+    const github = {
+      findPullRequestState: vi.fn(async () => ({
+        url: "https://github.com/owner/repo/pull/8",
+        state: "MERGED" as const,
+        mergedAt: "2026-10-27T12:00:00Z",
+        headRefOid: headSha,
+        baseRefName: "main",
+        headRefName: `agent/${card.id}`,
+        headRepository: { name: "repo" },
+        headRepositoryOwner: { login: "owner" },
+      })),
+      getPullRequestCommitShas: vi.fn(async () => [headSha]),
+      isAncestorCommit: vi.fn(async () => true),
+      getCiObservations: vi.fn(async () => {
+        throw new Error("CI must not be queried");
+      }),
+    } as unknown as GitHubClient;
+    const git = {
+      remoteBranchExists: vi.fn(async () => false),
+      pruneWorktrees: vi.fn(async () => undefined),
+      branchExists: vi.fn(async () => false),
+    } as unknown as GitClient;
+    const taskStore = new TaskExecutionStore(contextRoot, project);
+    taskStore.create({
+      version: 1,
+      projectId: project.id,
+      cardId: card.id,
+      phase: "ci",
+      primarySessionId: "session",
+      sessionCreationStatus: "bound",
+      expectedBranch: `agent/${card.id}`,
+      pullRequest: {
+        number: 8,
+        url: "https://github.com/owner/repo/pull/8",
+        headSha,
+      },
+      operationKey: "deferred-operation",
+      revision: 1,
+      retryCounters: { validation: 0, review: 0, ci: 0, humanFeedback: 0 },
+      createdAt: "2026-10-27T09:00:00.000Z",
+      updatedAt: "2026-10-27T09:00:00.000Z",
+    });
+    const queue = new TaskMutationQueue(contextRoot, project);
+    queue.enqueue({
+      projectId: project.id,
+      cardId: "live-owner-card",
+      eventId: "feedback:live-owner",
+      operationKey: "live-owner-operation",
+      kind: "feedback",
+      enqueuedAt: "2026-10-27T08:00:00.000Z",
+    });
+    const owner = queue.claimNext();
+    expect(owner?.status).toBe("active");
+    const onCardLeft = vi.fn();
+    const poll = () =>
+      runTaskSessionWorkflow({
+        project,
+        trello,
+        git,
+        github,
+        openCode: new OpenCodeClient(vi.fn()),
+        commands: new CommandRunner(vi.fn()),
+        signal: new AbortController().signal,
+        prepareAttachmentContext: async () => undefined,
+        onHumanReviewCardLeft: onCardLeft,
+      });
+    const warning = vi.spyOn(Logger.prototype, "warn");
+
+    await poll();
+    await poll();
+
+    expect(onCardLeft).not.toHaveBeenCalled();
+    expect(trello.moveCard).not.toHaveBeenCalled();
+    expect(
+      warning.mock.calls.filter(([message]) =>
+        String(message).includes("Deferred merged PR cleanup"),
+      ),
+    ).toHaveLength(1);
+    expect(
+      queue.list().find((item) => item.kind === "terminal-pr")?.status,
+    ).toBe("queued");
+
+    queue.complete(owner!.eventId);
+    await poll();
+    await poll();
+
+    expect(currentList).toBe(project.trello.doneListId);
+    expect(trello.moveCard).toHaveBeenCalledTimes(1);
+    expect(trello.addComment).not.toHaveBeenCalled();
+    expect(onCardLeft).toHaveBeenCalledTimes(1);
+    expect(taskStore.read(card.id)?.phase).toBe("done");
+  });
+
   it.each([
     {
       state: "MERGED" as const,
@@ -139,6 +458,7 @@ describe("task-session terminal PR reconciliation", () => {
         updatedAt: "2026-10-24T09:00:00.000Z",
       });
 
+      const onCardLeft = vi.fn();
       const poll = () =>
         runTaskSessionWorkflow({
           project,
@@ -149,6 +469,7 @@ describe("task-session terminal PR reconciliation", () => {
           commands: new CommandRunner(vi.fn()),
           signal: new AbortController().signal,
           prepareAttachmentContext: async () => undefined,
+          onHumanReviewCardLeft: onCardLeft,
         });
       const lifecycleEvent = vi.spyOn(Logger.prototype, "event");
 
@@ -158,6 +479,7 @@ describe("task-session terminal PR reconciliation", () => {
         );
         expect(currentList).toBe(project.trello.doneListId);
       }
+      await poll();
       await poll();
 
       const destinationEvent =
@@ -181,6 +503,7 @@ describe("task-session terminal PR reconciliation", () => {
         ...(destination === "done" ? [{ dueComplete: true }] : []),
       );
       expect(github.getCiObservations).not.toHaveBeenCalled();
+      expect(onCardLeft).toHaveBeenCalledTimes(1);
       if (state === "MERGED") {
         expect(github.isAncestorCommit).toHaveBeenCalled();
       }
