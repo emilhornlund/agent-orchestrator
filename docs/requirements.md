@@ -232,3 +232,9 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - Only one orchestrator instance may actively own and process a given project at a time, including when another instance is running locally or in Docker on the same machine.
 - A second instance must respect existing project ownership rather than claiming tasks. Crash recovery and ownership release must be safe; ambiguous ownership must prevent competing execution.
 - Multiple-machine coordination is out of scope for now and can be considered later. Ordinary single-machine operation must not require a shared database.
+
+## Configuration changes and runtime isolation
+
+- Configuration is loaded and validated at startup. Changes made while the orchestrator is running only take effect after a restart; live configuration reload is not supported.
+- Active tasks must be preserved across restarts and resumed safely with the new configuration.
+- Runtime failures affecting one project, such as unavailable Trello resources or expired GitHub credentials, must not unnecessarily stop other healthy projects from operating.
