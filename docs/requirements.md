@@ -259,3 +259,8 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - If essential information is still missing, post an actionable Trello comment explaining what needs clarification and move the card to `Failed`. The user may clarify it and explicitly return it to `Ready for Agent` later.
 - Trello comments are reserved for meaningful outcomes or situations requiring attention, such as refinement completion, task failures, missing information, and PR closure.
 - Routine operations such as validation, AI reviews, and retries belong in execution logs rather than generating noisy card comments.
+
+## Trello card content during execution
+
+- Implementation, validation, review, CI repair, and PR maintenance must never change a Trello card's title or description. Only an explicit refinement workflow may update them.
+- Trello comments are limited to meaningful events, such as failure and clarification requests, PR publication or transition to human review, and PR closure. Do not comment on every internal activity or progress step; keep detailed progress in execution logs.
