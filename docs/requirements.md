@@ -216,3 +216,10 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - Preserve completed work and workflow progress; never restart from scratch or repeat completed operations unnecessarily.
 - Apply the same recovery-first approach to other components, including Git, GitHub, Trello, child processes, and persistent workflow state.
 - Recovery must remain safe and evidence-based. If the correct state cannot be established, preserve evidence and report the blockage instead of guessing.
+
+## Application upgrades and shutdown
+
+- New versions must safely resume tasks started by earlier versions. Persisted workflow state must remain backward-compatible or be migrated safely, preserving task ownership, AI sessions, Git state, and progress.
+- Failed or unsupported migrations must preserve the original state and report the problem rather than corrupting it. Unaffected projects continue where safe.
+- On shutdown or deployment restart, including Docker termination signals, stop claiming new tasks, safely interrupt active child processes, and preserve the execution state necessary for recovery.
+- Release resources only when safe and automatically resume interrupted work on the next startup.
