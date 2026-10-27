@@ -298,3 +298,10 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - Each project has one execution queue coordinating all operations on its active task, including human-requested changes, CI repairs, rebasing, and conflict resolution. Never run concurrent operations that modify the same project or lose pending work.
 - Prioritize queued operations by default: human-requested changes first, CI repairs second, and routine PR maintenance third.
 - Prerequisite operations may run ahead of that order when necessary to safely complete higher-priority work, such as rebasing before applying requested changes.
+
+## Feedback arriving during remediation
+
+- Additional human feedback arriving while the agent is working is recorded and queued without interrupting the active OpenCode operation.
+- After the current operation, process new and still-actionable feedback automatically, without losing requests or unnecessarily repeating completed work.
+- An independent AI reviewer verifies that each human-requested change has actually been fulfilled before it is treated as resolved.
+- Unresolved requests receive bounded internal correction attempts, and any remaining findings must be reported clearly on the existing PR rather than silently marked complete.
