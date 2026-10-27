@@ -16,6 +16,7 @@ import {
 import type { TrelloCard } from "../trello/trello-client.js";
 import { TaskExecutionStore } from "../task-session/task-execution-store.js";
 import { logger } from "../logging/logger.js";
+import { verifyMergedTaskPrHeadContinuity } from "./verify-merged-task-pr-head-continuity.js";
 
 const reportedOutdatedPullRequests = new Map<string, string>();
 
@@ -110,7 +111,7 @@ export async function observeTaskSessionReviewCards(
       if (
         pullRequest.baseRefName !== project.repository.defaultBranch ||
         pullRequest.headRefName !== `agent/${card.id}` ||
-        pullRequest.headRefOid !== headSha ||
+        pullRequest.headRefOid === undefined ||
         pullRequest.headRepository?.name !== repository ||
         pullRequest.headRepositoryOwner?.login !== owner ||
         (pullRequest.state === "MERGED" && pullRequest.mergedAt === null) ||
@@ -118,6 +119,20 @@ export async function observeTaskSessionReviewCards(
       ) {
         throw new Error(
           `Terminal pull request metadata or ownership is ambiguous for Human Review card ${card.id}`,
+        );
+      }
+      if (pullRequest.state === "MERGED") {
+        await verifyMergedTaskPrHeadContinuity({
+          github,
+          project,
+          cwd: lookup.cwd,
+          pullRequestNumber: record.pullRequest.number,
+          recordedHeadSha: headSha,
+          mergedHeadSha: pullRequest.headRefOid,
+        });
+      } else if (pullRequest.headRefOid !== headSha) {
+        throw new Error(
+          `Closed pull request head changed for Human Review card ${card.id}`,
         );
       }
       observed.push({

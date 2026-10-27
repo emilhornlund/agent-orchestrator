@@ -105,6 +105,7 @@ import {
   requeueInterruptedPreparedPrMaintenance,
 } from "./maintain-outdated-pr.js";
 import { reconcileUnobservedTerminalPrEvents } from "./reconcile-unobserved-terminal-pr.js";
+import { verifyMergedTaskPrHeadContinuity } from "./verify-merged-task-pr-head-continuity.js";
 
 const lastLoggedCiState = new Map<string, string>();
 const reportedMissingMaintenancePlans = new Set<string>();
@@ -168,6 +169,7 @@ async function completeMergedTaskSession(options: {
   taskStore: TaskExecutionStore;
   trello: TrelloClient;
   git: GitClient;
+  github: GitHubClient;
   project: ProjectConfig;
   card: TrelloCard;
   pullRequest: PullRequestState;
@@ -196,12 +198,19 @@ async function completeMergedTaskSession(options: {
     pullRequest.mergedAt === null ||
     pullRequest.baseRefName !== project.repository.defaultBranch ||
     pullRequest.headRefName !== `agent/${card.id}` ||
-    headSha !== record.pullRequest.headSha ||
     pullRequest.headRepository?.name !== repository ||
     pullRequest.headRepositoryOwner?.login !== owner
   ) {
     throw new Error(`Merged pull request identity is ambiguous for ${card.id}`);
   }
+  await verifyMergedTaskPrHeadContinuity({
+    github: options.github,
+    project,
+    cwd: project.repository.path,
+    pullRequestNumber: record.pullRequest.number,
+    recordedHeadSha: record.pullRequest.headSha!,
+    mergedHeadSha: headSha,
+  });
   const terminalEvent = queue.enqueue({
     projectId: project.id,
     cardId: card.id,
@@ -690,17 +699,34 @@ export async function runTaskSessionWorkflow(
       project,
     });
     const expectedState = isMerged ? "MERGED" : "CLOSED";
+    const terminalHead = authoritative?.headRefOid;
+    const expectedEventId = `terminal-pr:${cardId}:${expectedState}:${terminalHead}`;
+    const expectedOperationKey = `${record.operationKey}:${expectedState}:${terminalHead}`;
     if (
       authoritative === null ||
       authoritative.state !== expectedState ||
       authoritative.url !== record.pullRequest.url ||
       authoritative.baseRefName !== project.repository.defaultBranch ||
       authoritative.headRefName !== `agent/${cardId}` ||
-      authoritative.headRefOid !== record.pullRequest.headSha
+      authoritative.headRefOid === undefined ||
+      pendingTerminalMutation.eventId !== expectedEventId ||
+      pendingTerminalMutation.operationKey !== expectedOperationKey
     ) {
       throw new Error(
         `Persisted terminal PR mutation no longer matches authoritative PR state for ${cardId}`,
       );
+    }
+    if (isMerged) {
+      await verifyMergedTaskPrHeadContinuity({
+        github,
+        project,
+        cwd: project.repository.path,
+        pullRequestNumber: record.pullRequest.number,
+        recordedHeadSha: record.pullRequest.headSha!,
+        mergedHeadSha: authoritative.headRefOid,
+      });
+    } else if (authoritative.headRefOid !== record.pullRequest.headSha) {
+      throw new Error(`Persisted closed PR head changed for ${cardId}`);
     }
     const recoveredTerminalMutation = queue.claimForRecovery(
       pendingTerminalMutation.eventId,
@@ -709,6 +735,7 @@ export async function runTaskSessionWorkflow(
       try {
         if (isMerged) {
           await completeMergedTaskSession({
+            github,
             queue,
             taskStore,
             trello,
@@ -778,6 +805,7 @@ export async function runTaskSessionWorkflow(
       });
       if (observation.state === "MERGED") {
         await completeMergedTaskSession({
+          github,
           queue,
           taskStore,
           trello,
@@ -1513,6 +1541,7 @@ export async function runTaskSessionWorkflow(
       throw new Error(`Could not verify merged pull request for ${card.id}`);
     }
     await completeMergedTaskSession({
+      github,
       queue,
       taskStore,
       trello,
@@ -3588,6 +3617,7 @@ export async function runTaskSessionWorkflow(
           );
         }
         await completeMergedTaskSession({
+          github,
           queue,
           taskStore,
           trello,
