@@ -706,8 +706,10 @@ export class PrMaintenanceStore {
       operations.some((operation) => operation.projectId !== this.projectId) ||
       new Set(operations.map((operation) => operation.operationId)).size !==
         operations.length ||
-      operations.filter((operation) => operation.status !== "completed")
-        .length > 1
+      operations.filter(
+        (operation) =>
+          operation.status !== "completed" && operation.status !== "cancelled",
+      ).length > 1
     )
       throw new Error("Invalid PR maintenance operation ownership or history");
     return { ...parsed, operations };

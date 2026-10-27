@@ -252,6 +252,52 @@ describe("PrMaintenanceStore", () => {
     ).toThrow(/already owns this project/);
   });
 
+  it("accepts cancelled history followed by one replacement across restarts", () => {
+    const { store, contextRoot, project } = setup();
+    store.create(operation());
+    store.advance("maintenance-1", "prepared", "active", identity());
+    store.recordLocalPreparation("maintenance-1", identity(), {
+      status: "prepared",
+      originalHead: sha("a"),
+      baseHead: sha("b"),
+      resultingHead: sha("c"),
+      updatedAt: new Date().toISOString(),
+    });
+    store.recordQualityVerification("maintenance-1", identity(), {
+      status: "failed",
+      preparedHead: sha("c"),
+      contentIdentity: `sha256:${"f".repeat(64)}`,
+      startedAt: new Date().toISOString(),
+      completedAt: new Date().toISOString(),
+      diagnostic: "Review verdict unavailable",
+    });
+    store.advance("maintenance-1", "active", "uncertain", identity());
+    expect(
+      store.cancelFailedUnpublished("maintenance-1", identity()).status,
+    ).toBe("cancelled");
+
+    const replacement = store.create(
+      operation({ operationId: "maintenance-2", targetBaseHead: sha("d") }),
+    );
+    expect(replacement.status).toBe("prepared");
+    const restarted = new PrMaintenanceStore(contextRoot, project);
+    expect(restarted.inspect().map(({ status }) => status)).toEqual([
+      "cancelled",
+      "prepared",
+    ]);
+    expect(() =>
+      restarted.create(operation({ operationId: "maintenance-3" })),
+    ).toThrow(/already owns this project/);
+    expect(
+      restarted.advance(
+        "maintenance-2",
+        "prepared",
+        "active",
+        identity({ targetBaseHead: sha("d") }),
+      ).status,
+    ).toBe("active");
+  });
+
   it("completes idempotently and permits a subsequent operation", () => {
     const { store } = setup();
     store.create(operation());
