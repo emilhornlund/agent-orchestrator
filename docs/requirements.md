@@ -264,3 +264,10 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 
 - Implementation, validation, review, CI repair, and PR maintenance must never change a Trello card's title or description. Only an explicit refinement workflow may update them.
 - Trello comments are limited to meaningful events, such as failure and clarification requests, PR publication or transition to human review, and PR closure. Do not comment on every internal activity or progress step; keep detailed progress in execution logs.
+
+## Cross-service consistency
+
+- Successfully completed external operations must be preserved even when subsequent steps fail. For example, if GitHub creates a PR but Trello cannot move the card to `Human Review`, retain the PR identity and retry the Trello transition safely.
+- Never duplicate pull requests, commits, or other completed side effects merely because later workflow updates fail.
+- Keep the affected project's next task blocked until GitHub, Trello, and persisted execution state are safely reconciled; automatically resume once consistency is verified.
+- Apply this principle to all cross-service workflow transitions, not just PR publication.
