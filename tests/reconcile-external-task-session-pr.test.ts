@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProjectConfig } from "../src/config/config.js";
 import type {
+  CiObservationsResult,
   GitHubClient,
   PullRequestState,
 } from "../src/github/github-client.js";
@@ -77,7 +78,35 @@ function fixture(options: { mutationPending?: boolean } = {}) {
   const moveCard = vi.fn(async () => undefined);
   const github = {
     getPullRequestStateByNumber: vi.fn(async () => pullRequest),
-  } as unknown as Pick<GitHubClient, "getPullRequestStateByNumber">;
+    getPullRequestCommitShas: vi.fn(async () => ["b".repeat(40)]),
+    getCiObservations: vi.fn(async ({ headSha }: { headSha: string }) => ({
+      headSha,
+      checks: [
+        {
+          source: "check-run" as const,
+          id: 1,
+          name: "Build",
+          headSha,
+          status: "completed",
+          conclusion: "success",
+          url: null,
+        },
+      ],
+      expectationSources: [
+        {
+          kind: "workflow-contract" as const,
+          sourceId: "workflow:ci.yml",
+          complete: true,
+          checkNames: ["Build"],
+        },
+      ],
+    })),
+  } as unknown as Pick<
+    GitHubClient,
+    | "getPullRequestStateByNumber"
+    | "getPullRequestCommitShas"
+    | "getCiObservations"
+  >;
   const git = {
     hasEquivalentImplementationCommit: vi.fn(async () => true),
   } as unknown as Pick<GitClient, "hasEquivalentImplementationCommit">;
@@ -109,12 +138,47 @@ function fixture(options: { mutationPending?: boolean } = {}) {
     project,
     taskStore,
     queue,
+    runtimeRoot: path.join(root, "runtime"),
     pullRequest,
     github,
     git,
     moveCard,
     association,
     reconcile,
+  };
+}
+
+function ciEvidence(
+  status: "pending" | "failed" | "missing" | "ambiguous",
+): CiObservationsResult {
+  const headSha = "b".repeat(40);
+  return {
+    headSha,
+    checks:
+      status === "missing" || status === "ambiguous"
+        ? []
+        : [
+            {
+              source: "check-run",
+              id: 1,
+              name: "Build",
+              headSha,
+              status: status === "pending" ? "in_progress" : "completed",
+              conclusion: status === "failed" ? "failure" : null,
+              url: null,
+            },
+          ],
+    expectationSources:
+      status === "ambiguous"
+        ? []
+        : [
+            {
+              kind: "workflow-contract",
+              sourceId: "workflow:ci.yml",
+              complete: true,
+              checkNames: ["Build"],
+            },
+          ],
   };
 }
 
@@ -137,7 +201,11 @@ describe("reconcileExternalTaskSessionPullRequest", () => {
       implementationCommit: "a".repeat(40),
       pullRequestNumber: 18,
       pullRequestHeadSha: "b".repeat(40),
+      pullRequestCommitShas: ["b".repeat(40)],
     });
+    expect(f.github.getCiObservations).toHaveBeenCalledWith(
+      expect.objectContaining({ headSha: "b".repeat(40) }),
+    );
     expect(f.queue.list()[0]?.status).toBe("completed");
   });
 
@@ -174,6 +242,63 @@ describe("reconcileExternalTaskSessionPullRequest", () => {
     expect(f.taskStore.read("card")?.externalRecovery).toBeUndefined();
     expect(f.moveCard).not.toHaveBeenCalled();
   });
+
+  it("rejects a missing implementation association without changing state", async () => {
+    const f = fixture();
+    const before = f.taskStore.read("card");
+    await expect(
+      f.reconcile({
+        association: {
+          ...f.association,
+          implementationCommit: undefined,
+        } as unknown as typeof f.association,
+      }),
+    ).rejects.toThrow("association is invalid");
+    expect(f.taskStore.read("card")).toEqual(before);
+    expect(f.queue.list()[0]?.status).toBe("completed");
+    expect(f.github.getPullRequestStateByNumber).not.toHaveBeenCalled();
+    expect(f.moveCard).not.toHaveBeenCalled();
+  });
+
+  it("rejects a conflicting persisted recovery association without changing it", async () => {
+    const f = fixture();
+    const current = f.taskStore.read("card");
+    expect(current).not.toBeNull();
+    const conflicting = f.taskStore.compareAndSwap("card", current!.revision, {
+      ...current!,
+      externalRecovery: {
+        implementationCommit: "d".repeat(40),
+        recoveryBranch: "recovery/other",
+        pullRequestNumber: 19,
+        pullRequestUrl: "https://github.com/owner/repository/pull/19",
+        status: "verified",
+        requestedAt: "2026-10-25T00:00:00.000Z",
+      },
+      revision: current!.revision + 1,
+      updatedAt: "2026-10-25T00:00:01.000Z",
+    });
+    await expect(f.reconcile()).rejects.toThrow(
+      "Conflicting external recovery",
+    );
+    expect(f.taskStore.read("card")).toEqual(conflicting);
+    expect(f.moveCard).not.toHaveBeenCalled();
+  });
+
+  it.each(["pending", "failed", "missing", "ambiguous"] as const)(
+    "rejects %s PR-head CI evidence before any recovery mutation",
+    async (status) => {
+      const f = fixture();
+      vi.mocked(f.github.getCiObservations).mockResolvedValueOnce(
+        ciEvidence(status),
+      );
+      await expect(f.reconcile()).rejects.toThrow(
+        "publication checks are not verified",
+      );
+      expect(f.taskStore.read("card")?.externalRecovery).toBeUndefined();
+      expect(f.moveCard).not.toHaveBeenCalled();
+      expect(f.queue.list()[0]?.status).toBe("completed");
+    },
+  );
 
   it("rejects reconciliation while a live mutation owns the project queue", async () => {
     const f = fixture();
@@ -232,7 +357,7 @@ describe("reconcileExternalTaskSessionPullRequest", () => {
       headRefOid: undefined,
     } as unknown as PullRequestState);
     await expect(missingHead.reconcile()).rejects.toThrow(
-      "changes do not match",
+      "incomplete commit evidence",
     );
     expect(
       missingHead.taskStore.read("card")?.externalRecovery,
@@ -291,21 +416,25 @@ describe("reconcileExternalTaskSessionPullRequest", () => {
     expect(f.queue.list()[0]?.status).toBe("completed");
   });
 
-  it("resumes queue retirement after the record reached Done", async () => {
+  it("resumes queue retirement after the record reached Done with fresh stores", async () => {
     const f = fixture({ mutationPending: true });
-    const complete = f.queue.complete.bind(f.queue);
     vi.spyOn(f.queue, "complete").mockImplementationOnce(() => {
       throw new Error("simulated interruption while retiring queue event");
     });
     await expect(f.reconcile()).rejects.toThrow("simulated interruption");
     expect(f.taskStore.read("card")?.phase).toBe("done");
-    expect(f.queue.list()[0]?.status).toBe("failed");
+    expect(f.queue.list()[0]).toMatchObject({ status: "active" });
+    expect(f.queue.list()[0]?.ownerToken).toBeUndefined();
 
-    vi.mocked(f.queue.complete).mockImplementationOnce((eventId) =>
-      complete(eventId),
-    );
-    await f.reconcile({ readTrelloListId: async () => "done" });
+    const freshQueue = new TaskMutationQueue(f.runtimeRoot, f.project);
+    const freshTaskStore = new TaskExecutionStore(f.runtimeRoot, f.project);
+    await f.reconcile({
+      queue: freshQueue,
+      taskStore: freshTaskStore,
+      readTrelloListId: async () => "done",
+    });
     expect(f.moveCard).toHaveBeenCalledOnce();
-    expect(f.queue.list()[0]?.status).toBe("completed");
+    expect(f.github.getCiObservations).toHaveBeenCalledOnce();
+    expect(freshQueue.list()[0]?.status).toBe("completed");
   });
 });

@@ -1,5 +1,12 @@
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { haveEquivalentImplementationChanges } from "../src/git/implementation-change-equivalence.js";
+import {
+  haveEquivalentImplementationChanges,
+  isCompletePullRequestCommitRange,
+} from "../src/git/implementation-change-equivalence.js";
 
 describe("haveEquivalentImplementationChanges", () => {
   const original = [
@@ -37,5 +44,91 @@ describe("haveEquivalentImplementationChanges", () => {
         original.replace("index 1111111..2222222 100644", "GIT binary patch"),
       ),
     ).toBe(false);
+  });
+
+  it("detects an unrelated earlier commit in a real multi-commit PR history", () => {
+    const repository = fs.mkdtempSync(
+      path.join(os.tmpdir(), "implementation-range-history-"),
+    );
+    const git = (args: string[]) =>
+      execFileSync("git", ["-C", repository, ...args], {
+        encoding: "utf8",
+      }).trim();
+    try {
+      execFileSync("git", ["init", "--quiet", repository]);
+      git(["config", "user.name", "Recovery Test"]);
+      git(["config", "user.email", "recovery@example.test"]);
+      fs.writeFileSync(path.join(repository, "implementation.txt"), "before\n");
+      fs.writeFileSync(path.join(repository, "base.txt"), "base\n");
+      git(["add", "."]);
+      git(["commit", "--quiet", "-m", "base"]);
+      const base = git(["rev-parse", "HEAD"]);
+
+      git(["checkout", "--quiet", "-b", "original-implementation"]);
+      fs.writeFileSync(path.join(repository, "implementation.txt"), "after\n");
+      git(["add", "implementation.txt"]);
+      git(["commit", "--quiet", "-m", "task implementation"]);
+      const implementation = git(["rev-parse", "HEAD"]);
+      const originalChange = git([
+        "diff",
+        "--no-ext-diff",
+        "--no-renames",
+        "--no-color",
+        "--unified=0",
+        `${implementation}^`,
+        implementation,
+      ]);
+
+      git(["checkout", "--quiet", "-b", "recovery", base]);
+      fs.writeFileSync(path.join(repository, "unrelated.txt"), "unrelated\n");
+      git(["add", "unrelated.txt"]);
+      git(["commit", "--quiet", "-m", "unrelated earlier PR change"]);
+      fs.writeFileSync(path.join(repository, "implementation.txt"), "after\n");
+      git(["add", "implementation.txt"]);
+      git(["commit", "--quiet", "-m", "rebased implementation"]);
+      const head = git(["rev-parse", "HEAD"]);
+      const completeCommitRange = git([
+        "rev-list",
+        "--reverse",
+        `${base}..${head}`,
+      ]).split("\n");
+      const fullChangeSet = git([
+        "diff",
+        "--no-ext-diff",
+        "--no-renames",
+        "--no-color",
+        "--unified=0",
+        base,
+        head,
+      ]);
+      const lastCommitOnly = git([
+        "diff",
+        "--no-ext-diff",
+        "--no-renames",
+        "--no-color",
+        "--unified=0",
+        `${head}^`,
+        head,
+      ]);
+
+      expect(
+        haveEquivalentImplementationChanges(originalChange, lastCommitOnly),
+      ).toBe(true);
+      expect(
+        haveEquivalentImplementationChanges(originalChange, fullChangeSet),
+      ).toBe(false);
+      expect(
+        isCompletePullRequestCommitRange(
+          completeCommitRange,
+          completeCommitRange,
+          head,
+        ),
+      ).toBe(true);
+      expect(
+        isCompletePullRequestCommitRange([head], completeCommitRange, head),
+      ).toBe(false);
+    } finally {
+      fs.rmSync(repository, { recursive: true, force: true });
+    }
   });
 });

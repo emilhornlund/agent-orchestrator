@@ -80,3 +80,27 @@ export function haveEquivalentImplementationChanges(
   const recovered = canonicalize(recoveredPatch);
   return original !== null && recovered !== null && original === recovered;
 }
+
+/** Require GitHub's commit evidence to enumerate the complete base-to-head range. */
+export function isCompletePullRequestCommitRange(
+  pullRequestCommitShas: readonly string[],
+  rangeCommitShas: readonly string[],
+  pullRequestHeadSha: string,
+): boolean {
+  if (
+    pullRequestCommitShas.length === 0 ||
+    rangeCommitShas.length !== pullRequestCommitShas.length ||
+    rangeCommitShas.at(-1)?.toLowerCase() !== pullRequestHeadSha.toLowerCase()
+  ) {
+    return false;
+  }
+  const expected = new Set(
+    pullRequestCommitShas.map((sha) => sha.toLowerCase()),
+  );
+  return (
+    expected.size === pullRequestCommitShas.length &&
+    rangeCommitShas.every((sha) => expected.has(sha.toLowerCase())) &&
+    new Set(rangeCommitShas.map((sha) => sha.toLowerCase())).size ===
+      rangeCommitShas.length
+  );
+}

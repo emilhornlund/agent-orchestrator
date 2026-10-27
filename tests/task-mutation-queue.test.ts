@@ -103,6 +103,29 @@ describe("TaskMutationQueue", () => {
     expect(restarted.claimNext()?.eventId).toBe("second");
   });
 
+  it("reclaims a released completed-task owner from a fresh queue instance", () => {
+    const queue = queueFor("project-a");
+    queue.enqueue(
+      task(
+        "project-a",
+        "complete-after-restart",
+        "card-one",
+        "2026-10-24T09:00:00.000Z",
+      ),
+    );
+    queue.claimNext();
+    queue.releaseForRecovery("complete-after-restart");
+
+    const restarted = queueFor("project-a");
+    expect(restarted.claimForRecovery("complete-after-restart")).toMatchObject({
+      eventId: "complete-after-restart",
+      status: "active",
+    });
+    expect(restarted.getActive()?.ownerToken).toBeDefined();
+    restarted.complete("complete-after-restart");
+    expect(restarted.list()[0]?.status).toBe("completed");
+  });
+
   it("does not steal a different active event during restart recovery", () => {
     const queue = queueFor("project-a");
     queue.enqueue(

@@ -5,6 +5,8 @@ import type { TaskExecutionStore } from "../task-session/task-execution-store.js
 import type { TaskMutationQueue } from "../task-session/task-mutation-queue.js";
 import type { TrelloClient } from "../trello/trello-client.js";
 import { transitionTaskExecutionRecord } from "../task-session/task-execution-transition.js";
+import { establishCiCheckExpectations } from "../github/ci-check-expectations.js";
+import { evaluateCiChecks } from "../github/evaluate-ci-checks.js";
 
 export interface ExternalTaskSessionRecoveryAssociation {
   projectId: string;
@@ -24,7 +26,12 @@ export interface ExternalTaskSessionRecoveryAssociation {
 export async function reconcileExternalTaskSessionPullRequest(options: {
   project: ProjectConfig;
   association: ExternalTaskSessionRecoveryAssociation;
-  github: Pick<GitHubClient, "getPullRequestStateByNumber">;
+  github: Pick<
+    GitHubClient,
+    | "getPullRequestStateByNumber"
+    | "getPullRequestCommitShas"
+    | "getCiObservations"
+  >;
   git: Pick<GitClient, "hasEquivalentImplementationCommit">;
   taskStore: TaskExecutionStore;
   queue: TaskMutationQueue;
@@ -34,13 +41,17 @@ export async function reconcileExternalTaskSessionPullRequest(options: {
 }): Promise<void> {
   const { project, association, taskStore, queue } = options;
   if (
+    typeof association.projectId !== "string" ||
     association.projectId !== project.id ||
+    typeof association.cardId !== "string" ||
     association.cardId.trim() !== association.cardId ||
+    typeof association.implementationCommit !== "string" ||
     association.implementationCommit.trim() !==
       association.implementationCommit ||
     !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu.test(
       association.implementationCommit,
     ) ||
+    typeof association.recoveryBranch !== "string" ||
     association.recoveryBranch.trim() !== association.recoveryBranch ||
     association.recoveryBranch.length === 0 ||
     association.pullRequestNumber < 1 ||
@@ -59,6 +70,53 @@ export async function reconcileExternalTaskSessionPullRequest(options: {
     throw new Error(
       "External recovery does not match an attention-required task",
     );
+  }
+
+  if (record.phase === "done") {
+    const completedRecovery = record.externalRecovery;
+    if (
+      completedRecovery === undefined ||
+      completedRecovery.status !== "card-moved" ||
+      completedRecovery.implementationCommit !==
+        association.implementationCommit ||
+      completedRecovery.recoveryBranch !== association.recoveryBranch ||
+      completedRecovery.pullRequestNumber !== association.pullRequestNumber
+    ) {
+      throw new Error(
+        "Completed task has no matching persisted recovery evidence",
+      );
+    }
+    const matchingEvents = queue
+      .list()
+      .filter(
+        (event) =>
+          event.projectId === project.id &&
+          event.cardId === association.cardId &&
+          event.kind === "implementation" &&
+          event.operationKey === record.operationKey,
+      );
+    if (matchingEvents.length !== 1)
+      throw new Error(
+        "External recovery requires exactly one matching mutation event",
+      );
+    const mutation = matchingEvents[0]!;
+    if (mutation.status === "completed") return;
+    const active = queue.getActive();
+    if (active !== null && active.eventId !== mutation.eventId)
+      throw new Error("Another worker owns the project mutation queue");
+    const claimed = queue.claimForRecovery(mutation.eventId);
+    if (claimed === null)
+      throw new Error(
+        "Original implementation mutation is still owned by a live worker",
+      );
+    try {
+      queue.complete(mutation.eventId);
+    } catch (error) {
+      if (queue.ownsActive(mutation.eventId))
+        queue.releaseForRecovery(mutation.eventId);
+      throw error;
+    }
+    return;
   }
 
   const [repositoryOwner, repositoryName] =
@@ -89,6 +147,22 @@ export async function reconcileExternalTaskSessionPullRequest(options: {
     );
   }
 
+  const pullRequestCommitShas = await options.github.getPullRequestCommitShas({
+    cwd: project.repository.path,
+    repository: project.repository.github,
+    pullRequestNumber: association.pullRequestNumber,
+    project,
+  });
+  const pullRequestHeadSha = pullRequest.headRefOid;
+  if (
+    pullRequestHeadSha === undefined ||
+    !pullRequestCommitShas.some(
+      (sha) => sha.toLowerCase() === pullRequestHeadSha.toLowerCase(),
+    )
+  ) {
+    throw new Error("Merged pull request has incomplete commit evidence");
+  }
+
   const matchingEvents = queue
     .list()
     .filter(
@@ -109,16 +183,39 @@ export async function reconcileExternalTaskSessionPullRequest(options: {
     throw new Error("Another worker owns the project mutation queue");
 
   if (
-    pullRequest.headRefOid === undefined ||
     !(await options.git.hasEquivalentImplementationCommit({
       project,
       implementationCommit: association.implementationCommit,
       pullRequestNumber: association.pullRequestNumber,
-      pullRequestHeadSha: pullRequest.headRefOid,
+      pullRequestHeadSha,
+      pullRequestCommitShas,
     }))
   ) {
     throw new Error(
       "External pull request changes do not match the implementation",
+    );
+  }
+
+  const observations = await options.github.getCiObservations({
+    cwd: project.repository.path,
+    repository: project.repository.github,
+    defaultBranch: project.repository.defaultBranch,
+    baseBranch: project.repository.defaultBranch,
+    headSha: pullRequestHeadSha,
+    pullRequestNumber: association.pullRequestNumber,
+    project,
+  });
+  const ciEvaluation = evaluateCiChecks({
+    expectedHeadSha: pullRequestHeadSha,
+    observedHeadSha: observations.headSha,
+    expectations: establishCiCheckExpectations(observations.expectationSources),
+    checks: observations.checks,
+  });
+  if (ciEvaluation.status !== "passed") {
+    const diagnostic =
+      "diagnostic" in ciEvaluation ? `: ${ciEvaluation.diagnostic}` : "";
+    throw new Error(
+      `Merged pull request publication checks are not verified: ${ciEvaluation.status}${diagnostic}`,
     );
   }
 
@@ -140,15 +237,6 @@ export async function reconcileExternalTaskSessionPullRequest(options: {
   ) {
     throw new Error(
       "Conflicting external recovery intent is already persisted",
-    );
-  }
-
-  if (
-    record.phase === "done" &&
-    (existingIntent === undefined || existingIntent.status !== "card-moved")
-  ) {
-    throw new Error(
-      "Completed task has no matching persisted recovery evidence",
     );
   }
 
@@ -199,7 +287,7 @@ export async function reconcileExternalTaskSessionPullRequest(options: {
         pullRequest: {
           number: association.pullRequestNumber,
           url: pullRequest.url,
-          headSha: pullRequest.headRefOid,
+          headSha: pullRequestHeadSha,
         },
         externalRecovery: { ...intent, status: "card-moved" },
         revision: latest.revision + 1,
@@ -222,7 +310,12 @@ export async function reconcileExternalTaskSessionPullRequest(options: {
     if (claimedMutation) queue.complete(mutation.eventId);
   } catch (error) {
     if (claimedMutation && queue.ownsActive(mutation.eventId)) {
-      queue.fail(mutation.eventId);
+      const latest = taskStore.read(association.cardId);
+      if (latest?.phase === "done") {
+        queue.releaseForRecovery(mutation.eventId);
+      } else {
+        queue.fail(mutation.eventId);
+      }
     }
     throw error;
   }

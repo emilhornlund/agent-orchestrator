@@ -12,7 +12,10 @@ import {
   redactError,
   redactSecrets,
 } from "../security/redact-secrets.js";
-import { haveEquivalentImplementationChanges } from "./implementation-change-equivalence.js";
+import {
+  haveEquivalentImplementationChanges,
+  isCompletePullRequestCommitRange,
+} from "./implementation-change-equivalence.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -417,17 +420,25 @@ export class GitClient {
     return this.runGit(repositoryPath, ["rev-parse", "HEAD^"]);
   }
 
-  /** Verify content-equivalent single-commit implementations in an isolated repo. */
+  /** Verify the complete PR change set against the implementation in isolation. */
   async hasEquivalentImplementationCommit(options: {
     project: ProjectConfig;
     implementationCommit: string;
     pullRequestNumber: number;
     pullRequestHeadSha: string;
+    pullRequestCommitShas: readonly string[];
   }): Promise<boolean> {
     const shaPattern = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu;
     if (
       !shaPattern.test(options.implementationCommit) ||
       !shaPattern.test(options.pullRequestHeadSha) ||
+      options.pullRequestCommitShas.length === 0 ||
+      options.pullRequestCommitShas.some((sha) => !shaPattern.test(sha)) ||
+      new Set(options.pullRequestCommitShas).size !==
+        options.pullRequestCommitShas.length ||
+      !options.pullRequestCommitShas.some(
+        (sha) => sha.toLowerCase() === options.pullRequestHeadSha.toLowerCase(),
+      ) ||
       !Number.isSafeInteger(options.pullRequestNumber) ||
       options.pullRequestNumber < 1
     ) {
@@ -482,11 +493,47 @@ export class GitClient {
         ["rev-parse", `${options.implementationCommit}^`],
         options.project,
       );
+      const prCommitSet = new Set(
+        options.pullRequestCommitShas.map((sha) => sha.toLowerCase()),
+      );
+      const roots: string[] = [];
+      for (const sha of options.pullRequestCommitShas) {
+        const parent = await this.runAuthenticated(
+          temporaryRepository,
+          ["rev-parse", `${sha}^`],
+          options.project,
+        );
+        if (!prCommitSet.has(parent.toLowerCase())) roots.push(sha);
+      }
+      if (roots.length !== 1) return false;
       const recoveredParent = await this.runAuthenticated(
         temporaryRepository,
-        ["rev-parse", `${options.pullRequestHeadSha}^`],
+        ["rev-parse", `${roots[0]}^`],
         options.project,
       );
+      const rangeCommits = (
+        await this.runAuthenticated(
+          temporaryRepository,
+          [
+            "rev-list",
+            "--reverse",
+            `${recoveredParent}..${options.pullRequestHeadSha}`,
+          ],
+          options.project,
+        )
+      )
+        .split("\n")
+        .filter(Boolean)
+        .map((sha) => sha.toLowerCase());
+      if (
+        !isCompletePullRequestCommitRange(
+          options.pullRequestCommitShas,
+          rangeCommits,
+          options.pullRequestHeadSha,
+        )
+      ) {
+        return false;
+      }
       const originalPatch = await this.runAuthenticated(
         temporaryRepository,
         [
