@@ -353,6 +353,40 @@ export class TaskMutationQueue {
     return this.finish(eventId, "failed");
   }
 
+  /** Relinquish ownership while retaining the active event for restart recovery. */
+  releaseForRecovery(eventId: string): TaskMutationEvent {
+    return this.update((queue) => {
+      if (queue.activeEventId !== eventId)
+        throw new TaskMutationQueueConflictError(
+          "Mutation event does not own the project queue",
+        );
+      const current = queue.events.find((event) => event.eventId === eventId);
+      if (
+        current?.status !== "active" ||
+        current.ownerToken !== this.ownerToken
+      ) {
+        throw new TaskMutationQueueConflictError(
+          "Mutation event is not owned by this recovery worker",
+        );
+      }
+      liveMutationOwners.delete(this.ownerToken);
+      const released = {
+        ...current,
+        ownerToken: undefined,
+        ownerPid: undefined,
+      };
+      return {
+        queue: {
+          ...queue,
+          events: queue.events.map((event) =>
+            event.eventId === eventId ? released : event,
+          ),
+        },
+        result: released,
+      };
+    });
+  }
+
   requeueAfterVerifiedRecovery(eventId: string): TaskMutationEvent {
     return this.finish(eventId, "queued");
   }

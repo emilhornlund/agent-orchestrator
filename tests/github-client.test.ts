@@ -1084,6 +1084,52 @@ describe("GitHubClient", () => {
     ]);
   });
 
+  it("reads the complete PR commit list", async () => {
+    const head = "b".repeat(40);
+    const runGitHub = vi
+      .fn<RunGitHubCommand>()
+      .mockResolvedValueOnce(
+        JSON.stringify([[{ sha: "a".repeat(40) }, { sha: head }]]),
+      );
+    const github = new GitHubClient(runGitHub);
+    const query = {
+      cwd: "/repo",
+      repository: "example/repository",
+      pullRequestNumber: 18,
+    };
+
+    await expect(github.getPullRequestCommitShas(query)).resolves.toEqual([
+      "a".repeat(40),
+      head,
+    ]);
+    expect(runGitHub).toHaveBeenCalledOnce();
+    expect(runGitHub).toHaveBeenCalledWith("/repo", [
+      "api",
+      "--paginate",
+      "--slurp",
+      "repos/example/repository/pulls/18/commits?per_page=100",
+    ]);
+  });
+
+  it("rejects empty, duplicate, and malformed PR commit evidence", async () => {
+    for (const output of [
+      "[[]]",
+      JSON.stringify([[{ sha: "a".repeat(40) }, { sha: "a".repeat(40) }]]),
+      JSON.stringify([[{ sha: "not-a-sha" }]]),
+    ]) {
+      const github = new GitHubClient(
+        vi.fn<RunGitHubCommand>().mockResolvedValue(output),
+      );
+      await expect(
+        github.getPullRequestCommitShas({
+          cwd: "/repo",
+          repository: "example/repository",
+          pullRequestNumber: 18,
+        }),
+      ).rejects.toThrow();
+    }
+  });
+
   it("rejects malformed merge state facts for an open pull request", async () => {
     const github = new GitHubClient(
       vi.fn<RunGitHubCommand>().mockResolvedValue(

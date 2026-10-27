@@ -64,6 +64,13 @@ export interface GetPullRequestStateByNumberOptions {
   project?: ProjectConfig;
 }
 
+export interface GetPullRequestRecoveryEvidenceOptions {
+  cwd: string;
+  repository: string;
+  pullRequestNumber: number;
+  project?: ProjectConfig;
+}
+
 export interface PullRequestDescriptionStatusOptions {
   cwd: string;
   repository: string;
@@ -2066,6 +2073,47 @@ export class GitHubClient {
       headRefName: parsed.headRefName,
       baseRefName: parsed.baseRefName,
     };
+  }
+
+  /** Returns the complete ordered commit list reported for a pull request. */
+  async getPullRequestCommitShas(
+    options: GetPullRequestRecoveryEvidenceOptions,
+  ): Promise<string[]> {
+    if (
+      !Number.isSafeInteger(options.pullRequestNumber) ||
+      options.pullRequestNumber < 1
+    ) {
+      throw new Error("PR number must be a positive integer");
+    }
+    const credential = await this.resolveCredential(options.project);
+    const output = await this.run(
+      options.cwd,
+      [
+        "api",
+        "--paginate",
+        "--slurp",
+        `repos/${options.repository}/pulls/${options.pullRequestNumber}/commits?per_page=100`,
+      ],
+      credential,
+    );
+    const values = parsePaginatedGitHubResponse(output, "pull request commits");
+    const shas = values.map((value) => {
+      if (
+        !isRecord(value) ||
+        typeof value.sha !== "string" ||
+        !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu.test(value.sha)
+      ) {
+        throw new Error(
+          "GitHub returned malformed pull request commit evidence",
+        );
+      }
+      return value.sha.toLowerCase();
+    });
+    if (shas.length === 0 || new Set(shas).size !== shas.length)
+      throw new Error(
+        "GitHub returned missing or ambiguous pull request commits",
+      );
+    return shas;
   }
 
   async findPullRequestState(

@@ -50,6 +50,9 @@ const taskExecutionEventSchema = z.discriminatedUnion("type", [
   }),
   eventIdentitySchema.extend({ type: z.literal("ci-passed-completed") }),
   eventIdentitySchema.extend({ type: z.literal("pull-request-merged") }),
+  eventIdentitySchema.extend({
+    type: z.literal("external-pull-request-reconciled"),
+  }),
   eventIdentitySchema.extend({ type: z.literal("ci-failed") }),
   eventIdentitySchema.extend({ type: z.literal("feedback-received") }),
   eventIdentitySchema.extend({ type: z.literal("feedback-ci-failed") }),
@@ -88,6 +91,10 @@ const phaseTransitions: Record<
   "ci-passed-awaiting-human": { from: "ci", to: "human-feedback" },
   "ci-passed-completed": { from: "ci", to: "done" },
   "pull-request-merged": { from: ["ci", "human-feedback"], to: "done" },
+  "external-pull-request-reconciled": {
+    from: "attention-required",
+    to: "done",
+  },
   "ci-failed": { from: "ci", to: "implementation" },
   "feedback-received": { from: "human-feedback", to: "implementation" },
   "feedback-ci-failed": { from: "human-feedback", to: "ci" },
@@ -137,7 +144,14 @@ export function transitionTaskExecutionRecord(
     );
   }
 
-  if (isTerminalPhase(record.phase)) {
+  if (
+    isTerminalPhase(record.phase) &&
+    !(
+      record.phase === "attention-required" &&
+      event.type === "external-pull-request-reconciled" &&
+      record.externalRecovery !== undefined
+    )
+  ) {
     throw new TaskExecutionTransitionError(
       `Cannot transition from terminal phase ${record.phase}`,
     );
