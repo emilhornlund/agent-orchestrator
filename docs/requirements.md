@@ -88,3 +88,13 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - Any unresolved failures or review findings must be disclosed clearly in the pull request; an incomplete implementation must never be represented as validated or ready to merge.
 - A failure to produce a pull request is exceptional and must have a genuine safety or external-operation reason, such as unavailable Git/GitHub services or a repository state that cannot be published safely.
 - Producing a pull request is not the same as approving it for merge. The detailed review, validation, and publication policies will be agreed separately.
+
+## Validation, review, and PR readiness
+
+- The orchestrator runs configured validation commands itself, rather than relying on an agent's claim that they passed.
+- Validation failures and independent AI review findings have separate configurable remediation limits. Within those limits, the implementation agent may address findings and the relevant checks are rerun.
+- Exhausting either limit must not prevent PR delivery.
+- When required validation and review pass, the orchestrator creates a normal pull request. If tests, validation, or independent AI review still have unresolved problems, it creates a draft pull request and clearly describes those problems.
+- Both normal and draft pull requests move the Trello card to `Human Review`. If email notifications are configured, a PR notification is sent, explicitly identifying draft PRs and their outstanding issues.
+- A draft PR may be marked ready for review when its outstanding issues have been resolved and verified.
+- The orchestrator never automatically merges pull requests; merging or closing is a human decision. A project cannot start its next task while its PR remains open.
