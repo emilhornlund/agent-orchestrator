@@ -252,3 +252,10 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - Validate the complete refinement result before changing the Trello card. If refinement cannot complete, preserve the original title, description, and classification rather than leaving partial changes; move the card to `Failed` with an explanation.
 - After successful refinement, return the updated card to `Backlog` and post a concise Trello comment confirming completion, the selected task type, and the total refinement duration when available.
 - The completion comment must not repeat the refined description already present on the card.
+
+## Incomplete tasks and Trello comments
+
+- An incomplete or unclear task must not be rejected automatically. The planning agent first examines the card, current repository, and attachments to determine whether the intended work can be understood without inventing requirements.
+- If essential information is still missing, post an actionable Trello comment explaining what needs clarification and move the card to `Failed`. The user may clarify it and explicitly return it to `Ready for Agent` later.
+- Trello comments are reserved for meaningful outcomes or situations requiring attention, such as refinement completion, task failures, missing information, and PR closure.
+- Routine operations such as validation, AI reviews, and retries belong in execution logs rather than generating noisy card comments.
