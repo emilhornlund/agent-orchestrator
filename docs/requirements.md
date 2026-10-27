@@ -138,3 +138,10 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - Retry transient failures with sensible bounded attempts and delays. If the dependency remains unavailable, preserve task state and periodically check for safe recovery rather than repeatedly restarting or failing the implementation.
 - Resume automatically when the dependency recovers and task state is verified. Never interpret an unavailable service as proof that a resource was deleted or an operation failed.
 - Notify the operator when intervention is needed without repeatedly sending duplicate alerts. Unaffected projects continue operating.
+
+## Email notifications
+
+- Email notifications are optional and configurable. Support these four events: refinement completed, PR ready for human review (normal or draft, with outstanding issues), attention required, and task failed.
+- Notifications identify the project and task, provide relevant links and useful details, and never expose secrets.
+- Email delivery is non-blocking: a notification failure must never undo successful work, change the task's workflow outcome, or prevent a PR from being delivered.
+- Failed deliveries are logged and should be retried safely when possible without sending duplicate notifications.
