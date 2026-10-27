@@ -730,6 +730,10 @@ export async function runTaskSessionFeedbackCycle(
         openCode,
         validation: quality.validation,
         coverage: quality.coverage,
+        previousFindings:
+          taskStore.read(card.id)?.reviewRepair?.cycleId === record.operationKey
+            ? (taskStore.read(card.id)?.reviewRepair?.findings ?? [])
+            : [],
         ...(attachmentContext === undefined ? {} : { attachmentContext }),
         runOptions: reviewRunOptions(project, signal),
       });
@@ -741,7 +745,7 @@ export async function runTaskSessionFeedbackCycle(
         cardId: card.id,
         operationKey: record.operationKey,
         expectedPrimarySessionId: record.primarySessionId!,
-        runReview: async () => {
+        runReview: async (previousFindings) => {
           if (roundIndex++ === 0)
             return {
               review: firstReview.review,
@@ -759,6 +763,7 @@ export async function runTaskSessionFeedbackCycle(
             openCode,
             validation: quality.validation,
             coverage: quality.coverage,
+            previousFindings,
             ...(attachmentContext === undefined ? {} : { attachmentContext }),
             runOptions: reviewRunOptions(project, signal),
           });

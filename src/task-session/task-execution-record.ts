@@ -127,6 +127,49 @@ const reviewRepairSchema = z.strictObject({
   status: z.enum(["active", "passed", "exhausted"]),
   maxAttempts: z.number().int().nonnegative().safe().optional(),
   finalReview: implementationReviewResultSchema.optional(),
+  findings: z
+    .array(
+      z.strictObject({
+        id: nonBlankIdentifier,
+        kind: z.enum(["defect", "incomplete", "contract-violation"]),
+        summary: z.string().min(1),
+        detail: z.string().min(1),
+        location: z
+          .strictObject({
+            filePath: z.string().min(1),
+            line: z.number().int().positive().optional(),
+          })
+          .optional(),
+        sourceContentIdentity: taskSessionContentIdentity,
+        sourceIdentities: z.array(taskSessionContentIdentity).min(1),
+        status: z.enum(["unresolved", "resolved", "superseded"]),
+        justification: z.string().min(1).optional(),
+      }),
+    )
+    .superRefine((findings, ctx) => {
+      const ids = new Set<string>();
+      for (const [index, finding] of findings.entries()) {
+        if (ids.has(finding.id)) {
+          ctx.addIssue({
+            code: "custom",
+            path: [index, "id"],
+            message: `Duplicate tracked finding identifier: ${finding.id}`,
+          });
+        }
+        ids.add(finding.id);
+        if (
+          finding.status === "superseded" &&
+          finding.justification === undefined
+        ) {
+          ctx.addIssue({
+            code: "custom",
+            path: [index, "justification"],
+            message: "Superseded tracked findings require justification",
+          });
+        }
+      }
+    })
+    .optional(),
 });
 
 const ciRepairSchema = z.strictObject({

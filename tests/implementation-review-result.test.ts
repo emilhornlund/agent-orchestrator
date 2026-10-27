@@ -111,6 +111,104 @@ describe("parseImplementationReviewResult", () => {
     ).toThrow("Duplicate requirement assessment");
   });
 
+  it("requires a review-owned classification for every prior finding", () => {
+    const previous = { ...result, previousFindingAssessments: [] };
+    expect(() =>
+      parseImplementationReviewResult(previous, {
+        ...expected,
+        previousFindingIds: ["finding-prior"],
+      }),
+    ).toThrow("omitted previous finding assessment");
+
+    expect(() =>
+      parseImplementationReviewResult(
+        {
+          ...result,
+          previousFindingAssessments: [
+            { findingId: "finding-prior", status: "superseded" },
+          ],
+        },
+        { ...expected, previousFindingIds: ["finding-prior"] },
+      ),
+    ).toThrow("Superseded findings require justification");
+
+    expect(
+      parseImplementationReviewResult(
+        {
+          ...result,
+          previousFindingAssessments: [
+            {
+              findingId: "finding-prior",
+              status: "superseded",
+              justification:
+                "The reported behavior no longer exists in this implementation.",
+            },
+          ],
+        },
+        { ...expected, previousFindingIds: ["finding-prior"] },
+      ).previousFindingAssessments,
+    ).toHaveLength(1);
+  });
+
+  it("keeps unresolved prior findings blocking and rejects contradictory verdicts", () => {
+    const priorFindingAssessment = {
+      findingId: "finding-prior",
+      status: "unresolved" as const,
+    };
+    expect(() =>
+      parseImplementationReviewResult(
+        {
+          ...result,
+          previousFindingAssessments: [priorFindingAssessment],
+        },
+        { ...expected, previousFindingIds: [priorFindingAssessment.findingId] },
+      ),
+    ).toThrow("Unresolved prior finding must remain in blockingFindings");
+
+    const blockingPriorFinding = {
+      id: priorFindingAssessment.findingId,
+      kind: "defect" as const,
+      summary: "Prior defect remains",
+      detail: "The prior blocking defect is still present.",
+    };
+    expect(() =>
+      parseImplementationReviewResult(
+        {
+          ...result,
+          blockingFindings: [blockingPriorFinding],
+          previousFindingAssessments: [priorFindingAssessment],
+        },
+        { ...expected, previousFindingIds: [priorFindingAssessment.findingId] },
+      ),
+    ).toThrow("cannot contain unsatisfied requirements or blocking findings");
+
+    expect(
+      parseImplementationReviewResult(
+        {
+          ...result,
+          verdict: "fail",
+          blockingFindings: [blockingPriorFinding],
+          previousFindingAssessments: [priorFindingAssessment],
+        },
+        { ...expected, previousFindingIds: [priorFindingAssessment.findingId] },
+      ).blockingFindings,
+    ).toEqual([blockingPriorFinding]);
+
+    expect(() =>
+      parseImplementationReviewResult(
+        {
+          ...result,
+          verdict: "fail",
+          blockingFindings: [blockingPriorFinding],
+          previousFindingAssessments: [
+            { findingId: priorFindingAssessment.findingId, status: "resolved" },
+          ],
+        },
+        { ...expected, previousFindingIds: [priorFindingAssessment.findingId] },
+      ),
+    ).toThrow("lists resolved prior finding as currently blocking");
+  });
+
   it("rejects invalid verdicts and inconsistent pass/fail outcomes", () => {
     expect(() =>
       parseImplementationReviewResult(

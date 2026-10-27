@@ -25,6 +25,7 @@ import type { ImplementationReviewResult } from "./implementation-review-result.
 import { parseImplementationReviewResult } from "./implementation-review-result.js";
 import type { TrelloCard } from "../trello/trello-client.js";
 import { getSessionLogPath } from "../logging/session-log.js";
+import type { TaskExecutionRecord } from "./task-execution-record.js";
 
 export class TaskSessionReviewError extends Error {
   constructor(
@@ -69,6 +70,9 @@ export interface RunTaskSessionReviewOptions {
   openCode: OpenCodeClient;
   validation: TaskSessionValidationResult;
   coverage: TaskSessionValidationResult | null;
+  previousFindings?: readonly NonNullable<
+    NonNullable<TaskExecutionRecord["reviewRepair"]>["findings"]
+  >[number][];
   attachmentContext?: CardAttachmentPromptContext;
   runOptions: Omit<
     OpenCodeRunOptions,
@@ -175,6 +179,7 @@ export async function runTaskSessionReview(
     openCode,
     validation,
     coverage,
+    previousFindings,
     attachmentContext,
     runOptions,
   } = options;
@@ -283,6 +288,7 @@ export async function runTaskSessionReview(
     diff,
     validation,
     coverage,
+    ...(previousFindings === undefined ? {} : { previousFindings }),
     ...(attachmentContext === undefined ? {} : { attachmentContext }),
   });
 
@@ -354,6 +360,7 @@ export async function runTaskSessionReview(
             (requirement) => requirement.id,
           ),
           contentIdentity,
+          previousFindingIds: (previousFindings ?? []).map(({ id }) => id),
         },
       );
       break;
