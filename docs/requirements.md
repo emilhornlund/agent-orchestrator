@@ -168,3 +168,10 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - Never delete branches or worktrees without verifying that they belong to the task and are safe to remove.
 - Recovery must not create duplicate commits or pull requests.
 - After a PR is merged, automatically clean up the owned task branch and worktree when safe. If cleanup cannot be verified as safe, preserve them and report the problem.
+
+## Pull request descriptions and working status
+
+- The orchestrator generates a useful PR description from the actual implementation, covering the purpose and summary, significant changes, validation and test results (including failures), outstanding issues, and a link to the Trello task.
+- The description is refreshed after significant changes, including human-review remediation, CI repairs, and rebasing, so it describes the current PR rather than its original implementation only.
+- Whenever the agent works on an existing PR, the orchestrator prominently displays a temporary status **at the top of the PR description**, similar to Dependabot's rebase status.
+- The status identifies the current activity (such as requested changes, CI repair, rebasing, or validation), is updated as work progresses, and is cleared when the activity finishes. It must not obscure or overwrite the underlying PR description.
