@@ -305,3 +305,10 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - After the current operation, process new and still-actionable feedback automatically, without losing requests or unnecessarily repeating completed work.
 - An independent AI reviewer verifies that each human-requested change has actually been fulfilled before it is treated as resolved.
 - Unresolved requests receive bounded internal correction attempts, and any remaining findings must be reported clearly on the existing PR rather than silently marked complete.
+
+## Partial human-review remediation and thread ownership
+
+- If only some requested changes are successfully addressed, publish the verified corrections to the existing PR rather than withholding them all.
+- Clearly distinguish resolved from unresolved requests; only reply confirming a fix after that specific change has been independently verified.
+- Keep the PR as a draft while unresolved requests remain, and return the Trello card to `Human Review` for further human feedback.
+- The orchestrator may reply to review threads describing verified fixes, but must not automatically resolve GitHub conversations. The human reviewer decides when a thread is resolved.
