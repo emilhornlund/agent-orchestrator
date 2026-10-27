@@ -84,6 +84,12 @@ describe("buildTaskSessionReviewRepairPrompt", () => {
       "inspect the relevant implementation and existing tests",
     );
     expect(prompt).toContain("Address every blocking finding");
+    expect(prompt).toContain("only material unsatisfied approved requirements");
+    expect(prompt).toContain("Serious demonstrable defects may be addressed");
+    expect(prompt).toContain(
+      "Do not make changes solely for unrelated refactoring",
+    );
+    expect(prompt).toContain("preserve the correct implementation");
     expect(prompt).toContain("do not focus only on the first");
     expect(prompt).toContain("underlying defect");
     expect(prompt).toContain("smallest complete correction");

@@ -81,9 +81,18 @@ describe("runPrMaintenanceReview", () => {
     expect(call.prompt).toContain("tests/card-start-eligibility.test.ts");
     expect(call.prompt).toContain("Do NOT mark tests or validation unverified");
     expect(call.prompt).toContain(
-      "explain concrete evidence demonstrating why it blocks",
+      "A blocking finding must be a material issue: an unsatisfied approved requirement, a demonstrable correctness defect, a violation of an applicable repository contract, or a regression introduced by this implementation.",
     );
-    expect(call.prompt).toContain("Unsupported speculation");
+    expect(call.prompt).toContain(
+      "Do not report unrelated refactoring opportunities, stylistic preferences without an applicable contract, optional enhancements beyond approved scope, unsupported hypothetical problems, or requests to redesign an otherwise correct implementation as blocking findings.",
+    );
+    expect(call.prompt).toContain("Return ONLY one JSON object with exactly");
+    expect(call.prompt).toContain(
+      "explain concrete evidence demonstrating why it is material and blocks",
+    );
+    expect(call.prompt).toContain(
+      "Serious demonstrable defects remain blocking",
+    );
   });
 
   it("retries a malformed blockingFindings array once without silently discarding findings", async () => {
