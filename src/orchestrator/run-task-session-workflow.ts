@@ -687,8 +687,16 @@ export async function runTaskSessionWorkflow(
     )
       continue;
     const orphanScope = `orphan:${queued.eventId}`;
+    if (queued.status === "completed") {
+      if (
+        preflightReadyIds.has(queued.cardId) &&
+        taskStore.read(queued.cardId) === null
+      )
+        continue;
+      mutationBlockStore.resolve(orphanScope);
+      continue;
+    }
     if (
-      queued.status === "completed" ||
       preflightReadyIds.has(queued.cardId) ||
       preflightWorkingIds.has(queued.cardId) ||
       taskStore.read(queued.cardId) !== null
@@ -696,13 +704,22 @@ export async function runTaskSessionWorkflow(
       mutationBlockStore.resolve(orphanScope);
       continue;
     }
-    const digest = /^[a-f0-9]{16}$/.exec(queued.eventId.split(":").at(-1) ?? "")
-      ? queued.eventId.split(":").at(-1)
+    const attempt = queued.eventId.match(/:attempt:([1-9][0-9]*)$/)?.[1];
+    const baseEventId =
+      attempt === undefined
+        ? queued.eventId
+        : queued.eventId.slice(0, -`:attempt:${attempt}`.length);
+    const baseOperationKey =
+      attempt === undefined
+        ? queued.operationKey
+        : queued.operationKey.slice(0, -`:attempt:${attempt}`.length);
+    const digest = /^[a-f0-9]{16}$/.exec(baseEventId.split(":").at(-1) ?? "")
+      ? baseEventId.split(":").at(-1)
       : undefined;
     const eventIdentityMatches =
       digest !== undefined &&
-      queued.eventId === `implementation:${queued.cardId}:${digest}` &&
-      queued.operationKey === `task-session:${queued.cardId}:${digest}`;
+      baseEventId === `implementation:${queued.cardId}:${digest}` &&
+      baseOperationKey === `task-session:${queued.cardId}:${digest}`;
     if (!eventIdentityMatches) {
       orphanRecoveryBlocked = true;
       const diagnostic = `Mutation ${queued.eventId} (${queued.kind}, ${queued.status}) has an ambiguous Ready-event identity; preserved for operator recovery`;
@@ -2482,16 +2499,112 @@ export async function runTaskSessionWorkflow(
         .update(`${card.name}\0${card.desc}\0${card.idLabels.join(",")}`)
         .digest("hex")
         .slice(0, 16);
-      const queuedEvent = queue.enqueue({
-        projectId: project.id,
-        cardId: card.id,
-        eventId: `implementation:${card.id}:${digest}`,
-        operationKey: `task-session:${card.id}:${digest}`,
-        kind: getWorkflowKind(card, project)!,
-        // Preserve Trello's Ready-list order even when cards are observed in
-        // the same clock millisecond and the queue's stable tie-break applies.
-        enqueuedAt: new Date(Date.now() + readyIndex).toISOString(),
-      });
+      const baseEventId = `implementation:${card.id}:${digest}`;
+      const priorAttempts = queue
+        .list()
+        .filter(
+          (event) =>
+            event.cardId === card.id &&
+            (event.eventId === baseEventId ||
+              event.eventId.startsWith(`${baseEventId}:attempt:`)),
+        );
+      const priorCompleted = priorAttempts.find(
+        (event) => event.status === "completed",
+      );
+      if (priorCompleted !== undefined) {
+        const diagnostic = `Ready card ${card.id} has a completed implementation mutation ${priorCompleted.eventId} but no task record; its outcome is ambiguous and operator recovery is required before scheduling`;
+        if (
+          mutationBlockStore.report(
+            `orphan:${priorCompleted.eventId}`,
+            `${priorCompleted.eventId}|completed-without-task-record`,
+            diagnostic,
+          )
+        ) {
+          logger
+            .child({ projectId: project.id, cardId: card.id })
+            .error(diagnostic);
+          await notifyAttentionRequired(
+            emailNotifier,
+            {
+              project,
+              category: "Workflow",
+              reason: diagnostic,
+              cardIds: [card.id],
+            },
+            logger.child({ projectId: project.id, cardId: card.id }),
+          );
+        }
+        return;
+      }
+      const liveAttempts = priorAttempts.filter((event) =>
+        ["queued", "active", "failed"].includes(event.status),
+      );
+      if (liveAttempts.length > 1) {
+        const diagnostic = `Ready card ${card.id} has multiple nonterminal mutation attempts for the same operation identity (${liveAttempts.map((event) => event.eventId).join(", ")}); preserved for operator recovery`;
+        if (
+          mutationBlockStore.report(
+            `attempts:${baseEventId}`,
+            liveAttempts
+              .map((event) => `${event.eventId}:${event.status}`)
+              .sort()
+              .join("|"),
+            diagnostic,
+          )
+        ) {
+          logger
+            .child({ projectId: project.id, cardId: card.id })
+            .error(diagnostic);
+          await notifyAttentionRequired(
+            emailNotifier,
+            {
+              project,
+              category: "Workflow",
+              reason: diagnostic,
+              cardIds: [card.id],
+            },
+            logger.child({ projectId: project.id, cardId: card.id }),
+          );
+        }
+        return;
+      }
+      mutationBlockStore.resolve(`attempts:${baseEventId}`);
+      mutationBlockStore.resolve(`orphan:${baseEventId}`);
+      let queuedEvent = liveAttempts[0];
+      if (queuedEvent === undefined) {
+        const retiredAttempts = priorAttempts.filter(
+          (event) => event.status === "retired",
+        );
+        const attemptNumber =
+          retiredAttempts.length === 0
+            ? 0
+            : Math.max(
+                ...retiredAttempts.map((event) =>
+                  event.eventId === baseEventId
+                    ? 0
+                    : Number(
+                        event.eventId.match(/:attempt:([1-9][0-9]*)$/)?.[1],
+                      ),
+                ),
+              ) + 1;
+        const eventId =
+          attemptNumber === 0
+            ? baseEventId
+            : `${baseEventId}:attempt:${attemptNumber}`;
+        const operationKey =
+          attemptNumber === 0
+            ? `task-session:${card.id}:${digest}`
+            : `task-session:${card.id}:${digest}:attempt:${attemptNumber}`;
+        queuedEvent = queue.enqueue({
+          projectId: project.id,
+          cardId: card.id,
+          eventId,
+          operationKey,
+          kind: getWorkflowKind(card, project)!,
+          // Preserve Trello's Ready-list order even when cards are observed in
+          // the same clock millisecond and the queue's stable tie-break applies.
+          enqueuedAt: new Date(Date.now() + readyIndex).toISOString(),
+        });
+      }
       const activeEvent = queue.getActive();
       if (
         activeEvent !== null &&
@@ -2502,11 +2615,7 @@ export async function runTaskSessionWorkflow(
           `Ready card ${card.id} changed identity while its prior task-session operation remains active`,
         );
       }
-      if (queuedEvent.status === "completed") {
-        throw new Error(
-          `Ready card ${card.id} has a completed implementation event but no task record; operator recovery is required`,
-        );
-      }
+      if (queuedEvent.status === "completed") continue;
       if (queuedEvent.status === "active" || queuedEvent.status === "failed") {
         if (readyRecoveryEvent !== null)
           throw new Error(
@@ -2546,6 +2655,30 @@ export async function runTaskSessionWorkflow(
   const card = selectedCard;
   const cardLog = logger.child({ projectId: project.id, cardId: card.id });
   try {
+    // The discovery snapshot can become stale while another poller or a user
+    // moves the card. Revalidate after claiming and before any implementation
+    // setup or Trello transition so an unstarted claim can be retired safely.
+    if (recoveryRecord === null) {
+      let currentlyReady: TrelloCard[];
+      try {
+        currentlyReady = await getCardsForDiscovery(
+          trello,
+          project.id,
+          project.trello.readyListId,
+          "Could not verify Ready eligibility after mutation claim",
+          signal,
+        );
+      } catch (error) {
+        if (queue.ownsActive(mutation.eventId))
+          queue.releaseForRecovery(mutation.eventId);
+        throw error;
+      }
+      if (!currentlyReady.some((candidate) => candidate.id === card.id)) {
+        queue.retireOrphanedReadyEvent(mutation.eventId);
+        mutationBlockStore.resolve(`orphan:${mutation.eventId}`);
+        return;
+      }
+    }
     if (recoveryRecord !== null) {
       cardLog.event(
         `Recovering existing task in ${recoveryRecord.phase} phase`,
@@ -2562,6 +2695,18 @@ export async function runTaskSessionWorkflow(
       }
       const worktree = await prepareWorktree(git, project, card.id);
       cardLog.event("Worktree prepared");
+      const stillReady = await getCardsForDiscovery(
+        trello,
+        project.id,
+        project.trello.readyListId,
+        "Could not verify Ready eligibility before refinement claim",
+        signal,
+      );
+      if (!stillReady.some((candidate) => candidate.id === card.id)) {
+        queue.retireOrphanedReadyEvent(mutation.eventId);
+        mutationBlockStore.resolve(`orphan:${mutation.eventId}`);
+        return;
+      }
       const claimedCard = await trello.moveCard(
         card.id,
         project.trello.workingListId,
@@ -2585,6 +2730,18 @@ export async function runTaskSessionWorkflow(
     } else {
       worktree = await prepareWorktree(git, project, card.id);
       cardLog.event("Worktree prepared");
+      const stillReady = await getCardsForDiscovery(
+        trello,
+        project.id,
+        project.trello.readyListId,
+        "Could not verify Ready eligibility before implementation claim",
+        signal,
+      );
+      if (!stillReady.some((candidate) => candidate.id === card.id)) {
+        queue.retireOrphanedReadyEvent(mutation.eventId);
+        mutationBlockStore.resolve(`orphan:${mutation.eventId}`);
+        return;
+      }
       const claimedCard = await trello.moveCard(
         card.id,
         project.trello.workingListId,

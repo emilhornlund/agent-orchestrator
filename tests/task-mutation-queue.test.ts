@@ -41,6 +41,14 @@ const task = (
   enqueuedAt,
 });
 
+const legacyProductionRetirements = [
+  "implementation:6ae0de2c9698c39d9aef39ac:e84ba7c9750946cc",
+  "implementation:6ae0de42841dfb17c4586fe1:45fca18677b6e871",
+  "implementation:6ae0de5b6f5885c6419e39ac:5e78d1e5064fbb2a",
+  "implementation:6ae0de73cd9aede357ddfd12:852c641926d7175e",
+  "implementation:6ae0de8b86f104140d006d5e:9cc9065ae2ae1b7a",
+];
+
 describe("TaskMutationQueue", () => {
   it("deduplicates events and claims at most one deterministic project mutation", () => {
     const queue = queueFor("project-a");
@@ -252,7 +260,7 @@ describe("TaskMutationQueue", () => {
     });
     queue.claimNext();
     expect(queue.getActive()?.eventId).toBe("stale");
-    expect(queue.retireOrphanedReadyEvent("stale").status).toBe("completed");
+    expect(queue.retireOrphanedReadyEvent("stale").status).toBe("retired");
     expect(queue.getActive()).toBeNull();
     queue.enqueue({
       ...task(
@@ -288,7 +296,7 @@ describe("TaskMutationQueue", () => {
       ),
       kind: "implementation",
     });
-    expect(queue.retireOrphanedReadyEvent("orphan").status).toBe("completed");
+    expect(queue.retireOrphanedReadyEvent("orphan").status).toBe("retired");
     expect(queue.getActive()?.eventId).toBe("current");
     expect(() => queue.retireOrphanedReadyEvent("current")).not.toThrow();
     expect(queue.getActive()).toBeNull();
@@ -309,5 +317,73 @@ describe("TaskMutationQueue", () => {
       TaskMutationQueueConflictError,
     );
     expect(queue.getActive()?.eventId).toBe("failed");
+  });
+
+  it("preserves retired history as distinct from successful completion across restart", () => {
+    const queue = queueFor("project-a");
+    queue.enqueue({
+      ...task("project-a", "retire-me", "card-one", "2026-10-24T09:00:00.000Z"),
+      kind: "implementation",
+    });
+    queue.retireOrphanedReadyEvent("retire-me");
+
+    const restarted = queueFor("project-a");
+    expect(restarted.list()).toMatchObject([
+      { eventId: "retire-me", status: "retired" },
+    ]);
+    expect(restarted.claimNext()).toBeNull();
+    expect(() => restarted.complete("retire-me")).toThrow(
+      TaskMutationQueueConflictError,
+    );
+  });
+
+  it("preserves legacy completed production identities without assuming retirement", () => {
+    const queue = queueFor("project-a");
+    for (const [index, eventId] of legacyProductionRetirements.entries()) {
+      const cardId = eventId.split(":")[1]!;
+      queue.enqueue({
+        projectId: "project-a",
+        cardId,
+        eventId,
+        operationKey: `task-session:${cardId}:${eventId.split(":")[2]}`,
+        kind: "implementation",
+        enqueuedAt: new Date(
+          Date.parse("2026-10-27T00:00:00.000Z") + index,
+        ).toISOString(),
+      });
+      queue.claimNext();
+      queue.complete(eventId);
+    }
+    const restarted = queueFor("project-a");
+    expect(restarted.list().map((event) => event.eventId)).toEqual(
+      legacyProductionRetirements,
+    );
+    expect(
+      restarted.list().every((event) => event.status === "completed"),
+    ).toBe(true);
+  });
+
+  it("requires an explicit attestation and an unowned queue to recover legacy completion", () => {
+    const queue = queueFor("project-a");
+    queue.enqueue({
+      ...task(
+        "project-a",
+        "legacy-completed",
+        "card-one",
+        "2026-10-24T09:00:00.000Z",
+      ),
+      kind: "implementation",
+    });
+    queue.claimNext();
+    queue.complete("legacy-completed");
+    expect(() =>
+      queue.retireLegacyCompletedEvent("legacy-completed", false),
+    ).toThrow(TaskMutationQueueConflictError);
+    expect(
+      queue.retireLegacyCompletedEvent("legacy-completed", true),
+    ).toMatchObject({
+      status: "retired",
+      retirementReason: "operator-confirmed-never-started",
+    });
   });
 });

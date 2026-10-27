@@ -21,9 +21,13 @@ const eventSchema = z.strictObject({
   ]),
   operationKey: z.string().min(1),
   enqueuedAt: z.string().datetime(),
-  status: z.enum(["queued", "active", "failed", "completed"]),
+  status: z.enum(["queued", "active", "failed", "completed", "retired"]),
   ownerToken: z.string().uuid().optional(),
   ownerPid: z.number().int().positive().optional(),
+  retiredAt: z.string().datetime().optional(),
+  retirementReason: z
+    .enum(["card-left-ready", "operator-confirmed-never-started"])
+    .optional(),
 });
 const queueSchema = z
   .strictObject({
@@ -42,6 +46,17 @@ const queueSchema = z
           code: "custom",
           path: ["events", index, "projectId"],
           message: "Mutation event belongs to another project",
+        });
+      }
+      if (
+        (event.status === "retired") !==
+        (event.retiredAt !== undefined && event.retirementReason !== undefined)
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["events", index],
+          message:
+            "Retired mutations require a durable retirement time and reason",
         });
       }
       if (ids.has(event.eventId)) {
@@ -384,7 +399,9 @@ export class TaskMutationQueue {
         liveMutationOwners.delete(current.ownerToken);
       const retired = {
         ...current,
-        status: "completed" as const,
+        status: "retired" as const,
+        retiredAt: new Date().toISOString(),
+        retirementReason: "card-left-ready" as const,
         ownerToken: undefined,
         ownerPid: undefined,
       };
@@ -393,6 +410,48 @@ export class TaskMutationQueue {
           ...queue,
           activeEventId:
             queue.activeEventId === eventId ? null : queue.activeEventId,
+          events: queue.events.map((event) =>
+            event.eventId === eventId ? retired : event,
+          ),
+        },
+        result: retired,
+      };
+    });
+  }
+
+  /**
+   * Narrow recovery for legacy PR #205 events, whose completed status cannot
+   * distinguish retirement from successful execution. The caller must verify
+   * task/Trello ownership and explicitly attest that execution never began.
+   */
+  retireLegacyCompletedEvent(
+    eventId: string,
+    confirmedNeverStarted: boolean,
+  ): TaskMutationEvent {
+    if (!confirmedNeverStarted)
+      throw new TaskMutationQueueConflictError(
+        "Legacy mutation recovery requires explicit never-started confirmation",
+      );
+    return this.update((queue) => {
+      const current = queue.events.find((event) => event.eventId === eventId);
+      if (
+        current === undefined ||
+        !["implementation", "refinement"].includes(current.kind) ||
+        current.status !== "completed" ||
+        queue.activeEventId !== null
+      )
+        throw new TaskMutationQueueConflictError(
+          "Legacy mutation is not safely recoverable",
+        );
+      const retired = {
+        ...current,
+        status: "retired" as const,
+        retiredAt: new Date().toISOString(),
+        retirementReason: "operator-confirmed-never-started" as const,
+      };
+      return {
+        queue: {
+          ...queue,
           events: queue.events.map((event) =>
             event.eventId === eventId ? retired : event,
           ),
