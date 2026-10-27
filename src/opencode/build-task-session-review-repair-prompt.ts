@@ -57,7 +57,13 @@ export function buildTaskSessionReviewRepairPrompt(
     JSON.stringify(input.review, null, 2),
     ...taskSessionRepositoryGuidance,
     `This is bounded review remediation attempt ${input.attempt} of ${input.maxAttempts}.`,
-    "Make only changes needed to address the concrete review findings while preserving the approved task scope. Leave changes in the worktree for orchestrator-owned validation and review.",
+    "Before changing anything, inspect the relevant implementation and existing tests for the review findings.",
+    "Address every blocking finding; do not focus only on the first or leave any finding without explicit consideration.",
+    "For each blocking finding, understand the underlying defect, identify and implement the smallest complete correction, and add or update regression tests when appropriate.",
+    "After addressing the findings, ensure the original approved requirements remain satisfied. Keep changes within the approved task scope; do not broaden the task.",
+    "Do not make superficial changes that merely silence a test or match review wording. Fix the underlying problem rather than hiding its symptoms.",
+    "Continue in this primary task session and its existing repository/worktree context. Do not start another AI session or remediation stage.",
+    "Leave repository changes in the worktree for orchestrator-owned validation and review; do not run orchestrator-owned validation yourself.",
     "Do not run Git commands or invoke GitHub tools. Do not create commits, change branches, push, or open pull requests; the orchestrator owns all Git and GitHub operations.",
   ].join("\n");
 }
