@@ -238,3 +238,10 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - Configuration is loaded and validated at startup. Changes made while the orchestrator is running only take effect after a restart; live configuration reload is not supported.
 - Active tasks must be preserved across restarts and resumed safely with the new configuration.
 - Runtime failures affecting one project, such as unavailable Trello resources or expired GitHub credentials, must not unnecessarily stop other healthy projects from operating.
+
+## Refinement templates and scope
+
+- Refinement uses distinct default templates for `Feature`, `Improvement`, and `Bug`, based on the existing templates. The agent may adapt or omit sections that do not apply; their detailed content can be reviewed separately.
+- Preserve the original task's intent and scope. Use current repository evidence to clarify the requested work, and include additional work only where strictly necessary to achieve its objective.
+- Identify larger dependencies or related opportunities without silently expanding the task or introducing unrelated refactoring.
+- When a task is overly large or complex, recommend splitting it into smaller tasks, but still refine the original card. Do not automatically create or split Trello cards; that capability may be considered later.
