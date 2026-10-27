@@ -98,3 +98,14 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - Both normal and draft pull requests move the Trello card to `Human Review`. If email notifications are configured, a PR notification is sent, explicitly identifying draft PRs and their outstanding issues.
 - A draft PR may be marked ready for review when its outstanding issues have been resolved and verified.
 - The orchestrator never automatically merges pull requests; merging or closing is a human decision. A project cannot start its next task while its PR remains open.
+
+## Human review and requested changes
+
+- GitHub reviews requesting changes are handled automatically; no manual Trello action is necessary.
+- The orchestrator collects all outstanding actionable feedback, including review summaries, inline comments, and general PR comments, retaining file and line context when available.
+- It moves the card from `Human Review` to `Working`, addresses feedback on the existing task branch, and updates the same pull request rather than creating a replacement.
+- It reruns validation and independent AI review, then returns the card to `Human Review` with clear information about any remaining issues.
+- Replies to addressed comments are posted only after the associated changes have been published and verified.
+- Feedback arriving during remediation must not be lost. After the current cycle, the orchestrator checks again and handles new or still-unresolved requests without unnecessarily repeating completed work.
+- Human review cycles are unlimited: new requests for changes can be submitted as often as needed. Configurable limits apply only to internal automated validation, review, and correction attempts within a cycle, never to the number of human-requested-change cycles.
+- The task remains active until its pull request is merged or closed.
