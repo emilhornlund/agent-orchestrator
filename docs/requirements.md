@@ -124,3 +124,17 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - After changes, it runs validation, independent review, and CI again and updates the same PR.
 - The orchestrator must not force-push, discard work, or create replacement PRs to bypass conflicts.
 - Problems it cannot safely resolve must be reported clearly with enough state preserved for recovery.
+
+## Restart and crash recovery
+
+- After a crash, shutdown, or container restart, the orchestrator must automatically resume interrupted work from its last verified state whenever safe.
+- Preserve worktrees, code changes, AI sessions, task ownership, and workflow progress; never silently start over or duplicate commits, pull requests, Trello actions, or other side effects.
+- If the previous state cannot be established safely, preserve all evidence, notify the operator, and block new tasks in the affected project until the situation is resolved.
+- Recovery problems in one project must not stop unrelated projects.
+
+## External service interruptions
+
+- Temporary unavailability, timeouts, and transient failures in Trello, GitHub, OpenCode, or other dependencies must not permanently fail a task.
+- Retry transient failures with sensible bounded attempts and delays. If the dependency remains unavailable, preserve task state and periodically check for safe recovery rather than repeatedly restarting or failing the implementation.
+- Resume automatically when the dependency recovers and task state is verified. Never interpret an unavailable service as proof that a resource was deleted or an operation failed.
+- Notify the operator when intervention is needed without repeatedly sending duplicate alerts. Unaffected projects continue operating.
