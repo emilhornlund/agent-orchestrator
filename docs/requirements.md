@@ -271,3 +271,11 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - Never duplicate pull requests, commits, or other completed side effects merely because later workflow updates fail.
 - Keep the affected project's next task blocked until GitHub, Trello, and persisted execution state are safely reconciled; automatically resume once consistency is verified.
 - Apply this principle to all cross-service workflow transitions, not just PR publication.
+
+## Failed task preservation and retryability
+
+- Preserve failed tasks' worktrees, code changes, execution records, and logs for diagnosis instead of automatically discarding them.
+- Preserved artifacts must never by themselves prevent a deliberate retry. Moving a card from `Failed` to `Ready for Agent` requests a new attempt; reconcile the earlier attempt automatically, safely reusing or isolating prior work as appropriate.
+- Stale worktrees, locks, AI sessions, and workflow records must not permanently trap a task. Supported Trello moves should allow the user to recover blocked states without hand-editing runtime data.
+- Retries and recovery actions must be bounded and must never enter uncontrolled infinite loops.
+- Never bypass safety checks or assume an uncertain external operation succeeded. Where safe recovery is temporarily impossible, preserve state, explain the blocker, and resume when it can be resolved.
