@@ -279,3 +279,10 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - Stale worktrees, locks, AI sessions, and workflow records must not permanently trap a task. Supported Trello moves should allow the user to recover blocked states without hand-editing runtime data.
 - Retries and recovery actions must be bounded and must never enter uncontrolled infinite loops.
 - Never bypass safety checks or assume an uncertain external operation succeeded. Where safe recovery is temporarily impossible, preserve state, explain the blocker, and resume when it can be resolved.
+
+## Resolving incomplete implementations
+
+- Pull request delivery takes precedence over passing quality gates. Failed validation, unresolved AI review findings, exhausted remediation attempts, and agent crashes must not block publication when Git and GitHub can safely publish the available work.
+- Publish incomplete or failing implementations as draft pull requests, describing unresolved problems accurately. Move the Trello card to `Human Review` once the PR is published.
+- An implementation task must not remain indefinitely in `Working`. If publication is genuinely impossible, such as during prolonged GitHub unavailability or unsafe unrecoverable Git state, reach a clearly explained recoverable failure outcome rather than silently remaining active.
+- Moving to `Failed` is exceptional for implementation tasks, not the default response to an exhausted validation or review limit. Preserve work and make deliberate retries possible.
