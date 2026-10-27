@@ -187,3 +187,11 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - Support both GitHub App authentication and personal credentials, such as a personal access token.
 - Each project independently chooses its GitHub authentication method.
 - GitHub App authentication is preferred for its dedicated bot identity and scoped permissions, but is not mandatory.
+
+## Project setup and quality commands
+
+- Each project may optionally configure a setup command, run in its isolated task worktree before refinement or implementation begins. If no command is configured, setup is skipped.
+- A successful setup need not be repeated unnecessarily when recovering an interrupted task. Setup output is captured separately from orchestrator logs, and failures are reported and handled safely.
+- Each project may optionally and independently configure a validation command and a test coverage command.
+- The orchestrator runs each configured command itself and accurately reports its results. An unconfigured command is skipped and must not be represented as having passed.
+- Not configuring either quality command must not prevent implementation or pull request delivery.
