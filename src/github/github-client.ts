@@ -2075,6 +2075,53 @@ export class GitHubClient {
     };
   }
 
+  /** Check GitHub's authoritative commit graph, not only patch similarity. */
+  async isAncestorCommit(options: {
+    cwd: string;
+    repository: string;
+    ancestorSha: string;
+    descendantSha: string;
+    project?: ProjectConfig;
+  }): Promise<boolean> {
+    const shaPattern = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu;
+    if (
+      !shaPattern.test(options.ancestorSha) ||
+      !shaPattern.test(options.descendantSha)
+    )
+      throw new Error("Commit ancestry requires valid Git commit identities");
+    if (
+      options.ancestorSha.toLowerCase() === options.descendantSha.toLowerCase()
+    )
+      return true;
+    const credential = await this.resolveCredential(options.project);
+    const output = await this.run(
+      options.cwd,
+      [
+        "api",
+        `repos/${options.repository}/compare/${options.ancestorSha}...${options.descendantSha}`,
+      ],
+      credential,
+    );
+    let response: unknown;
+    try {
+      response = JSON.parse(output);
+    } catch {
+      throw new Error("GitHub returned invalid commit comparison evidence");
+    }
+    if (
+      !isRecord(response) ||
+      typeof response.status !== "string" ||
+      !isRecord(response.merge_base_commit) ||
+      typeof response.merge_base_commit.sha !== "string"
+    )
+      throw new Error("GitHub returned incomplete commit ancestry evidence");
+    return (
+      response.status === "ahead" &&
+      response.merge_base_commit.sha.toLowerCase() ===
+        options.ancestorSha.toLowerCase()
+    );
+  }
+
   /** Returns the complete ordered commit list reported for a pull request. */
   async getPullRequestCommitShas(
     options: GetPullRequestRecoveryEvidenceOptions,

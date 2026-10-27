@@ -94,6 +94,8 @@ function fixture() {
       },
     ),
     comparePullRequestHeadToBase: vi.fn(async () => "current" as const),
+    getPullRequestCommitShas: vi.fn(async () => [] as string[]),
+    isAncestorCommit: vi.fn(async () => false),
     getCiObservations: vi.fn(async ({ headSha }: { headSha: string }) => ({
       headSha,
       checks: ["Build", "Tests"].map((name, index) => ({
@@ -316,6 +318,71 @@ describe("observeTaskSessionReviewCards", () => {
     expect(f.store.read("card-one")?.reviewObservation).toBeUndefined();
   });
 
+  it("accepts PR #194-style merged head advancement with verified Git history", async () => {
+    const f = fixture();
+    const recorded = f.headByCard.get("card-one")!;
+    const finalHead = "c".repeat(40);
+    vi.mocked(f.github.findPullRequestState).mockResolvedValue({
+      url: "https://github.com/owner/repo/pull/1",
+      state: "MERGED",
+      mergedAt: "2026-10-27T16:05:07Z",
+      headRefOid: finalHead,
+      baseRefName: "main",
+      headRefName: "agent/card-one",
+      headRepository: { name: "repo" },
+      headRepositoryOwner: { login: "owner" },
+    });
+    vi.mocked(f.github.getPullRequestCommitShas).mockResolvedValue([
+      recorded,
+      "d".repeat(40),
+      finalHead,
+    ]);
+    vi.mocked(f.github.isAncestorCommit).mockResolvedValue(true);
+    const observations = await observeTaskSessionReviewCards({
+      project: f.project,
+      cards: f.cards.slice(0, 1),
+      taskRecordStore: f.store,
+      github: f.github,
+    });
+    expect(observations[0]).toMatchObject({
+      state: "MERGED",
+      headSha: finalHead,
+    });
+    expect(f.github.isAncestorCommit).toHaveBeenCalled();
+    expect(f.store.read("card-one")?.pullRequest?.headSha).toBe(recorded);
+  });
+
+  it("rejects replaced, unlinked, or unverified merged heads", async () => {
+    const f = fixture();
+    const finalHead = "c".repeat(40);
+    vi.mocked(f.github.findPullRequestState).mockResolvedValue({
+      url: "https://github.com/owner/repo/pull/1",
+      state: "MERGED",
+      mergedAt: "2026-10-27T16:05:07Z",
+      headRefOid: finalHead,
+      baseRefName: "main",
+      headRefName: "agent/card-one",
+      headRepository: { name: "repo" },
+      headRepositoryOwner: { login: "owner" },
+    });
+    const observe = () =>
+      observeTaskSessionReviewCards({
+        project: f.project,
+        cards: f.cards.slice(0, 1),
+        taskRecordStore: f.store,
+        github: f.github,
+      });
+    vi.mocked(f.github.getPullRequestCommitShas).mockResolvedValue([finalHead]);
+    await expect(observe()).rejects.toThrow(/does not contain/);
+    vi.mocked(f.github.getPullRequestCommitShas).mockResolvedValue([
+      f.headByCard.get("card-one")!,
+      finalHead,
+    ]);
+    vi.mocked(f.github.isAncestorCommit).mockResolvedValue(false);
+    await expect(observe()).rejects.toThrow(/not descended/);
+    expect(f.store.read("card-one")?.reviewObservation).toBeUndefined();
+  });
+
   it.each(["stale", "missing"] as const)(
     "rejects terminal PRs with a %s persisted head",
     async (headState) => {
@@ -338,7 +405,7 @@ describe("observeTaskSessionReviewCards", () => {
           taskRecordStore: f.store,
           github: f.github,
         }),
-      ).rejects.toThrow("metadata or ownership is ambiguous");
+      ).rejects.toThrow(/head identity|does not contain|metadata or ownership/);
       expect(f.store.read("card-one")?.reviewObservation).toBeUndefined();
       expect(f.github.getCiObservations).not.toHaveBeenCalled();
     },

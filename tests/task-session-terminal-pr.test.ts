@@ -91,17 +91,20 @@ describe("task-session terminal PR reconciliation", () => {
       } as unknown as TrelloClient;
       let failCleanupOnce = state === "MERGED";
       const headSha = "a".repeat(40);
+      const mergedHeadSha = state === "MERGED" ? "b".repeat(40) : headSha;
       const github = {
         findPullRequestState: vi.fn(async () => ({
           url: "https://github.com/owner/repo/pull/7",
           state,
           mergedAt,
-          headRefOid: headSha,
+          headRefOid: mergedHeadSha,
           baseRefName: "main",
           headRefName: "agent/task-card",
           headRepository: { name: "repo" },
           headRepositoryOwner: { login: "owner" },
         })),
+        getPullRequestCommitShas: vi.fn(async () => [headSha, mergedHeadSha]),
+        isAncestorCommit: vi.fn(async () => true),
         getCiObservations: vi.fn(async () => {
           throw new Error("terminal PR reconciliation must not require CI");
         }),
@@ -178,6 +181,9 @@ describe("task-session terminal PR reconciliation", () => {
         ...(destination === "done" ? [{ dueComplete: true }] : []),
       );
       expect(github.getCiObservations).not.toHaveBeenCalled();
+      if (state === "MERGED") {
+        expect(github.isAncestorCommit).toHaveBeenCalled();
+      }
       if (state === "MERGED") {
         expect(
           new TaskExecutionStore(contextRoot, project).read(card.id)?.phase,
