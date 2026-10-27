@@ -43,3 +43,38 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - Supported task types are `Feature`, `Improvement`, `Bug`, and `Refinement`.
 - Refinement improves a card's title, description, and classification without implementing code.
 - After successful refinement, the card returns to `Backlog` for human review, and the project may take its next task.
+
+## Refinement context
+
+- Refinement must use the current state of the project's repository, with access to its source code, tests, configuration, documentation, and other relevant files.
+- The agent must use repository evidence to judge what needs to be done and how, rather than making assumptions.
+- Refined tasks should be actionable and technically grounded, without becoming detailed implementation plans.
+- Refinement must not modify source files or other repository content.
+- We will agree on a consistent Trello task template separately.
+
+## Unexpected manual Trello moves
+
+- A manual card move must not be mistaken for a successful orchestrator workflow transition.
+- If an active card is moved unexpectedly, preserve its execution state and pause further work for that project rather than guessing what happened.
+- Moving the card back to its expected list may allow automatic resumption, but only after the orchestrator verifies it is safe.
+- Other projects must remain unaffected. We may refine the precise recovery rules later.
+
+## Trello attachments
+
+- Agents must have access to all supported attachments on their Trello cards during refinement and implementation, including relevant images, documents, and logs.
+- Current attachments must be available when work starts or resumes.
+- Store downloaded attachment context separately from the Git repository.
+- Attachment access failures must be reported rather than silently ignored.
+
+## Implementation planning
+
+- Before modifying code, the implementation agent analyzes the task, attachments, and current repository state, then prepares an implementation plan.
+- An independent AI agent reviews the plan for correctness, completeness, and alignment with the task.
+- Implementation starts only after the plan is approved. No routine human plan approval is required.
+- If the plan cannot be approved, code changes must not begin.
+
+## Implementation boundaries
+
+- Implementation takes place in an isolated Git worktree on a task-specific branch, never in the original source checkout.
+- The agent may modify source code, tests, configuration, and documentation as necessary for the task.
+- Changes must follow the approved plan and repository-specific instructions, without unrelated modifications.
