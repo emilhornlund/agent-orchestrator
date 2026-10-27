@@ -15,6 +15,7 @@ import { establishCiCheckExpectations } from "../github/ci-check-expectations.js
 import { evaluateCiChecks } from "../github/evaluate-ci-checks.js";
 import { getSessionLogPath } from "../logging/session-log.js";
 import type { EmailNotifier } from "../notifications/email-notifier.js";
+import { notifyAttentionRequired } from "../notifications/email-notifier.js";
 import type { OpenCodeClient } from "../opencode/opencode-client.js";
 import { buildCommitPrompt } from "../opencode/build-commit-prompt.js";
 import {
@@ -106,6 +107,7 @@ import {
 } from "./maintain-outdated-pr.js";
 import { reconcileUnobservedTerminalPrEvents } from "./reconcile-unobserved-terminal-pr.js";
 import { verifyMergedTaskPrHeadContinuity } from "./verify-merged-task-pr-head-continuity.js";
+import { TaskMutationBlockStore } from "./task-mutation-block-store.js";
 
 const lastLoggedCiState = new Map<string, string>();
 const reportedMissingMaintenancePlans = new Set<string>();
@@ -166,6 +168,7 @@ function event(
 
 async function completeMergedTaskSession(options: {
   queue: TaskMutationQueue;
+  mutationBlockStore: TaskMutationBlockStore;
   taskStore: TaskExecutionStore;
   trello: TrelloClient;
   git: GitClient;
@@ -178,7 +181,7 @@ async function completeMergedTaskSession(options: {
   completionComment?: string;
   releaseMutationEventId?: string;
   onMutationReleased?: () => void;
-}): Promise<void> {
+}): Promise<"completed" | "deferred"> {
   const { queue, taskStore, trello, git, project, card, pullRequest, signal } =
     options;
   const headSha = pullRequest.headRefOid;
@@ -219,7 +222,10 @@ async function completeMergedTaskSession(options: {
     kind: "terminal-pr",
     enqueuedAt: record.updatedAt,
   });
-  if (terminalEvent.status === "completed" && record.phase === "done") return;
+  if (terminalEvent.status === "completed" && record.phase === "done") {
+    options.mutationBlockStore.resolve(`terminal:${terminalEventId}`);
+    return "completed";
+  }
   if (options.releaseMutationEventId !== undefined) {
     if (queue.getActive()?.eventId !== options.releaseMutationEventId) {
       throw new Error("Merged PR cannot release a mutation it does not own");
@@ -229,8 +235,19 @@ async function completeMergedTaskSession(options: {
   }
   const mutation = queue.claimForRecovery(terminalEventId);
   if (mutation === null || mutation.eventId !== terminalEventId) {
-    throw new Error(`Could not claim terminal PR cleanup for ${card.id}`);
+    const blocker = queue.getActive();
+    const diagnostic = `Deferred merged PR cleanup; blocking mutation ${blocker?.eventId ?? "unknown"} (${blocker?.kind ?? "unknown"}, ${blocker?.status ?? "unknown"}) retains project queue ownership`;
+    if (
+      options.mutationBlockStore.report(
+        `terminal:${terminalEventId}`,
+        `${terminalEventId}|${blocker?.eventId ?? "unknown"}|${blocker?.kind ?? "unknown"}|${blocker?.status ?? "unknown"}`,
+        diagnostic,
+      )
+    )
+      logger.child({ projectId: project.id, cardId: card.id }).warn(diagnostic);
+    return "deferred";
   }
+  options.mutationBlockStore.resolve(`terminal:${terminalEventId}`);
   try {
     await completeMergedTaskSessionPullRequest({
       trello,
@@ -248,7 +265,7 @@ async function completeMergedTaskSession(options: {
     });
     if (signal.aborted) {
       queue.fail(terminalEventId);
-      return;
+      return "deferred";
     }
     const latest = taskStore.read(card.id);
     if (latest === null || latest.pullRequest?.url !== pullRequest.url) {
@@ -279,6 +296,7 @@ async function completeMergedTaskSession(options: {
       );
     }
     queue.complete(terminalEventId);
+    return "completed";
   } catch (error) {
     if (queue.ownsActive(terminalEventId)) queue.fail(terminalEventId);
     throw error;
@@ -620,6 +638,7 @@ export async function runTaskSessionWorkflow(
   const taskStore = new TaskExecutionStore(root, project);
   const planStore = new TaskPlanStore(root, project);
   const queue = new TaskMutationQueue(root, project);
+  const mutationBlockStore = new TaskMutationBlockStore(root, project.id);
   const maintenanceStore = new PrMaintenanceStore(root, project);
   const feedbackLedgerStore = new FeedbackLedgerStore(root, project);
   requeueInterruptedPreparedPrMaintenance({
@@ -639,6 +658,127 @@ export async function runTaskSessionWorkflow(
     mutationQueue: queue,
     github,
   });
+  // Retire only provable stale Ready claims before terminal PR processing can
+  // try to acquire the project-wide mutation queue. Trello lists and task
+  // records are authoritative; PID data alone is not used to infer orphanhood.
+  const preflightReadyCards = await getCardsForDiscovery(
+    trello,
+    project.id,
+    project.trello.readyListId,
+    "Could not retrieve Ready cards for mutation recovery",
+    signal,
+  );
+  const preflightWorkingCards = await getCardsForDiscovery(
+    trello,
+    project.id,
+    project.trello.workingListId,
+    "Could not inspect Working cards for mutation recovery",
+    signal,
+  );
+  const preflightReadyIds = new Set(preflightReadyCards.map((card) => card.id));
+  const preflightWorkingIds = new Set(
+    preflightWorkingCards.map((card) => card.id),
+  );
+  let orphanRecoveryBlocked = false;
+  for (const queued of queue.list()) {
+    if (
+      (queued.kind !== "implementation" && queued.kind !== "refinement") ||
+      !["queued", "active", "failed", "completed"].includes(queued.status)
+    )
+      continue;
+    const orphanScope = `orphan:${queued.eventId}`;
+    if (
+      queued.status === "completed" ||
+      preflightReadyIds.has(queued.cardId) ||
+      preflightWorkingIds.has(queued.cardId) ||
+      taskStore.read(queued.cardId) !== null
+    ) {
+      mutationBlockStore.resolve(orphanScope);
+      continue;
+    }
+    const digest = /^[a-f0-9]{16}$/.exec(queued.eventId.split(":").at(-1) ?? "")
+      ? queued.eventId.split(":").at(-1)
+      : undefined;
+    const eventIdentityMatches =
+      digest !== undefined &&
+      queued.eventId === `implementation:${queued.cardId}:${digest}` &&
+      queued.operationKey === `task-session:${queued.cardId}:${digest}`;
+    if (!eventIdentityMatches) {
+      orphanRecoveryBlocked = true;
+      const diagnostic = `Mutation ${queued.eventId} (${queued.kind}, ${queued.status}) has an ambiguous Ready-event identity; preserved for operator recovery`;
+      if (
+        mutationBlockStore.report(
+          `orphan:${queued.eventId}`,
+          `${queued.eventId}|${queued.kind}|${queued.status}|identity-ambiguous`,
+          diagnostic,
+        )
+      ) {
+        logger
+          .child({ projectId: project.id, cardId: queued.cardId })
+          .error(diagnostic);
+        await notifyAttentionRequired(
+          emailNotifier,
+          {
+            project,
+            category: "Workflow",
+            reason: diagnostic,
+            cardIds: [queued.cardId],
+          },
+          logger.child({ projectId: project.id, cardId: queued.cardId }),
+        );
+      }
+      continue;
+    }
+    if (queued.status === "failed") {
+      orphanRecoveryBlocked = true;
+      const diagnostic = `Failed mutation ${queued.eventId} (${queued.kind}, failed) retains recovery obligations; it was not retired and requires verified task recovery or operator intervention`;
+      if (
+        mutationBlockStore.report(
+          `orphan:${queued.eventId}`,
+          `${queued.eventId}|${queued.kind}|failed|recovery-required`,
+          diagnostic,
+        )
+      ) {
+        logger
+          .child({ projectId: project.id, cardId: queued.cardId })
+          .error(diagnostic);
+        await notifyAttentionRequired(
+          emailNotifier,
+          {
+            project,
+            category: "Workflow",
+            reason: diagnostic,
+            cardIds: [queued.cardId],
+          },
+          logger.child({ projectId: project.id, cardId: queued.cardId }),
+        );
+      }
+      continue;
+    }
+    try {
+      queue.retireOrphanedReadyEvent(queued.eventId);
+      mutationBlockStore.resolve(`orphan:${queued.eventId}`);
+      logger
+        .child({ projectId: project.id, cardId: queued.cardId })
+        .warn(
+          `Recovered orphaned mutation ${queued.eventId} (${queued.kind}, ${queued.status}); retired before terminal PR reconciliation`,
+        );
+    } catch (error) {
+      orphanRecoveryBlocked = true;
+      const diagnostic = `Could not recover mutation ${queued.eventId} (${queued.kind}, ${queued.status}); operator intervention required: ${error instanceof Error ? error.message : String(error)}`;
+      if (
+        mutationBlockStore.report(
+          `orphan:${queued.eventId}`,
+          `${queued.eventId}|${queued.kind}|${queued.status}|${error instanceof Error ? error.message : String(error)}`,
+          diagnostic,
+        )
+      )
+        logger
+          .child({ projectId: project.id, cardId: queued.cardId })
+          .error(diagnostic);
+    }
+  }
+  if (orphanRecoveryBlocked) return;
   const humanReviewCards = await getCardsForDiscovery(
     trello,
     project.id,
@@ -734,9 +874,10 @@ export async function runTaskSessionWorkflow(
     if (recoveredTerminalMutation !== null) {
       try {
         if (isMerged) {
-          await completeMergedTaskSession({
+          const outcome = await completeMergedTaskSession({
             github,
             queue,
+            mutationBlockStore,
             taskStore,
             trello,
             git,
@@ -746,6 +887,7 @@ export async function runTaskSessionWorkflow(
             ...(emailNotifier === undefined ? {} : { emailNotifier }),
             signal,
           });
+          if (outcome === "completed") options.onHumanReviewCardLeft?.(cardId);
         } else {
           await returnClosedTaskSessionPullRequestToBacklog({
             trello,
@@ -764,7 +906,7 @@ export async function runTaskSessionWorkflow(
             signal,
           });
         }
-        options.onHumanReviewCardLeft?.(cardId);
+        if (!isMerged) options.onHumanReviewCardLeft?.(cardId);
         if (!isMerged) {
           if (signal.aborted) queue.fail(recoveredTerminalMutation.eventId);
           else queue.complete(recoveredTerminalMutation.eventId);
@@ -775,6 +917,21 @@ export async function runTaskSessionWorkflow(
         }
         throw error;
       }
+    } else if (isMerged) {
+      const outcome = await completeMergedTaskSession({
+        github,
+        queue,
+        mutationBlockStore,
+        taskStore,
+        trello,
+        git,
+        project,
+        card,
+        pullRequest: authoritative,
+        ...(emailNotifier === undefined ? {} : { emailNotifier }),
+        signal,
+      });
+      if (outcome === "completed") options.onHumanReviewCardLeft?.(cardId);
     }
   }
   for (const observation of observations) {
@@ -804,9 +961,10 @@ export async function runTaskSessionWorkflow(
         enqueuedAt: record.updatedAt,
       });
       if (observation.state === "MERGED") {
-        await completeMergedTaskSession({
+        const outcome = await completeMergedTaskSession({
           github,
           queue,
+          mutationBlockStore,
           taskStore,
           trello,
           git,
@@ -816,7 +974,7 @@ export async function runTaskSessionWorkflow(
           ...(emailNotifier === undefined ? {} : { emailNotifier }),
           signal,
         });
-        options.onHumanReviewCardLeft?.(card.id);
+        if (outcome === "completed") options.onHumanReviewCardLeft?.(card.id);
         continue;
       }
       const terminalMutation = queue.claimForRecovery(terminalEventId);
@@ -903,190 +1061,196 @@ export async function runTaskSessionWorkflow(
       const activeMutation = queue.claimForRecovery(ciEventId);
       if (activeMutation === null || activeMutation.eventId !== ciEventId)
         continue;
-      logger
-        .child({ projectId: project.id, cardId: observation.cardId })
-        .event("CI repair started");
       const card = humanReviewCards.find(
         (candidate) => candidate.id === observation.cardId,
       );
-      if (card === undefined || record.primarySessionId === undefined) {
-        throw new Error(
-          "CI repair requires the owned review card and primary session",
+      let ciResult;
+      try {
+        logger
+          .child({ projectId: project.id, cardId: observation.cardId })
+          .event("CI repair started");
+        if (card === undefined || record.primarySessionId === undefined) {
+          throw new Error(
+            "CI repair requires the owned review card and primary session",
+          );
+        }
+        const worktreePath = path.join(
+          project.repository.worktreeRoot,
+          card.id,
         );
-      }
-      const worktreePath = path.join(project.repository.worktreeRoot, card.id);
-      const expectedBranch = `agent/${card.id}`;
-      const operationKey = record.operationKey;
-      const plan = planStore.read(card.id);
-      if (plan === null || plan.verification?.verdict !== "pass") {
-        throw new Error("CI repair requires the independently verified plan");
-      }
-      const validationOptions = {
-        project,
-        cardId: card.id,
-        expectedBranch,
-        operationKey,
-        worktreePath,
-        taskRecordStore: taskStore,
-        git,
-        commands,
-        signal,
-        timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
-      };
-      let quality: Awaited<
-        ReturnType<typeof runTaskSessionValidationWithRepairs>
-      >;
-      let latestReview: Awaited<ReturnType<typeof runTaskSessionReview>>;
-      const rerunQualityAndReview = async () => {
-        quality = await runTaskSessionValidationWithRepairs({
-          validation: validationOptions,
-          openCode,
-          planStore,
-          card,
-          expectedPrimarySessionId: record.primarySessionId!,
-          repairRunOptions: {
-            model: project.opencode.remediation.model,
-            variant: project.opencode.remediation.variant,
-            timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
-            signal,
-          },
-        });
-        const runReview = async () =>
-          runTaskSessionReview({
-            project,
-            card,
-            expectedBranch,
-            operationKey,
-            worktreePath,
-            taskRecordStore: taskStore,
-            planStore,
-            git,
+        const expectedBranch = `agent/${card.id}`;
+        const operationKey = record.operationKey;
+        const plan = planStore.read(card.id);
+        if (plan === null || plan.verification?.verdict !== "pass") {
+          throw new Error("CI repair requires the independently verified plan");
+        }
+        const validationOptions = {
+          project,
+          cardId: card.id,
+          expectedBranch,
+          operationKey,
+          worktreePath,
+          taskRecordStore: taskStore,
+          git,
+          commands,
+          signal,
+          timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
+        };
+        let quality: Awaited<
+          ReturnType<typeof runTaskSessionValidationWithRepairs>
+        >;
+        let latestReview: Awaited<ReturnType<typeof runTaskSessionReview>>;
+        const rerunQualityAndReview = async () => {
+          quality = await runTaskSessionValidationWithRepairs({
+            validation: validationOptions,
             openCode,
-            validation: quality.validation,
-            coverage: quality.coverage,
-            runOptions: {
-              model: project.opencode.review.model,
-              variant: project.opencode.review.variant,
+            planStore,
+            card,
+            expectedPrimarySessionId: record.primarySessionId!,
+            repairRunOptions: {
+              model: project.opencode.remediation.model,
+              variant: project.opencode.remediation.variant,
               timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
               signal,
             },
           });
-        let first = await runReview();
-        const repairReview = async (
-          review: typeof first.review,
-          attempt: number,
-        ) => {
-          let latest = taskStore.read(card.id);
+          const runReview = async () =>
+            runTaskSessionReview({
+              project,
+              card,
+              expectedBranch,
+              operationKey,
+              worktreePath,
+              taskRecordStore: taskStore,
+              planStore,
+              git,
+              openCode,
+              validation: quality.validation,
+              coverage: quality.coverage,
+              runOptions: {
+                model: project.opencode.review.model,
+                variant: project.opencode.review.variant,
+                timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
+                signal,
+              },
+            });
+          let first = await runReview();
+          const repairReview = async (
+            review: typeof first.review,
+            attempt: number,
+          ) => {
+            let latest = taskStore.read(card.id);
+            if (latest === null)
+              throw new Error("Task state disappeared during CI review repair");
+            taskStore.compareAndSwap(
+              card.id,
+              latest.revision,
+              transitionTaskExecutionRecord(
+                latest,
+                event(latest, "review-failed"),
+              ),
+            );
+            const prompt = buildTaskSessionReviewRepairPrompt({
+              projectId: project.id,
+              card,
+              approvedPlan: plan.plan,
+              review,
+              attempt,
+              maxAttempts: project.opencode.remediation.maxPasses,
+            });
+            const repaired = await runWithPrimaryTaskSession(
+              taskStore,
+              openCode,
+              project.id,
+              card.id,
+              {
+                model: project.opencode.remediation.model,
+                variant: project.opencode.remediation.variant,
+                timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
+                signal,
+                cwd: worktreePath,
+                prompt,
+              },
+            );
+            if (repaired.exitCode !== 0)
+              throw new Error(
+                "Primary-session review correction failed during CI repair",
+              );
+            latest = taskStore.read(card.id);
+            if (latest === null)
+              throw new Error(
+                "Task state disappeared after CI review correction",
+              );
+            const validationPhase = transitionTaskExecutionRecord(
+              latest,
+              event(latest, "implementation-completed"),
+            );
+            latest = taskStore.compareAndSwap(
+              card.id,
+              latest.revision,
+              validationPhase,
+            );
+            updateRecord(taskStore, latest, {
+              retryCounters: { ...latest.retryCounters, validation: 0 },
+              validationRepair: { cycleId: operationKey, status: "active" },
+            });
+          };
+          let roundIndex = 0;
+          const ciReviewResult = await runTaskSessionReviewWithRepairs({
+            maxAttempts: project.opencode.remediation.maxPasses,
+            store: taskStore,
+            projectId: project.id,
+            cardId: card.id,
+            operationKey,
+            expectedPrimarySessionId: record.primarySessionId!,
+            runReview: async () => {
+              if (roundIndex++ === 0)
+                return {
+                  review: first.review,
+                  contentIdentity: first.contentIdentity,
+                };
+              first = await runReview();
+              return {
+                review: first.review,
+                contentIdentity: first.contentIdentity,
+              };
+            },
+            repair: repairReview,
+            rerunQuality: async () => {
+              quality = await runTaskSessionValidationWithRepairs({
+                validation: validationOptions,
+                openCode,
+                planStore,
+                card,
+                expectedPrimarySessionId: record.primarySessionId!,
+                repairRunOptions: {
+                  model: project.opencode.remediation.model,
+                  variant: project.opencode.remediation.variant,
+                  timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
+                  signal,
+                },
+              });
+            },
+            getCurrentContentIdentity: () =>
+              getTaskSessionSourceSnapshotIdentity(git, worktreePath),
+          });
+          latestReview = first;
+          if (ciReviewResult.review.verdict !== "pass")
+            throw new Error(
+              "CI repair review remains blocking after the configured repair limit",
+            );
+          const latest = taskStore.read(card.id);
           if (latest === null)
-            throw new Error("Task state disappeared during CI review repair");
+            throw new Error("Task state disappeared after CI review");
           taskStore.compareAndSwap(
             card.id,
             latest.revision,
             transitionTaskExecutionRecord(
               latest,
-              event(latest, "review-failed"),
+              event(latest, "review-passed"),
             ),
           );
-          const prompt = buildTaskSessionReviewRepairPrompt({
-            projectId: project.id,
-            card,
-            approvedPlan: plan.plan,
-            review,
-            attempt,
-            maxAttempts: project.opencode.remediation.maxPasses,
-          });
-          const repaired = await runWithPrimaryTaskSession(
-            taskStore,
-            openCode,
-            project.id,
-            card.id,
-            {
-              model: project.opencode.remediation.model,
-              variant: project.opencode.remediation.variant,
-              timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
-              signal,
-              cwd: worktreePath,
-              prompt,
-            },
-          );
-          if (repaired.exitCode !== 0)
-            throw new Error(
-              "Primary-session review correction failed during CI repair",
-            );
-          latest = taskStore.read(card.id);
-          if (latest === null)
-            throw new Error(
-              "Task state disappeared after CI review correction",
-            );
-          const validationPhase = transitionTaskExecutionRecord(
-            latest,
-            event(latest, "implementation-completed"),
-          );
-          latest = taskStore.compareAndSwap(
-            card.id,
-            latest.revision,
-            validationPhase,
-          );
-          updateRecord(taskStore, latest, {
-            retryCounters: { ...latest.retryCounters, validation: 0 },
-            validationRepair: { cycleId: operationKey, status: "active" },
-          });
         };
-        let roundIndex = 0;
-        const ciReviewResult = await runTaskSessionReviewWithRepairs({
-          maxAttempts: project.opencode.remediation.maxPasses,
-          store: taskStore,
-          projectId: project.id,
-          cardId: card.id,
-          operationKey,
-          expectedPrimarySessionId: record.primarySessionId!,
-          runReview: async () => {
-            if (roundIndex++ === 0)
-              return {
-                review: first.review,
-                contentIdentity: first.contentIdentity,
-              };
-            first = await runReview();
-            return {
-              review: first.review,
-              contentIdentity: first.contentIdentity,
-            };
-          },
-          repair: repairReview,
-          rerunQuality: async () => {
-            quality = await runTaskSessionValidationWithRepairs({
-              validation: validationOptions,
-              openCode,
-              planStore,
-              card,
-              expectedPrimarySessionId: record.primarySessionId!,
-              repairRunOptions: {
-                model: project.opencode.remediation.model,
-                variant: project.opencode.remediation.variant,
-                timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
-                signal,
-              },
-            });
-          },
-          getCurrentContentIdentity: () =>
-            getTaskSessionSourceSnapshotIdentity(git, worktreePath),
-        });
-        latestReview = first;
-        if (ciReviewResult.review.verdict !== "pass")
-          throw new Error(
-            "CI repair review remains blocking after the configured repair limit",
-          );
-        const latest = taskStore.read(card.id);
-        if (latest === null)
-          throw new Error("Task state disappeared after CI review");
-        taskStore.compareAndSwap(
-          card.id,
-          latest.revision,
-          transitionTaskExecutionRecord(latest, event(latest, "review-passed")),
-        );
-      };
-      let ciResult;
-      try {
         ciResult = await runTaskSessionCiRepairs({
           store: taskStore,
           projectId: project.id,
@@ -1405,7 +1569,7 @@ export async function runTaskSessionWorkflow(
           },
         });
       } catch (error) {
-        queue.fail(ciEventId);
+        if (queue.ownsActive(ciEventId)) queue.fail(ciEventId);
         throw error;
       }
       if (ciResult.status === "exhausted") queue.fail(ciEventId);
@@ -1543,6 +1707,7 @@ export async function runTaskSessionWorkflow(
     await completeMergedTaskSession({
       github,
       queue,
+      mutationBlockStore,
       taskStore,
       trello,
       git,
@@ -2280,13 +2445,7 @@ export async function runTaskSessionWorkflow(
     recoveryRecord = recovery.record;
     recoveryWorktreePath = worktreePath;
   } else {
-    const readyCards = await getCardsForDiscovery(
-      trello,
-      project.id,
-      project.trello.readyListId,
-      "Could not retrieve Ready for Agent cards",
-      signal,
-    );
+    const readyCards = preflightReadyCards;
     const eligibleCards = readyCards.filter(
       (card) =>
         isCardStartDateReached(card, Date.now()) &&
@@ -2369,18 +2528,29 @@ export async function runTaskSessionWorkflow(
       // discovery and claim. The next poll will verify and retire the orphan.
       if (queue.ownsActive(mutation.eventId))
         queue.releaseForRecovery(mutation.eventId);
-      throw new Error(
-        `Queued task ${mutation.cardId} is no longer in Ready for Agent`,
-      );
+      const diagnostic = `Claimed mutation ${mutation.eventId} (${mutation.kind}, ${mutation.status}) was no longer eligible because card ${mutation.cardId} disappeared from Ready for Agent; ownership was released for authoritative reconciliation on the next poll`;
+      if (
+        mutationBlockStore.report(
+          `orphan:${mutation.eventId}`,
+          `${mutation.eventId}|${mutation.kind}|disappeared-after-claim`,
+          diagnostic,
+        )
+      )
+        logger
+          .child({ projectId: project.id, cardId: mutation.cardId })
+          .warn(diagnostic);
+      return;
     }
   }
   if (mutation === null || selectedCard === null) return;
   const card = selectedCard;
   const cardLog = logger.child({ projectId: project.id, cardId: card.id });
-  if (recoveryRecord !== null) {
-    cardLog.event(`Recovering existing task in ${recoveryRecord.phase} phase`);
-  }
   try {
+    if (recoveryRecord !== null) {
+      cardLog.event(
+        `Recovering existing task in ${recoveryRecord.phase} phase`,
+      );
+    }
     if (mutation.kind === "refinement") {
       if (recoveryRecord !== null) {
         throw new Error(
@@ -3644,6 +3814,7 @@ export async function runTaskSessionWorkflow(
         await completeMergedTaskSession({
           github,
           queue,
+          mutationBlockStore,
           taskStore,
           trello,
           git,
