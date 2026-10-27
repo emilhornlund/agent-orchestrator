@@ -187,13 +187,20 @@ export async function maintainOutdatedPr(
   )
     return "deferred";
   const operation =
-    prior ??
-    maintenanceStore.create({
-      ...identity,
-      operationId: randomUUID(),
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
+    prior === undefined
+      ? maintenanceStore.create({
+          ...identity,
+          operationId: randomUUID(),
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        })
+      : prior.targetBaseHead !== currentBase && prior.status === "prepared"
+        ? maintenanceStore.retargetUnstarted(
+            prior.operationId,
+            prior,
+            currentBase,
+          )
+        : prior;
   const eventId = `pr-maintenance:${card.id}:${operation.operationId}`;
   const mutation = mutationQueue.enqueue({
     projectId: project.id,
@@ -507,6 +514,61 @@ export async function maintainOutdatedPr(
     if (mutationQueue.ownsActive(eventId)) mutationQueue.fail(eventId);
     throw error;
   }
+}
+
+/** Recover an unstarted maintenance operation after its queue owner exited. */
+export function requeueInterruptedPreparedPrMaintenance(options: {
+  project: ProjectConfig;
+  maintenanceStore: PrMaintenanceStore;
+  mutationQueue: TaskMutationQueue;
+}): boolean {
+  const active = options.mutationQueue.getActive();
+  if (
+    active?.kind !== "pr-maintenance" ||
+    (active.status !== "active" && active.status !== "failed")
+  )
+    return false;
+  const operation = options.maintenanceStore.inspect(active.operationKey);
+  if (
+    operation === null ||
+    operation.projectId !== options.project.id ||
+    operation.cardId !== active.cardId ||
+    active.projectId !== options.project.id ||
+    active.eventId !==
+      `pr-maintenance:${operation.cardId}:${operation.operationId}`
+  )
+    throw new Error("Failed PR maintenance queue and store identities differ");
+  if (
+    operation.status !== "prepared" ||
+    operation.localPreparation !== undefined ||
+    operation.publication !== undefined ||
+    operation.qualityVerification !== undefined ||
+    options.mutationQueue.ownsActive(active.eventId)
+  )
+    return false;
+  if (
+    active.status === "failed" &&
+    operation.failedPreparedRecoveryAttempted === true
+  )
+    return false;
+  const claimed = options.mutationQueue.claimForRecovery(active.eventId);
+  if (claimed === null) return false; // Live owner: do not interfere.
+  if (active.status === "failed") {
+    try {
+      options.maintenanceStore.claimFailedPreparedRecovery(
+        operation.operationId,
+      );
+    } catch (error) {
+      if (options.mutationQueue.ownsActive(claimed.eventId))
+        options.mutationQueue.fail(claimed.eventId);
+      throw error;
+    }
+  }
+  options.mutationQueue.requeueAfterVerifiedRecovery(claimed.eventId);
+  logger
+    .child({ projectId: options.project.id, cardId: operation.cardId })
+    .warn("Recovered interrupted unstarted PR maintenance queue claim");
+  return true;
 }
 
 /**

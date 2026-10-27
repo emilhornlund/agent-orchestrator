@@ -120,3 +120,19 @@ export function decideHumanReviewPublication(
       !decision.reasons.some((reason) => staleReasons.includes(reason)),
   };
 }
+
+/** Require passing local checks but treat AI review as advisory for human-review publication. */
+export function decideValidatedHumanReviewPublication(
+  input: VerifiedPublicationDecisionInput,
+): VerifiedPublicationDecision {
+  const result = decideVerifiedPublication(input);
+  const advisory = new Set([
+    "Passing final implementation review is missing",
+    "Final implementation review did not pass",
+    "Final implementation review is stale",
+  ]);
+  return {
+    ...result,
+    allowed: result.reasons.every((reason) => advisory.has(reason)),
+  };
+}

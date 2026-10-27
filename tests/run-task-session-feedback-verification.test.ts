@@ -5,7 +5,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProjectConfig } from "../src/config/config.js";
 import type { RunOpenCode } from "../src/opencode/opencode-client.js";
 import { OpenCodeClient } from "../src/opencode/opencode-client.js";
-import { runTaskSessionFeedbackVerification } from "../src/task-session/run-task-session-feedback-verification.js";
+import {
+  runTaskSessionFeedbackVerification,
+  runAdvisoryTaskSessionFeedbackVerification,
+} from "../src/task-session/run-task-session-feedback-verification.js";
 import { getTaskSessionSourceSnapshotIdentity } from "../src/task-session/source-snapshot.js";
 import type { TaskPlan } from "../src/task-session/task-plan.js";
 import type { FeedbackLedgerEntry } from "../src/task-session/feedback-ledger.js";
@@ -217,7 +220,245 @@ describe("runTaskSessionFeedbackVerification", () => {
           signal: new AbortController().signal,
         },
       }),
-    ).rejects.toThrow("requires current local validation");
+    ).rejects.toThrow("quality gates failed");
     expect(run).not.toHaveBeenCalled();
+  });
+  it("runs verification with failed advisory AI review", async () => {
+    const f = fixture();
+    const identity = await getTaskSessionSourceSnapshotIdentity(
+      f.git,
+      f.worktreePath,
+    );
+    const run = vi.fn<RunOpenCode>().mockResolvedValue({
+      exitCode: 0,
+      output: JSON.stringify({
+        version: 1,
+        projectId: "project",
+        cardId: "card",
+        headSha: f.headSha,
+        contentIdentity: identity,
+        dispositions: [
+          {
+            feedbackId: "inline-comment:comment-1",
+            status: "unresolved",
+            reason: "Not verified",
+          },
+        ],
+      }),
+      errorOutput: "",
+    });
+    const result = await runTaskSessionFeedbackVerification({
+      project: f.project,
+      card: f.card,
+      expectedBranch: "agent/card",
+      expectedHeadSha: f.headSha,
+      worktreePath: f.worktreePath,
+      approvedPlan: f.plan,
+      actionableFeedback: f.feedback,
+      qualityEvidence: {
+        currentContentIdentity: identity,
+        validationCommand: "yarn validate",
+        validation: {
+          command: "yarn validate",
+          startedAt: "2026-10-24T09:00:00.000Z",
+          completedAt: "2026-10-24T09:01:00.000Z",
+          exitCode: 0,
+          status: "passed",
+          timedOut: false,
+          aborted: false,
+          diagnostic: "ok",
+          contentIdentity: identity,
+        },
+        coverage: null,
+        review: {
+          ...f.reviewResult,
+          verdict: "fail",
+          reviewedContentIdentity: identity,
+        },
+      },
+      git: f.git,
+      openCode: new OpenCodeClient(run),
+      runOptions: {
+        model: "reviewer",
+        variant: "high",
+        timeoutMilliseconds: 60000,
+        signal: new AbortController().signal,
+      },
+    });
+    expect(result.dispositions[0]?.status).toBe("unresolved");
+  });
+
+  it.each(["malformed", "nonzero", "execution"] as const)(
+    "preserves unresolved feedback when AI verification is %s",
+    async (failure) => {
+      const f = fixture();
+      const identity = await getTaskSessionSourceSnapshotIdentity(
+        f.git,
+        f.worktreePath,
+      );
+      const run = vi.fn<RunOpenCode>().mockImplementation(async () => {
+        if (failure === "execution") throw new Error("AI unavailable");
+        return {
+          exitCode: failure === "nonzero" ? 1 : 0,
+          output: "invalid JSON",
+          errorOutput: "",
+        };
+      });
+      const result = await runAdvisoryTaskSessionFeedbackVerification({
+        project: f.project,
+        card: f.card,
+        expectedBranch: "agent/card",
+        expectedHeadSha: f.headSha,
+        worktreePath: f.worktreePath,
+        approvedPlan: f.plan,
+        actionableFeedback: f.feedback,
+        qualityEvidence: {
+          currentContentIdentity: identity,
+          validationCommand: "yarn validate",
+          validation: {
+            command: "yarn validate",
+            startedAt: "2026-10-24T09:00:00.000Z",
+            completedAt: "2026-10-24T09:01:00.000Z",
+            exitCode: 0,
+            status: "passed",
+            timedOut: false,
+            aborted: false,
+            diagnostic: "ok",
+            contentIdentity: identity,
+          },
+          coverage: null,
+          review: { ...f.reviewResult, reviewedContentIdentity: identity },
+        },
+        git: f.git,
+        openCode: new OpenCodeClient(run),
+        runOptions: {
+          model: "reviewer",
+          variant: "high",
+          timeoutMilliseconds: 60_000,
+          signal: new AbortController().signal,
+        },
+      });
+      expect(result.dispositions).toMatchObject([
+        {
+          feedbackId: "inline-comment:comment-1",
+          status: "unresolved",
+        },
+      ]);
+    },
+  );
+
+  it("does not accept advisory fallback after a source change", async () => {
+    const f = fixture();
+    const identity = await getTaskSessionSourceSnapshotIdentity(
+      f.git,
+      f.worktreePath,
+    );
+    const run = vi.fn<RunOpenCode>().mockImplementation(async () => {
+      fs.writeFileSync(path.join(f.worktreePath, "source.ts"), "changed\\n");
+      return { exitCode: 0, output: "malformed", errorOutput: "" };
+    });
+    await expect(
+      runAdvisoryTaskSessionFeedbackVerification({
+        project: f.project,
+        card: f.card,
+        expectedBranch: "agent/card",
+        expectedHeadSha: f.headSha,
+        worktreePath: f.worktreePath,
+        approvedPlan: f.plan,
+        actionableFeedback: f.feedback,
+        qualityEvidence: {
+          currentContentIdentity: identity,
+          validationCommand: "yarn validate",
+          validation: {
+            command: "yarn validate",
+            startedAt: "2026-10-24T09:00:00.000Z",
+            completedAt: "2026-10-24T09:01:00.000Z",
+            exitCode: 0,
+            status: "passed",
+            timedOut: false,
+            aborted: false,
+            diagnostic: "ok",
+            contentIdentity: identity,
+          },
+          coverage: null,
+          review: { ...f.reviewResult, reviewedContentIdentity: identity },
+        },
+        git: f.git,
+        openCode: new OpenCodeClient(run),
+        runOptions: {
+          model: "reviewer",
+          variant: "high",
+          timeoutMilliseconds: 60_000,
+          signal: new AbortController().signal,
+        },
+      }),
+    ).rejects.toThrow("source or PR head changed");
+  });
+
+  it("preserves unresolved feedback on an invalid AI disposition", async () => {
+    const f = fixture();
+    const identity = await getTaskSessionSourceSnapshotIdentity(
+      f.git,
+      f.worktreePath,
+    );
+    const run = vi.fn<RunOpenCode>().mockResolvedValue({
+      exitCode: 0,
+      output: JSON.stringify({
+        version: 1,
+        projectId: "project",
+        cardId: "card",
+        headSha: f.headSha,
+        contentIdentity: identity,
+        dispositions: [
+          {
+            feedbackId: "inline-comment:invented",
+            status: "verified-fixed",
+            evidence: ["x"],
+          },
+        ],
+      }),
+      errorOutput: "",
+    });
+    const result = await runAdvisoryTaskSessionFeedbackVerification({
+      project: f.project,
+      card: f.card,
+      expectedBranch: "agent/card",
+      expectedHeadSha: f.headSha,
+      worktreePath: f.worktreePath,
+      approvedPlan: f.plan,
+      actionableFeedback: f.feedback,
+      qualityEvidence: {
+        currentContentIdentity: identity,
+        validationCommand: "yarn validate",
+        validation: {
+          command: "yarn validate",
+          startedAt: "2026-10-24T09:00:00.000Z",
+          completedAt: "2026-10-24T09:01:00.000Z",
+          exitCode: 0,
+          status: "passed",
+          timedOut: false,
+          aborted: false,
+          diagnostic: "ok",
+          contentIdentity: identity,
+        },
+        coverage: null,
+        review: { ...f.reviewResult, reviewedContentIdentity: identity },
+      },
+      git: f.git,
+      openCode: new OpenCodeClient(run),
+      runOptions: {
+        model: "reviewer",
+        variant: "high",
+        timeoutMilliseconds: 60_000,
+        signal: new AbortController().signal,
+      },
+    });
+    expect(result.dispositions).toEqual([
+      {
+        feedbackId: "inline-comment:comment-1",
+        status: "unresolved",
+        reason: expect.stringContaining("inconclusive"),
+      },
+    ]);
   });
 });

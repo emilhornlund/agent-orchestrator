@@ -19,7 +19,7 @@ import type { CommandRunner } from "../process/command-runner.js";
 import type { TrelloCard, TrelloClient } from "../trello/trello-client.js";
 import type { ObservedTaskSessionReviewCard } from "./observe-task-session-review-cards.js";
 import { runTaskSessionFeedbackRemediation } from "../task-session/run-task-session-feedback-remediation.js";
-import { runTaskSessionFeedbackVerification } from "../task-session/run-task-session-feedback-verification.js";
+import { runAdvisoryTaskSessionFeedbackVerification } from "../task-session/run-task-session-feedback-verification.js";
 import { publishVerifiedFeedbackReplies } from "../task-session/publish-verified-feedback-replies.js";
 import type { FeedbackVerificationResult } from "../task-session/feedback-verification.js";
 import { reconcileFeedbackRound } from "../task-session/reconcile-feedback-round.js";
@@ -32,6 +32,7 @@ import type { FeedbackLedgerEntry } from "../task-session/feedback-ledger.js";
 import { TaskExecutionStore } from "../task-session/task-execution-store.js";
 import { TaskMutationQueue } from "../task-session/task-mutation-queue.js";
 import type { TaskExecutionRecord } from "../task-session/task-execution-record.js";
+import type { ImplementationReviewResult } from "../task-session/implementation-review-result.js";
 import { TaskPlanStore } from "../task-session/task-plan-store.js";
 import { transitionTaskExecutionRecord } from "../task-session/task-execution-transition.js";
 import { runWithPrimaryTaskSession } from "../task-session/primary-task-session.js";
@@ -39,10 +40,13 @@ import { runTaskSessionValidationWithRepairs } from "../task-session/run-task-se
 import type { TaskSessionValidationResult } from "../task-session/run-task-session-validation.js";
 import { runTaskSessionValidation } from "../task-session/run-task-session-validation.js";
 import { runTaskSessionCoverage } from "../task-session/run-task-session-coverage.js";
-import { runTaskSessionReview } from "../task-session/run-task-session-review.js";
+import {
+  runTaskSessionReview,
+  TaskSessionReviewUnavailableError,
+} from "../task-session/run-task-session-review.js";
 import { runTaskSessionReviewWithRepairs } from "../task-session/run-task-session-review-repairs.js";
 import {
-  decideVerifiedPublication,
+  decideValidatedHumanReviewPublication,
   type VerifiedPublicationDecisionInput,
 } from "../task-session/verified-publication-decision.js";
 import { getTaskSessionSourceSnapshotIdentity } from "../task-session/source-snapshot.js";
@@ -240,13 +244,22 @@ export async function runTaskSessionFeedbackCycle(
   const cardLog = logger.child({ projectId: project.id, cardId: card.id });
   if (
     record === null ||
-    record.phase !== "human-feedback" ||
+    (record.phase !== "human-feedback" && record.phase !== "review") ||
     record.pullRequest?.headSha !== observation.headSha
   ) {
     throw new Error(
       "Feedback round task record does not match the current owned PR head",
     );
   }
+  const recoveringReview = record.phase === "review";
+  if (
+    recoveringReview &&
+    (record.reviewRepair?.status !== "exhausted" ||
+      record.reviewRepair.finalReview?.verdict !== "fail")
+  )
+    throw new Error(
+      "Feedback review checkpoint is not eligible for exhausted-review recovery",
+    );
   const storedPlan = planStore.read(card.id);
   if (storedPlan === null || storedPlan.verification?.verdict !== "pass")
     throw new Error(
@@ -533,13 +546,37 @@ export async function runTaskSessionFeedbackCycle(
     )
     .digest("hex")
     .slice(0, 16)}`;
-  if (record.feedbackRemediation?.operationId === operationId) {
+  if (
+    !recoveringReview &&
+    record.feedbackRemediation?.operationId === operationId
+  ) {
     if (record.feedbackRemediation.status === "active") {
       throw new Error(
         "Feedback remediation outcome is active and ambiguous; refusing duplicate execution",
       );
     }
     return "idle";
+  }
+  if (recoveringReview) {
+    const active = options.mutationQueue.getActive();
+    if (
+      active?.eventId !== operationId ||
+      active.cardId !== card.id ||
+      active.kind !== "feedback" ||
+      active.status !== "failed" ||
+      record.feedbackRemediation?.operationId !== operationId ||
+      record.feedbackRemediation.status !== "changed" ||
+      record.feedbackRecoveryAttemptEventId !== operationId ||
+      (await git.getCurrentBranch(worktreePath)) !== record.expectedBranch ||
+      (await git.getHeadSha(worktreePath)) !== observation.headSha ||
+      (await git.getStatus(worktreePath)).trim().length === 0 ||
+      (await getTaskSessionSourceSnapshotIdentity(git, worktreePath)) !==
+        record.reviewRepair?.finalReview?.reviewedContentIdentity
+    ) {
+      throw new Error(
+        "Failed feedback recovery lacks verified queue, branch, PR head or source evidence",
+      );
+    }
   }
   options.mutationQueue.enqueue({
     projectId: project.id,
@@ -556,241 +593,270 @@ export async function runTaskSessionFeedbackCycle(
       options.prepareAttachmentContext === undefined
         ? options.attachmentContext
         : await options.prepareAttachmentContext();
-    const remediation = await runTaskSessionFeedbackRemediation({
-      project,
-      card,
-      expectedBranch: record.expectedBranch!,
-      operationKey: record.operationKey,
-      operationId,
-      expectedPrimarySessionId: record.primarySessionId!,
-      expectedPullRequestHeadSha: observation.headSha,
-      worktreePath,
-      taskRecordStore: taskStore,
-      planStore,
-      feedbackLedgerStore: ledgerStore,
-      git,
-      openCode,
-      ...(attachmentContext === undefined ? {} : { attachmentContext }),
-      runOptions: {
-        model: project.opencode.remediation.model,
-        variant: project.opencode.remediation.variant,
-        timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
-        signal,
-      },
-    });
-    cardLog.event(`Requested-changes remediation ${remediation.status}`);
-    if (remediation.status === "no-op") {
-      options.mutationQueue.complete(operationId);
-      return "remediated";
-    }
-    let current = taskStore.read(card.id);
-    if (current === null)
-      throw new Error("Task record disappeared after feedback remediation");
-    current = updateRecord(taskStore, current, {
-      ciRepair: undefined,
-      reviewObservation: undefined,
-      publicationQuality: undefined,
-      reviewRepair: undefined,
-    });
-    const feedbackReceived = transitionTaskExecutionRecord(current, {
-      type: "feedback-received",
-      eventId: `${operationId}:feedback-received`,
-      projectId: project.id,
-      cardId: card.id,
-      operationKey: current.operationKey,
-      occurredAt: new Date(
-        Math.max(Date.now(), Date.parse(current.updatedAt) + 1),
-      ).toISOString(),
-    });
-    current = taskStore.compareAndSwap(
-      card.id,
-      current.revision,
-      feedbackReceived,
-    );
-    const implementationCompleted = transitionTaskExecutionRecord(current, {
-      type: "implementation-completed",
-      eventId: `${operationId}:implementation-completed`,
-      projectId: project.id,
-      cardId: card.id,
-      operationKey: current.operationKey,
-      occurredAt: new Date(
-        Math.max(Date.now(), Date.parse(current.updatedAt) + 1),
-      ).toISOString(),
-    });
-    current = taskStore.compareAndSwap(
-      card.id,
-      current.revision,
-      implementationCompleted,
-    );
-    current = taskStore.compareAndSwap(card.id, current.revision, {
-      ...current,
-      validationRepair: { cycleId: operationId, status: "active" },
-      retryCounters: { ...current.retryCounters, validation: 0 },
-      revision: current.revision + 1,
-      updatedAt: new Date(
-        Math.max(Date.now(), Date.parse(current.updatedAt) + 1),
-      ).toISOString(),
-    });
-    const validationOptions = {
-      project,
-      cardId: card.id,
-      expectedBranch: record.expectedBranch!,
-      operationKey: record.operationKey,
-      worktreePath,
-      taskRecordStore: taskStore,
-      git,
-      commands,
-      signal,
-      timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
+    let quality: {
+      validation: TaskSessionValidationResult;
+      coverage: TaskSessionValidationResult | null;
     };
-    let quality = await runTaskSessionValidationWithRepairs({
-      validation: validationOptions,
-      openCode,
-      planStore,
-      card,
-      expectedPrimarySessionId: record.primarySessionId!,
-      ...(attachmentContext === undefined ? {} : { attachmentContext }),
-      repairRunOptions: validationRepairRunOptions(project, signal),
-    });
-    let firstReview = await runTaskSessionReview({
-      project,
-      card,
-      expectedBranch: record.expectedBranch!,
-      operationKey: record.operationKey,
-      worktreePath,
-      taskRecordStore: taskStore,
-      planStore,
-      git,
-      openCode,
-      validation: quality.validation,
-      coverage: quality.coverage,
-      ...(attachmentContext === undefined ? {} : { attachmentContext }),
-      runOptions: reviewRunOptions(project, signal),
-    });
-    let roundIndex = 0;
-    const finalReview = await runTaskSessionReviewWithRepairs({
-      maxAttempts: project.opencode.remediation.maxPasses,
-      store: taskStore,
-      projectId: project.id,
-      cardId: card.id,
-      operationKey: record.operationKey,
-      expectedPrimarySessionId: record.primarySessionId!,
-      runReview: async () => {
-        if (roundIndex++ === 0)
+    let finalReview: { review: ImplementationReviewResult };
+    if (recoveringReview) {
+      const validationOptions = {
+        project,
+        cardId: card.id,
+        expectedBranch: record.expectedBranch!,
+        operationKey: record.operationKey,
+        worktreePath,
+        taskRecordStore: taskStore,
+        git,
+        commands,
+        signal,
+        timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
+        feedbackReviewRecovery: true,
+      };
+      const validation = await runTaskSessionValidation(validationOptions);
+      const coverage = await runTaskSessionCoverage(validationOptions);
+      quality = { validation, coverage };
+      finalReview = { review: record.reviewRepair!.finalReview! };
+      cardLog.event(
+        "Resuming failed feedback review with preserved implementation and exhausted review",
+      );
+    } else {
+      const remediation = await runTaskSessionFeedbackRemediation({
+        project,
+        card,
+        expectedBranch: record.expectedBranch!,
+        operationKey: record.operationKey,
+        operationId,
+        expectedPrimarySessionId: record.primarySessionId!,
+        expectedPullRequestHeadSha: observation.headSha,
+        worktreePath,
+        taskRecordStore: taskStore,
+        planStore,
+        feedbackLedgerStore: ledgerStore,
+        git,
+        openCode,
+        ...(attachmentContext === undefined ? {} : { attachmentContext }),
+        runOptions: {
+          model: project.opencode.remediation.model,
+          variant: project.opencode.remediation.variant,
+          timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
+          signal,
+        },
+      });
+      cardLog.event(`Requested-changes remediation ${remediation.status}`);
+      if (remediation.status === "no-op") {
+        options.mutationQueue.complete(operationId);
+        return "remediated";
+      }
+      let current = taskStore.read(card.id);
+      if (current === null)
+        throw new Error("Task record disappeared after feedback remediation");
+      current = updateRecord(taskStore, current, {
+        ciRepair: undefined,
+        reviewObservation: undefined,
+        publicationQuality: undefined,
+        reviewRepair: undefined,
+      });
+      const feedbackReceived = transitionTaskExecutionRecord(current, {
+        type: "feedback-received",
+        eventId: `${operationId}:feedback-received`,
+        projectId: project.id,
+        cardId: card.id,
+        operationKey: current.operationKey,
+        occurredAt: new Date(
+          Math.max(Date.now(), Date.parse(current.updatedAt) + 1),
+        ).toISOString(),
+      });
+      current = taskStore.compareAndSwap(
+        card.id,
+        current.revision,
+        feedbackReceived,
+      );
+      const implementationCompleted = transitionTaskExecutionRecord(current, {
+        type: "implementation-completed",
+        eventId: `${operationId}:implementation-completed`,
+        projectId: project.id,
+        cardId: card.id,
+        operationKey: current.operationKey,
+        occurredAt: new Date(
+          Math.max(Date.now(), Date.parse(current.updatedAt) + 1),
+        ).toISOString(),
+      });
+      current = taskStore.compareAndSwap(
+        card.id,
+        current.revision,
+        implementationCompleted,
+      );
+      current = taskStore.compareAndSwap(card.id, current.revision, {
+        ...current,
+        validationRepair: { cycleId: operationId, status: "active" },
+        retryCounters: { ...current.retryCounters, validation: 0 },
+        revision: current.revision + 1,
+        updatedAt: new Date(
+          Math.max(Date.now(), Date.parse(current.updatedAt) + 1),
+        ).toISOString(),
+      });
+      const validationOptions = {
+        project,
+        cardId: card.id,
+        expectedBranch: record.expectedBranch!,
+        operationKey: record.operationKey,
+        worktreePath,
+        taskRecordStore: taskStore,
+        git,
+        commands,
+        signal,
+        timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
+      };
+      quality = await runTaskSessionValidationWithRepairs({
+        validation: validationOptions,
+        openCode,
+        planStore,
+        card,
+        expectedPrimarySessionId: record.primarySessionId!,
+        ...(attachmentContext === undefined ? {} : { attachmentContext }),
+        repairRunOptions: validationRepairRunOptions(project, signal),
+      });
+      let firstReview = await runTaskSessionReview({
+        project,
+        card,
+        expectedBranch: record.expectedBranch!,
+        operationKey: record.operationKey,
+        worktreePath,
+        taskRecordStore: taskStore,
+        planStore,
+        git,
+        openCode,
+        validation: quality.validation,
+        coverage: quality.coverage,
+        ...(attachmentContext === undefined ? {} : { attachmentContext }),
+        runOptions: reviewRunOptions(project, signal),
+      });
+      let roundIndex = 0;
+      finalReview = await runTaskSessionReviewWithRepairs({
+        maxAttempts: project.opencode.remediation.maxPasses,
+        store: taskStore,
+        projectId: project.id,
+        cardId: card.id,
+        operationKey: record.operationKey,
+        expectedPrimarySessionId: record.primarySessionId!,
+        runReview: async () => {
+          if (roundIndex++ === 0)
+            return {
+              review: firstReview.review,
+              contentIdentity: firstReview.contentIdentity,
+            };
+          firstReview = await runTaskSessionReview({
+            project,
+            card,
+            expectedBranch: record.expectedBranch!,
+            operationKey: record.operationKey,
+            worktreePath,
+            taskRecordStore: taskStore,
+            planStore,
+            git,
+            openCode,
+            validation: quality.validation,
+            coverage: quality.coverage,
+            ...(attachmentContext === undefined ? {} : { attachmentContext }),
+            runOptions: reviewRunOptions(project, signal),
+          });
           return {
             review: firstReview.review,
             contentIdentity: firstReview.contentIdentity,
           };
-        firstReview = await runTaskSessionReview({
-          project,
-          card,
-          expectedBranch: record.expectedBranch!,
-          operationKey: record.operationKey,
-          worktreePath,
-          taskRecordStore: taskStore,
-          planStore,
-          git,
-          openCode,
-          validation: quality.validation,
-          coverage: quality.coverage,
-          ...(attachmentContext === undefined ? {} : { attachmentContext }),
-          runOptions: reviewRunOptions(project, signal),
-        });
-        return {
-          review: firstReview.review,
-          contentIdentity: firstReview.contentIdentity,
-        };
-      },
-      repair: async (review, attempt) => {
-        let latest = taskStore.read(card.id);
-        if (latest === null)
-          throw new Error(
-            "Task state disappeared during feedback review repair",
+        },
+        repair: async (review, attempt) => {
+          let latest = taskStore.read(card.id);
+          if (latest === null)
+            throw new Error(
+              "Task state disappeared during feedback review repair",
+            );
+          taskStore.compareAndSwap(
+            card.id,
+            latest.revision,
+            transitionTaskExecutionRecord(latest, {
+              type: "review-failed",
+              eventId: `${operationId}:review-failed:${attempt}`,
+              projectId: project.id,
+              cardId: card.id,
+              operationKey: latest.operationKey,
+              occurredAt: new Date(
+                Math.max(Date.now(), Date.parse(latest.updatedAt) + 1),
+              ).toISOString(),
+            }),
           );
-        taskStore.compareAndSwap(
-          card.id,
-          latest.revision,
-          transitionTaskExecutionRecord(latest, {
-            type: "review-failed",
-            eventId: `${operationId}:review-failed:${attempt}`,
+          const prompt = buildTaskSessionReviewRepairPrompt({
+            projectId: project.id,
+            card,
+            approvedPlan: storedPlan.plan,
+            review,
+            attempt,
+            maxAttempts: project.opencode.remediation.maxPasses,
+            ...(attachmentContext === undefined ? {} : { attachmentContext }),
+          });
+          const repaired = await runWithPrimaryTaskSession(
+            taskStore,
+            openCode,
+            project.id,
+            card.id,
+            {
+              model: project.opencode.remediation.model,
+              variant: project.opencode.remediation.variant,
+              timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
+              signal,
+              cwd: worktreePath,
+              prompt,
+            },
+          );
+          if (repaired.exitCode !== 0)
+            throw new Error("Primary feedback review repair failed");
+          latest = taskStore.read(card.id);
+          if (latest === null)
+            throw new Error(
+              "Task state disappeared after feedback review repair",
+            );
+          const validationPhase = transitionTaskExecutionRecord(latest, {
+            type: "implementation-completed",
+            eventId: `${operationId}:review-implementation-completed:${attempt}`,
             projectId: project.id,
             cardId: card.id,
             operationKey: latest.operationKey,
             occurredAt: new Date(
               Math.max(Date.now(), Date.parse(latest.updatedAt) + 1),
             ).toISOString(),
-          }),
-        );
-        const prompt = buildTaskSessionReviewRepairPrompt({
-          projectId: project.id,
-          card,
-          approvedPlan: storedPlan.plan,
-          review,
-          attempt,
-          maxAttempts: project.opencode.remediation.maxPasses,
-          ...(attachmentContext === undefined ? {} : { attachmentContext }),
-        });
-        const repaired = await runWithPrimaryTaskSession(
-          taskStore,
-          openCode,
-          project.id,
-          card.id,
-          {
-            model: project.opencode.remediation.model,
-            variant: project.opencode.remediation.variant,
-            timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
-            signal,
-            cwd: worktreePath,
-            prompt,
-          },
-        );
-        if (repaired.exitCode !== 0)
-          throw new Error("Primary feedback review repair failed");
-        latest = taskStore.read(card.id);
-        if (latest === null)
-          throw new Error(
-            "Task state disappeared after feedback review repair",
+          });
+          latest = taskStore.compareAndSwap(
+            card.id,
+            latest.revision,
+            validationPhase,
           );
-        const validationPhase = transitionTaskExecutionRecord(latest, {
-          type: "implementation-completed",
-          eventId: `${operationId}:review-implementation-completed:${attempt}`,
-          projectId: project.id,
-          cardId: card.id,
-          operationKey: latest.operationKey,
-          occurredAt: new Date(
-            Math.max(Date.now(), Date.parse(latest.updatedAt) + 1),
-          ).toISOString(),
-        });
-        latest = taskStore.compareAndSwap(
-          card.id,
-          latest.revision,
-          validationPhase,
-        );
-        taskStore.compareAndSwap(card.id, latest.revision, {
-          ...latest,
-          validationRepair: { cycleId: operationId, status: "active" },
-          retryCounters: { ...latest.retryCounters, validation: 0 },
-          revision: latest.revision + 1,
-          updatedAt: new Date(
-            Math.max(Date.now(), Date.parse(latest.updatedAt) + 1),
-          ).toISOString(),
-        });
-      },
-      rerunQuality: async () => {
-        quality = await runTaskSessionValidationWithRepairs({
-          validation: validationOptions,
-          openCode,
-          planStore,
-          card,
-          expectedPrimarySessionId: record.primarySessionId!,
-          ...(attachmentContext === undefined ? {} : { attachmentContext }),
-          repairRunOptions: validationRepairRunOptions(project, signal),
-        });
-      },
-      getCurrentContentIdentity: () =>
-        getTaskSessionSourceSnapshotIdentity(git, worktreePath),
-    });
+          taskStore.compareAndSwap(card.id, latest.revision, {
+            ...latest,
+            validationRepair: { cycleId: operationId, status: "active" },
+            retryCounters: { ...latest.retryCounters, validation: 0 },
+            revision: latest.revision + 1,
+            updatedAt: new Date(
+              Math.max(Date.now(), Date.parse(latest.updatedAt) + 1),
+            ).toISOString(),
+          });
+        },
+        rerunQuality: async () => {
+          quality = await runTaskSessionValidationWithRepairs({
+            validation: validationOptions,
+            openCode,
+            planStore,
+            card,
+            expectedPrimarySessionId: record.primarySessionId!,
+            ...(attachmentContext === undefined ? {} : { attachmentContext }),
+            repairRunOptions: validationRepairRunOptions(project, signal),
+          });
+        },
+        getCurrentContentIdentity: () =>
+          getTaskSessionSourceSnapshotIdentity(git, worktreePath),
+      });
+    }
 
+    const reviewPassed = finalReview.review.verdict === "pass";
     const currentIdentity = await getTaskSessionSourceSnapshotIdentity(
       git,
       worktreePath,
@@ -841,7 +907,7 @@ export async function runTaskSessionFeedbackCycle(
         entries,
       });
     };
-    const verification = await runTaskSessionFeedbackVerification({
+    let verification = await runAdvisoryTaskSessionFeedbackVerification({
       project,
       card,
       expectedBranch: record.expectedBranch!,
@@ -855,30 +921,7 @@ export async function runTaskSessionFeedbackCycle(
       runOptions: reviewRunOptions(project, signal),
     });
     persistVerification(verification);
-    if (
-      verification.dispositions.some((item) => item.status === "unresolved")
-    ) {
-      const latest = taskStore.read(card.id);
-      if (latest !== null && latest.phase === "review") {
-        taskStore.compareAndSwap(
-          card.id,
-          latest.revision,
-          transitionTaskExecutionRecord(latest, {
-            type: "attention-required",
-            eventId: `${operationId}:feedback-unresolved`,
-            projectId: project.id,
-            cardId: card.id,
-            operationKey: latest.operationKey,
-            occurredAt: new Date(
-              Math.max(Date.now(), Date.parse(latest.updatedAt) + 1),
-            ).toISOString(),
-          }),
-        );
-      }
-      options.mutationQueue.fail(operationId);
-      return "attention-required";
-    }
-    if (!decideVerifiedPublication(qualityEvidence).allowed) {
+    if (!decideValidatedHumanReviewPublication(qualityEvidence).allowed) {
       throw new Error(
         "Feedback remediation has not passed current local quality and review gates",
       );
@@ -888,26 +931,39 @@ export async function runTaskSessionFeedbackCycle(
       worktreePath,
     );
     clearCommitResult(worktreePath);
-    const commitResult = await runWithPrimaryTaskSession(
-      taskStore,
-      openCode,
-      project.id,
-      card.id,
-      {
-        model: project.opencode.commit.model,
-        variant: project.opencode.commit.variant,
-        timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
-        signal,
-        sessionLogPath: getSessionLogPath(project.id, card.id),
-        sessionLabel: "Task-session feedback commit message",
-        cwd: worktreePath,
-        prompt: buildCommitPrompt(card),
-      },
-    );
-    if (commitResult.exitCode !== 0)
-      throw new Error("Feedback commit-message session failed");
-    const commitMessage = readCommitResult(worktreePath).message;
-    clearCommitResult(worktreePath);
+    let commitMessage = "fix(feedback): address requested changes";
+    try {
+      const commitResult = await runWithPrimaryTaskSession(
+        taskStore,
+        openCode,
+        project.id,
+        card.id,
+        {
+          model: project.opencode.commit.model,
+          variant: project.opencode.commit.variant,
+          timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
+          signal,
+          sessionLogPath: getSessionLogPath(project.id, card.id),
+          sessionLabel: "Task-session feedback commit message",
+          cwd: worktreePath,
+          prompt: buildCommitPrompt(card),
+        },
+      );
+      if (commitResult.exitCode === 0) {
+        commitMessage = readCommitResult(worktreePath).message;
+      } else {
+        cardLog.warn(
+          "Feedback commit-message agent unavailable; using deterministic message",
+        );
+      }
+    } catch (error) {
+      if (signal.aborted) throw error;
+      cardLog.warn(
+        "Feedback commit-message generation unavailable; using deterministic message",
+      );
+    } finally {
+      clearCommitResult(worktreePath);
+    }
     if (
       !repositorySnapshotsEqual(
         snapshotBeforeCommitMessage,
@@ -923,8 +979,8 @@ export async function runTaskSessionFeedbackCycle(
       card.id,
       latest.revision,
       transitionTaskExecutionRecord(latest, {
-        type: "review-passed",
-        eventId: `${operationId}:review-passed`,
+        type: reviewPassed ? "review-passed" : "review-exhausted",
+        eventId: `${operationId}:review-completed`,
         projectId: project.id,
         cardId: card.id,
         operationKey: latest.operationKey,
@@ -946,8 +1002,8 @@ export async function runTaskSessionFeedbackCycle(
       branch: record.expectedBranch!,
       expectedExistingPullRequestUrl: record.pullRequest!.url,
       commitMessage,
-      reviewResult: "Passed",
-      remediationResult: "Verified human feedback correction",
+      reviewResult: reviewPassed ? "Passed" : "Failed",
+      remediationResult: "Validated feedback corrections for human review",
       ...(options.emailNotifier === undefined
         ? {}
         : { emailNotifier: options.emailNotifier }),
@@ -962,7 +1018,7 @@ export async function runTaskSessionFeedbackCycle(
               `Verified coverage result: ${JSON.stringify(preparedEvidence.coverage)}`,
             ]),
         `Independent review result: ${JSON.stringify(preparedEvidence.review)}`,
-        "Remediation outcome: human feedback correction was independently validated and reviewed.",
+        "Remediation outcome: validated corrections delivered to human review; unresolved findings remain disclosed.",
       ],
       signal,
       initialEvidence: qualityEvidence,
@@ -1009,21 +1065,37 @@ export async function runTaskSessionFeedbackCycle(
           validation,
           coverage,
         );
-        const review = await runTaskSessionReview({
-          project,
-          card,
-          expectedBranch: record.expectedBranch!,
-          operationKey: record.operationKey,
-          worktreePath,
-          taskRecordStore: taskStore,
-          planStore,
-          git,
-          openCode,
-          validation,
-          coverage,
-          ...(attachmentContext === undefined ? {} : { attachmentContext }),
-          runOptions: reviewRunOptions(project, signal),
-        });
+        let review: { review: ImplementationReviewResult } = {
+          review: finalReview.review,
+        };
+        try {
+          review = await runTaskSessionReview({
+            project,
+            card,
+            expectedBranch: record.expectedBranch!,
+            operationKey: record.operationKey,
+            worktreePath,
+            taskRecordStore: taskStore,
+            planStore,
+            git,
+            openCode,
+            validation,
+            coverage,
+            ...(attachmentContext === undefined ? {} : { attachmentContext }),
+            runOptions: reviewRunOptions(project, signal),
+          });
+        } catch (error) {
+          if (!(error instanceof TaskSessionReviewUnavailableError))
+            throw error;
+          const currentSource = await getTaskSessionSourceSnapshotIdentity(
+            git,
+            worktreePath,
+          );
+          if (currentSource !== validation.contentIdentity) throw error;
+          cardLog.warn(
+            "Prepared AI review unavailable; retaining advisory review findings",
+          );
+        }
         const latestIdentity = await getTaskSessionSourceSnapshotIdentity(
           git,
           worktreePath,
@@ -1038,31 +1110,24 @@ export async function runTaskSessionFeedbackCycle(
           coverage,
           review: review.review,
         };
-        if (!decideVerifiedPublication(latestQuality).allowed)
+        if (!decideValidatedHumanReviewPublication(latestQuality).allowed)
           throw new Error("Prepared feedback publication review failed");
         const preparedHeadSha = await git.getHeadSha(worktreePath);
-        const latestVerification = await runTaskSessionFeedbackVerification({
-          project,
-          card,
-          expectedBranch: record.expectedBranch!,
-          expectedHeadSha: preparedHeadSha,
-          worktreePath,
-          approvedPlan: storedPlan.plan,
-          actionableFeedback,
-          qualityEvidence: latestQuality,
-          git,
-          openCode,
-          runOptions: reviewRunOptions(project, signal),
-        });
-        if (
-          latestVerification.dispositions.some(
-            (item) => item.status === "unresolved",
-          )
-        ) {
-          throw new Error(
-            "Prepared feedback review no longer verifies every requested correction",
-          );
-        }
+        const latestVerification =
+          await runAdvisoryTaskSessionFeedbackVerification({
+            project,
+            card,
+            expectedBranch: record.expectedBranch!,
+            expectedHeadSha: preparedHeadSha,
+            worktreePath,
+            approvedPlan: storedPlan.plan,
+            actionableFeedback,
+            qualityEvidence: latestQuality,
+            git,
+            openCode,
+            runOptions: reviewRunOptions(project, signal),
+          });
+        verification = latestVerification;
         persistVerification(latestVerification);
         const afterVerification = taskStore.read(card.id);
         if (afterVerification === null)

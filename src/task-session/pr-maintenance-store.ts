@@ -496,6 +496,78 @@ export class PrMaintenanceStore {
     }, operationId);
   }
 
+  /** Retarget only a never-started operation when main advances. */
+  retargetUnstarted(
+    operationId: string,
+    identity: Pick<
+      PrMaintenanceOperation,
+      | "projectId"
+      | "cardId"
+      | "pullRequest"
+      | "expectedRemoteHead"
+      | "targetBaseHead"
+    >,
+    targetBaseHead: string,
+  ): PrMaintenanceOperation {
+    return this.update((record) => {
+      const index = record.operations.findIndex(
+        (item) => item.operationId === operationId,
+      );
+      const current = record.operations[index];
+      if (current === undefined)
+        throw new PrMaintenanceConflictError("Unknown maintenance operation");
+      this.assertIdentity(current, identity);
+      if (
+        current.status !== "prepared" ||
+        current.ownerToken !== undefined ||
+        current.localPreparation !== undefined ||
+        current.qualityVerification !== undefined ||
+        current.publication !== undefined
+      )
+        throw new PrMaintenanceConflictError(
+          "Only an unstarted maintenance operation can change its base target",
+        );
+      const updated = parsePrMaintenanceOperation({
+        ...current,
+        targetBaseHead,
+        updatedAt: new Date().toISOString(),
+      });
+      const operations = [...record.operations];
+      operations[index] = updated;
+      return { ...record, operations };
+    }, operationId);
+  }
+
+  /** Persist one failed-queue retry before reclaiming it. */
+  claimFailedPreparedRecovery(operationId: string): PrMaintenanceOperation {
+    return this.update((record) => {
+      const index = record.operations.findIndex(
+        (item) => item.operationId === operationId,
+      );
+      const current = record.operations[index];
+      if (
+        current === undefined ||
+        current.status !== "prepared" ||
+        current.ownerToken !== undefined ||
+        current.localPreparation !== undefined ||
+        current.qualityVerification !== undefined ||
+        current.publication !== undefined ||
+        current.failedPreparedRecoveryAttempted === true
+      )
+        throw new PrMaintenanceConflictError(
+          "Failed prepared maintenance recovery was already used or is unsafe",
+        );
+      const updated = parsePrMaintenanceOperation({
+        ...current,
+        failedPreparedRecoveryAttempted: true,
+        updatedAt: new Date().toISOString(),
+      });
+      const operations = [...record.operations];
+      operations[index] = updated;
+      return { ...record, operations };
+    }, operationId);
+  }
+
   create(
     input: Omit<
       PrMaintenanceOperation,
@@ -706,8 +778,10 @@ export class PrMaintenanceStore {
       operations.some((operation) => operation.projectId !== this.projectId) ||
       new Set(operations.map((operation) => operation.operationId)).size !==
         operations.length ||
-      operations.filter((operation) => operation.status !== "completed")
-        .length > 1
+      operations.filter(
+        (operation) =>
+          operation.status !== "completed" && operation.status !== "cancelled",
+      ).length > 1
     )
       throw new Error("Invalid PR maintenance operation ownership or history");
     return { ...parsed, operations };

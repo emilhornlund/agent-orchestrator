@@ -49,8 +49,9 @@ import {
 import { runTaskSessionCiRepairs } from "../task-session/run-task-session-ci-repairs.js";
 import { runTaskSessionFeedbackCycle } from "./run-task-session-feedback-cycle.js";
 import { FeedbackLedgerStore } from "../task-session/feedback-ledger-store.js";
+import { canResumeFailedFeedbackReview } from "../task-session/can-resume-failed-feedback-review.js";
 import {
-  decideVerifiedPublication,
+  decideValidatedHumanReviewPublication,
   decideHumanReviewPublication,
   type VerifiedPublicationDecisionInput,
 } from "../task-session/verified-publication-decision.js";
@@ -101,6 +102,7 @@ import {
   maintainOutdatedPr,
   reconcileInterruptedPrMaintenance,
   retireFailedUnpublishedPrMaintenance,
+  requeueInterruptedPreparedPrMaintenance,
 } from "./maintain-outdated-pr.js";
 import { reconcileUnobservedTerminalPrEvents } from "./reconcile-unobserved-terminal-pr.js";
 
@@ -611,6 +613,11 @@ export async function runTaskSessionWorkflow(
   const queue = new TaskMutationQueue(root, project);
   const maintenanceStore = new PrMaintenanceStore(root, project);
   const feedbackLedgerStore = new FeedbackLedgerStore(root, project);
+  requeueInterruptedPreparedPrMaintenance({
+    project,
+    maintenanceStore,
+    mutationQueue: queue,
+  });
   retireFailedUnpublishedPrMaintenance({
     project,
     maintenanceStore,
@@ -1179,7 +1186,7 @@ export async function runTaskSessionWorkflow(
               coverage: quality.coverage,
               review: latestReview.review,
             };
-            if (!decideVerifiedPublication(gateInput).allowed)
+            if (!decideValidatedHumanReviewPublication(gateInput).allowed)
               throw new Error("CI repair publication gates failed");
             const existingPullRequestUrl = taskStore.read(card.id)?.pullRequest
               ?.url;
@@ -1235,7 +1242,8 @@ export async function runTaskSessionWorkflow(
               branch: expectedBranch,
               expectedExistingPullRequestUrl: existingPullRequestUrl,
               commitMessage,
-              reviewResult: "Passed",
+              reviewResult:
+                latestReview.review.verdict === "pass" ? "Passed" : "Failed",
               remediationResult: `CI repair attempt ${taskStore.read(card.id)?.retryCounters.ci ?? 1}`,
               ...(emailNotifier === undefined ? {} : { emailNotifier }),
               claimHumanReviewNotification: (commitSha) =>
@@ -1712,7 +1720,12 @@ export async function runTaskSessionWorkflow(
     if (observation.state !== "OPEN") continue;
     if (maintenanceHandledCardIds.has(observation.cardId)) continue;
     const record = taskStore.read(observation.cardId);
-    if (record === null || record.phase !== "human-feedback") continue;
+    if (record === null) continue;
+    const resumableFeedbackReview = canResumeFailedFeedbackReview(
+      record,
+      queue.getActive(),
+    );
+    if (record.phase !== "human-feedback" && !resumableFeedbackReview) continue;
     const card = latestHumanReviewCards.find(
       (candidate) => candidate.id === record.cardId,
     );
@@ -1720,6 +1733,16 @@ export async function runTaskSessionWorkflow(
       throw new Error(
         `Observed task-session review card disappeared: ${record.cardId}`,
       );
+    if (resumableFeedbackReview) {
+      // Durable one-shot authorization. An unsuccessful retry must not be
+      // reattempted by every poll or by a fresh worker after restart.
+      taskStore.compareAndSwap(record.cardId, record.revision, {
+        ...record,
+        feedbackRecoveryAttemptEventId: queue.getActive()!.eventId,
+        revision: record.revision + 1,
+        updatedAt: timestamp(record),
+      });
+    }
     const feedbackResult = await runTaskSessionFeedbackCycle({
       project,
       card,

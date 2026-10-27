@@ -46,6 +46,8 @@ export interface RunTaskSessionValidationOptions {
   commands: CommandRunner;
   signal: AbortSignal;
   timeoutMilliseconds: number;
+  /** Only for a verified, failed requested-changes review checkpoint. */
+  feedbackReviewRecovery?: boolean;
   commandOverride?: string;
   commandLabel?: string;
   secretValues?: readonly string[];
@@ -110,7 +112,16 @@ export async function runTaskSessionValidation(
     operationKey,
   });
 
-  if (record.phase !== "validation" && record.phase !== "publication") {
+  if (
+    record.phase !== "validation" &&
+    record.phase !== "publication" &&
+    !(
+      options.feedbackReviewRecovery === true &&
+      record.phase === "review" &&
+      record.reviewRepair?.status === "exhausted" &&
+      record.feedbackRemediation?.status === "changed"
+    )
+  ) {
     throw new Error(
       `Task-session validation requires validation or publication preparation, found ${record.phase}`,
     );
