@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProjectConfig } from "../src/config/config.js";
 import type { TaskExecutionRecord } from "../src/task-session/task-execution-record.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
+import { Logger } from "../src/logging/logger.js";
 import {
   runTaskSessionReviewWithRepairs,
   TaskSessionReviewRepairError,
@@ -133,6 +134,202 @@ function fixture() {
 }
 
 describe("runTaskSessionReviewWithRepairs", () => {
+  it("logs bounded structured finding transitions for successful review cycles", async () => {
+    const f = fixture();
+    const events: string[] = [];
+    vi.spyOn(Logger.prototype, "event").mockImplementation((message) => {
+      events.push(message);
+    });
+    const op = f.run(["fail", "pass"]);
+    await op.run();
+
+    const round = events
+      .filter((message) => message.startsWith("review-cycle "))
+      .map(
+        (message) =>
+          JSON.parse(message.slice("review-cycle ".length)) as Record<
+            string,
+            unknown
+          >,
+      )
+      .find((event) => event.event === "review-round");
+    expect(round).toMatchObject({
+      reviewPass: 1,
+      remediationAttempt: 0,
+      verdict: "fail",
+      newlyDiscoveredBlockingFindingIds: {
+        ids: [expect.stringMatching(/^finding-/)],
+        omitted: 0,
+      },
+    });
+    expect(
+      events.some((message) => message.includes('"event":"cycle-passed"')),
+    ).toBe(true);
+    expect(events.join(" ")).not.toContain("Fix requirement");
+  });
+
+  it("logs exhausted findings and restores useful diagnostics from persisted state", async () => {
+    const f = fixture();
+    const events: string[] = [];
+    vi.spyOn(Logger.prototype, "event").mockImplementation((message) => {
+      events.push(message);
+    });
+    const op = f.run(["fail"], 0);
+    const result = await op.run();
+    const findingId = result.record.reviewRepair?.findings?.[0]?.id;
+    expect(
+      events.some(
+        (message) =>
+          message.includes('"event":"cycle-exhausted"') &&
+          message.includes(findingId ?? "not-found"),
+      ),
+    ).toBe(true);
+    await op.run();
+    expect(
+      events.some((message) => message.includes('"event":"cycle-recovered"')),
+    ).toBe(true);
+  });
+
+  it("categorizes remediation execution and validation failures distinctly", async () => {
+    const f = fixture();
+    const events: string[] = [];
+    vi.spyOn(Logger.prototype, "event").mockImplementation((message) => {
+      events.push(message);
+    });
+    const options = {
+      store: f.store,
+      maxAttempts: 1,
+      projectId: "project",
+      cardId: "card",
+      operationKey: "operation",
+      expectedPrimarySessionId: "primary-session",
+      runReview: async () => ({
+        review: f.makeReview("fail"),
+        contentIdentity: f.identity,
+      }),
+      getCurrentContentIdentity: async () => f.identity,
+    };
+    await expect(
+      runTaskSessionReviewWithRepairs({
+        ...options,
+        repair: async () => {
+          throw new Error("execution details must not be logged");
+        },
+        rerunQuality: async () => undefined,
+      }),
+    ).rejects.toThrow("Review repair execution failed");
+    expect(
+      events.some((message) =>
+        message.includes('"category":"remediation-execution"'),
+      ),
+    ).toBe(true);
+    expect(events.join(" ")).not.toContain(
+      "execution details must not be logged",
+    );
+
+    fs.rmSync(root, { recursive: true, force: true });
+    const validationFixture = fixture();
+    await expect(
+      runTaskSessionReviewWithRepairs({
+        ...options,
+        store: validationFixture.store,
+        runReview: async () => ({
+          review: validationFixture.makeReview("fail"),
+          contentIdentity: validationFixture.identity,
+        }),
+        getCurrentContentIdentity: async () => validationFixture.identity,
+        repair: async () => undefined,
+        rerunQuality: async () => {
+          throw new Error("quality failed");
+        },
+      }),
+    ).rejects.toThrow("validation or coverage failed");
+    expect(
+      events.some((message) => message.includes('"category":"validation"')),
+    ).toBe(true);
+  });
+
+  it("logs review execution and result-validation failures as review failures", async () => {
+    const f = fixture();
+    const events: string[] = [];
+    vi.spyOn(Logger.prototype, "event").mockImplementation((message) => {
+      events.push(message);
+    });
+
+    await expect(
+      runTaskSessionReviewWithRepairs({
+        store: f.store,
+        maxAttempts: 1,
+        projectId: "project",
+        cardId: "card",
+        operationKey: "operation",
+        expectedPrimarySessionId: "primary-session",
+        runReview: async () => {
+          throw new Error("private session output");
+        },
+        repair: async () => undefined,
+        rerunQuality: async () => undefined,
+        getCurrentContentIdentity: async () => f.identity,
+      }),
+    ).rejects.toThrow("private session output");
+
+    expect(
+      events.some((message) =>
+        message.includes(
+          '"event":"cycle-failed","category":"review","stage":"execution","reviewPass":1,"remediationAttempt":0',
+        ),
+      ),
+    ).toBe(true);
+    expect(events.join(" ")).not.toContain("private session output");
+
+    const current = f.store.read("card")!;
+    f.store.compareAndSwap("card", current.revision, {
+      ...current,
+      revision: current.revision + 1,
+      reviewRepair: {
+        cycleId: "operation",
+        status: "active",
+        maxAttempts: 1,
+        findings: [
+          {
+            id: "prior-finding",
+            kind: "incomplete",
+            summary: "Prior issue",
+            detail: "Must be explicitly assessed",
+            sourceContentIdentity: f.identity,
+            sourceIdentities: [f.identity],
+            status: "unresolved",
+          },
+        ],
+      },
+      updatedAt: new Date().toISOString(),
+    });
+    await expect(
+      runTaskSessionReviewWithRepairs({
+        store: f.store,
+        maxAttempts: 1,
+        projectId: "project",
+        cardId: "card",
+        operationKey: "operation",
+        expectedPrimarySessionId: "primary-session",
+        runReview: async () => ({
+          review: f.makeReview("fail"),
+          contentIdentity: f.identity,
+        }),
+        repair: async () => undefined,
+        rerunQuality: async () => undefined,
+        getCurrentContentIdentity: async () => f.identity,
+      }),
+    ).rejects.toThrow("Review omitted prior finding");
+    expect(
+      events.some((message) =>
+        message.includes(
+          '"event":"cycle-failed","category":"review","stage":"result-validation"',
+        ),
+      ),
+    ).toBe(true);
+  });
+
   it("requires the latest independent review to pass after repair and quality rerun", async () => {
     const f = fixture();
     const op = f.run(["fail", "pass"]);
