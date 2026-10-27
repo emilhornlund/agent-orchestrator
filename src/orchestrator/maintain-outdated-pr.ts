@@ -187,13 +187,20 @@ export async function maintainOutdatedPr(
   )
     return "deferred";
   const operation =
-    prior ??
-    maintenanceStore.create({
-      ...identity,
-      operationId: randomUUID(),
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
+    prior === undefined
+      ? maintenanceStore.create({
+          ...identity,
+          operationId: randomUUID(),
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        })
+      : prior.targetBaseHead !== currentBase && prior.status === "prepared"
+        ? maintenanceStore.retargetUnstarted(
+            prior.operationId,
+            prior,
+            currentBase,
+          )
+        : prior;
   const eventId = `pr-maintenance:${card.id}:${operation.operationId}`;
   const mutation = mutationQueue.enqueue({
     projectId: project.id,
@@ -539,8 +546,24 @@ export function requeueInterruptedPreparedPrMaintenance(options: {
     options.mutationQueue.ownsActive(active.eventId)
   )
     return false;
+  if (
+    active.status === "failed" &&
+    operation.failedPreparedRecoveryAttempted === true
+  )
+    return false;
   const claimed = options.mutationQueue.claimForRecovery(active.eventId);
   if (claimed === null) return false; // Live owner: do not interfere.
+  if (active.status === "failed") {
+    try {
+      options.maintenanceStore.claimFailedPreparedRecovery(
+        operation.operationId,
+      );
+    } catch (error) {
+      if (options.mutationQueue.ownsActive(claimed.eventId))
+        options.mutationQueue.fail(claimed.eventId);
+      throw error;
+    }
+  }
   options.mutationQueue.requeueAfterVerifiedRecovery(claimed.eventId);
   logger
     .child({ projectId: options.project.id, cardId: operation.cardId })

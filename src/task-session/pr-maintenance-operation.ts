@@ -69,6 +69,8 @@ export const prMaintenanceOperationSchema = z
     ownerToken: z.uuid().optional(),
     ownerPid: z.number().int().positive().optional(),
     localPreparation: localPreparationSchema.optional(),
+    /** One-shot recovery of a failed event before any maintenance work began. */
+    failedPreparedRecoveryAttempted: z.boolean().optional(),
     conflictRemediationAttempts: z
       .number()
       .int()

@@ -298,6 +298,48 @@ describe("PrMaintenanceStore", () => {
     ).toBe("active");
   });
 
+  it("retargets only an untouched prepared maintenance operation", () => {
+    const { store, contextRoot, project } = setup();
+    store.create(operation());
+    const retargeted = store.retargetUnstarted(
+      "maintenance-1",
+      identity(),
+      sha("c"),
+    );
+    expect(retargeted.targetBaseHead).toBe(sha("c"));
+    const restarted = new PrMaintenanceStore(contextRoot, project);
+    expect(restarted.inspect("maintenance-1")?.targetBaseHead).toBe(sha("c"));
+    expect(() =>
+      restarted.retargetUnstarted("maintenance-1", identity(), sha("d")),
+    ).toThrow(/identity/);
+    restarted.advance(
+      "maintenance-1",
+      "prepared",
+      "active",
+      identity({ targetBaseHead: sha("c") }),
+    );
+    expect(() =>
+      restarted.retargetUnstarted(
+        "maintenance-1",
+        identity({ targetBaseHead: sha("c") }),
+        sha("e"),
+      ),
+    ).toThrow(/unstarted/);
+  });
+
+  it("persists a single failed prepared-event recovery allowance", () => {
+    const { store, project, contextRoot } = setup();
+    store.create(operation());
+    expect(
+      store.claimFailedPreparedRecovery("maintenance-1")
+        .failedPreparedRecoveryAttempted,
+    ).toBe(true);
+    const restarted = new PrMaintenanceStore(contextRoot, project);
+    expect(() =>
+      restarted.claimFailedPreparedRecovery("maintenance-1"),
+    ).toThrow(/already used/);
+  });
+
   it("completes idempotently and permits a subsequent operation", () => {
     const { store } = setup();
     store.create(operation());

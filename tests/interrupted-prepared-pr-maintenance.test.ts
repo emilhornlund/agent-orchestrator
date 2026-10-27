@@ -98,6 +98,33 @@ describe("interrupted prepared PR maintenance recovery", () => {
     expect(restartedQueue.claimForRecovery(f.eventId)?.status).toBe("active");
   });
 
+  it("recovers a failed prepared event once, then stops after another failure", () => {
+    const f = fixture();
+    const restartedQueue = staleQueue(f);
+    restartedQueue.claimForRecovery(f.eventId);
+    restartedQueue.fail(f.eventId);
+    const args = {
+      project: f.project,
+      maintenanceStore: f.maintenanceStore,
+      mutationQueue: restartedQueue,
+    };
+    expect(requeueInterruptedPreparedPrMaintenance(args)).toBe(true);
+    expect(
+      f.maintenanceStore.inspect(f.operationId)
+        ?.failedPreparedRecoveryAttempted,
+    ).toBe(true);
+    restartedQueue.claimForRecovery(f.eventId);
+    restartedQueue.fail(f.eventId);
+    const storeAfterRestart = new PrMaintenanceStore(f.state, f.project);
+    expect(
+      requeueInterruptedPreparedPrMaintenance({
+        ...args,
+        maintenanceStore: storeAfterRestart,
+      }),
+    ).toBe(false);
+    expect(restartedQueue.getActive()?.status).toBe("failed");
+  });
+
   it("does not steal a live queue owner", () => {
     const f = fixture();
     f.mutationQueue.claimNext();
