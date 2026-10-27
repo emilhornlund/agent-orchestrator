@@ -292,3 +292,9 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - Move an implementation task to `Failed` only when its intended workflow genuinely cannot continue, not merely because generated code, validation, or AI review is imperfect. Preserve work and explain the failure in a Trello comment.
 - Never create meaningless changes or artificial commits solely to force a pull request. If the task is already satisfied, or no meaningful implementation changes can be produced despite recovery attempts, move the card to `Failed` with an explanatory comment and preserve diagnostics for a deliberate retry.
 - If meaningful implementation changes are ready but GitHub remains temporarily unavailable, keep the work and retry PR publication automatically at controlled intervals until the service recovers. Notify the operator when prolonged unavailability needs attention without abandoning the implementation or creating duplicate PRs.
+
+## Coordinating work on an active PR
+
+- Each project has one execution queue coordinating all operations on its active task, including human-requested changes, CI repairs, rebasing, and conflict resolution. Never run concurrent operations that modify the same project or lose pending work.
+- Prioritize queued operations by default: human-requested changes first, CI repairs second, and routine PR maintenance third.
+- Prerequisite operations may run ahead of that order when necessary to safely complete higher-priority work, such as rebasing before applying requested changes.
