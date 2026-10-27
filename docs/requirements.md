@@ -286,3 +286,9 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - Publish incomplete or failing implementations as draft pull requests, describing unresolved problems accurately. Move the Trello card to `Human Review` once the PR is published.
 - An implementation task must not remain indefinitely in `Working`. If publication is genuinely impossible, such as during prolonged GitHub unavailability or unsafe unrecoverable Git state, reach a clearly explained recoverable failure outcome rather than silently remaining active.
 - Moving to `Failed` is exceptional for implementation tasks, not the default response to an exhausted validation or review limit. Preserve work and make deliberate retries possible.
+
+## Exceptional PR delivery outcomes
+
+- Move an implementation task to `Failed` only when its intended workflow genuinely cannot continue, not merely because generated code, validation, or AI review is imperfect. Preserve work and explain the failure in a Trello comment.
+- Never create meaningless changes or artificial commits solely to force a pull request. If the task is already satisfied, or no meaningful implementation changes can be produced despite recovery attempts, move the card to `Failed` with an explanatory comment and preserve diagnostics for a deliberate retry.
+- If meaningful implementation changes are ready but GitHub remains temporarily unavailable, keep the work and retry PR publication automatically at controlled intervals until the service recovers. Notify the operator when prolonged unavailability needs attention without abandoning the implementation or creating duplicate PRs.
