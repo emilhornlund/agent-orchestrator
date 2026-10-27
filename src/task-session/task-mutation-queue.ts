@@ -345,6 +345,63 @@ export class TaskMutationQueue {
     });
   }
 
+  /**
+   * Retire an orphaned Ready claim only after the caller has verified that the
+   * card has no task record and is absent from both Ready and Working.
+   * Never displace a different live process owner or a failed recovery event.
+   */
+  retireOrphanedReadyEvent(eventId: string): TaskMutationEvent {
+    return this.update((queue) => {
+      const current = queue.events.find((event) => event.eventId === eventId);
+      if (
+        current === undefined ||
+        !["implementation", "refinement"].includes(current.kind) ||
+        !["queued", "active"].includes(current.status)
+      )
+        throw new TaskMutationQueueConflictError(
+          "Orphaned Ready event is not safely retireable",
+        );
+      if (current.status === "active") {
+        if (queue.activeEventId !== eventId)
+          throw new TaskMutationQueueConflictError(
+            "Orphaned Ready event does not own the project queue",
+          );
+        if (
+          current.ownerToken !== this.ownerToken &&
+          ((current.ownerToken !== undefined &&
+            liveMutationOwners.has(current.ownerToken)) ||
+            isProcessAlive(current.ownerPid))
+        )
+          throw new TaskMutationQueueConflictError(
+            "Orphaned Ready event has a live competing owner",
+          );
+      }
+      if (current.status === "queued" && queue.activeEventId === eventId)
+        throw new TaskMutationQueueConflictError(
+          "Queued orphan unexpectedly owns the project queue",
+        );
+      if (current.ownerToken !== undefined)
+        liveMutationOwners.delete(current.ownerToken);
+      const retired = {
+        ...current,
+        status: "completed" as const,
+        ownerToken: undefined,
+        ownerPid: undefined,
+      };
+      return {
+        queue: {
+          ...queue,
+          activeEventId:
+            queue.activeEventId === eventId ? null : queue.activeEventId,
+          events: queue.events.map((event) =>
+            event.eventId === eventId ? retired : event,
+          ),
+        },
+        result: retired,
+      };
+    });
+  }
+
   complete(eventId: string): TaskMutationEvent {
     return this.finish(eventId, "completed");
   }
