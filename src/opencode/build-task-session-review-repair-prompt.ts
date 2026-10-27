@@ -58,6 +58,8 @@ export function buildTaskSessionReviewRepairPrompt(
     ...taskSessionRepositoryGuidance,
     `This is bounded review remediation attempt ${input.attempt} of ${input.maxAttempts}.`,
     "Before changing anything, inspect the relevant implementation and existing tests for the review findings.",
+    "Re-evaluate each finding against the approved task scope and the review's blocking criteria: only material unsatisfied approved requirements, demonstrable correctness defects, applicable repository contract violations, or implementation-introduced regressions require correction. Serious demonstrable defects may be addressed even when not explicitly named in the task.",
+    "Do not make changes solely for unrelated refactoring, stylistic preferences without an applicable contract, optional out-of-scope enhancements, unsupported hypothetical problems, or redesign requests for otherwise correct implementation. If a finding does not meet the blocking criteria, preserve the correct implementation rather than introducing an unnecessary change.",
     "Address every blocking finding; do not focus only on the first or leave any finding without explicit consideration.",
     "For each blocking finding, understand the underlying defect, identify and implement the smallest complete correction, and add or update regression tests when appropriate.",
     "After addressing the findings, ensure the original approved requirements remain satisfied. Keep changes within the approved task scope; do not broaden the task.",

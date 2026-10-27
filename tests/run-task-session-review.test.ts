@@ -378,9 +378,9 @@ describe("runTaskSessionReview", () => {
       "kind (string enum 'defect', 'incomplete', or 'contract-violation')",
     );
     expect(run?.prompt).toContain(
-      "explain concrete evidence demonstrating why it blocks",
+      "explain concrete evidence demonstrating why it is material and blocks",
     );
-    expect(run?.prompt).toContain("unsupported speculation");
+    expect(run?.prompt).toContain("unsupported hypothetical problems");
     expect(run?.prompt).toContain("do not run tests or other commands");
     expect(run?.prompt).toContain("Valid pass example:");
     expect(run?.prompt).toContain("Valid fail example:");
@@ -395,7 +395,7 @@ describe("runTaskSessionReview", () => {
     expect(fixture.git.getDiff).toHaveBeenCalledWith(fixture.worktreePath);
   });
 
-  it("instructs reviewers not to block on unsupported speculation or preferences", async () => {
+  it("limits blocking findings to material defects and excludes out-of-scope preferences", async () => {
     const fixture = createFixture();
     const contentIdentity = await fixture.createStoredPlan();
     const runOpenCode = vi.fn<RunOpenCode>().mockResolvedValue({
@@ -414,10 +414,17 @@ describe("runTaskSessionReview", () => {
 
     const prompt = runOpenCode.mock.calls[0]?.[0].prompt;
     expect(prompt).toContain(
-      "Do not treat unsupported speculation, hypothetical risks without evidence, or subjective preferences as blocking defects.",
+      "A blocking finding must be a material issue: an unsatisfied approved requirement, a demonstrable correctness defect, a violation of an applicable repository contract, or a regression introduced by this implementation.",
     );
     expect(prompt).toContain(
-      "a preference for a different naming or formatting style without a violated repository convention, must not be reported as blocking",
+      "Serious demonstrable defects remain blocking even when not explicitly mentioned in the task.",
+    );
+    expect(prompt).toContain(
+      "Do not report unrelated refactoring opportunities, stylistic preferences without an applicable contract, optional enhancements beyond approved scope, unsupported hypothetical problems, or requests to redesign an otherwise correct implementation as blocking findings.",
+    );
+    expect(prompt).toContain("These may not cause a failed review.");
+    expect(prompt).toContain(
+      "exactly these fields: version (number, exactly 1)",
     );
   });
 
