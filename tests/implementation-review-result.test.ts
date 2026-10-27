@@ -43,6 +43,49 @@ describe("parseImplementationReviewResult", () => {
     expect(parseImplementationReviewResult(decoded, expected)).toEqual(result);
   });
 
+  it("accepts an actionable evidence-backed blocking finding", () => {
+    const finding = {
+      kind: "incomplete",
+      summary: "Settings are lost after reload",
+      detail:
+        "Defect: settings are held only in memory. Requirement: REQ-1 requires persistence. Evidence: src/settings.ts:12 initializes the value without reading saved state, so reload loses the setting. Expected behavior: restore the saved setting after reload.",
+      location: { filePath: "src/settings.ts", line: 12 },
+    } as const;
+
+    expect(
+      parseImplementationReviewResult(
+        {
+          ...result,
+          verdict: "fail",
+          blockingFindings: [finding],
+        },
+        expected,
+      ).blockingFindings,
+    ).toEqual([finding]);
+  });
+
+  it("continues to recover persisted findings in the existing result shape", () => {
+    const persistedResult = {
+      ...result,
+      verdict: "fail",
+      requirementAssessments: [
+        { ...result.requirementAssessments[0]!, status: "unsatisfied" },
+        result.requirementAssessments[1],
+      ],
+      blockingFindings: [
+        {
+          kind: "incomplete",
+          summary: "Missing required behavior",
+          detail: "The required behavior is incomplete.",
+        },
+      ],
+    };
+
+    expect(parseImplementationReviewResult(persistedResult, expected)).toEqual(
+      persistedResult,
+    );
+  });
+
   it("rejects missing or duplicate requirement assessments", () => {
     expect(() =>
       parseImplementationReviewResult(
