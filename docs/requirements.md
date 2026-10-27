@@ -78,3 +78,13 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - Implementation takes place in an isolated Git worktree on a task-specific branch, never in the original source checkout.
 - The agent may modify source code, tests, configuration, and documentation as necessary for the task.
 - Changes must follow the approved plan and repository-specific instructions, without unrelated modifications.
+
+## Primary delivery requirement
+
+**The highest-priority goal of every implementation task is to produce a GitHub pull request.**
+
+- Every implementation task must result in a pull request, even when validation, tests, or independent AI review have unresolved failures.
+- The orchestrator attempts to resolve problems automatically within configured limits, but those limits must not create an endless loop or prevent delivery.
+- Any unresolved failures or review findings must be disclosed clearly in the pull request; an incomplete implementation must never be represented as validated or ready to merge.
+- A failure to produce a pull request is exceptional and must have a genuine safety or external-operation reason, such as unavailable Git/GitHub services or a repository state that cannot be published safely.
+- Producing a pull request is not the same as approving it for merge. The detailed review, validation, and publication policies will be agreed separately.
