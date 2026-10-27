@@ -175,3 +175,15 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - The description is refreshed after significant changes, including human-review remediation, CI repairs, and rebasing, so it describes the current PR rather than its original implementation only.
 - Whenever the agent works on an existing PR, the orchestrator prominently displays a temporary status **at the top of the PR description**, similar to Dependabot's rebase status.
 - The status identifies the current activity (such as requested changes, CI repair, rebasing, or validation), is updated as work progresses, and is cleared when the activity finishes. It must not obscure or overwrite the underlying PR description.
+
+## Commit history
+
+- The initial implementation produces one clean commit with an automatically generated, descriptive message.
+- Later review corrections, CI repairs, and other changes are recorded in additional commits on the same task branch. The orchestrator does not amend or rewrite previous commits.
+- Humans may choose to squash commits when merging the pull request.
+
+## GitHub authentication
+
+- Support both GitHub App authentication and personal credentials, such as a personal access token.
+- Each project independently chooses its GitHub authentication method.
+- GitHub App authentication is preferred for its dedicated bot identity and scoped permissions, but is not mandatory.
