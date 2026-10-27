@@ -109,3 +109,18 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - Feedback arriving during remediation must not be lost. After the current cycle, the orchestrator checks again and handles new or still-unresolved requests without unnecessarily repeating completed work.
 - Human review cycles are unlimited: new requests for changes can be submitted as often as needed. Configurable limits apply only to internal automated validation, review, and correction attempts within a cycle, never to the number of human-requested-change cycles.
 - The task remains active until its pull request is merged or closed.
+
+## GitHub CI
+
+- After a pull request is created or updated, the orchestrator waits for all expected GitHub CI checks and evaluates their results.
+- It automatically attempts to fix failed checks within a separately configurable correction limit, publishing fixes to the same PR and rerunning checks.
+- Unresolved CI failures leave the PR as a draft with clear diagnostics, not an indefinitely blocked delivery.
+- Checks that never start or finish must not leave the workflow waiting indefinitely; the uncertainty must be reported rather than treated as a pass.
+
+## Automatic PR maintenance
+
+- While a PR awaits human review, the orchestrator automatically detects when its branch needs updating or has merge conflicts with the target branch.
+- It attempts to rebase onto the latest target branch and uses an AI agent to resolve conflicts when needed, preserving existing work.
+- After changes, it runs validation, independent review, and CI again and updates the same PR.
+- The orchestrator must not force-push, discard work, or create replacement PRs to bypass conflicts.
+- Problems it cannot safely resolve must be reported clearly with enough state preserved for recovery.
