@@ -245,3 +245,10 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - Preserve the original task's intent and scope. Use current repository evidence to clarify the requested work, and include additional work only where strictly necessary to achieve its objective.
 - Identify larger dependencies or related opportunities without silently expanding the task or introducing unrelated refactoring.
 - When a task is overly large or complex, recommend splitting it into smaller tasks, but still refine the original card. Do not automatically create or split Trello cards; that capability may be considered later.
+
+## Refinement completion and failure
+
+- If refinement fails or produces an invalid result, the orchestrator first attempts safe recovery and bounded correction.
+- Validate the complete refinement result before changing the Trello card. If refinement cannot complete, preserve the original title, description, and classification rather than leaving partial changes; move the card to `Failed` with an explanation.
+- After successful refinement, return the updated card to `Backlog` and post a concise Trello comment confirming completion, the selected task type, and the total refinement duration when available.
+- The completion comment must not repeat the refined description already present on the card.
