@@ -195,3 +195,16 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - Each project may optionally and independently configure a validation command and a test coverage command.
 - The orchestrator runs each configured command itself and accurately reports its results. An unconfigured command is skipped and must not be represented as having passed.
 - Not configuring either quality command must not prevent implementation or pull request delivery.
+
+## AI model configuration
+
+- Each project may independently configure the OpenCode model and reasoning variant for each AI activity, such as refinement, planning, implementation, independent review, remediation, and commit message generation.
+- If a model or variant is not specified, let OpenCode use its own configured default rather than imposing an orchestrator-specific fallback.
+- Respect explicitly configured models and report an unavailable model clearly rather than silently substituting another.
+
+## AI session continuity and context
+
+- Each implementation task maintains a persistent primary OpenCode session across implementation, local validation repairs, CI repairs, human-requested changes, and subsequent remediation cycles.
+- The agent should retain or have access to as much relevant task and repository context as practical across the full lifecycle, including the task, attachments, approved plan, earlier work, feedback, and outcomes.
+- Restart recovery must resume the correct task session where safe, rather than silently starting a context-free replacement.
+- Independent planning and implementation reviews use separate sessions to preserve independent judgment.
