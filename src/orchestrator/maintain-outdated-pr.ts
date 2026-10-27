@@ -509,6 +509,45 @@ export async function maintainOutdatedPr(
   }
 }
 
+/** Recover an unstarted maintenance operation after its queue owner exited. */
+export function requeueInterruptedPreparedPrMaintenance(options: {
+  project: ProjectConfig;
+  maintenanceStore: PrMaintenanceStore;
+  mutationQueue: TaskMutationQueue;
+}): boolean {
+  const active = options.mutationQueue.getActive();
+  if (
+    active?.kind !== "pr-maintenance" ||
+    (active.status !== "active" && active.status !== "failed")
+  )
+    return false;
+  const operation = options.maintenanceStore.inspect(active.operationKey);
+  if (
+    operation === null ||
+    operation.projectId !== options.project.id ||
+    operation.cardId !== active.cardId ||
+    active.projectId !== options.project.id ||
+    active.eventId !==
+      `pr-maintenance:${operation.cardId}:${operation.operationId}`
+  )
+    throw new Error("Failed PR maintenance queue and store identities differ");
+  if (
+    operation.status !== "prepared" ||
+    operation.localPreparation !== undefined ||
+    operation.publication !== undefined ||
+    operation.qualityVerification !== undefined ||
+    options.mutationQueue.ownsActive(active.eventId)
+  )
+    return false;
+  const claimed = options.mutationQueue.claimForRecovery(active.eventId);
+  if (claimed === null) return false; // Live owner: do not interfere.
+  options.mutationQueue.requeueAfterVerifiedRecovery(claimed.eventId);
+  logger
+    .child({ projectId: options.project.id, cardId: operation.cardId })
+    .warn("Recovered interrupted unstarted PR maintenance queue claim");
+  return true;
+}
+
 /**
  * Release a failed maintenance queue owner after a deterministic, unpublished
  * quality failure. Never discard the prepared local commit/worktree.

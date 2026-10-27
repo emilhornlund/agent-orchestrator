@@ -102,6 +102,7 @@ import {
   maintainOutdatedPr,
   reconcileInterruptedPrMaintenance,
   retireFailedUnpublishedPrMaintenance,
+  requeueInterruptedPreparedPrMaintenance,
 } from "./maintain-outdated-pr.js";
 import { reconcileUnobservedTerminalPrEvents } from "./reconcile-unobserved-terminal-pr.js";
 
@@ -612,6 +613,11 @@ export async function runTaskSessionWorkflow(
   const queue = new TaskMutationQueue(root, project);
   const maintenanceStore = new PrMaintenanceStore(root, project);
   const feedbackLedgerStore = new FeedbackLedgerStore(root, project);
+  requeueInterruptedPreparedPrMaintenance({
+    project,
+    maintenanceStore,
+    mutationQueue: queue,
+  });
   retireFailedUnpublishedPrMaintenance({
     project,
     maintenanceStore,
