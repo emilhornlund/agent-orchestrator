@@ -2292,6 +2292,26 @@ export async function runTaskSessionWorkflow(
         isCardStartDateReached(card, Date.now()) &&
         getWorkflowKind(card, project) !== null,
     );
+    // Ready cards may have been moved externally while their queued claim
+    // persisted. Reconcile verified orphans before claiming the next event:
+    // otherwise a stale claim can monopolize the project mutation queue and
+    // prevent merged PRs from transitioning to Done.
+    const readyCardIds = new Set(readyCards.map((card) => card.id));
+    const workingCardIds = new Set(workingCards.map((card) => card.id));
+    for (const queued of queue.list()) {
+      if (
+        (queued.kind !== "implementation" && queued.kind !== "refinement") ||
+        (queued.status !== "queued" && queued.status !== "active") ||
+        readyCardIds.has(queued.cardId) ||
+        workingCardIds.has(queued.cardId) ||
+        taskStore.read(queued.cardId) !== null
+      )
+        continue;
+      queue.retireOrphanedReadyEvent(queued.eventId);
+      logger
+        .child({ projectId: project.id, cardId: queued.cardId })
+        .event("Retired verified orphaned Ready mutation");
+    }
     let readyRecoveryEvent: TaskMutationEvent | null = null;
     for (const [readyIndex, card] of eligibleCards.entries()) {
       if (taskStore.read(card.id) !== null) {
@@ -2344,10 +2364,15 @@ export async function runTaskSessionWorkflow(
     selectedCard =
       eligibleCards.find((candidate) => candidate.id === mutation!.cardId) ??
       null;
-    if (selectedCard === null)
+    if (selectedCard === null) {
+      // Do not strand ownership when an eligible card disappears between
+      // discovery and claim. The next poll will verify and retire the orphan.
+      if (queue.ownsActive(mutation.eventId))
+        queue.releaseForRecovery(mutation.eventId);
       throw new Error(
         `Queued task ${mutation.cardId} is no longer in Ready for Agent`,
       );
+    }
   }
   if (mutation === null || selectedCard === null) return;
   const card = selectedCard;

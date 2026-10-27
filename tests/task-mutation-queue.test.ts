@@ -243,4 +243,71 @@ describe("TaskMutationQueue", () => {
       ),
     ).toThrow("reused");
   });
+
+  it("retires a verified orphaned Ready claim so terminal cleanup can proceed", () => {
+    const queue = queueFor("project-a");
+    queue.enqueue({
+      ...task("project-a", "stale", "moved-card", "2026-10-24T09:00:00.000Z"),
+      kind: "implementation",
+    });
+    queue.claimNext();
+    expect(queue.getActive()?.eventId).toBe("stale");
+    expect(queue.retireOrphanedReadyEvent("stale").status).toBe("completed");
+    expect(queue.getActive()).toBeNull();
+    queue.enqueue({
+      ...task(
+        "project-a",
+        "terminal",
+        "merged-card",
+        "2026-10-24T09:01:00.000Z",
+      ),
+      kind: "terminal-pr",
+    });
+    expect(queue.claimForRecovery("terminal")?.eventId).toBe("terminal");
+    queue.complete("terminal");
+  });
+
+  it("retires queued orphan events without disturbing another active owner", () => {
+    const queue = queueFor("project-a");
+    queue.enqueue({
+      ...task(
+        "project-a",
+        "current",
+        "current-card",
+        "2026-10-24T09:00:00.000Z",
+      ),
+      kind: "implementation",
+    });
+    queue.claimNext();
+    queue.enqueue({
+      ...task(
+        "project-a",
+        "orphan",
+        "removed-card",
+        "2026-10-24T09:01:00.000Z",
+      ),
+      kind: "implementation",
+    });
+    expect(queue.retireOrphanedReadyEvent("orphan").status).toBe("completed");
+    expect(queue.getActive()?.eventId).toBe("current");
+    expect(() => queue.retireOrphanedReadyEvent("current")).not.toThrow();
+    expect(queue.getActive()).toBeNull();
+    expect(() => queue.retireOrphanedReadyEvent("orphan")).toThrow(
+      TaskMutationQueueConflictError,
+    );
+  });
+
+  it("does not retire failed mutations requiring explicit recovery", () => {
+    const queue = queueFor("project-a");
+    queue.enqueue({
+      ...task("project-a", "failed", "card-one", "2026-10-24T09:00:00.000Z"),
+      kind: "implementation",
+    });
+    queue.claimNext();
+    queue.fail("failed");
+    expect(() => queue.retireOrphanedReadyEvent("failed")).toThrow(
+      TaskMutationQueueConflictError,
+    );
+    expect(queue.getActive()?.eventId).toBe("failed");
+  });
 });
