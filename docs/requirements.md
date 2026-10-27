@@ -154,3 +154,17 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - Orchestrator diagnostics may refer to the relevant child-process log without reproducing its raw output.
 - Logs are organized by project and task and remain available after completion, failure, or restart, subject to retention.
 - Log retention is configurable globally, with a default of 30 days. Expired logs are cleaned up automatically, but logs belonging to active tasks must never be deleted.
+
+## Execution timeouts
+
+- OpenCode sessions, validation commands, and other long-running operations have configurable timeouts.
+- When a timeout is reached, stop the affected process and its child processes safely, preserving existing code changes, task state, and logs.
+- Attempt bounded recovery when safe. A timeout alone must not unnecessarily prevent eventual PR delivery.
+
+## Git safety and cleanup
+
+- Never modify the configured original source checkout. All agent changes belong in isolated task worktrees and branches.
+- Never force-push, overwrite unrelated remote changes, or automatically discard uncommitted work.
+- Never delete branches or worktrees without verifying that they belong to the task and are safe to remove.
+- Recovery must not create duplicate commits or pull requests.
+- After a PR is merged, automatically clean up the owned task branch and worktree when safe. If cleanup cannot be verified as safe, preserve them and report the problem.
