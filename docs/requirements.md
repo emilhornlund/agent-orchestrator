@@ -208,3 +208,11 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - The agent should retain or have access to as much relevant task and repository context as practical across the full lifecycle, including the task, attachments, approved plan, earlier work, feedback, and outcomes.
 - Restart recovery must resume the correct task session where safe, rather than silently starting a context-free replacement.
 - Independent planning and implementation reviews use separate sessions to preserve independent judgment.
+
+## Recovery-first behavior across components
+
+- When OpenCode fails or a session becomes unavailable, first attempt to reconnect to the original task session.
+- If the session is confirmed unrecoverable, the orchestrator may create a replacement session only when it can safely reconstruct the relevant context from the task, approved plan, repository, attachments, earlier changes, execution history, and feedback.
+- Preserve completed work and workflow progress; never restart from scratch or repeat completed operations unnecessarily.
+- Apply the same recovery-first approach to other components, including Git, GitHub, Trello, child processes, and persistent workflow state.
+- Recovery must remain safe and evidence-based. If the correct state cannot be established, preserve evidence and report the blockage instead of guessing.
