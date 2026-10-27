@@ -145,3 +145,12 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - Notifications identify the project and task, provide relevant links and useful details, and never expose secrets.
 - Email delivery is non-blocking: a notification failure must never undo successful work, change the task's workflow outcome, or prevent a PR from being delivered.
 - Failed deliveries are logged and should be retried safely when possible without sending duplicate notifications.
+
+## Logging and diagnostics
+
+- Every task has a traceable execution history, including workflow progress, state transitions, errors, retries, recovery decisions, validation and review results, and task duration.
+- Orchestrator logs contain structured workflow events and concise, sanitized diagnostic summaries; raw child-process output must never leak into orchestrator logs.
+- OpenCode, Git, validation commands, and other child processes have their stdout, stderr, and streaming output recorded separately, including when they fail.
+- Orchestrator diagnostics may refer to the relevant child-process log without reproducing its raw output.
+- Logs are organized by project and task and remain available after completion, failure, or restart, subject to retention.
+- Log retention is configurable globally, with a default of 30 days. Expired logs are cleaned up automatically, but logs belonging to active tasks must never be deleted.
