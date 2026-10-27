@@ -1,11 +1,11 @@
 interface FileChange {
   path: string;
   metadata: string[];
-  lines: string[];
+  hunks: string[][];
 }
 
 /**
- * Compare zero-context Git patches while ignoring hunk line numbers and commit
+ * Compare contextual Git patches while ignoring hunk line numbers and commit
  * metadata. This permits rebases and squash commits without treating matching
  * commit IDs as proof. Unsupported/binary patch forms fail closed.
  */
@@ -25,7 +25,7 @@ export function haveEquivalentImplementationChanges(
         const fileChange: FileChange = {
           path: match[1],
           metadata: [],
-          lines: [],
+          hunks: [],
         };
         current = fileChange;
         files.push(fileChange);
@@ -36,7 +36,12 @@ export function haveEquivalentImplementationChanges(
         line.startsWith("Binary files ")
       )
         return null;
-      if (line.startsWith("@@")) continue;
+      if (line.startsWith("@@")) {
+        if (!/^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/.test(line)) return null;
+        if (current === undefined) return null;
+        current.hunks.push([]);
+        continue;
+      }
       if (
         line.startsWith("index ") ||
         line.startsWith("--- ") ||
@@ -49,9 +54,15 @@ export function haveEquivalentImplementationChanges(
         if (line.trim().length > 0) return null;
         continue;
       }
-      if (line.startsWith("+") || line.startsWith("-")) {
-        current.lines.push(line);
-        sawChange = true;
+      if (
+        line.startsWith("+") ||
+        line.startsWith("-") ||
+        line.startsWith(" ")
+      ) {
+        const hunk = current.hunks.at(-1);
+        if (hunk === undefined) return null;
+        hunk.push(line);
+        if (!line.startsWith(" ")) sawChange = true;
       } else if (
         line.startsWith("old mode ") ||
         line.startsWith("new mode ") ||
@@ -68,10 +79,10 @@ export function haveEquivalentImplementationChanges(
     if (!sawChange || files.length === 0) return null;
     files.sort((left, right) => left.path.localeCompare(right.path));
     return JSON.stringify(
-      files.map(({ path, metadata, lines }) => ({
+      files.map(({ path, metadata, hunks }) => ({
         path,
         metadata: metadata.sort(),
-        lines,
+        hunks,
       })),
     );
   };

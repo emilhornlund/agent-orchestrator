@@ -15,9 +15,11 @@ describe("haveEquivalentImplementationChanges", () => {
     "--- a/src/task.ts",
     "+++ b/src/task.ts",
     "@@ -12,2 +12,3 @@",
+    " const anchor = true;",
     "-const status = 'old';",
     "+const status = 'recovered';",
     "+const ready = true;",
+    " const trailing = true;",
     "",
   ].join("\n");
 
@@ -28,6 +30,15 @@ describe("haveEquivalentImplementationChanges", () => {
     expect(
       haveEquivalentImplementationChanges(original, rebasedOrSquashed),
     ).toBe(true);
+  });
+
+  it("rejects identical changed lines at different surrounding locations", () => {
+    const misplaced = original
+      .replace(" const anchor = true;", " const unrelatedAnchor = true;")
+      .replace(" const trailing = true;", " const unrelatedTrailing = true;");
+    expect(haveEquivalentImplementationChanges(original, misplaced)).toBe(
+      false,
+    );
   });
 
   it("rejects changed, absent, or ambiguous patch evidence", () => {
@@ -74,7 +85,7 @@ describe("haveEquivalentImplementationChanges", () => {
         "--no-ext-diff",
         "--no-renames",
         "--no-color",
-        "--unified=0",
+        "--unified=3",
         `${implementation}^`,
         implementation,
       ]);
@@ -97,7 +108,7 @@ describe("haveEquivalentImplementationChanges", () => {
         "--no-ext-diff",
         "--no-renames",
         "--no-color",
-        "--unified=0",
+        "--unified=3",
         base,
         head,
       ]);
@@ -106,7 +117,7 @@ describe("haveEquivalentImplementationChanges", () => {
         "--no-ext-diff",
         "--no-renames",
         "--no-color",
-        "--unified=0",
+        "--unified=3",
         `${head}^`,
         head,
       ]);
