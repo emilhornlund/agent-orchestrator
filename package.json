@@ -10,6 +10,7 @@
   "scripts": {
     "dev": "tsx src/main.ts",
     "reconcile:external-pr": "tsx src/operator/reconcile-external-task-session-pr.ts",
+    "recover:legacy-mutation": "tsx src/operator/recover-legacy-retired-mutation.ts",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

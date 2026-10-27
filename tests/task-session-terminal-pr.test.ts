@@ -20,6 +20,209 @@ afterEach(() => {
 });
 
 describe("task-session terminal PR reconciliation", () => {
+  it("retires a card moved out of Ready after claim and creates one fresh re-entry attempt", async () => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "ready-card-reentry-"));
+    const repositoryPath = path.join(root, "repo");
+    const worktreeRoot = path.join(root, "worktrees");
+    const contextRoot = path.join(root, "state");
+    fs.mkdirSync(repositoryPath);
+    const project = {
+      id: "ready-reentry",
+      autoMerge: false,
+      contextRoot,
+      trello: {
+        boardId: "board",
+        backlogListId: "backlog",
+        readyListId: "ready",
+        workingListId: "working",
+        reviewListId: "review",
+        failedListId: "failed",
+        doneListId: "done",
+        refinementLabelId: "refinement",
+        featureLabelId: "feature",
+        improvementLabelId: "improvement",
+        bugLabelId: "bug",
+      },
+      repository: {
+        path: repositoryPath,
+        github: "owner/repo",
+        defaultBranch: "main",
+        worktreeRoot,
+        validationCommand: "yarn validate",
+        gitIdentity: { name: "Agent", email: "agent@example.test" },
+      },
+      opencode: {
+        refinement: { model: "refine", variant: "high" },
+        implementation: { model: "implement", variant: "high" },
+        review: { model: "review", variant: "high" },
+        remediation: { model: "repair", variant: "high", maxPasses: 1 },
+        commit: { model: "commit", variant: "low" },
+        timeoutMinutes: 1,
+      },
+    } as ProjectConfig & { contextRoot: string };
+    const card: TrelloCard = {
+      id: "reentry-card",
+      name: "Unchanged task",
+      desc: "The same task details",
+      idList: "ready",
+      idLabels: ["feature"],
+      url: "https://trello.example/reentry-card",
+    };
+    let currentList = "ready";
+    let readyReads = 0;
+    const trello = {
+      getCards: vi.fn(async (listId: string) => {
+        if (listId === "ready") {
+          readyReads += 1;
+          // On the first poll, move the card between discovery and the
+          // post-claim authoritative eligibility check.
+          if (readyReads === 2) currentList = "backlog";
+        }
+        return listId === currentList ? [{ ...card, idList: currentList }] : [];
+      }),
+      moveCard: vi.fn(async (_cardId: string, listId: string) => {
+        currentList = listId;
+        return { ...card, idList: listId };
+      }),
+      addComment: vi.fn(async () => undefined),
+    } as unknown as TrelloClient;
+    const queue = new TaskMutationQueue(contextRoot, project);
+    const fetch = vi.fn(async () => undefined);
+    const implementationRun = vi.fn(async () => ({
+      exitCode: 1,
+      output: '{"type":"step_start","sessionID":"session-1"}',
+      errorOutput: "",
+      sessionId: "session-1",
+    }));
+    const poll = () =>
+      runTaskSessionWorkflow({
+        project,
+        trello,
+        git: {
+          fetch,
+          branchExists: vi.fn(async () => false),
+          addWorktreeWithNewBranch: vi.fn(
+            async (_repositoryPath: string, worktreePath: string) => {
+              fs.mkdirSync(worktreePath, { recursive: true });
+            },
+          ),
+        } as unknown as GitClient,
+        github: {} as GitHubClient,
+        openCode: new OpenCodeClient(implementationRun),
+        commands: new CommandRunner(vi.fn()),
+        signal: new AbortController().signal,
+        prepareAttachmentContext: async () => undefined,
+      });
+
+    await poll();
+    expect(queue.list()).toMatchObject([
+      {
+        eventId: expect.stringMatching(/^implementation:reentry-card:/),
+        status: "retired",
+      },
+    ]);
+    expect(currentList).toBe("backlog");
+
+    queue.enqueue({
+      projectId: project.id,
+      cardId: "queue-occupier",
+      eventId: "queue-occupier",
+      operationKey: "queue-occupier",
+      kind: "feedback",
+      enqueuedAt: "2026-10-27T09:00:00.000Z",
+    });
+    expect(queue.claimNext()?.eventId).toBe("queue-occupier");
+
+    currentList = "ready";
+    await poll();
+    await poll(); // Simulate a restart/poll while the project queue is occupied.
+    expect(
+      queue.list().filter((event) => event.cardId === card.id),
+    ).toHaveLength(2);
+    expect(
+      queue.list().find((event) => event.eventId.endsWith(":attempt:1")),
+    ).toMatchObject({
+      eventId: expect.stringMatching(
+        /^implementation:reentry-card:.*:attempt:1$/,
+      ),
+      status: "queued",
+    });
+
+    currentList = "backlog";
+    await poll();
+    expect(
+      queue.list().find((event) => event.eventId.endsWith(":attempt:1"))
+        ?.status,
+    ).toBe("retired");
+    currentList = "ready";
+    await poll();
+    await poll();
+    expect(
+      queue.list().filter((event) => event.cardId === card.id),
+    ).toHaveLength(3);
+    expect(
+      queue.list().find((event) => event.eventId.endsWith(":attempt:2")),
+    ).toMatchObject({
+      eventId: expect.stringMatching(
+        /^implementation:reentry-card:.*:attempt:2$/,
+      ),
+      status: "queued",
+    });
+
+    currentList = "backlog";
+    await poll();
+    currentList = "ready";
+    await poll();
+    await poll();
+    expect(
+      queue.list().filter((event) => event.cardId === card.id),
+    ).toHaveLength(4);
+    expect(
+      queue
+        .list()
+        .filter((event) => event.cardId === card.id)
+        .filter((event) =>
+          ["queued", "active", "failed"].includes(event.status),
+        ),
+    ).toHaveLength(1);
+    expect(
+      queue.list().find((event) => event.eventId.endsWith(":attempt:3")),
+    ).toMatchObject({
+      eventId: expect.stringMatching(
+        /^implementation:reentry-card:.*:attempt:3$/,
+      ),
+      status: "queued",
+    });
+
+    queue.complete("queue-occupier");
+    await expect(poll()).rejects.toThrow(
+      "OpenCode planning exited with code 1",
+    );
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(implementationRun).toHaveBeenCalledTimes(1);
+    expect(
+      queue.list().filter((event) => event.cardId === card.id),
+    ).toHaveLength(4);
+    expect(
+      queue
+        .list()
+        .find((event) =>
+          event.eventId.startsWith("implementation:reentry-card:"),
+        )?.status,
+    ).toBe("retired");
+    expect(
+      queue.list().find((event) => event.eventId.endsWith(":attempt:3")),
+    ).toMatchObject({
+      eventId: expect.stringMatching(
+        /^implementation:reentry-card:.*:attempt:3$/,
+      ),
+      status: "failed",
+    });
+    expect(
+      new TaskExecutionStore(contextRoot, project).read(card.id),
+    ).not.toBeNull();
+  });
+
   it("retires a persisted orphan implementation before recovering a queued merged PR", async () => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), "terminal-queue-deadlock-"));
     const repositoryPath = path.join(root, "repo");
@@ -176,7 +379,7 @@ describe("task-session terminal PR reconciliation", () => {
 
     expect(
       queue.list().find((item) => item.cardId === "orphan-card")?.status,
-    ).toBe("completed");
+    ).toBe("retired");
     expect(
       queue.list().find((item) => item.kind === "terminal-pr")?.status,
     ).toBe("completed");
