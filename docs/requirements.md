@@ -70,14 +70,13 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 
 - Before modifying code, the implementation agent analyzes the task, attachments, and current repository state, then prepares an implementation plan.
 - An independent AI agent reviews the plan for correctness, completeness, and alignment with the task.
-- Implementation starts only after the plan is approved. No routine human plan approval is required.
-- If the plan cannot be approved, code changes must not begin.
+- Planning and independent review are advisory. The implementation agent may adapt or disregard the plan or its feedback; failed or exhausted planning/review attempts must not prevent implementation from proceeding.
 
 ## Implementation boundaries
 
 - Implementation takes place in an isolated Git worktree on a task-specific branch, never in the original source checkout.
 - The agent may modify source code, tests, configuration, and documentation as necessary for the task.
-- Changes must follow the approved plan and repository-specific instructions, without unrelated modifications.
+- The plan guides implementation but is not a mandatory approval gate. Repository safety instructions and task scope still apply; avoid unrelated modifications.
 
 ## Primary delivery requirement
 
@@ -92,11 +91,11 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 ## Validation, review, and PR readiness
 
 - The orchestrator runs configured validation commands itself, rather than relying on an agent's claim that they passed.
-- Validation failures and independent AI review findings have separate configurable remediation limits. Within those limits, the implementation agent may address findings and the relevant checks are rerun.
+- Validation failures and independent AI review findings have separate configurable improvement-attempt limits. These steps provide information to the agent, which decides what feedback to act on. Relevant checks may be rerun to report the latest results.
 - Exhausting either limit must not prevent PR delivery.
 - When required validation and review pass, the orchestrator creates a normal pull request. If tests, validation, or independent AI review still have unresolved problems, it creates a draft pull request and clearly describes those problems.
 - Both normal and draft pull requests move the Trello card to `Human Review`. If email notifications are configured, a PR notification is sent, explicitly identifying draft PRs and their outstanding issues.
-- A draft PR may be marked ready for review when its outstanding issues have been resolved and verified.
+- A draft PR may be marked ready for review when outstanding issues are addressed and its reported status is accurate; advisory review itself cannot veto delivery.
 - The orchestrator never automatically merges pull requests; merging or closing is a human decision. A project cannot start its next task while its PR remains open.
 
 ## Human review and requested changes
@@ -303,13 +302,13 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 
 - Additional human feedback arriving while the agent is working is recorded and queued without interrupting the active OpenCode operation.
 - After the current operation, process new and still-actionable feedback automatically, without losing requests or unnecessarily repeating completed work.
-- An independent AI reviewer verifies that each human-requested change has actually been fulfilled before it is treated as resolved.
-- Unresolved requests receive bounded internal correction attempts, and any remaining findings must be reported clearly on the existing PR rather than silently marked complete.
+- An independent AI reviewer assesses whether human-requested changes were fulfilled, but the assessment is advisory and cannot block publishing changes. Claims that a request was fulfilled must remain accurate.
+- The agent may use bounded internal correction attempts and choose which findings to act on; remaining findings must be reported clearly on the existing PR rather than silently marked complete.
 
 ## Partial human-review remediation and thread ownership
 
-- If only some requested changes are successfully addressed, publish the verified corrections to the existing PR rather than withholding them all.
-- Clearly distinguish resolved from unresolved requests; only reply confirming a fix after that specific change has been independently verified.
+- Publish the implementation agent's available corrections to the existing PR even when some feedback remains unresolved or the independent review is negative.
+- Clearly distinguish resolved from unresolved requests; only reply claiming a fix when there is adequate evidence that the change was actually made; an AI review is advisory, not a publication gate.
 - Keep the PR as a draft while unresolved requests remain, and return the Trello card to `Human Review` for further human feedback.
 - The orchestrator may reply to review threads describing verified fixes, but must not automatically resolve GitHub conversations. The human reviewer decides when a thread is resolved.
 
@@ -411,3 +410,11 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - Prevent stuck workflows by designing every operation with explicit success, failure, and recovery paths. Do not rely on periodic stall detection as the normal way to make progress.
 - If unexpected inconsistent state still arises, use periodic monitoring as a last-resort safety net to detect and safely recover it, including after restarts.
 - Every workflow state has explicitly allowed transitions. An external transition is only considered complete after its outcome is verified; never advance internal state merely because Trello, GitHub, or another service was assumed to succeed.
+
+## Advisory quality steps — critical invariant
+
+- All planning, plan review, validation, coverage, implementation review, and remediation inside the `Working` phase exist to guide and improve the agent's work, **never to approve, reject, or block progress to PR publication**.
+- The implementation agent may evaluate, adapt, or disregard any advisory feedback, including all of it. The orchestrator does not require agreement from an AI reviewer and does not force the agent to apply recommendations.
+- Advisory stages have bounded execution and correction attempts. Failure, timeout, malformed output, negative findings, or exhaustion must advance the workflow toward publishing the available meaningful implementation instead of leaving it stuck or moving it to `Failed`.
+- Reports must accurately distinguish what ran, what passed, what failed, what was skipped, and what remains uncertain. Publish a draft PR when significant unresolved quality problems remain; never misrepresent readiness.
+- Operational safety constraints remain mandatory: no loss of unrelated work, unsafe Git mutations, duplicate side effects, or exposure of credentials. These constraints are distinct from quality assessments and cannot be bypassed to force publication.
