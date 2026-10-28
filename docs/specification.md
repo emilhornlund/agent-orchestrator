@@ -341,6 +341,76 @@ The orchestrator must report quality outcomes accurately and select draft PR sta
 - Exhausted remediation attempts cannot postpone draft PR publication.
 - A draft PR may be marked ready for review after outstanding issues are addressed and its status is accurately reported, without requiring an AI reviewer's approval.
 
+## Human review and requested changes (REQ-HR)
+
+Human feedback on an open PR is handled automatically on its existing branch. Review and verification help the agent improve its work, but must never create an endless remediation cycle or prevent publishing available corrections.
+
+### REQ-HR-001 — Collect actionable GitHub feedback
+
+Before remediation, the orchestrator must gather current actionable GitHub feedback with available context.
+
+**Acceptance criteria**
+
+- Review summaries, inline review comments, and general PR comments are considered.
+- File and line context is retained when available; feedback without inline context remains eligible.
+- Edited comments are read in their latest form, and deleted or superseded comments are not treated as active requests.
+- Previously handled feedback remains traceable without automatically restarting completed work.
+
+### REQ-HR-002 — Remediate on the existing PR
+
+Requested changes must be processed on the existing task branch and published to the same PR.
+
+**Acceptance criteria**
+
+- The card moves from `Human Review` to `Working` during remediation.
+- Available changes are published to the existing PR rather than opening a replacement PR.
+- Bounded advisory validation and independent AI verification can inform corrections but cannot veto publication.
+- After the cycle, the card returns to `Human Review` with remaining issues reported accurately.
+
+### REQ-HR-003 — Preserve feedback arriving during execution
+
+New human feedback must not be lost or cause competing changes while another operation is running.
+
+**Acceptance criteria**
+
+- Feedback received during an active operation is recorded and queued without interrupting that operation.
+- The orchestrator refreshes feedback after the current cycle and processes newly actionable requests.
+- Multiple operations do not concurrently modify the active task branch.
+- Existing unchanged, previously attempted unresolved comments do not cause an endless remediation loop.
+
+### REQ-HR-004 — Publish partial corrections honestly
+
+The orchestrator must publish available corrections even if not all requested changes are addressed.
+
+**Acceptance criteria**
+
+- Verified or otherwise available implementation corrections are pushed without waiting for every AI review finding to be resolved.
+- Replies distinguish addressed, unresolved, and uncertain feedback, and never claim a fix without adequate evidence.
+- Unresolved requests keep the PR in draft status with clear remaining-issue information.
+- The orchestrator does not automatically resolve GitHub review threads; the human reviewer controls thread resolution.
+
+### REQ-HR-005 — Unlimited human feedback rounds, bounded internal attempts
+
+Human-requested-change rounds must remain available for as long as the PR is open, while automated correction cycles remain bounded.
+
+**Acceptance criteria**
+
+- Later new or edited requests can trigger another remediation round without a fixed lifetime limit on human feedback cycles.
+- Internal validation, AI review, and correction attempts obey their configured maximums for each round.
+- A round can finish despite negative AI findings, without requiring reviewer satisfaction.
+- A GitHub approval does not merge or complete the task; the project remains occupied until the PR is merged or closed.
+
+### REQ-HR-006 — Coordinate active-PR work
+
+Human remediation, CI repair, and routine PR maintenance must be serialized for the active project.
+
+**Acceptance criteria**
+
+- The active project has one coordinated queue of operations on its task branch.
+- Human-requested changes take priority over CI repairs, which take priority over routine maintenance by default.
+- Required prerequisites, such as safely updating the branch before a requested change, may run first.
+- No pending feedback or CI work is silently dropped while another operation holds the project.
+
 ## Specification coverage
 
 Additional domains—including refinement, human review, GitHub CI, recovery, Git safety, configuration, logging, and testing—will be specified section by section. An ID identifies a behavior, not a Trello implementation task. Later verification records can reference these IDs without modifying their meaning.
