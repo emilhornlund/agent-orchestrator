@@ -331,3 +331,15 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - A later move back to `Ready for Agent` starts a fresh implementation attempt from the latest accepted default branch, using the current card and attachments rather than automatically reusing rejected changes.
 - The agent may inspect the closed PR as historical context but must not assume that its code or decisions were correct.
 - For tasks that fail without a PR, preserve diagnostic evidence, but ensure a new attempt can begin safely without inheriting unwanted changes.
+
+## Failed task retries
+
+- Manually retrying a failed task starts a fresh attempt in a clean worktree from the latest default branch, based on the current Trello card and attachments.
+- Preserve logs and diagnostics from earlier attempts, but never automatically reuse their unfinished code.
+- Old worktrees, sessions, and execution records must not block a new, safely reconciled attempt.
+
+## Runtime state storage
+
+- Store durable task progress, AI session references, recovery information, and other execution state outside Git repositories and worktrees.
+- The runtime storage location is configurable for both local and Docker installations, and its data survives restarts and application upgrades.
+- The orchestrator manages runtime state automatically; routine operation and recovery must not require users to edit internal files manually.
