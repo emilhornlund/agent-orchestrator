@@ -206,7 +206,61 @@ describe("parseImplementationReviewResult", () => {
         },
         { ...expected, previousFindingIds: [priorFindingAssessment.findingId] },
       ),
-    ).toThrow("lists resolved prior finding as currently blocking");
+    ).toThrow("without new supporting evidence");
+  });
+
+  it("requires new current-source evidence to reopen a resolved finding", () => {
+    const prior = {
+      id: "finding-prior",
+      sourceContentIdentity: `sha256:${"b".repeat(64)}`,
+      sourceIdentities: [
+        `sha256:${"b".repeat(64)}`,
+        `sha256:${"c".repeat(64)}`,
+      ],
+      status: "resolved" as const,
+    };
+    const nextIdentity = `sha256:${"c".repeat(64)}`;
+    const reopenedFinding = {
+      id: prior.id,
+      sourceContentIdentity: nextIdentity,
+      kind: "defect" as const,
+      summary: "A regression reintroduced the defect",
+      detail:
+        "Evidence: src/settings.ts:24 now bypasses the persisted setting and reproduces the prior defect. Expected behavior: use the persisted setting.",
+      location: { filePath: "src/settings.ts", line: 24 },
+    };
+    const reopenedResult = {
+      ...result,
+      verdict: "fail" as const,
+      blockingFindings: [reopenedFinding],
+      previousFindingAssessments: [
+        { findingId: prior.id, status: "resolved" as const },
+      ],
+      reviewedContentIdentity: nextIdentity,
+    };
+
+    expect(() =>
+      parseImplementationReviewResult(reopenedResult, {
+        ...expected,
+        contentIdentity: nextIdentity,
+        previousFindingIds: [prior.id],
+        previousFindings: [prior],
+      }),
+    ).toThrow("without new supporting evidence");
+
+    expect(
+      parseImplementationReviewResult(reopenedResult, {
+        ...expected,
+        contentIdentity: nextIdentity,
+        previousFindingIds: [prior.id],
+        previousFindings: [
+          {
+            ...prior,
+            sourceIdentities: [`sha256:${"b".repeat(64)}`],
+          },
+        ],
+      }).blockingFindings,
+    ).toEqual([reopenedFinding]);
   });
 
   it("rejects invalid verdicts and inconsistent pass/fail outcomes", () => {

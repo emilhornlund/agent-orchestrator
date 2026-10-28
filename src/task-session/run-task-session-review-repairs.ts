@@ -173,15 +173,26 @@ function updateFindingLedger(
 
   for (const finding of previous) {
     const assessment = byId.get(finding.id)!;
-    const isReportedBlocking = review.blockingFindings.some(
-      (blockingFinding) => blockingFinding.id === finding.id,
+    const blockingFinding = review.blockingFindings.find(
+      (candidate) => candidate.id === finding.id,
     );
+    const isReportedBlocking = blockingFinding !== undefined;
+    const evidenceBackedReopening =
+      assessment.status === "resolved" &&
+      blockingFinding !== undefined &&
+      blockingFinding.sourceContentIdentity === contentIdentity &&
+      !finding.sourceIdentities.includes(contentIdentity) &&
+      blockingFinding.location !== undefined;
     if (assessment.status === "unresolved" && !isReportedBlocking) {
       throw new TaskSessionReviewRepairError(
         `Unresolved prior finding must remain blocking: ${finding.id}`,
       );
     }
-    if (assessment.status !== "unresolved" && isReportedBlocking) {
+    if (
+      assessment.status !== "unresolved" &&
+      isReportedBlocking &&
+      !evidenceBackedReopening
+    ) {
       throw new TaskSessionReviewRepairError(
         `Review lists ${assessment.status} prior finding as blocking: ${finding.id}`,
       );
@@ -228,9 +239,22 @@ function updateFindingLedger(
         `Review blocking finding references unknown prior finding: ${finding.id}`,
       );
     }
+    const priorAssessment =
+      finding.id === undefined ? undefined : byId.get(finding.id);
+    const priorFinding =
+      finding.id === undefined
+        ? undefined
+        : previous.find((candidate) => candidate.id === finding.id);
+    const evidenceBackedReopening =
+      priorAssessment?.status === "resolved" &&
+      priorFinding !== undefined &&
+      finding.sourceContentIdentity === contentIdentity &&
+      !priorFinding.sourceIdentities.includes(contentIdentity) &&
+      finding.location !== undefined;
     if (
       finding.id !== undefined &&
-      byId.get(finding.id)?.status !== "unresolved"
+      priorAssessment?.status !== "unresolved" &&
+      !evidenceBackedReopening
     ) {
       throw new TaskSessionReviewRepairError(
         `Review lists a non-unresolved prior finding as blocking: ${finding.id}`,
