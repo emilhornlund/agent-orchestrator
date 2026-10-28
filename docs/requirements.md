@@ -66,13 +66,12 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - Store downloaded attachment context separately from the Git repository.
 - Attachment access failures must be reported rather than silently ignored.
 
-## Implementation planning
+## Implementation planning and boundaries
 
 - Before modifying code, the implementation agent analyzes the task, attachments, and current repository state, then prepares an implementation plan.
 - An independent AI agent reviews the plan for correctness, completeness, and alignment with the task.
 - Planning and independent review are advisory. The implementation agent may adapt or disregard the plan or its feedback; failed or exhausted planning/review attempts must not prevent implementation from proceeding.
 
-## Implementation boundaries
 
 - Implementation takes place in an isolated Git worktree on a task-specific branch, never in the original source checkout.
 - The agent may modify source code, tests, configuration, and documentation as necessary for the task.
