@@ -44,7 +44,6 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - Refinement improves a card's title, description, and classification without implementing code.
 - After successful refinement, the card returns to `Backlog` for human review, and the project may take its next task.
 
-## Refinement context
 
 - Refinement must use the current state of the project's repository, with access to its source code, tests, configuration, documentation, and other relevant files.
 - The agent must use repository evidence to judge what needs to be done and how, rather than making assumptions.
