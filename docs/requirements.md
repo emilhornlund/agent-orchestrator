@@ -362,3 +362,10 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - There is no overall timeout for an entire task. Long-running tasks may continue as needed, while individual operations retain configurable timeouts.
 - Track meaningful progress for active work and detect operations that are genuinely stalled, without treating a long task as stalled merely because it has been running for hours.
 - Attempt automatic, safe recovery of stalled operations, preserving existing work and continuing toward PR delivery rather than waiting indefinitely.
+
+## Secrets and credentials
+
+- Load sensitive credentials from environment variables or protected secret files, never directly from project configuration committed to source control.
+- Never expose secrets in orchestrator or child-process logs, AI prompts, Trello comments, GitHub pull requests, or email notifications.
+- Provide child processes only the credentials they need for their assigned operation.
+- Report authentication and authorization failures clearly without revealing sensitive values.
