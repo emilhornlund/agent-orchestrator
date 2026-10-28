@@ -231,6 +231,64 @@ The orchestrator must require meaningful task changes rather than manufacture a 
 - If no meaningful changes can be produced despite appropriate attempts, the card moves to `Failed` with an explanatory comment and preserved diagnostics.
 - Failed tasks remain eligible for a later deliberate retry under the separate clean-retry requirements.
 
+## Validation and AI review (REQ-VAL)
+
+Validation, coverage, independent AI review, and remediation provide evidence and recommendations to improve implementation quality. They are advisory, never approval gates: a failing, negative, unavailable, or exhausted quality step must not prevent safe publication of meaningful implementation changes.
+
+### REQ-VAL-001 — Orchestrator-executed quality commands
+
+The orchestrator must execute configured validation and coverage commands directly and report their observed outcomes.
+
+**Acceptance criteria**
+
+- Validation and coverage commands are independently optional per project.
+- Each configured command is run by the orchestrator rather than accepted as passed based only on an AI agent's claim.
+- An unconfigured command is recorded as skipped, not passed.
+- Results accurately distinguish passed, failed, skipped, and uncertain executions.
+
+### REQ-VAL-002 — Independent review remains advisory
+
+Independent AI implementation review must provide feedback without controlling whether the implementation proceeds to publication.
+
+**Acceptance criteria**
+
+- Review findings are available to the implementation agent as recommendations.
+- The agent may adopt, adapt, or disregard any or all findings.
+- Negative, malformed, missing, or unavailable reviewer output is recorded but never treated as an implementation failure or publication veto.
+- A reviewer is not required to approve the final implementation.
+
+### REQ-VAL-003 — Separate bounded improvement attempts
+
+Validation remediation and AI review remediation must have separately configurable maximum attempt counts.
+
+**Acceptance criteria**
+
+- Repeated failures stop correction attempts when the relevant configured limit is reached.
+- The implementation agent may end remediation early when further changes would not be useful.
+- If remediation produces no implementation changes, its cycle stops without repeatedly reviewing unchanged code.
+- Exhaustion leads toward publishing the available implementation, not to `Failed` solely because quality findings remain.
+
+### REQ-VAL-004 — Advisory process failures do not block delivery
+
+Failures in advisory quality steps must be distinguished from an actual failure of the primary implementation process.
+
+**Acceptance criteria**
+
+- A failed test or a normal nonzero validation exit status is reported as a quality result, not classified as an implementation crash.
+- A crashed or timed-out advisory step receives bounded safe recovery; if it cannot be recovered, the result is recorded and the step is skipped.
+- When meaningful implementation changes exist and Git/GitHub publication is safe, an advisory failure does not prevent PR creation.
+
+### REQ-VAL-005 — Accurate disclosure and PR readiness
+
+The orchestrator must report quality outcomes accurately and select draft PR status when significant unresolved problems remain.
+
+**Acceptance criteria**
+
+- Successful validation and review permit a normal PR; unresolved validation, test, or review findings lead to a draft PR with those findings disclosed.
+- Failed, skipped, and uncertain checks are not represented as successful.
+- Exhausted remediation attempts cannot postpone draft PR publication.
+- A draft PR may be marked ready for review after outstanding issues are addressed and its status is accurately reported, without requiring an AI reviewer's approval.
+
 ## Specification coverage
 
 Additional domains—including refinement, human review, GitHub CI, recovery, Git safety, configuration, logging, and testing—will be specified section by section. An ID identifies a behavior, not a Trello implementation task. Later verification records can reference these IDs without modifying their meaning.
