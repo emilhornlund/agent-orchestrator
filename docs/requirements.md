@@ -104,7 +104,7 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - The orchestrator collects all outstanding actionable feedback, including review summaries, inline comments, and general PR comments, retaining file and line context when available.
 - It moves the card from `Human Review` to `Working`, addresses feedback on the existing task branch, and updates the same pull request rather than creating a replacement.
 - It reruns validation and independent AI review, then returns the card to `Human Review` with clear information about any remaining issues.
-- Replies to addressed comments are posted only after the associated changes have been published and verified.
+- Publish available changes to the existing PR regardless of independent AI verification findings. Replies must accurately describe what changed and must not claim unresolved or uncertain feedback is fulfilled.
 - Feedback arriving during remediation must not be lost. After the current cycle, the orchestrator checks again and handles new or still-unresolved requests without unnecessarily repeating completed work.
 - Human review cycles are unlimited: new requests for changes can be submitted as often as needed. Configurable limits apply only to internal automated validation, review, and correction attempts within a cycle, never to the number of human-requested-change cycles.
 - The task remains active until its pull request is merged or closed.
@@ -302,13 +302,13 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 
 - Additional human feedback arriving while the agent is working is recorded and queued without interrupting the active OpenCode operation.
 - After the current operation, process new and still-actionable feedback automatically, without losing requests or unnecessarily repeating completed work.
-- An independent AI reviewer assesses whether human-requested changes were fulfilled, but the assessment is advisory and cannot block publishing changes. Claims that a request was fulfilled must remain accurate.
+- Independent AI verification of requested changes is advisory: its findings may guide further edits and inform PR descriptions and replies, but it must never veto publishing the implementation agent's available changes. Claims that a request was fulfilled must remain evidence-based and accurate.
 - The agent may use bounded internal correction attempts and choose which findings to act on; remaining findings must be reported clearly on the existing PR rather than silently marked complete.
 
 ## Partial human-review remediation and thread ownership
 
 - Publish the implementation agent's available corrections to the existing PR even when some feedback remains unresolved or the independent review is negative.
-- Clearly distinguish resolved from unresolved requests; only reply claiming a fix when there is adequate evidence that the change was actually made; an AI review is advisory, not a publication gate.
+- Clearly distinguish resolved, unresolved, and uncertain requests. Only claim a fix with adequate supporting evidence; independent AI review is advisory and never a publication gate.
 - Keep the PR as a draft while unresolved requests remain, and return the Trello card to `Human Review` for further human feedback.
 - The orchestrator may reply to review threads describing verified fixes, but must not automatically resolve GitHub conversations. The human reviewer decides when a thread is resolved.
 
