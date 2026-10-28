@@ -99,15 +99,15 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - GitHub reviews requesting changes are handled automatically; no manual Trello action is necessary.
 - The orchestrator collects all outstanding actionable feedback, including review summaries, inline comments, and general PR comments, retaining file and line context when available.
 - It moves the card from `Human Review` to `Working`, addresses feedback on the existing task branch, and updates the same pull request rather than creating a replacement.
-- It reruns validation and independent AI review, then returns the card to `Human Review` with clear information about any remaining issues.
+- It offers validation and independent AI review as bounded, advisory follow-up steps. Failed, unavailable, or negative checks cannot prevent publishing available changes to the existing PR and returning the card to `Human Review` with accurate outstanding-issue information.
 - Publish available changes to the existing PR regardless of independent AI verification findings. Replies must accurately describe what changed and must not claim unresolved or uncertain feedback is fulfilled.
-- Feedback arriving during remediation must not be lost. After the current cycle, the orchestrator checks again and handles new or still-unresolved requests without unnecessarily repeating completed work.
+- Feedback arriving during remediation must not be lost. After the current cycle, the orchestrator checks for newly actionable feedback and processes it without repeating unchanged remediation. Previously reported unresolved feedback alone must not trigger a perpetual new cycle; return to `Human Review` and await new or changed human input.
 - Human review cycles are unlimited: new requests for changes can be submitted as often as needed. Configurable limits apply only to internal automated validation, review, and correction attempts within a cycle, never to the number of human-requested-change cycles.
 - The task remains active until its pull request is merged or closed.
 
 ## GitHub CI
 
-- After a pull request is created or updated, the orchestrator waits for all expected GitHub CI checks and evaluates their results.
+- After a pull request is created or updated, the orchestrator observes expected GitHub CI checks within bounded waiting periods and evaluates available results. Missing, pending, failed, or timed-out checks must never prevent PR delivery or cause an indefinite working-phase wait.
 - It automatically attempts to fix failed checks within a separately configurable correction limit, publishing fixes to the same PR and rerunning checks.
 - Unresolved CI failures leave the PR as a draft with clear diagnostics, not an indefinitely blocked delivery.
 - Checks that never start or finish must not leave the workflow waiting indefinitely; the uncertainty must be reported rather than treated as a pass.
@@ -124,7 +124,7 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 
 - After a crash, shutdown, or container restart, the orchestrator must automatically resume interrupted work from its last verified state whenever safe.
 - Preserve worktrees, code changes, AI sessions, task ownership, and workflow progress; never silently start over or duplicate commits, pull requests, Trello actions, or other side effects.
-- If the previous state cannot be established safely, preserve all evidence, notify the operator, and block new tasks in the affected project until the situation is resolved.
+- If the previous state cannot be established safely, preserve evidence and notify the operator. Attempt bounded automatic reconciliation; when the active attempt is genuinely unrecoverable, record a failure outcome and reconcile its Trello transition before releasing project ownership. If the external state cannot be verified, keep the project in an explicit recoverable waiting state with controlled rechecks rather than silently locking it forever.
 - Recovery problems in one project must not stop unrelated projects.
 
 - Temporary unavailability, timeouts, and transient failures in Trello, GitHub, OpenCode, or other dependencies must not permanently fail a task.
@@ -281,7 +281,7 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - Prerequisite operations may run ahead of that order when necessary to safely complete higher-priority work, such as rebasing before applying requested changes.
 
 - Additional human feedback arriving while the agent is working is recorded and queued without interrupting the active OpenCode operation.
-- After the current operation, process new and still-actionable feedback automatically, without losing requests or unnecessarily repeating completed work.
+- After the current operation, process newly actionable feedback automatically without losing requests. Do not repeatedly restart remediation solely for unchanged, previously attempted unresolved feedback; publish the current result and return to `Human Review`.
 - Independent AI verification of requested changes is advisory: its findings may guide further edits and inform PR descriptions and replies, but it must never veto publishing the implementation agent's available changes. Claims that a request was fulfilled must remain evidence-based and accurate.
 - The agent may use bounded internal correction attempts and choose which findings to act on; remaining findings must be reported clearly on the existing PR rather than silently marked complete.
 
