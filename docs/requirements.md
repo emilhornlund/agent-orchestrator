@@ -151,7 +151,6 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - Logs are organized by project and task and remain available after completion, failure, or restart, subject to retention.
 - Log retention is configurable globally, with a default of 30 days. Expired logs are cleaned up automatically, but logs belonging to active tasks must never be deleted.
 
-## Execution timeouts
 
 - OpenCode sessions, validation commands, and other long-running operations have configurable timeouts.
 - When a timeout is reached, stop the affected process and its child processes safely, preserving existing code changes, task state, and logs.
