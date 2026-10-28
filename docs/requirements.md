@@ -28,7 +28,7 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 
 - A merged pull request moves its card to `Done`.
 - A pull request closed without merging moves its card to `Backlog`. The orchestrator posts a Trello comment explaining the closure and linking to the PR. The task can be revised and explicitly queued again later; closure is not an orchestrator failure.
-- An unrecoverable automated failure moves its card to `Failed`, with an explanatory Trello comment and an email notification when configured. The specific conditions for failure will be defined later.
+- An unrecoverable automated failure moves its card to `Failed`, with an explanatory Trello comment and an email notification when configured. Failure conditions are defined in the recovery, PR-delivery exception, and advisory-step requirements below.
 - After a task reaches `Done`, `Failed`, or the cancelled `Backlog` outcome, the project may process its next task.
 - Cards in `Failed` are not automatically retried. To try again, the user explicitly returns the card to `Ready for Agent`.
 
@@ -82,7 +82,7 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - The orchestrator attempts to resolve problems automatically within configured limits, but those limits must not create an endless loop or prevent delivery.
 - Any unresolved failures or review findings must be disclosed clearly in the pull request; an incomplete implementation must never be represented as validated or ready to merge.
 - A failure to produce a pull request is exceptional and must have a genuine safety or external-operation reason, such as unavailable Git/GitHub services or a repository state that cannot be published safely.
-- Producing a pull request is not the same as approving it for merge. The detailed review, validation, and publication policies will be agreed separately.
+- Producing a pull request is not the same as approving it for merge. Review, validation, and publication behavior are defined below; advisory quality assessments are never publication gates.
 
 ## Validation, review, and PR readiness
 
