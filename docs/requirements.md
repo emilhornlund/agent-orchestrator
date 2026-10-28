@@ -356,3 +356,9 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - The orchestrator automatically polls Trello and GitHub for new tasks, feedback, CI results, and PR state changes without requiring a restart.
 - Use one optional global polling interval, defaulting to 15 seconds. Separate per-project polling intervals are not required.
 - Temporary API failures use controlled backoff. Polling must not interfere with an operation already running.
+
+## Task duration and stalled execution
+
+- There is no overall timeout for an entire task. Long-running tasks may continue as needed, while individual operations retain configurable timeouts.
+- Track meaningful progress for active work and detect operations that are genuinely stalled, without treating a long task as stalled merely because it has been running for hours.
+- Attempt automatic, safe recovery of stalled operations, preserving existing work and continuing toward PR delivery rather than waiting indefinitely.
