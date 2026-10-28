@@ -157,7 +157,6 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - Never modify the configured original source checkout. All agent changes belong in isolated task worktrees and branches.
 - Never force-push, overwrite unrelated remote changes, or automatically discard uncommitted work.
 - Never delete branches or worktrees without verifying that they belong to the task and are safe to remove.
-- Recovery must not create duplicate commits or pull requests.
 - After a PR is merged, automatically clean up the owned task branch and worktree when safe. If cleanup cannot be verified as safe, preserve them and report the problem.
 
 ## Pull request descriptions and working status
@@ -240,7 +239,6 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 
 - An incomplete or unclear task must not be rejected automatically. The planning agent first examines the card, current repository, and attachments to determine whether the intended work can be understood without inventing requirements.
 - If essential information is still missing, post an actionable Trello comment explaining what needs clarification and move the card to `Failed`. The user may clarify it and explicitly return it to `Ready for Agent` later.
-- Trello comments are reserved for meaningful outcomes or situations requiring attention, such as refinement completion, task failures, missing information, and PR closure.
 - Routine operations such as validation, AI reviews, and retries belong in execution logs rather than generating noisy card comments.
 
 - Implementation, validation, review, CI repair, and PR maintenance must never change a Trello card's title or description. Only an explicit refinement workflow may update them.
