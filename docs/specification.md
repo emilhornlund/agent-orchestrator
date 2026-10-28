@@ -411,6 +411,75 @@ Human remediation, CI repair, and routine PR maintenance must be serialized for 
 - Required prerequisites, such as safely updating the branch before a requested change, may run first.
 - No pending feedback or CI work is silently dropped while another operation holds the project.
 
+## GitHub CI (REQ-CI)
+
+GitHub CI provides additional evidence after a PR is created or updated. The orchestrator observes expected checks and offers bounded repairs, but missing, failed, or delayed CI must never trap the task or prevent delivery.
+
+### REQ-CI-001 — Observe expected checks with bounded waiting
+
+After PR creation or updates, the orchestrator must discover and evaluate expected GitHub CI checks without waiting indefinitely.
+
+**Acceptance criteria**
+
+- Available expected checks and their outcomes are recorded for the current PR revision.
+- Missing, pending, and timed-out checks are reported as uncertain rather than passed.
+- Waiting ends at a defined bound; a check that never starts or finishes cannot leave the card indefinitely in `Working` or block the existing PR.
+
+### REQ-CI-002 — Bounded, advisory CI repair
+
+The orchestrator must offer the implementation agent opportunities to address failed CI checks within a separately configurable correction limit.
+
+**Acceptance criteria**
+
+- Failed checks and relevant diagnostics are made available to the agent.
+- The agent may publish attempted fixes to the existing PR and CI is reevaluated after updates.
+- Exhausting the correction limit, or making no useful changes, ends the repair cycle without repeated reviews of unchanged code.
+- CI repair is not a mandatory approval gate; unresolved failures leave the PR as draft with accurate diagnostics.
+
+## Automatic PR maintenance (REQ-MNT)
+
+An open PR remains under safe, coordinated maintenance while awaiting human decisions. Updating its branch and resolving conflicts must preserve its identity and existing work, and must not create another infinite correction cycle.
+
+### REQ-MNT-001 — Detect outdated branches and merge conflicts
+
+The orchestrator must check an open PR for target-branch updates and merge conflicts while it awaits human review.
+
+**Acceptance criteria**
+
+- The need for a branch update or conflict resolution is detected without requiring a manual Trello action.
+- Maintenance is coordinated with human-requested changes and CI repairs, never concurrently modifying the same task branch.
+- An approved but still-open PR remains eligible for safe maintenance.
+
+### REQ-MNT-002 — Safely update the existing PR branch
+
+When safe, the orchestrator must attempt to rebase onto the latest target branch and use the agent to resolve conflicts.
+
+**Acceptance criteria**
+
+- Maintenance updates the existing PR and retains previous implementation work.
+- The orchestrator does not force-push, discard uncommitted changes, or replace the PR to bypass a conflict.
+- Unresolved or unsafe conflicts are reported with recoverable state retained, rather than silently retried forever.
+
+### REQ-MNT-003 — Reevaluate changes without introducing review gates
+
+After an automated branch update or conflict resolution, the orchestrator must offer validation, independent AI review, and CI reevaluation while allowing the PR to remain published.
+
+**Acceptance criteria**
+
+- Updated quality outcomes and unresolved issues are reported against the existing PR.
+- Negative or unavailable advisory reviews do not block publishing available safe corrections.
+- The maintenance cycle finishes or reaches a clear recoverable outcome without unbounded remediation.
+
+### REQ-MNT-004 — Maintain visible, temporary PR activity status
+
+While working on an existing PR, the orchestrator must show a temporary activity status at the top of its description.
+
+**Acceptance criteria**
+
+- The status describes the current activity, such as rebasing, conflict resolution, CI repair, or requested changes.
+- The underlying PR description remains intact and is updated to reflect relevant implementation changes.
+- Temporary status is cleared after the activity concludes, including when it ends with unresolved findings.
+
 ## Specification coverage
 
 Additional domains—including refinement, human review, GitHub CI, recovery, Git safety, configuration, logging, and testing—will be specified section by section. An ID identifies a behavior, not a Trello implementation task. Later verification records can reference these IDs without modifying their meaning.
