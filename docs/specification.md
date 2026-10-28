@@ -74,6 +74,50 @@ An actual unrecoverable primary implementation crash may fail a task, unlike fai
 - If primary execution remains unrecoverable, the card moves to `Failed` with preserved partial work and diagnostics rather than automatically publishing interrupted code.
 - An advisory process crash is recorded and skipped after bounded recovery, allowing PR delivery to continue.
 
+## Trello task lifecycle (REQ-TR)
+
+Trello reflects the task's externally visible outcome. Card transitions must be accurate and verified, and a project's next task must not begin before the preceding task reaches a confirmed terminal outcome.
+
+### REQ-TR-001 — Merged PR completion
+
+When the task's pull request is merged, the orchestrator must move its Trello card to `Done`.
+
+**Acceptance criteria**
+
+- The PR is confirmed merged before completion is recorded.
+- The move to `Done` is verified before the project accepts its next task.
+- Retrying reconciliation does not duplicate or reverse a completed outcome.
+
+### REQ-TR-002 — Closed, unmerged PR outcome
+
+When a pull request is closed without being merged, the orchestrator must return its card to `Backlog`, not `Failed`.
+
+**Acceptance criteria**
+
+- The orchestrator verifies that the PR was closed without merging.
+- The card returns to `Backlog` with a concise comment explaining the closure and linking to the PR.
+- The project may take another task after the transition is confirmed; the closed task may be deliberately queued again later.
+
+### REQ-TR-003 — Genuine failure outcome and deliberate retry
+
+An unrecoverable task failure must be recorded as `Failed` with sufficient explanation, and retries must be initiated by the user.
+
+**Acceptance criteria**
+
+- The orchestrator posts an explanatory Trello comment and sends a failure notification when configured.
+- A failed card is not automatically requeued as a new task.
+- Moving it from `Failed` to `Ready for Agent` requests a new attempt, with previous diagnostics preserved and no accidental reuse of unfinished code.
+
+### REQ-TR-004 — Eligible task ordering
+
+The orchestrator must claim eligible cards in the top-to-bottom order of `Ready for Agent`, regardless of task type.
+
+**Acceptance criteria**
+
+- The first eligible card is selected ahead of lower cards, whether it is a feature, improvement, bug, or refinement.
+- Cards with future start dates are skipped until eligible.
+- An ineligible card does not prevent selection of an eligible card farther down the list.
+
 ## Specification coverage
 
 Additional domains—including refinement, human review, GitHub CI, recovery, Git safety, configuration, logging, and testing—will be specified section by section. An ID identifies a behavior, not a Trello implementation task. Later verification records can reference these IDs without modifying their meaning.
