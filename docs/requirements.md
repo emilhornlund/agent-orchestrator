@@ -226,7 +226,6 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - A second instance must respect existing project ownership rather than claiming tasks. Crash recovery and ownership release must be safe; ambiguous ownership must prevent competing execution.
 - Multiple-machine coordination is out of scope for now and can be considered later. Ordinary single-machine operation must not require a shared database.
 
-## Configuration changes and runtime isolation
 
 - Configuration is loaded and validated at startup. Changes made while the orchestrator is running only take effect after a restart; live configuration reload is not supported.
 - Active tasks must be preserved across restarts and resumed safely with the new configuration.
@@ -239,7 +238,6 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - Identify larger dependencies or related opportunities without silently expanding the task or introducing unrelated refactoring.
 - When a task is overly large or complex, recommend splitting it into smaller tasks, but still refine the original card. Do not automatically create or split Trello cards; that capability may be considered later.
 
-## Refinement completion and failure
 
 - If refinement fails or produces an invalid result, the orchestrator first attempts safe recovery and bounded correction.
 - Validate the complete refinement result before changing the Trello card. If refinement cannot complete, preserve the original title, description, and classification rather than leaving partial changes; move the card to `Failed` with an explanation.
@@ -253,7 +251,6 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - Trello comments are reserved for meaningful outcomes or situations requiring attention, such as refinement completion, task failures, missing information, and PR closure.
 - Routine operations such as validation, AI reviews, and retries belong in execution logs rather than generating noisy card comments.
 
-## Trello card content during execution
 
 - Implementation, validation, review, CI repair, and PR maintenance must never change a Trello card's title or description. Only an explicit refinement workflow may update them.
 - Trello comments are limited to meaningful events, such as failure and clarification requests, PR publication or transition to human review, and PR closure. Do not comment on every internal activity or progress step; keep detailed progress in execution logs.
