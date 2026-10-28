@@ -388,3 +388,13 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - Passing unit tests alone is insufficient. Verify complete workflows, from Trello task selection through implementation, pull request delivery, human review, and final card outcomes.
 - Routine tests should simulate Trello, GitHub, OpenCode, and other external failures without requiring live services.
 - Establish a trustworthy baseline with realistic end-to-end verification in addition to mocked and unit tests.
+
+## Guaranteed workflow progress — critical invariant
+
+- The orchestrator must never enter an infinite execution, remediation, or recovery loop. Each active operation must make progress, complete, or reach a defined and observable outcome.
+- Cards must not remain indefinitely in intermediate states such as `Working` because of internal defects, stale ownership, orphaned processes, invalid records, or exhausted attempts.
+- Detect stalled work and reconcile abandoned sessions, locks, and execution records automatically. Internal failures must not permanently block a project or prevent later tasks from running.
+- Always prioritize safe draft PR delivery when implementation quality gates cannot pass; do not use repeated validation or AI reviews as a reason to stall publication.
+- Distinguish intentional waiting (such as `Human Review` or an external service outage) from a stuck workflow. Recheck waiting conditions and resume once they clear; do not spin indefinitely or send repeated alerts.
+- Genuine external dependencies or safety uncertainty may prevent immediate resolution, but such conditions must remain explicit, observable, and recoverable rather than silently stuck. No automated system can guarantee that an unavailable external service or a human decision will eventually arrive.
+- A dedicated live-service testing environment is a future improvement, not a prerequisite to addressing current robustness defects.
