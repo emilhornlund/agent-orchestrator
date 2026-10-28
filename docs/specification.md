@@ -175,6 +175,62 @@ A successfully refined card must return to `Backlog` with a concise completion c
 - The completion comment identifies the selected task type and includes total refinement duration when available, without repeating the refined description.
 - The project may select another eligible task only after the transition is verified.
 
+## Implementation execution (REQ-IMP)
+
+Implementation turns an eligible task into meaningful repository changes. The agent works in an isolated environment, uses current task evidence, and receives advisory planning and review feedback without allowing quality assessments to become publication gates.
+
+### REQ-IMP-001 — Isolated task-specific Git worktree
+
+Implementation must take place on a task-specific branch in an isolated worktree without modifying the configured original repository checkout.
+
+**Acceptance criteria**
+
+- Implementation changes are confined to the owned task worktree and branch.
+- The configured original checkout is not modified by the agent.
+- Source code, tests, configuration, and documentation may be changed when relevant to the task, without unrelated modifications.
+
+### REQ-IMP-002 — Current task context and attachments
+
+The implementation agent must have access to the current Trello task, relevant repository state, and supported attachments.
+
+**Acceptance criteria**
+
+- The agent can use the current task description and relevant repository files when determining the work.
+- Supported Trello attachments, including relevant images, documents, and logs, are available when execution starts or resumes.
+- Downloaded attachment context is stored outside Git worktrees; access failures are reported instead of silently ignored.
+
+### REQ-IMP-003 — Advisory planning and independent review
+
+The implementation agent should analyze the task and prepare a plan that receives independent AI feedback, but neither the plan nor its review may act as an approval gate.
+
+**Acceptance criteria**
+
+- Planning considers the task, attachments, and current repository before implementation.
+- An independent AI reviewer can provide feedback on correctness, completeness, and task alignment.
+- The implementation agent may adopt, adapt, or disregard the plan and feedback.
+- Rejection, negative feedback, or exhaustion of bounded advisory attempts does not prevent implementation from proceeding toward PR delivery.
+
+### REQ-IMP-004 — Primary OpenCode session continuity
+
+An implementation task must retain its primary OpenCode session across its implementation and subsequent correction activities whenever safe.
+
+**Acceptance criteria**
+
+- Local validation repairs, CI repairs, human-requested changes, and later remediation cycles reuse the task's primary session when available.
+- The agent retains access to relevant task context, previous changes, feedback, and outcomes.
+- Independent planning and implementation reviews use separate sessions.
+- After interruption, the orchestrator first attempts to restore the original session; replacement is allowed only when relevant context can be safely reconstructed.
+
+### REQ-IMP-005 — No artificial changes for PR creation
+
+The orchestrator must require meaningful task changes rather than manufacture a commit or PR when nothing needs implementation.
+
+**Acceptance criteria**
+
+- If the requested work is already implemented, the orchestrator does not introduce artificial modifications solely to produce a PR.
+- If no meaningful changes can be produced despite appropriate attempts, the card moves to `Failed` with an explanatory comment and preserved diagnostics.
+- Failed tasks remain eligible for a later deliberate retry under the separate clean-retry requirements.
+
 ## Specification coverage
 
 Additional domains—including refinement, human review, GitHub CI, recovery, Git safety, configuration, logging, and testing—will be specified section by section. An ID identifies a behavior, not a Trello implementation task. Later verification records can reference these IDs without modifying their meaning.
