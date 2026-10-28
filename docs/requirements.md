@@ -369,3 +369,9 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - Never expose secrets in orchestrator or child-process logs, AI prompts, Trello comments, GitHub pull requests, or email notifications.
 - Provide child processes only the credentials they need for their assigned operation.
 - Report authentication and authorization failures clearly without revealing sensitive values.
+
+## Supported execution environments
+
+- Local installations and Docker deployments are equally supported, with the same capabilities and workflow behavior.
+- The application must run without requiring Docker, and runtime paths must be configurable rather than tied to container-specific locations.
+- Persistent state, restart recovery, logging, Git operations, and task execution must work consistently in both environments.
