@@ -374,4 +374,3 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - Passing unit tests alone is insufficient. Verify complete workflows, from Trello task selection through implementation, pull request delivery, human review, and final card outcomes.
 - Routine tests should simulate Trello, GitHub, OpenCode, and other external failures without requiring live services.
 - Establish a trustworthy baseline with realistic end-to-end verification in addition to mocked and unit tests.
-
