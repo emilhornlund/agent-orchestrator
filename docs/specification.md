@@ -118,6 +118,63 @@ The orchestrator must claim eligible cards in the top-to-bottom order of `Ready 
 - Cards with future start dates are skipped until eligible.
 - An ineligible card does not prevent selection of an eligible card farther down the list.
 
+## Task refinement (REQ-REF)
+
+Refinement converts a Trello card into an actionable, repository-grounded task without implementing it. It may update the card's title, description, and classification, but must preserve the original intent and protect the repository and card from partial or unrelated changes.
+
+### REQ-REF-001 — Repository-grounded, read-only analysis
+
+The refinement agent must examine relevant current repository evidence without modifying repository content.
+
+**Acceptance criteria**
+
+- Refinement has access to relevant source code, tests, configuration, documentation, and supported card attachments.
+- The resulting task is grounded in observed repository state rather than unsupported assumptions.
+- Refinement does not modify source files or other repository content.
+
+### REQ-REF-002 — Actionable task classification and templates
+
+Refinement must produce an actionable card with a suitable classification and an appropriate task structure.
+
+**Acceptance criteria**
+
+- The resulting classification is `Feature`, `Improvement`, or `Bug`.
+- Each classification uses its distinct default template, with sections adapted or omitted where they do not apply.
+- The description explains the intended work without becoming a detailed implementation plan.
+
+### REQ-REF-003 — Preserve task intent and scope
+
+Refinement must clarify the original request without silently expanding its scope.
+
+**Acceptance criteria**
+
+- The refined title and description preserve the original objective.
+- Additional work is included only when strictly necessary for that objective.
+- Larger dependencies and related improvements may be identified without adding unrelated refactoring.
+- For oversized tasks, the result may recommend splitting work but does not automatically create or split cards.
+
+### REQ-REF-004 — Atomic completion and failure recovery
+
+The orchestrator must validate refinement output before applying card updates and preserve the original card content if refinement cannot complete.
+
+**Acceptance criteria**
+
+- The complete refinement result is checked before changing the card's title, description, or classification.
+- Invalid results receive bounded, safe correction attempts.
+- When refinement cannot succeed, the original title, description, and classification are preserved, and the card moves to `Failed` with an explanation.
+- An unsuccessful partial update is not represented as completed refinement.
+
+### REQ-REF-005 — Successful refinement outcome
+
+A successfully refined card must return to `Backlog` with a concise completion comment.
+
+**Acceptance criteria**
+
+- The validated title, description, and classification are applied to the card.
+- The card returns to `Backlog` after refinement succeeds.
+- The completion comment identifies the selected task type and includes total refinement duration when available, without repeating the refined description.
+- The project may select another eligible task only after the transition is verified.
+
 ## Specification coverage
 
 Additional domains—including refinement, human review, GitHub CI, recovery, Git safety, configuration, logging, and testing—will be specified section by section. An ID identifies a behavior, not a Trello implementation task. Later verification records can reference these IDs without modifying their meaning.
