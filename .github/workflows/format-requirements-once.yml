@@ -1,0 +1,34 @@
+name: Temporary requirements formatter
+
+on:
+  push:
+    branches:
+      - docs/requirements-baseline
+    paths:
+      - .github/workflows/format-requirements-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: yarn
+      - run: yarn install --frozen-lockfile
+      - run: yarn prettier --write docs/requirements.md
+      - name: Commit formatting if required
+        run: |
+          if ! git diff --quiet -- docs/requirements.md; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add docs/requirements.md
+            git commit -m "docs: format requirements with Prettier"
+            git push origin HEAD:docs/requirements-baseline
+          fi
