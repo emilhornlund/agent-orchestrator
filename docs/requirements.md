@@ -398,3 +398,10 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - Distinguish intentional waiting (such as `Human Review` or an external service outage) from a stuck workflow. Recheck waiting conditions and resume once they clear; do not spin indefinitely or send repeated alerts.
 - Genuine external dependencies or safety uncertainty may prevent immediate resolution, but such conditions must remain explicit, observable, and recoverable rather than silently stuck. No automated system can guarantee that an unavailable external service or a human decision will eventually arrive.
 - A dedicated live-service testing environment is a future improvement, not a prerequisite to addressing current robustness defects.
+
+## Exhausted internal recovery
+
+- If an internal error remains unrecoverable after bounded recovery attempts, terminate that attempt safely instead of leaving the card in `Working` or retrying indefinitely.
+- Move the card to `Failed`, explain the reason in a Trello comment, preserve work and diagnostics, and release the project to process subsequent tasks once the terminal transition is confirmed.
+- This applies only when the workflow genuinely cannot continue or safely produce a PR; exhausted quality checks alone must instead lead to draft PR delivery whenever possible.
+- If Trello is unavailable and the terminal move cannot be confirmed, retain and retry that pending transition safely. Never pretend the card reached `Failed` or release ownership before the state is reconciled.
