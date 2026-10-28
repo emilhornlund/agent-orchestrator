@@ -375,3 +375,9 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - Local installations and Docker deployments are equally supported, with the same capabilities and workflow behavior.
 - The application must run without requiring Docker, and runtime paths must be configurable rather than tied to container-specific locations.
 - Persistent state, restart recovery, logging, Git operations, and task execution must work consistently in both environments.
+
+## Startup dependency checks
+
+- Before processing tasks, verify that required external tools, such as Git, OpenCode, and GitHub CLI, are installed, accessible, and compatible with the application's requirements.
+- Check optional dependencies only when the relevant functionality is enabled.
+- If a required dependency is missing or incompatible, prevent task execution and report a clear, actionable startup error rather than failing midway through a task.
