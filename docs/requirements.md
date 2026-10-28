@@ -318,3 +318,9 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - Before each human-feedback remediation cycle, refresh review feedback from GitHub. Edited comments use their latest content; deleted or superseded comments must no longer be treated as outstanding requests. Preserve prior handling history for traceability.
 - A GitHub PR approval does not complete a task or authorize a merge. Keep the card in `Human Review` until the PR is actually merged or closed.
 - While an approved PR remains open, continue monitoring its state and performing necessary safe maintenance. Do not start another task in that project.
+
+## Idempotent cleanup after merging
+
+- After a PR is merged, cleanup must be safe and idempotent. A remote branch already deleted by GitHub counts as successfully cleaned up, not a failure.
+- Remove only verified, owned local worktrees and branches when safe, move the Trello card to `Done`, and allow the next task to start.
+- Repeating a cleanup operation must not cause errors solely because that cleanup already happened.
