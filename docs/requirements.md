@@ -289,7 +289,6 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - Prioritize queued operations by default: human-requested changes first, CI repairs second, and routine PR maintenance third.
 - Prerequisite operations may run ahead of that order when necessary to safely complete higher-priority work, such as rebasing before applying requested changes.
 
-## Feedback arriving during remediation
 
 - Additional human feedback arriving while the agent is working is recorded and queued without interrupting the active OpenCode operation.
 - After the current operation, process new and still-actionable feedback automatically, without losing requests or unnecessarily repeating completed work.
@@ -303,7 +302,6 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - Keep the PR as a draft while unresolved requests remain, and return the Trello card to `Human Review` for further human feedback.
 - The orchestrator may reply to review threads describing verified fixes, but must not automatically resolve GitHub conversations. The human reviewer decides when a thread is resolved.
 
-## Review feedback freshness and PR approval
 
 - Before each human-feedback remediation cycle, refresh review feedback from GitHub. Edited comments use their latest content; deleted or superseded comments must no longer be treated as outstanding requests. Preserve prior handling history for traceability.
 - A GitHub PR approval does not complete a task or authorize a merge. Keep the card in `Human Review` until the PR is actually merged or closed.
@@ -315,14 +313,12 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - Remove only verified, owned local worktrees and branches when safe, move the Trello card to `Done`, and allow the next task to start.
 - Repeating a cleanup operation must not cause errors solely because that cleanup already happened.
 
-## Closed PR cleanup and fresh retries
 
 - When a PR is closed without merging, move its card to `Backlog` and safely clean up the task's owned local worktree and branch after verifying that the implementation remains available through the closed GitHub PR.
 - A later move back to `Ready for Agent` starts a fresh implementation attempt from the latest accepted default branch, using the current card and attachments rather than automatically reusing rejected changes.
 - The agent may inspect the closed PR as historical context but must not assume that its code or decisions were correct.
 - For tasks that fail without a PR, preserve diagnostic evidence, but ensure a new attempt can begin safely without inheriting unwanted changes.
 
-## Failed task retries
 
 - Manually retrying a failed task starts a fresh attempt in a clean worktree from the latest default branch, based on the current Trello card and attachments.
 - Preserve logs and diagnostics from earlier attempts, but never automatically reuse their unfinished code.
@@ -340,7 +336,6 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - Projects waiting for available execution capacity retain their task order and state. When no global limit is configured, there is no orchestrator-imposed cross-project concurrency limit.
 - Waiting for human review does not consume a global execution slot. Such a project still cannot start another task until its PR reaches a terminal outcome, but other projects may use the available execution capacity.
 
-## Fair scheduling and polling
 
 - When the global execution limit is reached, waiting projects receive available capacity in first-come, first-served order. A busy project must not repeatedly bypass waiting projects; configurable project priorities are not required.
 - The orchestrator automatically polls Trello and GitHub for new tasks, feedback, CI results, and PR state changes without requiring a restart.
@@ -389,14 +384,12 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - Genuine external dependencies or safety uncertainty may prevent immediate resolution, but such conditions must remain explicit, observable, and recoverable rather than silently stuck. No automated system can guarantee that an unavailable external service or a human decision will eventually arrive.
 - A dedicated live-service testing environment is a future improvement, not a prerequisite to addressing current robustness defects.
 
-## Exhausted internal recovery
 
 - If an internal error remains unrecoverable after bounded recovery attempts, terminate that attempt safely instead of leaving the card in `Working` or retrying indefinitely.
 - Move the card to `Failed`, explain the reason in a Trello comment, preserve work and diagnostics, and release the project to process subsequent tasks once the terminal transition is confirmed.
 - This applies only when the workflow genuinely cannot continue or safely produce a PR; exhausted quality checks alone must instead lead to draft PR delivery whenever possible.
 - If Trello is unavailable and the terminal move cannot be confirmed, retain and retry that pending transition safely. Never pretend the card reached `Failed` or release ownership before the state is reconciled.
 
-## Preventing invalid workflow states
 
 - Prevent stuck workflows by designing every operation with explicit success, failure, and recovery paths. Do not rely on periodic stall detection as the normal way to make progress.
 - If unexpected inconsistent state still arises, use periodic monitoring as a last-resort safety net to detect and safely recover it, including after restarts.
