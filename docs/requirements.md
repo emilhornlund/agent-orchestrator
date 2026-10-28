@@ -405,3 +405,9 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - Move the card to `Failed`, explain the reason in a Trello comment, preserve work and diagnostics, and release the project to process subsequent tasks once the terminal transition is confirmed.
 - This applies only when the workflow genuinely cannot continue or safely produce a PR; exhausted quality checks alone must instead lead to draft PR delivery whenever possible.
 - If Trello is unavailable and the terminal move cannot be confirmed, retain and retry that pending transition safely. Never pretend the card reached `Failed` or release ownership before the state is reconciled.
+
+## Preventing invalid workflow states
+
+- Prevent stuck workflows by designing every operation with explicit success, failure, and recovery paths. Do not rely on periodic stall detection as the normal way to make progress.
+- If unexpected inconsistent state still arises, use periodic monitoring as a last-resort safety net to detect and safely recover it, including after restarts.
+- Every workflow state has explicitly allowed transitions. An external transition is only considered complete after its outcome is verified; never advance internal state merely because Trello, GitHub, or another service was assumed to succeed.
