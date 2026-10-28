@@ -480,6 +480,76 @@ While working on an existing PR, the orchestrator must show a temporary activity
 - The underlying PR description remains intact and is updated to reflect relevant implementation changes.
 - Temporary status is cleared after the activity concludes, including when it ends with unresolved findings.
 
+## Crash recovery and workflow resilience (REQ-REC)
+
+Recovery must restore verified workflow progress without duplicating operations or losing work. Genuine unrecoverable execution failures may terminate a task; temporary dependency outages and negative quality assessments do not. Waiting, retrying, and stalled execution must have distinct, observable behavior.
+
+### REQ-REC-001 — Resume from verified state after restart
+
+The orchestrator must safely resume interrupted tasks after application crashes, planned shutdowns, or container restarts.
+
+**Acceptance criteria**
+
+- Task ownership, progress, worktrees, code changes, and AI session references survive restarts.
+- On startup, the orchestrator verifies existing state before continuing operations.
+- Recovery does not silently restart completed steps or duplicate commits, PRs, or Trello actions.
+- A project with an unresolved recovery issue does not prevent other healthy projects from running.
+
+### REQ-REC-002 — Recover primary AI session and context
+
+Interrupted implementation work must reuse its original OpenCode session when safe, or reconstruct sufficient context before using a replacement.
+
+**Acceptance criteria**
+
+- Recovery first attempts to reconnect to the existing primary task session.
+- A replacement session is used only when the original is confirmed unrecoverable and relevant task, repository, plan, attachment, change, and feedback context can be reconstructed.
+- Previously completed work remains preserved; recovery does not silently start an unrelated implementation.
+- If primary implementation execution genuinely cannot recover within the existing bounded retry policy, the task may fail with diagnostics preserved, rather than treating quality feedback as a crash.
+
+### REQ-REC-003 — Handle temporary external outages
+
+Temporary unavailability of Trello, GitHub, OpenCode, or other external dependencies must preserve task state and allow eventual safe resumption.
+
+**Acceptance criteria**
+
+- Timeouts or unavailable responses are not interpreted as proof of deletion or failure of a previously attempted operation.
+- Retries use controlled delays and bounded immediate attempts; prolonged unavailability becomes an explicit monitored waiting condition.
+- Recovery verifies external outcomes before repeating side effects or resuming.
+- Attention notifications can report prolonged problems without repeated duplicate alerts, and unrelated projects continue.
+
+### REQ-REC-004 — Resolve stale and inconsistent workflow ownership
+
+Abandoned processes, stale locks, and inconsistent execution records must not leave a task silently trapped in an intermediate state.
+
+**Acceptance criteria**
+
+- Normal operations provide explicit success, failure, and recovery paths without relying on a periodic watchdog to advance.
+- Monitoring detects unexpected idle or inconsistent active tasks, including after restarts, and attempts safe reconciliation.
+- If internal recovery is exhausted and failure can be safely established, the task moves to `Failed` after its Trello transition is confirmed.
+- When an external outcome cannot be verified, the project remains in an observable, controlled waiting state rather than being released unsafely or entering a busy loop.
+
+### REQ-REC-005 — Preserve state during graceful shutdown and upgrades
+
+Shutdowns and application upgrades must retain recoverable task state.
+
+**Acceptance criteria**
+
+- Shutdown stops new task claims and safely interrupts active child processes while preserving state needed for resumption.
+- New versions resume compatible persisted state or perform safe migration without losing ownership, session references, or progress.
+- Unsupported migrations preserve original data and report the problem rather than corrupting state.
+- Startup recovery proceeds only after verifying that resumption is safe.
+
+### REQ-REC-006 — Bound operation timeouts without a task-wide deadline
+
+The orchestrator must bound individual operations and detect genuine stalls without imposing an overall deadline on a task.
+
+**Acceptance criteria**
+
+- Individual long-running operations have configurable timeouts, and timed-out process trees are terminated safely with logs and changes preserved.
+- Long tasks are not classified as stalled solely because of their elapsed duration.
+- Stalled operations receive safe bounded recovery and a defined subsequent workflow outcome.
+- A timeout in an advisory quality operation does not by itself prevent publishing meaningful implementation changes.
+
 ## Specification coverage
 
 Additional domains—including refinement, human review, GitHub CI, recovery, Git safety, configuration, logging, and testing—will be specified section by section. An ID identifies a behavior, not a Trello implementation task. Later verification records can reference these IDs without modifying their meaning.
