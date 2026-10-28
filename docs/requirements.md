@@ -312,3 +312,9 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - Clearly distinguish resolved from unresolved requests; only reply confirming a fix after that specific change has been independently verified.
 - Keep the PR as a draft while unresolved requests remain, and return the Trello card to `Human Review` for further human feedback.
 - The orchestrator may reply to review threads describing verified fixes, but must not automatically resolve GitHub conversations. The human reviewer decides when a thread is resolved.
+
+## Review feedback freshness and PR approval
+
+- Before each human-feedback remediation cycle, refresh review feedback from GitHub. Edited comments use their latest content; deleted or superseded comments must no longer be treated as outstanding requests. Preserve prior handling history for traceability.
+- A GitHub PR approval does not complete a task or authorize a merge. Keep the card in `Human Review` until the PR is actually merged or closed.
+- While an approved PR remains open, continue monitoring its state and performing necessary safe maintenance. Do not start another task in that project.
