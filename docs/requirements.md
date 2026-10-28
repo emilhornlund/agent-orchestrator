@@ -343,3 +343,9 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - Store durable task progress, AI session references, recovery information, and other execution state outside Git repositories and worktrees.
 - The runtime storage location is configurable for both local and Docker installations, and its data survives restarts and application upgrades.
 - The orchestrator manages runtime state automatically; routine operation and recovery must not require users to edit internal files manually.
+
+## Global execution concurrency
+
+- Support an optional global limit on how many projects can actively execute AI work at once, in addition to the one-active-task-per-project rule.
+- Projects waiting for available execution capacity retain their task order and state. When no global limit is configured, there is no orchestrator-imposed cross-project concurrency limit.
+- Waiting for human review does not consume a global execution slot. Such a project still cannot start another task until its PR reaches a terminal outcome, but other projects may use the available execution capacity.
