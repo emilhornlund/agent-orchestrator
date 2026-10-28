@@ -324,3 +324,10 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - After a PR is merged, cleanup must be safe and idempotent. A remote branch already deleted by GitHub counts as successfully cleaned up, not a failure.
 - Remove only verified, owned local worktrees and branches when safe, move the Trello card to `Done`, and allow the next task to start.
 - Repeating a cleanup operation must not cause errors solely because that cleanup already happened.
+
+## Closed PR cleanup and fresh retries
+
+- When a PR is closed without merging, move its card to `Backlog` and safely clean up the task's owned local worktree and branch after verifying that the implementation remains available through the closed GitHub PR.
+- A later move back to `Ready for Agent` starts a fresh implementation attempt from the latest accepted default branch, using the current card and attachments rather than automatically reusing rejected changes.
+- The agent may inspect the closed PR as historical context but must not assume that its code or decisions were correct.
+- For tasks that fail without a PR, preserve diagnostic evidence, but ensure a new attempt can begin safely without inheriting unwanted changes.
