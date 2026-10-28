@@ -349,3 +349,10 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - Support an optional global limit on how many projects can actively execute AI work at once, in addition to the one-active-task-per-project rule.
 - Projects waiting for available execution capacity retain their task order and state. When no global limit is configured, there is no orchestrator-imposed cross-project concurrency limit.
 - Waiting for human review does not consume a global execution slot. Such a project still cannot start another task until its PR reaches a terminal outcome, but other projects may use the available execution capacity.
+
+## Fair scheduling and polling
+
+- When the global execution limit is reached, waiting projects receive available capacity in first-come, first-served order. A busy project must not repeatedly bypass waiting projects; configurable project priorities are not required.
+- The orchestrator automatically polls Trello and GitHub for new tasks, feedback, CI results, and PR state changes without requiring a restart.
+- Use one optional global polling interval, defaulting to 15 seconds. Separate per-project polling intervals are not required.
+- Temporary API failures use controlled backoff. Polling must not interfere with an operation already running.
