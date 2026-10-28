@@ -74,6 +74,58 @@ An actual unrecoverable primary implementation crash may fail a task, unlike fai
 - If primary execution remains unrecoverable, the card moves to `Failed` with preserved partial work and diagnostics rather than automatically publishing interrupted code.
 - An advisory process crash is recorded and skipped after bounded recovery, allowing PR delivery to continue.
 
+### REQ-PR-004 — Publish normal or draft PRs accurately
+
+The orchestrator must publish meaningful implementation changes as a normal PR when applicable quality checks pass, or as a draft PR when significant quality concerns remain unresolved.
+
+**Acceptance criteria**
+
+- Failing validation, tests, AI review, or exhausted remediation do not prevent safe PR publication.
+- Both normal and draft PRs advance their Trello card to `Human Review` after publication is verified.
+- Draft PRs identify unresolved findings without claiming readiness to merge.
+- The configured PR-ready notification identifies the PR and any outstanding issues, including its draft status.
+
+### REQ-PR-005 — Idempotent PR publication and Trello synchronization
+
+Publishing a PR and transitioning its Trello card must remain consistent across partial failures, retries, and restarts.
+
+**Acceptance criteria**
+
+- When GitHub creates a PR but the Trello transition fails, the orchestrator preserves the PR identity and retries reconciliation.
+- A retry does not create a duplicate PR or duplicate completed external side effects.
+- The next project task remains blocked until the existing PR, Trello card, and persisted workflow state are reconciled.
+
+### REQ-PR-006 — Preserve publication work during GitHub outages
+
+Temporary GitHub unavailability must delay publication safely rather than discard meaningful work or fail the task solely because of the outage.
+
+**Acceptance criteria**
+
+- The task branch, worktree, changes, and publication progress are preserved while GitHub is unavailable.
+- Publication is retried at controlled intervals after verifying earlier uncertain outcomes.
+- Prolonged outages are visible and can trigger an attention notification without repeated duplicate alerts.
+- Once GitHub recovers, the orchestrator resumes publication without creating another PR for the same attempt.
+
+### REQ-PR-007 — Accurate, maintained PR descriptions
+
+The PR description must reflect the current implementation and its known quality results.
+
+**Acceptance criteria**
+
+- The description includes the task purpose, significant changes, validation and test results, unresolved issues, and a Trello link.
+- After relevant updates, including review corrections, CI fixes, and rebasing, the description is refreshed to describe the current PR.
+- While an agent works on an existing PR, a temporary activity status appears at the top of the description and is removed when the activity finishes without overwriting the underlying content.
+
+### REQ-PR-008 — Human control of PR outcome
+
+Publishing a PR must not be treated as authorization to merge or as completion of the Trello task.
+
+**Acceptance criteria**
+
+- The orchestrator never automatically merges a PR.
+- An open normal or draft PR remains associated with an active task in `Human Review`; the project does not claim another task.
+- A human merge leads to the verified `Done` outcome, while closure without merge leads to the verified `Backlog` outcome.
+
 ## Trello task lifecycle (REQ-TR)
 
 Trello reflects the task's externally visible outcome. Card transitions must be accurate and verified, and a project's next task must not begin before the preceding task reaches a confirmed terminal outcome.
