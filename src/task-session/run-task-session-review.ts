@@ -361,6 +361,14 @@ export async function runTaskSessionReview(
           ),
           contentIdentity,
           previousFindingIds: (previousFindings ?? []).map(({ id }) => id),
+          previousFindings: (previousFindings ?? []).map(
+            ({ id, sourceContentIdentity, sourceIdentities, status }) => ({
+              id,
+              sourceContentIdentity,
+              sourceIdentities,
+              status,
+            }),
+          ),
         },
       );
       break;

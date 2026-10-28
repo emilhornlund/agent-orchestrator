@@ -378,7 +378,19 @@ describe("runTaskSessionReview", () => {
       "kind (string enum 'defect', 'incomplete', or 'contract-violation')",
     );
     expect(run?.prompt).toContain(
-      "explain concrete evidence demonstrating why it is material and blocks",
+      "explain concrete current-source evidence demonstrating why it is material and blocks",
+    );
+    expect(run?.prompt).toContain(
+      "verify each previously reported blocking finding",
+    );
+    expect(run?.prompt).toContain(
+      "detect material regressions introduced by remediation",
+    );
+    expect(run?.prompt).toContain(
+      "independently reassess every approved requirement",
+    );
+    expect(run?.prompt).toContain(
+      "sourceContentIdentity equal to the reviewed source identity",
     );
     expect(run?.prompt).toContain("unsupported hypothetical problems");
     expect(run?.prompt).toContain("do not run tests or other commands");
@@ -469,6 +481,60 @@ describe("runTaskSessionReview", () => {
     expect(result.review.blockingFindings).toHaveLength(1);
     expect(result.review.requirementAssessments[1]?.status).toBe("unsatisfied");
     expect(fixture.taskRecordStore.read(card.id)?.phase).toBe("review");
+  });
+
+  it("provides finding history and accepts evidence-backed reopened regressions", async () => {
+    const fixture = createFixture();
+    const contentIdentity = await fixture.createStoredPlan();
+    const previousFindings = [
+      {
+        id: "finding-prior",
+        kind: "defect" as const,
+        summary: "Persistence can be bypassed",
+        detail: "Prior source defect",
+        sourceContentIdentity: `sha256:${"b".repeat(64)}`,
+        sourceIdentities: [`sha256:${"b".repeat(64)}`],
+        status: "resolved" as const,
+      },
+    ];
+    const reopened = {
+      ...passingReview(contentIdentity),
+      verdict: "fail",
+      blockingFindings: [
+        {
+          id: "finding-prior",
+          sourceContentIdentity: contentIdentity,
+          kind: "defect",
+          summary: "Persistence defect has returned",
+          detail:
+            "Evidence: src.ts:8 bypasses the persisted value and reproduces the defect. Expected behavior: load the persisted value.",
+          location: { filePath: "src.ts", line: 8 },
+        },
+      ],
+      previousFindingAssessments: [
+        { findingId: "finding-prior", status: "resolved" },
+      ],
+    };
+    const runOpenCode = vi.fn<RunOpenCode>().mockResolvedValue({
+      exitCode: 0,
+      output: JSON.stringify(reopened),
+      errorOutput: "",
+    });
+
+    const result = await runTaskSessionReview({
+      ...reviewOptions(
+        fixture,
+        new OpenCodeClient(runOpenCode),
+        successfulQualityEvidence(contentIdentity).validation,
+      ),
+      previousFindings,
+    });
+
+    expect(result.review.verdict).toBe("fail");
+    expect(result.review.blockingFindings[0]?.id).toBe("finding-prior");
+    expect(runOpenCode.mock.calls[0]?.[0].prompt).toContain(
+      JSON.stringify(previousFindings, null, 2),
+    );
   });
 
   it("rejects review when local validation evidence is missing, failed, or stale", async () => {

@@ -403,6 +403,141 @@ describe("runTaskSessionReviewWithRepairs", () => {
     );
   });
 
+  it("records a resolved prior finding as blocking only with new source evidence", async () => {
+    const f = fixture();
+    const priorIdentity = `sha256:${"b".repeat(64)}`;
+    const existing = f.store.read("card")!;
+    f.store.compareAndSwap("card", existing.revision, {
+      ...existing,
+      revision: existing.revision + 1,
+      reviewRepair: {
+        cycleId: "operation",
+        status: "active",
+        maxAttempts: 0,
+        findings: [
+          {
+            id: "prior-finding",
+            kind: "defect",
+            summary: "Prior defect",
+            detail: "Previously resolved defect",
+            sourceContentIdentity: priorIdentity,
+            sourceIdentities: [priorIdentity],
+            status: "resolved",
+          },
+        ],
+      },
+      updatedAt: new Date().toISOString(),
+    });
+
+    const result = await runTaskSessionReviewWithRepairs({
+      store: f.store,
+      maxAttempts: 0,
+      projectId: "project",
+      cardId: "card",
+      operationKey: "operation",
+      expectedPrimarySessionId: "primary-session",
+      runReview: async (previousFindings) => {
+        expect(previousFindings[0]?.sourceIdentities).toEqual([priorIdentity]);
+        return {
+          review: {
+            ...f.makeReview("fail"),
+            blockingFindings: [
+              {
+                id: "prior-finding",
+                sourceContentIdentity: f.identity,
+                kind: "defect",
+                summary: "Prior defect has returned",
+                detail:
+                  "Evidence: src/feature.ts:12 reproduces the prior defect in the current source. Expected behavior: preserve the corrected handling.",
+                location: { filePath: "src/feature.ts", line: 12 },
+              },
+            ],
+            previousFindingAssessments: previousFindings.map(({ id }) => ({
+              findingId: id,
+              status: "resolved" as const,
+            })),
+          },
+          contentIdentity: f.identity,
+        };
+      },
+      repair: async () => undefined,
+      rerunQuality: async () => undefined,
+      getCurrentContentIdentity: async () => f.identity,
+    });
+
+    expect(result.review.blockingFindings[0]).toMatchObject({
+      id: "prior-finding",
+      sourceContentIdentity: f.identity,
+    });
+    expect(result.record.reviewRepair?.findings?.[0]).toMatchObject({
+      id: "prior-finding",
+      status: "unresolved",
+      sourceIdentities: [priorIdentity, f.identity],
+    });
+  });
+
+  it("rejects reopening a resolved finding at any previously reviewed identity", async () => {
+    const f = fixture();
+    const priorIdentity = `sha256:${"b".repeat(64)}`;
+    const existing = f.store.read("card")!;
+    f.store.compareAndSwap("card", existing.revision, {
+      ...existing,
+      revision: existing.revision + 1,
+      reviewRepair: {
+        cycleId: "operation",
+        status: "active",
+        maxAttempts: 1,
+        findings: [
+          {
+            id: "prior-finding",
+            kind: "defect",
+            summary: "Prior defect",
+            detail: "Previously resolved defect",
+            sourceContentIdentity: priorIdentity,
+            sourceIdentities: [priorIdentity, f.identity],
+            status: "resolved",
+          },
+        ],
+      },
+      updatedAt: new Date().toISOString(),
+    });
+
+    await expect(
+      runTaskSessionReviewWithRepairs({
+        store: f.store,
+        maxAttempts: 1,
+        projectId: "project",
+        cardId: "card",
+        operationKey: "operation",
+        expectedPrimarySessionId: "primary-session",
+        runReview: async (previousFindings) => ({
+          review: {
+            ...f.makeReview("fail"),
+            blockingFindings: [
+              {
+                id: "prior-finding",
+                sourceContentIdentity: f.identity,
+                kind: "defect",
+                summary: "Prior defect has returned",
+                detail:
+                  "Evidence: src/feature.ts:12 reproduces the prior defect in the current source.",
+                location: { filePath: "src/feature.ts", line: 12 },
+              },
+            ],
+            previousFindingAssessments: previousFindings.map(({ id }) => ({
+              findingId: id,
+              status: "resolved" as const,
+            })),
+          },
+          contentIdentity: f.identity,
+        }),
+        repair: async () => undefined,
+        rerunQuality: async () => undefined,
+        getCurrentContentIdentity: async () => f.identity,
+      }),
+    ).rejects.toThrow("Review lists resolved prior finding as blocking");
+  });
+
   it("cannot complete a cycle while a prior finding is classified unresolved", async () => {
     const f = fixture();
     let pass = 0;

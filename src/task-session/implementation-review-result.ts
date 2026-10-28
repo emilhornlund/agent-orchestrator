@@ -139,6 +139,12 @@ export interface ImplementationReviewExpectations {
   requirementIds: readonly string[];
   contentIdentity: string;
   previousFindingIds?: readonly string[];
+  previousFindings?: readonly {
+    id: string;
+    sourceContentIdentity?: string;
+    sourceIdentities: readonly string[];
+    status: "unresolved" | "resolved" | "superseded";
+  }[];
 }
 
 export function parseImplementationReviewResult(
@@ -185,6 +191,9 @@ export function parseImplementationReviewResult(
   const previousAssessments = new Map(
     assessments.map(({ findingId, status }) => [findingId, status]),
   );
+  const previousFindings = new Map(
+    (expected.previousFindings ?? []).map((finding) => [finding.id, finding]),
+  );
   for (const finding of result.blockingFindings) {
     if (finding.id === undefined) continue;
     const status = previousAssessments.get(finding.id);
@@ -192,6 +201,21 @@ export function parseImplementationReviewResult(
       throw new Error(
         `Implementation review blocking finding references unknown prior finding: ${finding.id}`,
       );
+    }
+    if (status === "resolved") {
+      const prior = previousFindings.get(finding.id);
+      if (
+        prior === undefined ||
+        finding.sourceContentIdentity !== expected.contentIdentity ||
+        prior.sourceIdentities.includes(expected.contentIdentity) ||
+        finding.location === undefined ||
+        finding.detail.trim().length === 0
+      ) {
+        throw new Error(
+          `Implementation review reopened resolved prior finding without new supporting evidence: ${finding.id}`,
+        );
+      }
+      continue;
     }
     if (status !== "unresolved") {
       throw new Error(
