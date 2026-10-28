@@ -194,12 +194,12 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 ## AI session continuity and context
 
 - Each implementation task maintains a persistent primary OpenCode session across implementation, local validation repairs, CI repairs, human-requested changes, and subsequent remediation cycles.
-- The agent should retain or have access to as much relevant task and repository context as practical across the full lifecycle, including the task, attachments, approved plan, earlier work, feedback, and outcomes.
+- The agent should retain or have access to as much relevant task and repository context as practical across the full lifecycle, including the task, attachments, available advisory plan, earlier work, feedback, and outcomes.
 - Restart recovery must resume the correct task session where safe, rather than silently starting a context-free replacement.
 - Independent planning and implementation reviews use separate sessions to preserve independent judgment.
 
 - When OpenCode fails or a session becomes unavailable, first attempt to reconnect to the original task session.
-- If the session is confirmed unrecoverable, the orchestrator may create a replacement session only when it can safely reconstruct the relevant context from the task, approved plan, repository, attachments, earlier changes, execution history, and feedback.
+- If the session is confirmed unrecoverable, the orchestrator may create a replacement session only when it can safely reconstruct the relevant context from the task, available advisory plan, repository, attachments, earlier changes, execution history, and feedback.
 - Preserve completed work and workflow progress; never restart from scratch or repeat completed operations unnecessarily.
 - Apply the same recovery-first approach to other components, including Git, GitHub, Trello, child processes, and persistent workflow state.
 - Recovery must remain safe and evidence-based. If the correct state cannot be established, preserve evidence and report the blockage instead of guessing.
@@ -256,16 +256,16 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 ## Failed task preservation and retryability
 
 - Preserve failed tasks' worktrees, code changes, execution records, and logs for diagnosis instead of automatically discarding them.
-- Preserved artifacts must never by themselves prevent a deliberate retry. Moving a card from `Failed` to `Ready for Agent` requests a new attempt; reconcile the earlier attempt automatically, safely reusing or isolating prior work as appropriate.
+- Preserved artifacts must never prevent a deliberate retry. Moving a card from `Failed` to `Ready for Agent` starts a fresh attempt in a clean worktree from the latest default branch; preserve and isolate prior unfinished code and diagnostics, without automatically reusing that code.
 - Stale worktrees, locks, AI sessions, and workflow records must not permanently trap a task. Supported Trello moves should allow the user to recover blocked states without hand-editing runtime data.
 - Retries and recovery actions must be bounded and must never enter uncontrolled infinite loops.
 - Never bypass safety checks or assume an uncertain external operation succeeded. Where safe recovery is temporarily impossible, preserve state, explain the blocker, and resume when it can be resolved.
 
 ## Resolving incomplete implementations
 
-- Pull request delivery takes precedence over passing quality gates. Failed validation, unresolved AI review findings, exhausted remediation attempts, and agent crashes must not block publication when Git and GitHub can safely publish the available work.
+- Pull request delivery takes precedence over quality assessments. Failed validation, unresolved AI review findings, exhausted remediation attempts, and crashes in advisory steps must not block publication when Git and GitHub can safely publish meaningful work. An unrecoverable crash of the primary implementation process is a genuine execution failure and may instead end in `Failed` after bounded recovery.
 - Publish incomplete or failing implementations as draft pull requests, describing unresolved problems accurately. Move the Trello card to `Human Review` once the PR is published.
-- An implementation task must not remain indefinitely in `Working`. If publication is genuinely impossible, such as during prolonged GitHub unavailability or unsafe unrecoverable Git state, reach a clearly explained recoverable failure outcome rather than silently remaining active.
+- An implementation task must not silently remain stuck in `Working`. Prolonged GitHub unavailability is an explicit, observable waiting condition: preserve work and retry publication at controlled intervals until recovery, rather than marking the task `Failed` solely because of the outage. An unrecoverable unsafe Git state may lead to `Failed` after bounded recovery.
 - Moving to `Failed` is exceptional for implementation tasks, not the default response to an exhausted validation or review limit. Preserve work and make deliberate retries possible.
 
 ## Exceptional PR delivery outcomes
