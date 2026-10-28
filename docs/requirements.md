@@ -381,3 +381,10 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - Before processing tasks, verify that required external tools, such as Git, OpenCode, and GitHub CLI, are installed, accessible, and compatible with the application's requirements.
 - Check optional dependencies only when the relevant functionality is enabled.
 - If a required dependency is missing or incompatible, prevent task execution and report a clear, actionable startup error rather than failing midway through a task.
+
+## Automated verification and baseline
+
+- Every important workflow must have automated tests covering normal behavior, failures, interruptions, and recovery.
+- Passing unit tests alone is insufficient. Verify complete workflows, from Trello task selection through implementation, pull request delivery, human review, and final card outcomes.
+- Routine tests should simulate Trello, GitHub, OpenCode, and other external failures without requiring live services.
+- Establish a trustworthy baseline with realistic end-to-end verification in addition to mocked and unit tests.
