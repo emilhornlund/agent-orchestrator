@@ -16,6 +16,39 @@ This is our single shared, human-readable source of truth for how Agent Orchestr
 
 Agent Orchestrator automatically turns Trello tasks into implemented, tested, and reviewed GitHub pull requests using AI agents. It manages the end-to-end workflow while allowing humans to control the final outcome.
 
+## Guaranteed workflow progress — critical invariant
+
+- The orchestrator must never enter an infinite execution, remediation, or recovery loop. Each active operation must make progress, complete, or reach a defined and observable outcome.
+- Cards must not remain indefinitely in intermediate states such as `Working` because of internal defects, stale ownership, orphaned processes, invalid records, or exhausted attempts.
+- Detect stalled work and reconcile abandoned sessions, locks, and execution records automatically. Internal failures must not permanently block a project or prevent later tasks from running.
+- Always prioritize safe draft PR delivery when implementation quality gates cannot pass; do not use repeated validation or AI reviews as a reason to stall publication.
+- Distinguish intentional waiting (such as `Human Review` or an external service outage) from a stuck workflow. Recheck waiting conditions and resume once they clear; do not spin indefinitely or send repeated alerts.
+- Genuine external dependencies or safety uncertainty may prevent immediate resolution, but such conditions must remain explicit, observable, and recoverable rather than silently stuck. No automated system can guarantee that an unavailable external service or a human decision will eventually arrive.
+- A dedicated live-service testing environment is a future improvement, not a prerequisite to addressing current robustness defects.
+
+- If an internal error remains unrecoverable after bounded recovery attempts, terminate that attempt safely instead of leaving the card in `Working` or retrying indefinitely.
+- Move the card to `Failed`, explain the reason in a Trello comment, preserve work and diagnostics, and release the project to process subsequent tasks once the terminal transition is confirmed.
+- This applies only when the workflow genuinely cannot continue or safely produce a PR; exhausted quality checks alone must instead lead to draft PR delivery whenever possible.
+- If Trello is unavailable and the terminal move cannot be confirmed, retain and retry that pending transition safely. Never pretend the card reached `Failed` or release ownership before the state is reconciled.
+
+- Prevent stuck workflows by designing every operation with explicit success, failure, and recovery paths. Do not rely on periodic stall detection as the normal way to make progress.
+- If unexpected inconsistent state still arises, use periodic monitoring as a last-resort safety net to detect and safely recover it, including after restarts.
+- Every workflow state has explicitly allowed transitions. An external transition is only considered complete after its outcome is verified; never advance internal state merely because Trello, GitHub, or another service was assumed to succeed.
+
+## Advisory quality steps — critical invariant
+
+- All planning, plan review, validation, coverage, implementation review, and remediation inside the `Working` phase exist to guide and improve the agent's work, **never to approve, reject, or block progress to PR publication**.
+- The implementation agent may evaluate, adapt, or disregard any advisory feedback, including all of it. The orchestrator does not require agreement from an AI reviewer and does not force the agent to apply recommendations.
+- An agent may finish remediation early when further changes would not be useful. Existing attempt limits are maximums, not required counts; no additional configuration or approval mechanism is needed.
+- If an advisory remediation attempt produces no implementation changes, stop that remediation cycle and proceed toward publishing the existing meaningful changes. Do not repeatedly request review of unchanged code merely because the AI reviewer remains dissatisfied.
+- Advisory stages have bounded execution and correction attempts. Negative findings, failed validation, exhausted correction attempts, or an unrecoverable crash of an advisory stage must not block publication; record the outcome, skip that stage when necessary, and continue toward publishing meaningful implementation changes.
+- A crash must be established using execution evidence, not an unsatisfactory result. Negative AI feedback, failing tests, and normal nonzero validation results are not implementation crashes.
+- A genuine crash of the primary implementation process is different: first attempt safe recovery, including restoring the existing session or reconstructing context when possible. If primary execution remains unrecoverable, move the card to `Failed`, even when partial code changes exist. Preserve those changes and diagnostics; do not automatically publish interrupted implementation work as a draft PR. A temporary external outage follows the separate preservation-and-retry policy.
+- Use the existing bounded operation retry configuration for primary implementation crash recovery; do not add a separate implementation-crash retry setting.
+- Reports must accurately distinguish what ran, what passed, what failed, what was skipped, and what remains uncertain. Publish a draft PR when significant unresolved quality problems remain; never misrepresent readiness.
+- Unresolved validation failures after remediation, including repeated failures of the same checks, must be captured in the PR description and available diagnostics. Stop correction attempts at their configured limit and publish a draft PR; passing tests or eliminating validation errors is never a prerequisite for publication.
+- Operational safety constraints remain mandatory: no loss of unrelated work, unsafe Git mutations, duplicate side effects, or exposure of credentials. These constraints are distinct from quality assessments and cannot be bypassed to force publication.
+
 ## Projects and task concurrency
 
 - At least one project must be configured; multiple projects are supported.
@@ -358,35 +391,3 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - Routine tests should simulate Trello, GitHub, OpenCode, and other external failures without requiring live services.
 - Establish a trustworthy baseline with realistic end-to-end verification in addition to mocked and unit tests.
 
-## Guaranteed workflow progress — critical invariant
-
-- The orchestrator must never enter an infinite execution, remediation, or recovery loop. Each active operation must make progress, complete, or reach a defined and observable outcome.
-- Cards must not remain indefinitely in intermediate states such as `Working` because of internal defects, stale ownership, orphaned processes, invalid records, or exhausted attempts.
-- Detect stalled work and reconcile abandoned sessions, locks, and execution records automatically. Internal failures must not permanently block a project or prevent later tasks from running.
-- Always prioritize safe draft PR delivery when implementation quality gates cannot pass; do not use repeated validation or AI reviews as a reason to stall publication.
-- Distinguish intentional waiting (such as `Human Review` or an external service outage) from a stuck workflow. Recheck waiting conditions and resume once they clear; do not spin indefinitely or send repeated alerts.
-- Genuine external dependencies or safety uncertainty may prevent immediate resolution, but such conditions must remain explicit, observable, and recoverable rather than silently stuck. No automated system can guarantee that an unavailable external service or a human decision will eventually arrive.
-- A dedicated live-service testing environment is a future improvement, not a prerequisite to addressing current robustness defects.
-
-- If an internal error remains unrecoverable after bounded recovery attempts, terminate that attempt safely instead of leaving the card in `Working` or retrying indefinitely.
-- Move the card to `Failed`, explain the reason in a Trello comment, preserve work and diagnostics, and release the project to process subsequent tasks once the terminal transition is confirmed.
-- This applies only when the workflow genuinely cannot continue or safely produce a PR; exhausted quality checks alone must instead lead to draft PR delivery whenever possible.
-- If Trello is unavailable and the terminal move cannot be confirmed, retain and retry that pending transition safely. Never pretend the card reached `Failed` or release ownership before the state is reconciled.
-
-- Prevent stuck workflows by designing every operation with explicit success, failure, and recovery paths. Do not rely on periodic stall detection as the normal way to make progress.
-- If unexpected inconsistent state still arises, use periodic monitoring as a last-resort safety net to detect and safely recover it, including after restarts.
-- Every workflow state has explicitly allowed transitions. An external transition is only considered complete after its outcome is verified; never advance internal state merely because Trello, GitHub, or another service was assumed to succeed.
-
-## Advisory quality steps — critical invariant
-
-- All planning, plan review, validation, coverage, implementation review, and remediation inside the `Working` phase exist to guide and improve the agent's work, **never to approve, reject, or block progress to PR publication**.
-- The implementation agent may evaluate, adapt, or disregard any advisory feedback, including all of it. The orchestrator does not require agreement from an AI reviewer and does not force the agent to apply recommendations.
-- An agent may finish remediation early when further changes would not be useful. Existing attempt limits are maximums, not required counts; no additional configuration or approval mechanism is needed.
-- If an advisory remediation attempt produces no implementation changes, stop that remediation cycle and proceed toward publishing the existing meaningful changes. Do not repeatedly request review of unchanged code merely because the AI reviewer remains dissatisfied.
-- Advisory stages have bounded execution and correction attempts. Negative findings, failed validation, exhausted correction attempts, or an unrecoverable crash of an advisory stage must not block publication; record the outcome, skip that stage when necessary, and continue toward publishing meaningful implementation changes.
-- A crash must be established using execution evidence, not an unsatisfactory result. Negative AI feedback, failing tests, and normal nonzero validation results are not implementation crashes.
-- A genuine crash of the primary implementation process is different: first attempt safe recovery, including restoring the existing session or reconstructing context when possible. If primary execution remains unrecoverable, move the card to `Failed`, even when partial code changes exist. Preserve those changes and diagnostics; do not automatically publish interrupted implementation work as a draft PR. A temporary external outage follows the separate preservation-and-retry policy.
-- Use the existing bounded operation retry configuration for primary implementation crash recovery; do not add a separate implementation-crash retry setting.
-- Reports must accurately distinguish what ran, what passed, what failed, what was skipped, and what remains uncertain. Publish a draft PR when significant unresolved quality problems remain; never misrepresent readiness.
-- Unresolved validation failures after remediation, including repeated failures of the same checks, must be captured in the PR description and available diagnostics. Stop correction attempts at their configured limit and publish a draft PR; passing tests or eliminating validation errors is never a prerequisite for publication.
-- Operational safety constraints remain mandatory: no loss of unrelated work, unsafe Git mutations, duplicate side effects, or exposure of credentials. These constraints are distinct from quality assessments and cannot be bypassed to force publication.
