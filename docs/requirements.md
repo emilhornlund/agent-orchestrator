@@ -129,7 +129,6 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - If the previous state cannot be established safely, preserve all evidence, notify the operator, and block new tasks in the affected project until the situation is resolved.
 - Recovery problems in one project must not stop unrelated projects.
 
-## External service interruptions
 
 - Temporary unavailability, timeouts, and transient failures in Trello, GitHub, OpenCode, or other dependencies must not permanently fail a task.
 - Retry transient failures with sensible bounded attempts and delays. If the dependency remains unavailable, preserve task state and periodically check for safe recovery rather than repeatedly restarting or failing the implementation.
