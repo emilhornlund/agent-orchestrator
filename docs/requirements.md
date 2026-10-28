@@ -203,7 +203,6 @@ Agent Orchestrator automatically turns Trello tasks into implemented, tested, an
 - Restart recovery must resume the correct task session where safe, rather than silently starting a context-free replacement.
 - Independent planning and implementation reviews use separate sessions to preserve independent judgment.
 
-## Recovery-first behavior across components
 
 - When OpenCode fails or a session becomes unavailable, first attempt to reconnect to the original task session.
 - If the session is confirmed unrecoverable, the orchestrator may create a replacement session only when it can safely reconstruct the relevant context from the task, approved plan, repository, attachments, earlier changes, execution history, and feedback.
