@@ -550,6 +550,72 @@ The orchestrator must bound individual operations and detect genuine stalls with
 - Stalled operations receive safe bounded recovery and a defined subsequent workflow outcome.
 - A timeout in an advisory quality operation does not by itself prevent publishing meaningful implementation changes.
 
+## Git safety, cleanup, and retries (REQ-GIT)
+
+Git operations must preserve existing work and repository integrity. Branch and worktree cleanup is permitted only when ownership and safety are verified. Failed or closed attempts must not obstruct a clean, deliberately initiated retry.
+
+### REQ-GIT-001 — Protect original checkout and unrelated work
+
+All implementation changes must remain isolated from the configured source checkout and unrelated repository state.
+
+**Acceptance criteria**
+
+- Agent modifications occur only in an owned, task-specific worktree and branch.
+- The original source checkout remains unchanged.
+- The orchestrator never force-pushes, overwrites unrelated remote changes, or automatically discards uncommitted work.
+
+### REQ-GIT-002 — Preserve understandable, additive commit history
+
+Implementation and subsequent corrections must be committed without rewriting previous task commits.
+
+**Acceptance criteria**
+
+- The initial implementation is recorded in one clean commit with a generated, descriptive message.
+- Later human-review, CI, and maintenance corrections use additional commits on the existing branch.
+- Earlier commits are not amended or rewritten by the orchestrator; humans may squash on merge.
+
+### REQ-GIT-003 — Verify ownership before cleanup
+
+The orchestrator may remove a branch or worktree only after verifying its task ownership and confirming removal is safe.
+
+**Acceptance criteria**
+
+- Unknown or unowned branches and worktrees are not deleted.
+- Uncommitted or otherwise unpreserved work is not silently lost during cleanup.
+- If cleanup safety cannot be verified, artifacts remain intact and the problem is reported.
+
+### REQ-GIT-004 — Idempotent cleanup after merge
+
+After a confirmed PR merge, owned Git resources must be cleaned up safely and repeatably.
+
+**Acceptance criteria**
+
+- Only verified, owned local branches and worktrees are removed.
+- A remote branch already deleted by GitHub is treated as already cleaned up rather than as a failure.
+- Repeating cleanup does not fail solely because an earlier run completed it.
+- The card reaches `Done` and another project task becomes eligible only after required outcome reconciliation.
+
+### REQ-GIT-005 — Safe cleanup after an unmerged PR closes
+
+Closing a PR without merging must preserve the rejected implementation as accessible history while cleaning up verified owned resources.
+
+**Acceptance criteria**
+
+- The orchestrator verifies the PR closed without merging and returns its card to `Backlog`.
+- Owned local worktrees and branches are removed only after verifying the implementation remains accessible via the closed PR and cleanup is safe.
+- A later retry uses the current card and latest default branch; the closed PR may be consulted as history but its changes are not automatically reused.
+
+### REQ-GIT-006 — Clean manual retries after failure
+
+A deliberate retry of a failed task must start from clean current repository state without losing diagnostics from earlier attempts.
+
+**Acceptance criteria**
+
+- Moving a card from `Failed` to `Ready for Agent` starts a fresh attempt in a clean worktree based on the latest default branch.
+- Previous logs, execution records, and unfinished changes are preserved or safely isolated for diagnosis.
+- Old worktrees, sessions, and locks do not prevent a new attempt after safe reconciliation.
+- The new attempt does not automatically incorporate unfinished code from the failed attempt.
+
 ## Specification coverage
 
 Additional domains—including refinement, human review, GitHub CI, recovery, Git safety, configuration, logging, and testing—will be specified section by section. An ID identifies a behavior, not a Trello implementation task. Later verification records can reference these IDs without modifying their meaning.
