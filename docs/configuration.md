@@ -50,7 +50,7 @@ out of configuration files and source control.
 
 ### `projects`
 
-`projects` is a non-empty list. Each item has `id`, `autoMerge`, optional `maintenance`, `trello`, `repository`, and `opencode` settings. Project IDs
+`projects` is a non-empty list. Each item has `id`, optional legacy `autoMerge: false`, optional `maintenance`, `trello`, `repository`, and `opencode` settings. Project IDs
 must be unique.
 
 ### `workflow`
@@ -158,9 +158,9 @@ during startup before repository or Trello bootstrap.
 
 ### `projects[].autoMerge`
 
-Boolean that defaults to `false`. When `true`, the orchestrator may merge only after local validation, configured coverage,
-independent review, and complete successful CI evidence for the current PR head. When omitted or `false`, the pull request enters
-`Human Review` for the existing human-merge workflow. Refinement is never auto-merged. The value must be a boolean.
+Legacy compatibility setting. Omit it or set it to `false`; `true` is rejected during configuration loading with an actionable
+error. The orchestrator never merges pull requests. An open pull request remains in `Human Review` until a human merges or closes
+it; approval, passing CI, and local quality evidence do not complete the task. The value must be a boolean when supplied.
 
 ### `projects[].maintenance`
 
@@ -328,7 +328,7 @@ latest verified implementation proceeds to PR publication for **Human Review onl
 unresolved findings are recorded in the task execution state and disclosed in
 the PR description, without sending an Attention Required notification.
 Local validation and configured coverage must still pass on the current content.
-An unresolved review never permits automatic merge, even if `autoMerge` is enabled.
+An unresolved review never changes human ownership of the pull request outcome. Automatic merging is not supported.
 The attempt count and final reviewed snapshot are persisted outside the Git
 worktree for crash-safe resumption.
 

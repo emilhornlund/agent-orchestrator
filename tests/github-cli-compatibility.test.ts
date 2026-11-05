@@ -31,12 +31,16 @@ function supportedRun(): ReturnType<
     .mockImplementationOnce(async () => helpOutput())
     .mockImplementationOnce(async () => helpOutput())
     .mockImplementationOnce(async () => helpOutput())
-    .mockImplementationOnce(async () => helpOutput())
     .mockResolvedValueOnce("[]");
 }
 
 describe("validateGitHubCliCompatibility", () => {
   it("accepts a supported gh version and all required capabilities", async () => {
+    expect(
+      GITHUB_CLI_COMMAND_CAPABILITIES.some((capability) =>
+        capability.name.includes("pr merge"),
+      ),
+    ).toBe(false);
     const run = supportedRun();
 
     await expect(validateGitHubCliCompatibility(run, [project])).resolves.toBe(

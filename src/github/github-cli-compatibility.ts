@@ -92,16 +92,6 @@ export const GITHUB_CLI_COMMAND_CAPABILITIES: readonly GitHubCliCommandCapabilit
       requiredHelpOptions: ["--repo", "--base", "--head", "--title", "--body"],
     },
     {
-      name: "gh pr merge",
-      args: ["pr", "merge", "--help"],
-      requiredHelpOptions: [
-        "--repo",
-        "--match-head-commit",
-        "--merge",
-        "--delete-branch",
-      ],
-    },
-    {
       name: "gh api",
       args: ["api", "--help"],
       requiredHelpOptions: ["--paginate", "--slurp"],

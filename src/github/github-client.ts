@@ -41,14 +41,6 @@ export interface CreatePullRequestOptions {
   project?: ProjectConfig;
 }
 
-export interface MergePullRequestOptions {
-  cwd: string;
-  repository: string;
-  pullRequestUrl: string;
-  commitSha: string;
-  project?: ProjectConfig;
-}
-
 export interface FindPullRequestOptions {
   cwd: string;
   repository: string;
@@ -2613,25 +2605,6 @@ export class GitHubClient {
     return {
       url: parsePullRequestUrl(output),
     };
-  }
-
-  async mergePullRequest(options: MergePullRequestOptions): Promise<void> {
-    const credential = await this.resolveCredential(options.project);
-    await this.run(
-      options.cwd,
-      [
-        "pr",
-        "merge",
-        parsePullRequestUrl(options.pullRequestUrl),
-        "--repo",
-        options.repository,
-        "--match-head-commit",
-        options.commitSha,
-        "--merge",
-        "--delete-branch",
-      ],
-      credential,
-    );
   }
 
   async validateCliCompatibility(

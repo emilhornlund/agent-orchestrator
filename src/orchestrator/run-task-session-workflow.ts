@@ -72,8 +72,6 @@ import {
 } from "../task-session/task-execution-transition.js";
 import type { TaskExecutionRecord } from "../task-session/task-execution-record.js";
 import { runPrMaintenanceReview } from "../task-session/run-pr-maintenance-review.js";
-import { parseImplementationReviewResult } from "../task-session/implementation-review-result.js";
-import { decideTaskSessionAutoMergeReadiness } from "../task-session/task-session-auto-merge-readiness.js";
 import { getTaskSessionSourceSnapshotIdentity } from "../task-session/source-snapshot.js";
 import { publishTaskSessionCard } from "./publish-task-session-card.js";
 import {
@@ -81,8 +79,6 @@ import {
   enrichMaintainedPullRequestDescription,
 } from "./publish-card.js";
 import { runWithPrimaryTaskSession } from "../task-session/primary-task-session.js";
-import { buildAutoMergeSummary } from "./auto-merge.js";
-import { mergeTaskSessionPullRequest } from "./merge-task-session-pull-request.js";
 import { observeTaskSessionReviewCards } from "./observe-task-session-review-cards.js";
 import {
   completeMergedTaskSessionPullRequest,
@@ -1455,7 +1451,7 @@ export async function runTaskSessionWorkflow(
               github,
               opencode: openCode,
               commands,
-              project: { ...project, autoMerge: false },
+              project,
               card,
               worktreePath,
               branch: expectedBranch,
@@ -1608,10 +1604,7 @@ export async function runTaskSessionWorkflow(
             ? "CI repair succeeded"
             : "CI repair failed",
         );
-      if (
-        ciResult.status === "passed" &&
-        (!project.autoMerge || observation.feedbackIds.length > 0)
-      ) {
+      if (ciResult.status === "passed") {
         const latest = taskStore.read(card.id);
         if (latest !== null && latest.phase === "ci")
           taskStore.compareAndSwap(
@@ -1627,130 +1620,15 @@ export async function runTaskSessionWorkflow(
     }
     const checksPassed = observation.ciEvaluation.status === "passed";
     if (!checksPassed) continue;
-    if (
-      !project.autoMerge ||
-      observation.feedbackIds.length > 0 ||
-      record.reviewRepair?.status === "exhausted"
-    ) {
-      taskStore.compareAndSwap(
-        record.cardId,
-        record.revision,
-        transitionTaskExecutionRecord(
-          record,
-          event(record, "ci-passed-awaiting-human"),
-        ),
-      );
-      continue;
-    }
-    const storedPlan = planStore.read(observation.cardId);
-    const rawQuality = record.publicationQuality as
-      | {
-          contentIdentity: string;
-          validation: NonNullable<
-            NonNullable<TaskExecutionRecord["validationRepair"]>["evidence"]
-          >;
-          coverageEvidence?: NonNullable<
-            NonNullable<
-              TaskExecutionRecord["validationRepair"]
-            >["coverageEvidence"]
-          >;
-          review: unknown;
-        }
-      | undefined;
-    if (storedPlan === null || rawQuality === undefined) continue;
-    const worktreePath = path.join(
-      project.repository.worktreeRoot,
-      observation.cardId,
-    );
-    const currentIdentity = await getTaskSessionSourceSnapshotIdentity(
-      git,
-      worktreePath,
-    );
-    if (currentIdentity !== rawQuality.contentIdentity) continue;
-    const review = parseImplementationReviewResult(rawQuality.review, {
-      projectId: project.id,
-      cardId: observation.cardId,
-      requirementIds: storedPlan.plan.requirements.map(
-        (requirement) => requirement.id,
+    taskStore.compareAndSwap(
+      record.cardId,
+      record.revision,
+      transitionTaskExecutionRecord(
+        record,
+        event(record, "ci-passed-awaiting-human"),
       ),
-      contentIdentity: currentIdentity,
-    });
-    const validation: TaskSessionValidationResult = {
-      ...rawQuality.validation,
-      status: "passed",
-      timedOut: false,
-      aborted: false,
-    };
-    const coverage: TaskSessionValidationResult | null =
-      rawQuality.coverageEvidence === undefined
-        ? null
-        : {
-            ...rawQuality.coverageEvidence,
-            status: "passed",
-            timedOut: false,
-            aborted: false,
-          };
-    const readiness = {
-      expectedHeadSha: observation.headSha,
-      observedHeadSha: observation.headSha,
-      ciEvaluation: observation.ciEvaluation,
-      localEvidence: {
-        currentContentIdentity: currentIdentity,
-        validationCommand,
-        validation,
-        ...(project.repository.coverageCommand === undefined
-          ? {}
-          : { coverageCommand: project.repository.coverageCommand }),
-        coverage,
-        review,
-      },
-    };
-    const readinessDecision = decideTaskSessionAutoMergeReadiness(readiness);
-    if (!readinessDecision.allowed) continue;
-    const card = humanReviewCards.find(
-      (candidate) => candidate.id === observation.cardId,
     );
-    if (card === undefined || record.pullRequest === undefined) continue;
-    await mergeTaskSessionPullRequest(
-      github,
-      project,
-      card,
-      observation.pullRequestUrl,
-      observation.headSha,
-      project.repository.path,
-      readiness,
-      signal,
-    );
-    const mergedPullRequest = await github.findPullRequestState({
-      cwd: project.repository.path,
-      repository: project.repository.github,
-      headBranch: `agent/${card.id}`,
-      baseBranch: project.repository.defaultBranch,
-      project,
-    });
-    if (mergedPullRequest === null) {
-      throw new Error(`Could not verify merged pull request for ${card.id}`);
-    }
-    await completeMergedTaskSession({
-      github,
-      queue,
-      mutationBlockStore,
-      taskStore,
-      trello,
-      git,
-      project,
-      card,
-      pullRequest: mergedPullRequest,
-      completionComment: buildAutoMergeSummary({
-        pullRequestUrl: observation.pullRequestUrl,
-        commitSha: observation.headSha,
-        reviewResult: "Passed",
-        remediationResult:
-          "Task-session quality and current-head required checks passed",
-      }),
-      ...(emailNotifier === undefined ? {} : { emailNotifier }),
-      signal,
-    });
+    // Passing CI and local quality evidence never authorizes an orchestrator merge.
   }
   const latestHumanReviewCards = await getCardsForDiscovery(
     trello,
@@ -3140,7 +3018,7 @@ export async function runTaskSessionWorkflow(
         github,
         opencode: openCode,
         commands,
-        project: { ...project, autoMerge: false },
+        project,
         card: activeCard,
         worktreePath,
         branch: worktree.branch,
@@ -3813,7 +3691,7 @@ export async function runTaskSessionWorkflow(
         github,
         opencode: openCode,
         commands,
-        project: { ...project, autoMerge: false },
+        project,
         card: activeCard,
         worktreePath,
         branch: worktree.branch,
@@ -3876,7 +3754,7 @@ export async function runTaskSessionWorkflow(
         github,
         opencode: openCode,
         commands,
-        project: { ...project, autoMerge: false },
+        project,
         card: activeCard,
         worktreePath,
         branch: worktree.branch,
@@ -3938,80 +3816,6 @@ export async function runTaskSessionWorkflow(
       pullRequest: { number: prNumber, url: pr.url, headSha: pr.headRefOid },
     });
     taskStore.compareAndSwap(activeCard.id, current.revision, ci);
-    if (project.autoMerge && exhaustedReview === undefined) {
-      const ciObservation = await github.getCiObservations({
-        cwd: project.repository.path,
-        repository: project.repository.github,
-        defaultBranch: project.repository.defaultBranch,
-        headSha: publishedSha,
-        pullRequestNumber: prNumber,
-        project,
-      });
-      const ciEvaluation = evaluateCiChecks({
-        expectedHeadSha: publishedSha,
-        observedHeadSha: ciObservation.headSha,
-        expectations: establishCiCheckExpectations(
-          ciObservation.expectationSources,
-        ),
-        checks: ciObservation.checks,
-      });
-      cardLog.event(
-        `CI ${ciEvaluation.status === "waiting" ? "waiting" : ciEvaluation.status === "failed" ? "failed" : "passed"} for ${publishedSha}`,
-      );
-      if (ciEvaluation.status === "passed") {
-        await mergeTaskSessionPullRequest(
-          github,
-          project,
-          activeCard,
-          pr.url,
-          publishedSha,
-          project.repository.path,
-          {
-            expectedHeadSha: publishedSha,
-            observedHeadSha: publishedSha,
-            ciEvaluation,
-            localEvidence: preparedEvidence,
-          },
-          signal,
-        );
-        const mergedPullRequest = await github.findPullRequestState({
-          cwd: project.repository.path,
-          repository: project.repository.github,
-          headBranch: worktree.branch,
-          baseBranch: project.repository.defaultBranch,
-          project,
-        });
-        if (mergedPullRequest === null) {
-          throw new Error(
-            `Could not verify merged pull request for ${activeCard.id}`,
-          );
-        }
-        await completeMergedTaskSession({
-          github,
-          queue,
-          mutationBlockStore,
-          taskStore,
-          trello,
-          git,
-          project,
-          card: activeCard,
-          pullRequest: mergedPullRequest,
-          completionComment: buildAutoMergeSummary({
-            pullRequestUrl: pr.url,
-            commitSha: publishedSha,
-            reviewResult: "Passed",
-            remediationResult: `${finalReview.attempts} review repair(s)`,
-          }),
-          releaseMutationEventId: mutation.eventId,
-          onMutationReleased: () => {
-            mutation = null;
-          },
-          ...(emailNotifier === undefined ? {} : { emailNotifier }),
-          signal,
-        });
-        mutation = null;
-      }
-    }
     if (mutation !== null) queue.complete(mutation.eventId);
   } catch (error) {
     const failedRecord =

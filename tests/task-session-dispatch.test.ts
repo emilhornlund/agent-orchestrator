@@ -1116,7 +1116,6 @@ describe("task-session production dispatch", () => {
       })),
       findChangesRequestedPullRequest: vi.fn(async () => null),
       getPullRequestConversationComments: vi.fn(async () => []),
-      mergePullRequest: vi.fn(async () => undefined),
     } as unknown as GitHubClient;
     const openCode = vi.fn<RunOpenCode>();
     await pollProject(
@@ -1190,7 +1189,6 @@ describe("task-session production dispatch", () => {
     expect(new TaskMutationQueue(project.contextRoot, project).list()).toEqual(
       [],
     );
-    expect(github.mergePullRequest).not.toHaveBeenCalled();
     expect(openCode).not.toHaveBeenCalled();
   });
 

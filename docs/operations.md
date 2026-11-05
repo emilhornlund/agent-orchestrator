@@ -228,7 +228,6 @@ The required command surface is:
 | `gh repo clone` | Repository cloning                                                       |
 | `gh pr list`    | `--repo`, `--head`, `--base`, `--state`, `--json`, `--jq`, and `--limit` |
 | `gh pr create`  | `--repo`, `--base`, `--head`, `--title`, and `--body`                    |
-| `gh pr merge`   | `--repo`, `--match-head-commit`, `--merge`, and `--delete-branch`        |
 | `gh api`        | `--paginate` and `--slurp`                                               |
 
 The required `gh pr list --json` fields are `url`, `state`, `mergedAt`, `baseRefName`, `headRefName`, `headRepository`,
@@ -283,8 +282,8 @@ For every open owned PR, the worker verifies the persisted URL, branch, reposito
 feedback. Checks and commit statuses are matched to automatically established expectations from repository rules and static
 workflow contracts. Conditional or dynamic workflows, inaccessible policies, delayed/missing checks, skipped/neutral/cancelled
 results, and stale heads remain waiting or uncertain. The worker never uses currently visible green checks as proof that the
-expected check set is complete. Only complete failures trigger the bounded primary-session CI repair cycle; only complete passes
-can authorize feedback replies or auto-merge.
+expected check set is complete. Only complete failures trigger the bounded primary-session CI repair cycle; complete passes may
+support verified feedback replies but never authorize merging. Open PRs remain active regardless of approval or CI status.
 
 On review feedback, stable review/thread/comment identities remain in the durable task ledger through remediation and independent
 verification. Replies use the original GitHub conversation context and are published only after the correction is committed,
@@ -299,17 +298,16 @@ The publication rules are:
   update.
 - Fetch or rebase failure stops before push, pull-request lookup or creation, and the successful `Human Review` transition.
 - An existing open pull request is reused; a new pull request is created only when needed.
-- Normal publication never force-pushes. A task PR is observed on the exact published head, and auto-merge is deferred until
-  local quality gates, independent review, and the complete current-head CI evaluation pass. Pending, failed, unknown, and stale
-  CI evidence blocks merge.
+- Normal publication never force-pushes. A task PR is observed on the exact published head. CI and local quality evidence are
+  recorded for the human reviewer; neither passing evidence nor approval authorizes an orchestrator merge.
 
 If feedback remediation returns no source changes, its feedback remains unverified in the task ledger. The orchestrator does not
 commit, publish, reply with a success claim, or move the card to `Done` based on a no-op result; the existing PR and worktree remain
 available for further review or operator attention.
 
-The task worktree and branch are preserved after fetch, rebase, publication, CI, or merge failures so conflicts and diagnostics
-can be resolved. With `autoMerge: false`, a human must merge the pull request before the card reaches `Done`. With
-`autoMerge: true`, the unified worker merges only after complete current-head CI and local evidence pass.
+The task worktree and branch are preserved after fetch, rebase, publication, CI, or terminal reconciliation failures so conflicts
+and diagnostics can be resolved. An open pull request, including an approved or draft pull request, remains active and blocks the
+project's next task until a human merges or closes it. `autoMerge: true` is rejected during configuration loading.
 
 Prepared-publication conflicts follow the preservation boundary and never create a replacement pull request. A conflict is left
 in place for dedicated handling without automatic abort, reset, clean, worktree removal, or recreation. A validated handoff keeps
@@ -381,7 +379,7 @@ When enabled, each event is attempted once after its corresponding successful tr
 | `humanReview`        | A card successfully enters `Human Review` after normal publication or reconciliation                                   |
 | `failed`             | A card successfully enters `Failed` through automated failure handling                                                 |
 | `refinementComplete` | A refinement card successfully enters `Backlog`                                                                        |
-| `done`               | A merged pull request successfully moves its card to `Done`, whether it was merged by a human or auto-merged           |
+| `done`               | A human-merged pull request moves its card to `Done`                                                                   |
 | `attentionRequired`  | A project poll or reconciliation cannot safely continue after any bounded retry, including ambiguous active-card state |
 
 The service does not notify for cards merely observed in `Human Review`, `Failed`, or `Done`, unrelated list transitions, or
@@ -519,11 +517,11 @@ for review exhaustion alone; polling and restart reuse the persisted final
 review without consuming more attempts. Legacy exhausted records lacking final
 review evidence perform at most one read-only verification review during
 recovery, persist it, and continue without a new repair cycle. PRs with
-unresolved automated review findings are never automatically merged.
+unresolved automated review findings are preserved and surfaced for human review. No PR is automatically merged.
 
 Complete CI failures are collected together; pending or uncertain expected checks remain waiting without consuming repair attempts. Local
-gates and review are rerun after each correction. `autoMerge` defaults to `false`; when enabled it still requires complete
-current-head CI and passing local evidence. Exhaustion or ambiguous state is preserved for operator attention rather than retried
+gates and review are rerun after each correction. `autoMerge: true` is rejected at configuration load; omitted/false settings
+preserve compatibility, and current-head CI/local evidence never authorizes a merge. Exhaustion or ambiguous state is preserved for operator attention rather than retried
 indefinitely. Replies are published only for independently verified items after the correcting commit and a complete passing CI
 result. The process does not approve reviews or resolve reviewer threads. See [Workflow](workflow.md#unified-task-lifecycle) and
 [Recovery](recovery.md#task-session-recovery) for lifecycle and recovery details.
@@ -536,7 +534,7 @@ test, or live API verification has been performed; those checks remain separate 
 
 Operators should expect the orchestrator to refuse or stop rather than guess. It does not:
 
-- merge pull requests for projects whose `autoMerge` setting is `false`;
+- merge pull requests (automatic merge configuration is rejected);
 - use unrestricted force-pushes or unscoped force-with-lease pushes;
 - run agent implementation in the configured source checkout;
 - resume a `Working` card without qualifying transition and worktree or pull-request evidence;

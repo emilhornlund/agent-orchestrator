@@ -129,7 +129,7 @@ afterEach(() => {
 });
 
 describe("publishCard", () => {
-  it("never merges during publication, even when auto-merge is enabled", async () => {
+  it("publishes to Human Review even when passed a forged autoMerge value", async () => {
     const trello = {
       moveCard: vi.fn().mockResolvedValue({
         ...createCard(),
@@ -140,7 +140,6 @@ describe("publishCard", () => {
       findPullRequest: vi.fn().mockResolvedValue({
         url: "https://github.com/example/repository/pull/123",
       }),
-      mergePullRequest: vi.fn(),
     } as unknown as GitHubClient;
 
     await publishCard({
@@ -156,7 +155,6 @@ describe("publishCard", () => {
       remediationResult: "Not required",
     });
 
-    expect(github.mergePullRequest).not.toHaveBeenCalled();
     expect(trello.moveCard).toHaveBeenCalledWith("card-1", "review-list");
   });
 

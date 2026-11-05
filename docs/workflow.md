@@ -26,11 +26,8 @@ Ready for Agent
         +-> closed without merge ----> Backlog
 ```
 
-When `projects[].autoMerge` is `true`, the implementation branch instead follows this path after publication:
-
-```text
-Ready for Agent -> Working -> publish expected PR -> merge PR -> Done
-```
+Automatic merging is not supported. Configuration with `projects[].autoMerge: true` is rejected; omit the legacy setting or
+set it to `false`. Only an observed human merge or unmerged closure ends the active PR workflow.
 
 Refinement uses the same initial claim but returns the card to `Backlog`:
 
@@ -54,14 +51,15 @@ Ready for Agent -> Working -> approved plan + independent plan check
   -> discover expected checks + observe all exact-head check runs and commit statuses
        -> waiting/uncertain: preserve state; do not repair, reply, or merge
        -> complete failures: bounded same-session repair -> local gates/review -> same PR -> re-observe new head
-       -> complete pass: Human Review, or auto-merge when explicitly enabled
+       -> complete pass: remain active in Human Review
   -> Human Review: ledger actionable feedback -> same primary session -> verify -> gates -> publish -> CI -> contextual reply
   -> manually merged PR -> Done; deliberately closed PR -> Backlog
 ```
 
 One primary OpenCode session ID is persisted per task and resumed for implementation, CI repair, and human-feedback remediation.
 Independent plan and implementation reviewers use separate sessions. The orchestrator, not OpenCode, decides whether local
-commands, independent review, and CI evidence pass before publication, feedback replies, or auto-merge. The
+commands, independent review, and CI evidence pass before publication and feedback replies. Those signals never authorize PR
+merge. The
 exception is a structurally valid, content-bound failed implementation review after the configured
 `remediation.maxPasses`: local validation/coverage must pass and the PR is published for human
 review with an explicit warning, but is never automatically merged. Other exhausted or ambiguous
@@ -151,8 +149,8 @@ plan verification before code changes begin.
 The primary session implements the approved plan. The orchestrator—not the agent—runs the required `validationCommand` and any
 configured `coverageCommand`, binding each result to the exact source content. An independent reviewer uses a separate session to
 assess every approved requirement. Validation, coverage, and review repairs are bounded; after the last correction the relevant
-checks run again. A passing final review permits normal publication and, separately, possible
-auto-merge. If the independent implementation review remains failed after the configured
+checks run again. A passing final review permits normal publication; neither review nor CI evidence
+authorizes automatic merging. If the independent implementation review remains failed after the configured
 remediation limit, successful current validation and coverage still permit publication to Human
 Review only. The failed findings are preserved and disclosed on the PR; this outcome is not a
 workflow error and sends no Attention Required notification. Failed local validation, missing
@@ -190,15 +188,14 @@ An existing open pull request is reused; a new one is created only when none exi
 run and commit status is collected and evaluated against the complete expectation set. The card remains in `Human Review` while
 checks are pending or the expected set is uncertain. A complete failure set starts at most two CI repair rounds in the existing
 primary session; each correction reruns local validation/coverage and independent review, publishes to the same PR, and invalidates
-all prior-head CI evidence. With `autoMerge: false`, a successful complete CI result permits Human Review. With `autoMerge: true`,
-merge is deferred until local quality gates, review, and complete current-head CI all pass. Only a successful merge permits the
-card to move to `Done` with `dueComplete: true`; completion notification and summary follow that transition. A publication, merge,
-or card-transition failure does not produce a successful completion.
+all prior-head CI evidence. A successful complete CI result leaves the open PR in Human Review; approval and passing checks do not
+merge or complete it. Only an independently observed human merge permits the card to move to `Done` with `dueComplete: true`; a
+human unmerged closure routes it to `Backlog`. A publication or card-transition failure does not produce a successful completion.
 
 ## Human review
 
-Human review takes place on GitHub when `autoMerge` is disabled. The orchestrator never merges a pull request for a project
-with `autoMerge: false`; an enabled project merges only task-session implementation PRs after complete CI and local gates pass.
+Human review takes place on GitHub. The orchestrator never merges a pull request. Approval is an observation, not a terminal event;
+every open normal or draft PR remains active and blocks the project's next task.
 
 | GitHub state                                                 | Trello result                                                     |
 | ------------------------------------------------------------ | ----------------------------------------------------------------- |
@@ -222,8 +219,8 @@ cleanup, and preserved worktrees, branches, and prepared-conflict handoffs remai
 
 When requested changes are detected, the orchestrator creates a worktree from the existing task branch, supplies the GitHub
 review feedback to the implementation session after refreshing the current Trello attachment context, runs the same initial-review and
-bounded remediation loop, and republishes the updated branch and pull request. An enabled project auto-merges the successfully
-republished pull request; a disabled project returns it to Human Review. A requested-changes pass captures the authoritative PR head
+bounded remediation loop, and republishes the updated branch and pull request. The open PR remains in Human Review after publication.
+A requested-changes pass captures the authoritative PR head
 SHA used to select the feedback and re-reads the expected open PR head after review bodies and inline comments have been collected.
 Only a stable, commit-exact snapshot can move the card to Working or reach OpenCode. If the head changes, the complete snapshot is
 discarded, the card remains in Human Review with its existing PR and branch, and reconciliation logs the project, card, PR, and both
