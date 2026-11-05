@@ -4,27 +4,12 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
-import type { ProjectConfig } from "../src/config/config.js";
 import {
   GitClient,
   getGitIdentityEnvironment,
   type GitIdentity,
   type RunGit,
 } from "../src/git/git-client.js";
-import { GitHubCredentialProvider } from "../src/github/github-credential-provider.js";
-
-function project(
-  githubApp?: ProjectConfig["repository"]["githubApp"],
-): ProjectConfig {
-  return {
-    id: "project-a",
-    repository: {
-      github: "owner/repository",
-      githubApp,
-    },
-  } as ProjectConfig;
-}
-
 describe("GitClient", () => {
   it("fetches a branch from a remote", async () => {
     const runGit = vi.fn<RunGit>().mockResolvedValue("");
@@ -35,7 +20,7 @@ describe("GitClient", () => {
     expect(runGit).toHaveBeenCalledWith("/repo", ["fetch", "origin", "main"]);
   });
 
-  it("rebases a branch onto a base ref", async () => {
+  it("refuses rebase without dispatching any Git command", async () => {
     const runGit = vi.fn<RunGit>().mockResolvedValue("");
     const git = new GitClient(runGit);
     const identity: GitIdentity = {
@@ -43,43 +28,24 @@ describe("GitClient", () => {
       email: "agent-orchestrator@example.com",
     };
 
-    await git.rebase("/worktree", "origin/main", identity);
-
-    expect(runGit).toHaveBeenCalledWith(
-      "/worktree",
-      ["rebase", "origin/main"],
-      {
-        GIT_AUTHOR_NAME: "Agent Orchestrator",
-        GIT_AUTHOR_EMAIL: "agent-orchestrator@example.com",
-        GIT_COMMITTER_NAME: "Agent Orchestrator",
-        GIT_COMMITTER_EMAIL: "agent-orchestrator@example.com",
-      },
-    );
+    await expect(
+      git.rebase("/worktree", "origin/main", identity),
+    ).rejects.toThrow("disabled by the P1 safety guardrail");
+    expect(runGit).not.toHaveBeenCalled();
   });
 
-  it("passes configured signing settings when rebasing", async () => {
+  it("keeps signed rebase requests behind the same no-dispatch guard", async () => {
     const runGit = vi.fn<RunGit>().mockResolvedValue("");
     const git = new GitClient(runGit);
 
-    await git.rebase("/worktree", "origin/main", {
-      name: "Agent Orchestrator",
-      email: "agent-orchestrator@example.com",
-      signingKey: "/home/agent/.ssh/signing-key.pub",
-    });
-
-    expect(runGit).toHaveBeenCalledWith(
-      "/worktree",
-      ["rebase", "origin/main"],
-      expect.objectContaining({
-        GIT_CONFIG_COUNT: "3",
-        GIT_CONFIG_KEY_0: "gpg.format",
-        GIT_CONFIG_VALUE_0: "ssh",
-        GIT_CONFIG_KEY_1: "user.signingKey",
-        GIT_CONFIG_VALUE_1: "/home/agent/.ssh/signing-key.pub",
-        GIT_CONFIG_KEY_2: "commit.gpgSign",
-        GIT_CONFIG_VALUE_2: "true",
+    await expect(
+      git.rebase("/worktree", "origin/main", {
+        name: "Agent Orchestrator",
+        email: "agent-orchestrator@example.com",
+        signingKey: "/home/agent/.ssh/signing-key.pub",
       }),
-    );
+    ).rejects.toThrow("disabled by the P1 safety guardrail");
+    expect(runGit).not.toHaveBeenCalled();
   });
 
   it("checks whether one commit is an ancestor of another", async () => {
@@ -365,30 +331,8 @@ describe("GitClient", () => {
     ]);
   });
 
-  it("updates an owned task branch with an exact force-with-lease", async () => {
+  it("fails closed for every force-with-lease update without dispatching Git", async () => {
     const runGit = vi.fn<RunGit>().mockResolvedValue("");
-    const git = new GitClient(runGit);
-
-    await git.pushWithLease(
-      "/tmp/repository",
-      "origin",
-      "agent/card-123",
-      "remote-sha",
-    );
-
-    expect(runGit).toHaveBeenCalledWith("/tmp/repository", [
-      "push",
-      "--force-with-lease=refs/heads/agent/card-123:remote-sha",
-      "origin",
-      "agent/card-123",
-    ]);
-    expect(runGit.mock.calls[0]?.[1]).not.toContain("--force");
-  });
-
-  it("propagates a rejected lease without attempting another update", async () => {
-    const runGit = vi
-      .fn<RunGit>()
-      .mockRejectedValue(new Error("stale info: remote branch changed"));
     const git = new GitClient(runGit);
 
     await expect(
@@ -396,119 +340,10 @@ describe("GitClient", () => {
         "/tmp/repository",
         "origin",
         "agent/card-123",
-        "authoritative-sha",
-      ),
-    ).rejects.toThrow("stale info: remote branch changed");
-
-    expect(runGit).toHaveBeenCalledTimes(1);
-    expect(runGit.mock.calls[0]?.[1]).toEqual([
-      "push",
-      "--force-with-lease=refs/heads/agent/card-123:authoritative-sha",
-      "origin",
-      "agent/card-123",
-    ]);
-  });
-
-  it.each(["main", "feature/other", "agent/", "agent/card/child"])(
-    "rejects a non-owned branch %s before invoking Git",
-    async (branch) => {
-      const runGit = vi.fn<RunGit>().mockResolvedValue("");
-      const git = new GitClient(runGit);
-
-      await expect(
-        git.pushWithLease("/tmp/repository", "origin", branch, "remote-sha"),
-      ).rejects.toThrow("expected an agent/<card-id> branch");
-
-      expect(runGit).not.toHaveBeenCalled();
-    },
-  );
-
-  it.each(["", " "])(
-    "rejects a missing expected remote SHA (%j) before invoking Git",
-    async (expectedRemoteSha) => {
-      const runGit = vi.fn<RunGit>().mockResolvedValue("");
-      const git = new GitClient(runGit);
-
-      await expect(
-        git.pushWithLease(
-          "/tmp/repository",
-          "origin",
-          "agent/card-123",
-          expectedRemoteSha,
-        ),
-      ).rejects.toThrow("an authoritative current remote SHA is required");
-
-      expect(runGit).not.toHaveBeenCalled();
-    },
-  );
-
-  it("uses GitHub App askpass authentication for a lease update", async () => {
-    const token = "installation-token";
-    const runGit = vi.fn<RunGit>().mockResolvedValue("");
-    const credentials = new GitHubCredentialProvider({
-      authenticator: {
-        getInstallationToken: vi.fn().mockResolvedValue(token),
-      },
-    });
-    const git = new GitClient(runGit, credentials);
-    const configuredProject = project({
-      appId: "app-a",
-      installationId: "installation-a",
-      privateKeyPath: "/secrets/app.pem",
-    });
-
-    await git.pushWithLease(
-      "/tmp/repository",
-      "origin",
-      "agent/card-123",
-      "remote-sha",
-      configuredProject,
-    );
-
-    expect(runGit).toHaveBeenCalledWith(
-      "/tmp/repository",
-      [
-        "-c",
-        "credential.helper=",
-        "push",
-        "--force-with-lease=refs/heads/agent/card-123:remote-sha",
-        "origin",
-        "agent/card-123",
-      ],
-      expect.objectContaining({
-        GH_TOKEN: token,
-        GITHUB_TOKEN: token,
-        GIT_ASKPASS: expect.any(String),
-        GIT_TERMINAL_PROMPT: "0",
-      }),
-    );
-    expect(runGit.mock.calls[0]?.[1]).not.toContain(token);
-  });
-
-  it("preserves ambient or PAT authentication for a lease update", async () => {
-    vi.stubEnv("GH_TOKEN", "ambient-pat");
-
-    try {
-      const runGit = vi.fn<RunGit>().mockResolvedValue("");
-      const git = new GitClient(runGit);
-
-      await git.pushWithLease(
-        "/tmp/repository",
-        "origin",
-        "agent/card-123",
         "remote-sha",
-        project(),
-      );
-
-      expect(runGit).toHaveBeenCalledWith("/tmp/repository", [
-        "push",
-        "--force-with-lease=refs/heads/agent/card-123:remote-sha",
-        "origin",
-        "agent/card-123",
-      ]);
-    } finally {
-      vi.unstubAllEnvs();
-    }
+      ),
+    ).rejects.toThrow("Force-with-lease pushes are disabled");
+    expect(runGit).not.toHaveBeenCalled();
   });
 
   it("removes a worktree", async () => {

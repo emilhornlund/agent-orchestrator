@@ -81,8 +81,8 @@ function staleQueue(f: ReturnType<typeof fixture>): TaskMutationQueue {
   return new TaskMutationQueue(f.state, f.project);
 }
 
-describe("interrupted prepared PR maintenance recovery", () => {
-  it("requeues the exact persisted crash state after stale ownership", () => {
+describe("P1 interrupted prepared PR maintenance refusal", () => {
+  it("preserves the exact persisted crash state instead of requeueing a rewrite", () => {
     const f = fixture();
     const restartedQueue = staleQueue(f);
     expect(
@@ -91,14 +91,14 @@ describe("interrupted prepared PR maintenance recovery", () => {
         maintenanceStore: new PrMaintenanceStore(f.state, f.project),
         mutationQueue: restartedQueue,
       }),
-    ).toBe(true);
-    expect(restartedQueue.getActive()).toBeNull();
-    expect(restartedQueue.list()[0]?.status).toBe("queued");
+    ).toBe(false);
+    expect(restartedQueue.getActive()?.status).toBe("active");
+    expect(restartedQueue.list()[0]?.status).toBe("active");
     expect(f.maintenanceStore.inspect(f.operationId)?.status).toBe("prepared");
     expect(restartedQueue.claimForRecovery(f.eventId)?.status).toBe("active");
   });
 
-  it("recovers a failed prepared event once, then stops after another failure", () => {
+  it("does not recover or retire failed prepared publication state", () => {
     const f = fixture();
     const restartedQueue = staleQueue(f);
     restartedQueue.claimForRecovery(f.eventId);
@@ -108,11 +108,11 @@ describe("interrupted prepared PR maintenance recovery", () => {
       maintenanceStore: f.maintenanceStore,
       mutationQueue: restartedQueue,
     };
-    expect(requeueInterruptedPreparedPrMaintenance(args)).toBe(true);
+    expect(requeueInterruptedPreparedPrMaintenance(args)).toBe(false);
     expect(
       f.maintenanceStore.inspect(f.operationId)
         ?.failedPreparedRecoveryAttempted,
-    ).toBe(true);
+    ).toBeUndefined();
     restartedQueue.claimForRecovery(f.eventId);
     restartedQueue.fail(f.eventId);
     const storeAfterRestart = new PrMaintenanceStore(f.state, f.project);
@@ -145,12 +145,12 @@ describe("interrupted prepared PR maintenance recovery", () => {
     };
     queue.events[0]!.operationKey = "wrong-operation";
     fs.writeFileSync(file, JSON.stringify(queue));
-    expect(() =>
+    expect(
       requeueInterruptedPreparedPrMaintenance({
         project: f.project,
         maintenanceStore: f.maintenanceStore,
         mutationQueue: restartedQueue,
       }),
-    ).toThrow("identities differ");
+    ).toBe(false);
   });
 });

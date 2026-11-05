@@ -164,19 +164,25 @@ it; approval, passing CI, and local quality evidence do not complete the task. T
 
 ### `projects[].maintenance`
 
-Optional per-project setting for automatic rebasing of owned, outdated pull requests in `Human Review`:
+Optional legacy per-project toggle for routine maintenance of outdated pull requests in `Human Review`:
 
 ```yaml
 maintenance:
   enabled: true
 ```
 
-`enabled` defaults to `false`. When enabled, maintenance is limited to a verified agent-owned PR that is behind its configured
-base and has no active requested changes, unresolved review feedback, or other project mutation. The orchestrator validates and
-reviews the prepared rebased content, publishes with an exact force-with-lease, preserves the existing PR and Trello card, and
-waits for complete CI on the new exact head. Conflicts are preserved for manual handling. Maintenance does not enable auto-merge
-or remove the `Human Review` step. Leave this setting omitted or disabled in production unless maintenance has been deliberately
-enabled for that project.
+`enabled` defaults to `false`. Published-PR maintenance is temporarily deferred in this release, even when enabled. The legacy
+setting is retained for compatibility but does not enable a published rebase or push. Existing prepared maintenance and any
+associated worktree, backup refs, rewritten objects, pending push intent, and remote history must be preserved for operator
+reconciliation and the future additive replacement in P8. Do not manually retry a legacy push or reset/discard its worktree.
+There is currently no orchestrator force-push or rebase promise: P1 disables published and pre-publication rebase, including
+prepared-conflict continuation. An ordinary no-sync-needed initial publication remains available; a non-fast-forward publication
+is safely deferred with its worktree and evidence preserved.
+
+The future P8 replacement is intended to use additive target-branch merge and ordinary fast-forward-safe push. That behavior is
+not implemented or promised by this release. Existing unresolved prepared, failed, or push-intended operations block project
+writers until safely reconciled; they are not automatically retried, cancelled, or reported successful. Maintenance does not
+enable auto-merge or remove the `Human Review` step.
 
 ### CI expectation discovery
 

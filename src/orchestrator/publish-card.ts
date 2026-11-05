@@ -37,8 +37,6 @@ import { PublishedCardStateError } from "./published-card-state-error.js";
 import { getElapsedWorkflowTime } from "./workflow-duration.js";
 import { WorkflowError } from "./workflow-error.js";
 import { writeTrustedCommitState } from "./trusted-commit-state.js";
-import { writePreparedConflict } from "./prepared-conflict-state.js";
-import { remediatePreparedConflict } from "./remediate-prepared-conflict.js";
 
 export interface PublishCardOptions {
   trello: TrelloClient;
@@ -406,6 +404,7 @@ export async function publishCard({
   beforePushVerification,
   expectedExistingPullRequestUrl,
 }: PublishCardOptions): Promise<void> {
+  void commands;
   const cardLog = logger.child({
     projectId: project.id,
     cardId: card.id,
@@ -431,6 +430,9 @@ export async function publishCard({
 
     const defaultBranchRef = `origin/${project.repository.defaultBranch}`;
 
+    // Existing PR identity is still checked, but P1 does not rewrite a branch
+    // in any case. A remote-branch absence is never used as proof of
+    // unpublished history.
     if (expectedExistingPullRequestUrl !== undefined) {
       // Never rewrite the already-published history of an existing PR merely
       // because its base advanced. Its remediation commit must fast-forward
@@ -480,82 +482,9 @@ export async function publishCard({
         throw new TrelloRequestAbortedError();
       }
 
-      cardLog.event(`Rebasing ${branch} onto ${defaultBranchRef}...`);
-
-      try {
-        await git.rebase(
-          worktreePath,
-          defaultBranchRef,
-          project.repository.gitIdentity,
-        );
-      } catch (error) {
-        let rebaseState;
-        let conflictedPaths: string[];
-
-        try {
-          rebaseState = await git.getRebaseState(worktreePath);
-          conflictedPaths = await git.getConflictedPaths(worktreePath);
-        } catch (inspectionError) {
-          throw new WorkflowError(
-            "Git/GitHub",
-            `Failed to rebase ${branch} onto ${defaultBranchRef}: ${getErrorMessage(error)}. Git could not confirm an active rebase conflict (${getErrorMessage(inspectionError)}); the task worktree and branch were preserved for diagnosis and retry.`,
-            { cause: error },
-          );
-        }
-
-        if (rebaseState === null || conflictedPaths.length === 0) {
-          throw new WorkflowError(
-            "Git/GitHub",
-            `Failed to rebase ${branch} onto ${defaultBranchRef}: ${getErrorMessage(error)}. Git did not report an active rebase with conflicted paths; the task worktree and branch were preserved for diagnosis and retry.`,
-            { cause: error },
-          );
-        }
-
-        let handoff;
-
-        try {
-          handoff = writePreparedConflict(
-            project,
-            card.id,
-            conflictedPaths,
-            rebaseState,
-            {
-              origin: "initial-publication",
-              trustedTaskCommitSha: commitSha,
-              rebaseTargetSha: rebaseState.onto,
-            },
-          );
-        } catch (handoffError) {
-          throw new WorkflowError(
-            "Git/GitHub",
-            `Failed to preserve the publication rebase conflict for ${branch}: ${getErrorMessage(handoffError)}. The task worktree and branch were preserved for diagnosis and retry.`,
-            { cause: handoffError },
-          );
-        }
-
-        cardLog.event(
-          `Preserved publication rebase conflict for automated conflict remediation: ${conflictedPaths.join(", ")}`,
-        );
-
-        if (opencode === undefined) {
-          throw new WorkflowError(
-            "OpenCode",
-            `Publication rebase conflict for ${branch} was preserved for automated conflict remediation, but no OpenCode client is configured.`,
-            { cause: error },
-          );
-        }
-
-        await remediatePreparedConflict({
-          git,
-          github,
-          opencode,
-          ...(commands === undefined ? {} : { commands }),
-          project,
-          card,
-          handoff,
-          signal: signal ?? new AbortController().signal,
-        });
-      }
+      cardLog.event(
+        `Published-branch rewriting is disabled by the P1 safety guardrail; attempting ordinary fast-forward-safe publication without rebasing ${branch}`,
+      );
     }
 
     publishedCommitSha = await git.getHeadSha(worktreePath);

@@ -266,9 +266,9 @@ access and retry through the normal workflow; the service does not persist token
 strictly later than the current time plus the five-minute refresh window; expired, nearly expired, and exact-boundary
 responses therefore fail through the safe App exchange error path without being returned or cached.
 
-Immediately before publication, the task worktree fetches `origin/<defaultBranch>` and rebases `agent/<trello-card-id>` onto
-that fetched ref. Git leaves an already-current branch unchanged. The resulting `HEAD` drives remote comparison, push
-decisions, pull-request publication, notifications, and the Trello summary.
+Immediately before publication, the task worktree fetches `origin/<defaultBranch>`. P1 disables all automatic rebasing and
+prepared-conflict continuation. Ordinary initial publication is still available when the task branch can be published without
+rewriting history; otherwise the workflow preserves state and defers publication.
 
 The post-commit AI pull-request-description step is presentation-only. Its strict structured output accepts a summary of at most
 1,000 characters, at most 20 `changes` entries and 20 `validation` entries, and at most 500 characters per entry. Empty arrays
@@ -296,7 +296,7 @@ The publication rules are:
 - A remote branch already at the resulting commit is not pushed again.
 - A remote branch that is not an ancestor of the resulting commit is rejected because it would require a non-fast-forward
   update.
-- Fetch or rebase failure stops before push, pull-request lookup or creation, and the successful `Human Review` transition.
+- Fetch failure stops publication. A required non-fast-forward update is refused without rebase, and preserves the worktree and PR.
 - An existing open pull request is reused; a new pull request is created only when needed.
 - Normal publication never force-pushes. A task PR is observed on the exact published head. CI and local quality evidence are
   recorded for the human reviewer; neither passing evidence nor approval authorizes an orchestrator merge.
@@ -309,28 +309,19 @@ The task worktree and branch are preserved after fetch, rebase, publication, CI,
 and diagnostics can be resolved. An open pull request, including an approved or draft pull request, remains active and blocks the
 project's next task until a human merges or closes it. `autoMerge: true` is rejected during configuration loading.
 
-Prepared-publication conflicts follow the preservation boundary and never create a replacement pull request. A conflict is left
-in place for dedicated handling without automatic abort, reset, clean, worktree removal, or recreation. A validated handoff keeps
-task/base identity, the trusted pre-rebase commit, target, paths, and current rebase metadata. The dedicated OpenCode remediation
-session runs in the same isolated worktree and may continue every conflict stop; the agent does not control commits, pushes, or PRs.
+Prepared-publication conflicts and legacy prepared handoffs are not automatically handled. The worker does not inspect them to infer
+that rewriting is safe, and does not run a conflict agent, continue/abort/reset, clean, remove, recreate, or publish the worktree.
+The record, branch, refs, objects, intent, dirty/unshipped work, and handoff are preserved. PR state observation and verified
+terminal reconciliation continue read-only; affected task writers and claims remain blocked pending explicit reconciliation or
+the additive P8 implementation. See [Recovery](recovery.md).
 
-The coordinator verifies a completed rebase, clean worktree, correct branch, and trust evidence before continuing normal local
-quality review and publication. Failure, timeout, permission denial, unresolved conflict, or uncertain identity retains the handoff
-and worktree for operator attention. A blocked worker checks only the persisted handoff and Git conflict state; a valid completed
-rebase releases the block for the next normal task-session quality/publication gates. A missing or malformed handoff remains blocked.
+### Published branch rewriting is disabled
 
-### Rewriting an owned task branch
-
-The `GitClient.pushWithLease` helper is the only supported operation for publishing a caller-rewritten task branch. It may
-be used only for the exact `agent/<card-id>` branch convention. Before calling it, the caller must resolve the authoritative
-current SHA of that remote branch, for example with `git ls-remote`; a local tracking ref is not sufficient. The supplied SHA
-is placed in an exact `refs/heads/<branch>:<sha>` `--force-with-lease` option.
-
-Git performs the lease check at push time. If the branch changed after the authoritative lookup, or disappeared, the push
-fails and does not overwrite remote state. The helper propagates that failure, so callers must not report a successful update
-or advance workflow state after a rejected lease. It uses the same project-scoped GitHub App askpass credentials or ambient
-Git/PAT authentication as normal Git operations, and credentials are never command arguments. Unrestricted `--force` and
-unscoped `--force-with-lease` pushes remain unavailable.
+P1 removes the `pushWithLease` capability and disables all automatic rebases, including pre-publication and conflict continuation.
+No force-push or rebase-based publication is promised. Published history, remote refs, maintenance intents, conflict handoffs,
+worktrees, local-only commits, and dirty changes are retained when safe continuation is unavailable. The intended additive target
+merge and ordinary push replacement is deferred to P8; operators must not manually retry an uncertain operation or reset/discard
+its worktree. Ordinary initial publication requiring no synchronization remains supported.
 
 ## Elapsed workflow time
 
@@ -535,7 +526,7 @@ test, or live API verification has been performed; those checks remain separate 
 Operators should expect the orchestrator to refuse or stop rather than guess. It does not:
 
 - merge pull requests (automatic merge configuration is rejected);
-- use unrestricted force-pushes or unscoped force-with-lease pushes;
+- use force-pushes, including scoped `--force-with-lease`, or automatic rebases;
 - run agent implementation in the configured source checkout;
 - resume a `Working` card without qualifying transition and worktree or pull-request evidence;
 - mutate an open `Human Review` task without actionable feedback on its expected pull request;
