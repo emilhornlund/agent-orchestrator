@@ -1,23 +1,56 @@
-import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { GitClient, type RunGit } from "../src/git/git-client.js";
+import { createIsolatedGitFixture } from "./support/isolated-git-fixture.js";
 
 let root: string | undefined;
+let fixture: ReturnType<typeof createIsolatedGitFixture> | undefined;
 afterEach(() => {
   if (root !== undefined) fs.rmSync(root, { recursive: true, force: true });
   root = undefined;
+  fixture = undefined;
 });
 
 function git(cwd: string, ...args: string[]): string {
-  return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+  if (fixture === undefined) throw new Error("Git fixture is not initialized");
+  return fixture.git(cwd, ...args);
 }
 
 describe("P1 published rewrite guard (real Git repository)", () => {
+  it("ignores inherited Git and Node process configuration", () => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "p1-rebase-env-"));
+    const hostileConfig = path.join(root, "hostile-gitconfig");
+    fs.writeFileSync(
+      hostileConfig,
+      "[commit]\n\tgpgsign = true\n[core]\n\thooksPath = /hostile/hooks\n",
+    );
+    const previous = {
+      GIT_CONFIG_GLOBAL: process.env.GIT_CONFIG_GLOBAL,
+      GIT_CONFIG_COUNT: process.env.GIT_CONFIG_COUNT,
+      NODE_OPTIONS: process.env.NODE_OPTIONS,
+    };
+    process.env.GIT_CONFIG_GLOBAL = hostileConfig;
+    process.env.GIT_CONFIG_COUNT = "1";
+    process.env.NODE_OPTIONS = "--require=/hostile/preload.js";
+    try {
+      fixture = createIsolatedGitFixture(root);
+      expect(fixture.env).not.toHaveProperty("GIT_CONFIG_COUNT");
+      expect(fixture.env).not.toHaveProperty("NODE_OPTIONS");
+      expect(git(root, "config", "--get", "commit.gpgsign")).toBe("false");
+      expect(git(root, "config", "--get", "core.hooksPath")).toBe("/dev/null");
+    } finally {
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+
   it("refuses rebase and leased push without changing refs, objects, or worktree", async () => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), "p1-rebase-refusal-"));
+    fixture = createIsolatedGitFixture(root);
     const remote = path.join(root, "remote.git");
     const source = path.join(root, "source");
     const worktree = path.join(root, "worktree");
@@ -41,7 +74,7 @@ describe("P1 published rewrite guard (real Git repository)", () => {
     const history: string[][] = [];
     const runGit: RunGit = async (cwd, args) => {
       history.push([...args]);
-      return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+      return git(cwd, ...args);
     };
     const client = new GitClient(runGit);
     const refsBefore = git(source, "show-ref");

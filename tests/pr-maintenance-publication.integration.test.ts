@@ -1,22 +1,26 @@
-import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { GitClient } from "../src/git/git-client.js";
+import { createIsolatedGitFixture } from "./support/isolated-git-fixture.js";
 
 let root: string | undefined;
+let fixture: ReturnType<typeof createIsolatedGitFixture> | undefined;
 afterEach(() => {
   if (root !== undefined) fs.rmSync(root, { recursive: true, force: true });
   root = undefined;
+  fixture = undefined;
 });
 function git(cwd: string, ...args: string[]): string {
-  return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+  if (fixture === undefined) throw new Error("Git fixture is not initialized");
+  return fixture.git(cwd, ...args);
 }
 
 describe("P1 maintenance refusal (real Git remote)", () => {
   it("observes a real accepted push by exact remote head without dispatching a second push", async () => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), "p1-accepted-push-"));
+    fixture = createIsolatedGitFixture(root);
     const remote = path.join(root, "remote.git");
     const repo = path.join(root, "repo");
     git(root, "init", "--bare", "--initial-branch=main", remote);
@@ -34,7 +38,7 @@ describe("P1 maintenance refusal (real Git remote)", () => {
     const client = new GitClient(async (cwd, args) => {
       if (args[0] === "push") {
         pushCalls.push(1);
-        const output = execFileSync("git", args, { cwd, encoding: "utf8" });
+        const output = git(cwd, ...args);
         if (!pushAccepted) {
           pushAccepted = true;
           throw new Error(
@@ -43,7 +47,7 @@ describe("P1 maintenance refusal (real Git remote)", () => {
         }
         return output.trim();
       }
-      return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+      return git(cwd, ...args);
     });
 
     await expect(client.push(repo, "origin", "agent/card-1")).rejects.toThrow(
@@ -62,6 +66,7 @@ describe("P1 maintenance refusal (real Git remote)", () => {
 
   it("does not infer unpublished history from a deleted branch and preserves local evidence", async () => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), "p1-deleted-pr-branch-"));
+    fixture = createIsolatedGitFixture(root);
     const remote = path.join(root, "remote.git");
     const repo = path.join(root, "repo");
     const task = path.join(root, "task");
@@ -88,7 +93,7 @@ describe("P1 maintenance refusal (real Git remote)", () => {
     const history: string[][] = [];
     const client = new GitClient(async (cwd, args) => {
       history.push([...args]);
-      return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+      return git(cwd, ...args);
     });
     const taskRefsBefore = git(repo, "show-ref");
     const unrelatedHead = git(unrelated, "rev-parse", "HEAD");

@@ -289,6 +289,8 @@ describe("P1 stateful offline verification harness", () => {
     for (const argv of [
       ["push", "--force"],
       ["push", "--force-with-lease=main"],
+      ["push", "-f"],
+      ["-C", "/tmp/repo", "push", "-fu", "origin", "main"],
       ["push", "+refs/heads/main"],
     ]) {
       const unsafeArgv = new P1ServiceHarness();
@@ -297,6 +299,11 @@ describe("P1 stateful offline verification harness", () => {
         new P1Observer(unsafeArgv).assertNoForbiddenOrDuplicateEffects(),
       ).toThrow(/Forbidden/);
     }
+    const forcedFetch = new P1ServiceHarness();
+    forcedFetch.recordGitArgv(["fetch", "-f", "origin"]);
+    expect(() =>
+      new P1Observer(forcedFetch).assertNoForbiddenOrDuplicateEffects(),
+    ).not.toThrow();
     const transient = new P1ServiceHarness();
     transient.dispatch(
       "git-reset",

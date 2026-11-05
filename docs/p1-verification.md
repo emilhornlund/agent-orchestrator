@@ -61,3 +61,15 @@ These are implementer-observed results. Final validation of the exact resulting 
 ## Historical assertion inventory
 
 P1-T2/T3 replaced the prior auto-merge and published rewrite/leased-push assertions with no-merge/refusal/preservation guardrails. The changes are present at source base `8fc76e7`; they are historical context, not changes made by this T4 documentation update. T4 adds lifecycle/harness evidence and the three bounded coordinator corrections above. It does not relax unrelated assertions or claim successful recovery for the accepted-but-unacknowledged PR defect.
+
+## Supervisor execution record (historical)
+
+The supervisor recorded the following successful checks against the unchanged T4 tree at commit `75aae3e` on 2026-11-05; these are historical observations and do not describe the correction now in progress:
+
+- `yarn test:p1`: **PASS**, 5 files / 27 tests, at 21:58:40.
+- `yarn validate`: **PASS**, 119 files / 1,274 tests, at 21:58:57.
+- Diff check: **PASS**.
+- P1 task commit sequence: T1 `849c341`, T2 `e33a329`, T3 `8fc76e7`, T4 `75aae3e`.
+- First whole-phase independent review: **PASS for bounded P1**, with two low-severity findings subsequently assigned to P1-C1: force-push observation did not recognize short `git push -f` syntax and allowed non-push fetch handling to be overly broad; retained real-Git tests inherited ambient Git/Node process configuration. At that review handoff, the correction was still pending validation.
+
+Subsequent P1-C1 validation of the correction: the three focused suites passed (**3 files / 14 tests**), and `yarn validate` passed (**119 files / 1,275 tests**). These checks do not alter the historical T4 working-tree result above, and this record does not predict a resulting commit or SHA or certify phase closure. The six scenario statuses remain **Partial**, and the accepted-create/acknowledgement-loss recovery defect remains unresolved as described above.

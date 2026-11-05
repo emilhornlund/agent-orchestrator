@@ -445,15 +445,13 @@ export class P1Observer {
         /force-push|rebase|restore-worktree|reset|restore/i.test(event.action)
       )
         return true;
-      return (
-        event.service === "git" &&
-        (event.argv ?? []).some(
-          (arg) =>
-            /^--force(?:-with-lease)?(?:=|$)/.test(arg) ||
-            /^\+/.test(arg) ||
-            /^(?:rebase|reset|restore)$/.test(arg),
-        )
-      );
+      if (event.service !== "git") return false;
+      const argv = event.argv ?? [];
+      if (argv.some((arg) => /^(?:rebase|reset|restore)$/.test(arg)))
+        return true;
+      const commandIndex = gitCommandIndex(argv);
+      if (commandIndex < 0 || argv[commandIndex] !== "push") return false;
+      return argv.slice(commandIndex + 1).some(isForcePushArgument);
     });
     if (unsafe.length)
       throw new Error(
@@ -487,6 +485,32 @@ export class P1Observer {
     if (new Set(commentKeys).size !== commentKeys.length)
       throw new Error("Duplicate accepted comment effect in ledger");
   }
+}
+
+function gitCommandIndex(argv: readonly string[]): number {
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (
+      arg === "-C" ||
+      arg === "-c" ||
+      arg === "--git-dir" ||
+      arg === "--work-tree"
+    ) {
+      index += 1;
+      continue;
+    }
+    if (arg?.startsWith("-")) continue;
+    return index;
+  }
+  return -1;
+}
+
+function isForcePushArgument(arg: string): boolean {
+  return (
+    /^--force(?:-with-lease)?(?:=|$)/.test(arg) ||
+    /^-[^-]*f/.test(arg) ||
+    /^\+/.test(arg)
+  );
 }
 
 export function createRealGitFixture(): {
