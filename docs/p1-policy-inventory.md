@@ -2,16 +2,16 @@
 
 ## Purpose, authority, and evidence boundary
 
-This is the P1 inventory required before structural replacement. It records requirement-derived target contracts, the operations and transitions that must be guarded, current source/test entrypoints, and evidence obligations. It does **not** define a new runtime schema, claim that target behavior is implemented, or change requirements. `requirements.md` is authoritative; `specification.md` identifies acceptance criteria; `verification.md` defines scenario oracles; `implementation-audit.md` records an earlier audit; `rewrite-plan.md` defines the phase boundary. Where descriptions differ, follow requirements and record the discrepancy rather than weakening them.
+This inventory was written at the P1 baseline before structural replacement. It records requirement-derived target contracts, the then-current operations and transitions to guard, source/test entrypoints, and evidence obligations. Its baseline descriptions are historical, not a current-tree inventory; see `p1-verification.md` for T4 execution and scoped current evidence. It does **not** define a new runtime schema, change requirements, or by itself claim target behavior is implemented. `requirements.md` is authoritative; `specification.md` identifies acceptance criteria; `verification.md` defines scenario oracles; `implementation-audit.md` records an earlier audit; `rewrite-plan.md` defines the phase boundary. Where descriptions differ, follow requirements and record the discrepancy rather than weakening them.
 
 Evidence labels used here:
 
 - **Target contract**: behavior required by requirements, not a claim about current code.
-- **Source observed**: entrypoint or implementation path inspected at P1 baseline `6ab31ca`.
+- **Source observed**: entrypoint or implementation path inspected at P1 baseline `6ab31ca`; this does not describe the current tree without reinspection.
 - **Test observed**: a named test contains an assertion/path relevant to the policy. It does not prove the full external workflow.
 - **Not demonstrated**: no independent external observation or complete scenario evidence is recorded here.
 
-The audit's detailed line references use its audited revision `7132b33`, not this P1 baseline. File/function names below are a navigation inventory, not a claim that the audit line numbers are unchanged. The implementation audit classifies `REQ-PR-008`, `REQ-MNT-002`, and `REQ-GIT-001` as contradictory; its conclusion is consistent with the P1 source/test inspection below. Formatting, this inventory, and passing unit tests are not behavioral evidence.
+The audit's detailed line references use its audited revision `7132b33`, not this P1 baseline. File/function names below are a historical navigation inventory, not a claim that the paths or audit line numbers remain unchanged. The implementation audit classifies `REQ-PR-008`, `REQ-MNT-002`, and `REQ-GIT-001` as contradictory; its conclusion is consistent with the P1 source/test inspection at that time. Formatting, this inventory, and passing unit tests are not behavioral evidence.
 
 ## Requirement-derived policy contracts
 
@@ -84,7 +84,7 @@ Useful non-conflicting coverage includes `tests/git-client.test.ts` for option c
 
 ## P1 verification record and evidence template
 
-P1 **starts** the scenarios below by recording policy, locating entrypoints, and establishing baseline/evidence obligations. This document is not execution of the scenarios. Existing source/tests establish conflicts and selected local behavior only; no scenario is marked passed. The complete scenario definitions in `verification.md` remain binding, including stated levels and variants.
+The following table records the **historical P1 baseline**, when the scenarios were only inventoried. It is not a current result table: T4 execution and its explicit Partial statuses are recorded in `p1-verification.md`. The complete scenario definitions in `verification.md` remain binding, including stated levels and variants. No historical “Started” status below should be read as a current assertion that subsequent P1-T2/T3/T4 work did not occur.
 
 | Scenario       | Requirement coverage and core P1 work                                                                                                              | P1 baseline status                                                                                                                                          | Later/full obligation                                                                                                                                                                                                               |
 | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -120,4 +120,4 @@ Outcome meanings follow `verification.md`: **Passed** only when every stated obs
 
 ## P1 scope ledger
 
-This task is documentation/contracts inventory only. It does not remove merge or Git paths (T2/T3), implement a new state owner/schema or broad harness (P2), implement additive maintenance (P8), relax advisory gates (P6/P7/P8), revise authoritative requirements/specification/verification/audit/plan documents, or claim phase completion. The follow-on work must use the contracts, transition inventory, conflict list, and evidence template above as traceable starting points.
+This paragraph describes the original inventory task's boundary, not the current state or scope of P1-T4. Subsequent T2/T3 work changed the identified merge and Git paths, and T4 records the scoped harness/lifecycle evidence and coordinator corrections in `p1-verification.md`. P1 still does not implement a new durable state owner/schema (P2), additive maintenance (P8), or advisory-gate changes (P6/P7/P8), revise authoritative requirements/specification/verification/audit/plan documents, or claim phase completion. The contracts, transitions, conflict list, and evidence template above remain traceability material, with historical source/test observations labeled as such.

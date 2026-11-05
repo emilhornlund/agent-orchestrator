@@ -14,6 +14,7 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:p1": "vitest run tests/p1-harness.integration.test.ts tests/p1-production-lifecycle.integration.test.ts tests/pr-maintenance-publication.integration.test.ts tests/task-session-dispatch.test.ts tests/task-session-terminal-pr.test.ts",
     "test:watch": "vitest",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",

@@ -999,7 +999,10 @@ export async function runTaskSessionWorkflow(
           signal,
         });
         if (outcome === "completed") options.onHumanReviewCardLeft?.(card.id);
-        continue;
+        // A verified human terminal outcome owns this poll boundary. Do not
+        // claim another Ready card until a subsequent poll observes the
+        // completed Trello transition.
+        return;
       }
       const terminalMutation = queue.claimForRecovery(terminalEventId);
       if (terminalMutation === null) continue;
@@ -1020,7 +1023,7 @@ export async function runTaskSessionWorkflow(
         queue.fail(terminalMutation.eventId);
         throw error;
       }
-      continue;
+      return;
     }
     let record = taskStore.read(observation.cardId);
     const ciStateKey = `${project.id}/${observation.cardId}/${observation.headSha}`;
@@ -2330,13 +2333,18 @@ export async function runTaskSessionWorkflow(
     recoveryWorktreePath = worktreePath;
   } else {
     const readyCards = preflightReadyCards;
-    const eligibleCards = hasUnresolvedLegacyMaintenance
-      ? []
-      : readyCards.filter(
-          (card) =>
-            isCardStartDateReached(card, Date.now()) &&
-            getWorkflowKind(card, project) !== null,
-        );
+    const hasActiveHumanReview = humanReviewCards.some((card) => {
+      const record = taskStore.read(card.id);
+      return record?.phase === "human-feedback" || record?.phase === "ci";
+    });
+    const eligibleCards =
+      hasUnresolvedLegacyMaintenance || hasActiveHumanReview
+        ? []
+        : readyCards.filter(
+            (card) =>
+              isCardStartDateReached(card, Date.now()) &&
+              getWorkflowKind(card, project) !== null,
+          );
     // Ready cards may have been moved externally while their queued claim
     // persisted. Reconcile verified orphans before claiming the next event:
     // otherwise a stale claim can monopolize the project mutation queue and
@@ -2495,7 +2503,9 @@ export async function runTaskSessionWorkflow(
     }
     mutation =
       readyRecoveryEvent === null
-        ? queue.claimNext()
+        ? eligibleCards.length === 0
+          ? null
+          : queue.claimNext()
         : queue.claimForRecovery(readyRecoveryEvent.eventId);
     if (mutation === null) return;
     selectedCard =
