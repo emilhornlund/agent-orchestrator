@@ -4,7 +4,6 @@ import {
   contextRetentionIntervalMilliseconds,
 } from "../context/card-context-retention.js";
 import type { GitClient } from "../git/git-client.js";
-import { getExistingPreparedConflictWorktree } from "../git/prepare-worktree.js";
 import type { GitHubClient } from "../github/github-client.js";
 import { withGitHubOperationProject } from "../github/github-operation-context.js";
 import {
@@ -47,7 +46,6 @@ import {
   MAX_PREPARED_CONFLICT_REMEDIATION_ATTEMPTS,
   PreparedConflictRemediationError,
 } from "./remediate-prepared-conflict.js";
-import { readPreparedConflict } from "./prepared-conflict-state.js";
 import {
   MAX_TRELLO_RECONCILIATION_ATTEMPTS,
   RetryableTrelloReconciliationError,
@@ -321,81 +319,20 @@ function createPersistedReconciliationBlock(
   };
 }
 
-function isGitSha(value: string): boolean {
-  return /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(value);
-}
-
 async function hasPreparedConflictRecovery(
-  git: GitClient,
-  project: PollingProject,
-  blocked: BlockedPreparedConflict,
-  signal: AbortSignal,
+  _git: GitClient,
+  _project: PollingProject,
+  _blocked: BlockedPreparedConflict,
+  _signal: AbortSignal,
 ): Promise<boolean> {
-  if (signal.aborted) {
-    return false;
-  }
-
-  if (blocked.cardId === undefined) {
-    return false;
-  }
-
-  try {
-    const handoff = readPreparedConflict(project, blocked.cardId);
-
-    if (handoff === null) {
-      return false;
-    }
-
-    const worktree = await getExistingPreparedConflictWorktree(
-      git,
-      project,
-      blocked.cardId,
-      handoff.rebase,
-    );
-
-    if (worktree === null || worktree.rebase !== null) {
-      // A matching active rebase or any prepared-state mismatch remains blocked.
-      return false;
-    }
-
-    if ((await git.getConflictedPaths(worktree.path)).length > 0) {
-      return false;
-    }
-
-    const currentHead = await git.getHeadSha(worktree.path);
-
-    if (
-      !isGitSha(currentHead) ||
-      currentHead === handoff.rebase.originalHead ||
-      !(await git.isAncestor(
-        worktree.path,
-        handoff.rebase.onto,
-        currentHead,
-      )) ||
-      (await git.getStatus(worktree.path)).trim().length > 0
-    ) {
-      return false;
-    }
-
-    // Local completion only releases the project block. The OpenCode remediation
-    // session owns repository validation; the worker owns the lease-protected
-    // push and handoff removal.
-    return true;
-  } catch (error) {
-    if (!blocked.recoveryCheckFailed) {
-      blocked.recoveryCheckFailed = true;
-      logger
-        .child({
-          projectId: project.id,
-          cardId: blocked.cardId,
-        })
-        .warn(
-          `Could not inspect blocked prepared-conflict state: ${getErrorMessage(error)}; retaining the original failure context`,
-        );
-    }
-
-    return false;
-  }
+  void _git;
+  void _project;
+  void _blocked;
+  void _signal;
+  // P1 deliberately offers no automatic recovery path: neither apparent local
+  // completion nor remote-branch absence proves a rebase was unpublished.
+  // Preserve blockage and artifacts for explicit operator reconciliation.
+  return false;
 }
 
 async function runProjectWorker(
@@ -706,7 +643,7 @@ async function runProjectWorker(
           recoveryCheckFailed: false,
         });
         projectLog.error(
-          "Prepared conflict remediation retry threshold exhausted; blocking this project until the handoff or underlying conflict state is resolved",
+          `Prepared-conflict recovery is safely deferred for ${cardId ?? "unknown card"}: automatic rebase continuation is disabled and local/remote state cannot establish unpublished provenance. Handoff and worktree are preserved; no branch writer or new claim will run until additive recovery is available or an operator reconciles the state.`,
         );
       }
 

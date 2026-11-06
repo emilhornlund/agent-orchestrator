@@ -81,18 +81,20 @@ The expected remote branch is deleted only for a verified merged PR and only aft
 local worktree cleanup is restricted to the expected path and branch and refuses symlinks, dirty trees, active rebases, conflicts,
 or unknown paths. A cleanup failure preserves the terminal event so the operation can be retried without losing ownership.
 
-## Exhausted review after a publication rebase
+## Temporarily deferred published-PR maintenance
 
-When implementation review repairs reach `opencode.remediation.maxPasses`,
-the validated implementation is eligible for **Human Review publication only**.
-If a subsequent publication rebase changes the source snapshot, the old failed
-review must not be presented as current or re-run indefinitely. The
-orchestrator may publish the rebased, clean trusted commit only when **fresh
-validation and configured coverage both pass on its exact current snapshot**.
-The PR must identify that its unresolved review findings describe the
-pre-rebase version and that the rebased result still requires human review.
-Automatic merging remains prohibited. Changed or missing validation/coverage
-evidence, a dirty worktree, or uncertain Git state must remain blocked.
+**PR maintenance and every rebase/continue path are temporarily disabled by P1.** The orchestrator does not resume prepared rebases,
+including apparently unpublished conflicts, force-with-lease pushes, or retry uncertain maintenance publication. Preserve the maintenance record, worktree, backup refs,
+rewritten local objects, dirty/unshipped changes, and remote history. If remote acceptance is ambiguous, do not retry or retire
+the operation as successful; require operator reconciliation until additive maintenance is available in P8. All automatic rebasing
+and conflict continuation, including pre-publication rebase, are temporarily disabled. Ordinary publication remains supported when
+it requires no history rewrite.
+
+P1 temporarily disables all automatic rebase and continuation paths, including
+pre-publication synchronization. Ordinary initial publication that needs no
+sync remains supported. A required history rewrite or conflict recovery is
+deferred safely; P8 owns additive maintenance. Do not manually retry uncertain
+pushes or reset, abort, clean, or discard the worktree.
 
 A legacy `attention-required` record without a persisted `terminalFailure`
 cannot be automatically moved to Failed or discarded. Polling now logs the
@@ -104,19 +106,13 @@ and persisted task state before deciding how to resume or salvage the PR.
 
 ## Failed, unpublished PR maintenance and removed tasks
 
-A deterministic PR-maintenance quality failure (including an invalid review
-response after format correction) must not indefinitely own the project queue.
-On the next poll, a failed maintenance mutation can be retired only when its
-persisted operation is unowned, the prepared commit identity matches the failed
-quality evidence, and **no publication intent exists**. The maintenance record
-is marked `cancelled` before the matching queue mutation is completed. A
-restart between these writes reconciles the same event without replaying work.
-
-The prepared local rebase, its worktree, and its persisted evidence are
-preserved. A cancelled, failed maintenance review is not treated as passing
-and is not automatically rerun or published. A subsequent closed PR with
-such an unpublished rebase can transition its extant Trello card to Backlog,
-but must preserve the worktree for deliberate operator cleanup.
+Legacy maintenance records of every status are treated conservatively. Status
+labels, missing remote branches, and OPEN-only PR lookups do not prove that a
+clean local rewrite was shipped or never published. Do not cancel, retire,
+retry, or clean up records, refs, objects, publication intents, handoffs, or
+worktrees automatically. Read-only PR observation and independently verified
+terminal reconciliation may continue; any legacy maintenance artifact causes
+terminal cleanup to preserve the local worktree and related evidence.
 
 A queued or interrupted terminal-PR mutation may outlive its Trello card.
 If that card is absent from the Human Review list, polling verifies the
@@ -132,16 +128,16 @@ operator recovery in those cases.
 
 ## Prepared publication conflicts
 
-A verified active conflicted rebase uses the persisted handoff below the configured worktree root:
+A legacy active conflicted rebase may have a persisted handoff below the configured worktree root:
 
 ```text
 .orchestrator/prepared-conflicts/<project-id>/<card-id>.json
 ```
 
-The handoff preserves task/base identity, trusted pre-rebase commit, target, conflicted paths, and rebase metadata. The conflict
-worktree is not aborted, reset, cleaned, removed, or recreated automatically. Dedicated remediation runs in the same owned
-worktree, and publication resumes only after the handoff and rebase are authoritatively verified. A malformed handoff, a rebase
-error without an active conflict and conflict paths, failed remediation, or uncertain publication remains available for attention.
+The handoff and conflict worktree are preserved without abort, reset, cleanup, removal, recreation, or OpenCode continuation. No
+automatic publication or recovery is attempted. The affected task remains blocked until an operator reconciles history or later
+additive conflict handling is implemented. A malformed handoff, missing remote branch, or apparent completed rebase is not proof
+that automatic continuation is safe.
 
 ## Deliberate retry and operator actions
 

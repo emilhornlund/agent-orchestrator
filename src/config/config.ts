@@ -259,6 +259,17 @@ const configSchema = z
     }),
   })
   .superRefine((config, ctx) => {
+    config.projects.forEach((project, index) => {
+      if (project.autoMerge) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["projects", index, "autoMerge"],
+          message:
+            'Automatic pull request merging is not supported. Remove "autoMerge" or set it to false; a human must merge or close pull requests.',
+        });
+      }
+    });
+
     const projectIds = config.projects.map((project) => project.id);
     const projectIdCounts = new Map<string, number>();
 

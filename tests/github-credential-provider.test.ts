@@ -283,15 +283,7 @@ describe("GitHub credential command wiring", () => {
       body: "Body",
       project: configuredProject,
     });
-    await github.mergePullRequest({
-      cwd: "/repo",
-      repository: "project-a/repository",
-      pullRequestUrl: "https://github.com/project-a/repository/pull/1",
-      commitSha: "head",
-      project: configuredProject,
-    });
-
-    expect(runGitHubCommand).toHaveBeenCalledTimes(3);
+    expect(runGitHubCommand).toHaveBeenCalledTimes(2);
     for (const call of runGitHubCommand.mock.calls) {
       expect(call[2]?.GH_TOKEN).toBe("token-a");
       expect(call[1]).not.toContain("token-a");

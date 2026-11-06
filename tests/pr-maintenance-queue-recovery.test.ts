@@ -146,8 +146,8 @@ function fixture() {
   };
 }
 
-describe("failed PR-maintenance queue recovery", () => {
-  it("releases a failed review without a publication attempt and survives restart", () => {
+describe("P1 legacy PR-maintenance preservation", () => {
+  it("preserves failed review state and its queue ownership across restart", () => {
     const f = fixture();
     expect(f.queue.claimNext()).toBeNull();
 
@@ -159,23 +159,23 @@ describe("failed PR-maintenance queue recovery", () => {
 
     const restartedQueue = new TaskMutationQueue(f.context, f.project);
     const restartedStore = new PrMaintenanceStore(f.context, f.project);
-    expect(restartedStore.inspect(operationId)?.status).toBe("cancelled");
+    expect(restartedStore.inspect(operationId)?.status).toBe("uncertain");
     expect(
       restartedStore.inspect(operationId)?.localPreparation?.resultingHead,
     ).toBe(preparedHead);
-    expect(restartedQueue.getActive()).toBeNull();
+    expect(restartedQueue.getActive()?.status).toBe("failed");
     expect(
       restartedQueue.list().find((e) => e.eventId === f.maintenanceId)?.status,
-    ).toBe("completed");
+    ).toBe("failed");
     retireFailedUnpublishedPrMaintenance({
       project: f.project,
       maintenanceStore: restartedStore,
       mutationQueue: restartedQueue,
     });
-    expect(restartedQueue.getActive()).toBeNull();
+    expect(restartedQueue.getActive()?.status).toBe("failed");
   });
 
-  it("retires a closed PR event after its Trello task was removed, then claims new work", async () => {
+  it("observes a closed PR but does not retire a competing uncertain maintenance owner", async () => {
     const f = fixture();
     retireFailedUnpublishedPrMaintenance({
       project: f.project,
@@ -194,15 +194,15 @@ describe("failed PR-maintenance queue recovery", () => {
       observedReviewCardIds: [],
     });
     expect(f.queue.list().find((e) => e.eventId === f.terminalId)?.status).toBe(
-      "completed",
+      "queued",
     );
-    expect(f.queue.claimNext()?.cardId).toBe(nextCardId);
+    expect(f.queue.claimNext()).toBeNull();
     expect(f.store.inspect(operationId)?.localPreparation?.resultingHead).toBe(
       preparedHead,
     );
   });
 
-  it("retires a removed-card event when the closed PR branch was deleted", async () => {
+  it("does not infer safe cleanup from a deleted branch", async () => {
     const f = fixture();
     retireFailedUnpublishedPrMaintenance({
       project: f.project,
@@ -227,9 +227,9 @@ describe("failed PR-maintenance queue recovery", () => {
       observedReviewCardIds: [],
     });
     expect(f.queue.list().find((e) => e.eventId === f.terminalId)?.status).toBe(
-      "completed",
+      "queued",
     );
-    expect(f.queue.claimNext()?.cardId).toBe(nextCardId);
+    expect(f.queue.claimNext()).toBeNull();
   });
 
   it("does not retire an orphan event on a mismatched GitHub PR head", async () => {

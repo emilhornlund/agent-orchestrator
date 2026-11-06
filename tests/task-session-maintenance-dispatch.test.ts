@@ -7,9 +7,10 @@ import { runTaskSessionWorkflow } from "../src/orchestrator/run-task-session-wor
 import { runTaskSessionFeedbackCycle } from "../src/orchestrator/run-task-session-feedback-cycle.js";
 import { observeTaskSessionReviewCards } from "../src/orchestrator/observe-task-session-review-cards.js";
 import { maintainOutdatedPr } from "../src/orchestrator/maintain-outdated-pr.js";
-import { enrichMaintainedPullRequestDescription } from "../src/orchestrator/publish-card.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
 import { TaskPlanStore } from "../src/task-session/task-plan-store.js";
+import { PrMaintenanceStore } from "../src/task-session/pr-maintenance-store.js";
+import { runTaskSessionCiRepairs } from "../src/task-session/run-task-session-ci-repairs.js";
 
 vi.mock("../src/orchestrator/observe-task-session-review-cards.js", () => ({
   observeTaskSessionReviewCards: vi.fn(),
@@ -23,9 +24,11 @@ vi.mock("../src/orchestrator/maintain-outdated-pr.js", () => ({
 vi.mock("../src/orchestrator/run-task-session-feedback-cycle.js", () => ({
   runTaskSessionFeedbackCycle: vi.fn(async () => "idle"),
 }));
+vi.mock("../src/task-session/run-task-session-ci-repairs.js", () => ({
+  runTaskSessionCiRepairs: vi.fn(async () => ({ status: "idle" })),
+}));
 vi.mock("../src/orchestrator/publish-card.js", () => ({
   publishCard: vi.fn(),
-  enrichMaintainedPullRequestDescription: vi.fn(async () => true),
 }));
 
 const sha = "a".repeat(40);
@@ -41,10 +44,39 @@ async function pollReview(
   relation: "current" | "behind" | "diverged" | "uncertain",
   maintenance?: { enabled: boolean },
   withPlan = true,
+  feedbackIds: string[] = [],
   emailNotifier?: {
     send: (message: { subject: string; text: string }) => Promise<void>;
   },
-): Promise<void> {
+  legacyCardId?: string,
+  readyCard?: {
+    id: string;
+    name: string;
+    desc: string;
+    idList: string;
+    idLabels: string[];
+    url: string;
+  },
+  workingCard?: {
+    id: string;
+    name: string;
+    desc: string;
+    idList: string;
+    idLabels: string[];
+    url: string;
+  },
+  taskPhase: "human-feedback" | "ci" | "implementation" = "human-feedback",
+  ciStatus: "passed" | "failed" = "passed",
+): Promise<{
+  git: {
+    addWorktreeWithNewBranch: ReturnType<typeof vi.fn>;
+    fetch: ReturnType<typeof vi.fn>;
+    push: ReturnType<typeof vi.fn>;
+    getCurrentBranch: ReturnType<typeof vi.fn>;
+  };
+  openCodeRun: ReturnType<typeof vi.fn>;
+  project: ProjectConfig & { contextRoot: string };
+}> {
   root = fs.mkdtempSync(path.join(os.tmpdir(), "pr-maintenance-dispatch-"));
   const project = {
     id: "project",
@@ -93,7 +125,7 @@ async function pollReview(
     version: 1,
     projectId: project.id,
     cardId: card.id,
-    phase: "human-feedback",
+    phase: taskPhase,
     primarySessionId: "session",
     sessionCreationStatus: "bound",
     expectedBranch: "agent/card",
@@ -108,6 +140,21 @@ async function pollReview(
     createdAt: "2026-10-24T09:00:00.000Z",
     updatedAt: "2026-10-24T09:00:00.000Z",
   });
+  if (legacyCardId !== undefined) {
+    new PrMaintenanceStore(project.contextRoot, project).create({
+      projectId: project.id,
+      cardId: legacyCardId,
+      pullRequest: {
+        number: 7,
+        url: "https://github.com/owner/repo/pull/7",
+      },
+      expectedRemoteHead: "b".repeat(40),
+      targetBaseHead: "c".repeat(40),
+      operationId: "00000000-0000-4000-8000-000000000007",
+      createdAt: "2026-10-24T09:00:00.000Z",
+      updatedAt: "2026-10-24T09:00:00.000Z",
+    });
+  }
   if (withPlan) {
     new TaskPlanStore(project.contextRoot, project).create(
       {
@@ -138,28 +185,46 @@ async function pollReview(
       headSha: sha,
       pullRequestUrl: "https://github.com/owner/repo/pull/42",
       baseRelation: relation,
-      ciEvaluation: { status: "passed" },
-      feedbackIds: [],
+      ciEvaluation: {
+        status: ciStatus,
+        ...(ciStatus === "failed" ? { failures: [] } : {}),
+      },
+      feedbackIds,
       requestedChanges: null,
       conversationComments: [],
     },
   ] as never);
 
+  const trello = {
+    getCards: vi.fn(async (listId: string) =>
+      listId === "review"
+        ? [card]
+        : listId === "ready" && readyCard !== undefined
+          ? [readyCard]
+          : listId === "working" && workingCard !== undefined
+            ? [workingCard]
+            : [],
+    ),
+  };
+  const git = {
+    addWorktreeWithNewBranch: vi.fn(),
+    fetch: vi.fn(),
+    push: vi.fn(),
+    getCurrentBranch: vi.fn(),
+  };
+  const openCode = { run: vi.fn() };
   await runTaskSessionWorkflow({
     project,
-    trello: {
-      getCards: vi.fn(async (listId: string) =>
-        listId === "review" ? [card] : [],
-      ),
-    } as never,
-    git: {} as never,
+    trello: trello as never,
+    git: git as never,
     github: {} as never,
-    openCode: {} as never,
+    openCode: openCode as never,
     commands: {} as never,
     signal: new AbortController().signal,
     prepareAttachmentContext: async () => undefined,
     ...(emailNotifier === undefined ? {} : { emailNotifier }),
   });
+  return { git, project, openCodeRun: openCode.run };
 }
 
 describe("opt-in maintenance in the production Human Review polling path", () => {
@@ -175,6 +240,95 @@ describe("opt-in maintenance in the production Human Review polling path", () =>
       });
     },
   );
+
+  it("does not let routine maintenance deferral suppress actionable feedback", async () => {
+    await pollReview("behind", { enabled: true }, true, ["review-1"]);
+    expect(maintainOutdatedPr).toHaveBeenCalledOnce();
+    expect(runTaskSessionFeedbackCycle).toHaveBeenCalledOnce();
+    expect(
+      vi.mocked(runTaskSessionFeedbackCycle).mock.calls[0]?.[0],
+    ).toMatchObject({
+      observation: { feedbackIds: ["review-1"] },
+    });
+  });
+
+  it("blocks failed-CI branch writers when an unresolved legacy effect has no queue owner", async () => {
+    const { git, openCodeRun, project } = await pollReview(
+      "current",
+      undefined,
+      true,
+      [],
+      undefined,
+      "legacy-card-absent-from-trello",
+      undefined,
+      undefined,
+      "ci",
+      "failed",
+    );
+
+    expect(runTaskSessionCiRepairs).not.toHaveBeenCalled();
+    expect(openCodeRun).not.toHaveBeenCalled();
+    expect(git.addWorktreeWithNewBranch).not.toHaveBeenCalled();
+    expect(git.fetch).not.toHaveBeenCalled();
+    expect(git.push).not.toHaveBeenCalled();
+    expect(
+      new PrMaintenanceStore(project.contextRoot, project).inspect(),
+    ).toHaveLength(1);
+  });
+
+  it("blocks a different Ready card project-wide when a legacy card is absent from active Trello lists", async () => {
+    const readyCard = {
+      id: "different-ready-card",
+      name: "New task",
+      desc: "Implement this task",
+      idList: "ready",
+      idLabels: ["feature"],
+      url: "https://trello.example/new-task",
+    };
+    const { git, openCodeRun } = await pollReview(
+      "current",
+      undefined,
+      true,
+      [],
+      undefined,
+      "legacy-card-absent-from-active-lists",
+      readyCard,
+    );
+
+    expect(git.addWorktreeWithNewBranch).not.toHaveBeenCalled();
+    expect(git.fetch).not.toHaveBeenCalled();
+    expect(git.push).not.toHaveBeenCalled();
+    expect(openCodeRun).not.toHaveBeenCalled();
+    expect(runTaskSessionCiRepairs).not.toHaveBeenCalled();
+  });
+
+  it("does not resume an existing Working implementation under unresolved maintenance", async () => {
+    const workingCard = {
+      id: "working-task",
+      name: "Existing implementation",
+      desc: "Continue implementation",
+      idList: "working",
+      idLabels: ["feature"],
+      url: "https://trello.example/working-task",
+    };
+    const { git, openCodeRun } = await pollReview(
+      "current",
+      undefined,
+      true,
+      [],
+      undefined,
+      "legacy-card-absent-from-active-lists",
+      undefined,
+      workingCard,
+      "implementation",
+    );
+
+    expect(git.getCurrentBranch).not.toHaveBeenCalled();
+    expect(git.addWorktreeWithNewBranch).not.toHaveBeenCalled();
+    expect(git.fetch).not.toHaveBeenCalled();
+    expect(git.push).not.toHaveBeenCalled();
+    expect(openCodeRun).not.toHaveBeenCalled();
+  });
 
   it.each(["current", "uncertain"] as const)(
     "does not dispatch %s PRs",
@@ -194,28 +348,11 @@ describe("opt-in maintenance in the production Human Review polling path", () =>
     expect(maintainOutdatedPr).not.toHaveBeenCalled();
   });
 
-  it("enriches the same PR only after successful maintenance publication", async () => {
-    const newHead = "b".repeat(40);
-    vi.mocked(maintainOutdatedPr).mockImplementationOnce(async (options) => {
-      const current = options.taskStore.read(options.card.id)!;
-      options.taskStore.compareAndSwap(current.cardId, current.revision, {
-        ...current,
-        pullRequest: { ...current.pullRequest!, headSha: newHead },
-        revision: current.revision + 1,
-        updatedAt: new Date(
-          Math.max(Date.now(), Date.parse(current.updatedAt) + 1),
-        ).toISOString(),
-      });
-      return "published";
-    });
+  it("safely defers maintenance without treating it as publication", async () => {
     await pollReview("diverged", { enabled: true });
-    expect(enrichMaintainedPullRequestDescription).toHaveBeenCalledOnce();
-    expect(
-      vi.mocked(enrichMaintainedPullRequestDescription).mock.calls[0]?.[0],
-    ).toMatchObject({
-      pullRequestUrl: "https://github.com/owner/repo/pull/42",
-      commitSha: newHead,
-    });
+    await expect(
+      vi.mocked(maintainOutdatedPr).mock.results[0]?.value,
+    ).resolves.toBe("deferred");
   });
 
   it("honors an explicit maintenance opt-out", async () => {
@@ -225,7 +362,7 @@ describe("opt-in maintenance in the production Human Review polling path", () =>
 
   it("forwards the configured notifier to feedback correction through the coordinator", async () => {
     const emailNotifier = { send: vi.fn(async () => undefined) };
-    await pollReview("current", undefined, true, emailNotifier);
+    await pollReview("current", undefined, true, [], emailNotifier);
     expect(runTaskSessionFeedbackCycle).toHaveBeenCalledOnce();
     expect(
       vi.mocked(runTaskSessionFeedbackCycle).mock.calls[0]?.[0],

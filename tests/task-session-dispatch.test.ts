@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProjectConfig } from "../src/config/config.js";
 import { GitClient } from "../src/git/git-client.js";
@@ -87,6 +88,60 @@ function createCard(): TrelloCard {
 }
 
 describe("task-session production dispatch", () => {
+  it("does not claim a queued Ready event before its start time and resumes it once eligible", async () => {
+    const { project } = projectFixture();
+    const card: TrelloCard = {
+      ...createCard(),
+      start: new Date(Date.now() + 60_000).toISOString(),
+    };
+    const queue = new TaskMutationQueue(project.contextRoot, project);
+    const digest = createHash("sha256")
+      .update(`${card.name}\0${card.desc}\0${card.idLabels.join(",")}`)
+      .digest("hex")
+      .slice(0, 16);
+    queue.enqueue({
+      eventId: `implementation:card:${digest}`,
+      projectId: project.id,
+      cardId: card.id,
+      kind: "implementation",
+      operationKey: `task-session:card:${digest}`,
+      enqueuedAt: new Date().toISOString(),
+    });
+    const trello = {
+      getCards: vi.fn(async (listId: string) =>
+        listId === project.trello.readyListId ? [card] : [],
+      ),
+    } as unknown as TrelloClient;
+    const poll = () =>
+      pollProject(
+        trello,
+        {} as GitClient,
+        {} as GitHubClient,
+        new OpenCodeClient(vi.fn<RunOpenCode>()),
+        new CommandRunner(vi.fn<RunCommand>()),
+        project,
+        new AbortController().signal,
+      );
+
+    await poll();
+    expect(queue.getActive()).toBeNull();
+    expect(queue.list()).toMatchObject([
+      { eventId: `implementation:card:${digest}`, status: "queued" },
+    ]);
+    expect(
+      new TaskExecutionStore(project.contextRoot, project).read(card.id),
+    ).toBeNull();
+
+    card.start = new Date(Date.now() - 60_000).toISOString();
+    await expect(poll()).rejects.toThrow();
+    expect(queue.list()).toMatchObject([
+      {
+        eventId: `implementation:card:${digest}`,
+        status: "failed",
+      },
+    ]);
+  });
+
   it("recovers an interrupted Working task through the primary session before CI and feedback polling", async () => {
     const { project, repositoryPath, worktreeRoot } = projectFixture();
     const card = createCard();
@@ -1116,7 +1171,6 @@ describe("task-session production dispatch", () => {
       })),
       findChangesRequestedPullRequest: vi.fn(async () => null),
       getPullRequestConversationComments: vi.fn(async () => []),
-      mergePullRequest: vi.fn(async () => undefined),
     } as unknown as GitHubClient;
     const openCode = vi.fn<RunOpenCode>();
     await pollProject(
@@ -1190,7 +1244,6 @@ describe("task-session production dispatch", () => {
     expect(new TaskMutationQueue(project.contextRoot, project).list()).toEqual(
       [],
     );
-    expect(github.mergePullRequest).not.toHaveBeenCalled();
     expect(openCode).not.toHaveBeenCalled();
   });
 

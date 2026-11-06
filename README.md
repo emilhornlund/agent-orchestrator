@@ -7,8 +7,8 @@
 Agent Orchestrator is a local automation service that turns Trello cards into reviewed GitHub pull requests using
 OpenCode.
 
-It coordinates Trello, Git worktrees, OpenCode, and GitHub into a controlled software-engineering workflow. Human approval
-remains at the merge boundary by default; a project can explicitly opt into automatic implementation merges.
+It coordinates Trello, Git worktrees, OpenCode, and GitHub into a controlled software-engineering workflow. Humans own pull-request
+outcomes: the orchestrator never merges a PR, and approval or passing checks do not complete a task.
 
 ## How it works
 
@@ -16,11 +16,11 @@ Each configured project connects a local Git repository, a GitHub repository, a 
 The orchestrator polls each project independently and processes eligible cards:
 
 ```text
-Ready for Agent -> Working -> Human Review -> Done
-                         |          ^          |
-                         |          |          +-> merged pull request
-                         |          +----------+    requested changes
-                         +-> auto-merge -> Done
+Ready for Agent -> Working -> Human Review (open PR)
+                    ^                   |                 |
+                    |                   |                 +-> human closes unmerged -> Backlog
+                    |                   +-> human merges -> Done
+                    +------- requested changes -----------+
 
 Automated failure -> Failed
 Refinement: Ready for Agent -> Working -> Backlog -> Ready for Agent
@@ -28,8 +28,9 @@ Refinement: Ready for Agent -> Working -> Backlog -> Ready for Agent
 
 Cards with the `Refinement` label are refined before implementation. Other eligible cards need at least one implementation
 classification label: `Feature`, `Improvement`, or `Bug`. The orchestrator creates pull requests and responds to review
-feedback. Human approval is required unless the project's `autoMerge` setting is explicitly enabled. See the [workflow
-reference](docs/workflow.md) for the complete lifecycle, lists, labels, and transitions.
+feedback. An open PR remains active and occupies its project's task slot until a human merges or closes it; approval alone is not
+terminal. Configuration with `autoMerge: true` is rejected. See the [workflow reference](docs/workflow.md) for the complete
+lifecycle, lists, labels, and transitions.
 Pull request descriptions may be generated automatically from the final implementation result.
 
 Every project uses the restart-safe task-session workflow. One primary OpenCode session is retained across implementation,
@@ -58,8 +59,8 @@ reorganized; current configuration names, states, commands, and safety boundarie
 
 - Agent work runs in an isolated worktree and task branch; the configured source checkout is not used as the agent's
   working directory.
-- Pull requests are never merged automatically unless the owning project explicitly enables `autoMerge`; task branches are
-  never force-pushed.
+- Pull requests are never merged automatically. Open PRs, including approved or draft PRs, block the project's next task until a
+  human merges or closes them; `autoMerge: true` is rejected. Task branches are never force-pushed.
 - Only one task is active per project at a time. Independent projects can be processed concurrently.
 - Failed or interrupted work is reconciled from durable task records, queue ownership, Trello, Git, GitHub, and session evidence
   rather than being silently discarded. See [Recovery](docs/recovery.md).

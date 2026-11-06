@@ -1003,7 +1003,7 @@ export async function runTaskSessionFeedbackCycle(
       github,
       opencode: openCode,
       commands,
-      project: { ...project, autoMerge: false },
+      project,
       card,
       worktreePath,
       branch: record.expectedBranch!,

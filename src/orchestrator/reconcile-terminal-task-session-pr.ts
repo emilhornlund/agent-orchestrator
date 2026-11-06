@@ -113,6 +113,7 @@ export async function completeMergedTaskSessionPullRequest(options: {
   card: TrelloCard;
   pullRequest: PullRequestState;
   preparedConflict?: PreparedConflictHandoff;
+  preserveWorktree?: boolean;
   completionComment?: string;
   emailNotifier?: EmailNotifier;
   signal: AbortSignal;
@@ -121,37 +122,40 @@ export async function completeMergedTaskSessionPullRequest(options: {
   const cardLog = logger.child({ projectId: project.id, cardId: card.id });
   if (signal.aborted) return;
   const branch = `agent/${card.id}`;
-  const remoteBranchExists = await git.remoteBranchExists(
-    project.repository.path,
-    "origin",
-    branch,
-    project,
-  );
-  if (signal.aborted) return;
-  if (remoteBranchExists) {
-    try {
-      await git.deleteRemoteBranch(
-        project.repository.path,
-        "origin",
-        branch,
-        project,
-      );
-    } catch (error) {
-      if (!isMissingBranchDeletionError(error)) throw error;
-      if (
-        await git.remoteBranchExists(
+  if (!options.preserveWorktree) {
+    const remoteBranchExists = await git.remoteBranchExists(
+      project.repository.path,
+      "origin",
+      branch,
+      project,
+    );
+    if (signal.aborted) return;
+    if (remoteBranchExists) {
+      try {
+        await git.deleteRemoteBranch(
           project.repository.path,
           "origin",
           branch,
           project,
-        )
-      ) {
-        throw error;
+        );
+      } catch (error) {
+        if (!isMissingBranchDeletionError(error)) throw error;
+        if (
+          await git.remoteBranchExists(
+            project.repository.path,
+            "origin",
+            branch,
+            project,
+          )
+        ) {
+          throw error;
+        }
       }
     }
   }
 
-  clearTerminalConflict(project, card, options.preparedConflict, cardLog);
+  if (!options.preserveWorktree)
+    clearTerminalConflict(project, card, options.preparedConflict, cardLog);
   const alreadyDone = card.idList === project.trello.doneListId;
   if (!alreadyDone) {
     try {
@@ -186,8 +190,14 @@ export async function completeMergedTaskSessionPullRequest(options: {
       cardLog,
     );
   }
-  await removeTerminalSessionLog(project, card, cardLog);
-  await cleanupTerminalWorktree(git, project, card, cardLog, signal);
+  if (options.preserveWorktree) {
+    cardLog.warn(
+      "Legacy PR-maintenance artifacts preserved after merged PR; status is not proof that local rewritten work was shipped",
+    );
+  } else {
+    await removeTerminalSessionLog(project, card, cardLog);
+    await cleanupTerminalWorktree(git, project, card, cardLog, signal);
+  }
 }
 
 export async function returnClosedTaskSessionPullRequestToBacklog(options: {

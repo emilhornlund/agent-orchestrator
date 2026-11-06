@@ -449,13 +449,16 @@ describe("parseConfig", () => {
     expect(() => parseConfig(raw)).toThrow("projects.0.opencode.remediation");
   });
 
-  it("accepts opt-in automatic merging for a project", () => {
+  it("rejects automatic merging with actionable guidance", () => {
     const raw = validConfig.replace(
       '  - id: "project-one"',
       '  - id: "project-one"\n    autoMerge: true',
     );
 
-    expect(parseConfig(raw).projects[0]?.autoMerge).toBe(true);
+    expect(() => parseConfig(raw)).toThrow("projects.0.autoMerge");
+    expect(() => parseConfig(raw)).toThrow(
+      'Remove "autoMerge" or set it to false',
+    );
   });
 
   it.each([

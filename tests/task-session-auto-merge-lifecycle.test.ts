@@ -22,273 +22,282 @@ afterEach(() => {
   if (root !== undefined) fs.rmSync(root, { recursive: true, force: true });
 });
 
-describe("task-session production auto-merge CI gate", () => {
-  it("waits for delayed expected checks and merges only after all current-head results pass", async () => {
-    root = fs.mkdtempSync(path.join(os.tmpdir(), "task-session-auto-merge-"));
-    const repositoryPath = path.join(root, "repo");
-    const worktreeRoot = path.join(root, "worktrees");
-    const contextRoot = path.join(root, "state");
-    const worktreePath = path.join(worktreeRoot, "merge-card");
-    fs.mkdirSync(repositoryPath);
-    fs.mkdirSync(worktreePath, { recursive: true });
-    const sourcePath = path.join(worktreePath, "src.ts");
-    fs.writeFileSync(sourcePath, "export const value = 1;\n");
-    const project = {
-      id: "project",
-      autoMerge: true,
-      contextRoot,
-      trello: {
-        boardId: "board",
-        backlogListId: "backlog",
-        readyListId: "ready",
-        workingListId: "working",
-        reviewListId: "review",
-        failedListId: "failed",
-        doneListId: "done",
-        refinementLabelId: "refinement",
-        featureLabelId: "feature",
-        improvementLabelId: "improvement",
-        bugLabelId: "bug",
-      },
-      repository: {
-        path: repositoryPath,
-        worktreeRoot,
-        github: "owner/repo",
-        defaultBranch: "main",
-        validationCommand: "yarn validate",
-        gitIdentity: { name: "Agent", email: "agent@example.test" },
-      },
-      opencode: {
-        refinement: { model: "refine", variant: "high" },
-        implementation: { model: "implement", variant: "high" },
-        review: { model: "review", variant: "high" },
-        remediation: { model: "repair", variant: "high", maxPasses: 1 },
-        commit: { model: "commit", variant: "low" },
-        timeoutMinutes: 1,
-      },
-    } as ProjectConfig & { contextRoot: string };
-    const headSha = "a".repeat(40);
-    const card: TrelloCard = {
-      id: "merge-card",
-      name: "Verified task",
-      desc: "Implement and verify the feature.",
-      idList: project.trello.reviewListId,
-      idLabels: [],
-      url: "https://trello.example/merge-card",
-    };
-    let cardList = project.trello.reviewListId;
-    let pullRequestState: "OPEN" | "MERGED" = "OPEN";
-    const trello = {
-      getCards: vi.fn(async (listId: string) =>
-        listId === cardList ? [{ ...card, idList: cardList }] : [],
-      ),
-      moveCard: vi.fn(async (_cardId: string, listId: string) => {
-        cardList = listId;
-        return { ...card, idList: listId };
-      }),
-      addComment: vi.fn(async () => undefined),
-    } as unknown as TrelloClient;
-    let failCleanupOnce = true;
-    const git = {
-      getHeadSha: vi.fn(async () => headSha),
-      getHeadTrackedFiles: vi.fn(async () => ["src.ts"]),
-      getIndexEntries: vi.fn(async () => ""),
-      getUntrackedFiles: vi.fn(async () => []),
-      remoteBranchExists: vi.fn(async () => false),
-      getCurrentBranch: vi.fn(async () => `agent/${card.id}`),
-      getRebaseState: vi.fn(async () => null),
-      getConflictedPaths: vi.fn(async () => []),
-      getStatus: vi.fn(async () => ""),
-      removeWorktree: vi.fn(async (_repo: string, cwd: string) => {
-        fs.rmSync(cwd, { recursive: true, force: true });
-      }),
-      pruneWorktrees: vi.fn(async () => {
-        if (failCleanupOnce) {
-          failCleanupOnce = false;
-          throw new Error("simulated auto-merge cleanup interruption");
-        }
-      }),
-      branchExists: vi.fn(async () => false),
-    } as unknown as GitClient;
-    const contentIdentity = await getTaskSessionSourceSnapshotIdentity(
-      git,
-      worktreePath,
-    );
-    let observedChecks: CiCheckObservation[] = [
-      {
-        source: "check-run" as const,
-        id: 1,
-        name: "Build",
-        headSha,
-        status: "completed",
-        conclusion: "success",
-        url: null,
-      },
-    ];
-    const mergePullRequest = vi.fn(async () => {
-      pullRequestState = "MERGED";
-    });
-    const github = {
-      findPullRequestState: vi.fn(async () => ({
-        url: "https://github.com/owner/repo/pull/17",
-        state: pullRequestState,
-        mergedAt:
-          pullRequestState === "MERGED" ? "2026-10-24T11:00:00.000Z" : null,
-        headRefOid: headSha,
-        baseRefName: "main",
-        headRefName: `agent/${card.id}`,
-        headRepository: { name: "repo" },
-        headRepositoryOwner: { login: "owner" },
-      })),
-      getCiObservations: vi.fn(async () => ({
-        headSha,
-        checks: observedChecks,
-        expectationSources: [
-          {
-            kind: "repository-rules" as const,
-            sourceId: "rules",
-            complete: true,
-            checkNames: ["Build", "Tests"],
-          },
-        ],
-      })),
-      findChangesRequestedPullRequest: vi.fn(async () => null),
-      getPullRequestConversationComments: vi.fn(async () => []),
-      mergePullRequest,
-    } as unknown as GitHubClient;
-    const taskStore = new TaskExecutionStore(contextRoot, project);
-    taskStore.create({
-      version: 1,
-      projectId: project.id,
-      cardId: card.id,
-      phase: "ci",
-      primarySessionId: "primary-session",
-      sessionCreationStatus: "bound",
-      expectedBranch: `agent/${card.id}`,
-      pullRequest: {
-        number: 17,
-        url: "https://github.com/owner/repo/pull/17",
-        headSha,
-      },
-      operationKey: "auto-merge-operation",
-      publicationQuality: {
-        contentIdentity,
-        validation: {
-          command: "yarn validate",
-          startedAt: "2026-10-24T09:00:00.000Z",
-          completedAt: "2026-10-24T09:01:00.000Z",
-          exitCode: 0,
-          diagnostic: "validated",
-          contentIdentity,
+describe("task-session human-owned pull request outcome", () => {
+  it.each([false, true])(
+    "keeps an open %s pull request active after approval and current-head checks pass, even with forged autoMerge true",
+    async (draft) => {
+      root = fs.mkdtempSync(path.join(os.tmpdir(), "task-session-auto-merge-"));
+      const repositoryPath = path.join(root, "repo");
+      const worktreeRoot = path.join(root, "worktrees");
+      const contextRoot = path.join(root, "state");
+      const worktreePath = path.join(worktreeRoot, "merge-card");
+      fs.mkdirSync(repositoryPath);
+      fs.mkdirSync(worktreePath, { recursive: true });
+      const sourcePath = path.join(worktreePath, "src.ts");
+      fs.writeFileSync(sourcePath, "export const value = 1;\n");
+      const project = {
+        id: "project",
+        autoMerge: true,
+        contextRoot,
+        trello: {
+          boardId: "board",
+          backlogListId: "backlog",
+          readyListId: "ready",
+          workingListId: "working",
+          reviewListId: "review",
+          failedListId: "failed",
+          doneListId: "done",
+          refinementLabelId: "refinement",
+          featureLabelId: "feature",
+          improvementLabelId: "improvement",
+          bugLabelId: "bug",
         },
-        review: {
-          version: 1,
-          projectId: project.id,
-          cardId: card.id,
-          verdict: "pass",
-          requirementAssessments: [
+        repository: {
+          path: repositoryPath,
+          worktreeRoot,
+          github: "owner/repo",
+          defaultBranch: "main",
+          validationCommand: "yarn validate",
+          gitIdentity: { name: "Agent", email: "agent@example.test" },
+        },
+        opencode: {
+          refinement: { model: "refine", variant: "high" },
+          implementation: { model: "implement", variant: "high" },
+          review: { model: "review", variant: "high" },
+          remediation: { model: "repair", variant: "high", maxPasses: 1 },
+          commit: { model: "commit", variant: "low" },
+          timeoutMinutes: 1,
+        },
+      } as ProjectConfig & { contextRoot: string };
+      const headSha = "a".repeat(40);
+      const card: TrelloCard = {
+        id: "merge-card",
+        name: "Verified task",
+        desc: "Implement and verify the feature.",
+        idList: project.trello.reviewListId,
+        idLabels: [],
+        url: "https://trello.example/merge-card",
+      };
+      const nextCard: TrelloCard = {
+        ...card,
+        id: "next-card",
+        idList: project.trello.readyListId,
+      };
+      let cardList = project.trello.reviewListId;
+      const pullRequestState = "OPEN" as const;
+      const trello = {
+        getCards: vi.fn(async (listId: string) =>
+          listId === cardList
+            ? [{ ...card, idList: cardList }]
+            : listId === project.trello.readyListId
+              ? [nextCard]
+              : [],
+        ),
+        moveCard: vi.fn(async (_cardId: string, listId: string) => {
+          cardList = listId;
+          return { ...card, idList: listId };
+        }),
+        addComment: vi.fn(async () => undefined),
+      } as unknown as TrelloClient;
+      const git = {
+        getHeadSha: vi.fn(async () => headSha),
+        getHeadTrackedFiles: vi.fn(async () => ["src.ts"]),
+        getIndexEntries: vi.fn(async () => ""),
+        getUntrackedFiles: vi.fn(async () => []),
+        remoteBranchExists: vi.fn(async () => false),
+        getCurrentBranch: vi.fn(async () => `agent/${card.id}`),
+        getRebaseState: vi.fn(async () => null),
+        getConflictedPaths: vi.fn(async () => []),
+        getStatus: vi.fn(async () => ""),
+        removeWorktree: vi.fn(async (_repo: string, cwd: string) => {
+          fs.rmSync(cwd, { recursive: true, force: true });
+        }),
+        pruneWorktrees: vi.fn(async () => undefined),
+        branchExists: vi.fn(async () => false),
+      } as unknown as GitClient;
+      const contentIdentity = await getTaskSessionSourceSnapshotIdentity(
+        git,
+        worktreePath,
+      );
+      let observedChecks: CiCheckObservation[] = [
+        {
+          source: "check-run" as const,
+          id: 1,
+          name: "Build",
+          headSha,
+          status: "completed",
+          conclusion: "success",
+          url: null,
+        },
+      ];
+      const mergePullRequest = vi.fn(async () => undefined);
+      const github = {
+        findPullRequestState: vi.fn(async () => ({
+          url: "https://github.com/owner/repo/pull/17",
+          state: pullRequestState,
+          isDraft: draft,
+          reviewDecision: "APPROVED",
+          mergedAt: null,
+          headRefOid: headSha,
+          baseRefName: "main",
+          headRefName: `agent/${card.id}`,
+          headRepository: { name: "repo" },
+          headRepositoryOwner: { login: "owner" },
+        })),
+        getCiObservations: vi.fn(async () => ({
+          headSha,
+          checks: observedChecks,
+          expectationSources: [
             {
-              requirementId: "REQ-1",
-              status: "satisfied",
-              details: "Feature is implemented.",
-              evidence: ["src.ts", "tests/task.test.ts"],
+              kind: "repository-rules" as const,
+              sourceId: "rules",
+              complete: true,
+              checkNames: ["Build", "Tests"],
             },
           ],
-          blockingFindings: [],
-          reviewedContentIdentity: contentIdentity,
-        },
-      },
-      revision: 1,
-      retryCounters: { validation: 0, review: 0, ci: 0, humanFeedback: 0 },
-      createdAt: "2026-10-24T09:00:00.000Z",
-      updatedAt: "2026-10-24T09:00:00.000Z",
-    });
-    const planStore = new TaskPlanStore(contextRoot, project);
-    planStore.create(
-      {
+        })),
+        findChangesRequestedPullRequest: vi.fn(async () => null),
+        getPullRequestConversationComments: vi.fn(async () => []),
+        mergePullRequest,
+      } as unknown as GitHubClient;
+      const taskStore = new TaskExecutionStore(contextRoot, project);
+      taskStore.create({
         version: 1,
         projectId: project.id,
         cardId: card.id,
-        requirements: [
-          {
-            id: "REQ-1",
-            text: "Implement the feature",
-            verification: "Run tests",
+        phase: "ci",
+        primarySessionId: "primary-session",
+        sessionCreationStatus: "bound",
+        expectedBranch: `agent/${card.id}`,
+        pullRequest: {
+          number: 17,
+          url: "https://github.com/owner/repo/pull/17",
+          headSha,
+        },
+        operationKey: "auto-merge-operation",
+        publicationQuality: {
+          contentIdentity,
+          validation: {
+            command: "yarn validate",
+            startedAt: "2026-10-24T09:00:00.000Z",
+            completedAt: "2026-10-24T09:01:00.000Z",
+            exitCode: 0,
+            diagnostic: "validated",
+            contentIdentity,
           },
-        ],
-        steps: [
-          {
-            id: "STEP-1",
-            description: "Implement the feature",
-            requirementIds: ["REQ-1"],
-            verification: "Run tests",
+          review: {
+            version: 1,
+            projectId: project.id,
+            cardId: card.id,
+            verdict: "pass",
+            requirementAssessments: [
+              {
+                requirementId: "REQ-1",
+                status: "satisfied",
+                details: "Feature is implemented.",
+                evidence: ["src.ts", "tests/task.test.ts"],
+              },
+            ],
+            blockingFindings: [],
+            reviewedContentIdentity: contentIdentity,
           },
-        ],
-        assumptions: [],
-        blockers: [],
-      },
-      1,
-    );
-    planStore.storeVerification(card.id, 1, {
-      version: 1,
-      projectId: project.id,
-      cardId: card.id,
-      planRevision: 1,
-      verdict: "pass",
-      findings: [],
-    });
-
-    const poll = () =>
-      pollProject(
-        trello,
-        git,
-        github,
-        new OpenCodeClient(vi.fn()),
-        new CommandRunner(vi.fn()),
-        project,
-        new AbortController().signal,
+        },
+        revision: 1,
+        retryCounters: { validation: 0, review: 0, ci: 0, humanFeedback: 0 },
+        createdAt: "2026-10-24T09:00:00.000Z",
+        updatedAt: "2026-10-24T09:00:00.000Z",
+      });
+      const planStore = new TaskPlanStore(contextRoot, project);
+      planStore.create(
+        {
+          version: 1,
+          projectId: project.id,
+          cardId: card.id,
+          requirements: [
+            {
+              id: "REQ-1",
+              text: "Implement the feature",
+              verification: "Run tests",
+            },
+          ],
+          steps: [
+            {
+              id: "STEP-1",
+              description: "Implement the feature",
+              requirementIds: ["REQ-1"],
+              verification: "Run tests",
+            },
+          ],
+          assumptions: [],
+          blockers: [],
+        },
+        1,
       );
-    await poll();
-    expect(mergePullRequest).not.toHaveBeenCalled();
-    expect(
-      taskStore.read(card.id)?.reviewObservation?.ciEvaluation,
-    ).toMatchObject({
-      status: "waiting",
-      missingChecks: ["Tests"],
-    });
+      planStore.storeVerification(card.id, 1, {
+        version: 1,
+        projectId: project.id,
+        cardId: card.id,
+        planRevision: 1,
+        verdict: "pass",
+        findings: [],
+      });
 
-    observedChecks = [
-      ...observedChecks,
-      {
-        source: "commit-status",
-        id: 2,
-        context: "Tests",
-        headSha,
-        state: "success",
-        createdAt: "2026-10-24T10:00:00.000Z",
-        updatedAt: "2026-10-24T10:00:00.000Z",
-        url: null,
-        description: null,
-      },
-    ];
-    await expect(poll()).rejects.toThrow(
-      "simulated auto-merge cleanup interruption",
-    );
-    expect(cardList).toBe(project.trello.doneListId);
-    expect(taskStore.read(card.id)?.phase).toBe("ci");
+      const poll = () =>
+        pollProject(
+          trello,
+          git,
+          github,
+          new OpenCodeClient(vi.fn()),
+          new CommandRunner(vi.fn()),
+          project,
+          new AbortController().signal,
+        );
+      await poll();
+      expect(mergePullRequest).not.toHaveBeenCalled();
+      expect(
+        taskStore.read(card.id)?.reviewObservation?.ciEvaluation,
+      ).toMatchObject({
+        status: "waiting",
+        missingChecks: ["Tests"],
+      });
 
-    await poll();
-    expect(mergePullRequest).toHaveBeenCalledOnce();
-    expect(cardList).toBe(project.trello.doneListId);
-    expect(taskStore.read(card.id)).toMatchObject({
-      phase: "done",
-      pullRequest: { headSha },
-    });
-    expect(taskStore.read(card.id)?.reviewObservation).toBeUndefined();
-    expect(git.removeWorktree).toHaveBeenCalledWith(
-      repositoryPath,
-      worktreePath,
-    );
-    expect(fs.existsSync(worktreePath)).toBe(false);
-  });
+      observedChecks = [
+        ...observedChecks,
+        {
+          source: "commit-status",
+          id: 2,
+          context: "Tests",
+          headSha,
+          state: "success",
+          createdAt: "2026-10-24T10:00:00.000Z",
+          updatedAt: "2026-10-24T10:00:00.000Z",
+          url: null,
+          description: null,
+        },
+      ];
+      await poll();
+      expect(mergePullRequest).not.toHaveBeenCalled();
+      expect(cardList).toBe(project.trello.reviewListId);
+      expect(taskStore.read(card.id)?.phase).toBe("human-feedback");
+
+      await poll();
+      expect(mergePullRequest).not.toHaveBeenCalled();
+      expect(cardList).toBe(project.trello.reviewListId);
+      expect(taskStore.read(card.id)).toMatchObject({
+        phase: "human-feedback",
+        pullRequest: { headSha },
+      });
+      expect(
+        taskStore.read(card.id)?.reviewObservation?.ciEvaluation,
+      ).toMatchObject({
+        status: "passed",
+      });
+      expect(git.removeWorktree).not.toHaveBeenCalled();
+      expect(fs.existsSync(worktreePath)).toBe(true);
+      expect(trello.moveCard).not.toHaveBeenCalledWith(
+        nextCard.id,
+        project.trello.workingListId,
+      );
+    },
+  );
 });

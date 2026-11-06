@@ -72,17 +72,10 @@ import {
 } from "../task-session/task-execution-transition.js";
 import type { TaskExecutionRecord } from "../task-session/task-execution-record.js";
 import { runPrMaintenanceReview } from "../task-session/run-pr-maintenance-review.js";
-import { parseImplementationReviewResult } from "../task-session/implementation-review-result.js";
-import { decideTaskSessionAutoMergeReadiness } from "../task-session/task-session-auto-merge-readiness.js";
 import { getTaskSessionSourceSnapshotIdentity } from "../task-session/source-snapshot.js";
 import { publishTaskSessionCard } from "./publish-task-session-card.js";
-import {
-  publishCard,
-  enrichMaintainedPullRequestDescription,
-} from "./publish-card.js";
+import { publishCard } from "./publish-card.js";
 import { runWithPrimaryTaskSession } from "../task-session/primary-task-session.js";
-import { buildAutoMergeSummary } from "./auto-merge.js";
-import { mergeTaskSessionPullRequest } from "./merge-task-session-pull-request.js";
 import { observeTaskSessionReviewCards } from "./observe-task-session-review-cards.js";
 import {
   completeMergedTaskSessionPullRequest,
@@ -99,18 +92,14 @@ import {
 } from "./trusted-commit-state.js";
 import { logger } from "../logging/logger.js";
 import { PrMaintenanceStore } from "../task-session/pr-maintenance-store.js";
-import {
-  maintainOutdatedPr,
-  reconcileInterruptedPrMaintenance,
-  retireFailedUnpublishedPrMaintenance,
-  requeueInterruptedPreparedPrMaintenance,
-} from "./maintain-outdated-pr.js";
+import { maintainOutdatedPr } from "./maintain-outdated-pr.js";
 import { reconcileUnobservedTerminalPrEvents } from "./reconcile-unobserved-terminal-pr.js";
 import { verifyMergedTaskPrHeadContinuity } from "./verify-merged-task-pr-head-continuity.js";
 import { TaskMutationBlockStore } from "./task-mutation-block-store.js";
 
 const lastLoggedCiState = new Map<string, string>();
 const reportedMissingMaintenancePlans = new Set<string>();
+const reportedDeferredMaintenance = new Set<string>();
 const reportedLegacyAttentionRequired = new Set<string>();
 
 export interface RunTaskSessionWorkflowOptions {
@@ -181,6 +170,7 @@ async function completeMergedTaskSession(options: {
   completionComment?: string;
   releaseMutationEventId?: string;
   onMutationReleased?: () => void;
+  preserveLegacyMaintenanceArtifacts?: boolean;
 }): Promise<"completed" | "deferred"> {
   const { queue, taskStore, trello, git, project, card, pullRequest, signal } =
     options;
@@ -262,6 +252,9 @@ async function completeMergedTaskSession(options: {
         ? {}
         : { emailNotifier: options.emailNotifier }),
       signal,
+      ...(options.preserveLegacyMaintenanceArtifacts
+        ? { preserveWorktree: true }
+        : {}),
     });
     if (signal.aborted) {
       queue.fail(terminalEventId);
@@ -641,23 +634,37 @@ export async function runTaskSessionWorkflow(
   const mutationBlockStore = new TaskMutationBlockStore(root, project.id);
   const maintenanceStore = new PrMaintenanceStore(root, project);
   const feedbackLedgerStore = new FeedbackLedgerStore(root, project);
-  requeueInterruptedPreparedPrMaintenance({
-    project,
-    maintenanceStore,
-    mutationQueue: queue,
-  });
-  retireFailedUnpublishedPrMaintenance({
-    project,
-    maintenanceStore,
-    mutationQueue: queue,
-  });
-  await reconcileInterruptedPrMaintenance({
-    project,
-    taskStore,
-    maintenanceStore,
-    mutationQueue: queue,
-    github,
-  });
+  const unresolvedLegacyMaintenance = maintenanceStore
+    .inspect()
+    .filter((operation) => {
+      if (!["completed", "cancelled"].includes(operation.status)) return true;
+      if (operation.publication?.status === "push-intended") return true;
+      const locallyPreparedHead = operation.localPreparation?.resultingHead;
+      return (
+        locallyPreparedHead !== undefined &&
+        (operation.publication?.status !== "verified" ||
+          operation.publication.resultingHead !== locallyPreparedHead)
+      );
+    });
+  const hasUnresolvedLegacyMaintenance = unresolvedLegacyMaintenance.length > 0;
+  const shouldPreserveTerminalMaintenanceArtifacts = (
+    cardId: string,
+  ): boolean =>
+    hasUnresolvedLegacyMaintenance ||
+    maintenanceStore.inspect().some((operation) => operation.cardId === cardId);
+  if (unresolvedLegacyMaintenance.length > 0) {
+    const details = unresolvedLegacyMaintenance
+      .map(
+        (operation) =>
+          `${operation.cardId}/${operation.operationId} (${operation.status})`,
+      )
+      .join(", ");
+    logger
+      .child({ projectId: project.id })
+      .warn(
+        `Published PR maintenance is deferred pending P8 additive replacement; preserving unresolved legacy operation(s): ${details}. Terminal PR reads/reconciliation continue; all project branch writers and new claims remain blocked until these effects are reconciled.`,
+      );
+  }
   // Retire only provable stale Ready claims before terminal PR processing can
   // try to acquire the project-wide mutation queue. Trello lists and task
   // records are authoritative; PID data alone is not used to infer orphanhood.
@@ -901,6 +908,8 @@ export async function runTaskSessionWorkflow(
             project,
             card,
             pullRequest: authoritative,
+            preserveLegacyMaintenanceArtifacts:
+              shouldPreserveTerminalMaintenanceArtifacts(cardId),
             ...(emailNotifier === undefined ? {} : { emailNotifier }),
             signal,
           });
@@ -912,14 +921,8 @@ export async function runTaskSessionWorkflow(
             project,
             card,
             pullRequest: authoritative,
-            preserveWorktree: maintenanceStore
-              .inspect()
-              .some(
-                (item) =>
-                  item.cardId === cardId &&
-                  item.status === "cancelled" &&
-                  item.localPreparation?.status === "prepared",
-              ),
+            preserveWorktree:
+              shouldPreserveTerminalMaintenanceArtifacts(cardId),
             signal,
           });
         }
@@ -945,6 +948,8 @@ export async function runTaskSessionWorkflow(
         project,
         card,
         pullRequest: authoritative,
+        preserveLegacyMaintenanceArtifacts:
+          shouldPreserveTerminalMaintenanceArtifacts(cardId),
         ...(emailNotifier === undefined ? {} : { emailNotifier }),
         signal,
       });
@@ -988,11 +993,16 @@ export async function runTaskSessionWorkflow(
           project,
           card,
           pullRequest: observation.pullRequest,
+          preserveLegacyMaintenanceArtifacts:
+            shouldPreserveTerminalMaintenanceArtifacts(observation.cardId),
           ...(emailNotifier === undefined ? {} : { emailNotifier }),
           signal,
         });
         if (outcome === "completed") options.onHumanReviewCardLeft?.(card.id);
-        continue;
+        // A verified human terminal outcome owns this poll boundary. Do not
+        // claim another Ready card until a subsequent poll observes the
+        // completed Trello transition.
+        return;
       }
       const terminalMutation = queue.claimForRecovery(terminalEventId);
       if (terminalMutation === null) continue;
@@ -1003,14 +1013,7 @@ export async function runTaskSessionWorkflow(
           project,
           card,
           pullRequest: observation.pullRequest,
-          preserveWorktree: maintenanceStore
-            .inspect()
-            .some(
-              (item) =>
-                item.cardId === card.id &&
-                item.status === "cancelled" &&
-                item.localPreparation?.status === "prepared",
-            ),
+          preserveWorktree: shouldPreserveTerminalMaintenanceArtifacts(card.id),
           signal,
         });
         options.onHumanReviewCardLeft?.(card.id);
@@ -1020,7 +1023,7 @@ export async function runTaskSessionWorkflow(
         queue.fail(terminalMutation.eventId);
         throw error;
       }
-      continue;
+      return;
     }
     let record = taskStore.read(observation.cardId);
     const ciStateKey = `${project.id}/${observation.cardId}/${observation.headSha}`;
@@ -1058,6 +1061,7 @@ export async function runTaskSessionWorkflow(
       );
       record = taskStore.read(observation.cardId);
     }
+    if (hasUnresolvedLegacyMaintenance) continue;
     if (record === null || record.phase !== "ci") continue;
     if (
       observation.ciEvaluation.status === "waiting" ||
@@ -1455,7 +1459,7 @@ export async function runTaskSessionWorkflow(
               github,
               opencode: openCode,
               commands,
-              project: { ...project, autoMerge: false },
+              project,
               card,
               worktreePath,
               branch: expectedBranch,
@@ -1608,10 +1612,7 @@ export async function runTaskSessionWorkflow(
             ? "CI repair succeeded"
             : "CI repair failed",
         );
-      if (
-        ciResult.status === "passed" &&
-        (!project.autoMerge || observation.feedbackIds.length > 0)
-      ) {
+      if (ciResult.status === "passed") {
         const latest = taskStore.read(card.id);
         if (latest !== null && latest.phase === "ci")
           taskStore.compareAndSwap(
@@ -1627,130 +1628,15 @@ export async function runTaskSessionWorkflow(
     }
     const checksPassed = observation.ciEvaluation.status === "passed";
     if (!checksPassed) continue;
-    if (
-      !project.autoMerge ||
-      observation.feedbackIds.length > 0 ||
-      record.reviewRepair?.status === "exhausted"
-    ) {
-      taskStore.compareAndSwap(
-        record.cardId,
-        record.revision,
-        transitionTaskExecutionRecord(
-          record,
-          event(record, "ci-passed-awaiting-human"),
-        ),
-      );
-      continue;
-    }
-    const storedPlan = planStore.read(observation.cardId);
-    const rawQuality = record.publicationQuality as
-      | {
-          contentIdentity: string;
-          validation: NonNullable<
-            NonNullable<TaskExecutionRecord["validationRepair"]>["evidence"]
-          >;
-          coverageEvidence?: NonNullable<
-            NonNullable<
-              TaskExecutionRecord["validationRepair"]
-            >["coverageEvidence"]
-          >;
-          review: unknown;
-        }
-      | undefined;
-    if (storedPlan === null || rawQuality === undefined) continue;
-    const worktreePath = path.join(
-      project.repository.worktreeRoot,
-      observation.cardId,
-    );
-    const currentIdentity = await getTaskSessionSourceSnapshotIdentity(
-      git,
-      worktreePath,
-    );
-    if (currentIdentity !== rawQuality.contentIdentity) continue;
-    const review = parseImplementationReviewResult(rawQuality.review, {
-      projectId: project.id,
-      cardId: observation.cardId,
-      requirementIds: storedPlan.plan.requirements.map(
-        (requirement) => requirement.id,
+    taskStore.compareAndSwap(
+      record.cardId,
+      record.revision,
+      transitionTaskExecutionRecord(
+        record,
+        event(record, "ci-passed-awaiting-human"),
       ),
-      contentIdentity: currentIdentity,
-    });
-    const validation: TaskSessionValidationResult = {
-      ...rawQuality.validation,
-      status: "passed",
-      timedOut: false,
-      aborted: false,
-    };
-    const coverage: TaskSessionValidationResult | null =
-      rawQuality.coverageEvidence === undefined
-        ? null
-        : {
-            ...rawQuality.coverageEvidence,
-            status: "passed",
-            timedOut: false,
-            aborted: false,
-          };
-    const readiness = {
-      expectedHeadSha: observation.headSha,
-      observedHeadSha: observation.headSha,
-      ciEvaluation: observation.ciEvaluation,
-      localEvidence: {
-        currentContentIdentity: currentIdentity,
-        validationCommand,
-        validation,
-        ...(project.repository.coverageCommand === undefined
-          ? {}
-          : { coverageCommand: project.repository.coverageCommand }),
-        coverage,
-        review,
-      },
-    };
-    const readinessDecision = decideTaskSessionAutoMergeReadiness(readiness);
-    if (!readinessDecision.allowed) continue;
-    const card = humanReviewCards.find(
-      (candidate) => candidate.id === observation.cardId,
     );
-    if (card === undefined || record.pullRequest === undefined) continue;
-    await mergeTaskSessionPullRequest(
-      github,
-      project,
-      card,
-      observation.pullRequestUrl,
-      observation.headSha,
-      project.repository.path,
-      readiness,
-      signal,
-    );
-    const mergedPullRequest = await github.findPullRequestState({
-      cwd: project.repository.path,
-      repository: project.repository.github,
-      headBranch: `agent/${card.id}`,
-      baseBranch: project.repository.defaultBranch,
-      project,
-    });
-    if (mergedPullRequest === null) {
-      throw new Error(`Could not verify merged pull request for ${card.id}`);
-    }
-    await completeMergedTaskSession({
-      github,
-      queue,
-      mutationBlockStore,
-      taskStore,
-      trello,
-      git,
-      project,
-      card,
-      pullRequest: mergedPullRequest,
-      completionComment: buildAutoMergeSummary({
-        pullRequestUrl: observation.pullRequestUrl,
-        commitSha: observation.headSha,
-        reviewResult: "Passed",
-        remediationResult:
-          "Task-session quality and current-head required checks passed",
-      }),
-      ...(emailNotifier === undefined ? {} : { emailNotifier }),
-      signal,
-    });
+    // Passing CI and local quality evidence never authorizes an orchestrator merge.
   }
   const latestHumanReviewCards = await getCardsForDiscovery(
     trello,
@@ -1779,7 +1665,6 @@ export async function runTaskSessionWorkflow(
     signal,
     observedReviewCardIds: latestHumanReviewCards.map((card) => card.id),
   });
-  const maintenanceHandledCardIds = new Set<string>();
   if (project.maintenance?.enabled === true) {
     for (const observation of latestObservations) {
       if (
@@ -1891,55 +1776,26 @@ export async function runTaskSessionWorkflow(
             );
         },
       });
-      if (
-        maintenanceResult === "published" ||
-        maintenanceResult === "reconciled" ||
-        maintenanceResult === "conflicted"
-      ) {
-        maintenanceHandledCardIds.add(observation.cardId);
-      }
-      if (
-        maintenanceResult === "published" ||
-        maintenanceResult === "reconciled"
-      ) {
-        const published = taskStore.read(observation.cardId);
-        if (
-          published?.pullRequest?.url === observation.pullRequestUrl &&
-          typeof published.pullRequest.headSha === "string" &&
-          published.pullRequest.headSha !== observation.headSha
-        ) {
-          try {
-            await enrichMaintainedPullRequestDescription({
-              git,
-              github,
-              opencode: openCode,
-              project,
-              card,
-              worktreePath: path.join(project.repository.worktreeRoot, card.id),
-              pullRequestUrl: observation.pullRequestUrl,
-              commitSha: published.pullRequest.headSha,
-              verifiedFacts: [
-                `Configured validation passed for maintained commit ${published.pullRequest.headSha}.`,
-                "Independent implementation review passed for the maintained source.",
-                "Fresh GitHub CI for the maintained head has not yet been verified.",
-              ],
-              signal,
-            });
-          } catch {
-            logger
-              .child({ projectId: project.id, cardId: card.id })
-              .warn(
-                "PR description enrichment failed after verified maintenance; publication and CI state remain intact",
-              );
-          }
+      if (maintenanceResult === "deferred") {
+        const diagnosticKey = `${project.id}:${observation.cardId}:${observation.pullRequestUrl}`;
+        if (!reportedDeferredMaintenance.has(diagnosticKey)) {
+          logger
+            .child({ projectId: project.id, cardId: observation.cardId })
+            .warn(
+              `Routine PR maintenance deferred pending P8 additive replacement; preserving published history, local worktree, and PR ${observation.pullRequestUrl}`,
+            );
+          reportedDeferredMaintenance.add(diagnosticKey);
         }
+        // Avoid repeatedly dispatching routine maintenance this poll. Do not
+        // claim the unresolved legacy-operation block: ordinary maintenance
+        // deferral alone does not block unrelated safe writers.
       }
     }
   }
   let feedbackNeedsAttention = false;
   for (const observation of latestObservations) {
     if (observation.state !== "OPEN") continue;
-    if (maintenanceHandledCardIds.has(observation.cardId)) continue;
+    if (hasUnresolvedLegacyMaintenance) continue;
     const record = taskStore.read(observation.cardId);
     if (record === null) continue;
     const resumableFeedbackReview = canResumeFailedFeedbackReview(
@@ -2106,6 +1962,10 @@ export async function runTaskSessionWorkflow(
     "Could not inspect task-session Working cards",
     signal,
   );
+  // Terminal PR observation/reconciliation above is read-only-safe, but legacy
+  // maintenance may represent a branch effect for any card, including an
+  // archived or manually moved card. Do not resume Working/refinement writers.
+  if (hasUnresolvedLegacyMaintenance) return;
   const activeMutation = queue.getActive();
   if (
     workingCards.length === 1 &&
@@ -2473,11 +2333,18 @@ export async function runTaskSessionWorkflow(
     recoveryWorktreePath = worktreePath;
   } else {
     const readyCards = preflightReadyCards;
-    const eligibleCards = readyCards.filter(
-      (card) =>
-        isCardStartDateReached(card, Date.now()) &&
-        getWorkflowKind(card, project) !== null,
-    );
+    const hasActiveHumanReview = humanReviewCards.some((card) => {
+      const record = taskStore.read(card.id);
+      return record?.phase === "human-feedback" || record?.phase === "ci";
+    });
+    const eligibleCards =
+      hasUnresolvedLegacyMaintenance || hasActiveHumanReview
+        ? []
+        : readyCards.filter(
+            (card) =>
+              isCardStartDateReached(card, Date.now()) &&
+              getWorkflowKind(card, project) !== null,
+          );
     // Ready cards may have been moved externally while their queued claim
     // persisted. Reconcile verified orphans before claiming the next event:
     // otherwise a stale claim can monopolize the project mutation queue and
@@ -2636,7 +2503,9 @@ export async function runTaskSessionWorkflow(
     }
     mutation =
       readyRecoveryEvent === null
-        ? queue.claimNext()
+        ? eligibleCards.length === 0
+          ? null
+          : queue.claimNext()
         : queue.claimForRecovery(readyRecoveryEvent.eventId);
     if (mutation === null) return;
     selectedCard =
@@ -3140,7 +3009,7 @@ export async function runTaskSessionWorkflow(
         github,
         opencode: openCode,
         commands,
-        project: { ...project, autoMerge: false },
+        project,
         card: activeCard,
         worktreePath,
         branch: worktree.branch,
@@ -3813,7 +3682,7 @@ export async function runTaskSessionWorkflow(
         github,
         opencode: openCode,
         commands,
-        project: { ...project, autoMerge: false },
+        project,
         card: activeCard,
         worktreePath,
         branch: worktree.branch,
@@ -3876,7 +3745,7 @@ export async function runTaskSessionWorkflow(
         github,
         opencode: openCode,
         commands,
-        project: { ...project, autoMerge: false },
+        project,
         card: activeCard,
         worktreePath,
         branch: worktree.branch,
@@ -3938,80 +3807,6 @@ export async function runTaskSessionWorkflow(
       pullRequest: { number: prNumber, url: pr.url, headSha: pr.headRefOid },
     });
     taskStore.compareAndSwap(activeCard.id, current.revision, ci);
-    if (project.autoMerge && exhaustedReview === undefined) {
-      const ciObservation = await github.getCiObservations({
-        cwd: project.repository.path,
-        repository: project.repository.github,
-        defaultBranch: project.repository.defaultBranch,
-        headSha: publishedSha,
-        pullRequestNumber: prNumber,
-        project,
-      });
-      const ciEvaluation = evaluateCiChecks({
-        expectedHeadSha: publishedSha,
-        observedHeadSha: ciObservation.headSha,
-        expectations: establishCiCheckExpectations(
-          ciObservation.expectationSources,
-        ),
-        checks: ciObservation.checks,
-      });
-      cardLog.event(
-        `CI ${ciEvaluation.status === "waiting" ? "waiting" : ciEvaluation.status === "failed" ? "failed" : "passed"} for ${publishedSha}`,
-      );
-      if (ciEvaluation.status === "passed") {
-        await mergeTaskSessionPullRequest(
-          github,
-          project,
-          activeCard,
-          pr.url,
-          publishedSha,
-          project.repository.path,
-          {
-            expectedHeadSha: publishedSha,
-            observedHeadSha: publishedSha,
-            ciEvaluation,
-            localEvidence: preparedEvidence,
-          },
-          signal,
-        );
-        const mergedPullRequest = await github.findPullRequestState({
-          cwd: project.repository.path,
-          repository: project.repository.github,
-          headBranch: worktree.branch,
-          baseBranch: project.repository.defaultBranch,
-          project,
-        });
-        if (mergedPullRequest === null) {
-          throw new Error(
-            `Could not verify merged pull request for ${activeCard.id}`,
-          );
-        }
-        await completeMergedTaskSession({
-          github,
-          queue,
-          mutationBlockStore,
-          taskStore,
-          trello,
-          git,
-          project,
-          card: activeCard,
-          pullRequest: mergedPullRequest,
-          completionComment: buildAutoMergeSummary({
-            pullRequestUrl: pr.url,
-            commitSha: publishedSha,
-            reviewResult: "Passed",
-            remediationResult: `${finalReview.attempts} review repair(s)`,
-          }),
-          releaseMutationEventId: mutation.eventId,
-          onMutationReleased: () => {
-            mutation = null;
-          },
-          ...(emailNotifier === undefined ? {} : { emailNotifier }),
-          signal,
-        });
-        mutation = null;
-      }
-    }
     if (mutation !== null) queue.complete(mutation.eventId);
   } catch (error) {
     const failedRecord =

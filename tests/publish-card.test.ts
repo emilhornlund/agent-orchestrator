@@ -1,7 +1,3 @@
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ProjectConfig } from "../src/config/config.js";
@@ -15,7 +11,6 @@ import type { EmailNotifier } from "../src/notifications/email-notifier.js";
 import type { OpenCodeClient } from "../src/opencode/opencode-client.js";
 import { MAX_PULL_REQUEST_DESCRIPTION_SUMMARY_LENGTH } from "../src/opencode/pull-request-description.js";
 import { formatFailureDiagnostic } from "../src/orchestrator/failure-diagnostic.js";
-import { readPreparedConflict } from "../src/orchestrator/prepared-conflict-state.js";
 import { publishCard } from "../src/orchestrator/publish-card.js";
 import { WorkflowError } from "../src/orchestrator/workflow-error.js";
 import { type TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
@@ -113,23 +108,18 @@ function createPublicationGit(
     fetch: vi.fn().mockResolvedValue(undefined),
     rebase: vi.fn().mockResolvedValue(undefined),
     getHeadSha: vi.fn().mockResolvedValue("abc123"),
+    getRemoteBranchSha: vi.fn().mockResolvedValue(null),
     push: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   } as unknown as GitClient;
 }
 
-const temporaryDirectories: string[] = [];
-
 afterEach(() => {
   vi.unstubAllEnvs();
-
-  for (const directory of temporaryDirectories.splice(0)) {
-    fs.rmSync(directory, { recursive: true, force: true });
-  }
 });
 
 describe("publishCard", () => {
-  it("never merges during publication, even when auto-merge is enabled", async () => {
+  it("publishes to Human Review even when passed a forged autoMerge value", async () => {
     const trello = {
       moveCard: vi.fn().mockResolvedValue({
         ...createCard(),
@@ -140,7 +130,6 @@ describe("publishCard", () => {
       findPullRequest: vi.fn().mockResolvedValue({
         url: "https://github.com/example/repository/pull/123",
       }),
-      mergePullRequest: vi.fn(),
     } as unknown as GitHubClient;
 
     await publishCard({
@@ -156,7 +145,6 @@ describe("publishCard", () => {
       remediationResult: "Not required",
     });
 
-    expect(github.mergePullRequest).not.toHaveBeenCalled();
     expect(trello.moveCard).toHaveBeenCalledWith("card-1", "review-list");
   });
 
@@ -470,7 +458,6 @@ describe("publishCard", () => {
 
     expect(events).toEqual([
       "fetch",
-      "rebase",
       "push",
       "find-pr",
       "create-pr",
@@ -487,18 +474,10 @@ describe("publishCard", () => {
       "origin",
       "main",
     ]);
-    expect(runGit).toHaveBeenNthCalledWith(
-      3,
-      "/tmp/example-worktrees/card-1",
-      ["rebase", "origin/main"],
-      {
-        GIT_AUTHOR_NAME: "Configured Git Author",
-        GIT_AUTHOR_EMAIL: "agent-orchestrator@users.noreply.github.com",
-        GIT_COMMITTER_NAME: "Configured Git Author",
-        GIT_COMMITTER_EMAIL: "agent-orchestrator@users.noreply.github.com",
-      },
+    expect(runGit.mock.calls.some(([, args]) => args.includes("rebase"))).toBe(
+      false,
     );
-    expect(runGit).toHaveBeenNthCalledWith(4, "/tmp/example-worktrees/card-1", [
+    expect(runGit).toHaveBeenNthCalledWith(3, "/tmp/example-worktrees/card-1", [
       "rev-parse",
       "HEAD",
     ]);
@@ -626,11 +605,7 @@ describe("publishCard", () => {
       "main",
       createProject(),
     );
-    expect(git.rebase).toHaveBeenCalledWith(
-      "/worktree",
-      "origin/main",
-      createProject().repository.gitIdentity,
-    );
+    expect(git.rebase).not.toHaveBeenCalled();
     expect(git.getRemoteBranchSha).toHaveBeenCalledWith(
       "/worktree",
       "origin",
@@ -717,7 +692,7 @@ describe("publishCard", () => {
       verifiedDescriptionFacts: () => ["yarn validate passed."],
     });
 
-    expect(events.slice(0, 3)).toEqual(["rebase", "description", "push"]);
+    expect(events.slice(0, 2)).toEqual(["description", "push"]);
     expect(runDescription).toHaveBeenCalledTimes(1);
     expect(runDescription).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1449,11 +1424,7 @@ describe("publishCard", () => {
       remediationResult: "Not required",
     });
 
-    expect(git.rebase).toHaveBeenCalledWith(
-      "/worktree",
-      "origin/main",
-      createProject().repository.gitIdentity,
-    );
+    expect(git.rebase).not.toHaveBeenCalled();
     expect(git.push).not.toHaveBeenCalled();
     expect(github.findPullRequest).toHaveBeenCalledTimes(1);
     expect(trello.moveCard).toHaveBeenCalledWith("card-1", "review-list");
@@ -1494,144 +1465,6 @@ describe("publishCard", () => {
     expect(git.push).not.toHaveBeenCalled();
     expect(github.findPullRequest).not.toHaveBeenCalled();
     expect(trello.moveCard).not.toHaveBeenCalled();
-  });
-
-  it("stops before publication when rebasing conflicts", async () => {
-    const rebaseError = new Error("CONFLICT (content): merge conflict");
-    const git = createPublicationGit({
-      rebase: vi.fn().mockRejectedValue(rebaseError),
-      push: vi.fn(),
-    });
-    const github = {
-      findPullRequest: vi.fn(),
-      createPullRequest: vi.fn(),
-    } as unknown as GitHubClient;
-    const trello = {
-      moveCard: vi.fn(),
-    } as unknown as TrelloClient;
-
-    await expect(
-      publishCard({
-        trello,
-        git,
-        github,
-        project: createProject(),
-        card: createCard(),
-        worktreePath: "/worktree",
-        branch: "agent/card-1",
-        commitSha: "commit-sha",
-        reviewResult: "Passed",
-        remediationResult: "Not required",
-      }),
-    ).rejects.toThrow(
-      "Failed to rebase agent/card-1 onto origin/main: CONFLICT",
-    );
-
-    expect(git.getHeadSha).not.toHaveBeenCalled();
-    expect(git.push).not.toHaveBeenCalled();
-    expect(github.findPullRequest).not.toHaveBeenCalled();
-    expect(trello.moveCard).not.toHaveBeenCalled();
-  });
-
-  it("remediates an initial publication rebase conflict before creating the PR", async () => {
-    const taskSha = "a".repeat(40);
-    const targetSha = "b".repeat(40);
-    const rebasedSha = "c".repeat(40);
-    const worktreeRoot = fs.mkdtempSync(
-      path.join(os.tmpdir(), "agent-orchestrator-publication-conflict-"),
-    );
-    temporaryDirectories.push(worktreeRoot);
-    const project = {
-      ...createProject(),
-      repository: {
-        ...createProject().repository,
-        worktreeRoot,
-        setupCommand: "yarn install",
-      },
-    };
-    const card = createCard();
-    fs.mkdirSync(path.join(worktreeRoot, card.id));
-    const rebaseState = {
-      active: true as const,
-      backend: "merge" as const,
-      headName: "refs/heads/agent/card-1",
-      onto: targetSha,
-      originalHead: taskSha,
-      currentStep: 1,
-      totalSteps: 1,
-    };
-    const rebaseStates = [rebaseState, rebaseState, null];
-    const conflictedPaths = [["src/example.ts"], []];
-    const runOpenCode = vi
-      .fn()
-      .mockResolvedValueOnce({ exitCode: 0, output: "", errorOutput: "" })
-      .mockResolvedValueOnce({
-        exitCode: 0,
-        output: JSON.stringify({
-          summary: "Published implementation",
-          changes: ["Resolved the publication conflict."],
-          validation: [],
-        }),
-        errorOutput: "",
-      });
-    const git = createPublicationGit({
-      rebase: vi.fn().mockRejectedValue(new Error("CONFLICT")),
-      getRebaseState: vi
-        .fn()
-        .mockImplementation(async () => rebaseStates.shift()),
-      getConflictedPaths: vi
-        .fn()
-        .mockImplementation(async () => conflictedPaths.shift() ?? []),
-      isValidRepository: vi.fn().mockResolvedValue(true),
-      getHeadSha: vi.fn().mockResolvedValue(rebasedSha),
-      isAncestor: vi.fn().mockResolvedValue(true),
-      getStatus: vi.fn().mockResolvedValue(""),
-      getChangedFiles: vi.fn().mockResolvedValue("src/example.ts"),
-      getCommitMessage: vi.fn().mockResolvedValue("publish implementation"),
-      push: vi.fn().mockResolvedValue(undefined),
-    });
-    const createPullRequest = vi.fn().mockResolvedValue({
-      url: "https://github.com/example/repository/pull/123",
-    });
-    const github = {
-      findPullRequest: vi.fn().mockResolvedValue(null),
-      createPullRequest,
-    } as unknown as GitHubClient;
-    const trello = {
-      moveCard: vi.fn().mockResolvedValue(card),
-      getListTransitions: vi.fn().mockResolvedValue([]),
-      addComment: vi.fn().mockResolvedValue(undefined),
-    } as unknown as TrelloClient;
-    const commands = { run: vi.fn().mockResolvedValue({ exitCode: 0 }) };
-
-    await publishCard({
-      trello,
-      git,
-      github,
-      opencode: { run: runOpenCode } as unknown as OpenCodeClient,
-      project,
-      card,
-      worktreePath: path.join(worktreeRoot, card.id),
-      branch: "agent/card-1",
-      commitSha: taskSha,
-      reviewResult: "Passed",
-      remediationResult: "Not required",
-      commands: commands as never,
-    });
-
-    expect(runOpenCode).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sessionLabel: "OpenCode conflict remediation",
-        prompt: expect.stringContaining("src/example.ts"),
-      }),
-    );
-    expect(commands.run).toHaveBeenCalledWith(
-      expect.objectContaining({ command: "yarn install" }),
-    );
-    expect(git.push).toHaveBeenCalled();
-    expect(createPullRequest).toHaveBeenCalledOnce();
-    expect(readPreparedConflict(project, card.id)).toBeNull();
-    expect(trello.moveCard).toHaveBeenCalledWith(card.id, "review-list");
   });
 
   it("refuses a rebased branch when publication would not be fast-forward", async () => {

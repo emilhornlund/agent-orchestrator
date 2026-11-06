@@ -1,615 +1,70 @@
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-
-import { afterEach, describe, expect, it, vi } from "vitest";
-
+import { describe, expect, it, vi } from "vitest";
 import type { ProjectConfig } from "../src/config/config.js";
-import type { GitClient, GitRebaseState } from "../src/git/git-client.js";
+import type { GitClient } from "../src/git/git-client.js";
 import type { GitHubClient } from "../src/github/github-client.js";
-import { removeSessionLog } from "../src/logging/session-log.js";
-import { Logger } from "../src/logging/logger.js";
-import {
-  OpenCodeClient,
-  type OpenCodeRunResult,
-} from "../src/opencode/opencode-client.js";
-import { buildConflictRemediationPrompt } from "../src/opencode/build-conflict-remediation-prompt.js";
-import { buildValidationPromptLines } from "../src/opencode/build-validation-prompt.js";
-import {
-  CommandRunner,
-  type RunCommand,
-} from "../src/process/command-runner.js";
-import {
-  getPreparedConflictPath,
-  readPreparedConflict,
-  writePreparedConflict,
-  type PreparedConflictHandoff,
-} from "../src/orchestrator/prepared-conflict-state.js";
-import { remediatePreparedConflict } from "../src/orchestrator/remediate-prepared-conflict.js";
-import { readTrustedCommitState } from "../src/orchestrator/trusted-commit-state.js";
+import type { OpenCodeClient } from "../src/opencode/opencode-client.js";
 import type { TrelloCard } from "../src/trello/trello-client.js";
+import { remediatePreparedConflict } from "../src/orchestrator/remediate-prepared-conflict.js";
+import type { PreparedConflictHandoff } from "../src/orchestrator/prepared-conflict-state.js";
 
-const taskSha = "a".repeat(40);
-const baseSha = "b".repeat(40);
-const changedSha = "c".repeat(40);
-const temporaryDirectories: string[] = [];
-
-function createProject(
-  worktreeRoot: string,
-  validationCommand?: string,
-): ProjectConfig {
-  return {
-    id: "remediate-prepared-conflict-test",
-    autoMerge: false,
-    repository: {
-      path: "/configured/source",
-      github: "owner/repository",
-      defaultBranch: "main",
-      worktreeRoot,
-      ...(validationCommand === undefined ? {} : { validationCommand }),
-      gitIdentity: {
-        name: "Agent Orchestrator",
-        email: "agent@example.com",
-      },
-    },
-    trello: {
-      boardId: "board",
-      backlogListId: "backlog",
-      readyListId: "ready",
-      workingListId: "working",
-      reviewListId: "review",
-      failedListId: "failed",
-      doneListId: "done",
-      refinementLabelId: "refinement",
-      featureLabelId: "feature",
-      improvementLabelId: "improvement",
-      bugLabelId: "bug",
-    },
-    opencode: {
-      refinement: { model: "refinement", variant: "variant" },
-      implementation: { model: "implementation", variant: "variant" },
-      review: { model: "review", variant: "variant" },
-      remediation: {
-        model: "remediation-model",
-        variant: "xhigh",
-        maxPasses: 1,
-      },
-      commit: { model: "commit", variant: "variant" },
-      timeoutMinutes: 5,
-    },
-  };
-}
-
-function createCard(): TrelloCard {
-  return {
-    id: "card-1",
-    name: "Preserve player movement",
-    desc: "Keep movement speed compatible with the new physics base.",
-    idList: "review",
-    idLabels: [],
-    url: "https://trello.example/card-1",
-  };
-}
-
-function createHandoff(project: ProjectConfig): PreparedConflictHandoff {
-  return writePreparedConflict(
-    project,
-    "card-1",
-    ["src/player.ts", "src/physics.ts"],
-    {
-      active: true,
-      backend: "merge",
-      headName: "refs/heads/agent/card-1",
-      onto: baseSha,
-      originalHead: taskSha,
-      currentStep: 2,
-      totalSteps: 4,
-    },
-    {
-      origin: "initial-publication",
-      trustedTaskCommitSha: taskSha,
-      rebaseTargetSha: baseSha,
-    },
-  );
-}
-
-interface ScenarioOptions {
-  validationCommand?: string | undefined;
-  initialRebaseState?: GitRebaseState | null;
-  rebaseStates?: Array<GitRebaseState | null>;
-  conflictedPaths?: string[];
-  status?: string;
-  headSha?: string;
-  rebaseTargetIsAncestor?: boolean;
-  openCodeResult?: Partial<OpenCodeRunResult>;
-}
-
-function createScenario(options: ScenarioOptions = {}) {
-  const worktreeRoot = fs.mkdtempSync(
-    path.join(os.tmpdir(), "agent-orchestrator-conflict-remediation-"),
-  );
-  temporaryDirectories.push(worktreeRoot);
-  const project = createProject(
-    worktreeRoot,
-    "validationCommand" in options
-      ? options.validationCommand
-      : "yarn validate",
-  );
-  const card = createCard();
-  const worktreePath = path.join(worktreeRoot, card.id);
-  fs.mkdirSync(worktreePath);
-  const handoff = createHandoff(project);
-  const activeRebase = handoff.rebase;
-  const rebaseStates = [
-    options.initialRebaseState === undefined
-      ? activeRebase
-      : options.initialRebaseState,
-    ...(options.rebaseStates ?? [null]),
-  ];
-  const runOpenCode = vi.fn().mockResolvedValue({
-    exitCode: 0,
-    output: "",
-    errorOutput: "",
-    ...options.openCodeResult,
-  });
-  const runCommand = vi.fn<RunCommand>().mockResolvedValue({
-    exitCode: 0,
-  });
-  const github = {
-    updatePullRequestDescriptionStatus: vi.fn().mockResolvedValue(false),
-  } as unknown as GitHubClient;
-
-  const git = {
-    getCurrentBranch: vi.fn().mockResolvedValue("agent/card-1"),
-    isValidRepository: vi.fn().mockResolvedValue(true),
-    getRebaseState: vi
-      .fn()
-      .mockImplementation(async () => rebaseStates.shift() ?? null),
-    getConflictedPaths: vi
-      .fn()
-      .mockResolvedValue(options.conflictedPaths ?? []),
-    getHeadSha: vi.fn().mockResolvedValue(options.headSha ?? changedSha),
-    isAncestor: vi
-      .fn()
-      .mockResolvedValue(options.rebaseTargetIsAncestor ?? true),
-    getStatus: vi.fn().mockResolvedValue(options.status ?? ""),
-  } as unknown as GitClient;
-
-  return {
-    card,
-    commands: new CommandRunner(runCommand),
-    git,
-    github,
-    handoff,
-    opencode: new OpenCodeClient(runOpenCode),
-    project,
-    pullRequestUrl: "https://github.com/owner/repository/pull/1",
-    runCommand,
-    runOpenCode,
-    worktreePath,
-  };
-}
-
-afterEach(() => {
-  removeSessionLog("remediate-prepared-conflict-test", "card-1");
-
-  for (const directory of temporaryDirectories.splice(0)) {
-    fs.rmSync(directory, { recursive: true, force: true });
-  }
-});
-
-describe("buildConflictRemediationPrompt", () => {
-  it("focuses OpenCode on the original task and every rebase stop", () => {
-    const worktreeRoot = fs.mkdtempSync(
-      path.join(os.tmpdir(), "agent-orchestrator-conflict-prompt-"),
-    );
-    temporaryDirectories.push(worktreeRoot);
-    const project = createProject(worktreeRoot);
-    const handoff = {
-      ...createHandoff(project),
-      conflictedPaths: ["src/player.ts"],
-    };
-
-    const prompt = buildConflictRemediationPrompt(
-      createCard(),
-      handoff,
-      "yarn validate",
-    );
-
-    expect(prompt).toContain("Task: Preserve player movement");
-    expect(prompt).toContain("Keep movement speed compatible");
-    expect(prompt).toContain("Current task branch: agent/card-1");
-    expect(prompt).toContain("Rebase target commit: ");
-    expect(prompt).toContain("- src/player.ts");
-    expect(prompt).toContain("a rebase is currently in progress");
-    expect(prompt).toContain("more than once");
-    for (const line of buildValidationPromptLines("yarn validate")) {
-      expect(prompt).toContain(line);
-    }
-    expect(prompt).toContain(
-      "If validation fails because of your changes, fix those failures before finishing remediation.",
-    );
-  });
-});
-
-describe("remediatePreparedConflict", () => {
-  it("fails closed on a retired Human Review maintenance handoff origin", () => {
-    const scenario = createScenario();
-    const handoffPath = getPreparedConflictPath(
-      scenario.project,
-      scenario.card.id,
-    );
-    const handoff = JSON.parse(fs.readFileSync(handoffPath, "utf8")) as Record<
-      string,
-      unknown
-    >;
-    handoff.origin = "human-review-maintenance";
-    handoff.expectedRemoteTaskSha = taskSha;
-    fs.writeFileSync(handoffPath, JSON.stringify(handoff), "utf8");
-
-    expect(() =>
-      readPreparedConflict(scenario.project, scenario.card.id),
-    ).toThrow("Prepared conflict handoff is invalid");
-    expect(fs.existsSync(handoffPath)).toBe(true);
-  });
-
-  it("remediates initial-publication conflicts without a PR or remote task branch", async () => {
-    const scenario = createScenario();
-    const handoff = writePreparedConflict(
-      scenario.project,
-      scenario.card.id,
-      ["src/player.ts"],
-      scenario.handoff.rebase,
-      {
-        origin: "initial-publication",
-        trustedTaskCommitSha: taskSha,
-        rebaseTargetSha: baseSha,
-      },
-    );
-
-    await remediatePreparedConflict({
-      git: scenario.git,
-      opencode: scenario.opencode,
-      commands: scenario.commands,
-      project: scenario.project,
-      card: scenario.card,
-      handoff,
-      signal: new AbortController().signal,
-    });
-
-    expect(readPreparedConflict(scenario.project, scenario.card.id)).toBeNull();
-    expect(readTrustedCommitState(scenario.project, scenario.card.id)).toEqual(
-      expect.objectContaining({ commitSha: changedSha }),
-    );
-  });
-
-  it("resumes a completed initial-publication rebase after restart without another OpenCode session", async () => {
-    const scenario = createScenario({ initialRebaseState: null });
-    const handoff = writePreparedConflict(
-      scenario.project,
-      scenario.card.id,
-      ["src/player.ts"],
-      scenario.handoff.rebase,
-      {
-        origin: "initial-publication",
-        trustedTaskCommitSha: taskSha,
-        rebaseTargetSha: baseSha,
-      },
-    );
-
-    await remediatePreparedConflict({
-      git: scenario.git,
-      opencode: scenario.opencode,
-      commands: scenario.commands,
-      project: scenario.project,
-      card: scenario.card,
-      handoff,
-      signal: new AbortController().signal,
-    });
-
-    expect(scenario.runOpenCode).not.toHaveBeenCalled();
-    expect(readPreparedConflict(scenario.project, scenario.card.id)).toBeNull();
-    expect(readTrustedCommitState(scenario.project, scenario.card.id)).toEqual(
-      expect.objectContaining({ commitSha: changedSha }),
-    );
-  });
-
-  it("starts remediation from a matching detached-HEAD rebase and requires the branch after completion", async () => {
-    const scenario = createScenario();
-    const getCurrentBranch = vi.fn().mockResolvedValue("");
-    scenario.git.getCurrentBranch = getCurrentBranch;
-    scenario.runOpenCode.mockImplementation(async () => {
-      getCurrentBranch.mockResolvedValue("agent/card-1");
-
-      return {
-        exitCode: 0,
-        output: "",
-        errorOutput: "",
-      };
-    });
-
-    await remediatePreparedConflict({
-      ...scenario,
-      signal: new AbortController().signal,
-    });
-
-    expect(getCurrentBranch).toHaveBeenCalledOnce();
-    expect(scenario.runOpenCode).toHaveBeenCalledOnce();
-  });
-
-  it("leaves prepared Git state untouched when status presentation fails", async () => {
-    const scenario = createScenario();
-    vi.mocked(
-      scenario.github.updatePullRequestDescriptionStatus,
-    ).mockRejectedValue(new Error("description update failed"));
-
-    await expect(
-      remediatePreparedConflict({
-        ...scenario,
-        signal: new AbortController().signal,
-      }),
-    ).rejects.toThrow("managed status");
-
-    expect(scenario.runOpenCode).not.toHaveBeenCalled();
-    expect(
-      readPreparedConflict(scenario.project, scenario.card.id),
-    ).not.toBeNull();
-  });
-
+describe("prepared conflict P1 recovery refusal", () => {
   it.each([
-    ["configured command", "yarn validate"],
-    ["no configured command", undefined],
-  ] as const)(
-    "keeps prepared-conflict validation in the OpenCode session: %s",
-    async (_label, validationCommand) => {
-      const scenario = createScenario({ validationCommand });
-
-      await remediatePreparedConflict({
-        ...scenario,
-        signal: new AbortController().signal,
-      });
-
-      expect(scenario.runOpenCode).toHaveBeenCalledWith(
-        expect.objectContaining({
-          cwd: scenario.worktreePath,
-          model: "remediation-model",
-          variant: "xhigh",
-          sessionLabel: "OpenCode conflict remediation",
-          prompt: expect.stringContaining(
-            buildValidationPromptLines(validationCommand)[0] ?? "",
-          ),
-        }),
-      );
-      const prompt = scenario.runOpenCode.mock.calls[0]?.[0]?.prompt;
-
-      for (const line of buildValidationPromptLines(validationCommand)) {
-        expect(prompt).toContain(line);
-      }
-      expect(scenario.runCommand).not.toHaveBeenCalled();
-      expect(
-        scenario.github.updatePullRequestDescriptionStatus,
-      ).toHaveBeenNthCalledWith(
-        1,
-        expect.objectContaining({ status: "resolving-conflicts" }),
-      );
-      expect(
-        scenario.github.updatePullRequestDescriptionStatus,
-      ).toHaveBeenNthCalledWith(2, expect.objectContaining({ status: null }));
-      expect(
-        readTrustedCommitState(scenario.project, scenario.card.id),
-      ).toEqual(expect.objectContaining({ commitSha: changedSha }));
-      expect(
-        readPreparedConflict(scenario.project, scenario.card.id),
-      ).toBeNull();
-    },
-  );
-
-  it("runs setup through CommandRunner while validation stays with conflict-remediation OpenCode", async () => {
-    const scenario = createScenario({ validationCommand: "yarn validate" });
-    scenario.project.repository.setupCommand = "yarn install";
-
-    await remediatePreparedConflict({
-      ...scenario,
-      signal: new AbortController().signal,
-    });
-
-    expect(scenario.runCommand).toHaveBeenCalledWith(
-      expect.objectContaining({
-        command: "yarn install",
-        sessionLabel:
-          "Repository setup for initial publication conflict remediation",
-      }),
-    );
-    expect(scenario.runCommand).not.toHaveBeenCalledWith(
-      expect.objectContaining({ command: "yarn validate" }),
-    );
-    expect(scenario.runOpenCode.mock.calls[0]?.[0].prompt).toContain(
-      "Run the configured repository validation command: `yarn validate` before finishing.",
-    );
-  });
-
-  it("keeps successful remediation when managed status removal fails", async () => {
-    const scenario = createScenario();
-    const statusRemovalError = new Error("status cleanup failed");
-    const warning = vi.spyOn(Logger.prototype, "warn");
-
-    vi.mocked(
-      scenario.github.updatePullRequestDescriptionStatus,
-    ).mockImplementation(async ({ status }) => {
-      if (status === null) {
-        throw statusRemovalError;
-      }
-
-      return false;
-    });
-
-    try {
-      await expect(
-        remediatePreparedConflict({
-          ...scenario,
-          signal: new AbortController().signal,
-        }),
-      ).resolves.toBeUndefined();
-
-      expect(
-        readTrustedCommitState(scenario.project, scenario.card.id),
-      ).toEqual(expect.objectContaining({ commitSha: changedSha }));
-      expect(
-        readPreparedConflict(scenario.project, scenario.card.id),
-      ).toBeNull();
-      expect(warning).toHaveBeenCalledWith(
-        expect.stringContaining("status cleanup failed"),
-      );
-    } finally {
-      warning.mockRestore();
-    }
-  });
-
-  it("resumes a completed clean rebase without invoking OpenCode", async () => {
-    const scenario = createScenario({ initialRebaseState: null });
-
-    await remediatePreparedConflict({
-      ...scenario,
-      signal: new AbortController().signal,
-    });
-
-    expect(scenario.runOpenCode).not.toHaveBeenCalled();
-    expect(scenario.runCommand).not.toHaveBeenCalled();
-    expect(readTrustedCommitState(scenario.project, scenario.card.id)).toEqual(
-      expect.objectContaining({ commitSha: changedSha }),
-    );
-    expect(readPreparedConflict(scenario.project, scenario.card.id)).toBeNull();
-  });
-
-  it("blocks publication if a completed rebase becomes active again", async () => {
-    const scenario = createScenario({
-      initialRebaseState: null,
-      rebaseStates: [
-        {
+    "active rebase",
+    "completed local rebase",
+    "historically published PR",
+  ])(
+    "preserves the handoff and refuses %s continuation without external calls",
+    async () => {
+      const git = {
+        getRemoteBranchSha: vi.fn(),
+        rebase: vi.fn(),
+      } as unknown as GitClient;
+      const github = {
+        findPullRequest: vi.fn(),
+        findPullRequestState: vi.fn(),
+      } as unknown as GitHubClient;
+      const opencode = { run: vi.fn() } as unknown as OpenCodeClient;
+      const project = {
+        id: "project",
+        repository: { github: "owner/repo", worktreeRoot: "/worktrees" },
+      } as ProjectConfig;
+      const card = { id: "card-1", name: "Task", desc: "Task" } as TrelloCard;
+      const handoff = {
+        version: 1,
+        kind: "prepared-conflict",
+        projectId: "project",
+        cardId: "card-1",
+        taskBranch: "agent/card-1",
+        defaultBranch: "main",
+        origin: "initial-publication",
+        conflictedPaths: ["src/file.ts"],
+        rebase: {
           active: true,
           backend: "merge",
           headName: "refs/heads/agent/card-1",
-          onto: baseSha,
-          originalHead: taskSha,
-          currentStep: 2,
-          totalSteps: 4,
+          onto: "abc",
+          originalHead: "def",
         },
-      ],
-    });
-
-    await expect(
-      remediatePreparedConflict({
-        ...scenario,
-        signal: new AbortController().signal,
-      }),
-    ).rejects.toThrow("still active");
-
-    expect(scenario.runOpenCode).not.toHaveBeenCalled();
-    expect(
-      readPreparedConflict(scenario.project, scenario.card.id),
-    ).not.toBeNull();
-  });
-
-  it("preserves the handoff when a later rebase stop remains active", async () => {
-    const scenario = createScenario({
-      rebaseStates: [
-        {
-          active: true,
-          backend: "merge",
-          headName: "refs/heads/agent/card-1",
-          onto: baseSha,
-          originalHead: taskSha,
-          currentStep: 3,
-          totalSteps: 4,
-        },
-      ],
-    });
-
-    await expect(
-      remediatePreparedConflict({
-        ...scenario,
-        signal: new AbortController().signal,
-      }),
-    ).rejects.toThrow("still active");
-
-    expect(
-      readPreparedConflict(scenario.project, scenario.card.id),
-    ).not.toBeNull();
-    expect(
-      fs.existsSync(
-        getPreparedConflictPath(scenario.project, scenario.card.id),
-      ),
-    ).toBe(true);
-  });
-
-  it("does not clear or publish when OpenCode aborts the prepared rebase", async () => {
-    const scenario = createScenario({ headSha: taskSha });
-
-    await expect(
-      remediatePreparedConflict({
-        ...scenario,
-        signal: new AbortController().signal,
-      }),
-    ).rejects.toThrow("may have been aborted");
-
-    expect(
-      readPreparedConflict(scenario.project, scenario.card.id),
-    ).not.toBeNull();
-  });
-
-  it("does not publish a clean branch that does not contain the rebase target", async () => {
-    const scenario = createScenario({ rebaseTargetIsAncestor: false });
-
-    await expect(
-      remediatePreparedConflict({
-        ...scenario,
-        signal: new AbortController().signal,
-      }),
-    ).rejects.toThrow("does not contain rebase target");
-
-    expect(
-      readPreparedConflict(scenario.project, scenario.card.id),
-    ).not.toBeNull();
-  });
-
-  it.each([
-    ["dirty", { status: " M src/player.ts" }, "uncommitted changes"],
-    [
-      "invalid ancestry",
-      { rebaseTargetIsAncestor: false },
-      "does not contain rebase target",
-    ],
-    ["unchanged HEAD", { headSha: taskSha }, "may have been aborted"],
-  ] as const)(
-    "blocks a completed rebase with %s state",
-    async (_label, options, message) => {
-      const scenario = createScenario({
-        initialRebaseState: null,
-        ...options,
-      });
+        preparedAt: new Date().toISOString(),
+      } as PreparedConflictHandoff;
 
       await expect(
         remediatePreparedConflict({
-          ...scenario,
+          git,
+          github,
+          opencode,
+          project,
+          card,
+          handoff,
           signal: new AbortController().signal,
         }),
-      ).rejects.toThrow(message);
-
-      expect(scenario.runOpenCode).not.toHaveBeenCalled();
-      expect(
-        readPreparedConflict(scenario.project, scenario.card.id),
-      ).not.toBeNull();
+      ).rejects.toThrow("disabled by the P1 safety guardrail");
+      expect(git.getRemoteBranchSha).not.toHaveBeenCalled();
+      expect(git.rebase).not.toHaveBeenCalled();
+      expect(github.findPullRequest).not.toHaveBeenCalled();
+      expect(github.findPullRequestState).not.toHaveBeenCalled();
+      expect(opencode.run).not.toHaveBeenCalled();
+      expect(handoff.conflictedPaths).toEqual(["src/file.ts"]);
     },
   );
-
-  it("does not publish when the agent exits successfully with unresolved paths", async () => {
-    const scenario = createScenario({ conflictedPaths: ["src/player.ts"] });
-
-    await expect(
-      remediatePreparedConflict({
-        ...scenario,
-        signal: new AbortController().signal,
-      }),
-    ).rejects.toThrow("unmerged paths remain");
-  });
 });
