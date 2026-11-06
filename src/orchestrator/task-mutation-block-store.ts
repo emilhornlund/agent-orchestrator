@@ -27,6 +27,26 @@ const stateSchema = z
       keys.add(blocker.key);
     });
   });
+export function parseTaskMutationBlock(
+  value: unknown,
+): z.infer<typeof stateSchema> {
+  const current = stateSchema.safeParse(value);
+  if (current.success) return current.data;
+  const legacy = legacyStateSchema.parse(value);
+  return {
+    version: 1,
+    projectId: legacy.projectId,
+    blockers: [
+      {
+        key: createHash("sha256")
+          .update(`legacy:${legacy.identity}`)
+          .digest("hex"),
+        identity: legacy.identity,
+        diagnostic: legacy.diagnostic,
+      },
+    ],
+  };
+}
 
 const legacyStateSchema = z.strictObject({
   version: z.literal(1),
@@ -178,27 +198,10 @@ export class TaskMutationBlockStore {
       const parsed = JSON.parse(
         fs.readFileSync(this.filePath, "utf8"),
       ) as unknown;
-      const current = stateSchema.safeParse(parsed);
-      if (current.success) {
-        if (current.data.projectId !== this.projectId)
-          throw new Error("Task mutation block project identity mismatch");
-        return current.data;
-      }
-      const legacy = legacyStateSchema.parse(parsed);
-      if (legacy.projectId !== this.projectId)
+      const normalized = parseTaskMutationBlock(parsed);
+      if (normalized.projectId !== this.projectId)
         throw new Error("Task mutation block project identity mismatch");
-      const legacyKey = this.hash(`legacy:${legacy.identity}`);
-      return {
-        version: 1,
-        projectId: this.projectId,
-        blockers: [
-          {
-            key: legacyKey,
-            identity: legacy.identity,
-            diagnostic: legacy.diagnostic,
-          },
-        ],
-      };
+      return normalized;
     } catch (error) {
       if (
         typeof error !== "object" ||

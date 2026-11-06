@@ -17,6 +17,30 @@ const storeSchema = z.strictObject({
   revision: z.number().int().positive().safe(),
   operations: z.array(z.unknown()).max(10_000),
 });
+export function parsePrMaintenanceStore(
+  value: unknown,
+  expectedProjectId: string,
+): {
+  version: 1;
+  projectId: string;
+  revision: number;
+  operations: PrMaintenanceOperation[];
+} {
+  const parsed = storeSchema.parse(value);
+  if (parsed.projectId !== expectedProjectId)
+    throw new Error("PR maintenance store owner mismatch");
+  const operations = parsed.operations.map(parsePrMaintenanceOperation);
+  if (
+    operations.some((operation) => operation.projectId !== expectedProjectId) ||
+    new Set(operations.map((operation) => operation.operationId)).size !==
+      operations.length ||
+    operations.filter(
+      (operation) => !["completed", "cancelled"].includes(operation.status),
+    ).length > 1
+  )
+    throw new Error("Invalid PR maintenance operation ownership or history");
+  return { ...parsed, operations };
+}
 type StoreRecord = {
   version: 1;
   projectId: string;
@@ -768,23 +792,10 @@ export class PrMaintenanceStore {
       throw new Error(
         `PR maintenance store exceeds the ${MAX_STORE_BYTES}-byte limit`,
       );
-    const parsed = storeSchema.parse(
+    return parsePrMaintenanceStore(
       JSON.parse(fs.readFileSync(this.filePath, "utf8")) as unknown,
+      this.projectId,
     );
-    if (parsed.projectId !== this.projectId)
-      throw new Error("PR maintenance store owner mismatch");
-    const operations = parsed.operations.map(parsePrMaintenanceOperation);
-    if (
-      operations.some((operation) => operation.projectId !== this.projectId) ||
-      new Set(operations.map((operation) => operation.operationId)).size !==
-        operations.length ||
-      operations.filter(
-        (operation) =>
-          operation.status !== "completed" && operation.status !== "cancelled",
-      ).length > 1
-    )
-      throw new Error("Invalid PR maintenance operation ownership or history");
-    return { ...parsed, operations };
   }
 
   private update(

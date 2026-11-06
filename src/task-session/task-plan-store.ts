@@ -144,7 +144,7 @@ function assertDirectoryPath(directoryPath: string, create: boolean): boolean {
   return true;
 }
 
-function validateStoredTaskPlan(value: unknown): StoredTaskPlan {
+export function parseStoredTaskPlan(value: unknown): StoredTaskPlan {
   const envelope = storedTaskPlanEnvelopeSchema.parse(value);
   const plan = parseTaskPlan(envelope.plan);
   const verification =
@@ -199,7 +199,7 @@ function readTaskPlanFile(
     throw new Error(`Could not parse task plan: ${filePath}`, { cause: error });
   }
 
-  const stored = validateStoredTaskPlan(value);
+  const stored = parseStoredTaskPlan(value);
 
   if (stored.plan.projectId !== projectId || stored.plan.cardId !== cardId) {
     throw new Error(
@@ -211,7 +211,7 @@ function readTaskPlanFile(
 }
 
 function serializeTaskPlan(stored: StoredTaskPlan): string {
-  const serialized = `${JSON.stringify(validateStoredTaskPlan(stored), null, 2)}\n`;
+  const serialized = `${JSON.stringify(parseStoredTaskPlan(stored), null, 2)}\n`;
 
   if (Buffer.byteLength(serialized, "utf8") > MAX_TASK_PLAN_BYTES) {
     throw new Error(`Task plan exceeds the ${MAX_TASK_PLAN_BYTES}-byte limit`);

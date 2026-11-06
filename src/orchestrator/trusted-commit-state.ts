@@ -48,6 +48,17 @@ const rejectedCommitStateSchema = z.strictObject({
     .min(1)
     .refine((value) => value.trim() === value, "Commit SHA must not be padded"),
 });
+export function parseLegacyCommitState(
+  value: unknown,
+): TrustedCommitState | PendingCommitState | RejectedCommitState {
+  if (!value || typeof value !== "object" || !("kind" in value))
+    throw new Error("Commit state has no recognized kind");
+  const kind = (value as { kind: unknown }).kind;
+  if (kind === "trusted-commit") return trustedCommitStateSchema.parse(value);
+  if (kind === "pending-commit") return pendingCommitStateSchema.parse(value);
+  if (kind === "rejected-commit") return rejectedCommitStateSchema.parse(value);
+  throw new Error("Unsupported commit state kind");
+}
 
 export type RejectedCommitState = z.infer<typeof rejectedCommitStateSchema>;
 

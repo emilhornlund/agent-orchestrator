@@ -84,6 +84,11 @@ const queueSchema = z
       });
     }
   });
+export function parseTaskMutationQueue(
+  value: unknown,
+): ReturnType<typeof queueSchema.parse> {
+  return queueSchema.parse(value);
+}
 export type TaskMutationEvent = z.infer<typeof eventSchema>;
 type QueueRecord = z.infer<typeof queueSchema>;
 const liveMutationOwners = new Set<string>();

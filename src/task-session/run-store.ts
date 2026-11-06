@@ -359,6 +359,47 @@ export class RunStore {
     atomicJson(this.recordPath, parsed, true);
     return parsed;
   }
+  /** Import a validated legacy snapshot under the canonical lease. Artifacts are
+   * durable before the candidate record; an orphan after interruption is safe. */
+  importSnapshot(
+    record: RunRecord,
+    artifacts: readonly { content: Uint8Array; mediaType?: string }[],
+  ): RunRecord {
+    const parsed = parseRunRecord(record);
+    this.assertLease(parsed);
+    if (
+      parsed.revision !== 1 ||
+      parsed.attemptId !== path.basename(this.recordPath, ".json") ||
+      JSON.stringify(parsed.pinned) !== JSON.stringify(this.identity) ||
+      parsed.artifacts.length !== artifacts.length
+    )
+      throw new Error(
+        "Imported run must match candidate identity and artifact count",
+      );
+    provisionDirectory(path.dirname(this.recordPath));
+    if (fs.existsSync(this.recordPath))
+      throw new RunStoreConflictError("Run already exists");
+    const refs = artifacts.map(({ content, mediaType }) =>
+      this.persistArtifact(content, mediaType),
+    );
+    if (JSON.stringify(refs) !== JSON.stringify(parsed.artifacts))
+      throw new Error(
+        "Imported artifact references do not match validated content",
+      );
+    this.validateArtifacts(parsed);
+    this.assertLease(parsed);
+    atomicJson(this.recordPath, parsed, true);
+    return parsed;
+  }
+  /** Persist content-addressed import snapshots before recording the handoff marker. */
+  stageImportArtifacts(
+    artifacts: readonly { content: Uint8Array; mediaType?: string }[],
+  ): RunRecord["artifacts"] {
+    this.lease.assertHeld();
+    return artifacts.map(({ content, mediaType }) =>
+      this.persistArtifact(content, mediaType),
+    );
+  }
   /** All state mutations require the event/source/destination tuple; no public raw CAS. */
   transition(
     expectedRevision: number,
@@ -588,6 +629,21 @@ export class RunStore {
         }
       : null;
   }
+  /** Assert the current lease and the durable record's current owner fence. */
+  assertLeaseForImport(): RunRecord {
+    const record = this.read();
+    if (!record) throw new RunStoreConflictError("Imported attempt is missing");
+    this.lease.assertHeld();
+    if (
+      record.pinned.integrationId !== this.lease.integrationId ||
+      record.owner.instanceId !== this.lease.instanceId ||
+      record.owner.token !== this.lease.token
+    )
+      throw new RunStoreConflictError(
+        "Import lease is not the current durable attempt owner",
+      );
+    return record;
+  }
   /** Record authoritative discovery of an ambiguous effect without dispatching or reopening workflow state. */
   recordDiscoveredOperationOutcome(
     expectedRevision: number,
@@ -687,6 +743,12 @@ export class RunStore {
     this.lease.assertHeld();
     const run = this.read();
     if (!run) throw new Error("Attempt must exist before artifact publication");
+    return this.persistArtifact(content, mediaType);
+  }
+  private persistArtifact(
+    content: Uint8Array,
+    mediaType?: string,
+  ): RunRecord["artifacts"][number] {
     provisionDirectory(this.artifactDirectory);
     const digest = createHash("sha256").update(content).digest("hex");
     const name = `sha256-${digest}`;
