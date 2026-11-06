@@ -63,12 +63,22 @@ must be unique.
 | `logRetentionDays`        | Positive integer number of days for managed log retention; defaults to `14` when omitted  |
 | `contextRetentionDays`    | Positive integer number of days for card context retention; defaults to `14` when omitted |
 | `contextRoot`             | Optional absolute root for card context; defaults to `/opt/.agent-context`                |
+| `coordinationRoot`        | Optional absolute host-visible directory for canonical project ownership coordination     |
+| `coordinationNamespaceId` | Expected identity of the explicitly provisioned coordination namespace                    |
 | `maxAttachmentBytes`      | Optional positive safe integer per-upload limit in bytes; defaults to 50 MiB              |
 | `maxTotalAttachmentBytes` | Optional positive safe integer aggregate new-download limit in bytes; defaults to 200 MiB |
 
-`contextRoot` is normalized with `path.resolve` like the other configured absolute paths. A custom value must be non-blank
+`contextRoot` and `coordinationRoot` are normalized with `path.resolve` like the other configured absolute paths. A custom value must be non-blank
 and absolute. The root must not equal, contain, or be contained by any configured `projects[].repository.path` or
 `projects[].repository.worktreeRoot`, including after normalization. Unknown `workflow` keys are rejected.
+
+Configure `coordinationRoot` and `coordinationNamespaceId` together. The directory must be explicitly created with protected
+ownership/permissions and provisioned with the versioned `.agent-orchestrator-coordination.json` marker before acquisition; the
+coordination API never creates an arbitrary root or marker. Every local/container participant must mount the **same host directory**
+at its configured runtime path and use the same namespace ID. A copied marker in independent directories is not shared coordination.
+Operators must establish and verify this common-mount contract; isolated namespaces hidden from each other cannot be discovered by
+the application. Production startup does not acquire ownership through these settings yet; that wiring is delivered by the later
+production-integration task. Do not rely on these settings alone to coordinate running instances before then.
 
 Card context storage uses this layout, with project IDs, card IDs, and attachment filenames treated as untrusted single path
 components:

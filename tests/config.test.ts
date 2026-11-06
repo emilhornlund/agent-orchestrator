@@ -941,6 +941,44 @@ workflow:
     expect(() => parseConfig(raw)).toThrow("owner/repository");
   });
 
+  it("canonicalizes GitHub transport spellings and rejects equivalent duplicates", () => {
+    const canonical = parseConfig(
+      validConfig.replace(
+        'github: "owner/repository"',
+        'github: "https://github.com/OWNER/REPOSITORY.git"',
+      ),
+    );
+    expect(canonical.projects[0]?.repository.github).toBe("owner/repository");
+
+    const duplicate = appendProject(validConfig, "project-two", "two").replace(
+      'github: "owner/repository-two"',
+      'github: "git@github.com:OWNER/REPOSITORY.git"',
+    );
+    expect(() => parseConfig(duplicate)).toThrow(
+      "GitHub repositories must be unique",
+    );
+  });
+
+  it("requires the coordination directory and namespace identity as a pair", () => {
+    expect(() =>
+      parseConfig(
+        validConfig.replace(
+          "workflow:",
+          'workflow:\n  coordinationRoot: "/tmp/coordination"',
+        ),
+      ),
+    ).toThrow(
+      "coordinationRoot and coordinationNamespaceId must be configured together",
+    );
+    const complete = validConfig.replace(
+      "workflow:",
+      'workflow:\n  coordinationRoot: "/tmp/coordination"\n  coordinationNamespaceId: "host-one"',
+    );
+    expect(parseConfig(complete).workflow.coordinationNamespaceId).toBe(
+      "host-one",
+    );
+  });
+
   it("rejects duplicate Trello workflow list IDs", () => {
     const raw = validConfig.replace(
       'workingListId: "working"',

@@ -3,7 +3,6 @@ import path from "node:path";
 import { z } from "zod";
 import YAML from "yaml";
 
-const githubRepositoryPattern = /^[^/]+\/[^/]+$/;
 const nonBlankString = z.string().refine((value) => value.trim().length > 0, {
   message: "Must not be blank",
 });
@@ -139,9 +138,19 @@ const githubAppSchema = z
 
 const repositorySchema = z.strictObject({
   path: absolutePath,
-  github: nonBlankString.regex(githubRepositoryPattern, {
-    message: "Must use owner/repository format",
-  }),
+  github: nonBlankString
+    .refine(
+      (value) => {
+        try {
+          canonicalizeGitHubRepository(value);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      { message: "Must identify a GitHub owner/repository" },
+    )
+    .transform(canonicalizeGitHubRepository),
   defaultBranch: nonBlankString,
   worktreeRoot: absolutePath,
   setupCommand: nonBlankString.optional(),
@@ -254,6 +263,8 @@ const configSchema = z
       logRetentionDays: z.number().int().positive().default(14),
       contextRetentionDays: z.number().int().positive().default(14),
       contextRoot: absolutePath.default(DEFAULT_CONTEXT_ROOT),
+      coordinationRoot: absolutePath.optional(),
+      coordinationNamespaceId: nonBlankString.optional(),
       maxAttachmentBytes: z.number().int().positive().safe().optional(),
       maxTotalAttachmentBytes: z.number().int().positive().safe().optional(),
     }),
@@ -287,8 +298,8 @@ const configSchema = z
       }
     }
 
-    const githubRepositories = config.projects.map(
-      (project) => project.repository.github,
+    const githubRepositories = config.projects.map((project) =>
+      canonicalizeGitHubRepository(project.repository.github),
     );
 
     if (new Set(githubRepositories).size !== githubRepositories.length) {
@@ -336,6 +347,19 @@ const configSchema = z
     }
 
     const contextRoot = config.workflow.contextRoot;
+    const coordinationRoot = config.workflow.coordinationRoot;
+    const coordinationNamespaceId = config.workflow.coordinationNamespaceId;
+    if (
+      (coordinationRoot === undefined) !==
+      (coordinationNamespaceId === undefined)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["workflow"],
+        message:
+          "coordinationRoot and coordinationNamespaceId must be configured together",
+      });
+    }
 
     for (const [projectIndex, project] of config.projects.entries()) {
       if (project.repository.validationCommand === undefined) {
@@ -369,6 +393,17 @@ const configSchema = z
             message: `Context root "${contextRoot}" overlaps ${description} "${configuredPath}" for project "${project.id}"`,
           });
         }
+
+        if (
+          coordinationRoot !== undefined &&
+          pathsOverlap(coordinationRoot, configuredPath)
+        ) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["workflow", "coordinationRoot"],
+            message: `Coordination root "${coordinationRoot}" overlaps ${description} "${configuredPath}" for project "${project.id}"`,
+          });
+        }
       }
     }
   });
@@ -381,6 +416,47 @@ export type GitHubAppConfig = NonNullable<
 export type EmailNotificationConfig = NonNullable<
   NonNullable<Config["notifications"]>["email"]
 >;
+
+/** Canonical GitHub identity for supported owner/repository spellings. */
+export function canonicalizeGitHubRepository(input: string): string {
+  if (input !== input.trim() || /\s/.test(input)) {
+    throw new Error(
+      `Unsupported GitHub repository identity (whitespace is not allowed): ${input}`,
+    );
+  }
+  let value = input;
+  const spellings = [
+    /^git@github\.com:/i,
+    /^ssh:\/\/git@github\.com\//i,
+    /^https?:\/\/(?:www\.)?github\.com\//i,
+  ];
+  const prefix = spellings.find((pattern) => pattern.test(value));
+  if (prefix !== undefined) value = value.replace(prefix, "");
+  if (value.endsWith("/")) value = value.slice(0, -1);
+  if (
+    !/^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\/[A-Za-z0-9_.-]+$/.test(
+      value,
+    ) ||
+    /[?#]/.test(value)
+  ) {
+    throw new Error(
+      `Unsupported GitHub repository identity (expected owner/repository): ${input}`,
+    );
+  }
+  while (value.toLocaleLowerCase("en-US").endsWith(".git")) {
+    value = value.slice(0, -4);
+  }
+  if (
+    !/^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\/[A-Za-z0-9_.-]+$/.test(value)
+  ) {
+    throw new Error(`Unsupported GitHub repository identity: ${input}`);
+  }
+  const repository = value.slice(value.indexOf("/") + 1);
+  if (repository === "." || repository === ".." || repository.endsWith(".")) {
+    throw new Error(`Unsupported GitHub repository identity: ${input}`);
+  }
+  return value.toLocaleLowerCase("en-US");
+}
 
 export function parseConfig(raw: string): Config {
   let parsed: unknown;
