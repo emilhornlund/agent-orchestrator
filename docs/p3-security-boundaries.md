@@ -4,6 +4,13 @@ Child processes use the allowlists in `src/process/child-environment.ts`; their
 effective environment is not a copy of the orchestrator environment. All
 families retain only platform execution essentials. Git and `gh` additionally
 receive Git identity/transport settings and the selected GitHub credential.
+Git signing is configured only on the individual `git commit` invocation with
+trusted `-c` options. The configured signing-key path remains an operational
+Git argument; signing configuration is not exported through the indexed
+`GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n` channel, and those
+ambient injection variables are not inherited by Git children. This keeps
+signing scoped to Git (not other child-process families) without accepting
+arbitrary indexed configuration injection.
 OpenCode receives credentials only for the provider prefix selected by the
 project's configured `provider/model` value. The allowlist is explicit for
 OpenAI, Anthropic, Google/Gemini/Vertex, Mistral, Groq, xAI, OpenRouter,

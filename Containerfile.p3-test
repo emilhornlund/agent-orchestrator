@@ -1,6 +1,6 @@
 FROM docker.io/library/node:24-bookworm-slim
 RUN corepack enable && corepack prepare yarn@1.22.22 --activate \
-    && apt-get update && apt-get install -y --no-install-recommends git util-linux \
+    && apt-get update && apt-get install -y --no-install-recommends git openssh-client util-linux \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /workspace
 COPY package.json yarn.lock tsconfig.json tsconfig.build.json eslint.config.js .prettierrc.json .prettierignore config.example.yaml ./

@@ -64,6 +64,20 @@ describe("child process environment manifests", () => {
     ).toEqual({ PATH: "/custom", HOME: "/home/user", SYSTEMROOT: "/windows" });
   });
 
+  it("rejects ambient and supplied GIT_CONFIG injection variables", () => {
+    const hostileGitConfig = {
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_KEY_0: "commit.gpgSign",
+      GIT_CONFIG_VALUE_0: "false",
+    };
+    expect(
+      buildChildEnvironment("git", hostileGitConfig, {
+        ...parent,
+        ...hostileGitConfig,
+      }),
+    ).not.toMatchObject(hostileGitConfig);
+  });
+
   it("isolates project-scoped github credentials", () => {
     const projectA = buildChildEnvironment(
       "github",

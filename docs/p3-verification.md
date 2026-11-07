@@ -22,7 +22,13 @@ resource was inspected or used to mutate an external service.
   `tests/production-diagnostic-wiring.integration.test.ts`, which verifies
   production worker diagnostic persistence and restart reconstruction, plus
   real-child verbose validation/coverage/maintenance capture and output-limit
-  integration coverage.
+  integration coverage. `tests/git-client.test.ts` also creates a disposable
+  SSH key with `ssh-keygen`, commits through the production default `GitClient`
+  adapter, verifies the commit's `gpgsig` with `git verify-commit` and an
+  allowed-signers file, and injects hostile indexed `GIT_CONFIG_*` variables
+  to prove they do not override the configured key. It skips only when
+  `ssh-keygen` is unavailable; the P3 test container installs `openssh-client`
+  so this real signing case runs there.
 - Retention additionally associates legacy session files with active run records
   using safe project/card-derived names, conservatively retains daily logs while
   any attempt is active, and scans runtime-root `process-executions` metadata.
@@ -101,9 +107,9 @@ below.
 
 ## Execution record
 
-Latest rerun: `yarn test:p3` **passed** (36 files, 581 tests),
-`yarn validate` **passed** (lint, format check, typecheck, and 142 files / 1,525
-tests), and `yarn test:p3:container` **passed** (36 files, 581 tests). An
+Latest rerun: `yarn test:p3` **passed** (36 files, 584 tests),
+`yarn validate` **passed** (lint, format check, typecheck, and 142 files / 1,528
+tests), and `yarn test:p3:container` **passed** (36 files, 584 tests). An
 earlier `yarn validate` attempt during final housekeeping failed: besides
 formatting/unused-variable findings in the in-progress GitHub client changes,
 two GitHub CI observation tests exposed that stale-SHA failures no longer

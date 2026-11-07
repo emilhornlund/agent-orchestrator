@@ -64,17 +64,6 @@ export function getGitIdentityEnvironment(
     GIT_AUTHOR_EMAIL: identity.email,
     GIT_COMMITTER_NAME: identity.name,
     GIT_COMMITTER_EMAIL: identity.email,
-    ...(identity.signingKey === undefined
-      ? {}
-      : {
-          GIT_CONFIG_COUNT: "3",
-          GIT_CONFIG_KEY_0: "gpg.format",
-          GIT_CONFIG_VALUE_0: "ssh",
-          GIT_CONFIG_KEY_1: "user.signingKey",
-          GIT_CONFIG_VALUE_1: identity.signingKey,
-          GIT_CONFIG_KEY_2: "commit.gpgSign",
-          GIT_CONFIG_VALUE_2: "true",
-        }),
   };
 }
 
@@ -807,9 +796,20 @@ export class GitClient {
     messageFilePath: string,
     identity: GitIdentity,
   ): Promise<void> {
+    const signingOptions =
+      identity.signingKey === undefined
+        ? []
+        : [
+            "-c",
+            "gpg.format=ssh",
+            "-c",
+            `user.signingKey=${identity.signingKey}`,
+            "-c",
+            "commit.gpgSign=true",
+          ];
     await this.runGit(
       repositoryPath,
-      ["commit", "-F", messageFilePath],
+      [...signingOptions, "commit", "-F", messageFilePath],
       getGitIdentityEnvironment(identity),
     );
   }
