@@ -10,6 +10,8 @@ import {
   type TrelloClient,
 } from "../trello/trello-client.js";
 import { presentExternalDiagnostic } from "../security/bounded-diagnostic.js";
+import { ProcessExecutionError } from "../process/process-runtime.js";
+import { WorkflowError } from "./workflow-error.js";
 
 import {
   annotateFailure,
@@ -35,6 +37,25 @@ export async function failCard(
 
   const originalError = toFailureError(workflowError);
   const failureDescription = describeFailure(originalError);
+  const processFailure =
+    originalError instanceof ProcessExecutionError
+      ? {
+          artifactReference: `process-executions/${originalError.executionId}/stderr.txt`,
+        }
+      : originalError.name === "MalformedPullRequestUrlError" &&
+          "executionId" in originalError &&
+          typeof originalError.executionId === "string" &&
+          /^[0-9a-f-]{36}$/iu.test(originalError.executionId) &&
+          "stdoutArtifactReference" in originalError &&
+          originalError.stdoutArtifactReference ===
+            `process-executions/${originalError.executionId}/stdout.txt`
+        ? { artifactReference: originalError.stdoutArtifactReference }
+        : undefined;
+  const classification = processFailure
+    ? "process"
+    : originalError instanceof WorkflowError
+      ? "internal-workflow"
+      : "external-operation";
   const sessionLogPath = getExistingSessionLogPath(project.id, cardId);
   const failureContext: FailureContext = {
     projectId: project.id,
@@ -54,12 +75,27 @@ export async function failCard(
     cardLog.warn(
       `Retryable Trello failure; leaving card in its last known state and deferring failure handling: ${originalError.message}`,
     );
+    cardLog.diagnostic({
+      code: "trello-retry-deferred",
+      classification: "external-operation",
+      recovery: "state-preserved",
+    });
     throw originalError;
   }
 
   cardLog.error(
     `${formatFailureDiagnostic(originalError, failureContext)}; attempting to move card to Failed`,
   );
+  cardLog.diagnostic({
+    code: "task-failure",
+    classification,
+    recovery: "manual-review",
+    ...(processFailure
+      ? {
+          artifactReferences: [processFailure.artifactReference],
+        }
+      : {}),
+  });
 
   try {
     await trello.moveCard(cardId, project.trello.failedListId);
@@ -88,6 +124,16 @@ export async function failCard(
     cardLog.error(
       `Failure handling failed: could not move card to Failed: ${moveError.message}; preserving the primary failure and skipping the failure comment`,
     );
+    cardLog.diagnostic({
+      code: "card-failure-transition-failed",
+      classification: "workflow-recovery",
+      recovery: "transition-failed",
+      ...(processFailure
+        ? {
+            artifactReferences: [processFailure.artifactReference],
+          }
+        : {}),
+    });
 
     throw aggregateError;
   }

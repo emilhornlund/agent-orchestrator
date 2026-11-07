@@ -1,5 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import {
   RunRegistry,
   RunStore,
@@ -15,10 +17,18 @@ import {
   prepareProjectAttempt,
   updateProjectActiveAttempt,
 } from "../coordination/project-registry.js";
+import {
+  withProcessGroupAmbiguityHandler,
+  withTaskProcessArtifacts,
+} from "../process/process-runtime.js";
 
 const authorityContext = new AsyncLocalStorage<ProjectRunAuthority>();
+interface ProjectLeaseCapability {
+  assertHeld: () => void;
+  markTerminationAmbiguous: (pid: number | undefined) => void;
+}
 const projectLeaseContext = new AsyncLocalStorage<
-  ReadonlyMap<string, () => void>
+  ReadonlyMap<string, ProjectLeaseCapability>
 >();
 
 /** Lease-bound projection controller. A project queue must bind to a durable
@@ -29,6 +39,10 @@ export class ProjectRunAuthority {
     readonly store: RunStore,
     readonly ownerGeneration: number,
     private readonly releaseAttempt?: () => Promise<void>,
+    private readonly markTerminationAmbiguous?: (
+      pid: number | undefined,
+    ) => void,
+    readonly cardId?: string,
   ) {
     if (
       !projectId ||
@@ -107,6 +121,8 @@ export class ProjectRunAuthority {
           options.projectLease,
           null,
         ),
+      (pid) => options.projectLease.markProcessGroupAmbiguous(pid),
+      record.cardId,
     );
   }
 
@@ -236,13 +252,19 @@ export class ProjectRunAuthority {
       options.projectLease,
       { attemptId, storageRoot: options.pinned.storageRoot },
     );
-    return new ProjectRunAuthority(options.projectId, store, 1, () =>
-      updateProjectActiveAttempt(
-        options.coordinationRoot,
-        options.projectId,
-        options.projectLease,
-        null,
-      ),
+    return new ProjectRunAuthority(
+      options.projectId,
+      store,
+      1,
+      () =>
+        updateProjectActiveAttempt(
+          options.coordinationRoot,
+          options.projectId,
+          options.projectLease,
+          null,
+        ),
+      (pid) => options.projectLease.markProcessGroupAmbiguous(pid),
+      options.cardId,
     );
   }
 
@@ -358,7 +380,36 @@ export class ProjectRunAuthority {
   }
 
   run<T>(operation: () => T): T {
-    return authorityContext.run(this, operation);
+    return authorityContext.run(this, () =>
+      withTaskProcessArtifacts(
+        {
+          root: this.store.storageRoot,
+          projectId: this.projectId,
+          cardId: this.cardId ?? "task",
+          attemptId: this.store.attemptId,
+          recordEvent: (event) => {
+            const recordPath = path.join(
+              this.store.storageRoot,
+              "history",
+              encodeURIComponent(this.projectId),
+              encodeURIComponent(this.cardId ?? "task"),
+              encodeURIComponent(this.store.attemptId),
+              "events.jsonl",
+            );
+            fs.mkdirSync(path.dirname(recordPath), {
+              recursive: true,
+              mode: 0o700,
+            });
+            fs.appendFileSync(
+              recordPath,
+              `${JSON.stringify({ timestamp: new Date().toISOString(), ...event })}\n`,
+              { encoding: "utf8", mode: 0o600 },
+            );
+          },
+        },
+        operation,
+      ),
+    );
   }
 
   assertHeld(): void {
@@ -367,7 +418,10 @@ export class ProjectRunAuthority {
 
   async dispatch<T>(operation: () => Promise<T>): Promise<T> {
     this.assertHeld();
-    const result = await operation();
+    const result = await withProcessGroupAmbiguityHandler(
+      (pid) => this.markTerminationAmbiguous?.(pid),
+      operation,
+    );
     this.assertHeld();
     return result;
   }
@@ -379,34 +433,46 @@ export class ProjectRunAuthority {
     const authority = ProjectRunAuthority.current(projectId);
     if (authority) return authority.dispatch(operation);
     const leases = projectLeaseContext.getStore();
+    // No lease means this is an explicitly unowned utility operation: there is
+    // no project resource whose future reacquisition can be fenced. Project
+    // startup/task work must always enter through one of the scoped lease APIs.
     if (!leases) return operation();
-    const assertHeld = leases.get(projectId);
-    if (!assertHeld)
+    const capability = leases.get(projectId);
+    if (!capability)
       throw new RunStoreConflictError("Scoped project lease mismatch");
-    assertHeld();
-    return operation().then((result) => {
-      assertHeld();
-      return result;
-    });
+    capability.assertHeld();
+    return withProcessGroupAmbiguityHandler(
+      capability.markTerminationAmbiguous,
+      () =>
+        operation().then((result) => {
+          capability.assertHeld();
+          return result;
+        }),
+    );
   }
 
   static withProjectLease<T>(
     projectId: string,
     assertHeld: () => void,
+    markTerminationAmbiguous: (pid: number | undefined) => void,
     operation: () => T,
   ): T {
     return projectLeaseContext.run(
-      new Map([[projectId, assertHeld]]),
+      new Map([[projectId, { assertHeld, markTerminationAmbiguous }]]),
       operation,
     );
   }
 
   static withProjectLeases<T>(
-    leases: readonly { projectId: string; assertHeld: () => void }[],
+    leases: readonly {
+      projectId: string;
+      assertHeld: () => void;
+      markTerminationAmbiguous: (pid: number | undefined) => void;
+    }[],
     operation: () => T,
   ): T {
     const capabilities = new Map(
-      leases.map(({ projectId, assertHeld }) => [projectId, assertHeld]),
+      leases.map((capability) => [capability.projectId, capability]),
     );
     return projectLeaseContext.run(capabilities, operation);
   }

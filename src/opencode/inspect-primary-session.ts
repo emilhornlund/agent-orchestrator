@@ -6,16 +6,32 @@ interface ListedOpenCodeSession {
   directory: string;
 }
 
+export class OpenCodeSessionListError extends Error {
+  public readonly executionId?: string;
+  public readonly stdoutArtifactReference?: string;
+
+  constructor(
+    message: string,
+    origin?: { executionId?: string; stdoutArtifactReference?: string },
+  ) {
+    super(message);
+    this.name = "OpenCodeSessionListError";
+    if (origin?.executionId !== undefined)
+      this.executionId = origin.executionId;
+    if (origin?.stdoutArtifactReference !== undefined)
+      this.stdoutArtifactReference = origin.stdoutArtifactReference;
+  }
+}
+
 export function parseOpenCodeSessionList(
   output: string,
 ): ListedOpenCodeSession[] {
   let value: unknown;
   try {
     value = JSON.parse(output) as unknown;
-  } catch (error) {
-    throw new Error("OpenCode session list was not valid JSON", {
-      cause: error,
-    });
+  } catch {
+    // Parser messages may include the untrusted session-list stdout.
+    throw new Error("OpenCode session list was not valid JSON");
   }
   if (!Array.isArray(value))
     throw new Error("OpenCode session list was not a JSON array");
@@ -54,18 +70,32 @@ export async function inspectPrimaryOpenCodeSession(options: {
       signal: options.signal,
       timeoutMilliseconds: options.timeoutMilliseconds,
       captureOutput: true,
+      capturePolicy: "complete",
       maxCaptureOutputLength: 4 * 1024 * 1024,
       suppressOutput: true,
     });
     if (result.exitCode !== 0 || result.output === undefined) return null;
-    const sessions = parseOpenCodeSessionList(result.output);
+    let sessions: ListedOpenCodeSession[];
+    try {
+      sessions = parseOpenCodeSessionList(result.output);
+    } catch (error) {
+      throw new OpenCodeSessionListError(
+        error instanceof Error
+          ? error.message
+          : "OpenCode session list was malformed",
+        result,
+      );
+    }
     if (sessions.length >= 10_000) return null;
     const matching = sessions.filter(({ id }) => id === options.sessionId);
     if (matching.length > 1) return null;
     return matching[0]?.directory === path.resolve(options.cwd);
-  } catch {
+  } catch (error) {
     if (options.signal.aborted)
+      // Do not retain the runner error: it may contain untrusted child output.
+      // eslint-disable-next-line preserve-caught-error
       throw new Error("OpenCode session inspection aborted");
+    if (error instanceof OpenCodeSessionListError) throw error;
     return null;
   }
 }

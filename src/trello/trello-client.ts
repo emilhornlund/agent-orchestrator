@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { sanitizeControlledText } from "../security/redact-secrets.js";
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 
 export interface TrelloClientOptions {
@@ -649,7 +650,7 @@ export class TrelloClient {
     // not document the JSON request-body alternative supported by card PUTs.
     return this.post(
       `/cards/${cardId}/actions/comments`,
-      { text },
+      { text: sanitizeControlledText(text) },
       trelloCommentActionSchema,
       "comment",
     );
@@ -703,7 +704,16 @@ export class TrelloClient {
     const signal = this.getRequestSignal();
     const response = await this.request(url, operation, {
       method: "PUT",
-      body: JSON.stringify(parameters),
+      body: JSON.stringify(
+        Object.fromEntries(
+          Object.entries(parameters).map(([key, value]) => [
+            key,
+            typeof value === "string" && ["name", "desc"].includes(key)
+              ? sanitizeControlledText(value)
+              : value,
+          ]),
+        ),
+      ),
       headers: {
         "Content-Type": "application/json",
       },
@@ -730,7 +740,10 @@ export class TrelloClient {
     url.searchParams.set("token", this.options.token);
 
     for (const [name, value] of Object.entries(queryParameters)) {
-      url.searchParams.set(name, value);
+      url.searchParams.set(
+        name,
+        name === "text" ? sanitizeControlledText(value) : value,
+      );
     }
 
     const signal = this.getRequestSignal();
@@ -758,7 +771,10 @@ export class TrelloClient {
     url.searchParams.set("token", this.options.token);
 
     for (const [name, value] of Object.entries(queryParameters)) {
-      url.searchParams.set(name, value);
+      url.searchParams.set(
+        name,
+        name === "text" ? sanitizeControlledText(value) : value,
+      );
     }
 
     const signal = this.getRequestSignal();

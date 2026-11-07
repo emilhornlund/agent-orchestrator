@@ -1,4 +1,7 @@
 import { generateKeyPairSync, verify } from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -11,6 +14,9 @@ import {
   GitHubAppNetworkError,
   type SignGitHubAppJwt,
 } from "../src/github/github-app-authenticator.js";
+import { getProcessRuntime } from "../src/process/process-runtime.js";
+import { redactSecrets } from "../src/security/redact-secrets.js";
+import { appendSessionLog } from "../src/logging/session-log.js";
 
 const githubApp = {
   appId: "123456",
@@ -35,6 +41,70 @@ function tokenResponse(token: string, expiresAt: string): Response {
 }
 
 describe("GitHubAppAuthenticator", () => {
+  it("registers protected PEM contents for subsequent controlled redaction", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "github-app-key-"));
+    const keyPath = path.join(directory, "app.pem");
+    fs.writeFileSync(keyPath, privateKeyPem, { mode: 0o600 });
+    fs.chmodSync(keyPath, 0o600);
+    try {
+      const authenticator = new GitHubAppAuthenticator({
+        request: vi
+          .fn()
+          .mockResolvedValue(
+            tokenResponse("pem-test-token", "2099-01-01T00:00:00Z"),
+          ),
+      });
+      await authenticator.getInstallationToken(
+        { ...githubApp, privateKeyPath: keyPath },
+        repository,
+      );
+      expect(getProcessRuntime().secretValues).toContain(privateKeyPem);
+      expect(
+        redactSecrets(
+          `prompt ${privateKeyPem}`,
+          getProcessRuntime().secretValues,
+        ),
+      ).toBe("prompt [REDACTED]");
+      expect(
+        redactSecrets(
+          `encoded ${Buffer.from(privateKeyPem).toString("base64url")}`,
+          getProcessRuntime().secretValues,
+        ),
+      ).toBe("encoded [REDACTED]");
+      const sessionLog = path.join(directory, "session.log");
+      appendSessionLog(
+        sessionLog,
+        `diagnostic ${privateKeyPem} encoded=${Buffer.from(privateKeyPem).toString("base64url")}`,
+      );
+      expect(fs.readFileSync(sessionLog, "utf8")).toBe(
+        "diagnostic [REDACTED] encoded=[REDACTED]",
+      );
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an unprotected private-key file with a safe source error", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "github-app-key-"));
+    const keyPath = path.join(directory, "app.pem");
+    fs.writeFileSync(keyPath, privateKeyPem, { mode: 0o644 });
+    fs.chmodSync(keyPath, 0o644);
+    try {
+      await expect(
+        new GitHubAppAuthenticator().getInstallationToken(
+          { ...githubApp, privateKeyPath: keyPath },
+          repository,
+        ),
+      ).rejects.toMatchObject({
+        name: "GitHubAppCredentialError",
+        operation: "private key read",
+        message: "GitHub App private key read failed",
+      });
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("creates a GitHub-compatible RS256 JWT", () => {
     const jwt = createGitHubAppJwt(
       githubApp.appId,

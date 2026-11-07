@@ -1,4 +1,6 @@
 import path from "node:path";
+import fs from "node:fs";
+import os from "node:os";
 import { describe, expect, it, vi } from "vitest";
 import {
   CommandRunner,
@@ -6,8 +8,10 @@ import {
 } from "../src/process/command-runner.js";
 import {
   inspectPrimaryOpenCodeSession,
+  OpenCodeSessionListError,
   parseOpenCodeSessionList,
 } from "../src/opencode/inspect-primary-session.js";
+import { configureProcessRuntime } from "../src/process/process-runtime.js";
 
 describe("inspectPrimaryOpenCodeSession", () => {
   it("parses session identities and confirms only a session in the owned worktree", async () => {
@@ -64,7 +68,17 @@ describe("inspectPrimaryOpenCodeSession", () => {
   });
 
   it("fails closed on malformed, inaccessible, and ambiguous session listings", async () => {
-    expect(() => parseOpenCodeSessionList("{bad")).toThrow("valid JSON");
+    const marker = "SESSION_STDOUT_PRIVATE_CANARY_4A91";
+    let malformed: unknown;
+    try {
+      parseOpenCodeSessionList(`{${marker}`);
+    } catch (error) {
+      malformed = error;
+    }
+    expect(malformed).toBeInstanceOf(Error);
+    expect((malformed as Error).message).toContain("valid JSON");
+    expect((malformed as Error).message).not.toContain(marker);
+    expect((malformed as Error).cause).toBeUndefined();
     expect(() => parseOpenCodeSessionList("[{}]")).toThrow("malformed");
 
     const run = vi.fn<RunCommand>().mockResolvedValue({
@@ -86,5 +100,56 @@ describe("inspectPrimaryOpenCodeSession", () => {
     run.mockRejectedValueOnce(new Error("command unavailable"));
     await expect(inspect()).resolves.toBe(null);
     await expect(inspect("invalid/session")).resolves.toBe(null);
+  });
+
+  it("keeps malformed real child output private while attaching process artifact references", async () => {
+    const root = fs.mkdtempSync(
+      path.join(os.tmpdir(), "session-list-evidence-"),
+    );
+    const bin = path.join(root, "bin");
+    fs.mkdirSync(bin);
+    const marker = "SESSION_JSON_RAW_CANARY_7C52";
+    const executable = path.join(bin, "opencode");
+    fs.writeFileSync(executable, `#!/bin/sh\nprintf '{${marker}'\n`);
+    fs.chmodSync(executable, 0o700);
+    const priorPath = process.env.PATH;
+    try {
+      process.env.PATH = `${bin}${path.delimiter}${priorPath ?? ""}`;
+      configureProcessRuntime({
+        runtimeRoot: root,
+        signal: new AbortController().signal,
+      });
+      let failure: unknown;
+      try {
+        await inspectPrimaryOpenCodeSession({
+          commands: new CommandRunner(),
+          cwd: root,
+          sessionId: "ses_primary",
+          signal: new AbortController().signal,
+          timeoutMilliseconds: 5_000,
+        });
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(OpenCodeSessionListError);
+      expect(failure).toMatchObject({
+        executionId: expect.stringMatching(/^[0-9a-f-]{36}$/iu),
+        stdoutArtifactReference: expect.stringMatching(
+          /^process-executions\/[0-9a-f-]+\/stdout\.txt$/,
+        ),
+      });
+      expect((failure as Error).message).not.toContain(marker);
+      expect((failure as Error).cause).toBeUndefined();
+      const error = failure as OpenCodeSessionListError;
+      const stdout = fs.readFileSync(
+        path.join(root, error.stdoutArtifactReference!),
+        "utf8",
+      );
+      expect(stdout).toContain(marker);
+      expect((failure as Error).message).toContain("valid JSON");
+    } finally {
+      process.env.PATH = priorPath;
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });

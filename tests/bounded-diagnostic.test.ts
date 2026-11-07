@@ -30,6 +30,19 @@ describe("bounded external diagnostics", () => {
     );
   });
 
+  it("applies the presentation limit in characters, not UTF-8 bytes", () => {
+    const exact = "🙂".repeat(MAX_EXTERNAL_DIAGNOSTIC_LENGTH / 2);
+    const oversized = `${exact}🙂`;
+    const presented = presentExternalDiagnostic(oversized);
+
+    expect(exact).toHaveLength(MAX_EXTERNAL_DIAGNOSTIC_LENGTH);
+    expect(Buffer.byteLength(exact)).toBeGreaterThan(
+      MAX_EXTERNAL_DIAGNOSTIC_LENGTH,
+    );
+    expect(presented).toHaveLength(MAX_EXTERNAL_DIAGNOSTIC_LENGTH);
+    expect(presented).toContain(EXTERNAL_DIAGNOSTIC_TRUNCATION_MARKER);
+  });
+
   it("redacts before truncating so oversized secrets are not exposed", () => {
     const secret = "original-secret-value";
     const value = `${"x".repeat(MAX_EXTERNAL_DIAGNOSTIC_LENGTH)} ${secret}`;

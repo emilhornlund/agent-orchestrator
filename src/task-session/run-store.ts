@@ -11,6 +11,7 @@ import {
   type RunLifecycleState,
   terminalEvidenceSchema,
 } from "./run-record.js";
+import { taskExecutionEventTypes } from "./task-execution-record.js";
 
 export class RunStoreConflictError extends Error {
   constructor(message: string) {
@@ -275,6 +276,146 @@ export class RunStore {
   private readonly recordPath: string;
   private readonly artifactDirectory: string;
   private readonly identity: ReturnType<typeof pinnedIdentitySchema.parse>;
+  readonly storageRoot: string;
+  readonly attemptId: string;
+
+  private appendTimeline(
+    prior: RunRecord | null,
+    next: RunRecord,
+    kind: string,
+    transition?: RunEventType,
+  ): void {
+    const timelinePath = path.join(
+      this.identity.storageRoot,
+      "history",
+      encodeURIComponent(next.projectId),
+      encodeURIComponent(next.cardId),
+      encodeURIComponent(next.attemptId),
+      "events.jsonl",
+    );
+    fs.mkdirSync(path.dirname(timelinePath), { recursive: true, mode: 0o700 });
+    let startedAt = next.updatedAt;
+    try {
+      const firstLine = fs
+        .readFileSync(timelinePath, "utf8")
+        .split("\n")
+        .find((line) => line.length > 0);
+      if (firstLine) {
+        const first = JSON.parse(firstLine) as { startedAt?: unknown };
+        if (typeof first.startedAt === "string") startedAt = first.startedAt;
+      }
+    } catch {
+      // A new timeline starts at this durable state transition. Existing
+      // malformed evidence is never overwritten; append a fresh safe entry.
+    }
+    const event = {
+      type: "attempt-state",
+      kind,
+      ...(transition === undefined ? {} : { transition }),
+      timestamp: next.updatedAt,
+      startedAt,
+      elapsedMilliseconds: Math.max(
+        0,
+        Date.parse(next.updatedAt) - Date.parse(startedAt),
+      ),
+      projectId: next.projectId,
+      cardId: next.cardId,
+      attemptId: next.attemptId,
+      revision: next.revision,
+      ownerGeneration: next.owner.generation,
+      before: prior
+        ? {
+            lifecycle: prior.lifecycle,
+            checkpoint: prior.checkpoint,
+            operation: prior.operation,
+            publicationState: prior.publicationState,
+            terminalSync: prior.terminalSync,
+            wait: prior.wait,
+          }
+        : null,
+      after: {
+        lifecycle: next.lifecycle,
+        checkpoint: next.checkpoint,
+        operation: next.operation,
+        publicationState: next.publicationState,
+        terminalSync: next.terminalSync,
+        terminalOutcome: next.terminalEvidence?.prOutcome ?? null,
+        pendingOperations: next.pendingOperations.map((operation) => ({
+          kind: operation.kind,
+          status: operation.status,
+          generation: operation.generation,
+          resolution: operation.resolutionEvidence?.disposition ?? null,
+        })),
+        wait: next.wait,
+        budgets: next.budgets,
+        taskProjections: Object.values(next.compatibility).flatMap((raw) => {
+          if (typeof raw !== "object" || raw === null) return [];
+          const projection = raw as Record<string, unknown>;
+          const result: Record<string, unknown> = {};
+          const phases = [
+            "planning",
+            "implementation",
+            "validation",
+            "review",
+            "publication",
+            "ci",
+            "human-feedback",
+            "done",
+            "attention-required",
+          ];
+          if (
+            typeof projection.phase === "string" &&
+            phases.includes(projection.phase)
+          )
+            result.phase = projection.phase;
+          const lastEvent = projection.lastEvent;
+          if (
+            typeof lastEvent === "object" &&
+            lastEvent !== null &&
+            "type" in lastEvent &&
+            typeof lastEvent.type === "string" &&
+            taskExecutionEventTypes.includes(
+              lastEvent.type as (typeof taskExecutionEventTypes)[number],
+            )
+          )
+            result.lastEvent = lastEvent.type;
+          const counters = projection.retryCounters;
+          if (typeof counters === "object" && counters !== null)
+            result.retryCounters = Object.fromEntries(
+              Object.entries(counters).filter(
+                (entry): entry is [string, number] =>
+                  typeof entry[1] === "number" &&
+                  Number.isSafeInteger(entry[1]) &&
+                  entry[1] >= 0,
+              ),
+            );
+          for (const qualityKey of ["validation", "coverage", "review"]) {
+            const quality = projection[qualityKey];
+            if (
+              typeof quality === "object" &&
+              quality !== null &&
+              "status" in quality &&
+              typeof quality.status === "string" &&
+              [
+                "passed",
+                "failed",
+                "timed-out",
+                "aborted",
+                "unavailable",
+              ].includes(quality.status)
+            )
+              result[`${qualityKey}Status`] = quality.status;
+          }
+          return Object.keys(result).length ? [result] : [];
+        }),
+        artifacts: next.artifacts.map((artifact) => artifact.path),
+      },
+    };
+    fs.appendFileSync(timelinePath, `${JSON.stringify(event)}\n`, {
+      encoding: "utf8",
+      mode: 0o600,
+    });
+  }
   constructor(
     directory: string,
     attemptId: string,
@@ -298,6 +439,8 @@ export class RunStore {
       throw new Error("Invalid attempt path or mismatched canonical lease");
     this.identity = pinnedIdentitySchema.parse(identity);
     const resolved = path.resolve(directory);
+    this.storageRoot = resolved;
+    this.attemptId = attemptId;
     if (resolved !== path.resolve(this.identity.storageRoot))
       throw new Error("Run storage path differs from pinned storage identity");
     const repo = path.resolve(this.identity.repositoryPath);
@@ -452,6 +595,7 @@ export class RunStore {
     });
     this.assertLease(current);
     atomicJson(this.recordPath, next);
+    this.appendTimeline(current, next, "compatibility-removed");
     return true;
   }
 
@@ -617,6 +761,7 @@ export class RunStore {
     });
     this.assertLease(current);
     atomicJson(this.recordPath, next);
+    this.appendTimeline(current, next, "compatibility-updated");
     return output.result;
   }
   create(record: RunRecord): RunRecord {
@@ -635,6 +780,7 @@ export class RunStore {
       throw new RunStoreConflictError("Run already exists");
     this.validateArtifacts(parsed);
     atomicJson(this.recordPath, parsed, true);
+    this.appendTimeline(null, parsed, "attempt-created");
     return parsed;
   }
   /** Import a validated legacy snapshot under the canonical lease. Artifacts are
@@ -667,6 +813,7 @@ export class RunStore {
     this.validateArtifacts(parsed);
     this.assertLease(parsed);
     atomicJson(this.recordPath, parsed, true);
+    this.appendTimeline(null, parsed, "attempt-imported");
     return parsed;
   }
   /** Persist content-addressed import snapshots before recording the handoff marker. */
@@ -900,6 +1047,7 @@ export class RunStore {
     this.validateArtifacts(next);
     this.assertLease(current);
     atomicJson(this.recordPath, next);
+    this.appendTimeline(current, next, "workflow-transition", event);
     return next;
   }
   durableIdentity(): {
@@ -998,6 +1146,7 @@ export class RunStore {
     });
     this.assertLease(current);
     atomicJson(this.recordPath, next);
+    this.appendTimeline(current, next, "operation-outcome-discovered");
     return next;
   }
   /** Takeover is only performed under the matching new canonical lease and increments durable fencing generation. */
@@ -1027,6 +1176,7 @@ export class RunStore {
       updatedAt: new Date().toISOString(),
     });
     atomicJson(this.recordPath, next);
+    this.appendTimeline(current, next, "ownership-resumed");
     return next;
   }
   writeArtifact(

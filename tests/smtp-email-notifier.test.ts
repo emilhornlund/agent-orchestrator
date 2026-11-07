@@ -4,6 +4,7 @@ import tls from "node:tls";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { SmtpEmailNotifier } from "../src/notifications/smtp-email-notifier.js";
+import { registerProcessSecrets } from "../src/process/process-runtime.js";
 
 const testCertificate = `-----BEGIN CERTIFICATE-----
 MIIDJTCCAg2gAwIBAgIUWhkfBYi5FSzO9BOwLxyIO1//mZkwDQYJKoZIhvcNAQEL
@@ -282,6 +283,30 @@ describe("SmtpEmailNotifier", () => {
     expect(payload).toContain("Trello card URL: https://trello.example/card-1");
     expect(payload).not.toContain("smtp-user");
     expect(payload).not.toContain("smtp-password");
+  });
+
+  it("redacts registered canaries in captured subject and text while retaining routing", async () => {
+    const canary = "smtp-outbound-token-canary-unique";
+    registerProcessSecrets([canary]);
+    let payload = "";
+    const server = createSmtpTestServer({
+      implicitTls: false,
+      onMessage: (message) => {
+        payload = message;
+      },
+    });
+    const port = await listen(server);
+
+    await notifier(port, false).send({
+      subject: `Review ${canary}`,
+      text: `Encoded ${Buffer.from(canary).toString("base64url")}`,
+    });
+
+    expect(payload).toContain("Subject: Review [REDACTED]");
+    expect(payload).toContain("Encoded [REDACTED]");
+    expect(payload).not.toContain(canary);
+    expect(payload).toContain("To: reviewers@example.com");
+    expect(payload).toContain("From: agent-orchestrator@example.com");
   });
 
   it("delivers through an implicit TLS connection", async () => {

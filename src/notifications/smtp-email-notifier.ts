@@ -3,6 +3,7 @@ import type { ConnectionOptions } from "node:tls";
 import tls from "node:tls";
 
 import nodemailer from "nodemailer";
+import { sanitizeControlledText } from "../security/redact-secrets.js";
 
 import type {
   EmailMessage,
@@ -204,8 +205,8 @@ export class SmtpEmailNotifier implements EmailNotifier {
         : transporter.sendMail({
             from: this.options.from,
             to: this.options.recipients,
-            subject: message.subject,
-            text: message.text,
+            subject: sanitizeControlledText(message.subject),
+            text: sanitizeControlledText(message.text),
           });
 
       if (aborted === undefined) {

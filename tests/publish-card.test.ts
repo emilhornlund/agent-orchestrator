@@ -10,6 +10,7 @@ import { GitHubCredentialProvider } from "../src/github/github-credential-provid
 import type { EmailNotifier } from "../src/notifications/email-notifier.js";
 import type { OpenCodeClient } from "../src/opencode/opencode-client.js";
 import { MAX_PULL_REQUEST_DESCRIPTION_SUMMARY_LENGTH } from "../src/opencode/pull-request-description.js";
+import { Logger } from "../src/logging/logger.js";
 import { formatFailureDiagnostic } from "../src/orchestrator/failure-diagnostic.js";
 import { publishCard } from "../src/orchestrator/publish-card.js";
 import { WorkflowError } from "../src/orchestrator/workflow-error.js";
@@ -992,6 +993,63 @@ describe("publishCard", () => {
     );
   });
 
+  it("does not forward unknown JSON field names from child output into logs", async () => {
+    const marker = "RAW_PR_JSON_FIELD_MARKER_82fd";
+    const warnings = vi
+      .spyOn(Logger.prototype, "warn")
+      .mockImplementation(() => {});
+    const invalid = JSON.stringify({
+      summary: "description",
+      changes: [],
+      validation: [],
+      [marker]: "untrusted output",
+    });
+    const opencode = {
+      run: vi.fn().mockResolvedValue({
+        exitCode: 0,
+        output: invalid,
+        errorOutput: "",
+        processExecutionId: "controlled-execution-id",
+      }),
+    } as unknown as OpenCodeClient;
+    const createPullRequest = vi.fn().mockResolvedValue({
+      url: "https://github.com/example/repository/pull/123",
+    });
+    const git = createPublicationGit({
+      getChangedFiles: vi.fn().mockResolvedValue("src/example.ts"),
+      getCommitMessage: vi.fn().mockResolvedValue("implement example"),
+    });
+    const trello = {
+      moveCard: vi.fn().mockResolvedValue(createCard()),
+      getListTransitions: vi.fn().mockResolvedValue([]),
+      addComment: vi.fn().mockResolvedValue(undefined),
+    } as unknown as TrelloClient;
+    const github = {
+      findPullRequest: vi.fn().mockResolvedValue(null),
+      createPullRequest,
+    } as unknown as GitHubClient;
+
+    await publishCard({
+      trello,
+      git,
+      github,
+      opencode,
+      project: createProject(),
+      card: createCard(),
+      worktreePath: "/worktree",
+      branch: "agent/card-1",
+      commitSha: "abc123",
+      reviewResult: "Passed",
+      remediationResult: "Not required",
+    });
+
+    const logged = warnings.mock.calls.map(([message]) => message).join("\n");
+    expect(logged).not.toContain(marker);
+    expect(logged).toContain("schema validation");
+    expect(logged).toContain("process-executions/controlled-execution-id");
+    warnings.mockRestore();
+  });
+
   it("retains verified publication when the corrective description snapshot fails", async () => {
     const git = createPublicationGit({
       getChangedFiles: vi.fn().mockResolvedValue("src/task.ts"),
@@ -1216,6 +1274,10 @@ describe("publishCard", () => {
   });
 
   it("uses the deterministic body for a non-successful description result", async () => {
+    const marker = "RAW_OPENCODE_STDERR_MARKER_7fd9";
+    const warn = vi
+      .spyOn(Logger.prototype, "warn")
+      .mockImplementation(() => {});
     const git = createPublicationGit({
       getChangedFiles: vi.fn().mockResolvedValue("src/example.ts"),
       getCommitMessage: vi.fn().mockResolvedValue("implement example"),
@@ -1224,7 +1286,7 @@ describe("publishCard", () => {
       run: vi.fn().mockResolvedValue({
         exitCode: 1,
         output: "",
-        errorOutput: "model failed",
+        errorOutput: marker,
       }),
     } as unknown as OpenCodeClient;
     const trello = {
@@ -1265,6 +1327,9 @@ describe("publishCard", () => {
     );
     expect(opencode.run).toHaveBeenCalledTimes(1);
     expect(trello.moveCard).toHaveBeenCalledWith("card-1", "review-list");
+    expect(warn.mock.calls.flat().join(" ")).not.toContain(marker);
+    expect(warn.mock.calls.flat().join(" ")).toContain("process execution log");
+    warn.mockRestore();
   });
 
   it("uses the deterministic body when Markdown rendering fails", async () => {

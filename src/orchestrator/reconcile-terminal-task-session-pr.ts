@@ -5,7 +5,6 @@ import { cleanupWorktree } from "../git/cleanup-worktree.js";
 import type { GitClient } from "../git/git-client.js";
 import type { PullRequestState } from "../github/github-client.js";
 import { logger, type Logger } from "../logging/logger.js";
-import { getSessionLogPath, removeSessionLog } from "../logging/session-log.js";
 import {
   notifyCompletion,
   type EmailNotifier,
@@ -88,21 +87,6 @@ async function cleanupTerminalWorktree(
       `Terminal task cleanup was not completed for ${worktreePath} and ${branch}: ${message(error)}`,
     );
     throw error;
-  }
-}
-
-async function removeTerminalSessionLog(
-  project: ProjectConfig,
-  card: TrelloCard,
-  cardLog: Logger,
-): Promise<void> {
-  try {
-    removeSessionLog(project.id, card.id);
-    cardLog.info("OpenCode session log removed");
-  } catch (error) {
-    cardLog.warn(
-      `Could not remove OpenCode session log ${getSessionLogPath(project.id, card.id)}: ${message(error)}`,
-    );
   }
 }
 
@@ -195,7 +179,6 @@ export async function completeMergedTaskSessionPullRequest(options: {
       "Legacy PR-maintenance artifacts preserved after merged PR; status is not proof that local rewritten work was shipped",
     );
   } else {
-    await removeTerminalSessionLog(project, card, cardLog);
     await cleanupTerminalWorktree(git, project, card, cardLog, signal);
   }
 }

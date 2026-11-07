@@ -1,0 +1,53 @@
+# P3 process and secret boundaries
+
+Child processes use the allowlists in `src/process/child-environment.ts`; their
+effective environment is not a copy of the orchestrator environment. All
+families retain only platform execution essentials. Git and `gh` additionally
+receive Git identity/transport settings and the selected GitHub credential.
+Git signing is configured only on the individual `git commit` invocation with
+trusted `-c` options. The configured signing-key path remains an operational
+Git argument; signing configuration is not exported through the indexed
+`GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n` channel, and those
+ambient injection variables are not inherited by Git children. This keeps
+signing scoped to Git (not other child-process families) without accepting
+arbitrary indexed configuration injection.
+OpenCode receives credentials only for the provider prefix selected by the
+project's configured `provider/model` value. The allowlist is explicit for
+OpenAI, Anthropic, Google/Gemini/Vertex, Mistral, Groq, xAI, OpenRouter,
+DeepSeek, Azure OpenAI, Cohere, and Bedrock. Unknown or absent provider prefixes
+do not receive ambient provider variables; OpenCode retains its normal HOME/XDG
+configuration access and its own default behavior, without an orchestrator
+model fallback.
+Setup/quality commands and `flock` receive no Trello, SMTP, GitHub, or AI
+credentials. A project App installation token is registered when issued and is
+redacted in subsequent controlled diagnostics; PAT support remains through the
+GitHub CLI environment. App private keys are read only from regular files owned
+by the orchestrator user with no group/world permissions; successfully read
+PEM contents are registered before token generation or later context handling.
+
+Known registered secrets are redacted in process streams and OpenCode prompt
+text in literal, percent-encoded, base64/base64url, JSON-escaped forms. Streaming
+redaction retains a boundary window for split forms. Recognized credential
+field patterns are also redacted. This is a bounded defense for registered
+values and known representations; it is not a scanner for arbitrary transforms
+or unknown secrets. Context read from attachments or repositories is untrusted;
+prompt construction redacts registered values and recognizable credential
+patterns, but the scanner does not prove arbitrary repository data safe. During
+attachment download, materialization rejects an upload containing a registered
+raw credential byte sequence (including across stream chunks) and does not
+publish its file or manifest. This is not a scan for encoded or unknown
+attachment secrets. Agents can still directly read repository files in ordinary
+writable runs, so no universal repository-content guarantee is made. The
+Git, `gh`, and OpenCode stdout and stderr each use independent incremental UTF-8
+decoders before their stream redactors. Decoder tails are finalized before the
+redactor is flushed on terminal paths; incomplete UTF-8 sequences follow Node's
+replacement-character policy. This preserves byte-split Unicode and prevents
+cross-stream decoder state. Flock's existing `setEncoding` path uses Node's UTF-8
+stream decoding.
+Trello comment and content parameters, `gh` CLI content arguments (including
+PR bodies/replies), and SMTP subject/body fields also pass through the same
+registered-secret sanitizer. This is applied at the relevant outbound content
+boundary; request authentication parameters are deliberately not redacted or
+rewritten. `docs/p3-verification.md` records named synthetic capture tests and
+per-surface limits. These tests do not substitute for realistic outbound
+canary scans or prove every future route is covered.

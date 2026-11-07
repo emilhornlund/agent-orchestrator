@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execFileSync, spawnSync } from "node:child_process";
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -215,6 +216,139 @@ describe("GitClient", () => {
       "--count",
       "before..after",
     ]);
+  });
+
+  it("keeps signing config out of the child environment and overrides ambient Git config", async () => {
+    const key = "/protected/operational signing key";
+    const identity: GitIdentity = {
+      name: "Agent Orchestrator",
+      email: "agent-orchestrator@example.com",
+      signingKey: key,
+    };
+    const environment = getGitIdentityEnvironment(identity);
+
+    expect(environment).toEqual({
+      GIT_AUTHOR_NAME: identity.name,
+      GIT_AUTHOR_EMAIL: identity.email,
+      GIT_COMMITTER_NAME: identity.name,
+      GIT_COMMITTER_EMAIL: identity.email,
+    });
+    expect(environment).not.toHaveProperty("GIT_CONFIG_COUNT");
+    expect(environment).not.toHaveProperty("GIT_CONFIG_KEY_0");
+    expect(environment).not.toHaveProperty("GIT_CONFIG_VALUE_0");
+
+    const runGit = vi.fn<RunGit>().mockResolvedValue("");
+    await new GitClient(runGit).commit("/worktree", "/tmp/message", identity);
+    expect(runGit).toHaveBeenCalledWith(
+      "/worktree",
+      [
+        "-c",
+        "gpg.format=ssh",
+        "-c",
+        `user.signingKey=${key}`,
+        "-c",
+        "commit.gpgSign=true",
+        "commit",
+        "-F",
+        "/tmp/message",
+      ],
+      environment,
+    );
+  });
+
+  it("creates a real SSH-signed commit with the configured key despite ambient Git config injection", async (context) => {
+    if (spawnSync("ssh-keygen", ["-V"], { encoding: "utf8" }).error) {
+      context.skip();
+      return;
+    }
+
+    const temporaryDirectory = fs.mkdtempSync(
+      path.join(os.tmpdir(), "agent-orchestrator-ssh-signing-"),
+    );
+    const repository = path.join(temporaryDirectory, "repository");
+    const keyPath = path.join(temporaryDirectory, "protected signing key");
+    const messagePath = path.join(temporaryDirectory, "message.txt");
+    const allowedSignersPath = path.join(temporaryDirectory, "allowed-signers");
+    const injected = [
+      "GIT_CONFIG_COUNT",
+      "GIT_CONFIG_KEY_0",
+      "GIT_CONFIG_VALUE_0",
+      "GIT_CONFIG_KEY_1",
+      "GIT_CONFIG_VALUE_1",
+    ] as const;
+    const priorEnvironment = Object.fromEntries(
+      injected.map((key) => [key, process.env[key]]),
+    );
+    const runGit = (args: string[], cwd = repository): string =>
+      execFileSync("git", args, {
+        cwd,
+        encoding: "utf8",
+        env: Object.fromEntries(
+          Object.entries(process.env).filter(
+            ([key]) => !key.startsWith("GIT_CONFIG_"),
+          ),
+        ),
+      }).trim();
+
+    try {
+      fs.mkdirSync(repository);
+      execFileSync("ssh-keygen", [
+        "-q",
+        "-t",
+        "ed25519",
+        "-N",
+        "",
+        "-f",
+        keyPath,
+      ]);
+      runGit(["init", "--quiet"]);
+      runGit(["config", "commit.gpgSign", "false"]);
+      runGit(["config", "gpg.format", "openpgp"]);
+      runGit(["config", "user.signingKey", `${keyPath}.pub`]);
+      fs.writeFileSync(
+        path.join(repository, "tracked.txt"),
+        "signed payload\n",
+      );
+      fs.writeFileSync(messagePath, "signed commit\n");
+      runGit(["add", "tracked.txt"]);
+
+      const publicKey = fs.readFileSync(`${keyPath}.pub`, "utf8").trim();
+      fs.writeFileSync(
+        allowedSignersPath,
+        `agent@example.com namespaces="git" ${publicKey}\n`,
+      );
+      process.env.GIT_CONFIG_COUNT = "2";
+      process.env.GIT_CONFIG_KEY_0 = "commit.gpgSign";
+      process.env.GIT_CONFIG_VALUE_0 = "false";
+      process.env.GIT_CONFIG_KEY_1 = "user.signingKey";
+      process.env.GIT_CONFIG_VALUE_1 = `${keyPath}.pub`;
+
+      await new GitClient().commit(repository, messagePath, {
+        name: "Agent Orchestrator",
+        email: "agent@example.com",
+        signingKey: keyPath,
+      });
+
+      const rawCommit = runGit(["cat-file", "commit", "HEAD"]);
+      expect(rawCommit).toContain("gpgsig -----BEGIN SSH SIGNATURE-----");
+      expect(
+        runGit([
+          "-c",
+          "gpg.format=ssh",
+          "-c",
+          `gpg.ssh.allowedSignersFile=${allowedSignersPath}`,
+          "verify-commit",
+          "HEAD",
+        ]),
+      ).toBe("");
+    } finally {
+      for (const key of injected) {
+        const value = priorEnvironment[key];
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+      fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+    }
   });
 
   it("detects a clean repository", async () => {

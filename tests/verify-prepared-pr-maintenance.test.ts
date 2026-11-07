@@ -3,13 +3,18 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { ProjectConfig } from "../src/config/config.js";
-import { CommandRunAbortedError } from "../src/process/command-runner.js";
+import {
+  CommandRunAbortedError,
+  CommandRunner,
+} from "../src/process/command-runner.js";
+import { configureProcessRuntime } from "../src/process/process-runtime.js";
 import { getSessionLogPath } from "../src/logging/session-log.js";
 import { PrMaintenanceStore } from "../src/task-session/pr-maintenance-store.js";
 import { verifyPreparedPrMaintenance } from "../src/task-session/verify-prepared-pr-maintenance.js";
 import type { ImplementationReviewResult } from "../src/task-session/implementation-review-result.js";
 
 const sha = (char: string) => char.repeat(40);
+const rawDiagnosticMarker = "RAW_MAINTENANCE_STDERR_MARKER_81ac";
 function fixture(
   options: {
     coverage?: boolean;
@@ -81,7 +86,7 @@ function fixture(
     getIndexEntries: vi.fn(async () => ""),
     getUntrackedFiles: vi.fn(async () => []),
   };
-  const commands = {
+  let commands: Pick<CommandRunner, "run"> = {
     run: vi.fn(async ({ command }: { command: string }) => {
       if (options.interrupted && command === "validate")
         throw new CommandRunAbortedError();
@@ -95,10 +100,10 @@ function fixture(
               ? 1
               : 0,
         output: "",
-        errorOutput: "gate diagnostic",
+        errorOutput: rawDiagnosticMarker,
       };
     }),
-  };
+  } as never;
   const review: ImplementationReviewResult = {
     version: 1,
     projectId: "project",
@@ -140,10 +145,57 @@ function fixture(
         return review;
       },
     });
-  return { run, store, commands, root };
+  return {
+    run,
+    store,
+    project,
+    get commands() {
+      return commands;
+    },
+    set commands(value: Pick<CommandRunner, "run">) {
+      commands = value;
+    },
+    root,
+  };
 }
 
 describe("verifyPreparedPrMaintenance", () => {
+  it("passes actual verbose validation and coverage commands with separate full artifacts", async () => {
+    const f = fixture({ coverage: true });
+    const artifactRoot = path.join(f.root, "process-artifacts");
+    configureProcessRuntime({
+      runtimeRoot: artifactRoot,
+      signal: new AbortController().signal,
+    });
+    f.commands = new CommandRunner();
+    // Both independent gates exercise real child output on both pipes.
+    const executable =
+      "node -e \"process.stdout.write('o'.repeat(3000));process.stderr.write('e'.repeat(3000))\"";
+    f.project.repository.validationCommand = executable;
+    f.project.repository.coverageCommand = executable;
+    const result = await f.run();
+    expect(result.validation.status).toBe("passed");
+    expect(result.validation.exitCode).toBe(0);
+    expect(result.validation.diagnostic).toHaveLength(2_000);
+    expect(result.coverage?.status).toBe("passed");
+    expect(result.coverage?.exitCode).toBe(0);
+    expect(result.coverage?.diagnostic).toHaveLength(2_000);
+    expect(result.coverage?.diagnostic).toContain("[truncated]");
+    const executions = fs.readdirSync(
+      path.join(artifactRoot, "process-executions"),
+    );
+    expect(executions).toHaveLength(2);
+    for (const id of executions) {
+      const directory = path.join(artifactRoot, "process-executions", id);
+      expect(fs.readFileSync(path.join(directory, "stdout.txt"), "utf8")).toBe(
+        "o".repeat(3_000),
+      );
+      expect(fs.readFileSync(path.join(directory, "stderr.txt"), "utf8")).toBe(
+        "e".repeat(3_000),
+      );
+    }
+    fs.rmSync(f.root, { recursive: true, force: true });
+  });
   it("passes all configured gates and persists evidence for the prepared content", async () => {
     const f = fixture({ coverage: true });
     const result = await f.run();
@@ -187,6 +239,26 @@ describe("verifyPreparedPrMaintenance", () => {
       expect(f.store.inspect("maintenance")?.qualityVerification?.status).toBe(
         "uncertain",
       );
+    fs.rmSync(f.root, { recursive: true, force: true });
+  });
+
+  it("keeps failed gate raw diagnostics in quality evidence, not the thrown log-safe summary", async () => {
+    const f = fixture({ validationFails: true });
+    let thrown: unknown;
+    try {
+      await f.run();
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).not.toContain(rawDiagnosticMarker);
+    expect((thrown as Error).message).toContain("session log");
+    expect(
+      (
+        f.store.inspect("maintenance")?.qualityVerification as
+          { validation?: { diagnostic?: string } } | undefined
+      )?.validation?.diagnostic,
+    ).toContain(rawDiagnosticMarker);
     fs.rmSync(f.root, { recursive: true, force: true });
   });
 });

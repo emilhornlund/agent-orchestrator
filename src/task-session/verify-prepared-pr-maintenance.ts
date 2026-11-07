@@ -160,14 +160,18 @@ export async function verifyPreparedPrMaintenance(
       "PR maintenance validation",
     );
     if (validation.status !== "passed")
-      throw new Error(`Validation failed: ${validation.diagnostic}`);
+      throw new Error(
+        `Validation failed (exit code ${validation.exitCode}); diagnostics are available in session log ${options.sessionLogPath ?? getSessionLogPath(project.id, operation.cardId)}`,
+      );
     if (project.repository.coverageCommand !== undefined) {
       coverage = await runGate(
         project.repository.coverageCommand,
         "PR maintenance coverage",
       );
       if (coverage.status !== "passed")
-        throw new Error(`Coverage failed: ${coverage.diagnostic}`);
+        throw new Error(
+          `Coverage failed (exit code ${coverage.exitCode}); diagnostics are available in session log ${options.sessionLogPath ?? getSessionLogPath(project.id, operation.cardId)}`,
+        );
     }
     const review = await options.review({
       contentIdentity,

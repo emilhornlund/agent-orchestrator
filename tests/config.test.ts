@@ -225,7 +225,7 @@ describe("parseConfig", () => {
     });
     expect(project!.opencode.timeoutMinutes).toBe(360);
     expect(config.workflow.pollIntervalSeconds).toBe(15);
-    expect(config.workflow.logRetentionDays).toBe(14);
+    expect(config.workflow.logRetentionDays).toBe(30);
     expect(config.workflow.contextRetentionDays).toBe(14);
     expect(config.workflow.contextRoot).toBe("/opt/.agent-context");
     expect(config.notifications).toBeUndefined();

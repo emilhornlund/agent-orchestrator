@@ -3743,7 +3743,7 @@ export async function runTaskSessionWorkflow(
       } catch (error) {
         if (signal.aborted) throw error;
         cardLog.warn(
-          `Commit message generation failed: ${error instanceof Error ? error.message : String(error)}. Using deterministic fallback.`,
+          `Commit message generation failed (${error instanceof Error ? error.name : "unknown failure"}); diagnostics are available in session log ${getSessionLogPath(project.id, activeCard.id)}. Using deterministic fallback.`,
         );
         commitMessage = fallbackCommitMessage;
       } finally {

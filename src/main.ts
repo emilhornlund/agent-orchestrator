@@ -8,10 +8,15 @@ import { parseEnvironment } from "./config/environment.js";
 import { GitClient } from "./git/git-client.js";
 import { GitHubClient } from "./github/github-client.js";
 import { GitHubCredentialProvider } from "./github/github-credential-provider.js";
-import { logger, shouldWriteConsole } from "./logging/logger.js";
+import {
+  configureLoggerRuntime,
+  logger,
+  shouldWriteConsole,
+} from "./logging/logger.js";
 import { createEmailNotifier } from "./notifications/email-notifier.js";
 import { OpenCodeClient } from "./opencode/opencode-client.js";
 import { CommandRunner } from "./process/command-runner.js";
+import { configureProcessRuntime } from "./process/process-runtime.js";
 import {
   installProcessHandlers,
   type ProcessEventSource,
@@ -40,8 +45,14 @@ export async function main(
   lifecycle: RuntimeLifecycle = new RuntimeLifecycle(),
 ): Promise<void> {
   const config = loadConfig();
+  configureLoggerRuntime(config.workflow.contextRoot);
   const environment = parseEnvironment(process.env);
   addConfiguredSecretValues(lifecycle, config, environment);
+  configureProcessRuntime({
+    runtimeRoot: config.workflow.contextRoot,
+    signal: lifecycle.signal,
+    secretValues: lifecycle.getSecretValues(),
+  });
 
   const emailNotifier = createEmailNotifier(
     config.notifications?.email,
@@ -62,7 +73,7 @@ export async function main(
 
   const opencode = new OpenCodeClient(undefined, lifecycle.getSecretValues());
 
-  const commands = new CommandRunner();
+  const commands = new CommandRunner(undefined, lifecycle.signal);
 
   logger.event("Agent Orchestrator");
   logger.event(`Projects: ${config.projects.length}`);

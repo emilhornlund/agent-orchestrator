@@ -62,7 +62,7 @@ must be unique.
 | Key                       | Meaning and validation                                                                    |
 | ------------------------- | ----------------------------------------------------------------------------------------- |
 | `pollIntervalSeconds`     | Positive integer interval between project polling cycles                                  |
-| `logRetentionDays`        | Positive integer number of days for managed log retention; defaults to `14` when omitted  |
+| `logRetentionDays`        | Positive integer number of days for managed log retention; defaults to `30` when omitted  |
 | `contextRetentionDays`    | Positive integer number of days for card context retention; defaults to `14` when omitted |
 | `contextRoot`             | Optional absolute root for card context; defaults to `/opt/.agent-context`                |
 | `coordinationRoot`        | Required absolute host-visible directory for canonical project ownership coordination     |
@@ -137,6 +137,13 @@ to its configured storage root; changing that root during an active attempt is n
 old-version workers before enabling a version that understands this namespace: old binaries do not participate in these leases,
 and the lease cannot retroactively fence them. Distinct namespace IDs/hidden mounts are an operator deployment error that
 cannot be detected from either isolated mount. Multiple-machine coordination is not supported.
+
+If termination is ambiguous and a durable ambiguity marker cannot be published, the service emits one sanitized operator-required warning,
+continues controlled marker-publication retries, and remains alive with the integration locks held. Normal bootstrap/shutdown completion must
+not release those locks until every marker has been synced. A successful retry permits orderly shutdown while the marker continues to block
+reacquisition pending operator recovery. This is a fail-closed guarantee for normal process operation, not an immunity to `SIGKILL`, runtime
+crash, power loss, or host failure: those can close descriptors before the marker is durable. In that case an operator must independently
+verify the recorded process group and preserved evidence before recovering or clearing coordination state.
 
 Card context storage uses this layout, with project IDs, card IDs, and attachment filenames treated as untrusted single path
 components:

@@ -137,6 +137,13 @@ describe("resuming canonical preparing attempts", () => {
       });
       const attemptId = preparing.store.read()!.attemptId;
       const originalGeneration = preparing.store.read()!.owner.generation;
+      const processRunner = new CommandRunner();
+      await preparing.run(() =>
+        processRunner.run({
+          cwd: root,
+          command: `node -e 'process.stdout.write("BEFORE_RESTART_CHILD_MARKER")'`,
+        }),
+      );
       await oldLease.release();
       leases.splice(leases.indexOf(oldLease), 1);
 
@@ -158,6 +165,12 @@ describe("resuming canonical preparing attempts", () => {
         lifecycle: "preparing",
         owner: { generation: originalGeneration + 1 },
       });
+      await authority.run(() =>
+        processRunner.run({
+          cwd: root,
+          command: `node -e 'process.stderr.write("AFTER_RESTART_CHILD_MARKER"); process.exit(11)'`,
+        }),
+      );
 
       const card: TrelloCard = {
         id: cardId,
@@ -284,6 +297,82 @@ describe("resuming canonical preparing attempts", () => {
       expect(effectStates.every((state) => state !== "preparing")).toBe(true);
       if (taskKind === "implementation")
         expect(fs.existsSync(path.join(worktreeRoot, cardId))).toBe(true);
+      const timelinePath = path.join(
+        storageRoot,
+        "history",
+        encodeURIComponent(project.id),
+        encodeURIComponent(cardId),
+        encodeURIComponent(attemptId),
+        "events.jsonl",
+      );
+      const timeline = fs
+        .readFileSync(timelinePath, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+      const processEvents = timeline.filter((event) =>
+        String(event.type).startsWith("process-"),
+      );
+      const stateEvents = timeline.filter(
+        (event) => event.type === "attempt-state",
+      );
+      expect(stateEvents.length).toBeGreaterThan(2);
+      expect(
+        stateEvents.every(
+          (event) =>
+            typeof event.revision === "number" &&
+            typeof event.ownerGeneration === "number" &&
+            typeof event.elapsedMilliseconds === "number" &&
+            event.attemptId === attemptId &&
+            event.after !== null,
+        ),
+      ).toBe(true);
+      expect(
+        stateEvents.some(
+          (event) =>
+            event.transition ===
+            (taskKind === "refinement"
+              ? "refinement-claimed"
+              : "implementation-claimed"),
+        ),
+      ).toBe(true);
+      expect(processEvents.length).toBeGreaterThanOrEqual(4);
+      expect(
+        processEvents.every(
+          (event, index) =>
+            event.type ===
+            (index % 2 === 0 ? "process-started" : "process-finished"),
+        ),
+      ).toBe(true);
+      expect(processEvents.some((event) => event.status === "success")).toBe(
+        true,
+      );
+      expect(processEvents.some((event) => event.status === "nonzero")).toBe(
+        true,
+      );
+      expect(JSON.stringify(processEvents)).not.toContain("CHILD_MARKER");
+      const referencedStreams = processEvents
+        .filter((event) => event.type === "process-finished")
+        .flatMap((event) => [event.stdoutArtifact, event.stderrArtifact])
+        .filter((artifact): artifact is string => typeof artifact === "string")
+        .map((artifact) => fs.readFileSync(artifact, "utf8"));
+      expect(referencedStreams.join("\n")).toContain(
+        "BEFORE_RESTART_CHILD_MARKER",
+      );
+      expect(referencedStreams.join("\n")).toContain(
+        "AFTER_RESTART_CHILD_MARKER",
+      );
+      expect(
+        timeline.some(
+          (event) =>
+            event.type === "attempt-state" &&
+            event.after !== null &&
+            typeof event.after === "object" &&
+            "lifecycle" in event.after &&
+            event.after.lifecycle ===
+              (taskKind === "refinement" ? "refined" : "planning"),
+        ),
+      ).toBe(true);
       if (taskKind === "implementation") {
         expect(setupRuns).toBe(1);
         expect(

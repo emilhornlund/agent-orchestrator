@@ -94,6 +94,89 @@ afterEach(() => {
 });
 
 describe("ensureRepository", () => {
+  it("runs the real clone path with scoped App/PAT env against conflicting ambient tokens", async () => {
+    const root = createTemporaryDirectory();
+    const executableDirectory = path.join(root, "bin");
+    fs.mkdirSync(executableDirectory);
+    const ghPath = path.join(executableDirectory, "gh");
+    const original = {
+      PATH: process.env.PATH,
+      GH_TOKEN: process.env.GH_TOKEN,
+      GITHUB_TOKEN: process.env.GITHUB_TOKEN,
+      TRELLO_API_KEY: process.env.TRELLO_API_KEY,
+      SMTP_PASSWORD: process.env.SMTP_PASSWORD,
+    };
+    const writeScript = (recordPath: string): void => {
+      fs.writeFileSync(
+        ghPath,
+        `#!/usr/bin/env node\nconst fs=require('node:fs');const args=process.argv.slice(2);fs.mkdirSync(args[3],{recursive:true});fs.writeFileSync(${JSON.stringify(recordPath)},JSON.stringify({args,GH_TOKEN:process.env.GH_TOKEN,GITHUB_TOKEN:process.env.GITHUB_TOKEN,TRELLO_API_KEY:process.env.TRELLO_API_KEY,SMTP_PASSWORD:process.env.SMTP_PASSWORD}));\n`,
+        { mode: 0o700 },
+      );
+      fs.chmodSync(ghPath, 0o700);
+    };
+    process.env.PATH = `${executableDirectory}${path.delimiter}${original.PATH ?? ""}`;
+    process.env.GH_TOKEN = "ambient-pat-gh";
+    process.env.GITHUB_TOKEN = "ambient-pat-github";
+    process.env.TRELLO_API_KEY = "unrelated-trello-secret";
+    process.env.SMTP_PASSWORD = "unrelated-mail-secret";
+    try {
+      const appRepository = path.join(root, "app-repository");
+      const appRecord = path.join(root, "app-env.json");
+      writeScript(appRecord);
+      const appCredentialProvider = new GitHubCredentialProvider({
+        authenticator: {
+          getInstallationToken: vi.fn().mockResolvedValue("app-scoped-token"),
+        },
+      });
+      await ensureRepository(
+        createGit(async (_cwd, args) =>
+          args[0] === "remote" ? "git@github.com:owner/repository.git" : "true",
+        ),
+        new CommandRunner(),
+        createProject(appRepository, {
+          appId: "app",
+          installationId: "installation",
+          privateKeyPath: "/protected/app.pem",
+        }),
+        appCredentialProvider,
+      );
+      const appEnvironment = JSON.parse(
+        fs.readFileSync(appRecord, "utf8"),
+      ) as Record<string, unknown>;
+      expect(appEnvironment).toMatchObject({
+        GH_TOKEN: "app-scoped-token",
+        GITHUB_TOKEN: "app-scoped-token",
+      });
+      expect(appEnvironment).not.toHaveProperty("TRELLO_API_KEY");
+      expect(appEnvironment).not.toHaveProperty("SMTP_PASSWORD");
+
+      const patRepository = path.join(root, "pat-repository");
+      const patRecord = path.join(root, "pat-env.json");
+      writeScript(patRecord);
+      await ensureRepository(
+        createGit(async (_cwd, args) =>
+          args[0] === "remote" ? "git@github.com:owner/repository.git" : "true",
+        ),
+        new CommandRunner(),
+        createProject(patRepository),
+      );
+      const patEnvironment = JSON.parse(
+        fs.readFileSync(patRecord, "utf8"),
+      ) as Record<string, unknown>;
+      expect(patEnvironment).toMatchObject({
+        GH_TOKEN: "ambient-pat-gh",
+        GITHUB_TOKEN: "ambient-pat-github",
+      });
+      expect(patEnvironment).not.toHaveProperty("TRELLO_API_KEY");
+      expect(patEnvironment).not.toHaveProperty("SMTP_PASSWORD");
+    } finally {
+      for (const [key, value] of Object.entries(original)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+
   it("clones a missing repository", async () => {
     const root = createTemporaryDirectory();
     const repositoryPath = path.join(root, "repository");
@@ -116,6 +199,7 @@ describe("ensureRepository", () => {
         expect(options).toEqual({
           cwd: process.cwd(),
           command: `gh repo clone owner/repository ${repositoryPath}`,
+          processFamily: "github",
           ...(ambientSecretValues.length === 0
             ? {}
             : { secretValues: ambientSecretValues }),
@@ -152,6 +236,8 @@ describe("ensureRepository", () => {
       .fn<RunCommand>()
       .mockImplementation(async (options) => {
         expect(options.environment?.GH_TOKEN).toBe("token-a");
+        expect(options.environment?.GITHUB_TOKEN).toBe("token-a");
+        expect(options.processFamily).toBe("github");
         expect(options.command).toBe(
           `gh repo clone owner/repository ${repositoryPath} -- -c credential.helper=`,
         );

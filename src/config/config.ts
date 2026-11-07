@@ -260,7 +260,7 @@ const configSchema = z
 
     workflow: z.strictObject({
       pollIntervalSeconds: z.number().int().positive(),
-      logRetentionDays: z.number().int().positive().default(14),
+      logRetentionDays: z.number().int().positive().default(30),
       contextRetentionDays: z.number().int().positive().default(14),
       contextRoot: absolutePath.default(DEFAULT_CONTEXT_ROOT),
       coordinationRoot: absolutePath.optional(),

@@ -23,6 +23,7 @@ import {
   CommandRunAbortedError,
   type CommandRunner,
 } from "../process/command-runner.js";
+import { ProcessExecutionError } from "../process/process-runtime.js";
 import {
   TrelloRequestAbortedError,
   getTrelloRequestOperation,
@@ -192,6 +193,40 @@ interface BlockedReconciliation {
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function getProcessExecutionError(
+  error: unknown,
+): { executionId: string; artifactReference: string } | undefined {
+  const seen = new Set<unknown>();
+  const pending = [error];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (current === undefined || seen.has(current)) continue;
+    seen.add(current);
+    if (current instanceof ProcessExecutionError)
+      return {
+        executionId: current.executionId,
+        artifactReference: `process-executions/${current.executionId}/stderr.txt`,
+      };
+    if (
+      current instanceof Error &&
+      "executionId" in current &&
+      typeof current.executionId === "string" &&
+      /^[0-9a-f-]{36}$/iu.test(current.executionId) &&
+      "stdoutArtifactReference" in current &&
+      current.stdoutArtifactReference ===
+        `process-executions/${current.executionId}/stdout.txt`
+    )
+      return {
+        executionId: current.executionId,
+        artifactReference: current.stdoutArtifactReference,
+      };
+    if (current instanceof AggregateError) pending.push(...current.errors);
+    if (current instanceof Error && current.cause !== undefined)
+      pending.push(current.cause);
+  }
+  return undefined;
 }
 
 function runBestEffortRetention(operation: string, cleanup: () => void): void {
@@ -417,6 +452,16 @@ async function runProjectWorkerInner(
       .event(
         `Restored blocked ${block.operation} reconciliation from runtime storage; waiting for ${block.recoveryCondition === "card-moved-to-ready" ? "the affected card to move from its recorded reconciliation list to Ready for Agent" : "explicit operator recovery and worker restart"}`,
       );
+    logger
+      .child({
+        projectId: project.id,
+        ...(block.cardId === undefined ? {} : { cardId: block.cardId }),
+      })
+      .diagnostic({
+        code: "recovery-deferred",
+        classification: "workflow-recovery",
+        recovery: "state-preserved",
+      });
   } else if (persistedBlock.status === "malformed") {
     const failure = new WorkflowError(
       "Workflow",
@@ -528,6 +573,18 @@ async function runProjectWorkerInner(
           .event(
             `Recovered blocked ${blockedReconciliation.operation} reconciliation after explicit worker restart; resuming normal processing`,
           );
+        logger
+          .child({
+            projectId: project.id,
+            ...(blockedReconciliation.cardId === undefined
+              ? {}
+              : { cardId: blockedReconciliation.cardId }),
+          })
+          .diagnostic({
+            code: "recovery-deferred",
+            classification: "workflow-recovery",
+            recovery: "none",
+          });
       } else {
         const recovered = await hasReconciliationRecovery(
           trello,
@@ -566,6 +623,18 @@ async function runProjectWorkerInner(
           .event(
             `Recovered blocked ${blockedReconciliation.operation} reconciliation after the affected card returned to Ready for Agent; resuming normal processing`,
           );
+        logger
+          .child({
+            projectId: project.id,
+            ...(blockedReconciliation.cardId === undefined
+              ? {}
+              : { cardId: blockedReconciliation.cardId }),
+          })
+          .diagnostic({
+            code: "recovery-deferred",
+            classification: "workflow-recovery",
+            recovery: "none",
+          });
       }
     }
 
@@ -769,6 +838,22 @@ async function runProjectWorkerInner(
         isShutdownCancellation(error, signal) ||
         (signal.aborted && signal.reason === "fatal")
       ) {
+        const processFailure = getProcessExecutionError(error);
+        if (processFailure) {
+          logger
+            .child({
+              projectId: project.id,
+              ...(getFailureContext(error)?.cardId === undefined
+                ? {}
+                : { cardId: getFailureContext(error)!.cardId }),
+            })
+            .diagnostic({
+              code: "process-failed",
+              classification: "process",
+              recovery: "state-preserved",
+              artifactReferences: [processFailure.artifactReference],
+            });
+        }
         return;
       }
 
@@ -832,6 +917,16 @@ async function runProjectWorkerInner(
         projectLog.warn(
           `Prepared conflict remediation attempt ${attempt}/${MAX_PREPARED_CONFLICT_REMEDIATION_ATTEMPTS} failed: ${error.message}`,
         );
+        projectLog.diagnostic({
+          code: "recovery-deferred",
+          classification: "workflow-recovery",
+          recovery:
+            attempt < MAX_PREPARED_CONFLICT_REMEDIATION_ATTEMPTS
+              ? "retry-scheduled"
+              : "state-preserved",
+          attempt,
+          maximumAttempts: MAX_PREPARED_CONFLICT_REMEDIATION_ATTEMPTS,
+        });
 
         if (attempt < MAX_PREPARED_CONFLICT_REMEDIATION_ATTEMPTS) {
           await sleep(pollIntervalMilliseconds, signal);
@@ -865,6 +960,16 @@ async function runProjectWorkerInner(
         projectLog.warn(
           `Retryable GitHub reconciliation attempt ${attempt}/${MAX_GITHUB_RECONCILIATION_ATTEMPTS} failed for ${error.operation}: ${causeMessage}`,
         );
+        projectLog.diagnostic({
+          code: "recovery-deferred",
+          classification: "external-operation",
+          recovery:
+            attempt < MAX_GITHUB_RECONCILIATION_ATTEMPTS
+              ? "retry-scheduled"
+              : "state-preserved",
+          attempt,
+          maximumAttempts: MAX_GITHUB_RECONCILIATION_ATTEMPTS,
+        });
 
         if (attempt < MAX_GITHUB_RECONCILIATION_ATTEMPTS) {
           await sleep(getRetryBackoffDelayMilliseconds(attempt), signal);
@@ -915,6 +1020,16 @@ async function runProjectWorkerInner(
         projectLog.warn(
           `Retryable Trello operation attempt ${attempt}/${MAX_TRELLO_RECONCILIATION_ATTEMPTS} failed for ${operation}: ${error instanceof Error ? error.message : String(error)}`,
         );
+        projectLog.diagnostic({
+          code: "trello-retry-deferred",
+          classification: "external-operation",
+          recovery:
+            attempt < MAX_TRELLO_RECONCILIATION_ATTEMPTS
+              ? "retry-scheduled"
+              : "state-preserved",
+          attempt,
+          maximumAttempts: MAX_TRELLO_RECONCILIATION_ATTEMPTS,
+        });
 
         if (attempt < MAX_TRELLO_RECONCILIATION_ATTEMPTS) {
           await sleep(getRetryBackoffDelayMilliseconds(attempt), signal);
@@ -988,6 +1103,23 @@ async function runProjectWorkerInner(
         failureContext.cardFailureHandled === true;
 
       const failureDescription = describeFailure(error);
+      const processFailure = getProcessExecutionError(error);
+      projectLog.diagnostic({
+        code: processFailure ? "process-failed" : "task-failure",
+        classification: processFailure
+          ? "process"
+          : error instanceof WorkflowError
+            ? "internal-workflow"
+            : "external-operation",
+        recovery: newlyBlockedReconciliation
+          ? "state-preserved"
+          : "manual-review",
+        ...(processFailure
+          ? {
+              artifactReferences: [processFailure.artifactReference],
+            }
+          : {}),
+      });
       const currentFailureIdentity = failureNotificationIdentity(
         project.id,
         failureContext?.reconciliationOperation,
@@ -1174,7 +1306,25 @@ export async function runOrchestrator(
       }
 
       runBestEffortRetention("log retention", () =>
-        cleanupLogRetention(config.workflow.logRetentionDays),
+        cleanupLogRetention(
+          config.workflow.logRetentionDays,
+          new Date(),
+          [
+            ...new Set([
+              config.workflow.contextRoot,
+              ...(projectRunContexts
+                ? [...projectRunContexts.values()].flatMap((context) =>
+                    context.pinned ? [context.pinned.storageRoot] : [],
+                  )
+                : []),
+            ]),
+          ],
+          projectRunContexts
+            ? [...projectRunContexts.values()].flatMap(
+                (context) => context.authority?.store.read()?.attemptId ?? [],
+              )
+            : [],
+        ),
       );
       runBestEffortRetention("card context retention", () =>
         cleanupCardContextRetention(

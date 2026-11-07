@@ -44,6 +44,19 @@ describe("Git and OpenCode startup compatibility", () => {
     expect(run).toHaveBeenCalledTimes(4);
   });
 
+  it("uses the supplied project timeout consistently for every startup probe", async () => {
+    const { commands, run } = runner(supported);
+    await validateGitAndOpenCode(commands, 17_000);
+    expect(run.mock.calls.map(([input]) => input.timeoutMilliseconds)).toEqual([
+      17_000, 17_000, 17_000, 17_000,
+    ]);
+    const secondProject = runner(supported);
+    await validateGitAndOpenCode(secondProject.commands, 83_000);
+    expect(
+      secondProject.run.mock.calls.map(([input]) => input.timeoutMilliseconds),
+    ).toEqual([83_000, 83_000, 83_000, 83_000]);
+  });
+
   it.each([
     ["missing Git", { ...supported, "git --version": undefined }],
     [
@@ -88,7 +101,7 @@ describe("Git and OpenCode startup compatibility", () => {
       );
       writeExecutable(
         "opencode",
-        `if [ "$1" = "--version" ]; then printf '${MINIMUM_OPENCODE_VERSION}\\n'; else printf '%s\\n' '--auto --model --variant --dir --session --format'; fi`,
+        `if [ "$1" = "--version" ]; then printf '${MINIMUM_OPENCODE_VERSION}\\n'; else printf '%03000d' 0; printf '%s\\n' '--auto --model --variant --dir --session --format'; printf '%03000d' 0 >&2; fi`,
       );
       process.env.PATH = fixtureRoot;
       await expect(

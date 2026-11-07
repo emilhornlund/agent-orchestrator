@@ -2681,7 +2681,12 @@ describe("runOrchestrator", () => {
         logRetention.logRetentionIntervalMilliseconds,
       );
 
-      expect(cleanupLogRetention).toHaveBeenCalledWith(14);
+      expect(cleanupLogRetention).toHaveBeenCalledWith(
+        14,
+        expect.any(Date),
+        [runtimeStorageRoot],
+        [],
+      );
       expect(cleanupCardContextRetention).toHaveBeenCalledWith(
         runtimeStorageRoot,
         14,

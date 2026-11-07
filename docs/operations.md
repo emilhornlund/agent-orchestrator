@@ -438,25 +438,24 @@ Daily files use the existing format:
 timestamp level context message
 ```
 
-They are written under `logs/orchestrator-YYYY-MM-DD.log`; test runs use the `test-orchestrator-YYYY-MM-DD.log` prefix. Raw
+They are written under `<workflow.contextRoot>/orchestrator-logs/orchestrator-YYYY-MM-DD.log`; test runs use the `test-orchestrator-YYYY-MM-DD.log` prefix. Raw
 OpenCode and command output is written to per-card session logs or forwarded to process standard streams, so it is not
 timestamped by the shared logger. Configured repository validation is captured in the relevant OpenCode card session log. Clean
 Human Review branch maintenance does not run the configured validation command. Session logs are stored below
-`logs/sessions/<sanitized-project-id>/<sanitized-card-id>.log`; path components are sanitized for filesystem use. Validation
+`<pinned-storage-root>/history/sessions/<sanitized-project-id>/<sanitized-card-id>-<attempt-id>.log`; path components are sanitized for filesystem use. Child stdout/stderr is stored under the pinned attempt's `artifacts/<project>/<card>/<attempt>/process-executions/` tree. Validation
 failures reported by an agent are concise diagnostics with a session-log reference; the complete redacted stdout and stderr remain
 in that per-card log instead of being dumped to the service log.
 
 Vitest suppresses shared logger console output by default while retaining the daily test log. Temporarily enable application
 logger output for a debugging run with `TEST_LOGS=true yarn test`.
 
-`workflow.logRetentionDays` defaults to `14`. Retention cleanup runs at startup and once per day while the service is
-running. It applies to managed daily logs and per-card session logs; a file is removed only when its filesystem modification
+`workflow.logRetentionDays` defaults to `30`. Retention cleanup runs at startup and once per day while the service is
+running. It applies to managed daily logs, task history, and process artifacts; a file is removed only when its filesystem modification
 time is strictly older than the retention cutoff. Missing log directories are ignored. Unrelated files and directories,
-symbolic links, and active log files are preserved. Scan and removal failures are logged with their path and reason while
+symbolic links, and active log files are preserved. Nonterminal or malformed attempt envelopes protect their evidence, including idle Human Review and restart recovery. Scan and removal failures are logged with their path and reason while
 other candidates continue to be processed.
 
-Failed-card session logs remain available until retention removes them. A session log for a card successfully moved to `Done`
-is removed immediately on a best-effort basis.
+Session and process evidence remains after completion and is removed only by retention after the configured expiry.
 
 Fatal diagnostics redact configured and environment secret values. Operators should still remove credentials, tokens, private
 URLs, and personal data from any shared diagnostic output; see [SECURITY.md](../SECURITY.md).

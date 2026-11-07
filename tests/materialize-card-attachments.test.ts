@@ -8,6 +8,7 @@ import {
   materializeCardAttachments,
   type TrelloAttachmentSource,
 } from "../src/context/materialize-card-attachments.js";
+import { registerProcessSecrets } from "../src/process/process-runtime.js";
 import type { TrelloAttachment } from "../src/trello/trello-client.js";
 
 const temporaryDirectories: string[] = [];
@@ -231,6 +232,48 @@ describe("materializeCardAttachments", () => {
       manifest,
     );
     expect(attachments.downloadCardAttachment).toHaveBeenCalledOnce();
+  });
+
+  it("refuses to materialize attachment bytes containing a registered credential", async () => {
+    const root = makeTemporaryRoot();
+    const credential = "attachment-known-pat-canary-unique";
+    registerProcessSecrets([credential]);
+    const file = upload("secret-file", "notes.txt");
+    const attachments = source([file], {
+      "secret-file": new Response(`prefix ${credential} suffix`),
+    });
+
+    await expect(
+      materializeCardAttachments(attachments, root, "project-one", "card-1"),
+    ).rejects.toThrow("contains a registered credential");
+    const paths = contextPaths(root);
+    expect(fs.existsSync(path.join(paths.attachments, "notes.txt"))).toBe(
+      false,
+    );
+    expect(fs.existsSync(paths.manifest)).toBe(false);
+  });
+
+  it("detects a registered credential split across downloaded byte chunks", async () => {
+    const root = makeTemporaryRoot();
+    const credential = "attachment-split-token-canary-unique";
+    registerProcessSecrets([credential]);
+    const file = upload("split-secret-file", "notes.txt");
+    const split = Math.floor(credential.length / 2);
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(Buffer.from(`prefix ${credential.slice(0, split)}`));
+        controller.enqueue(Buffer.from(`${credential.slice(split)} suffix`));
+        controller.close();
+      },
+    });
+    const attachments = source([file], {
+      "split-secret-file": new Response(body),
+    });
+
+    await expect(
+      materializeCardAttachments(attachments, root, "project-one", "card-1"),
+    ).rejects.toThrow("contains a registered credential");
+    expect(fs.existsSync(contextPaths(root).manifest)).toBe(false);
   });
 
   it("writes an empty manifest without requesting a download", async () => {

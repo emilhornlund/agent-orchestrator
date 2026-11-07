@@ -10,10 +10,15 @@ vi.mock("node:child_process", () => ({
 
 import {
   GitHubClient,
+  MalformedGitHubResponseError,
   isRetryableGitHubError,
+  parseGitHubJson,
+  parsePaginatedGitHubResponse,
+  type GitHubOutputOrigin,
   type RunGitHubCommand,
 } from "../src/github/github-client.js";
 import type { ProjectConfig } from "../src/config/config.js";
+import { registerProcessSecrets } from "../src/process/process-runtime.js";
 import {
   AGENT_ORCHESTRATOR_STATUS_END,
   AGENT_ORCHESTRATOR_STATUS_START,
@@ -35,7 +40,53 @@ function createFakeChild(): FakeChild {
   return child;
 }
 
+function successfulOutputRunner(outputs: string[]): RunGitHubCommand {
+  let index = 0;
+  return async (_cwd, _args, _environment, onSuccessfulOutput) => {
+    const current = index++;
+    onSuccessfulOutput?.({
+      executionId: `execution-${current}`,
+      stdoutArtifactReference: `process-executions/execution-${current}/stdout.txt`,
+    });
+    return outputs[current] ?? "";
+  };
+}
+
 describe("GitHubClient", () => {
+  it("retains invocation provenance for malformed JSON and pages without response data", () => {
+    const origin: GitHubOutputOrigin = {
+      executionId: "execution-123",
+      stdoutArtifactReference: "process-executions/execution-123/stdout.txt",
+    };
+    const parsers: Array<[string, () => unknown]> = [
+      [
+        "malformed JSON",
+        () => parseGitHubJson('{"sensitive":"private"', origin),
+      ],
+      [
+        "malformed page collection",
+        () =>
+          parsePaginatedGitHubResponse(
+            '{"sensitive":"private"}',
+            "check runs",
+            "check_runs",
+            origin,
+          ),
+      ],
+    ];
+    for (const [label, parse] of parsers) {
+      expect(label).toBeTruthy();
+      expect(parse).toThrow(MalformedGitHubResponseError);
+      try {
+        parse();
+      } catch (error) {
+        expect(error).toMatchObject(origin);
+        expect((error as Error).message).not.toContain("private");
+        expect((error as Error).cause).toBeUndefined();
+      }
+    }
+  });
+
   beforeEach(() => {
     spawnMock.mockReset();
   });
@@ -96,9 +147,9 @@ describe("GitHubClient", () => {
           JSON.stringify({ status: "diverged", ahead_by: 1, behind_by: 19 }),
         ),
     );
-    await expect(malformed.comparePullRequestHeadToBase(options)).resolves.toBe(
-      "uncertain",
-    );
+    await expect(
+      malformed.comparePullRequestHeadToBase(options),
+    ).rejects.toBeInstanceOf(MalformedGitHubResponseError);
     const live = "b".repeat(40);
     const gh = new GitHubClient(
       vi
@@ -345,6 +396,95 @@ describe("GitHubClient", () => {
     ).rejects.toThrow("HTTP 403");
   });
 
+  it("sanitizes PEM canaries in spawned GraphQL and conversation replies and validates sanitized receipts", async () => {
+    const pem =
+      "-----BEGIN PRIVATE KEY-----\nPEM /+=& canary\n-----END PRIVATE KEY-----";
+    registerProcessSecrets([pem]);
+    const threadLookup = {
+      data: {
+        repository: {
+          pullRequest: {
+            reviewThreads: {
+              nodes: [
+                {
+                  id: "PRRT_thread-id",
+                  isResolved: false,
+                  isOutdated: false,
+                  comments: {
+                    nodes: [
+                      {
+                        databaseId: 10,
+                        body: "review request",
+                        author: { login: "reviewer" },
+                        path: null,
+                        line: null,
+                        originalLine: null,
+                        diffHunk: null,
+                        pullRequestReview: { databaseId: 9 },
+                      },
+                    ],
+                    pageInfo: { hasNextPage: false },
+                  },
+                },
+              ],
+              pageInfo: { hasNextPage: false },
+            },
+          },
+        },
+      },
+    };
+    const nextSpawn = (output: string): void => {
+      const child = createFakeChild();
+      spawnMock.mockImplementationOnce(() => {
+        queueMicrotask(() => {
+          child.stdout.emit("data", Buffer.from(output));
+          child.emit("close", 0);
+        });
+        return child;
+      });
+    };
+    const suppliedBody = `Literal ${pem}; percent=${encodeURIComponent(pem)}; b64=${Buffer.from(pem).toString("base64url")}`;
+    const sanitizedBody =
+      "Literal [REDACTED]; percent=[REDACTED]; b64=[REDACTED]";
+
+    nextSpawn(JSON.stringify(threadLookup));
+    nextSpawn(
+      JSON.stringify({
+        data: {
+          addPullRequestReviewThreadReply: { comment: { databaseId: 201 } },
+        },
+      }),
+    );
+    await expect(
+      new GitHubClient().replyToReviewThread({
+        cwd: "/repo",
+        repository: "owner/repo",
+        pullRequestUrl: "https://github.com/owner/repo/pull/12",
+        threadId: "PRRT_thread-id",
+        body: suppliedBody,
+      }),
+    ).resolves.toMatchObject({ id: "201", kind: "review-thread" });
+    const graphArgs = spawnMock.mock.calls[1]![1] as string[];
+    expect(graphArgs).toContain("threadId=PRRT_thread-id");
+    expect(graphArgs).toContain(`body=${sanitizedBody}`);
+    expect(graphArgs.find((arg) => arg.startsWith("query="))).toContain(
+      "addPullRequestReviewThreadReply",
+    );
+
+    nextSpawn(JSON.stringify({ id: 202, body: sanitizedBody }));
+    await expect(
+      new GitHubClient().replyToConversationComment({
+        cwd: "/repo",
+        repository: "owner/repo",
+        pullRequestUrl: "https://github.com/owner/repo/pull/12",
+        body: suppliedBody,
+      }),
+    ).resolves.toEqual({ id: "202", kind: "conversation" });
+    const conversationArgs = spawnMock.mock.calls[2]![1] as string[];
+    expect(conversationArgs).toContain("repos/owner/repo/issues/12/comments");
+    expect(conversationArgs).toContain(`body=${sanitizedBody}`);
+  });
+
   it("creates contextual conversation replies and validates repository ownership and responses", async () => {
     const run = vi.fn<RunGitHubCommand>().mockResolvedValue(
       JSON.stringify({
@@ -392,7 +532,7 @@ describe("GitHubClient", () => {
         body: "Reply",
         project,
       }),
-    ).rejects.toThrow("malformed conversation reply");
+    ).rejects.toBeInstanceOf(MalformedGitHubResponseError);
   });
 
   it("collects bounded, redacted annotations for failed exact-head check runs", async () => {
@@ -733,17 +873,28 @@ describe("GitHubClient", () => {
   });
 
   it("rejects a non-GitHub pull request URL from gh", async () => {
+    const marker = "UNIQUE_PRIVATE_STDOUT_CANARY_987";
     const github = new GitHubClient(
-      vi.fn<RunGitHubCommand>().mockResolvedValue("https://example.com/pr/1"),
+      vi
+        .fn<RunGitHubCommand>()
+        .mockResolvedValue(`https://example.com/pr/1?marker=${marker}`),
     );
 
-    await expect(
-      github.findPullRequest({
-        cwd: "/tmp/repository",
-        repository: "example/repository",
-        headBranch: "agent/example",
-      }),
-    ).rejects.toThrow("invalid pull request URL");
+    const result = github.findPullRequest({
+      cwd: "/tmp/repository",
+      repository: "example/repository",
+      headBranch: "agent/example",
+    });
+    const failure = await result.catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure).toMatchObject({
+      name: "MalformedPullRequestUrlError",
+      message:
+        "GitHub CLI returned an invalid pull request URL (malformed response)",
+    });
+    expect((failure as Error).cause).toBeUndefined();
+    expect(String(failure)).not.toContain(marker);
+    expect(JSON.stringify(failure)).not.toContain(marker);
   });
 
   it("parses and trims the URL returned by gh", async () => {
@@ -769,9 +920,9 @@ describe("GitHubClient", () => {
         cwd: "/tmp/repository",
         repository: "example/repository",
         baseBranch: "main",
-        headBranch: "agent/example",
-        title: "Example task",
-        body: "Example body",
+        headBranch: "branch-token=rotation",
+        title: "Example token=rotation",
+        body: "Example body token=rotation",
       }),
     ).resolves.toEqual({
       url: "https://github.com/example/repository/pull/123",
@@ -787,17 +938,51 @@ describe("GitHubClient", () => {
         "--base",
         "main",
         "--head",
-        "agent/example",
+        "branch-token=rotation",
         "--title",
-        "Example task",
+        "Example token=rotation",
         "--body",
-        "Example body",
+        "Example body token=rotation",
       ],
       {
         cwd: "/tmp/repository",
         stdio: ["inherit", "pipe", "pipe"],
+        detached: process.platform !== "win32",
+        env: expect.objectContaining({
+          PATH: process.env.PATH,
+          HOME: process.env.HOME,
+        }),
       },
     );
+  });
+
+  it("redacts registered PEM canaries only in outbound gh content arguments", async () => {
+    const pem =
+      "-----BEGIN PRIVATE KEY-----\nsynthetic-gh-pem\n-----END PRIVATE KEY-----";
+    registerProcessSecrets([pem]);
+    const child = createFakeChild();
+    spawnMock.mockImplementationOnce(() => {
+      queueMicrotask(() => {
+        child.stdout.emit(
+          "data",
+          Buffer.from("https://github.com/example/repository/pull/123\n"),
+        );
+        child.emit("close", 0);
+      });
+      return child;
+    });
+    await new GitHubClient().createPullRequest({
+      cwd: "/repo",
+      repository: "example/repository",
+      baseBranch: "main",
+      headBranch: "branch-token=rotation",
+      title: `Contains ${pem}`,
+      body: `Details ${Buffer.from(pem).toString("base64url")}`,
+    });
+    const args = spawnMock.mock.calls[0]![1] as string[];
+    expect(args[args.indexOf("--head") + 1]).toBe("branch-token=rotation");
+    expect(args[args.indexOf("--title") + 1]).toBe("Contains [REDACTED]");
+    expect(args[args.indexOf("--body") + 1]).toBe("Details [REDACTED]");
   });
 
   it("rejects when gh exits non-zero", async () => {
@@ -824,7 +1009,9 @@ describe("GitHubClient", () => {
         title: "Example task",
         body: "Example body",
       }),
-    ).rejects.toThrow("GitHub CLI exited with code 2: permission denied");
+    ).rejects.toThrow(
+      /GitHub CLI exited with code 2; diagnostics: process-executions\//,
+    );
   });
 
   it("rejects when gh cannot be started", async () => {
@@ -849,7 +1036,9 @@ describe("GitHubClient", () => {
         title: "Example task",
         body: "Example body",
       }),
-    ).rejects.toThrow("Failed to start GitHub CLI: spawn gh ENOENT");
+    ).rejects.toThrow(
+      /GitHub CLI spawn failure; diagnostics: process-executions\//,
+    );
   });
 
   it("rejects when gh succeeds without returning a URL", async () => {
@@ -901,7 +1090,7 @@ describe("GitHubClient", () => {
     child.emit("close", null);
 
     await expect(request).rejects.toThrow(
-      "GitHub CLI timed out after 120000ms",
+      /GitHub CLI timeout; diagnostics: process-executions\//,
     );
   });
 
@@ -921,13 +1110,14 @@ describe("GitHubClient", () => {
       body: "Example body",
     });
     const rejection = expect(request).rejects.toThrow(
-      "GitHub CLI timed out after 120000ms",
+      /GitHub CLI timeout; diagnostics: process-executions\//,
     );
 
     await vi.advanceTimersByTimeAsync(2 * 60 * 1000 + 5_000);
 
     expect(child.kill).toHaveBeenNthCalledWith(1, "SIGTERM");
     expect(child.kill).toHaveBeenNthCalledWith(2, "SIGKILL");
+    child.emit("close", null);
     await rejection;
   });
 
@@ -1077,16 +1267,14 @@ describe("GitHubClient", () => {
       JSON.stringify([[{ sha: "a".repeat(40) }, { sha: "a".repeat(40) }]]),
       JSON.stringify([[{ sha: "not-a-sha" }]]),
     ]) {
-      const github = new GitHubClient(
-        vi.fn<RunGitHubCommand>().mockResolvedValue(output),
-      );
+      const github = new GitHubClient(successfulOutputRunner([output]));
       await expect(
         github.getPullRequestCommitShas({
           cwd: "/repo",
           repository: "example/repository",
           pullRequestNumber: 18,
         }),
-      ).rejects.toThrow();
+      ).rejects.toBeInstanceOf(MalformedGitHubResponseError);
     }
   });
 
@@ -1494,46 +1682,44 @@ describe("GitHubClient", () => {
   });
 
   it("rejects a malformed pull request list response", async () => {
+    const marker = "CHILD_STDOUT_UNTRUSTED_7f32";
     const github = new GitHubClient(
-      vi.fn<RunGitHubCommand>().mockResolvedValue(JSON.stringify({})),
+      vi.fn<RunGitHubCommand>().mockResolvedValue(`[${marker}`),
     );
 
-    await expect(
-      github.findChangesRequestedPullRequest({
-        cwd: "/repo",
-        repository: "example/repository",
-        headBranch: "agent/card-1",
-      }),
-    ).rejects.toThrow("invalid pull request list");
+    const result = github.findChangesRequestedPullRequest({
+      cwd: "/repo",
+      repository: "example/repository",
+      headBranch: "agent/card-1",
+    });
+    await expect(result).rejects.toBeInstanceOf(MalformedGitHubResponseError);
+    await expect(result).rejects.toThrow("invalid pull request list");
+    await expect(result).rejects.not.toThrow(marker);
   });
 
   it("rejects a malformed requested-changes review response", async () => {
-    const runGitHub = vi
-      .fn<RunGitHubCommand>()
-      .mockResolvedValueOnce(
-        JSON.stringify([
+    const runGitHub = successfulOutputRunner([
+      JSON.stringify([
+        {
+          url: "https://github.com/example/repository/pull/123",
+          number: 123,
+          reviewDecision: "CHANGES_REQUESTED",
+          headRefOid: "current-head-sha",
+        },
+      ]),
+      JSON.stringify([
+        [
           {
-            url: "https://github.com/example/repository/pull/123",
-            number: 123,
-            reviewDecision: "CHANGES_REQUESTED",
-            headRefOid: "current-head-sha",
+            id: 456,
+            body: 123,
+            commit_id: "current-head-sha",
+            state: "CHANGES_REQUESTED",
+            submitted_at: "2026-01-01T10:00:00Z",
+            user: { login: "reviewer-one" },
           },
-        ]),
-      )
-      .mockResolvedValueOnce(
-        JSON.stringify([
-          [
-            {
-              id: 456,
-              body: 123,
-              commit_id: "current-head-sha",
-              state: "CHANGES_REQUESTED",
-              submitted_at: "2026-01-01T10:00:00Z",
-              user: { login: "reviewer-one" },
-            },
-          ],
-        ]),
-      );
+        ],
+      ]),
+    ]);
 
     const github = new GitHubClient(runGitHub);
 
@@ -1543,7 +1729,7 @@ describe("GitHubClient", () => {
         repository: "example/repository",
         headBranch: "agent/card-1",
       }),
-    ).rejects.toThrow("invalid requested changes review");
+    ).rejects.toBeInstanceOf(MalformedGitHubResponseError);
   });
 
   it("ignores requested changes that target an older PR head", async () => {
@@ -2304,7 +2490,7 @@ describe("GitHubClient", () => {
         repository: "example/repository",
         headBranch: "agent/card-1",
       }),
-    ).rejects.toThrow("incomplete review thread response");
+    ).rejects.toBeInstanceOf(MalformedGitHubResponseError);
   });
 
   it("rejects malformed paginated review JSON", async () => {
@@ -2376,7 +2562,7 @@ describe("GitHubClient", () => {
         repository: "example/repository",
         headBranch: "agent/card-1",
       }),
-    ).rejects.toThrow("invalid inline review comment");
+    ).rejects.toBeInstanceOf(MalformedGitHubResponseError);
   });
 
   it("rejects malformed inline comment location metadata", async () => {
@@ -2426,7 +2612,7 @@ describe("GitHubClient", () => {
         repository: "example/repository",
         headBranch: "agent/card-1",
       }),
-    ).rejects.toThrow("invalid inline review comment");
+    ).rejects.toBeInstanceOf(MalformedGitHubResponseError);
   });
 
   it("preserves a requested review when it has no written feedback", async () => {
