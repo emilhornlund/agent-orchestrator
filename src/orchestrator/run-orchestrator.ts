@@ -66,6 +66,7 @@ import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 import { getCardsForDiscovery } from "./trello-list-discovery.js";
 import { getWorkflowKind } from "./workflow-kind.js";
 import { isCardStartDateReached } from "./card-start-eligibility.js";
+import { MAX_VALIDATION_REPAIR_ATTEMPTS } from "../task-session/run-task-session-validation-repairs.js";
 
 function sleep(milliseconds: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -620,7 +621,7 @@ async function runProjectWorkerInner(
             ? {
                 budgets: {
                   validation: {
-                    limit: project.opencode.remediation.maxPasses + 1,
+                    limit: MAX_VALIDATION_REPAIR_ATTEMPTS,
                     used: 0,
                     episodeId: `${selected.id}:initial-validation`,
                     trigger: "initial-implementation",

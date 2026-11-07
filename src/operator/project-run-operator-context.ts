@@ -1,4 +1,6 @@
 import type { Config, ProjectConfig } from "../config/config.js";
+import path from "node:path";
+import { canonicalizeGitHubRepository } from "../config/config.js";
 import {
   acquireProjectOwnership,
   type ProjectOwnershipLease,
@@ -49,6 +51,20 @@ export async function acquireProjectRunOperatorContext(
     let pin: HostProjectPin | undefined = candidates[0];
     let effectiveProject = project;
     if (pin?.activeAttempt || pin?.pendingAttempt) {
+      if (
+        JSON.stringify(project.trello) !== JSON.stringify(pin.trello) ||
+        canonicalizeGitHubRepository(project.repository.github) !==
+          pin.repository.github ||
+        path.resolve(project.repository.path) !== pin.repository.path ||
+        project.repository.defaultBranch !== pin.repository.defaultBranch ||
+        path.resolve(project.repository.worktreeRoot) !==
+          pin.repository.worktreeRoot ||
+        path.resolve(config.workflow.contextRoot) !== pin.storageRoot
+      ) {
+        throw new Error(
+          `Project ${project.id} configuration is incompatible with its active host pin; operator recovery made no changes`,
+        );
+      }
       effectiveProject = projectUsingHostPin(project, pin);
     } else {
       pin = (

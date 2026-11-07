@@ -12,6 +12,14 @@ import { TrelloClient } from "../trello/trello-client.js";
 import { reconcileExternalTaskSessionPullRequest } from "../orchestrator/reconcile-external-task-session-pr.js";
 import { acquireProjectRunOperatorContext } from "./project-run-operator-context.js";
 import { withGitHubOperationProject } from "../github/github-operation-context.js";
+import type { Config } from "../config/config.js";
+
+export interface ExternalTaskSessionRecoveryDependencies {
+  config?: Config;
+  trello?: TrelloClient;
+  github?: GitHubClient;
+  git?: GitClient;
+}
 
 const usage =
   "Usage: yarn reconcile:external-pr --project ID --card ID --commit SHA --branch BRANCH --pr NUMBER";
@@ -66,9 +74,10 @@ function parseArguments(args: readonly string[]): {
 
 export async function runExternalTaskSessionRecovery(
   args: readonly string[],
+  dependencies: ExternalTaskSessionRecoveryDependencies = {},
 ): Promise<void> {
   const association = parseArguments(args);
-  const config = loadConfig();
+  const config = dependencies.config ?? loadConfig();
   const projectConfig = config.projects.find(
     (project) => project.id === association.projectId,
   );
@@ -78,17 +87,22 @@ export async function runExternalTaskSessionRecovery(
     ...projectConfig,
     contextRoot: config.workflow.contextRoot,
   };
-  const environment = parseEnvironment(process.env);
+  const environment = dependencies.trello
+    ? undefined
+    : parseEnvironment(process.env);
   const controller = new AbortController();
-  const trello = new TrelloClient({
-    apiKey: environment.TRELLO_API_KEY,
-    token: environment.TRELLO_TOKEN,
-    signal: controller.signal,
-    timeoutMilliseconds: 30_000,
-  });
+  const trello =
+    dependencies.trello ??
+    new TrelloClient({
+      apiKey: environment?.TRELLO_API_KEY ?? "",
+      token: environment?.TRELLO_TOKEN ?? "",
+      signal: controller.signal,
+      timeoutMilliseconds: 30_000,
+    });
   const githubCredentials = new GitHubCredentialProvider();
-  const github = new GitHubClient(undefined, githubCredentials);
-  const git = new GitClient(undefined, githubCredentials);
+  const github =
+    dependencies.github ?? new GitHubClient(undefined, githubCredentials);
+  const git = dependencies.git ?? new GitClient(undefined, githubCredentials);
   const operatorContext = await acquireProjectRunOperatorContext(
     config,
     projectConfig,

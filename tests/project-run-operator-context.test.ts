@@ -23,6 +23,7 @@ import { GitClient } from "../src/git/git-client.js";
 import { withGitHubOperationProject } from "../src/github/github-operation-context.js";
 import { CommandRunner } from "../src/process/command-runner.js";
 import { reconcileExternalTaskSessionPullRequest } from "../src/orchestrator/reconcile-external-task-session-pr.js";
+import { runExternalTaskSessionRecovery } from "../src/operator/reconcile-external-task-session-pr.js";
 import type { TrelloClient } from "../src/trello/trello-client.js";
 
 let root = "";
@@ -180,6 +181,202 @@ describe("operator canonical attempt context", () => {
     await expect(
       acquireProjectRunOperatorContext(missingNamespace, project),
     ).rejects.toThrow("requires the configured host coordination namespace");
+  });
+
+  it("rejects changed active Trello mappings before operator recovery can dispatch", async () => {
+    const { config, project, coordinationRoot } = fixture();
+    const operator = await acquireProjectRunOperatorContext(config, project);
+    const before = operator.authority.store.read();
+    await operator.release();
+
+    const changedProject = {
+      ...project,
+      trello: { ...project.trello, doneListId: "replacement-done" },
+    };
+    const changedConfig = {
+      ...config,
+      projects: [changedProject],
+    };
+    const registryBefore = fs.readFileSync(
+      path.join(coordinationRoot, "projects.registry.json"),
+    );
+
+    await expect(
+      acquireProjectRunOperatorContext(changedConfig, changedProject),
+    ).rejects.toThrow("incompatible with its active host pin");
+    expect(
+      fs.readFileSync(path.join(coordinationRoot, "projects.registry.json")),
+    ).toEqual(registryBefore);
+
+    const originalContext = await acquireProjectRunOperatorContext(
+      config,
+      project,
+    );
+    try {
+      expect(originalContext.authority.store.read()).toMatchObject({
+        attemptId: before?.attemptId,
+        lifecycle: before?.lifecycle,
+      });
+      expect(originalContext.authority.store.read()?.pinned.lists.done).toBe(
+        project.trello.doneListId,
+      );
+    } finally {
+      await originalContext.release();
+    }
+  });
+
+  it("rejects changed Trello mappings against a pending-only host pin", async () => {
+    const { config, project, sourceTask, coordinationRoot } = fixture();
+    const serviceLease = await acquireProjectOwnership(
+      coordinationRoot,
+      { trelloBoardId: "board-one", githubRepository: "owner/repository" },
+      "operator-test",
+    );
+    const [hostPin] = await verifyAndPinProjects(config, [serviceLease]);
+    const legacyTask = JSON.parse(
+      fs.readFileSync(sourceTask, "utf8"),
+    ) as TaskExecutionRecord;
+    await prepareProjectAttempt(coordinationRoot, project.id, serviceLease, {
+      attemptId: legacyAttemptId(legacyTask),
+      storageRoot: hostPin!.storageRoot,
+    });
+    await serviceLease.release();
+
+    const registryFile = path.join(coordinationRoot, "projects.registry.json");
+    const registryBefore = fs.readFileSync(registryFile);
+    const changedProject = {
+      ...project,
+      trello: { ...project.trello, doneListId: "replacement-done" },
+    };
+    await expect(
+      acquireProjectRunOperatorContext(
+        { ...config, projects: [changedProject] },
+        changedProject,
+      ),
+    ).rejects.toThrow("incompatible with its active host pin");
+    expect(fs.readFileSync(registryFile)).toEqual(registryBefore);
+
+    const originalContext = await acquireProjectRunOperatorContext(
+      config,
+      project,
+    );
+    await originalContext.release();
+  });
+
+  it("rejects public external-PR recovery on changed active mappings before external effects and preserves the active attempt", async () => {
+    const { config, project, sourceTask, coordinationRoot } = fixture();
+    const serviceLease = await acquireProjectOwnership(
+      coordinationRoot,
+      { trelloBoardId: "board-one", githubRepository: "owner/repository" },
+      "operator-test",
+    );
+    const [hostPin] = await verifyAndPinProjects(config, [serviceLease]);
+    const task = {
+      ...(JSON.parse(
+        fs.readFileSync(sourceTask, "utf8"),
+      ) as TaskExecutionRecord),
+      lastEvent: { type: "attention-required" as const },
+    };
+    const attempt = await ProjectRunAuthority.createPreparingAttempt({
+      projectId: project.id,
+      cardId: task.cardId,
+      taskKind: "implementation",
+      pinned: {
+        integrationId: hostPin!.integrationId,
+        projectId: project.id,
+        boardId: hostPin!.trello.boardId,
+        lists: {
+          ready: hostPin!.trello.readyListId,
+          working: hostPin!.trello.workingListId,
+          review: hostPin!.trello.reviewListId,
+          failed: hostPin!.trello.failedListId,
+          done: hostPin!.trello.doneListId,
+          backlog: hostPin!.trello.backlogListId,
+        },
+        repository: hostPin!.repository.github,
+        repositoryPath: hostPin!.repository.path,
+        worktreeRoot: hostPin!.repository.worktreeRoot,
+        storageRoot: hostPin!.storageRoot,
+      },
+      projectLease: serviceLease,
+      coordinationRoot,
+      attemptId: "active-attention-attempt",
+    });
+    attempt.claim();
+    attempt.mutateTaskExecution({
+      key: "task-execution-card-one",
+      initial: task,
+      operation: (current) => ({ value: current, result: undefined }),
+      validate: (value) => value as TaskExecutionRecord,
+    });
+    await serviceLease.release();
+
+    const registryFile = path.join(coordinationRoot, "projects.registry.json");
+    const attemptFile = path.join(
+      config.workflow.contextRoot,
+      "attempts",
+      "active-attention-attempt.json",
+    );
+    const registryBefore = fs.readFileSync(registryFile);
+    const attemptBefore = fs.readFileSync(attemptFile);
+    const taskBefore = fs.readFileSync(sourceTask);
+    const externalCalls = {
+      trello: vi.fn(),
+      github: vi.fn(),
+      git: vi.fn(),
+    };
+    const changedProject = {
+      ...project,
+      trello: { ...project.trello, doneListId: "replacement-done" },
+    };
+    const changedConfig = { ...config, projects: [changedProject] };
+
+    await expect(
+      runExternalTaskSessionRecovery(
+        [
+          "--project",
+          project.id,
+          "--card",
+          task.cardId,
+          "--commit",
+          "a".repeat(40),
+          "--branch",
+          "recovery/card-one",
+          "--pr",
+          "18",
+        ],
+        {
+          config: changedConfig,
+          trello: externalCalls.trello as unknown as TrelloClient,
+          github: externalCalls.github as never,
+          git: externalCalls.git as never,
+        },
+      ),
+    ).rejects.toThrow("incompatible with its active host pin");
+
+    expect(externalCalls.trello).not.toHaveBeenCalled();
+    expect(externalCalls.github).not.toHaveBeenCalled();
+    expect(externalCalls.git).not.toHaveBeenCalled();
+    expect(fs.readFileSync(registryFile)).toEqual(registryBefore);
+    expect(fs.readFileSync(attemptFile)).toEqual(attemptBefore);
+    expect(fs.readFileSync(sourceTask)).toEqual(taskBefore);
+
+    const originalContext = await acquireProjectRunOperatorContext(
+      config,
+      project,
+    );
+    try {
+      expect(originalContext.authority.store.read()).toMatchObject({
+        attemptId: "active-attention-attempt",
+        lifecycle: "waiting",
+        owner: { generation: 2 },
+      });
+      expect(originalContext.authority.store.read()?.pinned.lists.done).toBe(
+        project.trello.doneListId,
+      );
+    } finally {
+      await originalContext.release();
+    }
   });
 
   it("does not accept a completed external result after the lease is lost in flight", async () => {
