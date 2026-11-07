@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 import { buildChildEnvironment } from "../process/child-environment.js";
 import fs from "node:fs";
 import os from "node:os";
@@ -101,6 +102,8 @@ const defaultRunGit: RunGit = async (cwd, args, environment) => {
     });
     const stdoutRedactor = createSecretRedactor(secretValues);
     const stderrRedactor = createSecretRedactor(secretValues);
+    const stdoutDecoder = new StringDecoder("utf8");
+    const stderrDecoder = new StringDecoder("utf8");
     let stdout = "";
     let stderr = "";
     let settled = false;
@@ -133,6 +136,8 @@ const defaultRunGit: RunGit = async (cwd, args, environment) => {
       }
     };
     const flush = (): void => {
+      append("stdout", stdoutRedactor.push(stdoutDecoder.end()));
+      append("stderr", stderrRedactor.push(stderrDecoder.end()));
       append("stdout", stdoutRedactor.flush());
       append("stderr", stderrRedactor.flush());
     };
@@ -161,11 +166,21 @@ const defaultRunGit: RunGit = async (cwd, args, environment) => {
     };
     runtime.signal?.addEventListener("abort", abort, { once: true });
     if (runtime.signal?.aborted) abort();
-    child.stdout.on("data", (chunk: Buffer) =>
-      append("stdout", stdoutRedactor.push(chunk.toString())),
+    child.stdout.on("data", (chunk: Buffer | string) =>
+      append(
+        "stdout",
+        stdoutRedactor.push(
+          typeof chunk === "string" ? chunk : stdoutDecoder.write(chunk),
+        ),
+      ),
     );
-    child.stderr.on("data", (chunk: Buffer) =>
-      append("stderr", stderrRedactor.push(chunk.toString())),
+    child.stderr.on("data", (chunk: Buffer | string) =>
+      append(
+        "stderr",
+        stderrRedactor.push(
+          typeof chunk === "string" ? chunk : stderrDecoder.write(chunk),
+        ),
+      ),
     );
     child.once("error", (error) => {
       if (settled) return;

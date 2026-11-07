@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 import { buildChildEnvironment } from "../process/child-environment.js";
 
 import {
@@ -853,6 +854,7 @@ export type RunGitHubCommand = (
   cwd: string,
   args: string[],
   environment?: GitHubCredentialEnvironment,
+  onSuccessfulOutput?: (origin: GitHubOutputOrigin) => void,
 ) => Promise<string>;
 
 const transientHttpStatuses = new Set([408, 425, 429, 500, 502, 503, 504]);
@@ -980,7 +982,10 @@ export function isRetryableGitHubError(error: unknown): boolean {
   );
 }
 
-function parsePullRequestUrl(value: string): string {
+function parsePullRequestUrl(
+  value: string,
+  origin?: GitHubOutputOrigin,
+): string {
   const url = value.trim();
 
   try {
@@ -993,13 +998,32 @@ function parsePullRequestUrl(value: string): string {
     ) {
       throw new Error("not a GitHub pull request URL");
     }
-  } catch (error) {
-    throw new Error(`GitHub CLI returned an invalid pull request URL: ${url}`, {
-      cause: error,
-    });
+  } catch {
+    throw new MalformedPullRequestUrlError(origin);
   }
 
   return url;
+}
+
+export class MalformedPullRequestUrlError extends Error {
+  public readonly executionId?: string;
+  public readonly stdoutArtifactReference?: string;
+
+  constructor(origin?: GitHubOutputOrigin) {
+    super(
+      "GitHub CLI returned an invalid pull request URL (malformed response)",
+    );
+    this.name = "MalformedPullRequestUrlError";
+    if (origin !== undefined) {
+      this.executionId = origin.executionId;
+      this.stdoutArtifactReference = origin.stdoutArtifactReference;
+    }
+  }
+}
+
+export interface GitHubOutputOrigin {
+  executionId: string;
+  stdoutArtifactReference: string;
 }
 
 function getPullRequestNumberForRepository(
@@ -1030,6 +1054,7 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
   cwd,
   args,
   environment,
+  onSuccessfulOutput,
 ) =>
   new Promise((resolve, reject) => {
     const runtime = getProcessRuntime();
@@ -1079,6 +1104,8 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
     let forceKillTimeout: NodeJS.Timeout | undefined;
     const stdoutRedactor = createSecretRedactor(environmentSecrets);
     const stderrRedactor = createSecretRedactor(environmentSecrets);
+    const stdoutDecoder = new StringDecoder("utf8");
+    const stderrDecoder = new StringDecoder("utf8");
 
     const record = (stream: "stdout" | "stderr", text: string): void => {
       if (recorderFailure !== undefined || settled) return;
@@ -1110,6 +1137,8 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
     const flushRedactors = (): void => {
       if (redactorsFlushed) return;
       redactorsFlushed = true;
+      record("stdout", stdoutRedactor.push(stdoutDecoder.end()));
+      record("stderr", stderrRedactor.push(stderrDecoder.end()));
       const stdoutRemainder = stdoutRedactor.flush();
       const stderrRemainder = stderrRedactor.flush();
       record("stdout", stdoutRemainder);
@@ -1135,13 +1164,17 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
       }, GITHUB_TERMINATION_GRACE_MS);
     }, timeoutMilliseconds);
 
-    child.stdout.on("data", (chunk: Buffer) => {
-      const text = stdoutRedactor.push(chunk.toString());
+    child.stdout.on("data", (chunk: Buffer | string) => {
+      const text = stdoutRedactor.push(
+        typeof chunk === "string" ? chunk : stdoutDecoder.write(chunk),
+      );
       record("stdout", text);
     });
 
-    child.stderr.on("data", (chunk: Buffer) => {
-      const text = stderrRedactor.push(chunk.toString());
+    child.stderr.on("data", (chunk: Buffer | string) => {
+      const text = stderrRedactor.push(
+        typeof chunk === "string" ? chunk : stderrDecoder.write(chunk),
+      );
       record("stderr", text);
     });
 
@@ -1273,6 +1306,10 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
         return;
       }
 
+      onSuccessfulOutput?.({
+        executionId: execution.executionId,
+        stdoutArtifactReference: `process-executions/${execution.executionId}/stdout.txt`,
+      });
       resolve(output.trim());
     });
 
@@ -1303,11 +1340,23 @@ export class GitHubClient {
     cwd: string,
     args: string[],
     credential: GitHubCredential,
+    onSuccessfulOutput?: (origin: GitHubOutputOrigin) => void,
   ): Promise<string> {
     const dispatch = async (): Promise<string> => {
       try {
-        const output =
-          Object.keys(credential.environment).length === 0
+        const canCaptureOrigin =
+          onSuccessfulOutput !== undefined &&
+          this.runGitHubCommand === defaultRunGitHubCommand;
+        const output = canCaptureOrigin
+          ? await this.runGitHubCommand(
+              cwd,
+              args,
+              Object.keys(credential.environment).length === 0
+                ? undefined
+                : credential.environment,
+              onSuccessfulOutput,
+            )
+          : Object.keys(credential.environment).length === 0
             ? await this.runGitHubCommand(cwd, args)
             : await this.runGitHubCommand(cwd, args, credential.environment);
 
@@ -2085,6 +2134,7 @@ export class GitHubClient {
     options: FindPullRequestOptions,
   ): Promise<PullRequest | null> {
     const credential = await this.resolveCredential(options.project);
+    let outputOrigin: GitHubOutputOrigin | undefined;
     const output = await this.run(
       options.cwd,
       [
@@ -2104,6 +2154,9 @@ export class GitHubClient {
         '.[0].url // ""',
       ],
       credential,
+      (origin) => {
+        outputOrigin = origin;
+      },
     );
 
     if (output.trim().length === 0) {
@@ -2111,7 +2164,7 @@ export class GitHubClient {
     }
 
     return {
-      url: parsePullRequestUrl(output),
+      url: parsePullRequestUrl(output, outputOrigin),
     };
   }
 
@@ -2777,6 +2830,7 @@ export class GitHubClient {
     options: CreatePullRequestOptions,
   ): Promise<PullRequest> {
     const credential = await this.resolveCredential(options.project);
+    let outputOrigin: GitHubOutputOrigin | undefined;
     const output = await this.run(
       options.cwd,
       [
@@ -2795,6 +2849,9 @@ export class GitHubClient {
         options.body,
       ],
       credential,
+      (origin) => {
+        outputOrigin = origin;
+      },
     );
 
     if (output.trim().length === 0) {
@@ -2802,7 +2859,7 @@ export class GitHubClient {
     }
 
     return {
-      url: parsePullRequestUrl(output),
+      url: parsePullRequestUrl(output, outputOrigin),
     };
   }
 

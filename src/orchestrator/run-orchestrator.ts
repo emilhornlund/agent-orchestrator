@@ -197,14 +197,31 @@ function getErrorMessage(error: unknown): string {
 
 function getProcessExecutionError(
   error: unknown,
-): ProcessExecutionError | undefined {
+): { executionId: string; artifactReference: string } | undefined {
   const seen = new Set<unknown>();
   const pending = [error];
   while (pending.length > 0) {
     const current = pending.pop();
     if (current === undefined || seen.has(current)) continue;
     seen.add(current);
-    if (current instanceof ProcessExecutionError) return current;
+    if (current instanceof ProcessExecutionError)
+      return {
+        executionId: current.executionId,
+        artifactReference: `process-executions/${current.executionId}/stderr.txt`,
+      };
+    if (
+      current instanceof Error &&
+      "executionId" in current &&
+      typeof current.executionId === "string" &&
+      /^[0-9a-f-]{36}$/iu.test(current.executionId) &&
+      "stdoutArtifactReference" in current &&
+      current.stdoutArtifactReference ===
+        `process-executions/${current.executionId}/stdout.txt`
+    )
+      return {
+        executionId: current.executionId,
+        artifactReference: current.stdoutArtifactReference,
+      };
     if (current instanceof AggregateError) pending.push(...current.errors);
     if (current instanceof Error && current.cause !== undefined)
       pending.push(current.cause);
@@ -834,9 +851,7 @@ async function runProjectWorkerInner(
               code: "process-failed",
               classification: "process",
               recovery: "state-preserved",
-              artifactReferences: [
-                `process-executions/${processFailure.executionId}/stderr.txt`,
-              ],
+              artifactReferences: [processFailure.artifactReference],
             });
         }
         return;
@@ -1101,9 +1116,7 @@ async function runProjectWorkerInner(
           : "manual-review",
         ...(processFailure
           ? {
-              artifactReferences: [
-                `process-executions/${processFailure.executionId}/stderr.txt`,
-              ],
+              artifactReferences: [processFailure.artifactReference],
             }
           : {}),
       });

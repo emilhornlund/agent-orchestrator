@@ -14,10 +14,7 @@ import { verifyAndPinProjects } from "../src/coordination/project-registry.js";
 import { GitClient } from "../src/git/git-client.js";
 import { configureLoggerRuntime } from "../src/logging/logger.js";
 import { cleanupLogRetention } from "../src/logging/log-retention.js";
-import {
-  ProcessExecutionError,
-  configureProcessRuntime,
-} from "../src/process/process-runtime.js";
+import { configureProcessRuntime } from "../src/process/process-runtime.js";
 import {
   MAX_GITHUB_RECONCILIATION_ATTEMPTS,
   RetryableGitHubReconciliationError,
@@ -25,7 +22,11 @@ import {
 import { runOrchestrator } from "../src/orchestrator/run-orchestrator.js";
 import { ProjectRunAuthority } from "../src/task-session/project-run-authority.js";
 import type { TrelloClient } from "../src/trello/trello-client.js";
-import type { GitHubClient } from "../src/github/github-client.js";
+import {
+  GitHubClient,
+  MalformedPullRequestUrlError,
+  type GitHubClient as GitHubClientType,
+} from "../src/github/github-client.js";
 import type { OpenCodeClient } from "../src/opencode/opencode-client.js";
 import type { CommandRunner } from "../src/process/command-runner.js";
 
@@ -155,12 +156,13 @@ describe("production typed diagnostic evidence", () => {
       });
       authority.claim();
 
-      const fakeGit = path.join(binRoot, "git");
+      const rawMarker = "GH_INVALID_URL_RAW_OUTPUT_CANARY_4E21";
+      const fakeGh = path.join(binRoot, "gh");
       fs.writeFileSync(
-        fakeGit,
-        "#!/bin/sh\nprintf 'safe-stdout-marker\\n'\nprintf 'safe-stderr-marker\\n' >&2\nexit 29\n",
+        fakeGh,
+        `#!/bin/sh\nprintf 'https://example.invalid/private?marker=${rawMarker}\\n'\nprintf 'safe-stderr-marker\\n' >&2\nexit 0\n`,
       );
-      fs.chmodSync(fakeGit, 0o700);
+      fs.chmodSync(fakeGh, 0o700);
       process.env.PATH = `${binRoot}${path.delimiter}${priorPath ?? ""}`;
       process.env.VITEST = "false";
       configureLoggerRuntime(storageRoot);
@@ -168,6 +170,11 @@ describe("production typed diagnostic evidence", () => {
         runtimeRoot: storageRoot,
         signal: new AbortController().signal,
       });
+      const consoleOutput: string[] = [];
+      for (const method of ["log", "warn", "error"] as const)
+        vi.spyOn(console, method).mockImplementation((...values: unknown[]) => {
+          consoleOutput.push(values.join(" "));
+        });
 
       let invocations = 0;
       const trello = {
@@ -182,11 +189,23 @@ describe("production typed diagnostic evidence", () => {
         invocations += 1;
         let processFailure: unknown;
         try {
-          await new GitClient().getStatus(repositoryPath);
+          await new GitHubClient().findPullRequest({
+            cwd: repositoryPath,
+            repository: project.repository.github,
+            headBranch: "agent/diagnostic",
+            project,
+          });
         } catch (error) {
           processFailure = error;
         }
-        expect(processFailure).toBeInstanceOf(ProcessExecutionError);
+        expect(processFailure).toBeInstanceOf(MalformedPullRequestUrlError);
+        expect((processFailure as Error).message).not.toContain(rawMarker);
+        expect(processFailure).toMatchObject({
+          executionId: expect.stringMatching(/^[0-9a-f-]{36}$/iu),
+          stdoutArtifactReference: expect.stringMatching(
+            /^process-executions\/[0-9a-f-]+\/stdout\.txt$/,
+          ),
+        });
         throw new RetryableGitHubReconciliationError(
           project.id,
           "diagnostic-card",
@@ -206,7 +225,7 @@ describe("production typed diagnostic evidence", () => {
       await runOrchestrator(
         trello,
         {} as GitClient,
-        {} as GitHubClient,
+        {} as GitHubClientType,
         {} as OpenCodeClient,
         {} as CommandRunner,
         config,
@@ -278,7 +297,7 @@ describe("production typed diagnostic evidence", () => {
         processDiagnostic.summary.artifactReferences as string[]
       )[0]!;
       expect(artifactReference).toMatch(
-        /^process-executions\/[0-9a-f-]+\/stderr\.txt$/,
+        /^process-executions\/[0-9a-f-]+\/stdout\.txt$/,
       );
       const executionDirectory = path.join(
         storageRoot,
@@ -288,17 +307,15 @@ describe("production typed diagnostic evidence", () => {
         encodeURIComponent(record.attemptId),
         artifactReference,
       );
-      expect(fs.readFileSync(executionDirectory, "utf8")).toContain(
-        "safe-stderr-marker",
-      );
+      const stdoutArtifact = fs.readFileSync(executionDirectory, "utf8");
+      expect(stdoutArtifact).toContain(rawMarker);
       expect(
         fs.readFileSync(
-          path.join(path.dirname(executionDirectory), "stdout.txt"),
+          path.join(path.dirname(executionDirectory), "stderr.txt"),
           "utf8",
         ),
-      ).toContain("safe-stdout-marker");
-      expect(history).not.toContain("safe-stderr-marker");
-      expect(history).not.toContain("safe-stdout-marker");
+      ).toContain("safe-stderr-marker");
+      expect(history).not.toContain(rawMarker);
 
       const dailyLog = path.join(
         storageRoot,
@@ -310,7 +327,8 @@ describe("production typed diagnostic evidence", () => {
         "Retryable GitHub reconciliation attempt 1/3",
       );
       expect(dailyContents).toContain("retry threshold exhausted");
-      expect(dailyContents).toContain(artifactReference);
+      expect(dailyContents).not.toContain(rawMarker);
+      expect(consoleOutput.join(" ")).not.toContain(rawMarker);
       const oldDailyDate = new Date("2020-01-01T00:00:00.000Z");
       fs.utimesSync(dailyLog, oldDailyDate, oldDailyDate);
 
@@ -399,6 +417,7 @@ describe("production typed diagnostic evidence", () => {
         ),
       ).toBe(true);
     } finally {
+      vi.restoreAllMocks();
       process.env.PATH = priorPath;
       if (priorVitest === undefined) delete process.env.VITEST;
       else process.env.VITEST = priorVitest;

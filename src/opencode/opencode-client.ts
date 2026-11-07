@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 import {
   buildChildEnvironment,
   providerFromModel,
@@ -388,6 +389,8 @@ const defaultRunOpenCode: RunOpenCode = async ({
     let errorOutput = "";
     const stdoutRedactor = createSecretRedactor(secretValues);
     const stderrRedactor = createSecretRedactor(secretValues);
+    const stdoutDecoder = new StringDecoder("utf8");
+    const stderrDecoder = new StringDecoder("utf8");
     let settled = false;
     let timedOut = false;
     let recorderFailure: Error | undefined;
@@ -449,8 +452,10 @@ const defaultRunOpenCode: RunOpenCode = async ({
     function flushOutput(): void {
       if (redactorsFlushed) return;
       redactorsFlushed = true;
-      const stdout = stdoutRedactor.flush();
-      const stderr = stderrRedactor.flush();
+      const stdoutDecoded = stdoutRedactor.push(stdoutDecoder.end());
+      const stderrDecoded = stderrRedactor.push(stderrDecoder.end());
+      const stdout = stdoutDecoded + stdoutRedactor.flush();
+      const stderr = stderrDecoded + stderrRedactor.flush();
       if (captureFailure === undefined) {
         try {
           output = appendBoundedOutput(output, stdout, "stdout");
@@ -474,8 +479,10 @@ const defaultRunOpenCode: RunOpenCode = async ({
 
     effectiveSignal.addEventListener("abort", handleAbort, { once: true });
 
-    child.stdout.on("data", (chunk: Buffer) => {
-      const text = stdoutRedactor.push(chunk.toString());
+    child.stdout.on("data", (chunk: Buffer | string) => {
+      const text = stdoutRedactor.push(
+        typeof chunk === "string" ? chunk : stdoutDecoder.write(chunk),
+      );
 
       if (captureFailure === undefined) {
         try {
@@ -500,8 +507,10 @@ const defaultRunOpenCode: RunOpenCode = async ({
       if (recorderFailure !== undefined) terminate();
     });
 
-    child.stderr.on("data", (chunk: Buffer) => {
-      const text = stderrRedactor.push(chunk.toString());
+    child.stderr.on("data", (chunk: Buffer | string) => {
+      const text = stderrRedactor.push(
+        typeof chunk === "string" ? chunk : stderrDecoder.write(chunk),
+      );
 
       if (captureFailure === undefined) {
         try {

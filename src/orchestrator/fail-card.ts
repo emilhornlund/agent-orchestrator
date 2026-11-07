@@ -38,7 +38,19 @@ export async function failCard(
   const originalError = toFailureError(workflowError);
   const failureDescription = describeFailure(originalError);
   const processFailure =
-    originalError instanceof ProcessExecutionError ? originalError : undefined;
+    originalError instanceof ProcessExecutionError
+      ? {
+          artifactReference: `process-executions/${originalError.executionId}/stderr.txt`,
+        }
+      : originalError.name === "MalformedPullRequestUrlError" &&
+          "executionId" in originalError &&
+          typeof originalError.executionId === "string" &&
+          /^[0-9a-f-]{36}$/iu.test(originalError.executionId) &&
+          "stdoutArtifactReference" in originalError &&
+          originalError.stdoutArtifactReference ===
+            `process-executions/${originalError.executionId}/stdout.txt`
+        ? { artifactReference: originalError.stdoutArtifactReference }
+        : undefined;
   const classification = processFailure
     ? "process"
     : originalError instanceof WorkflowError
@@ -80,9 +92,7 @@ export async function failCard(
     recovery: "manual-review",
     ...(processFailure
       ? {
-          artifactReferences: [
-            `process-executions/${processFailure.executionId}/stderr.txt`,
-          ],
+          artifactReferences: [processFailure.artifactReference],
         }
       : {}),
   });
@@ -120,9 +130,7 @@ export async function failCard(
       recovery: "transition-failed",
       ...(processFailure
         ? {
-            artifactReferences: [
-              `process-executions/${processFailure.executionId}/stderr.txt`,
-            ],
+            artifactReferences: [processFailure.artifactReference],
           }
         : {}),
     });

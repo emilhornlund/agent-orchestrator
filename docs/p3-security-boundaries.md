@@ -31,6 +31,12 @@ raw credential byte sequence (including across stream chunks) and does not
 publish its file or manifest. This is not a scan for encoded or unknown
 attachment secrets. Agents can still directly read repository files in ordinary
 writable runs, so no universal repository-content guarantee is made. The
+Git, `gh`, and OpenCode stdout and stderr each use independent incremental UTF-8
+decoders before their stream redactors. Decoder tails are finalized before the
+redactor is flushed on terminal paths; incomplete UTF-8 sequences follow Node's
+replacement-character policy. This preserves byte-split Unicode and prevents
+cross-stream decoder state. Flock's existing `setEncoding` path uses Node's UTF-8
+stream decoding.
 Trello comment and content parameters, `gh` CLI content arguments (including
 PR bodies/replies), and SMTP subject/body fields also pass through the same
 registered-secret sanitizer. This is applied at the relevant outbound content

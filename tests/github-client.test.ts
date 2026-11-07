@@ -823,17 +823,28 @@ describe("GitHubClient", () => {
   });
 
   it("rejects a non-GitHub pull request URL from gh", async () => {
+    const marker = "UNIQUE_PRIVATE_STDOUT_CANARY_987";
     const github = new GitHubClient(
-      vi.fn<RunGitHubCommand>().mockResolvedValue("https://example.com/pr/1"),
+      vi
+        .fn<RunGitHubCommand>()
+        .mockResolvedValue(`https://example.com/pr/1?marker=${marker}`),
     );
 
-    await expect(
-      github.findPullRequest({
-        cwd: "/tmp/repository",
-        repository: "example/repository",
-        headBranch: "agent/example",
-      }),
-    ).rejects.toThrow("invalid pull request URL");
+    const result = github.findPullRequest({
+      cwd: "/tmp/repository",
+      repository: "example/repository",
+      headBranch: "agent/example",
+    });
+    const failure = await result.catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure).toMatchObject({
+      name: "MalformedPullRequestUrlError",
+      message:
+        "GitHub CLI returned an invalid pull request URL (malformed response)",
+    });
+    expect((failure as Error).cause).toBeUndefined();
+    expect(String(failure)).not.toContain(marker);
+    expect(JSON.stringify(failure)).not.toContain(marker);
   });
 
   it("parses and trims the URL returned by gh", async () => {

@@ -435,6 +435,63 @@ describe("production child adapter outcome matrix", () => {
     15_000,
   );
 
+  it.each(["git", "gh", "opencode"] as const)(
+    "%s decodes independently split UTF-8 streams before redaction and flushes malformed tails",
+    async (family) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "p3-utf8-streams-"));
+      roots.push(root);
+      const binaries = path.join(root, "bin");
+      fs.mkdirSync(binaries);
+      const secret = "秘密🔐";
+      const out = `out: café:${secret}:終\n`;
+      const err = `err: λ:${secret}:雪\n`;
+      const script = `#!${process.execPath}\nconst out=Buffer.from(${JSON.stringify(out)}); const err=Buffer.from(${JSON.stringify(err)}); for(let i=0;i<out.length;i++) process.stdout.write(out.subarray(i,i+1)); for(let i=0;i<err.length;i++) process.stderr.write(err.subarray(i,i+1)); process.stdout.write(Buffer.from([0xe2,0x82]));\n`;
+      fs.writeFileSync(path.join(binaries, family), script, { mode: 0o700 });
+      process.env.PATH = `${binaries}${path.delimiter}${originalPath ?? ""}`;
+      const runtimeRoot = path.join(root, "runtime");
+      configureProcessRuntime({
+        runtimeRoot,
+        signal: new AbortController().signal,
+        operationTimeoutMilliseconds: 10_000,
+        secretValues: [secret],
+      });
+      const operation =
+        family === "git"
+          ? new GitClient().getStatus(root)
+          : family === "gh"
+            ? new GitHubClient().findPullRequest({
+                cwd: root,
+                repository: "owner/repository",
+                headBranch: "agent/utf8",
+              })
+            : new OpenCodeClient().run({
+                cwd: root,
+                model: "test/model",
+                variant: "test",
+                prompt: "utf8 fixture",
+                timeoutMilliseconds: 10_000,
+                signal: new AbortController().signal,
+              });
+      if (family === "gh")
+        await expect(operation).rejects.toThrow(
+          "GitHub CLI returned an invalid pull request URL",
+        );
+      else await expect(operation).resolves.toBeDefined();
+
+      const evidence = await inspectArtifact(
+        path.join(runtimeRoot, "process-executions"),
+      );
+      expect(evidence.stdout).toBe(`out: café:[REDACTED]:終\n�`);
+      expect(evidence.stderr).toBe(`err: λ:[REDACTED]:雪\n`);
+      expect(evidence.stdout).not.toContain(secret);
+      expect(evidence.stderr).not.toContain(secret);
+      expect(() =>
+        JSON.parse(JSON.stringify({ out: evidence.stdout })),
+      ).not.toThrow();
+    },
+    15_000,
+  );
+
   it.each(["git", "opencode"] as const)(
     "%s records a zero-exit-on-SIGTERM capture overflow as evidence-failure",
     async (family) => {
