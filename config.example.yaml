@@ -139,6 +139,11 @@ workflow:
   contextRetentionDays: 14
   # Optional; defaults to /opt/.agent-context. Keep this outside repositories and worktree roots.
   contextRoot: "/opt/.agent-context"
+  # Required for P2 canonical ownership. Provision once as the service account;
+  # every host/container process must use this namespace ID and the same host
+  # directory mounted read/write (not independent copies). See docs/configuration.md.
+  coordinationRoot: "/var/lib/agent-orchestrator/coordination"
+  coordinationNamespaceId: "replace-with-provisioned-namespace-id"
   # Optional; defaults to 50 MiB per uploaded file and 200 MiB for new downloads per preparation.
   maxAttachmentBytes: 52428800
   maxTotalAttachmentBytes: 209715200

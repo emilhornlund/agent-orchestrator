@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import type { FailureCategory } from "./failure-diagnostic.js";
 import { readPersistedStateJson } from "./persisted-state-reader.js";
+import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 
 export const RECONCILIATION_BLOCK_VERSION = 1;
 export const RECONCILIATION_BLOCK_FILENAME = "reconciliation-block.json";
@@ -318,6 +319,23 @@ export function loadReconciliationBlock(
   contextRoot: string,
   projectId: string,
 ): ReconciliationBlockLoadResult {
+  const authority = ProjectRunAuthority.current(projectId);
+  if (authority) {
+    try {
+      const block = authority.read(
+        ProjectRunAuthority.reconciliationBlockKey(projectId),
+        (value) => validatePersistedBlock(value, projectId),
+      );
+      return block === null
+        ? { status: "missing" }
+        : { status: "loaded", block };
+    } catch (error) {
+      return {
+        status: "malformed",
+        error: error instanceof Error ? error : new Error(String(error)),
+      };
+    }
+  }
   let filePath: string;
 
   try {
@@ -360,6 +378,16 @@ export function writeReconciliationBlock(
   block: PersistedReconciliationBlock,
 ): void {
   const validatedBlock = validatePersistedBlock(block, block.projectId);
+  const authority = ProjectRunAuthority.current(validatedBlock.projectId);
+  if (authority) {
+    authority.mutate(
+      ProjectRunAuthority.reconciliationBlockKey(validatedBlock.projectId),
+      null,
+      () => ({ value: validatedBlock, result: undefined }),
+      (value) => validatePersistedBlock(value, validatedBlock.projectId),
+    );
+    return;
+  }
   const filePath = blockPath(contextRoot, block.projectId);
   const directory = path.dirname(filePath);
   ensureDirectory(directory);
@@ -397,6 +425,11 @@ export function removeReconciliationBlock(
   contextRoot: string,
   projectId: string,
 ): void {
+  const authority = ProjectRunAuthority.current(projectId);
+  if (authority) {
+    authority.remove(ProjectRunAuthority.reconciliationBlockKey(projectId));
+    return;
+  }
   const filePath = blockPath(contextRoot, projectId);
 
   try {

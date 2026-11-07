@@ -9,6 +9,7 @@ import {
   getRejectedCommitStateDirectory,
   getTrustedCommitStateDirectory,
 } from "./trusted-commit-state.js";
+import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 
 const cardStateTemporaryFilePattern = /^.+\.json\.([1-9]\d*)\.tmp$/;
 const reconciliationBlockTemporaryFilePattern =
@@ -242,6 +243,9 @@ export function cleanupPersistedStateTemporaryFiles(
   contextRoot: string,
 ): void {
   for (const project of projects) {
+    // These files are import evidence when a canonical envelope is active.
+    // Never sweep legacy paths while operating in authority mode.
+    if (ProjectRunAuthority.current(project.id) !== undefined) continue;
     try {
       cleanupProjectPersistedStateTemporaryFiles(project, contextRoot);
     } catch (error) {

@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import type { ProjectConfig } from "../config/config.js";
+import { ProjectRunAuthority } from "./project-run-authority.js";
 import {
   parsePrMaintenanceOperation,
   localPreparationSchema,
@@ -17,6 +18,30 @@ const storeSchema = z.strictObject({
   revision: z.number().int().positive().safe(),
   operations: z.array(z.unknown()).max(10_000),
 });
+export function parsePrMaintenanceStore(
+  value: unknown,
+  expectedProjectId: string,
+): {
+  version: 1;
+  projectId: string;
+  revision: number;
+  operations: PrMaintenanceOperation[];
+} {
+  const parsed = storeSchema.parse(value);
+  if (parsed.projectId !== expectedProjectId)
+    throw new Error("PR maintenance store owner mismatch");
+  const operations = parsed.operations.map(parsePrMaintenanceOperation);
+  if (
+    operations.some((operation) => operation.projectId !== expectedProjectId) ||
+    new Set(operations.map((operation) => operation.operationId)).size !==
+      operations.length ||
+    operations.filter(
+      (operation) => !["completed", "cancelled"].includes(operation.status),
+    ).length > 1
+  )
+    throw new Error("Invalid PR maintenance operation ownership or history");
+  return { ...parsed, operations };
+}
 type StoreRecord = {
   version: 1;
   projectId: string;
@@ -109,8 +134,13 @@ export class PrMaintenanceStore {
   private readonly filePath: string;
   private readonly projectId: string;
   private readonly ownerToken = randomUUID();
+  private readonly authority: ProjectRunAuthority | undefined;
 
-  constructor(rootDirectory: string, project: ProjectConfig) {
+  constructor(
+    rootDirectory: string,
+    project: ProjectConfig,
+    authority?: ProjectRunAuthority,
+  ) {
     if (!path.isAbsolute(rootDirectory))
       throw new Error("PR maintenance storage root must be absolute");
     const root = path.resolve(rootDirectory);
@@ -126,6 +156,9 @@ export class PrMaintenanceStore {
     }
     assertComponent(project.id, "project ID");
     this.projectId = project.id;
+    this.authority = authority ?? ProjectRunAuthority.current(project.id);
+    if (authority && authority.projectId !== project.id)
+      throw new Error("PR maintenance authority project mismatch");
     this.filePath = path.join(root, "pr-maintenance", `${project.id}.json`);
   }
 
@@ -754,6 +787,18 @@ export class PrMaintenanceStore {
   }
 
   private read(): StoreRecord {
+    if (this.authority !== undefined)
+      return (
+        this.authority.read(
+          ProjectRunAuthority.taskKey("maintenance", this.projectId),
+          (value) => parsePrMaintenanceStore(value, this.projectId),
+        ) ?? {
+          version: 1,
+          projectId: this.projectId,
+          revision: 1,
+          operations: [],
+        }
+      );
     const stats = fs.lstatSync(this.filePath, { throwIfNoEntry: false });
     if (stats === undefined)
       return {
@@ -768,29 +813,46 @@ export class PrMaintenanceStore {
       throw new Error(
         `PR maintenance store exceeds the ${MAX_STORE_BYTES}-byte limit`,
       );
-    const parsed = storeSchema.parse(
+    return parsePrMaintenanceStore(
       JSON.parse(fs.readFileSync(this.filePath, "utf8")) as unknown,
+      this.projectId,
     );
-    if (parsed.projectId !== this.projectId)
-      throw new Error("PR maintenance store owner mismatch");
-    const operations = parsed.operations.map(parsePrMaintenanceOperation);
-    if (
-      operations.some((operation) => operation.projectId !== this.projectId) ||
-      new Set(operations.map((operation) => operation.operationId)).size !==
-        operations.length ||
-      operations.filter(
-        (operation) =>
-          operation.status !== "completed" && operation.status !== "cancelled",
-      ).length > 1
-    )
-      throw new Error("Invalid PR maintenance operation ownership or history");
-    return { ...parsed, operations };
   }
 
   private update(
     change: (current: StoreRecord) => StoreRecord,
     operationId?: string,
   ): PrMaintenanceOperation {
+    if (this.authority !== undefined)
+      return this.authority.mutate(
+        ProjectRunAuthority.taskKey("maintenance", this.projectId),
+        {
+          version: 1,
+          projectId: this.projectId,
+          revision: 1,
+          operations: [],
+        },
+        (value) => {
+          const current = parsePrMaintenanceStore(value, this.projectId);
+          const changed = change(current);
+          const updated =
+            changed === current
+              ? current
+              : parsePrMaintenanceStore(
+                  { ...changed, revision: current.revision + 1 },
+                  this.projectId,
+                );
+          const operation = updated.operations.find(
+            (item) => item.operationId === operationId,
+          );
+          if (!operation)
+            throw new PrMaintenanceConflictError(
+              "Maintenance operation disappeared",
+            );
+          return { value: updated, result: operation };
+        },
+        (value) => parsePrMaintenanceStore(value, this.projectId),
+      );
     ensureDirectory(path.dirname(this.filePath));
     return this.withLock(() => {
       const current = this.read();

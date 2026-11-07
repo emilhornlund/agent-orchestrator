@@ -4,9 +4,13 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
-import type { ProjectConfig } from "../config/config.js";
+import {
+  canonicalizeGitHubRepository,
+  type ProjectConfig,
+} from "../config/config.js";
 import { GitHubCredentialProvider } from "../github/github-credential-provider.js";
 import { getGitHubOperationProject } from "../github/github-operation-context.js";
+import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 import {
   containsSecret,
   redactError,
@@ -92,10 +96,24 @@ const defaultRunGit: RunGit = async (cwd, args, environment) => {
 };
 
 export class GitClient {
+  private readonly runGit: RunGit;
+
   constructor(
-    private readonly runGit: RunGit = defaultRunGit,
+    runGit: RunGit = defaultRunGit,
     private readonly credentials: GitHubCredentialProvider = new GitHubCredentialProvider(),
-  ) {}
+  ) {
+    this.runGit = async (cwd, args, environment) => {
+      const project = getGitHubOperationProject();
+      const projectId = project?.id ?? ProjectRunAuthority.currentProjectId();
+      const dispatch = () =>
+        environment === undefined
+          ? runGit(cwd, args)
+          : runGit(cwd, args, environment);
+      return projectId === undefined
+        ? dispatch()
+        : ProjectRunAuthority.dispatch(projectId, dispatch);
+    };
+  }
 
   private async runAuthenticated(
     cwd: string,
@@ -110,28 +128,33 @@ export class GitClient {
         ? ["-c", "credential.helper=", ...args]
         : args;
 
-    try {
-      const output =
-        Object.keys(credential.environment).length === 0
-          ? await this.runGit(cwd, authenticatedArgs)
-          : await this.runGit(cwd, authenticatedArgs, credential.environment);
+    const dispatch = async (): Promise<string> => {
+      try {
+        const output =
+          Object.keys(credential.environment).length === 0
+            ? await this.runGit(cwd, authenticatedArgs)
+            : await this.runGit(cwd, authenticatedArgs, credential.environment);
 
-      return redactSecrets(output, credential.secretValues);
-    } catch (error) {
-      const safeError = redactError(error, credential.secretValues);
+        return redactSecrets(output, credential.secretValues);
+      } catch (error) {
+        const safeError = redactError(error, credential.secretValues);
 
-      if (
-        credential.mode === "ambient" &&
-        error instanceof Error &&
-        !containsSecret(error, credential.secretValues)
-      ) {
-        throw error;
+        if (
+          credential.mode === "ambient" &&
+          error instanceof Error &&
+          !containsSecret(error, credential.secretValues)
+        ) {
+          throw error;
+        }
+
+        // Do not retain the caught error: Git output may have included a credential.
+        // eslint-disable-next-line preserve-caught-error
+        throw new Error(safeError.message, { cause: safeError });
       }
-
-      // Do not retain the caught error: Git output may have included a credential.
-      // eslint-disable-next-line preserve-caught-error
-      throw new Error(safeError.message, { cause: safeError });
-    }
+    };
+    return operationProject === undefined
+      ? dispatch()
+      : ProjectRunAuthority.dispatch(operationProject.id, dispatch);
   }
 
   async isValidRepository(repositoryPath: string): Promise<boolean> {
@@ -147,6 +170,33 @@ export class GitClient {
     } catch {
       return false;
     }
+  }
+
+  /** Read-only verification of the configured checkout's origin identity. */
+  async assertOriginMatches(
+    repositoryPath: string,
+    expectedRepository: string,
+  ): Promise<void> {
+    const output = await this.runGit(repositoryPath, [
+      "remote",
+      "get-url",
+      "origin",
+    ]);
+    const remote = output.trim().replace(/\.git$/iu, "");
+    let actual: string;
+    try {
+      actual = canonicalizeGitHubRepository(remote);
+    } catch (error) {
+      throw new Error(
+        `Repository origin is not a supported GitHub identity: ${remote}`,
+        { cause: error },
+      );
+    }
+    const expected = canonicalizeGitHubRepository(expectedRepository);
+    if (actual !== expected)
+      throw new Error(
+        `Repository origin mismatch: configured ${expected}, checkout origin is ${actual}`,
+      );
   }
 
   async fetch(

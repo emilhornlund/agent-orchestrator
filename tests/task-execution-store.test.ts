@@ -10,6 +10,10 @@ import {
   TaskExecutionStore,
 } from "../src/task-session/task-execution-store.js";
 import type { TaskExecutionRecord } from "../src/task-session/task-execution-record.js";
+import type { TaskExecutionEvent } from "../src/task-session/task-execution-transition.js";
+import { transitionTaskExecutionRecord } from "../src/task-session/task-execution-transition.js";
+import { RunStore } from "../src/task-session/run-store.js";
+import { ProjectRunAuthority } from "../src/task-session/project-run-authority.js";
 
 let temporaryRoot: string | undefined;
 
@@ -72,6 +76,282 @@ function createRecord(
 }
 
 describe("TaskExecutionStore", () => {
+  it("projects task record writes into the fenced attempt envelope without legacy files", () => {
+    const { project, storageRoot } = createFixture();
+    const integrationId = JSON.stringify({
+      trelloBoardId: "board",
+      githubRepository: "owner/repository",
+    });
+    const lease = {
+      integrationId,
+      instanceId: "instance-one",
+      token: "lease-token-one",
+      assertHeld: vi.fn(),
+    };
+    const pinned = {
+      integrationId,
+      projectId: project.id,
+      boardId: "board",
+      lists: {
+        ready: "ready",
+        working: "working",
+        review: "review",
+        failed: "failed",
+        done: "done",
+        backlog: "backlog",
+      },
+      repository: "owner/repository",
+      repositoryPath: project.repository.path,
+      worktreeRoot: project.repository.worktreeRoot,
+      storageRoot,
+    };
+    const runStore = new RunStore(storageRoot, "attempt-one", pinned, lease);
+    runStore.create({
+      version: 1,
+      revision: 1,
+      projectId: project.id,
+      cardId: "card-one",
+      attemptId: "attempt-one",
+      taskKind: "implementation",
+      pinned,
+      lifecycle: "planning",
+      checkpoint: "planning",
+      publicationState: "none",
+      operation: { id: null, kind: null, generation: 0 },
+      wait: { reason: null, dependency: null, since: null, retryAt: null },
+      owner: {
+        instanceId: lease.instanceId,
+        token: lease.token,
+        generation: 1,
+      },
+      resources: [],
+      pendingOperations: [],
+      queue: [],
+      budgets: {},
+      sessions: {},
+      artifacts: [],
+      expectedTrelloListId: null,
+      terminalSync: "not-applicable",
+      terminalEvidence: null,
+      legacy: {},
+      compatibility: {},
+      updatedAt: new Date().toISOString(),
+    });
+    const authority = new ProjectRunAuthority(project.id, runStore, 1);
+    const store = new TaskExecutionStore(storageRoot, project, authority);
+    const record = createRecord();
+    expect(store.create(record)).toEqual(record);
+    expect(store.read(record.cardId)).toEqual(record);
+    expect(runStore.read()?.revision).toBe(2);
+    expect(
+      fs.existsSync(
+        path.join(
+          storageRoot,
+          "task-executions",
+          project.id,
+          `${record.cardId}.json`,
+        ),
+      ),
+    ).toBe(false);
+    const next = {
+      ...record,
+      revision: 2,
+      phase: "implementation" as const,
+      primarySessionId: "session-one",
+      expectedBranch: "agent/card-one",
+      lastEvent: {
+        id: "initial-plan-1:plan-approved",
+        type: "plan-approved" as const,
+        operationKey: "initial-plan-1",
+        occurredAt: "2026-10-24T09:00:00.000Z",
+      },
+    };
+    store.compareAndSwap(record.cardId, 1, next);
+    expect(store.read(record.cardId)).toEqual(next);
+    expect(runStore.read()?.revision).toBe(3);
+    expect(runStore.read()).toMatchObject({
+      lifecycle: "implementation",
+      sessions: { primary: "session-one" },
+      operation: { id: "initial-plan-1", kind: "implementation" },
+    });
+    let projected: TaskExecutionRecord = next;
+    for (const phase of [
+      "validation",
+      "review",
+      "publication",
+      "ci",
+    ] as const) {
+      const phaseEvent: Record<
+        "validation" | "review" | "publication" | "ci",
+        TaskExecutionEvent["type"]
+      > = {
+        validation: "implementation-completed",
+        review: "validation-passed",
+        publication: "review-passed",
+        ci: "publication-completed",
+      };
+      const eventType = phaseEvent[phase];
+      const occurredAt = new Date().toISOString();
+      const following = {
+        ...projected,
+        phase,
+        revision: projected.revision + 1,
+        lastEvent: {
+          id: `${projected.operationKey}:${eventType}:${projected.revision}`,
+          type: eventType,
+          operationKey: projected.operationKey,
+          occurredAt,
+          ...(phase === "ci"
+            ? {
+                pullRequest: {
+                  number: 17,
+                  url: "https://github.com/owner/repository/pull/17",
+                  headSha: "a".repeat(40),
+                },
+              }
+            : {}),
+        },
+        ...(phase === "publication" || phase === "ci"
+          ? {
+              pullRequest: {
+                number: 17,
+                url: "https://github.com/owner/repository/pull/17",
+                headSha: "a".repeat(40),
+              },
+            }
+          : {}),
+      };
+      store.compareAndSwap(record.cardId, projected.revision, following);
+      projected = following;
+      expect(runStore.read()?.lifecycle).toBe(phase);
+    }
+    expect(runStore.read()).toMatchObject({
+      publicationState: "open",
+      expectedTrelloListId: "review",
+      resources: [
+        expect.objectContaining({
+          kind: "pull-request",
+          id: "17",
+          path: "https://github.com/owner/repository/pull/17",
+        }),
+      ],
+    });
+    const falseFailure: TaskExecutionRecord = {
+      ...projected,
+      phase: "attention-required",
+      terminalFailure: {
+        kind: "implementation",
+        reason: "failure while PR remains open",
+        outcome: "confirmed",
+      },
+      revision: projected.revision + 1,
+    };
+    expect(() =>
+      store.compareAndSwap(record.cardId, projected.revision, falseFailure, {
+        event: "failed",
+        evidence: {
+          prOutcome: "no-pr-failure",
+          prObservationId: "no-pull-request:initial-plan-1",
+          prVerifiedAt: new Date().toISOString(),
+          trelloListId: pinned.lists.failed,
+          trelloObservationId: "trello-failed-readback",
+          trelloVerifiedAt: new Date().toISOString(),
+        },
+      }),
+    ).toThrow("confirmed no-PR implementation failure");
+    const advance = (type: TaskExecutionEvent["type"]) => {
+      const occurredAt = new Date(
+        Math.max(Date.now(), Date.parse(projected.updatedAt) + 1),
+      ).toISOString();
+      const event = {
+        type,
+        eventId: `${projected.operationKey}:${type}:${projected.revision}`,
+        projectId: projected.projectId,
+        cardId: projected.cardId,
+        operationKey: projected.operationKey,
+        occurredAt,
+        ...(type === "publication-completed"
+          ? {
+              pullRequest: {
+                number: 17,
+                url: "https://github.com/owner/repository/pull/17",
+                headSha: "a".repeat(40),
+              },
+            }
+          : {}),
+      } as TaskExecutionEvent;
+      const nextRecord = transitionTaskExecutionRecord(projected, event);
+      store.compareAndSwap(record.cardId, projected.revision, nextRecord);
+      projected = nextRecord;
+      return nextRecord;
+    };
+    advance("ci-passed-awaiting-human");
+    expect(runStore.read()?.lifecycle).toBe("human-review");
+    advance("feedback-received");
+    expect(runStore.read()?.lifecycle).toBe("implementation");
+    advance("implementation-completed");
+    advance("validation-failed");
+    expect(runStore.read()?.lifecycle).toBe("implementation");
+    advance("implementation-completed");
+    advance("validation-passed");
+    advance("review-failed");
+    expect(runStore.read()?.lifecycle).toBe("implementation");
+    advance("implementation-completed");
+    advance("validation-passed");
+    advance("review-passed");
+    advance("publication-completed");
+    advance("ci-passed-awaiting-human");
+    advance("feedback-ci-failed");
+    expect(runStore.read()?.lifecycle).toBe("ci");
+    advance("ci-passed-awaiting-human");
+    advance("feedback-replies-published");
+    expect(runStore.read()?.lifecycle).toBe("ci");
+    advance("ci-passed-awaiting-human");
+    advance("feedback-received");
+    advance("implementation-completed");
+    advance("validation-passed");
+    advance("review-passed");
+    advance("publication-completed");
+    advance("ci-passed-awaiting-human");
+    const doneProjection: TaskExecutionRecord = {
+      ...projected,
+      phase: "done",
+      revision: projected.revision + 1,
+    };
+    const beforeTerminal = runStore.read()!;
+    const terminalEvidence = {
+      prOutcome: "merged" as const,
+      prObservationId: "github-merged:17:sha",
+      prVerifiedAt: new Date().toISOString(),
+      trelloListId: pinned.lists.done,
+      trelloObservationId: "trello-done-readback",
+      trelloVerifiedAt: new Date().toISOString(),
+    };
+    store.compareAndSwap(record.cardId, projected.revision, doneProjection, {
+      event: "merged",
+      evidence: terminalEvidence,
+    });
+    const afterTerminal = runStore.read()!;
+    expect(afterTerminal.revision).toBe(beforeTerminal.revision + 1);
+    expect(afterTerminal).toMatchObject({
+      lifecycle: "done",
+      publicationState: "merged",
+      terminalSync: "verified",
+      terminalEvidence,
+      compatibility: {
+        "task-execution-card-one": expect.objectContaining({ phase: "done" }),
+      },
+    });
+    const fencedStore = new TaskExecutionStore(
+      storageRoot,
+      project,
+      new ProjectRunAuthority(project.id, runStore, 2),
+    );
+    expect(() => fencedStore.read(record.cardId)).toThrow(
+      "Stale compatibility projection owner fence",
+    );
+  });
+
   it("creates and reads a validated record outside repository worktrees", () => {
     const { store, storageRoot, project } = createFixture();
     const record = createRecord();

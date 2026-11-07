@@ -18,6 +18,7 @@ import { runRefinementCardWorkflow } from "../refinement/run-refinement-card.js"
 import { runTaskSessionWorkflow } from "./run-task-session-workflow.js";
 import { WorkflowError } from "./workflow-error.js";
 import type { TrelloCard, TrelloClient } from "../trello/trello-client.js";
+import type { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 
 export type PollingProject = ProjectConfig & {
   contextRoot?: string;
@@ -84,57 +85,63 @@ export async function pollProject(
   emailNotifier?: EmailNotifier,
   onHumanReviewCardsObserved?: (cardIds: string[]) => void,
   onHumanReviewCardLeft?: (cardId: string) => void,
+  authority?: ProjectRunAuthority,
 ): Promise<void> {
   if (signal.aborted) return;
 
-  await withActiveProjectContext(project.id, () =>
-    runTaskSessionWorkflow({
-      project,
-      trello,
-      git,
-      github,
-      openCode: opencode,
-      commands,
-      signal,
-      ...(emailNotifier === undefined ? {} : { emailNotifier }),
-      ...(onHumanReviewCardsObserved === undefined
-        ? {}
-        : { onHumanReviewCardsObserved }),
-      ...(onHumanReviewCardLeft === undefined ? {} : { onHumanReviewCardLeft }),
-      prepareAttachmentContext: async (card) => {
-        const cardLog = logger.child({
-          projectId: project.id,
-          cardId: card.id,
-        });
-        return prepareAttachmentPromptContext(
-          trello,
-          project,
-          card,
-          signal,
-          cardLog,
-        );
-      },
-      processRefinement: async (card, worktree) =>
-        withActiveCardContext(project.id, card.id, () =>
-          runRefinementCardWorkflow({
+  const execute = () =>
+    withActiveProjectContext(project.id, () =>
+      runTaskSessionWorkflow({
+        project,
+        trello,
+        git,
+        github,
+        openCode: opencode,
+        commands,
+        signal,
+        ...(emailNotifier === undefined ? {} : { emailNotifier }),
+        ...(onHumanReviewCardsObserved === undefined
+          ? {}
+          : { onHumanReviewCardsObserved }),
+        ...(onHumanReviewCardLeft === undefined
+          ? {}
+          : { onHumanReviewCardLeft }),
+        prepareAttachmentContext: async (card) => {
+          const cardLog = logger.child({
+            projectId: project.id,
+            cardId: card.id,
+          });
+          return prepareAttachmentPromptContext(
             trello,
-            git,
-            openCode: opencode,
             project,
             card,
             signal,
-            preparedWorktree: worktree,
-            ...(emailNotifier === undefined ? {} : { emailNotifier }),
-            prepareAttachmentContext: (refinementCard, cardLog) =>
-              prepareAttachmentPromptContext(
-                trello,
-                project,
-                refinementCard,
-                signal,
-                cardLog,
-              ),
-          }),
-        ),
-    }),
-  );
+            cardLog,
+          );
+        },
+        processRefinement: async (card, worktree) =>
+          withActiveCardContext(project.id, card.id, () =>
+            runRefinementCardWorkflow({
+              trello,
+              git,
+              openCode: opencode,
+              project,
+              card,
+              signal,
+              preparedWorktree: worktree,
+              ...(emailNotifier === undefined ? {} : { emailNotifier }),
+              prepareAttachmentContext: (refinementCard, cardLog) =>
+                prepareAttachmentPromptContext(
+                  trello,
+                  project,
+                  refinementCard,
+                  signal,
+                  cardLog,
+                ),
+            }),
+          ),
+      }),
+    );
+  if (authority) await authority.run(execute);
+  else await execute();
 }

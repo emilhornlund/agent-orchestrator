@@ -9,6 +9,7 @@ import {
   appendSessionLog,
   appendSessionSection,
 } from "../logging/session-log.js";
+import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 
 const shutdownGraceMilliseconds = 5_000;
 
@@ -528,6 +529,15 @@ export class OpenCodeClient {
   ) {}
 
   async run(options: OpenCodeRunOptions): Promise<OpenCodeRunResult> {
+    const projectId = ProjectRunAuthority.currentProjectId();
+    return projectId === undefined
+      ? this.runOwned(options)
+      : ProjectRunAuthority.dispatch(projectId, () => this.runOwned(options));
+  }
+
+  private async runOwned(
+    options: OpenCodeRunOptions,
+  ): Promise<OpenCodeRunResult> {
     if (options.sessionId !== undefined) {
       assertValidSessionId(options.sessionId);
     }

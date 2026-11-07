@@ -5,13 +5,29 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Config, ProjectConfig } from "../src/config/config.js";
+import {
+  acquireProjectOwnership,
+  provisionCoordinationNamespace,
+} from "../src/coordination/project-ownership.js";
+import { verifyAndPinProjects } from "../src/coordination/project-registry.js";
+import { ProjectRunAuthority } from "../src/task-session/project-run-authority.js";
+import { RunRegistry, RunStore } from "../src/task-session/run-store.js";
+import { TaskMutationQueue } from "../src/task-session/task-mutation-queue.js";
 import type { GitClient } from "../src/git/git-client.js";
 import {
   GitHubMergeStateUnknownError,
   type GitHubClient,
 } from "../src/github/github-client.js";
 import type { OpenCodeClient } from "../src/opencode/opencode-client.js";
+import { OpenCodeClient as RealOpenCodeClient } from "../src/opencode/opencode-client.js";
 import type { CommandRunner } from "../src/process/command-runner.js";
+import { CommandRunner as RealCommandRunner } from "../src/process/command-runner.js";
+import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
+import { transitionTaskExecutionRecord } from "../src/task-session/task-execution-transition.js";
+import { TaskPlanStore } from "../src/task-session/task-plan-store.js";
+import { runTaskSessionValidationWithRepairs } from "../src/task-session/run-task-session-validation-repairs.js";
+import { getWorkflowKind } from "../src/orchestrator/workflow-kind.js";
+import { isCardStartDateReached } from "../src/orchestrator/card-start-eligibility.js";
 import { Logger } from "../src/logging/logger.js";
 import {
   TrelloRequestError,
@@ -162,6 +178,531 @@ describe("runOrchestrator", () => {
 
   afterEach(() => {
     fs.rmSync(runtimeStorageRoot, { recursive: true, force: true });
+  });
+
+  it("assigns validation repair capacity independently of AI review maxPasses", async () => {
+    const controller = new AbortController();
+    const project = createProject("validation-budget");
+    project.opencode!.remediation.maxPasses = 0;
+    const coordinationRoot = path.join(runtimeStorageRoot, "coordination");
+    fs.mkdirSync(coordinationRoot);
+    provisionCoordinationNamespace(coordinationRoot, "validation-budget");
+    const config = {
+      ...createConfig([project], 0.001),
+      workflow: {
+        ...createConfig([project], 0.001).workflow,
+        coordinationRoot,
+        coordinationNamespaceId: "validation-budget",
+      },
+    } as Config;
+    const lease = await acquireProjectOwnership(
+      coordinationRoot,
+      {
+        trelloBoardId: project.trello.boardId,
+        githubRepository: project.repository.github,
+      },
+      "validation-budget",
+    );
+    try {
+      const pin = (await verifyAndPinProjects(config, [lease]))[0]!;
+      const pinned = {
+        integrationId: pin.integrationId,
+        projectId: project.id,
+        boardId: project.trello.boardId,
+        lists: {
+          ready: project.trello.readyListId,
+          working: project.trello.workingListId,
+          review: project.trello.reviewListId,
+          failed: project.trello.failedListId,
+          done: project.trello.doneListId,
+          backlog: project.trello.backlogListId,
+        },
+        repository: pin.repository.github,
+        repositoryPath: pin.repository.path,
+        worktreeRoot: pin.repository.worktreeRoot,
+        storageRoot: pin.storageRoot,
+      };
+      const readyCard: TrelloCard = {
+        id: "validation-card",
+        name: "Implementation",
+        desc: "",
+        idList: project.trello.readyListId,
+        idLabels: [project.trello.featureLabelId],
+        url: "https://trello.test/validation-card",
+      };
+      const trello = {
+        getCards: vi.fn(async (listId: string) =>
+          listId === project.trello.readyListId ? [readyCard] : [],
+        ),
+      } as unknown as TrelloClient;
+      let workerBudgets:
+        ReturnType<ProjectRunAuthority["store"]["read"]> | undefined;
+      pollProject.mockImplementation(async (...args) => {
+        const authority = args.at(-1) as ProjectRunAuthority;
+        workerBudgets = authority.store.read();
+        controller.abort();
+      });
+
+      await runOrchestrator(
+        trello,
+        {} as GitClient,
+        {} as GitHubClient,
+        {} as OpenCodeClient,
+        {} as CommandRunner,
+        config,
+        controller.signal,
+        undefined,
+        undefined,
+        new Map([
+          [project.id, { projectLease: lease, pinned, coordinationRoot }],
+        ]),
+      );
+
+      expect(workerBudgets?.budgets).toMatchObject({
+        validation: { limit: 2, used: 0 },
+        review: { limit: 1, used: 0 },
+      });
+    } finally {
+      await lease.release();
+    }
+  });
+
+  it("keeps worker validation repairs within the canonical budget when maxPasses is zero", async () => {
+    const controller = new AbortController();
+    const project = createProject("validation-repair-budget");
+    project.opencode!.remediation.maxPasses = 0;
+    project.repository.validationCommand = "validate";
+    const contextRoot = path.join(runtimeStorageRoot, "repair-context");
+    const repositoryPath = path.join(runtimeStorageRoot, "repair-repository");
+    const worktreeRoot = path.join(runtimeStorageRoot, "repair-worktrees");
+    const worktreePath = path.join(worktreeRoot, "validation-card");
+    fs.mkdirSync(repositoryPath);
+    fs.mkdirSync(worktreePath, { recursive: true });
+    fs.writeFileSync(path.join(worktreePath, "src.ts"), "before\n");
+    project.repository.path = repositoryPath;
+    project.repository.worktreeRoot = worktreeRoot;
+    const coordinationRoot = path.join(
+      runtimeStorageRoot,
+      "repair-coordination",
+    );
+    fs.mkdirSync(coordinationRoot);
+    provisionCoordinationNamespace(
+      coordinationRoot,
+      "validation-repair-budget",
+    );
+    const config = {
+      ...createConfig([project], 0.001),
+      workflow: {
+        ...createConfig([project], 0.001).workflow,
+        contextRoot,
+        coordinationRoot,
+        coordinationNamespaceId: "validation-repair-budget",
+      },
+    } as Config;
+    const lease = await acquireProjectOwnership(
+      coordinationRoot,
+      {
+        trelloBoardId: project.trello.boardId,
+        githubRepository: project.repository.github,
+      },
+      "validation-repair-budget",
+    );
+    try {
+      const pin = (await verifyAndPinProjects(config, [lease]))[0]!;
+      const pinned = {
+        integrationId: pin.integrationId,
+        projectId: project.id,
+        boardId: project.trello.boardId,
+        lists: {
+          ready: project.trello.readyListId,
+          working: project.trello.workingListId,
+          review: project.trello.reviewListId,
+          failed: project.trello.failedListId,
+          done: project.trello.doneListId,
+          backlog: project.trello.backlogListId,
+        },
+        repository: pin.repository.github,
+        repositoryPath: pin.repository.path,
+        worktreeRoot: pin.repository.worktreeRoot,
+        storageRoot: pin.storageRoot,
+      };
+      const card: TrelloCard = {
+        id: "validation-card",
+        name: "Implement validation repair",
+        desc: "",
+        idList: project.trello.readyListId,
+        idLabels: [project.trello.featureLabelId],
+        url: "https://trello.test/validation-card",
+      };
+      expect(isCardStartDateReached(card)).toBe(true);
+      expect(getWorkflowKind(card, project)).toBe("implementation");
+      const trello = {
+        getCards: vi.fn(async (listId: string) => {
+          return listId === project.trello.readyListId ? [card] : [];
+        }),
+      } as unknown as TrelloClient;
+      const command = vi.fn(async () => ({
+        exitCode: 1,
+        output: "validation remains failing",
+        errorOutput: "persistent validation failure",
+      }));
+      const runOpenCode = vi.fn(async () => {
+        fs.writeFileSync(path.join(worktreePath, "src.ts"), "repaired\n");
+        return { exitCode: 0, output: "repair applied", errorOutput: "" };
+      });
+      let dispatches = 0;
+      let observedAuthority: ProjectRunAuthority | undefined;
+      let workerError: unknown;
+      pollProject.mockImplementation(async (...args) => {
+        dispatches += 1;
+        const authority = args.at(-1) as ProjectRunAuthority;
+        observedAuthority = authority;
+        try {
+          const operationKey = "validation-budget-operation";
+          const sessionId = "ses_validation_budget";
+          const executionStore = new TaskExecutionStore(
+            contextRoot,
+            project,
+            authority,
+          );
+          const planStore = new TaskPlanStore(contextRoot, project, authority);
+          executionStore.create({
+            version: 1,
+            projectId: project.id,
+            cardId: card.id,
+            phase: "planning",
+            primarySessionId: sessionId,
+            sessionCreationStatus: "bound",
+            expectedBranch: "agent/validation-card",
+            operationKey,
+            revision: 1,
+            retryCounters: {
+              validation: 0,
+              review: 0,
+              ci: 0,
+              humanFeedback: 0,
+            },
+            createdAt: "2026-10-24T09:00:00.000Z",
+            updatedAt: "2026-10-24T09:00:00.000Z",
+          });
+          const projectionEvents = [
+            "plan-approved",
+            "implementation-completed",
+          ] as const;
+          for (const [index, type] of projectionEvents.entries()) {
+            const current = executionStore.read(card.id);
+            if (!current) throw new Error("Expected projected task record");
+            const occurredAt = new Date(
+              Date.parse(current.updatedAt) + 1,
+            ).toISOString();
+            executionStore.compareAndSwap(
+              card.id,
+              current.revision,
+              transitionTaskExecutionRecord(current, {
+                type,
+                eventId: `worker-projection-${index}`,
+                projectId: project.id,
+                cardId: card.id,
+                operationKey,
+                occurredAt,
+              }),
+            );
+          }
+          planStore.create(
+            {
+              version: 1,
+              projectId: project.id,
+              cardId: card.id,
+              requirements: [
+                {
+                  id: "REQ-1",
+                  text: "Implement it",
+                  verification: "Run validate",
+                },
+              ],
+              steps: [
+                {
+                  id: "STEP-1",
+                  description: "Implement it",
+                  requirementIds: ["REQ-1"],
+                  verification: "Run validate",
+                },
+              ],
+              assumptions: [],
+              blockers: [],
+            },
+            1,
+          );
+          planStore.storeVerification(card.id, 1, {
+            version: 1,
+            projectId: project.id,
+            cardId: card.id,
+            planRevision: 1,
+            verdict: "pass",
+            findings: [],
+          });
+          const git = {
+            getCurrentBranch: vi.fn(async () => "agent/validation-card"),
+            getHeadSha: vi.fn(async () => "a".repeat(40)),
+            getHeadTrackedFiles: vi.fn(async () => ["src.ts"]),
+            getIndexEntries: vi.fn(
+              async () =>
+                "100644 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0\tsrc.ts\0",
+            ),
+            getUntrackedFiles: vi.fn(async () => []),
+          } as unknown as GitClient;
+          const result = await runTaskSessionValidationWithRepairs({
+            validation: {
+              project,
+              cardId: card.id,
+              expectedBranch: "agent/validation-card",
+              operationKey,
+              worktreePath,
+              taskRecordStore: executionStore,
+              git,
+              commands: new RealCommandRunner(command),
+              signal: new AbortController().signal,
+              timeoutMilliseconds: 30_000,
+            },
+            openCode: new RealOpenCodeClient(runOpenCode),
+            planStore,
+            card,
+            expectedPrimarySessionId: sessionId,
+            repairRunOptions: {
+              model: "repair-model",
+              variant: "high",
+              timeoutMilliseconds: 30_000,
+              signal: new AbortController().signal,
+            },
+          });
+          expect(result.attempts).toBe(2);
+          expect(result.record.validationRepair?.status).toBe("exhausted");
+          expect(executionStore.read(card.id)?.retryCounters.validation).toBe(
+            2,
+          );
+          expect(authority.store.read()?.budgets.validation).toMatchObject({
+            limit: 2,
+            used: 2,
+          });
+          // Recovery performs the final quality observation but cannot dispatch another repair.
+          await runTaskSessionValidationWithRepairs({
+            validation: {
+              project,
+              cardId: card.id,
+              expectedBranch: "agent/validation-card",
+              operationKey,
+              worktreePath,
+              taskRecordStore: executionStore,
+              git,
+              commands: new RealCommandRunner(command),
+              signal: new AbortController().signal,
+              timeoutMilliseconds: 30_000,
+            },
+            openCode: new RealOpenCodeClient(runOpenCode),
+            planStore,
+            card,
+            expectedPrimarySessionId: sessionId,
+            repairRunOptions: {
+              model: "repair-model",
+              variant: "high",
+              timeoutMilliseconds: 30_000,
+              signal: new AbortController().signal,
+            },
+          });
+          expect(runOpenCode).toHaveBeenCalledTimes(2);
+          expect(command).toHaveBeenCalledTimes(4);
+        } catch (error) {
+          workerError = error;
+        } finally {
+          controller.abort();
+        }
+      });
+
+      await runOrchestrator(
+        trello,
+        {} as GitClient,
+        {} as GitHubClient,
+        {} as OpenCodeClient,
+        {} as CommandRunner,
+        config,
+        controller.signal,
+        undefined,
+        undefined,
+        new Map([
+          [project.id, { projectLease: lease, pinned, coordinationRoot }],
+        ]),
+      );
+      expect(dispatches).toBe(1);
+      expect(workerError).toBeUndefined();
+      expect(observedAuthority?.store.read()?.budgets.validation?.used).toBe(2);
+    } finally {
+      await lease.release();
+    }
+  }, 30_000);
+
+  it("exits a completed attempt scope before readiness retries and the next-card poll", async () => {
+    const controller = new AbortController();
+    const repositoryPath = path.join(runtimeStorageRoot, "repository");
+    const worktreeRoot = path.join(runtimeStorageRoot, "worktrees");
+    const storageRoot = path.join(runtimeStorageRoot, "attempt-state");
+    const coordinationRoot = path.join(runtimeStorageRoot, "coordination");
+    fs.mkdirSync(repositoryPath);
+    fs.mkdirSync(worktreeRoot);
+    fs.mkdirSync(storageRoot);
+    fs.mkdirSync(coordinationRoot);
+    provisionCoordinationNamespace(coordinationRoot, "scope-test");
+    const project = {
+      ...createProject("scope-project"),
+      repository: {
+        ...createProject("scope-project").repository,
+        path: repositoryPath,
+        worktreeRoot,
+      },
+    };
+    const config = {
+      ...createConfig([project], 0.001),
+      workflow: {
+        ...createConfig([project], 0.001).workflow,
+        contextRoot: storageRoot,
+        coordinationRoot,
+        coordinationNamespaceId: "scope-test",
+      },
+    } as Config;
+    const lease = await acquireProjectOwnership(
+      coordinationRoot,
+      {
+        trelloBoardId: project.trello.boardId,
+        githubRepository: project.repository.github,
+      },
+      "scope-test",
+    );
+    try {
+      const hostPin = (await verifyAndPinProjects(config, [lease]))[0]!;
+      const pinned = {
+        integrationId: hostPin.integrationId,
+        projectId: project.id,
+        boardId: project.trello.boardId,
+        lists: {
+          ready: project.trello.readyListId,
+          working: project.trello.workingListId,
+          review: project.trello.reviewListId,
+          failed: project.trello.failedListId,
+          done: project.trello.doneListId,
+          backlog: project.trello.backlogListId,
+        },
+        repository: hostPin.repository.github,
+        repositoryPath: hostPin.repository.path,
+        worktreeRoot: hostPin.repository.worktreeRoot,
+        storageRoot: hostPin.storageRoot,
+      };
+      const initialAuthority = await ProjectRunAuthority.createPreparingAttempt(
+        {
+          projectId: project.id,
+          cardId: "refinement-card",
+          taskKind: "refinement",
+          pinned,
+          projectLease: lease,
+          coordinationRoot,
+        },
+      );
+      initialAuthority.claim();
+      const readyCard = {
+        id: "next-card",
+        name: "Next implementation",
+        desc: "Implement the next task.",
+        idList: project.trello.readyListId,
+        idLabels: [project.trello.featureLabelId],
+        url: "https://trello.test/next-card",
+      } satisfies TrelloCard;
+      const trello = {
+        getCards: vi.fn(async (listId: string) =>
+          listId === project.trello.readyListId ? [readyCard] : [],
+        ),
+      } as unknown as TrelloClient;
+      let pollCount = 0;
+      pollProject.mockImplementation(async (...args) => {
+        pollCount += 1;
+        const authority = args.at(-1) as ProjectRunAuthority;
+        expect(ProjectRunAuthority.current(project.id)).toBe(authority);
+        if (pollCount === 1) {
+          expect(authority.store.read()?.cardId).toBe("refinement-card");
+          await authority.completeRefinement({
+            observationId: "refinement-complete",
+            observedAt: new Date().toISOString(),
+            trelloObservationId: "backlog-readback",
+            trelloVerifiedAt: new Date().toISOString(),
+          });
+          return;
+        }
+        expect(authority.store.read()?.cardId).toBe("next-card");
+        const queue = new TaskMutationQueue(storageRoot, project);
+        queue.enqueue({
+          projectId: project.id,
+          cardId: "next-card",
+          eventId: "next-card-event",
+          operationKey: "next-card-operation",
+          kind: "implementation",
+          enqueuedAt: new Date().toISOString(),
+        });
+        controller.abort();
+      });
+      let readinessCount = 0;
+      const deferredReadiness = vi.fn(async () => {
+        readinessCount += 1;
+        if (readinessCount === 2)
+          throw new Error("temporary readiness outage after terminal release");
+      });
+      const contexts = new Map([
+        [
+          project.id,
+          {
+            authority: initialAuthority,
+            projectLease: lease,
+            pinned,
+            coordinationRoot,
+          },
+        ],
+      ]);
+      await runOrchestrator(
+        trello,
+        {} as GitClient,
+        {} as GitHubClient,
+        {} as OpenCodeClient,
+        {} as CommandRunner,
+        config,
+        controller.signal,
+        undefined,
+        deferredReadiness,
+        contexts,
+      );
+      expect(pollCount).toBe(2);
+      expect(readinessCount).toBeGreaterThanOrEqual(4);
+      expect(
+        fs.existsSync(getReconciliationBlockPath(storageRoot, project.id)),
+      ).toBe(false);
+      expect(
+        fs.existsSync(
+          path.join(storageRoot, "task-mutation-queues", `${project.id}.json`),
+        ),
+      ).toBe(false);
+      const pointer = new RunRegistry(storageRoot, pinned.integrationId, {
+        integrationId: pinned.integrationId,
+        instanceId: lease.instanceId,
+        token: lease.token,
+        assertHeld: () => lease.assertHeld(),
+      }).reconcile();
+      expect(pointer).not.toBeNull();
+      expect(
+        new RunStore(storageRoot, pointer!.attemptId, pinned, {
+          integrationId: pinned.integrationId,
+          instanceId: lease.instanceId,
+          token: lease.token,
+          assertHeld: () => lease.assertHeld(),
+        }).read()?.cardId,
+      ).toBe("next-card");
+    } finally {
+      await lease.release();
+    }
   });
 
   it("runs project workers concurrently", async () => {

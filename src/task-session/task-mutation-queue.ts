@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import type { ProjectConfig } from "../config/config.js";
+import { ProjectRunAuthority } from "./project-run-authority.js";
 
 const eventSchema = z.strictObject({
   eventId: z
@@ -84,6 +85,11 @@ const queueSchema = z
       });
     }
   });
+export function parseTaskMutationQueue(
+  value: unknown,
+): ReturnType<typeof queueSchema.parse> {
+  return queueSchema.parse(value);
+}
 export type TaskMutationEvent = z.infer<typeof eventSchema>;
 type QueueRecord = z.infer<typeof queueSchema>;
 const liveMutationOwners = new Set<string>();
@@ -176,8 +182,13 @@ export class TaskMutationQueue {
   private readonly filePath: string;
   private readonly projectId: string;
   private readonly ownerToken = randomUUID();
+  private readonly authority: ProjectRunAuthority | undefined;
 
-  constructor(rootDirectory: string, project: ProjectConfig) {
+  constructor(
+    rootDirectory: string,
+    project: ProjectConfig,
+    authority?: ProjectRunAuthority,
+  ) {
     if (!path.isAbsolute(rootDirectory))
       throw new Error("Task mutation queue root must be absolute");
     assertComponent(project.id, "project ID");
@@ -192,6 +203,9 @@ export class TaskMutationQueue {
         "Task mutation queue root must not overlap source or worktree roots",
       );
     this.projectId = project.id;
+    this.authority = authority ?? ProjectRunAuthority.current(project.id);
+    if (authority && authority.projectId !== project.id)
+      throw new Error("Task mutation queue authority project mismatch");
     this.filePath = path.join(
       root,
       "task-mutation-queues",
@@ -555,6 +569,19 @@ export class TaskMutationQueue {
   }
 
   private readQueue(): QueueRecord {
+    if (this.authority !== undefined)
+      return (
+        this.authority.read(
+          ProjectRunAuthority.queueKey(this.projectId),
+          parseTaskMutationQueue,
+        ) ?? {
+          version: 1,
+          projectId: this.projectId,
+          revision: 1,
+          activeEventId: null,
+          events: [],
+        }
+      );
     const stat = fs.lstatSync(this.filePath, { throwIfNoEntry: false });
     if (stat === undefined)
       return {
@@ -577,6 +604,31 @@ export class TaskMutationQueue {
   private update<T>(
     operation: (queue: QueueRecord) => { queue: QueueRecord; result: T },
   ): T {
+    if (this.authority !== undefined) {
+      const initial: QueueRecord = {
+        version: 1,
+        projectId: this.projectId,
+        revision: 1,
+        activeEventId: null,
+        events: [],
+      };
+      return this.authority.mutate(
+        ProjectRunAuthority.queueKey(this.projectId),
+        initial,
+        (stored) => {
+          const current = parseTaskMutationQueue(stored);
+          const output = operation(current);
+          if (output.queue === current)
+            return { value: current, result: output.result };
+          const next = parseTaskMutationQueue({
+            ...output.queue,
+            revision: current.revision + 1,
+          });
+          return { value: next, result: output.result };
+        },
+        parseTaskMutationQueue,
+      );
+    }
     ensureDirectory(path.dirname(this.filePath));
     return this.withLock(() => {
       const current = this.readQueue();

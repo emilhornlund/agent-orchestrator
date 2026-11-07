@@ -96,6 +96,8 @@ import { maintainOutdatedPr } from "./maintain-outdated-pr.js";
 import { reconcileUnobservedTerminalPrEvents } from "./reconcile-unobserved-terminal-pr.js";
 import { verifyMergedTaskPrHeadContinuity } from "./verify-merged-task-pr-head-continuity.js";
 import { TaskMutationBlockStore } from "./task-mutation-block-store.js";
+import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
+import type { RunRecord } from "../task-session/run-record.js";
 
 const lastLoggedCiState = new Map<string, string>();
 const reportedMissingMaintenancePlans = new Set<string>();
@@ -126,6 +128,27 @@ function timestamp(record: TaskExecutionRecord): string {
   return new Date(
     Math.max(Date.now(), Date.parse(record.updatedAt) + 1),
   ).toISOString();
+}
+
+async function completeRefinementAuthority(
+  authority: ProjectRunAuthority | undefined,
+  trello: TrelloClient,
+  project: ProjectConfig,
+  cardId: string,
+): Promise<void> {
+  if (!authority) return;
+  const observedAt = new Date().toISOString();
+  const backlog = await trello.getCards(project.trello.backlogListId);
+  if (!backlog.some((card) => card.id === cardId))
+    throw new Error(
+      `Refinement completion is not verified: ${cardId} was not observed in Backlog`,
+    );
+  await authority.completeRefinement({
+    observationId: `refinement:${cardId}:${observedAt}`,
+    observedAt,
+    trelloObservationId: `backlog-readback:${cardId}:${observedAt}`,
+    trelloVerifiedAt: observedAt,
+  });
 }
 
 function updateRecord(
@@ -214,6 +237,29 @@ async function completeMergedTaskSession(options: {
   });
   if (terminalEvent.status === "completed" && record.phase === "done") {
     options.mutationBlockStore.resolve(`terminal:${terminalEventId}`);
+    const evidence = await readRunTerminalEvidence({
+      trello,
+      project,
+      card,
+      pullRequestNumber: record.pullRequest.number,
+      headSha,
+      outcome: "merged",
+    });
+    const authority = ProjectRunAuthority.current(project.id);
+    const run = authority?.store.read();
+    if (authority && run && run.lifecycle !== "done") {
+      const next = {
+        ...record,
+        revision: record.revision + 1,
+        updatedAt: timestamp(record),
+      };
+      await taskStore.compareAndSwap(card.id, record.revision, next, {
+        event: "merged",
+        evidence,
+      });
+    } else if (authority) {
+      await authority.releaseVerifiedTerminal();
+    }
     return "completed";
   }
   if (options.releaseMutationEventId !== undefined) {
@@ -266,34 +312,128 @@ async function completeMergedTaskSession(options: {
         `Merged task record changed during cleanup for ${card.id}`,
       );
     }
+    let terminalProjection: TaskExecutionRecord;
     if (latest.phase !== "done") {
       if (latest.phase !== "ci" && latest.phase !== "human-feedback") {
         throw new Error(
           `Cannot complete merged task ${card.id} from phase ${latest.phase}`,
         );
       }
-      taskStore.compareAndSwap(
-        card.id,
-        latest.revision,
-        transitionTaskExecutionRecord(
-          { ...latest, reviewObservation: undefined },
-          {
-            type: "pull-request-merged",
-            eventId: `${latest.operationKey}:pull-request-merged`,
-            projectId: project.id,
-            cardId: card.id,
-            operationKey: latest.operationKey,
-            occurredAt: timestamp(latest),
-          },
-        ),
+      terminalProjection = transitionTaskExecutionRecord(
+        { ...latest, reviewObservation: undefined },
+        {
+          type: "pull-request-merged",
+          eventId: `${latest.operationKey}:pull-request-merged`,
+          projectId: project.id,
+          cardId: card.id,
+          operationKey: latest.operationKey,
+          occurredAt: timestamp(latest),
+        },
       );
+    } else {
+      terminalProjection = {
+        ...latest,
+        revision: latest.revision + 1,
+        updatedAt: timestamp(latest),
+      };
     }
     queue.complete(terminalEventId);
+    const evidence = await readRunTerminalEvidence({
+      trello,
+      project,
+      card,
+      pullRequestNumber: record.pullRequest.number,
+      headSha,
+      outcome: "merged",
+    });
+    if (ProjectRunAuthority.current(project.id))
+      await taskStore.compareAndSwap(
+        card.id,
+        latest.revision,
+        terminalProjection,
+        { event: "merged", evidence },
+      );
+    else taskStore.compareAndSwap(card.id, latest.revision, terminalProjection);
     return "completed";
   } catch (error) {
     if (queue.ownsActive(terminalEventId)) queue.fail(terminalEventId);
     throw error;
   }
+}
+
+async function readRunTerminalEvidence(options: {
+  trello: TrelloClient;
+  project: ProjectConfig;
+  card: TrelloCard;
+  pullRequestNumber: number;
+  headSha: string;
+  outcome: "merged" | "closed-unmerged";
+}): Promise<NonNullable<RunRecord["terminalEvidence"]>> {
+  const listId =
+    options.outcome === "merged"
+      ? options.project.trello.doneListId
+      : options.project.trello.backlogListId;
+  const observedAt = new Date().toISOString();
+  const cards = await options.trello.getCards(listId);
+  if (!cards.some((candidate) => candidate.id === options.card.id))
+    throw new Error(
+      `Terminal attempt state is not verified: ${options.card.id} was not observed in its destination list`,
+    );
+  return {
+    prOutcome: options.outcome,
+    prObservationId: `github-${options.outcome}:${options.pullRequestNumber}:${options.headSha}`,
+    prVerifiedAt: observedAt,
+    trelloListId: listId,
+    trelloObservationId: `trello-${options.outcome}:${options.card.id}:${observedAt}`,
+    trelloVerifiedAt: observedAt,
+  };
+}
+
+async function persistClosedRunTerminal(
+  taskStore: TaskExecutionStore,
+  trello: TrelloClient,
+  project: ProjectConfig,
+  card: TrelloCard,
+  record: TaskExecutionRecord,
+): Promise<void> {
+  if (!ProjectRunAuthority.current(project.id) || !record.pullRequest?.headSha)
+    return;
+  const evidence = await readRunTerminalEvidence({
+    trello,
+    project,
+    card,
+    pullRequestNumber: record.pullRequest.number,
+    headSha: record.pullRequest.headSha,
+    outcome: "closed-unmerged",
+  });
+  const latest = taskStore.read(card.id);
+  if (!latest) throw new Error(`Task projection disappeared for ${card.id}`);
+  await taskStore.compareAndSwap(
+    card.id,
+    latest.revision,
+    {
+      ...latest,
+      revision: latest.revision + 1,
+      updatedAt: timestamp(latest),
+    },
+    { event: "closed-unmerged", evidence },
+  );
+}
+
+function noPullRequestFailureEvidence(
+  project: ProjectConfig,
+  cardId: string,
+  operationKey: string,
+): NonNullable<RunRecord["terminalEvidence"]> {
+  const observedAt = new Date().toISOString();
+  return {
+    prOutcome: "no-pr-failure",
+    prObservationId: `no-pull-request:${operationKey}`,
+    prVerifiedAt: observedAt,
+    trelloListId: project.trello.failedListId,
+    trelloObservationId: `trello-failed-readback:${cardId}:${observedAt}`,
+    trelloVerifiedAt: observedAt,
+  };
 }
 
 function commitMessageRunOptions(
@@ -929,7 +1069,16 @@ export async function runTaskSessionWorkflow(
         if (!isMerged) options.onHumanReviewCardLeft?.(cardId);
         if (!isMerged) {
           if (signal.aborted) queue.fail(recoveredTerminalMutation.eventId);
-          else queue.complete(recoveredTerminalMutation.eventId);
+          else {
+            queue.complete(recoveredTerminalMutation.eventId);
+            await persistClosedRunTerminal(
+              taskStore,
+              trello,
+              project,
+              card,
+              record,
+            );
+          }
         }
       } catch (error) {
         if (!isMerged && queue.ownsActive(recoveredTerminalMutation.eventId)) {
@@ -1018,7 +1167,16 @@ export async function runTaskSessionWorkflow(
         });
         options.onHumanReviewCardLeft?.(card.id);
         if (signal.aborted) queue.fail(terminalMutation.eventId);
-        else queue.complete(terminalMutation.eventId);
+        else {
+          queue.complete(terminalMutation.eventId);
+          await persistClosedRunTerminal(
+            taskStore,
+            trello,
+            project,
+            card,
+            record,
+          );
+        }
       } catch (error) {
         queue.fail(terminalMutation.eventId);
         throw error;
@@ -2004,6 +2162,12 @@ export async function runTaskSessionWorkflow(
         path: worktreePath,
         branch: `agent/${card.id}`,
       });
+      await completeRefinementAuthority(
+        ProjectRunAuthority.current(project.id),
+        trello,
+        project,
+        card.id,
+      );
       if (signal.aborted) queue.fail(recovered.eventId);
       else queue.complete(recovered.eventId);
       return;
@@ -2132,16 +2296,40 @@ export async function runTaskSessionWorkflow(
         latestFailureRecord.terminalFailure?.kind !== "implementation"
       )
         throw new Error(`Terminal failure identity changed for ${card.id}`);
-      if (latestFailureRecord.terminalFailure.outcome !== "confirmed")
-        taskStore.compareAndSwap(card.id, latestFailureRecord.revision, {
-          ...latestFailureRecord,
-          terminalFailure: {
-            ...latestFailureRecord.terminalFailure,
-            outcome: "confirmed",
+      const confirmedFailure = {
+        ...latestFailureRecord,
+        terminalFailure: {
+          ...latestFailureRecord.terminalFailure,
+          outcome: "confirmed" as const,
+        },
+        revision: latestFailureRecord.revision + 1,
+        updatedAt: timestamp(latestFailureRecord),
+      };
+      if (
+        ProjectRunAuthority.current(project.id) &&
+        latestFailureRecord.pullRequest === undefined &&
+        latestFailureRecord.externalRecovery === undefined
+      ) {
+        taskStore.compareAndSwap(
+          card.id,
+          latestFailureRecord.revision,
+          confirmedFailure,
+          {
+            event: "failed",
+            evidence: noPullRequestFailureEvidence(
+              project,
+              card.id,
+              latestFailureRecord.operationKey,
+            ),
           },
-          revision: latestFailureRecord.revision + 1,
-          updatedAt: timestamp(latestFailureRecord),
-        });
+        );
+      } else {
+        taskStore.compareAndSwap(
+          card.id,
+          latestFailureRecord.revision,
+          confirmedFailure,
+        );
+      }
       queue.complete(owner.eventId);
       return;
     }
@@ -2337,13 +2525,18 @@ export async function runTaskSessionWorkflow(
       const record = taskStore.read(card.id);
       return record?.phase === "human-feedback" || record?.phase === "ci";
     });
+    const authority = ProjectRunAuthority.current(project.id);
+    const authorityAttempt = authority?.store.read();
     const eligibleCards =
       hasUnresolvedLegacyMaintenance || hasActiveHumanReview
         ? []
         : readyCards.filter(
             (card) =>
               isCardStartDateReached(card, Date.now()) &&
-              getWorkflowKind(card, project) !== null,
+              getWorkflowKind(card, project) !== null &&
+              (authorityAttempt === undefined ||
+                authorityAttempt === null ||
+                authorityAttempt.cardId === card.id),
           );
     // Ready cards may have been moved externally while their queued claim
     // persisted. Reconcile verified orphans before claiming the next event:
@@ -2592,6 +2785,12 @@ export async function runTaskSessionWorkflow(
       );
       cardLog.event("Card claimed; transition to Working succeeded");
       await options.processRefinement(claimedCard ?? card, worktree);
+      await completeRefinementAuthority(
+        ProjectRunAuthority.current(project.id),
+        trello,
+        project,
+        card.id,
+      );
       if (signal.aborted) queue.fail(mutation.eventId);
       else queue.complete(mutation.eventId);
       return;
@@ -3851,13 +4050,40 @@ export async function runTaskSessionWorkflow(
           `Terminal failure identity changed for ${mutation.cardId}`,
           { cause: error },
         );
-      if (latest.terminalFailure.outcome !== "confirmed")
-        taskStore.compareAndSwap(mutation.cardId, latest.revision, {
-          ...latest,
-          terminalFailure: { ...latest.terminalFailure, outcome: "confirmed" },
-          revision: latest.revision + 1,
-          updatedAt: timestamp(latest),
-        });
+      const confirmedFailure = {
+        ...latest,
+        terminalFailure: {
+          ...latest.terminalFailure,
+          outcome: "confirmed" as const,
+        },
+        revision: latest.revision + 1,
+        updatedAt: timestamp(latest),
+      };
+      if (
+        ProjectRunAuthority.current(project.id) &&
+        latest.pullRequest === undefined &&
+        latest.externalRecovery === undefined
+      ) {
+        taskStore.compareAndSwap(
+          mutation.cardId,
+          latest.revision,
+          confirmedFailure,
+          {
+            event: "failed",
+            evidence: noPullRequestFailureEvidence(
+              project,
+              mutation.cardId,
+              latest.operationKey,
+            ),
+          },
+        );
+      } else {
+        taskStore.compareAndSwap(
+          mutation.cardId,
+          latest.revision,
+          confirmedFailure,
+        );
+      }
       queue.complete(mutation.eventId);
       mutation = null;
       throw error;

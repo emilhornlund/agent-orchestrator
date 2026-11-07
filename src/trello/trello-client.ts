@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 
 export interface TrelloClientOptions {
   apiKey: string;
@@ -377,26 +378,32 @@ export class TrelloClient {
     operation: TrelloRequestOperation,
     init?: RequestInit,
   ): Promise<Response> {
-    try {
-      return await fetch(url, init);
-    } catch (error) {
-      if (
-        this.options.signal?.aborted ||
-        (init?.signal?.aborted && !isTimeoutReason(init.signal.reason))
-      ) {
-        throw new TrelloRequestAbortedError();
-      }
+    const dispatch = async (): Promise<Response> => {
+      try {
+        return await fetch(url, init);
+      } catch (error) {
+        if (
+          this.options.signal?.aborted ||
+          (init?.signal?.aborted && !isTimeoutReason(init.signal.reason))
+        ) {
+          throw new TrelloRequestAbortedError();
+        }
 
-      if (init?.signal?.aborted && isTimeoutReason(init.signal.reason)) {
-        throw new TrelloRequestTimeoutError(operation, error);
-      }
+        if (init?.signal?.aborted && isTimeoutReason(init.signal.reason)) {
+          throw new TrelloRequestTimeoutError(operation, error);
+        }
 
-      throw new TrelloRequestError(
-        operation,
-        `Trello request failed during ${operation}: ${safeErrorMessage(error)}`,
-        { cause: error, retryable: true },
-      );
-    }
+        throw new TrelloRequestError(
+          operation,
+          `Trello request failed during ${operation}: ${safeErrorMessage(error)}`,
+          { cause: error, retryable: true },
+        );
+      }
+    };
+    const projectId = ProjectRunAuthority.currentProjectId();
+    return projectId === undefined
+      ? dispatch()
+      : ProjectRunAuthority.dispatch(projectId, dispatch);
   }
 
   getBoard(boardId: string): Promise<TrelloBoard> {

@@ -7,6 +7,7 @@ import {
   type FeedbackLedger,
   type FeedbackLedgerEntry,
 } from "./feedback-ledger.js";
+import { ProjectRunAuthority } from "./project-run-authority.js";
 
 export const MAX_FEEDBACK_LEDGER_BYTES = 2 * 1024 * 1024;
 
@@ -70,8 +71,13 @@ function ensureDirectory(directory: string, create: boolean): boolean {
 export class FeedbackLedgerStore {
   private readonly directory: string;
   private readonly projectId: string;
+  private readonly authority: ProjectRunAuthority | undefined;
 
-  constructor(rootDirectory: string, project: ProjectConfig) {
+  constructor(
+    rootDirectory: string,
+    project: ProjectConfig,
+    authority?: ProjectRunAuthority,
+  ) {
     if (!path.isAbsolute(rootDirectory))
       throw new Error("Feedback ledger root must be absolute");
     safeId(project.id, "project ID");
@@ -87,6 +93,9 @@ export class FeedbackLedgerStore {
       );
     }
     this.projectId = project.id;
+    this.authority = authority ?? ProjectRunAuthority.current(project.id);
+    if (authority && authority.projectId !== project.id)
+      throw new Error("Feedback ledger authority project mismatch");
     this.directory = path.join(root, "feedback-ledgers", project.id);
   }
 
@@ -96,6 +105,18 @@ export class FeedbackLedgerStore {
   }
 
   read(cardId: string): FeedbackLedger | null {
+    if (this.authority !== undefined) {
+      const ledger = this.authority.read(
+        ProjectRunAuthority.taskKey("feedback-ledger", cardId),
+        parseFeedbackLedger,
+      );
+      if (
+        ledger &&
+        (ledger.projectId !== this.projectId || ledger.cardId !== cardId)
+      )
+        throw new Error("Feedback ledger projection ownership mismatch");
+      return ledger;
+    }
     const file = this.file(cardId);
     if (!ensureDirectory(this.directory, false)) return null;
     const stat = fs.lstatSync(file, { throwIfNoEntry: false });
@@ -132,6 +153,19 @@ export class FeedbackLedgerStore {
       updatedAt: new Date().toISOString(),
       entries,
     });
+    if (this.authority !== undefined)
+      return this.authority.mutate(
+        ProjectRunAuthority.taskKey("feedback-ledger", cardId),
+        null,
+        (value) => {
+          if (value !== null)
+            throw new FeedbackLedgerConflictError(
+              "Feedback ledger already exists",
+            );
+          return { value: initial, result: initial };
+        },
+        parseFeedbackLedger,
+      );
     const file = this.file(cardId);
     ensureDirectory(this.directory, true);
     return this.withLock(file, () => {
@@ -148,6 +182,28 @@ export class FeedbackLedgerStore {
     nextValue: FeedbackLedger,
   ): FeedbackLedger {
     const next = parseFeedbackLedger(nextValue);
+    if (this.authority !== undefined)
+      return this.authority.mutate(
+        ProjectRunAuthority.taskKey("feedback-ledger", cardId),
+        null,
+        (value) => {
+          const current = value === null ? null : parseFeedbackLedger(value);
+          if (current === null || current.revision !== expectedRevision)
+            throw new FeedbackLedgerConflictError(
+              "Feedback ledger projection revision conflict",
+            );
+          if (
+            next.projectId !== this.projectId ||
+            next.cardId !== cardId ||
+            next.revision !== expectedRevision + 1
+          )
+            throw new Error(
+              "Updated feedback ledger projection must preserve ownership and increment revision",
+            );
+          return { value: next, result: next };
+        },
+        parseFeedbackLedger,
+      );
     const file = this.file(cardId);
     if (
       next.projectId !== this.projectId ||
