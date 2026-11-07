@@ -83,6 +83,61 @@ the application. Startup acquires canonical project ownership before housekeepin
 Trello resource, repository, worktree, and context-storage pins in the host registry. A removed or redirected pinned project must
 be explicitly reconciled; do not delete registry evidence to bypass the check.
 
+### Provisioning a shared host coordination namespace
+
+An administrator must create the `/var/lib` parent hierarchy and grant the dedicated service account ownership of its
+application directory; an unprivileged service account cannot create arbitrary entries directly under `/var/lib`. Do not
+grant the service account broad system privileges just to provision this path. Run namespace setup below as the service
+account (replace the path and namespace ID consistently in every participant's configuration). Do not place it under a
+repository. The namespace directory is private to that runtime UID; a rootless container must use a compatible UID mapping.
+Provisioning refuses an existing marker. Run `node --import tsx` from the application checkout with the declared `tsx`
+dependency installed. The working directory matters for package resolution. Use a dedicated service account and compatible
+Podman `--userns=keep-id` mapping rather than broadening namespace permissions.
+
+```sh
+SERVICE_USER=agent-orchestrator
+SERVICE_GROUP=agent-orchestrator
+sudo install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0750 /var/lib/agent-orchestrator
+```
+
+Then, from the application checkout as the service account:
+
+```sh
+set -eu
+export COORDINATION_ROOT=/var/lib/agent-orchestrator/coordination
+install -d -m 0700 "$COORDINATION_ROOT"
+test "$(stat -c %u "$COORDINATION_ROOT")" = "$(id -u)"
+node --import tsx --input-type=module -e 'import { provisionCoordinationNamespace } from "./src/coordination/project-ownership.ts"; provisionCoordinationNamespace(process.env.COORDINATION_ROOT, "host-prod-v1")'
+```
+
+`set -eu` makes any failed install, ownership check, or provision command stop setup; do not start the service if provisioning
+fails. The administrator-owned parent-directory step may instead be performed by the host's normal service-account
+provisioning system.
+
+For Podman, mount that exact host directory read/write. A non-root container must use a compatible host UID mapping; do not
+make the namespace group/world writable to work around a mapping mismatch. Do not use `:Z` or `:z` when the same namespace is
+shared with host processes or other containers: relabeling can make an otherwise shared host directory inaccessible to peers.
+Do not use `--security-opt label=disable` for production as a substitute for a deliberate SELinux policy. Have the host
+administrator configure SELinux policy so the host service identity and the compatible container domain can access the same
+existing namespace label. Do not privately relabel a shared namespace or the source checkout. Runtime paths may differ: for example, configure
+the host as `/var/lib/agent-orchestrator/coordination` and a container as `/run/agent-orchestrator/coordination`, with the
+host directory mounted at the latter path. The contents must be the same mount, not copies. For example:
+
+```sh
+podman run --rm --userns=keep-id -v "$COORDINATION_ROOT:/run/agent-orchestrator/coordination:rw" IMAGE
+```
+
+The source checkout used by `tsx` must be available read-only in the container at its configured working directory, and the
+container command must execute from that directory so package resolution finds the installed `tsx` dependency. Export the
+same configuration and namespace ID in every participant. A container that cannot access the marker/owner files fails startup
+before project processing; do not work around that failure by making the namespace writable by everyone.
+
+The volume may be bind-mounted at different absolute paths in host and container. Active attempt state itself remains pinned
+to its configured storage root; changing that root during an active attempt is not an equivalent alias. Stop and verify all
+old-version workers before enabling a version that understands this namespace: old binaries do not participate in these leases,
+and the lease cannot retroactively fence them. Distinct namespace IDs/hidden mounts are an operator deployment error that
+cannot be detected from either isolated mount. Multiple-machine coordination is not supported.
+
 Card context storage uses this layout, with project IDs, card IDs, and attachment filenames treated as untrusted single path
 components:
 

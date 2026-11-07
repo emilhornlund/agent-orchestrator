@@ -123,6 +123,8 @@ export class ProjectRunAuthority {
     projectLease: ProjectOwnershipLease;
     coordinationRoot: string;
     budgets?: RunRecord["budgets"];
+    resources?: RunRecord["resources"];
+    sessions?: RunRecord["sessions"];
     attemptId?: string;
   }): Promise<ProjectRunAuthority> {
     const attemptId = options.attemptId ?? randomUUID();
@@ -211,11 +213,12 @@ export class ProjectRunAuthority {
           path: `refs/heads/agent/${options.cardId}`,
           provenance: "attempt-planned",
         },
+        ...(options.resources ?? []),
       ],
       pendingOperations: [],
       queue: [],
       budgets: options.budgets ?? {},
-      sessions: {},
+      sessions: options.sessions ?? {},
       artifacts: [],
       expectedTrelloListId: null,
       terminalSync: "not-applicable",

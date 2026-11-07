@@ -494,6 +494,20 @@ A queued event does not mutate a repository. A failed or uncertain event retains
 recovery; it blocks later mutations for that project rather than being discarded or automatically retried. Preserve its record,
 inspect the affected task and external state, and follow the task-session recovery guide before resuming.
 
+### Legacy-state upgrade blockage
+
+At startup, the current canonical attempt store imports supported v1 legacy task-execution state and preserves the original
+source bytes in a migration snapshot. A legacy queue, queue-only state without exactly one task authority, malformed or
+unsupported persisted data, or ambiguous work remains a project-level blockage; it is not interpreted as an empty queue or
+permission to claim a new task. Migration does not delete or rewrite its source evidence. Stop old writers before starting the
+lease-aware version because older workers do not participate in canonical ownership.
+
+For a blocked upgrade, preserve runtime files, the source checkout, worktrees, branches and external PR state. Follow the
+supported recovery procedure and have the service operator/support owner reconcile the authoritative task and queued operation
+using existing application recovery tooling before resuming. Do not manually edit persistence files or delete a queue/blocker
+as a routine recovery step. If the persisted state cannot be unambiguously reconciled through supported procedures, keep that
+project blocked and escalate rather than creating a replacement attempt.
+
 Validation and CI repair each retain their finite two-attempt limit. Implementation review
 repair instead honors `opencode.remediation.maxPasses` (default one). On
 exhaustion, the last structured failed review and its source identity are
