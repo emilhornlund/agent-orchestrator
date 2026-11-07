@@ -54,6 +54,7 @@ export async function inspectPrimaryOpenCodeSession(options: {
       signal: options.signal,
       timeoutMilliseconds: options.timeoutMilliseconds,
       captureOutput: true,
+      capturePolicy: "complete",
       maxCaptureOutputLength: 4 * 1024 * 1024,
       suppressOutput: true,
     });

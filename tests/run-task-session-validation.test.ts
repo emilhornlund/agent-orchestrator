@@ -14,11 +14,20 @@ import {
 } from "../src/process/command-runner.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
 import { runTaskSessionValidation } from "../src/task-session/run-task-session-validation.js";
+import { runTaskSessionCoverage } from "../src/task-session/run-task-session-coverage.js";
+import {
+  configureProcessRuntime,
+  getProcessRuntime,
+} from "../src/process/process-runtime.js";
 
 let temporaryRoot: string | undefined;
 
 afterEach(() => {
   vi.restoreAllMocks();
+  configureProcessRuntime({
+    runtimeRoot: getProcessRuntime().artifactRoot,
+    signal: new AbortController().signal,
+  });
 
   if (temporaryRoot !== undefined) {
     fs.rmSync(temporaryRoot, { recursive: true, force: true });
@@ -131,6 +140,60 @@ function runValidation(
 }
 
 describe("runTaskSessionValidation", () => {
+  it.each(["validation", "coverage"] as const)(
+    "runs actual verbose %s output without mistaking a full summary for an output limit",
+    async (gate) => {
+      const fixture = createFixture({
+        validationCommand:
+          "node -e \"process.stdout.write('o'.repeat(3000));process.stderr.write('e'.repeat(3000))\"",
+      });
+      const artifactRoot = path.join(temporaryRoot!, "process-artifacts");
+      configureProcessRuntime({
+        runtimeRoot: artifactRoot,
+        signal: new AbortController().signal,
+      });
+      fixture.commands = new CommandRunner();
+      if (gate === "coverage")
+        fixture.project.repository.coverageCommand =
+          fixture.project.repository.validationCommand;
+
+      const result =
+        gate === "coverage"
+          ? await runTaskSessionCoverage({
+              project: fixture.project,
+              cardId: "card-one",
+              expectedBranch: "agent/card-one",
+              operationKey: "implementation-one",
+              worktreePath: fixture.worktreePath,
+              taskRecordStore: fixture.taskRecordStore,
+              git: fixture.git,
+              commands: fixture.commands,
+              signal: new AbortController().signal,
+              timeoutMilliseconds: 30_000,
+            })
+          : await runValidation(fixture);
+
+      expect(result?.status).toBe("passed");
+      expect(result?.exitCode).toBe(0);
+      expect(result?.diagnostic).toHaveLength(2_000);
+      expect(result?.diagnostic).toContain("[truncated]");
+      const [executionId] = fs.readdirSync(
+        path.join(artifactRoot, "process-executions"),
+      );
+      expect(executionId).toBeDefined();
+      const evidencePath = path.join(
+        artifactRoot,
+        "process-executions",
+        executionId!,
+      );
+      expect(
+        fs.readFileSync(path.join(evidencePath, "stdout.txt"), "utf8"),
+      ).toBe("o".repeat(3_000));
+      expect(
+        fs.readFileSync(path.join(evidencePath, "stderr.txt"), "utf8"),
+      ).toBe("e".repeat(3_000));
+    },
+  );
   it("runs the exact configured command in the owned worktree and records evidence", async () => {
     const fixture = createFixture();
     fixture.runCommand.mockResolvedValue({

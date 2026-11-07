@@ -101,7 +101,7 @@ describe("Git and OpenCode startup compatibility", () => {
       );
       writeExecutable(
         "opencode",
-        `if [ "$1" = "--version" ]; then printf '${MINIMUM_OPENCODE_VERSION}\\n'; else printf '%s\\n' '--auto --model --variant --dir --session --format'; fi`,
+        `if [ "$1" = "--version" ]; then printf '${MINIMUM_OPENCODE_VERSION}\\n'; else printf '%03000d' 0; printf '%s\\n' '--auto --model --variant --dir --session --format'; printf '%03000d' 0 >&2; fi`,
       );
       process.env.PATH = fixtureRoot;
       await expect(

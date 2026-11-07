@@ -20,7 +20,9 @@ resource was inspected or used to mutate an external service.
   probes, runtime shutdown and relevant recovery dispatch. It is not the full
   workflow suite. It explicitly includes
   `tests/production-diagnostic-wiring.integration.test.ts`, which verifies
-  production worker diagnostic persistence and restart reconstruction.
+  production worker diagnostic persistence and restart reconstruction, plus
+  real-child verbose validation/coverage/maintenance capture and output-limit
+  integration coverage.
 - Retention additionally associates legacy session files with active run records
   using safe project/card-derived names, conservatively retains daily logs while
   any attempt is active, and scans runtime-root `process-executions` metadata.
@@ -99,9 +101,9 @@ below.
 
 ## Execution record
 
-Final-oracle rerun: `yarn validate` **passed** (140 files, 1,508 tests);
-`yarn test:p3` **passed** (31 files, 547 tests); and
-`yarn test:p3:container` **passed** (31 files, 547 tests). The suite now
+Final-oracle rerun: `yarn validate` **passed** (141 files, 1,516 tests);
+`yarn test:p3` **passed** (34 files, 570 tests); and
+`yarn test:p3:container` **passed** (34 files, 570 tests). The suite now
 explicitly includes `production-diagnostic-wiring.integration.test.ts`. Its
 retention scenario expires the actual worker's daily log from configured
 `storageRoot` only after `completeRefinement` records a canonical verified

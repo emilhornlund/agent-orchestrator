@@ -191,15 +191,20 @@ describe("CommandRunner", () => {
     }
   });
 
-  it("rejects oversized captured stdout instead of returning a truncated parseable prefix", async () => {
+  it("summarizes verbose captured output without terminating the command", async () => {
     const child = createFakeChild();
-    const longOutput = `${"output token-a ".repeat(200)}\n`;
+    const artifactDirectory = fs.mkdtempSync(
+      path.join(os.tmpdir(), "verbose-command-artifacts-"),
+    );
+    temporaryDirectories.push(artifactDirectory);
+    const longOutput = `${"output token-a ".repeat(300)}\n`;
+    const longErrorOutput = `${"warning token-a ".repeat(300)}\n`;
 
     spawnMock.mockImplementationOnce(() => {
       queueMicrotask(() => {
         child.stdout.emit("data", Buffer.from(longOutput));
-        child.stderr.emit("data", Buffer.from("warning token-a\n"));
-        child.emit("close", 0);
+        child.stderr.emit("data", Buffer.from(longErrorOutput));
+        child.emit("close", 9);
       });
       return child;
     });
@@ -209,11 +214,99 @@ describe("CommandRunner", () => {
       command: "yarn validate",
       captureOutput: true,
       secretValues: ["token-a"],
+      artifactDirectory,
     });
-    await expect(result).rejects.toThrow(
-      "stdout exceeded the 2000-byte output limit",
-    );
-    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+    await expect(result).resolves.toMatchObject({ exitCode: 9 });
+    const resolved = await result;
+    expect(resolved.output).toHaveLength(2_000);
+    expect(resolved.output).toContain("[truncated]");
+    expect(resolved.errorOutput).toHaveLength(2_000);
+    expect(resolved.errorOutput).toContain("[truncated]");
+    expect(child.kill).not.toHaveBeenCalled();
+    const [executionId] = fs.readdirSync(artifactDirectory);
+    expect(executionId).toBeDefined();
+    const executionDirectory = path.join(artifactDirectory, executionId!);
+    expect(
+      fs.readFileSync(path.join(executionDirectory, "stdout.txt"), "utf8"),
+    ).toContain("output [REDACTED]");
+    expect(
+      fs.readFileSync(path.join(executionDirectory, "stderr.txt"), "utf8"),
+    ).toContain("warning [REDACTED]");
+  });
+
+  it("returns complete Unicode output to machine-readable callers", async () => {
+    const child = createFakeChild();
+    const output = "✓🙂".repeat(800);
+    spawnMock.mockImplementationOnce(() => {
+      queueMicrotask(() => {
+        child.stdout.emit("data", Buffer.from(output));
+        child.emit("close", 0);
+      });
+      return child;
+    });
+    const result = await new CommandRunner().run({
+      cwd: "/worktree",
+      command: "machine-readable",
+      captureOutput: true,
+      capturePolicy: "complete",
+      suppressOutput: true,
+    });
+    expect(result.output).toBe(output);
+  });
+
+  it("decodes a multibyte character split across every child chunk boundary", async () => {
+    const child = createFakeChild();
+    const expected = "prefix🙂é終suffix";
+    const expectedError = "error✓漢🙂done";
+    const bytes = Buffer.from(expected);
+    const errorBytes = Buffer.from(expectedError);
+    spawnMock.mockImplementationOnce(() => {
+      queueMicrotask(() => {
+        for (
+          let index = 0;
+          index < Math.max(bytes.length, errorBytes.length);
+          index += 1
+        ) {
+          const stdoutByte = bytes[index];
+          const stderrByte = errorBytes[index];
+          if (stdoutByte !== undefined)
+            child.stdout.emit("data", Buffer.from([stdoutByte]));
+          if (stderrByte !== undefined)
+            child.stderr.emit("data", Buffer.from([stderrByte]));
+        }
+        child.emit("close", 0);
+      });
+      return child;
+    });
+    const result = await new CommandRunner().run({
+      cwd: "/worktree",
+      command: "split-utf8",
+      captureOutput: true,
+      capturePolicy: "complete",
+      suppressOutput: true,
+    });
+    expect(result.output).toBe(expected);
+    expect(result.errorOutput).toBe(expectedError);
+  });
+
+  it("replaces an incomplete terminal UTF-8 sequence when flushing the stream", async () => {
+    const child = createFakeChild();
+    spawnMock.mockImplementationOnce(() => {
+      queueMicrotask(() => {
+        child.stdout.emit("data", Buffer.from([0x61, 0xf0, 0x9f]));
+        child.emit("close", 0);
+      });
+      return child;
+    });
+    const result = await new CommandRunner().run({
+      cwd: "/worktree",
+      command: "incomplete-utf8",
+      captureOutput: true,
+      capturePolicy: "complete",
+      suppressOutput: true,
+    });
+    // Node's StringDecoder policy: malformed/incomplete UTF-8 becomes U+FFFD.
+    expect(result.output).toBe("a�");
   });
 
   it("passes operation credentials to the child and redacts command output", async () => {

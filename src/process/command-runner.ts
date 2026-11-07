@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 import {
   buildChildEnvironment,
   type ChildProcessFamily,
@@ -19,6 +20,7 @@ import {
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 import { getGitHubOperationProject } from "../github/github-operation-context.js";
 import {
+  PROCESS_CAPTURE_MAX_BYTES,
   appendBoundedOutput,
   beginProcessEvidence,
   drainProcessGroup,
@@ -67,6 +69,8 @@ export interface CommandRunOptions {
   signal?: AbortSignal;
   timeoutMilliseconds?: number;
   captureOutput?: boolean;
+  /** Summarize captured output for diagnostics, or return complete bounded output for parsing. */
+  capturePolicy?: "diagnostic-summary" | "complete";
   maxCaptureOutputLength?: number;
   suppressOutput?: boolean;
   environment?: Record<string, string>;
@@ -108,6 +112,7 @@ const defaultRunCommand: RunCommand = async ({
   signal,
   timeoutMilliseconds,
   captureOutput,
+  capturePolicy,
   maxCaptureOutputLength,
   suppressOutput,
   environment,
@@ -180,6 +185,8 @@ const defaultRunCommand: RunCommand = async ({
     let forceKillTimeout: NodeJS.Timeout | undefined;
     const stdoutRedactor = createSecretRedactor(effectiveSecretValues);
     const stderrRedactor = createSecretRedactor(effectiveSecretValues);
+    const stdoutDecoder = new StringDecoder("utf8");
+    const stderrDecoder = new StringDecoder("utf8");
     let outputFlushed = false;
     let capturedOutput: string | undefined;
     let capturedErrorOutput: string | undefined;
@@ -191,7 +198,7 @@ const defaultRunCommand: RunCommand = async ({
       stream: "stdout" | "stderr",
     ): string | undefined {
       if (captureOutput !== true || text.length === 0) return current;
-      const limit = maxCaptureOutputLength ?? MAX_EXTERNAL_DIAGNOSTIC_LENGTH;
+      const limit = PROCESS_CAPTURE_MAX_BYTES;
       try {
         return appendBoundedOutput(current ?? "", text, stream, limit);
       } catch (error) {
@@ -237,8 +244,10 @@ const defaultRunCommand: RunCommand = async ({
       }
 
       outputFlushed = true;
-      const stdout = stdoutRedactor.flush();
-      const stderr = stderrRedactor.flush();
+      const stdout =
+        stdoutRedactor.push(stdoutDecoder.end()) + stdoutRedactor.flush();
+      const stderr =
+        stderrRedactor.push(stderrDecoder.end()) + stderrRedactor.flush();
       writeOutput(stdout, process.stdout);
       writeOutput(stderr, process.stderr);
       capturedOutput = capture(stdout, capturedOutput, "stdout");
@@ -335,14 +344,14 @@ const defaultRunCommand: RunCommand = async ({
     }
 
     child.stdout.on("data", (chunk: Buffer) => {
-      const text = chunk.toString();
+      const text = stdoutDecoder.write(chunk);
       const redacted = stdoutRedactor.push(text);
       writeOutput(redacted, process.stdout);
       capturedOutput = capture(redacted, capturedOutput, "stdout");
     });
 
     child.stderr.on("data", (chunk: Buffer) => {
-      const text = chunk.toString();
+      const text = stderrDecoder.write(chunk);
       const redacted = stderrRedactor.push(text);
       writeOutput(redacted, process.stderr);
       capturedErrorOutput = capture(redacted, capturedErrorOutput, "stderr");
@@ -417,16 +426,22 @@ const defaultRunCommand: RunCommand = async ({
         exitCode: code ?? 1,
         ...(captureOutput === true
           ? {
-              output: presentExternalDiagnostic(
-                capturedOutput ?? "",
-                effectiveSecretValues,
-                maxCaptureOutputLength,
-              ),
-              errorOutput: presentExternalDiagnostic(
-                capturedErrorOutput ?? "",
-                effectiveSecretValues,
-                maxCaptureOutputLength,
-              ),
+              output:
+                capturePolicy === "complete"
+                  ? (capturedOutput ?? "")
+                  : presentExternalDiagnostic(
+                      capturedOutput ?? "",
+                      effectiveSecretValues,
+                      maxCaptureOutputLength ?? MAX_EXTERNAL_DIAGNOSTIC_LENGTH,
+                    ),
+              errorOutput:
+                capturePolicy === "complete"
+                  ? (capturedErrorOutput ?? "")
+                  : presentExternalDiagnostic(
+                      capturedErrorOutput ?? "",
+                      effectiveSecretValues,
+                      maxCaptureOutputLength ?? MAX_EXTERNAL_DIAGNOSTIC_LENGTH,
+                    ),
             }
           : {}),
       });

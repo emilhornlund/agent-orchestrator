@@ -46,6 +46,7 @@ async function probe(
       command: [executable, ...args].join(" "),
       timeoutMilliseconds,
       captureOutput: true,
+      capturePolicy: "complete",
       suppressOutput: true,
     });
   } catch (error) {
