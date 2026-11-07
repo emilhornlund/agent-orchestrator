@@ -8,7 +8,9 @@ import { TaskMutationBlockStore } from "../src/orchestrator/task-mutation-block-
 import { FeedbackLedgerStore } from "../src/task-session/feedback-ledger-store.js";
 import { PrMaintenanceStore } from "../src/task-session/pr-maintenance-store.js";
 import { ProjectRunAuthority } from "../src/task-session/project-run-authority.js";
+import { runTaskSessionReviewWithRepairs } from "../src/task-session/run-task-session-review-repairs.js";
 import { RunStore } from "../src/task-session/run-store.js";
+import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
 import { TaskMutationQueue } from "../src/task-session/task-mutation-queue.js";
 import { TaskPlanStore } from "../src/task-session/task-plan-store.js";
 import {
@@ -39,6 +41,197 @@ afterEach(() => {
 });
 
 describe("lease-backed project store projections", () => {
+  it("selects a review cycle budget atomically and preserves its bound on restart", async () => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "review-budget-authority-"));
+    const repository = path.join(root, "repository");
+    const worktrees = path.join(root, "worktrees");
+    const runtime = path.join(root, "runtime");
+    fs.mkdirSync(repository);
+    fs.mkdirSync(worktrees);
+    const project = {
+      id: "project-one",
+      repository: { path: repository, worktreeRoot: worktrees },
+    } as ProjectConfig;
+    const integrationId = JSON.stringify({
+      trelloBoardId: "board-one",
+      githubRepository: "owner/repository",
+    });
+    const pinned = {
+      integrationId,
+      projectId: project.id,
+      boardId: "board-one",
+      lists: {
+        ready: "ready",
+        working: "working",
+        review: "review",
+        failed: "failed",
+        done: "done",
+        backlog: "backlog",
+      },
+      repository: "owner/repository",
+      repositoryPath: repository,
+      worktreeRoot: worktrees,
+      storageRoot: runtime,
+    };
+    const lease = {
+      integrationId,
+      instanceId: "instance-one",
+      token: "lease-token-one",
+      assertHeld: vi.fn(),
+    };
+    const envelopeStore = new RunStore(runtime, "attempt-one", pinned, lease);
+    envelopeStore.create({
+      version: 1,
+      revision: 1,
+      projectId: project.id,
+      cardId: "card-one",
+      attemptId: "attempt-one",
+      taskKind: "implementation",
+      pinned,
+      lifecycle: "review",
+      checkpoint: "review",
+      publicationState: "none",
+      operation: { id: "cycle-two", kind: "review", generation: 1 },
+      wait: { reason: null, dependency: null, since: null, retryAt: null },
+      owner: {
+        instanceId: lease.instanceId,
+        token: lease.token,
+        generation: 1,
+      },
+      resources: [],
+      pendingOperations: [],
+      queue: [],
+      budgets: {
+        review: {
+          limit: 2,
+          used: 0,
+          episodeId: "card-one:initial-review",
+          trigger: "initial-implementation",
+        },
+      },
+      sessions: {},
+      artifacts: [],
+      expectedTrelloListId: "review",
+      terminalSync: "not-applicable",
+      terminalEvidence: null,
+      legacy: {},
+      compatibility: {},
+      updatedAt: new Date().toISOString(),
+    });
+    const authority = new ProjectRunAuthority(project.id, envelopeStore, 1);
+    const store = new TaskExecutionStore(runtime, project, authority);
+    const initial = {
+      version: 1 as const,
+      projectId: project.id,
+      cardId: "card-one",
+      phase: "review" as const,
+      primarySessionId: "primary-session",
+      sessionCreationStatus: "bound" as const,
+      expectedBranch: "agent/card-one",
+      operationKey: "cycle-two",
+      revision: 1,
+      retryCounters: { validation: 0, review: 0, ci: 0, humanFeedback: 0 },
+      createdAt: "2026-11-07T09:00:00.000Z",
+      updatedAt: "2026-11-07T09:00:00.000Z",
+    };
+    authority.run(() => store.create(initial));
+    let identity = `sha256:${"a".repeat(64)}`;
+    let reviewCalls = 0;
+    let repairCalls = 0;
+    let qualityCalls = 0;
+    const run = (maxAttempts: number) =>
+      runTaskSessionReviewWithRepairs({
+        store,
+        maxAttempts,
+        projectId: project.id,
+        cardId: "card-one",
+        operationKey: "cycle-two",
+        expectedPrimarySessionId: "primary-session",
+        runReview: async (previousFindings) => {
+          reviewCalls += 1;
+          return {
+            review: {
+              version: 1,
+              projectId: project.id,
+              cardId: "card-one",
+              verdict: "fail" as const,
+              requirementAssessments: [
+                {
+                  requirementId: "REQ-1",
+                  status: "unsatisfied" as const,
+                  details: "Missing",
+                  evidence: [],
+                },
+              ],
+              blockingFindings: previousFindings.length
+                ? previousFindings.map(({ id, kind, summary, detail }) => ({
+                    id,
+                    kind,
+                    summary,
+                    detail,
+                  }))
+                : [
+                    {
+                      kind: "incomplete" as const,
+                      summary: "Missing",
+                      detail: "Fix requirement",
+                    },
+                  ],
+              previousFindingAssessments: previousFindings.map(({ id }) => ({
+                findingId: id,
+                status: "unresolved" as const,
+              })),
+              reviewedContentIdentity: identity,
+            },
+            contentIdentity: identity,
+          };
+        },
+        repair: async () => {
+          repairCalls += 1;
+          identity = `sha256:${String(repairCalls).padStart(64, "b")}`;
+        },
+        rerunQuality: async () => {
+          qualityCalls += 1;
+        },
+        getCurrentContentIdentity: async () => identity,
+      });
+
+    const exhausted = await authority.run(() => run(3));
+    expect(exhausted.record.reviewRepair).toMatchObject({
+      cycleId: "cycle-two",
+      status: "exhausted",
+      maxAttempts: 3,
+    });
+    expect(exhausted.record.retryCounters.review).toBe(3);
+    expect({ reviewCalls, repairCalls, qualityCalls }).toEqual({
+      reviewCalls: 4,
+      repairCalls: 3,
+      qualityCalls: 3,
+    });
+    expect(envelopeStore.read()?.budgets.review).toMatchObject({
+      limit: 4,
+      used: 3,
+      episodeId: "cycle-two",
+    });
+
+    // A compatible restart with a lower configured value keeps the selected
+    // persisted cycle bound and recovers its durable final review without a
+    // fourth repair or a counter reset.
+    const restarted = await authority.run(() => run(1));
+    expect(restarted.record.reviewRepair?.maxAttempts).toBe(3);
+    expect(restarted.record.retryCounters.review).toBe(3);
+    expect({ reviewCalls, repairCalls, qualityCalls }).toEqual({
+      reviewCalls: 4,
+      repairCalls: 3,
+      qualityCalls: 3,
+    });
+    expect(envelopeStore.read()?.budgets.review).toMatchObject({
+      limit: 4,
+      used: 3,
+      episodeId: "cycle-two",
+    });
+  });
+
   it("routes queue, plan, feedback, maintenance, and blocker mutations only through the RunStore envelope", () => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), "run-authority-adapters-"));
     const repository = path.join(root, "repository");
