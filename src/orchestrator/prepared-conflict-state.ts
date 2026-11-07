@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import type { ProjectConfig } from "../config/config.js";
 import type { GitRebaseState } from "../git/git-client.js";
+import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 import {
   PersistedStateFileTooLargeError,
   readPersistedStateJson,
@@ -104,6 +105,29 @@ export function readPreparedConflict(
   project: ProjectConfig,
   cardId: string,
 ): PreparedConflictHandoff | null {
+  const authority = ProjectRunAuthority.current(project.id);
+  if (authority) {
+    const value = authority.read(`prepared-conflict-${cardId}`, (stored) =>
+      preparedConflictSchema.parse(stored),
+    );
+    if (value === null) return null;
+    if (
+      value.projectId !== project.id ||
+      value.cardId !== cardId ||
+      value.taskBranch !== `agent/${cardId}` ||
+      value.defaultBranch !== project.repository.defaultBranch ||
+      (value.rebase.headName !== `agent/${cardId}` &&
+        value.rebase.headName !== `refs/heads/agent/${cardId}`) ||
+      value.trustedTaskCommitSha === undefined ||
+      value.rebaseTargetSha === undefined ||
+      value.rebase.originalHead !== value.trustedTaskCommitSha ||
+      value.rebase.onto !== value.rebaseTargetSha
+    )
+      throw new Error(
+        `Prepared conflict projection does not match project ${project.id} and card ${cardId}`,
+      );
+    return value as PreparedConflictHandoff;
+  }
   if (typeof project.repository.worktreeRoot !== "string") {
     return null;
   }
@@ -231,6 +255,17 @@ export function writePreparedConflict(
     throw new Error("Cannot record prepared conflict: Git state is incomplete");
   }
 
+  const authority = ProjectRunAuthority.current(project.id);
+  if (authority) {
+    authority.mutate(
+      `prepared-conflict-${cardId}`,
+      null,
+      () => ({ value: result.data, result: undefined }),
+      (value) => preparedConflictSchema.parse(value),
+    );
+    return handoff;
+  }
+
   const handoffPath = statePath(project, cardId);
   const directory = path.dirname(handoffPath);
   const temporaryPath = `${handoffPath}.${process.pid}.tmp`;
@@ -260,6 +295,18 @@ export function writePreparedConflict(
 export function readPreparedConflicts(
   project: ProjectConfig,
 ): PreparedConflictHandoff[] {
+  const authority = ProjectRunAuthority.current(project.id);
+  if (authority) {
+    return authority
+      .list("prepared-conflict-", (value) =>
+        preparedConflictSchema.parse(value),
+      )
+      .map(({ value }) => value as PreparedConflictHandoff)
+      .filter(
+        (handoff) => readPreparedConflict(project, handoff.cardId) !== null,
+      )
+      .sort((first, second) => first.cardId.localeCompare(second.cardId));
+  }
   if (typeof project.repository.worktreeRoot !== "string") {
     return [];
   }
@@ -296,6 +343,12 @@ export function clearPreparedConflict(
   const handoff = readPreparedConflict(project, cardId);
 
   if (handoff === null) {
+    return;
+  }
+
+  const authority = ProjectRunAuthority.current(project.id);
+  if (authority) {
+    authority.remove(`prepared-conflict-${cardId}`);
     return;
   }
 

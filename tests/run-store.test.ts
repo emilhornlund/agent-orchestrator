@@ -62,6 +62,7 @@ function fixture(identity: ReturnType<typeof setup>["identity"]): RunRecord {
     projectId: "p",
     cardId: "card",
     attemptId: "attempt-1",
+    taskKind: "implementation",
     pinned: identity,
     lifecycle: "ready",
     checkpoint: "ready",
@@ -79,6 +80,7 @@ function fixture(identity: ReturnType<typeof setup>["identity"]): RunRecord {
     terminalSync: "not-applicable",
     terminalEvidence: null,
     legacy: {},
+    compatibility: {},
     updatedAt: new Date(0).toISOString(),
   };
 }
@@ -129,6 +131,12 @@ describe("RunStore authoritative foundation", () => {
             ...fixture(base.identity),
             attemptId,
             cardId: `card-${sequence}`,
+            taskKind:
+              source === "refinement" ||
+              event === "refinement-claimed" ||
+              event === "refinement-completed"
+                ? ("refinement" as const)
+                : ("implementation" as const),
             lifecycle: source,
             checkpoint:
               source === "waiting"
@@ -181,17 +189,21 @@ describe("RunStore authoritative foundation", () => {
           };
           store.create(initial);
           const observation = [
+            "refinement-completed",
             "merged",
             "closed-unmerged",
             "failed",
             "cancelled",
           ].includes(event);
+          const claim = [
+            "claim",
+            "implementation-claimed",
+            "refinement-claimed",
+          ].includes(event);
           const result = store.transition(
             1,
             1,
-            observation || event === "claim"
-              ? null
-              : { id: "matrix-op", generation: 1 },
+            observation || claim ? null : { id: "matrix-op", generation: 1 },
             event,
             source,
             target,
@@ -206,8 +218,7 @@ describe("RunStore authoritative foundation", () => {
                     retryAt: null,
                   },
                 };
-              if (event === "wait-resumed" || observation || event === "claim")
-                return run;
+              if (event === "wait-resumed" || observation || claim) return run;
               return {
                 ...run,
                 pendingOperations: [
@@ -220,10 +231,17 @@ describe("RunStore authoritative foundation", () => {
               };
             },
             observation
-              ? terminalProof(base.identity, event)
-              : event === "wait-entered" ||
-                  event === "wait-resumed" ||
-                  event === "claim"
+              ? event === "refinement-completed"
+                ? {
+                    prOutcome: "refinement-completed" as const,
+                    prObservationId: "refinement-observed",
+                    prVerifiedAt: new Date(0).toISOString(),
+                    trelloListId: base.identity.lists.backlog,
+                    trelloObservationId: "backlog-observed",
+                    trelloVerifiedAt: new Date(0).toISOString(),
+                  }
+                : terminalProof(base.identity, event)
+              : event === "wait-entered" || event === "wait-resumed" || claim
                 ? undefined
                 : "matrix-evidence",
           );
@@ -301,7 +319,7 @@ describe("RunStore authoritative foundation", () => {
   it("rejects wait-resumed from every lifecycle other than waiting through the source matrix", () => {
     const base = setup();
     for (const state of runLifecycleStates.filter(
-      (candidate) => candidate !== "waiting",
+      (candidate) => candidate !== "waiting" && candidate !== "refined",
     )) {
       const attemptId = `not-waiting-${state}`;
       const store = new RunStore(
@@ -786,6 +804,112 @@ describe("RunStore authoritative foundation", () => {
     registry.handoff(store, null, 1);
     expect(registry.read()?.attemptId).toBe("attempt-1");
     expect(registry.reconcile()?.attemptId).toBe("attempt-1");
+  });
+
+  it("scopes unpointed-attempt reconciliation to its canonical integration", () => {
+    const { root, lease, identity, store } = setup();
+    const firstRegistry = new RunRegistry(
+      identity.storageRoot,
+      identity.integrationId,
+      lease,
+    );
+    store.create(fixture(identity));
+    firstRegistry.handoff(store, null, 1);
+
+    const otherIdentity = {
+      ...identity,
+      integrationId: "another-integration",
+      projectId: "other-project",
+      boardId: "other-board",
+    };
+    const otherLease: RunStoreLease = {
+      integrationId: otherIdentity.integrationId,
+      instanceId: "other-instance",
+      token: "other-token",
+      assertHeld() {},
+    };
+    const otherStore = new RunStore(
+      otherIdentity.storageRoot,
+      "other-attempt",
+      otherIdentity,
+      otherLease,
+    );
+    otherStore.create({
+      ...fixture(otherIdentity),
+      projectId: otherIdentity.projectId,
+      attemptId: "other-attempt",
+      owner: {
+        instanceId: otherLease.instanceId,
+        token: otherLease.token,
+        generation: 1,
+      },
+    });
+    const otherRegistry = new RunRegistry(
+      otherIdentity.storageRoot,
+      otherIdentity.integrationId,
+      otherLease,
+    );
+    otherRegistry.handoff(otherStore, null, 1);
+    expect(firstRegistry.reconcile()?.attemptId).toBe("attempt-1");
+    expect(otherRegistry.reconcile()?.attemptId).toBe("other-attempt");
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it("opens a terminal predecessor with its persisted pins before a new-pin handoff", () => {
+    const { root, lease, identity, store } = setup();
+    const terminal = {
+      ...fixture(identity),
+      lifecycle: "failed" as const,
+      checkpoint: "failed" as const,
+      expectedTrelloListId: identity.lists.failed,
+      terminalSync: "verified" as const,
+      terminalEvidence: {
+        prOutcome: "no-pr-failure" as const,
+        prObservationId: "failure-readback",
+        prVerifiedAt: new Date().toISOString(),
+        trelloListId: identity.lists.failed,
+        trelloObservationId: "failed-list-readback",
+        trelloVerifiedAt: new Date().toISOString(),
+      },
+    };
+    store.create(terminal);
+    const registry = new RunRegistry(
+      identity.storageRoot,
+      identity.integrationId,
+      lease,
+    );
+    registry.handoff(store, null, 1);
+
+    const predecessor = RunStore.openWithPersistedIdentity(
+      identity.storageRoot,
+      terminal.attemptId,
+      lease,
+    );
+    expect(predecessor?.read()?.pinned.repositoryPath).toBe(
+      identity.repositoryPath,
+    );
+    const nextRepository = path.join(root, "new-repo");
+    const nextWorktrees = path.join(root, "new-worktrees");
+    fs.mkdirSync(nextRepository);
+    fs.mkdirSync(nextWorktrees);
+    const nextIdentity = {
+      ...identity,
+      repositoryPath: nextRepository,
+      worktreeRoot: nextWorktrees,
+    };
+    const nextStore = new RunStore(
+      identity.storageRoot,
+      "attempt-next",
+      nextIdentity,
+      lease,
+    );
+    nextStore.create({
+      ...fixture(nextIdentity),
+      attemptId: "attempt-next",
+    });
+    registry.handoff(nextStore, registry.read(), 2);
+    expect(registry.reconcile()?.attemptId).toBe("attempt-next");
+    fs.rmSync(root, { recursive: true, force: true });
   });
   it("rejects active registry replacement and dangling pointer recovery", () => {
     const { store, identity, lease } = setup();

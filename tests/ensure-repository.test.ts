@@ -98,7 +98,11 @@ describe("ensureRepository", () => {
     const root = createTemporaryDirectory();
     const repositoryPath = path.join(root, "repository");
     const project = createProject(repositoryPath);
-    const runGit = vi.fn<RunGit>().mockResolvedValue("true");
+    const runGit = vi
+      .fn<RunGit>()
+      .mockImplementation(async (_cwd, args) =>
+        args[0] === "remote" ? "git@github.com:owner/repository.git" : "true",
+      );
     const runCommand = vi
       .fn<RunCommand>()
       .mockImplementation(async (options) => {
@@ -178,7 +182,13 @@ describe("ensureRepository", () => {
     fs.mkdirSync(repositoryPath);
     fs.writeFileSync(markerPath, "preserve me");
 
-    const runGit = vi.fn<RunGit>().mockResolvedValue("true");
+    const runGit = vi
+      .fn<RunGit>()
+      .mockImplementation(async (_cwd, args) =>
+        args[0] === "remote"
+          ? "https://github.com/owner/repository.git"
+          : "true",
+      );
     const runCommand = vi.fn<RunCommand>();
 
     await ensureRepository(
@@ -189,7 +199,7 @@ describe("ensureRepository", () => {
 
     expect(runCommand).not.toHaveBeenCalled();
     expect(fs.readFileSync(markerPath, "utf8")).toBe("preserve me");
-    expect(runGit).toHaveBeenCalledTimes(1);
+    expect(runGit).toHaveBeenCalledTimes(2);
   });
 
   it("fails for an existing non-Git directory", async () => {
@@ -215,6 +225,34 @@ describe("ensureRepository", () => {
     expect(runCommand).not.toHaveBeenCalled();
   });
 
+  it("rejects a mismatched checkout origin without changing source files", async () => {
+    const root = createTemporaryDirectory();
+    const repositoryPath = path.join(root, "repository");
+    fs.mkdirSync(repositoryPath);
+    const sourceFile = path.join(repositoryPath, "important.txt");
+    fs.writeFileSync(sourceFile, "preserve source checkout\n");
+    const runGit = vi
+      .fn<RunGit>()
+      .mockImplementation(async (_cwd, args) =>
+        args[0] === "remote" ? "git@github.com:other/repository.git" : "true",
+      );
+    await expect(
+      ensureRepository(
+        createGit(runGit),
+        new CommandRunner(vi.fn<RunCommand>()),
+        createProject(repositoryPath),
+      ),
+    ).rejects.toThrow("Repository origin mismatch");
+    expect(fs.readFileSync(sourceFile, "utf8")).toBe(
+      "preserve source checkout\n",
+    );
+    expect(runGit).toHaveBeenCalledWith(repositoryPath, [
+      "remote",
+      "get-url",
+      "origin",
+    ]);
+  });
+
   it("fails when cloning fails", async () => {
     const root = createTemporaryDirectory();
     const repositoryPath = path.join(root, "repository");
@@ -228,7 +266,7 @@ describe("ensureRepository", () => {
         createProject(repositoryPath),
       ),
     ).rejects.toThrow(
-      `Failed to clone repository "owner/repository" into "${repositoryPath}": gh repo clone exited with code 1`,
+      "GitHub rejected the repository or credentials; verify project configuration and access",
     );
 
     expect(runGit).not.toHaveBeenCalled();

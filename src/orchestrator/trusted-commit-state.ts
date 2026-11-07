@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import type { ProjectConfig } from "../config/config.js";
 import type { GitClient } from "../git/git-client.js";
+import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 import {
   PersistedStateFileTooLargeError,
   readPersistedStateJson,
@@ -107,6 +108,24 @@ export function readPendingCommitState(
   project: ProjectConfig,
   cardId: string,
 ): PendingCommitState | null {
+  const authority = ProjectRunAuthority.current(project.id);
+  if (authority) {
+    const state = authority.read(
+      ProjectRunAuthority.commitKey("pending-commit", cardId),
+      (value) => pendingCommitStateSchema.parse(value),
+    );
+    if (
+      state &&
+      (state.projectId !== project.id ||
+        state.cardId !== cardId ||
+        state.taskBranch !== `agent/${cardId}` ||
+        state.defaultBranch !== project.repository.defaultBranch)
+    )
+      throw new Error(
+        "Pending commit projection does not match task ownership",
+      );
+    return state;
+  }
   const filePath = getPendingCommitStatePath(project, cardId);
   if (!fs.existsSync(filePath)) return null;
   const state = pendingCommitStateSchema.parse(
@@ -135,6 +154,16 @@ export function writePendingCommitState(
     state.defaultBranch !== project.repository.defaultBranch
   )
     throw new Error("Cannot persist mismatched pending commit intent");
+  const authority = ProjectRunAuthority.current(project.id);
+  if (authority) {
+    authority.mutate(
+      ProjectRunAuthority.commitKey("pending-commit", cardId),
+      null,
+      () => ({ value: state, result: undefined }),
+      (value) => pendingCommitStateSchema.parse(value),
+    );
+    return;
+  }
   const filePath = getPendingCommitStatePath(project, cardId);
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const temporaryPath = `${filePath}.${process.pid}.tmp`;
@@ -205,6 +234,11 @@ export function clearPendingCommitState(
   project: ProjectConfig,
   cardId: string,
 ): void {
+  const authority = ProjectRunAuthority.current(project.id);
+  if (authority) {
+    authority.remove(ProjectRunAuthority.commitKey("pending-commit", cardId));
+    return;
+  }
   fs.rmSync(getPendingCommitStatePath(project, cardId), { force: true });
 }
 
@@ -249,6 +283,24 @@ export function readTrustedCommitState(
   project: ProjectConfig,
   cardId: string,
 ): TrustedCommitState | null {
+  const authority = ProjectRunAuthority.current(project.id);
+  if (authority) {
+    const state = authority.read(
+      ProjectRunAuthority.commitKey("trusted-commit", cardId),
+      (value) => trustedCommitStateSchema.parse(value),
+    );
+    if (
+      state &&
+      (state.projectId !== project.id ||
+        state.cardId !== cardId ||
+        state.taskBranch !== `agent/${cardId}` ||
+        state.defaultBranch !== project.repository.defaultBranch)
+    )
+      throw new Error(
+        "Trusted commit projection does not match task ownership",
+      );
+    return state;
+  }
   const statePath = getStatePath(project, cardId);
 
   if (!fs.existsSync(statePath)) {
@@ -293,6 +345,24 @@ export function readRejectedCommitState(
   project: ProjectConfig,
   cardId: string,
 ): RejectedCommitState | null {
+  const authority = ProjectRunAuthority.current(project.id);
+  if (authority) {
+    const state = authority.read(
+      ProjectRunAuthority.commitKey("rejected-commit", cardId),
+      (value) => rejectedCommitStateSchema.parse(value),
+    );
+    if (
+      state &&
+      (state.projectId !== project.id ||
+        state.cardId !== cardId ||
+        state.taskBranch !== `agent/${cardId}` ||
+        state.defaultBranch !== project.repository.defaultBranch)
+    )
+      throw new Error(
+        "Rejected commit projection does not match task ownership",
+      );
+    return state;
+  }
   const statePath = getRejectedStatePath(project, cardId);
 
   if (!fs.existsSync(statePath)) {
@@ -344,6 +414,17 @@ export function writeTrustedCommitState(
     throw new Error("Cannot record trusted commit state: state is incomplete");
   }
 
+  const authority = ProjectRunAuthority.current(project.id);
+  if (authority) {
+    authority.mutate(
+      ProjectRunAuthority.commitKey("trusted-commit", cardId),
+      null,
+      () => ({ value: result.data, result: undefined }),
+      (value) => trustedCommitStateSchema.parse(value),
+    );
+    return;
+  }
+
   const statePath = getStatePath(project, cardId);
   const temporaryPath = `${statePath}.${process.pid}.tmp`;
 
@@ -376,6 +457,17 @@ export function writeRejectedCommitState(
 
   if (!result.success) {
     throw new Error("Cannot record rejected commit state: state is incomplete");
+  }
+
+  const authority = ProjectRunAuthority.current(project.id);
+  if (authority) {
+    authority.mutate(
+      ProjectRunAuthority.commitKey("rejected-commit", cardId),
+      null,
+      () => ({ value: result.data, result: undefined }),
+      (value) => rejectedCommitStateSchema.parse(value),
+    );
+    return;
   }
 
   const statePath = getRejectedStatePath(project, cardId);

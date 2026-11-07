@@ -1,6 +1,6 @@
 import type { ProjectConfig } from "../config/config.js";
 
-/** The oldest gh release whose commands and JSON fields are supported here. */
+/** The oldest gh release whose executable capabilities are supported here. */
 export const MINIMUM_SUPPORTED_GITHUB_CLI_VERSION = "2.40.0";
 
 export interface GitHubCliVersion {
@@ -72,6 +72,11 @@ export const GITHUB_CLI_COMMAND_CAPABILITIES: readonly GitHubCliCommandCapabilit
       name: "gh repo clone",
       args: ["repo", "clone", "--help"],
       requiredHelpOptions: [],
+    },
+    {
+      name: "gh repo view",
+      args: ["repo", "view", "--help"],
+      requiredHelpOptions: ["--json"],
     },
     {
       name: "gh pr list",
@@ -233,42 +238,8 @@ export async function validateGitHubCliCompatibility(
     }
   }
 
-  const project = projects[0];
-
-  if (project === undefined) {
-    throw new GitHubCliCompatibilityError(
-      "no configured project is available to validate pull request JSON fields",
-    );
-  }
-
-  const jsonOutput = await runCompatibilityCheck(
-    run,
-    [
-      "pr",
-      "list",
-      "--repo",
-      project.repository.github,
-      "--state",
-      "all",
-      "--limit",
-      "1",
-      "--json",
-      GITHUB_CLI_REQUIRED_PR_JSON_FIELDS.join(","),
-    ],
-    `required pull request JSON fields for repository "${project.repository.github}"`,
-    project,
-  );
-
-  try {
-    const parsed: unknown = JSON.parse(jsonOutput);
-
-    if (!Array.isArray(parsed)) {
-      throw new Error("response was not a JSON array");
-    }
-  } catch (error) {
-    throw new GitHubCliCompatibilityError(
-      `required pull request JSON fields for repository "${project.repository.github}" returned invalid JSON`,
-      error,
-    );
-  }
+  // This is strictly an executable/version/capability probe. Repository
+  // authentication, permissions, and remote availability are resource checks
+  // and must not be inferred from whichever project happens to be first.
+  void projects;
 }

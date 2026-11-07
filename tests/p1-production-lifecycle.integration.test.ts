@@ -5,8 +5,17 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { ProjectConfig } from "../src/config/config.js";
+import type { Config, ProjectConfig } from "../src/config/config.js";
 import { GitClient, type RunGit } from "../src/git/git-client.js";
+import {
+  acquireProjectOwnership,
+  provisionCoordinationNamespace,
+  type ProjectOwnershipLease,
+} from "../src/coordination/project-ownership.js";
+import { verifyAndPinProjects } from "../src/coordination/project-registry.js";
+import { ProjectRunAuthority } from "../src/task-session/project-run-authority.js";
+import type { RunRecord } from "../src/task-session/run-record.js";
+import { withGitHubOperationProject } from "../src/github/github-operation-context.js";
 import type { GitHubClient } from "../src/github/github-client.js";
 import {
   OpenCodeClient,
@@ -23,7 +32,9 @@ import type { TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
 
 const execFile = promisify(nodeExecFile);
 let roots: string[] = [];
-afterEach(() => {
+const leases: ProjectOwnershipLease[] = [];
+afterEach(async () => {
+  await Promise.all(leases.splice(0).map((lease) => lease.release()));
   for (const root of roots) fs.rmSync(root, { recursive: true, force: true });
   roots = [];
 });
@@ -133,6 +144,49 @@ describe("P1 production lifecycle through pollProject", () => {
           commit: { model: "commit", variant: "low" },
           timeoutMinutes: 1,
         },
+      };
+      const coordinationRoot = path.join(root, "coordination");
+      fs.mkdirSync(coordinationRoot);
+      provisionCoordinationNamespace(coordinationRoot, "p1-test");
+      const orchestrationConfig = {
+        projects: [project],
+        workflow: {
+          contextRoot,
+          coordinationRoot,
+          coordinationNamespaceId: "p1-test",
+          pollIntervalSeconds: 1,
+          logRetentionDays: 30,
+          contextRetentionDays: 30,
+        },
+      } as Config;
+      const lease = await acquireProjectOwnership(
+        coordinationRoot,
+        {
+          trelloBoardId: project.trello.boardId,
+          githubRepository: project.repository.github,
+        },
+        "p1-test",
+      );
+      leases.push(lease);
+      const hostPin = (
+        await verifyAndPinProjects(orchestrationConfig, [lease])
+      )[0]!;
+      const pinned: RunRecord["pinned"] = {
+        integrationId: hostPin.integrationId,
+        projectId: project.id,
+        boardId: project.trello.boardId,
+        lists: {
+          ready: project.trello.readyListId,
+          working: project.trello.workingListId,
+          review: project.trello.reviewListId,
+          failed: project.trello.failedListId,
+          done: project.trello.doneListId,
+          backlog: project.trello.backlogListId,
+        },
+        repository: hostPin.repository.github,
+        repositoryPath: hostPin.repository.path,
+        worktreeRoot: hostPin.repository.worktreeRoot,
+        storageRoot: hostPin.storageRoot,
       };
       fs.writeFileSync(
         path.join(source, "validate.js"),
@@ -509,9 +563,84 @@ describe("P1 production lifecycle through pollProject", () => {
         }
       });
       const signal = new AbortController().signal;
-      const poll = () =>
-        pollProject(trello, git, github, openCode, commands, project, signal);
-      const store = new TaskExecutionStore(contextRoot, project);
+      const authorities = new Map<string, ProjectRunAuthority>();
+      let activeAuthority: ProjectRunAuthority | undefined;
+      const poll = async () => {
+        if (activeAuthority === undefined) {
+          const eligible = await trello.getCards(project.trello.readyListId);
+          const selected = eligible.find((card) =>
+            card.idLabels.includes("feature"),
+          );
+          if (selected === undefined) return;
+          activeAuthority = await ProjectRunAuthority.createPreparingAttempt({
+            projectId: project.id,
+            cardId: selected.id,
+            taskKind: "implementation",
+            pinned,
+            projectLease: lease,
+            coordinationRoot,
+            budgets: {
+              validation: {
+                limit: 5,
+                used: 0,
+                episodeId: `${selected.id}:validation`,
+                trigger: "initial",
+              },
+              review: {
+                limit: 5,
+                used: 0,
+                episodeId: `${selected.id}:review`,
+                trigger: "initial",
+              },
+              ci: {
+                limit: 2,
+                used: 0,
+                episodeId: `${selected.id}:ci`,
+                trigger: "publication",
+              },
+            },
+          });
+          activeAuthority.claim();
+          authorities.set(selected.id, activeAuthority);
+        }
+        const authority = activeAuthority;
+        await authority.run(() =>
+          withGitHubOperationProject(project, () =>
+            pollProject(
+              trello,
+              git,
+              github,
+              openCode,
+              commands,
+              project,
+              signal,
+              undefined,
+              undefined,
+              undefined,
+              authority,
+            ),
+          ),
+        );
+        const completed = authority.store.read();
+        if (
+          completed &&
+          ["done", "refined", "failed", "cancelled"].includes(
+            completed.lifecycle,
+          ) &&
+          completed.terminalSync === "verified"
+        ) {
+          await authority.releaseVerifiedTerminal();
+          activeAuthority = undefined;
+        }
+      };
+      const store = {
+        read: (cardId: string) => {
+          const authority = authorities.get(cardId);
+          return new TaskExecutionStore(contextRoot, project, authority).read(
+            cardId,
+          );
+        },
+      };
       loseCreateAcknowledgement = ackLoss;
       if (ackLoss) {
         await expect(poll()).rejects.toThrow(
@@ -555,9 +684,12 @@ describe("P1 production lifecycle through pollProject", () => {
         expect(store.read("next")).toBeNull();
         expect(fs.existsSync(path.join(worktrees, "next"))).toBe(false);
         expect(openCodeCards).not.toContain("next");
+        expect(store.read("first")?.phase).toBe("attention-required");
         expect(
-          new TaskExecutionStore(contextRoot, project).read("first")?.phase,
-        ).toBe("attention-required");
+          fs.existsSync(
+            path.join(contextRoot, "task-executions", project.id, "first.json"),
+          ),
+        ).toBe(false);
         expect(
           ledger.some(
             ({ service, action }) =>
@@ -573,7 +705,7 @@ describe("P1 production lifecycle through pollProject", () => {
         attempt += 1
       )
         await poll();
-      const record = new TaskExecutionStore(contextRoot, project).read("first");
+      const record = store.read("first");
       expect(record?.phase).toBe("human-feedback");
       const firstPr = prs.get("agent/first");
       expect(firstPr).toBeDefined();
@@ -629,6 +761,11 @@ describe("P1 production lifecycle through pollProject", () => {
       )
         await poll();
       expect(lists.get("first")).toBe(destination);
+      const firstAuthority = authorities.get("first");
+      expect(firstAuthority?.store.read()).toMatchObject({
+        lifecycle: terminal === "merged" ? "done" : "cancelled",
+        terminalSync: "verified",
+      });
       const terminalReadback = await (
         trello as unknown as {
           getCard: (id: string) => Promise<TrelloCard>;
@@ -668,6 +805,15 @@ describe("P1 production lifecycle through pollProject", () => {
       ).toBeLessThan(ledger.length);
       trapNextClaim = true;
       await expect(poll()).rejects.toThrow("observed next claim boundary");
+      expect(authorities.get("next")?.store.read()).toMatchObject({
+        cardId: "next",
+        lifecycle: "planning",
+      });
+      expect(
+        fs.existsSync(
+          path.join(contextRoot, "task-executions", project.id, "next.json"),
+        ),
+      ).toBe(false);
       expect(
         ledger.some(
           (event) => event.id === "next" && event.action === "move:working",

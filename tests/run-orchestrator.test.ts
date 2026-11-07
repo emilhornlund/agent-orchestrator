@@ -5,6 +5,14 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Config, ProjectConfig } from "../src/config/config.js";
+import {
+  acquireProjectOwnership,
+  provisionCoordinationNamespace,
+} from "../src/coordination/project-ownership.js";
+import { verifyAndPinProjects } from "../src/coordination/project-registry.js";
+import { ProjectRunAuthority } from "../src/task-session/project-run-authority.js";
+import { RunRegistry, RunStore } from "../src/task-session/run-store.js";
+import { TaskMutationQueue } from "../src/task-session/task-mutation-queue.js";
 import type { GitClient } from "../src/git/git-client.js";
 import {
   GitHubMergeStateUnknownError,
@@ -162,6 +170,171 @@ describe("runOrchestrator", () => {
 
   afterEach(() => {
     fs.rmSync(runtimeStorageRoot, { recursive: true, force: true });
+  });
+
+  it("exits a completed attempt scope before readiness retries and the next-card poll", async () => {
+    const controller = new AbortController();
+    const repositoryPath = path.join(runtimeStorageRoot, "repository");
+    const worktreeRoot = path.join(runtimeStorageRoot, "worktrees");
+    const storageRoot = path.join(runtimeStorageRoot, "attempt-state");
+    const coordinationRoot = path.join(runtimeStorageRoot, "coordination");
+    fs.mkdirSync(repositoryPath);
+    fs.mkdirSync(worktreeRoot);
+    fs.mkdirSync(storageRoot);
+    fs.mkdirSync(coordinationRoot);
+    provisionCoordinationNamespace(coordinationRoot, "scope-test");
+    const project = {
+      ...createProject("scope-project"),
+      repository: {
+        ...createProject("scope-project").repository,
+        path: repositoryPath,
+        worktreeRoot,
+      },
+    };
+    const config = {
+      ...createConfig([project], 0.001),
+      workflow: {
+        ...createConfig([project], 0.001).workflow,
+        contextRoot: storageRoot,
+        coordinationRoot,
+        coordinationNamespaceId: "scope-test",
+      },
+    } as Config;
+    const lease = await acquireProjectOwnership(
+      coordinationRoot,
+      {
+        trelloBoardId: project.trello.boardId,
+        githubRepository: project.repository.github,
+      },
+      "scope-test",
+    );
+    try {
+      const hostPin = (await verifyAndPinProjects(config, [lease]))[0]!;
+      const pinned = {
+        integrationId: hostPin.integrationId,
+        projectId: project.id,
+        boardId: project.trello.boardId,
+        lists: {
+          ready: project.trello.readyListId,
+          working: project.trello.workingListId,
+          review: project.trello.reviewListId,
+          failed: project.trello.failedListId,
+          done: project.trello.doneListId,
+          backlog: project.trello.backlogListId,
+        },
+        repository: hostPin.repository.github,
+        repositoryPath: hostPin.repository.path,
+        worktreeRoot: hostPin.repository.worktreeRoot,
+        storageRoot: hostPin.storageRoot,
+      };
+      const initialAuthority = await ProjectRunAuthority.createPreparingAttempt(
+        {
+          projectId: project.id,
+          cardId: "refinement-card",
+          taskKind: "refinement",
+          pinned,
+          projectLease: lease,
+          coordinationRoot,
+        },
+      );
+      initialAuthority.claim();
+      const readyCard = {
+        id: "next-card",
+        name: "Next implementation",
+        desc: "Implement the next task.",
+        idList: project.trello.readyListId,
+        idLabels: [project.trello.featureLabelId],
+        url: "https://trello.test/next-card",
+      } satisfies TrelloCard;
+      const trello = {
+        getCards: vi.fn(async (listId: string) =>
+          listId === project.trello.readyListId ? [readyCard] : [],
+        ),
+      } as unknown as TrelloClient;
+      let pollCount = 0;
+      pollProject.mockImplementation(async (...args) => {
+        pollCount += 1;
+        const authority = args.at(-1) as ProjectRunAuthority;
+        expect(ProjectRunAuthority.current(project.id)).toBe(authority);
+        if (pollCount === 1) {
+          expect(authority.store.read()?.cardId).toBe("refinement-card");
+          await authority.completeRefinement({
+            observationId: "refinement-complete",
+            observedAt: new Date().toISOString(),
+            trelloObservationId: "backlog-readback",
+            trelloVerifiedAt: new Date().toISOString(),
+          });
+          return;
+        }
+        expect(authority.store.read()?.cardId).toBe("next-card");
+        const queue = new TaskMutationQueue(storageRoot, project);
+        queue.enqueue({
+          projectId: project.id,
+          cardId: "next-card",
+          eventId: "next-card-event",
+          operationKey: "next-card-operation",
+          kind: "implementation",
+          enqueuedAt: new Date().toISOString(),
+        });
+        controller.abort();
+      });
+      let readinessCount = 0;
+      const deferredReadiness = vi.fn(async () => {
+        readinessCount += 1;
+        if (readinessCount === 2)
+          throw new Error("temporary readiness outage after terminal release");
+      });
+      const contexts = new Map([
+        [
+          project.id,
+          {
+            authority: initialAuthority,
+            projectLease: lease,
+            pinned,
+            coordinationRoot,
+          },
+        ],
+      ]);
+      await runOrchestrator(
+        trello,
+        {} as GitClient,
+        {} as GitHubClient,
+        {} as OpenCodeClient,
+        {} as CommandRunner,
+        config,
+        controller.signal,
+        undefined,
+        deferredReadiness,
+        contexts,
+      );
+      expect(pollCount).toBe(2);
+      expect(readinessCount).toBeGreaterThanOrEqual(4);
+      expect(
+        fs.existsSync(getReconciliationBlockPath(storageRoot, project.id)),
+      ).toBe(false);
+      expect(
+        fs.existsSync(
+          path.join(storageRoot, "task-mutation-queues", `${project.id}.json`),
+        ),
+      ).toBe(false);
+      const pointer = new RunRegistry(storageRoot, pinned.integrationId, {
+        integrationId: pinned.integrationId,
+        instanceId: lease.instanceId,
+        token: lease.token,
+        assertHeld: () => lease.assertHeld(),
+      }).reconcile();
+      expect(pointer).not.toBeNull();
+      expect(
+        new RunStore(storageRoot, pointer!.attemptId, pinned, {
+          integrationId: pinned.integrationId,
+          instanceId: lease.instanceId,
+          token: lease.token,
+          assertHeld: () => lease.assertHeld(),
+        }).read()?.cardId,
+      ).toBe("next-card");
+    } finally {
+      await lease.release();
+    }
   });
 
   it("runs project workers concurrently", async () => {

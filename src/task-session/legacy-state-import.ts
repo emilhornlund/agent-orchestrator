@@ -18,6 +18,7 @@ import {
   type RunLifecycleState,
 } from "./run-record.js";
 import { RunRegistry, RunStore, type RunStoreLease } from "./run-store.js";
+import { ProjectRunAuthority } from "./project-run-authority.js";
 
 export interface LegacySourceRecord {
   readonly family: string;
@@ -27,6 +28,90 @@ export interface LegacySourceRecord {
   readonly sha256: string;
   readonly bytes: Uint8Array;
   readonly parsed: unknown;
+}
+
+export function legacyAttemptId(taskInput: unknown): string {
+  const task = parseTaskExecutionRecord(taskInput);
+  return `legacy-${createHash("sha256")
+    .update(`${task.projectId}\0${task.cardId}\0${task.createdAt}`)
+    .digest("hex")
+    .slice(0, 32)}`;
+}
+
+function buildLegacyCompatibilityProjection(
+  sources: readonly LegacySourceRecord[],
+  projectId: string,
+  cardId: string,
+): Record<string, unknown> {
+  const compatibility: Record<string, unknown> = {};
+  for (const source of sources) {
+    let key: string | undefined;
+    let value: unknown;
+    switch (source.family) {
+      case "task-executions":
+        if (source.cardId !== cardId) continue;
+        key = `task-execution-${cardId}`;
+        value = parseTaskExecutionRecord(source.parsed);
+        break;
+      case "task-mutation-queues":
+        key = ProjectRunAuthority.queueKey(projectId);
+        value = parseTaskMutationQueue(source.parsed);
+        break;
+      case "task-mutation-blocks":
+        key = ProjectRunAuthority.mutationBlocksKey(projectId);
+        value = parseTaskMutationBlock(source.parsed);
+        break;
+      case "task-plans":
+        if (source.cardId !== cardId) continue;
+        key = ProjectRunAuthority.taskKey("task-plan", cardId);
+        value = parseStoredTaskPlan(source.parsed);
+        break;
+      case "feedback-ledgers":
+        if (source.cardId !== cardId) continue;
+        key = ProjectRunAuthority.taskKey("feedback-ledger", cardId);
+        value = parseFeedbackLedger(source.parsed);
+        break;
+      case "pr-maintenance":
+        key = ProjectRunAuthority.taskKey("maintenance", projectId);
+        value = parsePrMaintenanceStore(source.parsed, projectId);
+        break;
+      case "reconciliation-block":
+        key = ProjectRunAuthority.reconciliationBlockKey(projectId);
+        value = source.parsed;
+        break;
+      case "trusted-commits":
+      case "pending-commits":
+      case "rejected-commits": {
+        if (source.cardId !== cardId) continue;
+        const state = parseLegacyCommitState(source.parsed);
+        key = ProjectRunAuthority.commitKey(state.kind, cardId);
+        value = state;
+        break;
+      }
+      case "prepared-conflicts":
+        if (source.cardId !== cardId) continue;
+        key = `prepared-conflict-${cardId}`;
+        value = source.parsed;
+        break;
+      case "session-artifacts":
+        // These bytes are preserved in the immutable migration artifact and
+        // remain linked through the validated task source manifest.
+        continue;
+      default:
+        throw new Error(
+          `No canonical compatibility projection is defined for legacy family ${source.family}`,
+        );
+    }
+    if (key === undefined) continue;
+    if (Object.hasOwn(compatibility, key))
+      throw new Error(`Duplicate legacy compatibility projection ${key}`);
+    compatibility[key] = value;
+  }
+  if (!Object.hasOwn(compatibility, `task-execution-${cardId}`))
+    throw new Error(
+      "Legacy compatibility snapshot is missing task execution state",
+    );
+  return compatibility;
 }
 
 function readSafeDirectory(directory: string): fs.Dirent[] | null {
@@ -612,7 +697,7 @@ export function buildLegacyRunSnapshot(input: {
   };
   const timestamp = input.now ?? new Date();
   const stamp = timestamp.toISOString();
-  const attemptId = `legacy-${createHash("sha256").update(`${task.projectId}\0${task.cardId}\0${task.createdAt}`).digest("hex").slice(0, 32)}`;
+  const attemptId = legacyAttemptId(task);
   const sourcePhase: Record<string, RunLifecycleState> = {
     planning: "planning",
     implementation: "implementation",
@@ -640,6 +725,21 @@ export function buildLegacyRunSnapshot(input: {
   const hasPr =
     task.pullRequest !== undefined || task.externalRecovery !== undefined;
   const primarySession = task.primarySessionId;
+  const compatibility = buildLegacyCompatibilityProjection(
+    input.sources,
+    task.projectId,
+    task.cardId,
+  );
+  const hasPreparedConflict = input.sources.some(
+    (source) =>
+      source.family === "prepared-conflicts" && source.cardId === task.cardId,
+  );
+  const recoveryDisposition =
+    task.phase === "attention-required" ||
+    task.phase === "done" ||
+    hasPreparedConflict
+      ? "operator-reconciliation-required"
+      : "task-session-reconcile";
   const run = parseRunRecord({
     version: 1,
     revision: 1,
@@ -650,13 +750,23 @@ export function buildLegacyRunSnapshot(input: {
     lifecycle: "waiting",
     checkpoint,
     publicationState: hasPr ? "unknown" : "none",
-    operation: { id: null, kind: null, generation: 0 },
+    operation: {
+      id: task.operationKey,
+      kind: `task-phase-${task.phase}`,
+      generation: 1,
+    },
     wait: {
-      reason:
-        task.phase === "done"
+      reason: hasPreparedConflict
+        ? "legacy-prepared-conflict-reconciliation"
+        : task.phase === "done"
           ? "legacy-terminal-unverified"
-          : "legacy-migration-reconciliation",
-      dependency: "legacy-state",
+          : task.phase === "attention-required"
+            ? "legacy-attention-required"
+            : "legacy-execution-reconciliation",
+      dependency:
+        recoveryDisposition === "task-session-reconcile"
+          ? "task-session"
+          : "operator",
       since: stamp,
       retryAt: null,
     },
@@ -714,7 +824,9 @@ export function buildLegacyRunSnapshot(input: {
       externalRecovery: task.externalRecovery ?? null,
       sourceManifestHash,
       sourceManifest,
+      recoveryDisposition,
     },
+    compatibility,
     updatedAt: stamp,
   });
   return { record: run, artifacts: [artifact] };
@@ -1112,6 +1224,7 @@ export function migrateLegacyProject(options: {
   pinned: RunRecord["pinned"];
   lease: RunStoreLease;
   store: RunStore;
+  storeForAttempt?: (attemptId: string) => RunStore;
   registry: RunRegistry;
   now?: Date;
   afterDurableStage?: (stage: MigrationMarker["stage"]) => void;
@@ -1146,8 +1259,74 @@ export function migrateLegacyProject(options: {
     lease: options.lease,
     ...(options.now ? { now: options.now } : {}),
   });
+  const markerId = createHash("sha256")
+    .update(`${options.lease.integrationId}:${candidate.record.attemptId}`)
+    .digest("hex");
+  const markerPath = path.join(
+    options.pinned.storageRoot,
+    "migrations",
+    `${markerId}.json`,
+  );
+  const currentPointer = options.registry.read();
+  if (fs.existsSync(markerPath)) {
+    const marker = z
+      .object({
+        version: z.literal(1),
+        integrationId: z.string(),
+        attemptId: z.string(),
+        manifestHash: z.string(),
+        stage: z.enum([
+          "snapshots-complete",
+          "candidate-installed",
+          "pointer-published",
+          "complete",
+          "artifacts-durable",
+          "candidate-durable",
+          "pointer-durable",
+        ]),
+      })
+      .passthrough()
+      .parse(readMigrationMarker(markerPath));
+    if (
+      marker.integrationId !== options.lease.integrationId ||
+      marker.attemptId !== candidate.record.attemptId ||
+      marker.manifestHash !== candidate.record.legacy.sourceManifestHash
+    )
+      throw new Error(
+        "Legacy migration marker identity conflicts with source snapshot",
+      );
+    if (
+      marker.stage === "complete" &&
+      currentPointer?.attemptId === candidate.record.attemptId
+    ) {
+      const existingStore = RunStore.openWithPersistedIdentity(
+        options.pinned.storageRoot,
+        candidate.record.attemptId,
+        options.lease,
+      );
+      if (!existingStore)
+        throw new Error("Completed migration candidate disappeared");
+      const existing = existingStore.read();
+      if (
+        !existing ||
+        existing.legacy.sourceManifestHash !==
+          candidate.record.legacy.sourceManifestHash
+      )
+        throw new Error(
+          "Completed legacy migration marker does not match its durable candidate",
+        );
+      return { status: "imported", record: existing };
+    }
+    if (
+      marker.stage === "complete" &&
+      currentPointer !== null &&
+      currentPointer.attemptId !== candidate.record.attemptId
+    )
+      return { status: "no-legacy-task" };
+  }
   const record = migrateLegacyAttempt({
-    store: options.store,
+    store:
+      options.storeForAttempt?.(candidate.record.attemptId) ?? options.store,
     registry: options.registry,
     lease: options.lease,
     candidate,

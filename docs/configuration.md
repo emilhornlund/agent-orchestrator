@@ -20,10 +20,12 @@ The service loads `config.yaml` and then validates the process environment. A mi
 field, blank required value, or invalid value is a startup error. Configuration parsing reports repository-relative field
 paths such as `projects.0.repository.path`.
 
-Before repository bootstrap or project processing begins, startup requires GitHub CLI (`gh`) version `2.40.0` or later and
-validates the command and pull-request JSON capabilities listed in [Operations](operations.md#github-cli-compatibility). A
-missing executable, unsupported version, unavailable command, unsupported JSON field, or failed capability probe is a fatal
-startup/configuration error rather than a later card-specific workflow failure.
+Before housekeeping, repository bootstrap, or project processing begins, startup requires Git `2.30.0` or later, OpenCode
+`1.0.0` or later, and GitHub CLI (`gh`) `2.40.0` or later. Git/OpenCode version output and the OpenCode `run` options
+consumed by this service are probed locally; gh version and enabled command help capabilities are also checked. A missing,
+inaccessible, malformed, unsupported, or capability-incomplete executable is a fatal startup error with a local remediation
+message. These are executable compatibility checks, not project authentication/resource checks: gh does not contact the first
+configured repository during compatibility validation. Trello/GitHub resource validation remains project-scoped and separate.
 
 ## Environment variables
 
@@ -63,8 +65,8 @@ must be unique.
 | `logRetentionDays`        | Positive integer number of days for managed log retention; defaults to `14` when omitted  |
 | `contextRetentionDays`    | Positive integer number of days for card context retention; defaults to `14` when omitted |
 | `contextRoot`             | Optional absolute root for card context; defaults to `/opt/.agent-context`                |
-| `coordinationRoot`        | Optional absolute host-visible directory for canonical project ownership coordination     |
-| `coordinationNamespaceId` | Expected identity of the explicitly provisioned coordination namespace                    |
+| `coordinationRoot`        | Required absolute host-visible directory for canonical project ownership coordination     |
+| `coordinationNamespaceId` | Required identity of the explicitly provisioned coordination namespace                    |
 | `maxAttachmentBytes`      | Optional positive safe integer per-upload limit in bytes; defaults to 50 MiB              |
 | `maxTotalAttachmentBytes` | Optional positive safe integer aggregate new-download limit in bytes; defaults to 200 MiB |
 
@@ -72,13 +74,14 @@ must be unique.
 and absolute. The root must not equal, contain, or be contained by any configured `projects[].repository.path` or
 `projects[].repository.worktreeRoot`, including after normalization. Unknown `workflow` keys are rejected.
 
-Configure `coordinationRoot` and `coordinationNamespaceId` together. The directory must be explicitly created with protected
+Configure `coordinationRoot` and `coordinationNamespaceId` for every production run. The directory must be explicitly created with protected
 ownership/permissions and provisioned with the versioned `.agent-orchestrator-coordination.json` marker before acquisition; the
 coordination API never creates an arbitrary root or marker. Every local/container participant must mount the **same host directory**
 at its configured runtime path and use the same namespace ID. A copied marker in independent directories is not shared coordination.
 Operators must establish and verify this common-mount contract; isolated namespaces hidden from each other cannot be discovered by
-the application. Production startup does not acquire ownership through these settings yet; that wiring is delivered by the later
-production-integration task. Do not rely on these settings alone to coordinate running instances before then.
+the application. Startup acquires canonical project ownership before housekeeping/bootstrap and records project integration,
+Trello resource, repository, worktree, and context-storage pins in the host registry. A removed or redirected pinned project must
+be explicitly reconciled; do not delete registry evidence to bypass the check.
 
 Card context storage uses this layout, with project IDs, card IDs, and attachment filenames treated as untrusted single path
 components:

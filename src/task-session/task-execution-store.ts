@@ -7,6 +7,7 @@ import {
   parseTaskExecutionRecord,
   type TaskExecutionRecord,
 } from "./task-execution-record.js";
+import { ProjectRunAuthority } from "./project-run-authority.js";
 
 export const MAX_TASK_EXECUTION_RECORD_BYTES = 1024 * 1024;
 
@@ -190,10 +191,16 @@ function serializeRecord(record: TaskExecutionRecord): string {
 
 export class TaskExecutionStore {
   private readonly directoryPath: string;
+  private readonly authority: ProjectRunAuthority | undefined;
 
-  constructor(rootDirectory: string, project: ProjectConfig) {
+  constructor(
+    rootDirectory: string,
+    project: ProjectConfig,
+    authority?: ProjectRunAuthority,
+  ) {
     const root = assertStorageRoot(rootDirectory, project);
     this.directoryPath = path.join(root, "task-executions", project.id);
+    this.authority = authority ?? ProjectRunAuthority.current(project.id);
   }
 
   private getRecordPath(cardId: string): string {
@@ -202,6 +209,18 @@ export class TaskExecutionStore {
   }
 
   read(cardId: string): TaskExecutionRecord | null {
+    if (this.authority !== undefined) {
+      const value = this.authority.read(
+        `task-execution-${cardId}`,
+        parseTaskExecutionRecord,
+      );
+      if (
+        value &&
+        (value.projectId !== this.projectId || value.cardId !== cardId)
+      )
+        throw new Error("Task execution projection identity mismatch");
+      return value;
+    }
     const filePath = this.getRecordPath(cardId);
 
     if (!assertDirectoryPath(this.directoryPath, false)) {
@@ -218,6 +237,21 @@ export class TaskExecutionStore {
       throw new Error(
         "A new task execution record must belong to this project and start at revision 1",
       );
+    }
+
+    if (this.authority !== undefined) {
+      return this.authority.mutateTaskExecution({
+        key: `task-execution-${record.cardId}`,
+        initial: null,
+        operation: (value) => {
+          if (value !== null)
+            throw new TaskExecutionRecordConflictError(
+              "Run already contains task execution projection",
+            );
+          return { value: record, result: record };
+        },
+        validate: parseTaskExecutionRecord,
+      });
     }
 
     const filePath = this.getRecordPath(record.cardId);
@@ -259,6 +293,12 @@ export class TaskExecutionStore {
     cardId: string,
     expectedRevision: number,
     nextRecordInput: TaskExecutionRecord,
+    terminal?: {
+      event: "merged" | "closed-unmerged" | "failed";
+      evidence: NonNullable<
+        import("./run-record.js").RunRecord["terminalEvidence"]
+      >;
+    },
   ): TaskExecutionRecord {
     if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1) {
       throw new Error(
@@ -267,6 +307,38 @@ export class TaskExecutionStore {
     }
 
     const nextRecord = parseTaskExecutionRecord(nextRecordInput);
+
+    if (this.authority !== undefined) {
+      return this.authority.mutateTaskExecution({
+        key: `task-execution-${cardId}`,
+        initial: null,
+        operation: (value) => {
+          const current =
+            value === null ? null : parseTaskExecutionRecord(value);
+          if (current === null || current.revision !== expectedRevision)
+            throw new TaskExecutionRecordConflictError(
+              "Task execution projection revision conflict",
+            );
+          if (
+            nextRecord.projectId !== current.projectId ||
+            nextRecord.cardId !== cardId ||
+            nextRecord.revision !== expectedRevision + 1
+          )
+            throw new Error(
+              "Updated task execution projection must preserve identity and increment revision exactly once",
+            );
+          return { value: nextRecord, result: nextRecord };
+        },
+        validate: parseTaskExecutionRecord,
+        ...(terminal === undefined ? {} : { terminal }),
+      });
+    }
+
+    if (terminal !== undefined)
+      throw new Error(
+        "Verified terminal transitions require canonical RunStore authority",
+      );
+
     const filePath = this.getRecordPath(cardId);
 
     if (!assertDirectoryPath(this.directoryPath, false)) {

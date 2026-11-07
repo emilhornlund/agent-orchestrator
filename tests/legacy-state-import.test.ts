@@ -16,6 +16,7 @@ import type { ProjectConfig } from "../src/config/config.js";
 import { provisionCoordinationNamespace } from "../src/coordination/project-ownership.js";
 import { writeReconciliationBlock } from "../src/orchestrator/reconciliation-block-storage.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
+import { ProjectRunAuthority } from "../src/task-session/project-run-authority.js";
 import { TaskMutationQueue } from "../src/task-session/task-mutation-queue.js";
 import { TaskPlanStore } from "../src/task-session/task-plan-store.js";
 import { FeedbackLedgerStore } from "../src/task-session/feedback-ledger-store.js";
@@ -27,6 +28,13 @@ import {
   writeTrustedCommitState,
 } from "../src/orchestrator/trusted-commit-state.js";
 import { writePreparedConflict } from "../src/orchestrator/prepared-conflict-state.js";
+import { readPreparedConflict } from "../src/orchestrator/prepared-conflict-state.js";
+import {
+  readPendingCommitState,
+  readRejectedCommitState,
+  readTrustedCommitState,
+} from "../src/orchestrator/trusted-commit-state.js";
+import { loadReconciliationBlock } from "../src/orchestrator/reconciliation-block-storage.js";
 import type { TaskExecutionRecord } from "../src/task-session/task-execution-record.js";
 
 const legacy = {
@@ -119,7 +127,7 @@ describe("legacy state import", () => {
     });
     expect(built.record.lifecycle).toBe("waiting");
     expect(built.record.checkpoint).toBe("human-feedback");
-    expect(built.record.wait.reason).toBe("legacy-migration-reconciliation");
+    expect(built.record.wait.reason).toBe("legacy-execution-reconciliation");
     expect(built.record.publicationState).toBe("unknown");
     expect(built.record.sessions.primary).toBe("session-primary");
     expect(built.record.legacy.retryCounters).toEqual(legacy.retryCounters);
@@ -182,7 +190,14 @@ describe("legacy state import", () => {
       expect(mapped.record.wait.reason).toBe(
         phase === "done"
           ? "legacy-terminal-unverified"
-          : "legacy-migration-reconciliation",
+          : phase === "attention-required"
+            ? "legacy-attention-required"
+            : "legacy-execution-reconciliation",
+      );
+      expect(mapped.record.legacy.recoveryDisposition).toBe(
+        phase === "done" || phase === "attention-required"
+          ? "operator-reconciliation-required"
+          : "task-session-reconcile",
       );
     },
   );
@@ -258,7 +273,7 @@ describe("legacy state import", () => {
           "complete",
         ]),
       );
-      expect(result?.wait.reason).toBe("legacy-migration-reconciliation");
+      expect(result?.wait.reason).toBe("legacy-execution-reconciliation");
       expect(registry.reconcile()?.attemptId).toBe(candidate.record.attemptId);
       const successorLease = {
         ...lease,
@@ -532,6 +547,118 @@ describe("legacy state import", () => {
         "task-plans",
         "trusted-commits",
       ]);
+      const integrationId = JSON.stringify({
+        trelloBoardId: "board",
+        githubRepository: "owner/repository",
+      });
+      const migrationLease = { ...lease, integrationId };
+      const migrationPinned = {
+        ...pinned,
+        integrationId,
+        repositoryPath: project.repository.path,
+        worktreeRoot: project.repository.worktreeRoot,
+        storageRoot: runtime,
+      };
+      const migrationRegistry = new RunRegistry(
+        runtime,
+        integrationId,
+        migrationLease,
+      );
+      const importedAttempt = migrateLegacyProject({
+        runtimeRoot: runtime,
+        project,
+        pinned: migrationPinned,
+        lease: migrationLease,
+        store: new RunStore(
+          runtime,
+          "migration-candidate",
+          migrationPinned,
+          migrationLease,
+        ),
+        storeForAttempt: (attemptId) =>
+          new RunStore(runtime, attemptId, migrationPinned, migrationLease),
+        registry: migrationRegistry,
+      });
+      expect(importedAttempt.status).toBe("imported");
+      if (importedAttempt.status !== "imported")
+        throw new Error("expected imported attempt");
+      expect(importedAttempt.record).toMatchObject({
+        lifecycle: "waiting",
+        publicationState: "unknown",
+        checkpoint: "human-feedback",
+        wait: { reason: "legacy-prepared-conflict-reconciliation" },
+        legacy: { recoveryDisposition: "operator-reconciliation-required" },
+      });
+      for (const projectionKey of [
+        "task-execution-card-one",
+        ProjectRunAuthority.queueKey(projectId),
+        ProjectRunAuthority.mutationBlocksKey(projectId),
+        ProjectRunAuthority.taskKey("maintenance", projectId),
+        ProjectRunAuthority.taskKey("task-plan", "card-one"),
+        ProjectRunAuthority.taskKey("feedback-ledger", "card-one"),
+        ProjectRunAuthority.commitKey("trusted-commit", "card-one"),
+        ProjectRunAuthority.commitKey("pending-commit", "card-one"),
+        ProjectRunAuthority.commitKey("rejected-commit", "card-one"),
+        `prepared-conflict-card-one`,
+        ProjectRunAuthority.reconciliationBlockKey(projectId),
+      ])
+        expect(
+          importedAttempt.record.compatibility[projectionKey],
+        ).toBeDefined();
+      for (const source of result.records)
+        expect(fs.readFileSync(source.path)).toEqual(Buffer.from(source.bytes));
+      const migratedStore = new RunStore(
+        runtime,
+        importedAttempt.record.attemptId,
+        migrationPinned,
+        migrationLease,
+      );
+      const generation = importedAttempt.record.owner.generation;
+      expect(
+        migratedStore.readCompatibility(
+          generation,
+          ProjectRunAuthority.queueKey(projectId),
+          (value) => value,
+        ),
+      ).toEqual(
+        result.records.find(
+          (source) => source.family === "task-mutation-queues",
+        )?.parsed,
+      );
+      const importedAuthority = new ProjectRunAuthority(
+        projectId,
+        migratedStore,
+        generation,
+      );
+      importedAuthority.run(() => {
+        expect(
+          new TaskExecutionStore(runtime, project).read("card-one"),
+        ).toEqual(legacy);
+        expect(new TaskMutationQueue(runtime, project).list()).toHaveLength(1);
+        expect(
+          new TaskPlanStore(runtime, project).read("card-one"),
+        ).not.toBeNull();
+        expect(
+          new FeedbackLedgerStore(runtime, project).read("card-one"),
+        ).not.toBeNull();
+        expect(new PrMaintenanceStore(runtime, project).inspect()).toHaveLength(
+          1,
+        );
+        expect(
+          new TaskMutationBlockStore(runtime, projectId).report(
+            "migration-scope",
+            "migration-identity",
+            "normal v1 block",
+          ),
+        ).toBe(false);
+        expect(readTrustedCommitState(project, "card-one")).not.toBeNull();
+        expect(readPendingCommitState(project, "card-one")).not.toBeNull();
+        expect(readRejectedCommitState(project, "card-one")).not.toBeNull();
+        expect(readPreparedConflict(project, "card-one")).not.toBeNull();
+        expect(loadReconciliationBlock(runtime, projectId).status).toBe(
+          "loaded",
+        );
+      });
       const maintenanceFile = path.join(maintenance, "project-one.json");
       const originalMaintenance = JSON.parse(
         fs.readFileSync(maintenanceFile, "utf8"),

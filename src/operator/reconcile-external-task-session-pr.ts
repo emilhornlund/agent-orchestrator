@@ -10,6 +10,8 @@ import { TaskExecutionStore } from "../task-session/task-execution-store.js";
 import { TaskMutationQueue } from "../task-session/task-mutation-queue.js";
 import { TrelloClient } from "../trello/trello-client.js";
 import { reconcileExternalTaskSessionPullRequest } from "../orchestrator/reconcile-external-task-session-pr.js";
+import { acquireProjectRunOperatorContext } from "./project-run-operator-context.js";
+import { withGitHubOperationProject } from "../github/github-operation-context.js";
 
 const usage =
   "Usage: yarn reconcile:external-pr --project ID --card ID --commit SHA --branch BRANCH --pr NUMBER";
@@ -87,46 +89,60 @@ export async function runExternalTaskSessionRecovery(
   const githubCredentials = new GitHubCredentialProvider();
   const github = new GitHubClient(undefined, githubCredentials);
   const git = new GitClient(undefined, githubCredentials);
-  const taskStore = new TaskExecutionStore(
-    config.workflow.contextRoot,
-    project,
+  const operatorContext = await acquireProjectRunOperatorContext(
+    config,
+    projectConfig,
   );
-  const queue = new TaskMutationQueue(config.workflow.contextRoot, project);
-  const relevantListIds = [
-    project.trello.workingListId,
-    project.trello.reviewListId,
-    project.trello.failedListId,
-    project.trello.doneListId,
-  ];
-
-  await reconcileExternalTaskSessionPullRequest({
-    project,
-    association: { ...association, projectId: project.id },
-    github,
-    git,
-    taskStore,
-    queue,
-    trello,
-    doneListId: project.trello.doneListId,
-    readTrelloListId: async () => {
-      const lists = await Promise.all(
-        relevantListIds.map(async (listId) => ({
-          listId,
-          cards: await trello.getCards(listId),
-        })),
-      );
-      const locations = lists.flatMap(({ listId, cards }) =>
-        cards
-          .filter((card) => card.id === association.cardId)
-          .map(() => listId),
-      );
-      if (locations.length !== 1)
-        throw new Error(
-          `Expected exactly one authoritative Trello location for ${association.cardId}; found ${locations.length}`,
+  try {
+    await operatorContext.run(() =>
+      withGitHubOperationProject(project, async () => {
+        const taskStore = new TaskExecutionStore(
+          config.workflow.contextRoot,
+          project,
         );
-      return locations[0]!;
-    },
-  });
+        const queue = new TaskMutationQueue(
+          config.workflow.contextRoot,
+          project,
+        );
+        const relevantListIds = [
+          project.trello.workingListId,
+          project.trello.reviewListId,
+          project.trello.failedListId,
+          project.trello.doneListId,
+        ];
+        await reconcileExternalTaskSessionPullRequest({
+          project,
+          association: { ...association, projectId: project.id },
+          github,
+          git,
+          taskStore,
+          queue,
+          trello,
+          doneListId: project.trello.doneListId,
+          readTrelloListId: async () => {
+            const lists = await Promise.all(
+              relevantListIds.map(async (listId) => ({
+                listId,
+                cards: await trello.getCards(listId),
+              })),
+            );
+            const locations = lists.flatMap(({ listId, cards }) =>
+              cards
+                .filter((card) => card.id === association.cardId)
+                .map(() => listId),
+            );
+            if (locations.length !== 1)
+              throw new Error(
+                `Expected exactly one authoritative Trello location for ${association.cardId}; found ${locations.length}`,
+              );
+            return locations[0]!;
+          },
+        });
+      }),
+    );
+  } finally {
+    await operatorContext.release();
+  }
 }
 
 if (

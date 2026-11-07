@@ -3,8 +3,17 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { ProjectConfig } from "../src/config/config.js";
+import type { Config, ProjectConfig } from "../src/config/config.js";
 import { GitClient } from "../src/git/git-client.js";
+import {
+  acquireProjectOwnership,
+  provisionCoordinationNamespace,
+  type ProjectOwnershipLease,
+} from "../src/coordination/project-ownership.js";
+import { verifyAndPinProjects } from "../src/coordination/project-registry.js";
+import { ProjectRunAuthority } from "../src/task-session/project-run-authority.js";
+import type { RunRecord } from "../src/task-session/run-record.js";
+import { withGitHubOperationProject } from "../src/github/github-operation-context.js";
 import { GitHubClient } from "../src/github/github-client.js";
 import {
   OpenCodeClient,
@@ -18,10 +27,13 @@ import {
 } from "../src/process/command-runner.js";
 import { pollProject } from "../src/orchestrator/poll-project.js";
 import { TaskMutationQueue } from "../src/task-session/task-mutation-queue.js";
+import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
 import type { TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
 
 let root: string;
-afterEach(() => {
+const leases: ProjectOwnershipLease[] = [];
+afterEach(async () => {
+  await Promise.all(leases.splice(0).map((lease) => lease.release()));
   if (root !== undefined) fs.rmSync(root, { recursive: true, force: true });
 });
 
@@ -66,6 +78,47 @@ describe("task-session refinement scheduling", () => {
         timeoutMinutes: 1,
       },
     } as ProjectConfig & { contextRoot: string };
+    const coordinationRoot = path.join(root, "coordination");
+    fs.mkdirSync(coordinationRoot);
+    provisionCoordinationNamespace(coordinationRoot, "refinement-test");
+    const config = {
+      projects: [project],
+      workflow: {
+        contextRoot,
+        coordinationRoot,
+        coordinationNamespaceId: "refinement-test",
+        pollIntervalSeconds: 1,
+        logRetentionDays: 30,
+        contextRetentionDays: 30,
+      },
+    } as Config;
+    const lease = await acquireProjectOwnership(
+      coordinationRoot,
+      {
+        trelloBoardId: project.trello.boardId,
+        githubRepository: project.repository.github,
+      },
+      "refinement-test",
+    );
+    leases.push(lease);
+    const pin = (await verifyAndPinProjects(config, [lease]))[0]!;
+    const pinned: RunRecord["pinned"] = {
+      integrationId: pin.integrationId,
+      projectId: project.id,
+      boardId: project.trello.boardId,
+      lists: {
+        ready: project.trello.readyListId,
+        working: project.trello.workingListId,
+        review: project.trello.reviewListId,
+        failed: project.trello.failedListId,
+        done: project.trello.doneListId,
+        backlog: project.trello.backlogListId,
+      },
+      repository: pin.repository.github,
+      repositoryPath: pin.repository.path,
+      worktreeRoot: pin.repository.worktreeRoot,
+      storageRoot: pin.storageRoot,
+    };
     const readyCard: TrelloCard = {
       id: "refine-card",
       name: "Clarify feature",
@@ -152,14 +205,32 @@ describe("task-session refinement scheduling", () => {
     const openCode = new OpenCodeClient(openCodeRun);
     const commands = new CommandRunner(vi.fn());
 
-    await pollProject(
-      trello,
-      git,
-      github,
-      openCode,
-      commands,
-      project,
-      new AbortController().signal,
+    const refinementAuthority =
+      await ProjectRunAuthority.createPreparingAttempt({
+        projectId: project.id,
+        cardId: readyCard.id,
+        taskKind: "refinement",
+        pinned,
+        projectLease: lease,
+        coordinationRoot,
+      });
+    refinementAuthority.claim();
+    await refinementAuthority.run(() =>
+      withGitHubOperationProject(project, () =>
+        pollProject(
+          trello,
+          git,
+          github,
+          openCode,
+          commands,
+          project,
+          new AbortController().signal,
+          undefined,
+          undefined,
+          undefined,
+          refinementAuthority,
+        ),
+      ),
     );
 
     expect(openCodeRun).toHaveBeenCalledOnce();
@@ -175,6 +246,11 @@ describe("task-session refinement scheduling", () => {
       project.trello.refinementLabelId,
     );
     expect(githubRun).not.toHaveBeenCalled();
+    expect(refinementAuthority.store.read()).toMatchObject({
+      lifecycle: "refined",
+      terminalSync: "verified",
+      expectedTrelloListId: project.trello.backlogListId,
+    });
     expect(openCodeRun).toHaveBeenCalledWith(
       expect.objectContaining({
         model: "refine",
@@ -182,7 +258,7 @@ describe("task-session refinement scheduling", () => {
       }),
     );
     expect(
-      new TaskMutationQueue(contextRoot, project)
+      new TaskMutationQueue(contextRoot, project, refinementAuthority)
         .list()
         .map(({ cardId, kind, status }) => ({ cardId, kind, status })),
     ).toEqual([
@@ -191,12 +267,86 @@ describe("task-session refinement scheduling", () => {
         kind: "refinement",
         status: "completed",
       },
-      {
-        cardId: implementationCard.id,
-        kind: "implementation",
-        status: "queued",
-      },
     ]);
+    const nextAuthority = await ProjectRunAuthority.createPreparingAttempt({
+      projectId: project.id,
+      cardId: implementationCard.id,
+      taskKind: "implementation",
+      pinned,
+      projectLease: lease,
+      coordinationRoot,
+    });
+    nextAuthority.claim();
+    expect(nextAuthority.store.read()).toMatchObject({
+      cardId: implementationCard.id,
+      lifecycle: "planning",
+    });
+    expect(
+      fs.existsSync(
+        path.join(contextRoot, "task-mutation-queues", `${project.id}.json`),
+      ),
+    ).toBe(false);
+    const implementationProject = {
+      ...project,
+      repository: { ...project.repository, setupCommand: "yarn install" },
+    };
+    const failedSetupCommands = new CommandRunner(
+      vi.fn<RunCommand>().mockResolvedValue({
+        exitCode: 1,
+        output: "setup failed",
+        errorOutput: "",
+      }),
+    );
+    await expect(
+      nextAuthority.run(() =>
+        withGitHubOperationProject(implementationProject, () =>
+          pollProject(
+            trello,
+            git,
+            github,
+            openCode,
+            failedSetupCommands,
+            implementationProject,
+            new AbortController().signal,
+            undefined,
+            undefined,
+            undefined,
+            nextAuthority,
+          ),
+        ),
+      ),
+    ).rejects.toThrow("repository setup exited with code 1");
+    expect(cardLists.get(implementationCard.id)).toBe(
+      project.trello.workingListId,
+    );
+    expect(nextAuthority.store.read()).toMatchObject({
+      cardId: implementationCard.id,
+      lifecycle: "planning",
+      terminalSync: "not-applicable",
+    });
+    expect(
+      new TaskExecutionStore(contextRoot, project, nextAuthority).read(
+        implementationCard.id,
+      )?.phase,
+    ).toBe("planning");
+    expect(
+      new TaskMutationQueue(contextRoot, project, nextAuthority)
+        .list()
+        .find((event) => event.cardId === implementationCard.id)?.status,
+    ).toBe("failed");
+    expect(openCodeRun.mock.calls.map(([options]) => options.model)).toEqual([
+      "refine",
+    ]);
+    expect(
+      fs.existsSync(
+        path.join(
+          contextRoot,
+          "task-executions",
+          project.id,
+          `${implementationCard.id}.json`,
+        ),
+      ),
+    ).toBe(false);
   });
 
   it("keeps an implementation-first Ready card as the sole mutation owner ahead of refinement", async () => {

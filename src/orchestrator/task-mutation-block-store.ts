@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
+import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 
 const blockerSchema = z.strictObject({
   key: z.string().regex(/^[a-f0-9]{64}$/),
@@ -86,10 +87,12 @@ function ensureDirectory(directory: string): void {
 /** Durable, independently keyed suppression for mutation-queue blockers. */
 export class TaskMutationBlockStore {
   private readonly filePath: string;
+  private readonly authority: ProjectRunAuthority | undefined;
 
   constructor(
     contextRoot: string,
     private readonly projectId: string,
+    authority?: ProjectRunAuthority,
   ) {
     if (!path.isAbsolute(contextRoot))
       throw new Error("Task mutation block root must be absolute");
@@ -107,6 +110,9 @@ export class TaskMutationBlockStore {
       "task-mutation-queues",
       `${projectId}.block.json`,
     );
+    this.authority = authority ?? ProjectRunAuthority.current(projectId);
+    if (authority && authority.projectId !== projectId)
+      throw new Error("Task mutation block authority project mismatch");
   }
 
   report(
@@ -116,6 +122,29 @@ export class TaskMutationBlockStore {
   ): boolean {
     const key = this.hash(scopeInput);
     const identity = this.hash(identityInput);
+    if (this.authority !== undefined)
+      return this.authority.mutate(
+        ProjectRunAuthority.mutationBlocksKey(this.projectId),
+        { version: 1, projectId: this.projectId, blockers: [] },
+        (value) => {
+          const previous = stateSchema.parse(parseTaskMutationBlock(value));
+          const current = previous.blockers.find(
+            (blocker) => blocker.key === key,
+          );
+          if (current?.identity === identity)
+            return { value: previous, result: false };
+          const state = stateSchema.parse({
+            version: 1,
+            projectId: this.projectId,
+            blockers: [
+              ...previous.blockers.filter((blocker) => blocker.key !== key),
+              { key, identity, diagnostic },
+            ],
+          });
+          return { value: state, result: true };
+        },
+        stateSchema.parse,
+      );
     const previous = this.read();
     const current = previous.blockers.find((blocker) => blocker.key === key);
     if (current?.identity === identity) return false;
@@ -145,6 +174,24 @@ export class TaskMutationBlockStore {
 
   resolve(scopeInput: string): void {
     const key = this.hash(scopeInput);
+    if (this.authority !== undefined) {
+      this.authority.mutate(
+        ProjectRunAuthority.mutationBlocksKey(this.projectId),
+        { version: 1, projectId: this.projectId, blockers: [] },
+        (value) => {
+          const previous = stateSchema.parse(parseTaskMutationBlock(value));
+          const remaining = previous.blockers.filter(
+            (blocker) => blocker.key !== key,
+          );
+          return {
+            value: stateSchema.parse({ ...previous, blockers: remaining }),
+            result: undefined,
+          };
+        },
+        stateSchema.parse,
+      );
+      return;
+    }
     const previous = this.read();
     if (!previous.blockers.some((blocker) => blocker.key === key)) return;
     const remaining = previous.blockers.filter(
@@ -189,6 +236,13 @@ export class TaskMutationBlockStore {
   }
 
   private read(): z.infer<typeof stateSchema> {
+    if (this.authority !== undefined)
+      return (
+        this.authority.read(
+          ProjectRunAuthority.mutationBlocksKey(this.projectId),
+          stateSchema.parse,
+        ) ?? { version: 1, projectId: this.projectId, blockers: [] }
+      );
     try {
       const stat = fs.lstatSync(this.filePath, { throwIfNoEntry: false });
       if (stat === undefined)

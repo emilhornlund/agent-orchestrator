@@ -6,6 +6,7 @@ import { parseEnvironment } from "../config/environment.js";
 import { TaskExecutionStore } from "../task-session/task-execution-store.js";
 import { TaskMutationQueue } from "../task-session/task-mutation-queue.js";
 import { TrelloClient } from "../trello/trello-client.js";
+import { acquireProjectRunOperatorContext } from "./project-run-operator-context.js";
 
 const usage =
   "Usage: yarn recover:legacy-mutation --project ID --event EVENT_ID --confirm-never-started";
@@ -37,28 +38,6 @@ export async function recoverLegacyRetiredMutation(
   if (configured === undefined)
     throw new Error(`Unknown project: ${projectId}`);
   const project = { ...configured, contextRoot: config.workflow.contextRoot };
-  const event = new TaskMutationQueue(config.workflow.contextRoot, project)
-    .list()
-    .find((candidate) => candidate.eventId === eventId);
-  if (
-    event === undefined ||
-    event.projectId !== project.id ||
-    !["implementation", "refinement"].includes(event.kind) ||
-    event.status !== "completed"
-  )
-    throw new Error(
-      "The specified event is not a legacy completed Ready mutation",
-    );
-
-  const taskStore = new TaskExecutionStore(
-    config.workflow.contextRoot,
-    project,
-  );
-  if (taskStore.read(event.cardId) !== null)
-    throw new Error(
-      `Task execution ownership exists for ${event.cardId}; preserving the completed mutation`,
-    );
-
   const environment = parseEnvironment(process.env);
   const trello = new TrelloClient({
     apiKey: environment.TRELLO_API_KEY,
@@ -66,23 +45,56 @@ export async function recoverLegacyRetiredMutation(
     signal: new AbortController().signal,
     timeoutMilliseconds: 30_000,
   });
-  const [readyCards, workingCards] = await Promise.all([
-    trello.getCards(project.trello.readyListId),
-    trello.getCards(project.trello.workingListId),
-  ]);
-  if (
-    !readyCards.some((card) => card.id === event.cardId) ||
-    workingCards.some((card) => card.id === event.cardId)
-  )
-    throw new Error(
-      `Card ${event.cardId} must be verified in Ready for Agent and absent from Working before recovery`,
-    );
-
-  const queue = new TaskMutationQueue(config.workflow.contextRoot, project);
-  const recovered = queue.retireLegacyCompletedEvent(eventId, true);
-  process.stdout.write(
-    `Recorded operator-confirmed retirement for ${recovered.eventId}; the next workflow poll may schedule it as a fresh attempt.\n`,
+  const operatorContext = await acquireProjectRunOperatorContext(
+    config,
+    configured,
   );
+  try {
+    await operatorContext.run(async () => {
+      const queue = new TaskMutationQueue(config.workflow.contextRoot, project);
+      const event = queue
+        .list()
+        .find((candidate) => candidate.eventId === eventId);
+      if (
+        event === undefined ||
+        event.projectId !== project.id ||
+        !["implementation", "refinement"].includes(event.kind) ||
+        event.status !== "completed"
+      )
+        throw new Error(
+          "The specified event is not a legacy completed Ready mutation in the canonical attempt projection",
+        );
+
+      const taskStore = new TaskExecutionStore(
+        config.workflow.contextRoot,
+        project,
+      );
+      if (taskStore.read(event.cardId) !== null)
+        throw new Error(
+          `Task execution ownership exists for ${event.cardId}; preserving the completed mutation`,
+        );
+
+      const [readyCards, workingCards] = await Promise.all([
+        trello.getCards(project.trello.readyListId),
+        trello.getCards(project.trello.workingListId),
+      ]);
+      operatorContext.lease.assertHeld();
+      if (
+        !readyCards.some((card) => card.id === event.cardId) ||
+        workingCards.some((card) => card.id === event.cardId)
+      )
+        throw new Error(
+          `Card ${event.cardId} must be verified in Ready for Agent and absent from Working before recovery`,
+        );
+
+      const recovered = queue.retireLegacyCompletedEvent(eventId, true);
+      process.stdout.write(
+        `Recorded operator-confirmed retirement for ${recovered.eventId} in the canonical attempt projection.\n`,
+      );
+    });
+  } finally {
+    await operatorContext.release();
+  }
 }
 
 if (

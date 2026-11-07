@@ -18,9 +18,11 @@ const identifier = z
 const date = z.string().datetime();
 
 export const runLifecycleStates = [
+  "preparing",
   "ready",
   "planning",
   "implementation",
+  "refinement",
   "validation",
   "review",
   "publication",
@@ -29,12 +31,15 @@ export const runLifecycleStates = [
   "human-review",
   "waiting",
   "done",
+  "refined",
   "failed",
   "cancelled",
 ] as const;
 export type RunLifecycleState = (typeof runLifecycleStates)[number];
 export const runEventTypes = [
   "claim",
+  "implementation-claimed",
+  "refinement-claimed",
   "plan-approved",
   "implementation-completed",
   "validation-passed",
@@ -44,6 +49,10 @@ export const runEventTypes = [
   "ci-observed",
   "feedback-received",
   "human-review-entered",
+  "implementation-correction",
+  "feedback-ci-failed",
+  "feedback-replies-published",
+  "refinement-completed",
   "wait-entered",
   "wait-resumed",
   "merged",
@@ -64,6 +73,8 @@ export const runTransitionMatrix: Readonly<
   >
 > = {
   claim: { ready: "planning" },
+  "implementation-claimed": { preparing: "planning" },
+  "refinement-claimed": { preparing: "refinement" },
   "plan-approved": { planning: "implementation" },
   "implementation-completed": { implementation: "validation" },
   "validation-passed": { validation: "review" },
@@ -71,9 +82,21 @@ export const runTransitionMatrix: Readonly<
   "review-completed": { review: "publication" },
   "publication-completed": { publication: "ci" },
   "ci-observed": { ci: "human-review" },
-  "feedback-received": { "human-review": "human-feedback" },
+  "feedback-received": { "human-review": "implementation" },
   "human-review-entered": { "human-feedback": "human-review" },
+  "implementation-correction": {
+    validation: "implementation",
+    review: "implementation",
+    ci: "implementation",
+    "human-review": "implementation",
+    "human-feedback": "implementation",
+  },
+  "feedback-ci-failed": { "human-review": "ci" },
+  "feedback-replies-published": { "human-review": "ci" },
+  "refinement-completed": { refinement: "refined" },
   "wait-entered": {
+    preparing: "waiting",
+    refinement: "waiting",
     planning: "waiting",
     implementation: "waiting",
     validation: "waiting",
@@ -81,11 +104,14 @@ export const runTransitionMatrix: Readonly<
     publication: "waiting",
     ci: "waiting",
     "human-feedback": "waiting",
+    "human-review": "waiting",
   },
   "wait-resumed": {
     waiting: [
       "planning",
+      "preparing",
       "implementation",
+      "refinement",
       "validation",
       "review",
       "publication",
@@ -181,7 +207,12 @@ const operation = z.strictObject({
     .optional(),
 });
 export const terminalEvidenceSchema = z.strictObject({
-  prOutcome: z.enum(["merged", "closed-unmerged", "no-pr-failure"]),
+  prOutcome: z.enum([
+    "merged",
+    "closed-unmerged",
+    "no-pr-failure",
+    "refinement-completed",
+  ]),
   prObservationId: identifier,
   prVerifiedAt: date,
   trelloListId: identifier,
@@ -195,6 +226,9 @@ export const runRecordSchema = z
     projectId: identifier,
     cardId: identifier,
     attemptId: identifier,
+    taskKind: z
+      .enum(["implementation", "refinement"])
+      .default("implementation"),
     pinned: pinnedIdentitySchema,
     lifecycle: z.enum(runLifecycleStates),
     checkpoint: z.enum(runLifecycleStates),
@@ -259,6 +293,8 @@ export const runRecordSchema = z
     ]),
     terminalEvidence: terminalEvidenceSchema.nullable(),
     legacy: z.record(identifier, z.unknown()),
+    /** Validated legacy-store projections, owned by this attempt envelope. */
+    compatibility: z.record(identifier, z.unknown()).default({}),
     updatedAt: date,
   })
   .superRefine((run, ctx) => {
@@ -329,7 +365,9 @@ export const runRecordSchema = z
       });
     if (
       run.lifecycle === "waiting" &&
-      ["waiting", "done", "failed", "cancelled"].includes(run.checkpoint)
+      ["waiting", "done", "refined", "failed", "cancelled"].includes(
+        run.checkpoint,
+      )
     )
       ctx.addIssue({
         code: "custom",
@@ -337,7 +375,9 @@ export const runRecordSchema = z
         message: "Wait checkpoint must be resumable",
       });
     if (
-      !["waiting", "done", "failed", "cancelled"].includes(run.lifecycle) &&
+      !["waiting", "done", "refined", "failed", "cancelled"].includes(
+        run.lifecycle,
+      ) &&
       run.lifecycle !== run.checkpoint
     )
       ctx.addIssue({
@@ -358,7 +398,7 @@ export const runRecordSchema = z
         message: "Wait details only apply while waiting",
       });
     if (
-      ["done", "failed", "cancelled"].includes(run.lifecycle) &&
+      ["done", "refined", "failed", "cancelled"].includes(run.lifecycle) &&
       (run.terminalSync !== "verified" ||
         run.terminalEvidence === null ||
         run.expectedTrelloListId !== run.terminalEvidence.trelloListId)
@@ -382,6 +422,29 @@ export const runRecordSchema = z
         message: "Done requires verified merged PR outcome",
       });
     if (
+      run.lifecycle === "refined" &&
+      (run.taskKind !== "refinement" ||
+        run.publicationState !== "none" ||
+        run.terminalEvidence?.prOutcome !== "refinement-completed")
+    )
+      ctx.addIssue({
+        code: "custom",
+        path: ["terminalEvidence"],
+        message:
+          "Refined requires a verified refinement completion, not PR closure",
+      });
+    if (
+      run.terminalEvidence?.prOutcome === "refinement-completed" &&
+      (run.taskKind !== "refinement" ||
+        run.terminalEvidence.trelloListId !== run.pinned.lists.backlog)
+    )
+      ctx.addIssue({
+        code: "custom",
+        path: ["terminalEvidence"],
+        message:
+          "Refinement completion must verify Backlog for a refinement attempt",
+      });
+    if (
       run.lifecycle === "cancelled" &&
       run.publicationState !== "closed-unmerged"
     )
@@ -393,7 +456,7 @@ export const runRecordSchema = z
     if (
       run.lifecycle === "waiting" &&
       (run.checkpoint === "waiting" ||
-        ["done", "failed", "cancelled"].includes(run.checkpoint))
+        ["done", "refined", "failed", "cancelled"].includes(run.checkpoint))
     )
       ctx.addIssue({
         code: "custom",

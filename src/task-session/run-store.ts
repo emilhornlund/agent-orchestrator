@@ -170,7 +170,7 @@ export class RunRegistry {
       if (
         prior.attemptId !== durable.attemptId &&
         !(
-          ["done", "failed", "cancelled"].includes(old.lifecycle) &&
+          ["done", "refined", "failed", "cancelled"].includes(old.lifecycle) &&
           old.terminalSync === "verified" &&
           old.pendingOperations.every(isConclusiveOperationResolution)
         )
@@ -204,9 +204,13 @@ export class RunRegistry {
       assertNoSymlinkPath(attemptsDirectory);
       if (
         fs.existsSync(attemptsDirectory) &&
-        fs
-          .readdirSync(attemptsDirectory)
-          .some((entry) => entry.endsWith(".json"))
+        fs.readdirSync(attemptsDirectory).some((entry) => {
+          if (!entry.endsWith(".json")) return false;
+          const candidate = parseRunRecord(
+            safeRead(path.join(attemptsDirectory, entry)),
+          );
+          return candidate.pinned.integrationId === this.integrationId;
+        })
       )
         throw new RunStoreConflictError(
           "Durable attempt exists without registry pointer; reconcile handoff before any new claim",
@@ -252,8 +256,9 @@ export class RunRegistry {
       )
         continue;
       const run = parseRunRecord(safeRead(path.join(attemptsDirectory, entry)));
+      if (run.pinned.integrationId !== this.integrationId) continue;
       if (!(
-        ["done", "failed", "cancelled"].includes(run.lifecycle) &&
+        ["done", "refined", "failed", "cancelled"].includes(run.lifecycle) &&
         run.terminalSync === "verified" &&
         run.pendingOperations.every(isConclusiveOperationResolution)
       ))
@@ -318,7 +323,36 @@ export class RunStore {
     this.recordPath = path.join(resolved, "attempts", `${attemptId}.json`);
     this.artifactDirectory = path.join(resolved, "artifacts", attemptId);
   }
+  /** Open a predecessor using its persisted pins, never a caller's newer pins. */
+  static openWithPersistedIdentity(
+    directory: string,
+    attemptId: string,
+    lease: RunStoreLease,
+  ): RunStore | null {
+    if (
+      !path.isAbsolute(directory) ||
+      !attemptId ||
+      attemptId.includes("/") ||
+      attemptId.includes("\\")
+    )
+      throw new Error("Invalid predecessor attempt location");
+    const record = safeRead(
+      path.join(path.resolve(directory), "attempts", `${attemptId}.json`),
+    );
+    if (record === null) return null;
+    const parsed = parseRunRecord(record);
+    if (
+      parsed.attemptId !== attemptId ||
+      parsed.pinned.integrationId !== lease.integrationId ||
+      path.resolve(parsed.pinned.storageRoot) !== path.resolve(directory)
+    )
+      throw new RunStoreConflictError(
+        "Persisted predecessor identity does not match the canonical integration/storage root",
+      );
+    return new RunStore(directory, attemptId, parsed.pinned, lease);
+  }
   read(): RunRecord | null {
+    this.lease.assertHeld();
     const value = safeRead(this.recordPath);
     if (value === null) return null;
     if (
@@ -340,6 +374,250 @@ export class RunStore {
       );
     this.validateArtifacts(run);
     return run;
+  }
+  assertCurrentLease(expectedOwnerGeneration?: number): RunRecord {
+    this.lease.assertHeld();
+    const current = this.read();
+    if (!current)
+      throw new RunStoreConflictError("Canonical attempt is missing");
+    this.assertLease(current);
+    if (
+      expectedOwnerGeneration !== undefined &&
+      current.owner.generation !== expectedOwnerGeneration
+    )
+      throw new RunStoreConflictError(
+        "Stale canonical attempt owner generation",
+      );
+    return current;
+  }
+  readCompatibility<T>(
+    expectedOwnerGeneration: number,
+    key: string,
+    validate: (value: unknown) => T,
+  ): T | null {
+    const current = this.read();
+    if (!current) return null;
+    this.assertLease(current);
+    if (current.owner.generation !== expectedOwnerGeneration)
+      throw new RunStoreConflictError(
+        "Stale compatibility projection owner fence",
+      );
+    const value = current.compatibility[key];
+    return value === undefined ? null : validate(structuredClone(value));
+  }
+
+  listCompatibility<T>(
+    expectedOwnerGeneration: number,
+    prefix: string,
+    validate: (value: unknown) => T,
+  ): readonly { key: string; value: T }[] {
+    const current = this.read();
+    if (!current) return [];
+    this.assertLease(current);
+    if (current.owner.generation !== expectedOwnerGeneration)
+      throw new RunStoreConflictError(
+        "Stale compatibility projection owner fence",
+      );
+    return Object.entries(current.compatibility)
+      .filter(([key]) => key.startsWith(prefix))
+      .map(([key, value]) => ({
+        key,
+        value: validate(structuredClone(value)),
+      }));
+  }
+
+  removeCompatibility(
+    expectedRevision: number,
+    expectedOwnerGeneration: number,
+    key: string,
+  ): boolean {
+    this.lease.assertHeld();
+    const current = this.read();
+    if (
+      !current ||
+      current.revision !== expectedRevision ||
+      current.owner.generation !== expectedOwnerGeneration
+    )
+      throw new RunStoreConflictError(
+        "Stale compatibility projection revision or owner fence",
+      );
+    if (!(key in current.compatibility)) return false;
+    const compatibility = { ...current.compatibility };
+    delete compatibility[key];
+    const next = parseRunRecord({
+      ...current,
+      compatibility,
+      revision: current.revision + 1,
+      updatedAt: new Date().toISOString(),
+    });
+    this.assertLease(current);
+    atomicJson(this.recordPath, next);
+    return true;
+  }
+
+  /**
+   * Revision/fence checked mutation for a concrete legacy-store projection.
+   * The adapter must validate its domain schema before returning a value.
+   * Lifecycle changes are accepted only with an enumerated transition event;
+   * task projection and its core RunRecord state remain one atomic write.
+   */
+  mutateCompatibility<T>(options: {
+    expectedRevision: number;
+    expectedOwnerGeneration: number;
+    key: string;
+    current: (value: unknown | null) => { value: unknown; result: T };
+    validate: (value: unknown) => unknown;
+    lifecycleTransition?: {
+      event: RunEventType;
+      to: RunLifecycleState;
+    };
+    runState?: Partial<
+      Pick<
+        RunRecord,
+        | "publicationState"
+        | "sessions"
+        | "budgets"
+        | "operation"
+        | "resources"
+        | "expectedTrelloListId"
+        | "wait"
+      >
+    >;
+    deriveRunState?: (
+      current: RunRecord,
+      validatedProjection: unknown,
+    ) => {
+      lifecycleTransition?: { event: RunEventType; to: RunLifecycleState };
+      runState?: Partial<
+        Pick<
+          RunRecord,
+          | "publicationState"
+          | "sessions"
+          | "budgets"
+          | "operation"
+          | "resources"
+          | "expectedTrelloListId"
+          | "wait"
+        >
+      >;
+    };
+    terminal?: {
+      event: "merged" | "closed-unmerged" | "failed";
+      evidence: NonNullable<RunRecord["terminalEvidence"]>;
+    };
+  }): T {
+    if (!options.key || options.key.trim() !== options.key)
+      throw new Error(
+        "Compatibility projection key must be a nonblank identifier",
+      );
+    this.lease.assertHeld();
+    const current = this.read();
+    if (
+      !current ||
+      current.revision !== options.expectedRevision ||
+      current.owner.generation !== options.expectedOwnerGeneration
+    )
+      throw new RunStoreConflictError(
+        "Stale compatibility projection revision or owner fence",
+      );
+    const before = structuredClone(current);
+    const input = current.compatibility[options.key] ?? null;
+    const output = options.current(structuredClone(input));
+    if (JSON.stringify(current) !== JSON.stringify(before))
+      throw new Error(
+        "Compatibility projection callback mutated the attempt snapshot",
+      );
+    const validated = options.validate(output.value);
+    const derived = options.deriveRunState?.(current, validated) ?? {};
+    const lifecycleTransition =
+      derived.lifecycleTransition ?? options.lifecycleTransition;
+    let lifecycle = current.lifecycle;
+    const effectiveTransition = options.terminal
+      ? {
+          event: options.terminal.event,
+          to:
+            options.terminal.event === "merged"
+              ? ("done" as const)
+              : options.terminal.event === "closed-unmerged"
+                ? ("cancelled" as const)
+                : ("failed" as const),
+        }
+      : lifecycleTransition;
+    if (effectiveTransition) {
+      const { event, to } = effectiveTransition;
+      const allowed = runTransitionMatrix[event]?.[current.lifecycle];
+      if (
+        allowed === undefined ||
+        (Array.isArray(allowed) ? !allowed.includes(to) : allowed !== to)
+      )
+        throw new RunStoreConflictError(
+          `Illegal authoritative projection transition ${event}: ${current.lifecycle} -> ${to}`,
+        );
+      lifecycle = to;
+    }
+    if (options.terminal) {
+      const evidence = terminalEvidenceSchema.parse(options.terminal.evidence);
+      const expectedOutcome =
+        options.terminal.event === "merged"
+          ? "merged"
+          : options.terminal.event === "closed-unmerged"
+            ? "closed-unmerged"
+            : "no-pr-failure";
+      const expectedList =
+        options.terminal.event === "merged"
+          ? current.pinned.lists.done
+          : options.terminal.event === "closed-unmerged"
+            ? current.pinned.lists.backlog
+            : current.pinned.lists.failed;
+      if (
+        evidence.prOutcome !== expectedOutcome ||
+        evidence.trelloListId !== expectedList ||
+        current.taskKind !== "implementation" ||
+        (options.terminal.event === "failed" &&
+          current.publicationState !== "none") ||
+        !current.pendingOperations.every(isConclusiveOperationResolution)
+      )
+        throw new RunStoreConflictError(
+          "Terminal projection requires independently verified PR/Trello evidence and conclusive operations",
+        );
+    }
+    const next = parseRunRecord({
+      ...current,
+      ...derived.runState,
+      ...options.runState,
+      lifecycle,
+      checkpoint:
+        lifecycle === current.lifecycle
+          ? current.checkpoint
+          : lifecycle === "waiting"
+            ? current.lifecycle
+            : lifecycle,
+      wait:
+        derived.runState?.wait ??
+        options.runState?.wait ??
+        (lifecycle === "waiting"
+          ? current.wait
+          : { reason: null, dependency: null, since: null, retryAt: null }),
+      compatibility: { ...current.compatibility, [options.key]: validated },
+      ...(options.terminal === undefined
+        ? {}
+        : {
+            publicationState:
+              options.terminal.event === "merged"
+                ? "merged"
+                : options.terminal.event === "closed-unmerged"
+                  ? "closed-unmerged"
+                  : "none",
+            expectedTrelloListId: options.terminal.evidence.trelloListId,
+            terminalSync: "verified",
+            terminalEvidence: options.terminal.evidence,
+          }),
+      revision: current.revision + 1,
+      updatedAt: new Date().toISOString(),
+    });
+    this.assertLease(current);
+    atomicJson(this.recordPath, next);
+    return output.result;
   }
   create(record: RunRecord): RunRecord {
     const parsed = parseRunRecord(record);
@@ -431,6 +709,7 @@ export class RunStore {
         `Forbidden transition event/source pair: ${event} from ${from}`,
       );
     const terminalObservation = [
+      "refinement-completed",
       "merged",
       "closed-unmerged",
       "failed",
@@ -438,6 +717,11 @@ export class RunStore {
     ].includes(event);
     if (
       event !== "claim" &&
+      event !== "implementation-claimed" &&
+      event !== "refinement-claimed" &&
+      event !== "implementation-correction" &&
+      event !== "feedback-ci-failed" &&
+      event !== "feedback-replies-published" &&
       !terminalObservation &&
       event !== "wait-resumed" &&
       (!expectedOperation ||
@@ -491,9 +775,11 @@ export class RunStore {
       const expectedOutcome =
         event === "merged"
           ? "merged"
-          : event === "failed"
-            ? "no-pr-failure"
-            : "closed-unmerged";
+          : event === "refinement-completed"
+            ? "refinement-completed"
+            : event === "failed"
+              ? "no-pr-failure"
+              : "closed-unmerged";
       const expectedList =
         event === "merged"
           ? current.pinned.lists.done
@@ -561,16 +847,18 @@ export class RunStore {
       publicationState:
         event === "merged"
           ? "merged"
-          : event === "closed-unmerged" || event === "cancelled"
-            ? "closed-unmerged"
-            : changed.publicationState,
+          : event === "refinement-completed"
+            ? changed.publicationState
+            : event === "closed-unmerged" || event === "cancelled"
+              ? "closed-unmerged"
+              : changed.publicationState,
       expectedTrelloListId: terminalEvent
         ? (evidence as NonNullable<RunRecord["terminalEvidence"]>).trelloListId
         : changed.expectedTrelloListId,
-      terminalSync: ["done", "failed", "cancelled"].includes(to)
+      terminalSync: ["done", "refined", "failed", "cancelled"].includes(to)
         ? "verified"
         : changed.terminalSync,
-      terminalEvidence: ["done", "failed", "cancelled"].includes(to)
+      terminalEvidence: ["done", "refined", "failed", "cancelled"].includes(to)
         ? (evidence as RunRecord["terminalEvidence"])
         : changed.terminalEvidence,
       revision: current.revision + 1,
@@ -586,8 +874,13 @@ export class RunStore {
       );
     if (
       event !== "claim" &&
+      event !== "implementation-claimed" &&
+      event !== "refinement-claimed" &&
       event !== "wait-entered" &&
       event !== "wait-resumed" &&
+      event !== "implementation-correction" &&
+      event !== "feedback-ci-failed" &&
+      event !== "feedback-replies-published" &&
       !terminalObservation
     ) {
       const completed = next.pendingOperations.find(

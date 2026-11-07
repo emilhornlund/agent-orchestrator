@@ -61,6 +61,11 @@ import {
   writeReconciliationBlock,
 } from "./reconciliation-block-storage.js";
 import { WorkflowError } from "./workflow-error.js";
+import type { ProjectRunWorkerContext } from "../task-session/project-run-authority.js";
+import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
+import { getCardsForDiscovery } from "./trello-list-discovery.js";
+import { getWorkflowKind } from "./workflow-kind.js";
+import { isCardStartDateReached } from "./card-start-eligibility.js";
 
 function sleep(milliseconds: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -335,7 +340,7 @@ async function hasPreparedConflictRecovery(
   return false;
 }
 
-async function runProjectWorker(
+async function runProjectWorkerInner(
   trello: TrelloClient,
   git: GitClient,
   github: GitHubClient,
@@ -346,7 +351,8 @@ async function runProjectWorker(
   signal: AbortSignal,
   emailNotifier?: EmailNotifier,
   deferredTrelloValidation?: typeof validateProjectTrello,
-): Promise<void> {
+  runContext?: ProjectRunWorkerContext,
+): Promise<"authority-released" | undefined> {
   const githubReconciliationAttempts = new Map<string, number>();
   const trelloTransientAttempts = new Map<string, number>();
   const preparedConflictAttempts = new Map<string, number>();
@@ -366,6 +372,16 @@ async function runProjectWorker(
   let restoredFailureIdentity: string | undefined;
   let pendingTrelloValidation = deferredTrelloValidation;
   const runtimeStorageRoot = project.contextRoot ?? DEFAULT_CONTEXT_ROOT;
+
+  if (runContext?.blockedReason) {
+    logger
+      .child({ projectId: project.id })
+      .error(
+        `Project attempt authority is blocked; this project will remain isolated: ${runContext.blockedReason}`,
+      );
+    while (!signal.aborted) await sleep(pollIntervalMilliseconds, signal);
+    return;
+  }
 
   const persistedBlock = loadReconciliationBlock(
     runtimeStorageRoot,
@@ -553,9 +569,141 @@ async function runProjectWorker(
     }
 
     try {
+      if (runContext && !runContext.authority) {
+        if (runContext.newClaimsBlockedReason) {
+          logger
+            .child({ projectId: project.id })
+            .warn(runContext.newClaimsBlockedReason);
+          await sleep(pollIntervalMilliseconds, signal);
+          continue;
+        }
+        if (
+          runContext.projectLease === undefined ||
+          runContext.pinned === undefined ||
+          runContext.coordinationRoot === undefined
+        ) {
+          throw new Error(
+            "Project has no lease-bound attempt creation context",
+          );
+        }
+        if (pendingTrelloValidation !== undefined) {
+          await pendingTrelloValidation(trello, project);
+          pendingTrelloValidation = undefined;
+        }
+        const readyCards = await getCardsForDiscovery(
+          trello,
+          project.id,
+          project.trello.readyListId,
+          "Could not inspect Ready cards before canonical attempt selection",
+          signal,
+        );
+        const selected = readyCards.find(
+          (card) =>
+            isCardStartDateReached(card, Date.now()) &&
+            getWorkflowKind(card, project) !== null,
+        );
+        if (selected === undefined) {
+          await sleep(pollIntervalMilliseconds, signal);
+          continue;
+        }
+        const taskKind = getWorkflowKind(selected, project);
+        if (taskKind === null) continue;
+        runContext.projectLease.assertHeld();
+        const authority = await ProjectRunAuthority.createPreparingAttempt({
+          projectId: project.id,
+          cardId: selected.id,
+          taskKind,
+          pinned: runContext.pinned,
+          projectLease: runContext.projectLease,
+          coordinationRoot: runContext.coordinationRoot,
+          ...(taskKind === "implementation"
+            ? {
+                budgets: {
+                  validation: {
+                    limit: project.opencode.remediation.maxPasses + 1,
+                    used: 0,
+                    episodeId: `${selected.id}:initial-validation`,
+                    trigger: "initial-implementation",
+                  },
+                  review: {
+                    limit: project.opencode.remediation.maxPasses + 1,
+                    used: 0,
+                    episodeId: `${selected.id}:initial-review`,
+                    trigger: "initial-implementation",
+                  },
+                  ci: {
+                    limit: 2,
+                    used: 0,
+                    episodeId: `${selected.id}:initial-ci`,
+                    trigger: "initial-publication",
+                  },
+                },
+              }
+            : {}),
+        });
+        authority.claim();
+        runContext = { ...runContext, authority };
+        return await authority.run(() =>
+          runProjectWorkerInner(
+            trello,
+            git,
+            github,
+            opencode,
+            commands,
+            project,
+            pollIntervalMilliseconds,
+            signal,
+            emailNotifier,
+            deferredTrelloValidation,
+            runContext,
+          ),
+        );
+      }
+      const authorityRecord = runContext?.authority?.store.read();
+      const resumableLegacyAttempt =
+        authorityRecord?.lifecycle === "waiting" &&
+        authorityRecord.legacy.recoveryDisposition === "task-session-reconcile";
+      if (
+        runContext?.authority &&
+        (!authorityRecord ||
+          (authorityRecord.lifecycle === "waiting" && !resumableLegacyAttempt))
+      ) {
+        logger
+          .child({ projectId: project.id })
+          .info(
+            `Canonical attempt is waiting (${authorityRecord?.wait.reason ?? "checkpoint unavailable"}); no workflow mutations will be dispatched`,
+          );
+        await sleep(pollIntervalMilliseconds, signal);
+        continue;
+      }
       if (pendingTrelloValidation !== undefined) {
         await pendingTrelloValidation(trello, project);
         pendingTrelloValidation = undefined;
+      }
+
+      const preparingAuthority = runContext?.authority;
+      const preparingAttempt = preparingAuthority?.store.read();
+      if (preparingAttempt?.lifecycle === "preparing") {
+        const readyCards = await getCardsForDiscovery(
+          trello,
+          project.id,
+          project.trello.readyListId,
+          "Could not revalidate the preparing attempt in Ready for Agent",
+          signal,
+        );
+        const card = readyCards.find(
+          (candidate) => candidate.id === preparingAttempt.cardId,
+        );
+        if (
+          !card ||
+          !isCardStartDateReached(card, Date.now()) ||
+          getWorkflowKind(card, project) !== preparingAttempt.taskKind
+        ) {
+          await sleep(pollIntervalMilliseconds, signal);
+          continue;
+        }
+        preparingAuthority!.assertHeld();
+        preparingAuthority!.claim();
       }
 
       if (emailNotifier === undefined) {
@@ -571,6 +719,7 @@ async function runProjectWorker(
             undefined,
             onHumanReviewCardsObserved,
             onHumanReviewCardLeft,
+            ...(runContext?.authority ? [runContext.authority] : []),
           ),
         );
       } else {
@@ -586,8 +735,24 @@ async function runProjectWorker(
             emailNotifier,
             onHumanReviewCardsObserved,
             onHumanReviewCardLeft,
+            ...(runContext?.authority ? [runContext.authority] : []),
           ),
         );
+      }
+
+      const completedAttempt = runContext?.authority?.store.read();
+      if (
+        completedAttempt &&
+        ["done", "refined", "failed", "cancelled"].includes(
+          completedAttempt.lifecycle,
+        ) &&
+        completedAttempt.terminalSync === "verified"
+      ) {
+        await runContext!.authority!.releaseVerifiedTerminal();
+        const { authority: _releasedAuthority, ...releasedContext } =
+          runContext!;
+        void _releasedAuthority;
+        runContext = releasedContext;
       }
 
       githubReconciliationAttempts.clear();
@@ -596,12 +761,46 @@ async function runProjectWorker(
       suppressedFailureIdentity = undefined;
       restoredFailureIdentity = undefined;
       activeHumanReviewFailureIdentities.clear();
+      if (completedAttempt && runContext && !runContext.authority)
+        return "authority-released";
     } catch (error) {
       if (
         isShutdownCancellation(error, signal) ||
         (signal.aborted && signal.reason === "fatal")
       ) {
         return;
+      }
+
+      const alreadyTerminal = runContext?.authority?.store.read();
+      if (
+        runContext?.authority &&
+        alreadyTerminal &&
+        ["done", "refined", "failed", "cancelled"].includes(
+          alreadyTerminal.lifecycle,
+        ) &&
+        alreadyTerminal.terminalSync === "verified"
+      ) {
+        logger
+          .child({ projectId: project.id, cardId: alreadyTerminal.cardId })
+          .warn(
+            `Workflow returned an error after authoritative terminal completion; preserving the verified outcome: ${getErrorMessage(error)}`,
+          );
+        await runContext.authority.releaseVerifiedTerminal();
+        const { authority: _completedAuthority, ...releasedContext } =
+          runContext;
+        void _completedAuthority;
+        runContext = releasedContext;
+        return "authority-released";
+      }
+
+      if (runContext && !runContext.authority) {
+        logger
+          .child({ projectId: project.id })
+          .warn(
+            `Project has no canonical active attempt; retaining transient failure without legacy-state writes: ${getErrorMessage(error)}`,
+          );
+        await sleep(pollIntervalMilliseconds, signal);
+        continue;
       }
 
       if (error instanceof TrelloListDiscoveryError) {
@@ -912,6 +1111,48 @@ async function runProjectWorker(
   }
 }
 
+async function runProjectWorker(
+  trello: TrelloClient,
+  git: GitClient,
+  github: GitHubClient,
+  opencode: OpenCodeClient,
+  commands: CommandRunner,
+  project: PollingProject,
+  pollIntervalMilliseconds: number,
+  signal: AbortSignal,
+  emailNotifier?: EmailNotifier,
+  deferredTrelloValidation?: typeof validateProjectTrello,
+  runContext?: ProjectRunWorkerContext,
+): Promise<void> {
+  let currentContext = runContext;
+  while (!signal.aborted) {
+    const execute = () =>
+      runProjectWorkerInner(
+        trello,
+        git,
+        github,
+        opencode,
+        commands,
+        project,
+        pollIntervalMilliseconds,
+        signal,
+        emailNotifier,
+        deferredTrelloValidation,
+        currentContext,
+      );
+    const outcome = currentContext?.authority
+      ? await currentContext.authority.run(execute)
+      : await execute();
+    if (outcome !== "authority-released") return;
+    if (currentContext) {
+      const { authority: _releasedAuthority, ...releasedContext } =
+        currentContext;
+      void _releasedAuthority;
+      currentContext = releasedContext;
+    }
+  }
+}
+
 export async function runOrchestrator(
   trello: TrelloClient,
   git: GitClient,
@@ -922,6 +1163,7 @@ export async function runOrchestrator(
   signal: AbortSignal,
   emailNotifier?: EmailNotifier,
   deferredTrelloValidation?: typeof validateProjectTrello,
+  projectRunContexts?: ReadonlyMap<string, ProjectRunWorkerContext>,
 ): Promise<void> {
   const pollIntervalMilliseconds = config.workflow.pollIntervalSeconds * 1000;
   const retentionTimer = setInterval(
@@ -967,7 +1209,9 @@ export async function runOrchestrator(
           commands,
           {
             ...project,
-            contextRoot: config.workflow.contextRoot,
+            contextRoot:
+              projectRunContexts?.get(project.id)?.pinned?.storageRoot ??
+              config.workflow.contextRoot,
             ...(config.workflow.maxAttachmentBytes === undefined
               ? {}
               : { maxAttachmentBytes: config.workflow.maxAttachmentBytes }),
@@ -982,6 +1226,7 @@ export async function runOrchestrator(
           signal,
           emailNotifier,
           deferredTrelloValidation,
+          projectRunContexts?.get(project.id),
         ),
       ),
     );

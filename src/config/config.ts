@@ -360,7 +360,6 @@ const configSchema = z
           "coordinationRoot and coordinationNamespaceId must be configured together",
       });
     }
-
     for (const [projectIndex, project] of config.projects.entries()) {
       if (project.repository.validationCommand === undefined) {
         ctx.addIssue({

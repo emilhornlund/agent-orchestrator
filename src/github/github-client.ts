@@ -1,6 +1,9 @@
 import { spawn } from "node:child_process";
 
-import type { ProjectConfig } from "../config/config.js";
+import {
+  canonicalizeGitHubRepository,
+  type ProjectConfig,
+} from "../config/config.js";
 import type { CiCheckExpectationSource } from "./ci-check-expectations.js";
 import { collectCiWorkflowExpectationSources } from "./ci-workflow-contract.js";
 import { presentExternalDiagnostic } from "../security/bounded-diagnostic.js";
@@ -11,6 +14,8 @@ import {
   redactSecrets,
 } from "../security/redact-secrets.js";
 import { getGitHubOperationProject } from "./github-operation-context.js";
+import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
+import { ProjectResourceError } from "../startup/project-resource-error.js";
 import {
   GitHubCredentialProvider,
   type GitHubCredential,
@@ -1121,27 +1126,34 @@ export class GitHubClient {
     args: string[],
     credential: GitHubCredential,
   ): Promise<string> {
-    try {
-      const output =
-        Object.keys(credential.environment).length === 0
-          ? await this.runGitHubCommand(cwd, args)
-          : await this.runGitHubCommand(cwd, args, credential.environment);
+    const dispatch = async (): Promise<string> => {
+      try {
+        const output =
+          Object.keys(credential.environment).length === 0
+            ? await this.runGitHubCommand(cwd, args)
+            : await this.runGitHubCommand(cwd, args, credential.environment);
 
-      return redactSecrets(output, credential.secretValues);
-    } catch (error) {
-      const safeError = redactError(error, credential.secretValues);
+        return redactSecrets(output, credential.secretValues);
+      } catch (error) {
+        const safeError = redactError(error, credential.secretValues);
 
-      if (
-        credential.mode === "ambient" &&
-        !containsSecret(error, credential.secretValues)
-      ) {
-        throw error;
+        if (
+          credential.mode === "ambient" &&
+          !containsSecret(error, credential.secretValues)
+        ) {
+          throw error;
+        }
+
+        // Do not retain the caught error: CLI output may have included a credential.
+        // eslint-disable-next-line preserve-caught-error
+        throw new Error(safeError.message, { cause: safeError });
       }
-
-      // Do not retain the caught error: CLI output may have included a credential.
-      // eslint-disable-next-line preserve-caught-error
-      throw new Error(safeError.message, { cause: safeError });
-    }
+    };
+    const projectId =
+      getGitHubOperationProject()?.id ?? ProjectRunAuthority.currentProjectId();
+    return projectId === undefined
+      ? dispatch()
+      : ProjectRunAuthority.dispatch(projectId, dispatch);
   }
 
   private resolveCredential(
@@ -2612,8 +2624,77 @@ export class GitHubClient {
   ): Promise<void> {
     await validateGitHubCliCompatibility(async (args, project) => {
       const credential = await this.resolveCredential(project);
-
-      return this.run(process.cwd(), [...args], credential);
+      const dispatch = () => this.run(process.cwd(), [...args], credential);
+      return project === undefined
+        ? dispatch()
+        : ProjectRunAuthority.dispatch(project.id, dispatch);
     }, projects);
+  }
+
+  /** Project-scoped authenticated resource check; never changes repository state. */
+  async validateRepositoryAccess(project: ProjectConfig): Promise<void> {
+    let credential: GitHubCredential;
+    try {
+      credential = await this.resolveCredential(project);
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "GitHub credential resolution failed";
+      const status = message.match(/HTTP\s+(\d{3})/i)?.[1];
+      throw new ProjectResourceError(
+        status && Number(status) >= 500 ? "unavailable" : "invalid",
+        `GitHub authentication check failed for project "${project.id}"${status ? ` (HTTP ${status})` : "; verify configured credentials"}`,
+        error,
+      );
+    }
+    let output: string;
+    try {
+      output = await this.run(
+        process.cwd(),
+        ["repo", "view", project.repository.github, "--json", "nameWithOwner"],
+        credential,
+      );
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "GitHub repository lookup failed";
+      const status = message.match(/(?:HTTP|status)\s+(401|403|404)\b/i)?.[1];
+      const transient =
+        /timed?\s*out|connection reset|connection refused|could not resolve|network|HTTP\s+5\d\d/i.test(
+          message,
+        );
+      throw new ProjectResourceError(
+        transient ? "unavailable" : "invalid",
+        `GitHub repository access check failed for project "${project.id}" (${status ? `HTTP ${status}; verify repository and credentials` : transient ? "temporarily unavailable; retrying" : "verify repository access and credentials"})`,
+        error,
+      );
+    }
+    let actual: string;
+    try {
+      const parsed: unknown = JSON.parse(output);
+      if (
+        typeof parsed !== "object" ||
+        parsed === null ||
+        typeof (parsed as { nameWithOwner?: unknown }).nameWithOwner !==
+          "string"
+      )
+        throw new Error("malformed repository identity response");
+      actual = canonicalizeGitHubRepository(
+        (parsed as { nameWithOwner: string }).nameWithOwner,
+      );
+    } catch (error) {
+      throw new ProjectResourceError(
+        "invalid",
+        `GitHub returned a malformed repository identity for project "${project.id}"`,
+        error,
+      );
+    }
+    if (actual !== canonicalizeGitHubRepository(project.repository.github))
+      throw new ProjectResourceError(
+        "invalid",
+        `GitHub repository identity mismatch for project "${project.id}"`,
+      );
   }
 }

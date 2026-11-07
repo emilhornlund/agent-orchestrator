@@ -29,8 +29,27 @@ interface NamespaceMarker {
 
 export interface ProjectOwnershipLease {
   readonly identity: ProjectIntegrationIdentity;
+  readonly instanceId: string;
+  readonly token: string;
   assertHeld(): void;
   release(): Promise<void>;
+}
+
+/** Runs a short host-wide registry transaction under a kernel flock. */
+export async function withProjectRegistryLock<T>(
+  coordinationRoot: string,
+  operation: () => T | Promise<T>,
+): Promise<T> {
+  assertSafeDirectory(coordinationRoot);
+  const lock = await acquireKernelLock(
+    path.join(path.resolve(coordinationRoot), ".projects-registry.lock"),
+    true,
+  );
+  try {
+    return await operation();
+  } finally {
+    await releaseKernelLock(lock);
+  }
 }
 
 export class ProjectOwnershipError extends Error {
@@ -307,7 +326,10 @@ interface KernelLock {
   inode: number;
 }
 
-async function acquireKernelLock(lockPath: string): Promise<KernelLock> {
+async function acquireKernelLock(
+  lockPath: string,
+  wait = false,
+): Promise<KernelLock> {
   const descriptor = openLockFile(lockPath);
   let stat: fs.Stats;
   try {
@@ -324,7 +346,7 @@ async function acquireKernelLock(lockPath: string): Promise<KernelLock> {
   }
   let child: ChildProcess;
   try {
-    child = spawn("flock", ["-n", "3"], {
+    child = spawn("flock", [...(wait ? [] : ["-n"]), "3"], {
       stdio: ["ignore", "ignore", "pipe", descriptor],
     });
   } catch (error) {
@@ -481,6 +503,8 @@ export async function acquireProjectOwnership(
       trelloBoardId: identity.trelloBoardId.trim(),
       githubRepository: canonicalizeGitHubRepository(identity.githubRepository),
     },
+    instanceId: `${os.hostname()}:${process.pid}:${randomUUID()}`,
+    token: randomUUID(),
     assertHeld() {
       const lost = held.some((lock) => {
         try {

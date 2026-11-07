@@ -12,6 +12,7 @@ import {
   MAX_EXTERNAL_DIAGNOSTIC_LENGTH,
   presentExternalDiagnostic,
 } from "../security/bounded-diagnostic.js";
+import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 
 const commandTerminationGraceMilliseconds = 5_000;
 
@@ -292,6 +293,9 @@ export class CommandRunner {
   constructor(private readonly runCommand: RunCommand = defaultRunCommand) {}
 
   run(options: CommandRunOptions): Promise<CommandRunResult> {
-    return this.runCommand(options);
+    const projectId = ProjectRunAuthority.currentProjectId();
+    return projectId === undefined
+      ? this.runCommand(options)
+      : ProjectRunAuthority.dispatch(projectId, () => this.runCommand(options));
   }
 }

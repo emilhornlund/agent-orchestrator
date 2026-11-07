@@ -217,27 +217,22 @@ shutdown cancellation does not start or continue destructive cleanup.
 ### GitHub CLI compatibility
 
 Agent Orchestrator supports GitHub CLI (`gh`) `2.40.0` and later. Startup validates the installed CLI before bootstrapping any
-configured repository or beginning Trello project processing. The validation runs `gh --version`, checks the help surface for
-the commands and options used by the service, and executes a repository-scoped `gh pr list --json` probe for every dynamic pull
-request field used by reconciliation and review handling.
+configured repository or beginning Trello project processing. The validation runs `gh --version` and checks the help surface
+for the executable commands and options used by the service. It does not contact a repository: credentials, repository access,
+and project resources are checked separately and must not be conflated with executable compatibility.
 
 The required command surface is:
 
 | Command         | Required capabilities                                                    |
 | --------------- | ------------------------------------------------------------------------ |
 | `gh repo clone` | Repository cloning                                                       |
+| `gh repo view`  | `--json` (used for project-scoped repository identity validation)        |
 | `gh pr list`    | `--repo`, `--head`, `--base`, `--state`, `--json`, `--jq`, and `--limit` |
 | `gh pr create`  | `--repo`, `--base`, `--head`, `--title`, and `--body`                    |
 | `gh api`        | `--paginate` and `--slurp`                                               |
 
-The required `gh pr list --json` fields are `url`, `state`, `mergedAt`, `baseRefName`, `headRefName`, `headRepository`,
-`headRepositoryOwner`, `mergeable`, `mergeStateStatus`, `number`, `reviewDecision`, and `headRefOid`. The service derives a
-head repository's `owner/name` identity from the stable `headRepositoryOwner.login` and `headRepository.name` fields; it does
-not depend on the unsupported `headRepositoryNameWithOwner` convenience field.
-
-Capability validation uses the first configured repository and its project-scoped GitHub credentials. Consequently, the
-configured repository must be reachable with the selected ambient or GitHub App authentication before normal processing can
-begin. Failures identify GitHub CLI compatibility at startup and do not become card-specific reconciliation failures.
+The help probes cover the commands and flags actually used, and intentionally do not require an automatic-merge command or
+merge capability. GitHub authentication and configured repository access are independent project resources.
 
 GitHub authentication is selected per project at the `repository.githubApp` operation boundary. These are the two supported
 modes:

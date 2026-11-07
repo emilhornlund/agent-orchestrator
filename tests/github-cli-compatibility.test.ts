@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from "vitest";
 import type { ProjectConfig } from "../src/config/config.js";
 import {
   GITHUB_CLI_COMMAND_CAPABILITIES,
-  GITHUB_CLI_REQUIRED_PR_JSON_FIELDS,
   GitHubCliCompatibilityError,
   type RunGitHubCliCompatibilityCommand,
   validateGitHubCliCompatibility,
@@ -31,7 +30,7 @@ function supportedRun(): ReturnType<
     .mockImplementationOnce(async () => helpOutput())
     .mockImplementationOnce(async () => helpOutput())
     .mockImplementationOnce(async () => helpOutput())
-    .mockResolvedValueOnce("[]");
+    .mockImplementationOnce(async () => helpOutput());
 }
 
 describe("validateGitHubCliCompatibility", () => {
@@ -43,24 +42,11 @@ describe("validateGitHubCliCompatibility", () => {
     ).toBe(false);
     const run = supportedRun();
 
-    await expect(validateGitHubCliCompatibility(run, [project])).resolves.toBe(
+    await expect(validateGitHubCliCompatibility(run, [])).resolves.toBe(
       undefined,
     );
-
-    expect(run).toHaveBeenLastCalledWith(
-      [
-        "pr",
-        "list",
-        "--repo",
-        "owner/repository",
-        "--state",
-        "all",
-        "--limit",
-        "1",
-        "--json",
-        GITHUB_CLI_REQUIRED_PR_JSON_FIELDS.join(","),
-      ],
-      project,
+    expect(run).toHaveBeenCalledTimes(
+      1 + GITHUB_CLI_COMMAND_CAPABILITIES.length,
     );
   });
 
@@ -107,6 +93,8 @@ describe("validateGitHubCliCompatibility", () => {
     const run = vi
       .fn<RunGitHubCliCompatibilityCommand>()
       .mockResolvedValueOnce("gh version 2.40.0")
+      .mockResolvedValueOnce(helpOutput())
+      .mockResolvedValueOnce(helpOutput())
       .mockResolvedValueOnce("")
       .mockResolvedValueOnce("");
 
@@ -115,22 +103,13 @@ describe("validateGitHubCliCompatibility", () => {
     ).rejects.toThrow("gh pr list is missing required options");
   });
 
-  it("rejects a CLI that does not support a required PR JSON field", async () => {
-    const run = vi
-      .fn<RunGitHubCliCompatibilityCommand>()
-      .mockResolvedValueOnce("gh version 2.40.0")
-      .mockImplementation(async (args) => {
-        if (args.includes("--json")) {
-          throw new Error("unknown JSON field: headRepository");
-        }
-
-        return helpOutput();
-      });
-
-    await expect(
-      validateGitHubCliCompatibility(run, [project]),
-    ).rejects.toThrow(
-      'required pull request JSON fields for repository "owner/repository" is unavailable: unknown JSON field: headRepository',
+  it("does not probe repository authentication while checking executable compatibility", async () => {
+    const run = supportedRun();
+    await expect(validateGitHubCliCompatibility(run, [project])).resolves.toBe(
+      undefined,
+    );
+    expect(run.mock.calls.some((call) => call[0].includes("--repo"))).toBe(
+      false,
     );
   });
 });
