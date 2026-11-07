@@ -1,0 +1,308 @@
+import os from "node:os";
+import path from "node:path";
+import fs from "node:fs";
+import { randomUUID } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
+
+let runtimeRoot: string | undefined;
+let lifecycleSignal: AbortSignal | undefined;
+let secretValues: readonly string[] = [];
+let operationTimeoutMilliseconds = 2 * 60 * 1_000;
+const ambiguityHandler = new AsyncLocalStorage<
+  (pid: number | undefined) => void
+>();
+
+export function withProcessGroupAmbiguityHandler<T>(
+  handler: (pid: number | undefined) => void,
+  operation: () => T,
+): T {
+  return ambiguityHandler.run(handler, operation);
+}
+
+/** A process cannot retain more than this much combined stream evidence. */
+export const PROCESS_EVIDENCE_MAX_BYTES = 64 * 1024 * 1024;
+
+export class ProcessEvidenceError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "ProcessEvidenceError";
+  }
+}
+
+export const PROCESS_CAPTURE_MAX_BYTES = 16 * 1024 * 1024;
+
+export class ProcessOutputLimitError extends Error {
+  constructor(
+    stream: "stdout" | "stderr",
+    limit = PROCESS_CAPTURE_MAX_BYTES,
+    executionId?: string,
+  ) {
+    super(
+      `Process ${stream} exceeded the ${limit}-byte output limit${executionId === undefined ? "" : `; diagnostics: process-executions/${executionId}/${stream}.txt`}`,
+    );
+    this.name = "ProcessOutputLimitError";
+  }
+}
+
+export type ProcessFailureClassification =
+  "spawn-failure" | "nonzero" | "timeout" | "interrupted";
+const processFailureDiagnostics = new WeakMap<ProcessExecutionError, string>();
+
+/** Safe public process failure; raw diagnostics remain in the execution artifact. */
+export class ProcessExecutionError extends Error {
+  constructor(
+    tool: string,
+    public readonly executionId: string,
+    public readonly classification: ProcessFailureClassification,
+    public readonly exitCode?: number,
+    public readonly signal?: NodeJS.Signals,
+    diagnostic?: string,
+  ) {
+    const state =
+      classification === "nonzero"
+        ? `exited with code ${exitCode ?? 1}${signal === undefined ? "" : ` (${signal})`}`
+        : classification.replace("-", " ");
+    super(
+      `${tool} ${state}; diagnostics: process-executions/${executionId}/stderr.txt`,
+    );
+    this.name = "ProcessExecutionError";
+    if (diagnostic !== undefined)
+      processFailureDiagnostics.set(this, diagnostic);
+  }
+}
+
+export function getProcessFailureDiagnostic(
+  error: ProcessExecutionError,
+): string | undefined {
+  return processFailureDiagnostics.get(error);
+}
+
+/** Retain complete output or reject; callers must never parse a prefix. */
+export function appendBoundedOutput(
+  current: string,
+  text: string,
+  stream: "stdout" | "stderr",
+  limit = PROCESS_CAPTURE_MAX_BYTES,
+): string {
+  if (Buffer.byteLength(current) + Buffer.byteLength(text) > limit)
+    throw new ProcessOutputLimitError(stream, limit);
+  return current + text;
+}
+
+/** Configure process execution evidence and cancellation for the production runtime. */
+export function configureProcessRuntime(options: {
+  runtimeRoot: string;
+  signal: AbortSignal;
+  secretValues?: readonly string[];
+  operationTimeoutMilliseconds?: number;
+}): void {
+  runtimeRoot = path.resolve(options.runtimeRoot);
+  lifecycleSignal = options.signal;
+  secretValues = options.secretValues ?? [];
+  operationTimeoutMilliseconds =
+    options.operationTimeoutMilliseconds ?? operationTimeoutMilliseconds;
+}
+
+export function getProcessRuntime(): {
+  artifactRoot: string;
+  signal?: AbortSignal;
+  secretValues: readonly string[];
+  operationTimeoutMilliseconds: number;
+} {
+  return {
+    artifactRoot:
+      runtimeRoot ??
+      path.join(os.tmpdir(), "agent-orchestrator-process-artifacts"),
+    ...(lifecycleSignal === undefined ? {} : { signal: lifecycleSignal }),
+    secretValues,
+    operationTimeoutMilliseconds,
+  };
+}
+
+export function beginProcessEvidence(
+  command: string,
+  cwd: string,
+  secrets: readonly string[] = [],
+  artifactRootOverride?: string,
+) {
+  const executionsRoot =
+    artifactRootOverride ??
+    path.join(getProcessRuntime().artifactRoot, "process-executions");
+  const executionId = randomUUID();
+  const directory = path.join(executionsRoot, executionId);
+  const stdoutPath = path.join(directory, "stdout.txt");
+  const stderrPath = path.join(directory, "stderr.txt");
+  const startedAt = new Date().toISOString();
+  const safeCommand = secrets.reduce(
+    (text, secret) => (secret ? text.replaceAll(secret, "[REDACTED]") : text),
+    command,
+  );
+  const metadataPath = path.join(directory, "execution.json");
+  const writeMetadata = (metadata: Record<string, unknown>) =>
+    fs.writeFileSync(
+      metadataPath,
+      `${JSON.stringify({ executionId, command: safeCommand, cwd, startedAt, stdoutArtifact: stdoutPath, stderrArtifact: stderrPath, ...metadata }, null, 2)}\n`,
+      { mode: 0o600 },
+    );
+  try {
+    fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(stdoutPath, "", { mode: 0o600 });
+    fs.writeFileSync(stderrPath, "", { mode: 0o600 });
+    writeMetadata({ status: "running" });
+  } catch (error) {
+    try {
+      fs.rmSync(directory, { recursive: true, force: true });
+    } catch {
+      /* Preserve initialization failure. */
+    }
+    throw new ProcessEvidenceError("Could not initialize process evidence", {
+      cause: error,
+    });
+  }
+  let bytesWritten = 0;
+  let finished = false;
+  let failure: ProcessEvidenceError | undefined;
+  return {
+    executionId,
+    get failure() {
+      return failure;
+    },
+    append(stream: "stdout" | "stderr", text: string) {
+      if (finished || failure !== undefined) return;
+      const bytes = Buffer.byteLength(text);
+      if (bytesWritten + bytes > PROCESS_EVIDENCE_MAX_BYTES) {
+        failure = new ProcessEvidenceError(
+          `Process evidence exceeded ${PROCESS_EVIDENCE_MAX_BYTES} bytes`,
+        );
+        return;
+      }
+      try {
+        fs.appendFileSync(stream === "stdout" ? stdoutPath : stderrPath, text);
+        bytesWritten += bytes;
+      } catch (error) {
+        failure = new ProcessEvidenceError(
+          "Could not append process evidence",
+          { cause: error },
+        );
+      }
+    },
+    finish(status: string, fields: Record<string, unknown> = {}) {
+      if (finished) return;
+      finished = true;
+      try {
+        writeMetadata({
+          finishedAt: new Date().toISOString(),
+          status,
+          ...fields,
+        });
+      } catch (error) {
+        throw new ProcessEvidenceError("Could not finalize process evidence", {
+          cause: error,
+        });
+      }
+    },
+  };
+}
+
+export function signalProcessGroup(
+  pid: number | undefined,
+  signal: NodeJS.Signals,
+  fallback?: (signal: NodeJS.Signals) => boolean,
+): void {
+  if (pid === undefined || process.platform === "win32") {
+    fallback?.(signal);
+    return;
+  }
+  try {
+    process.kill(-pid, signal);
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ESRCH"))
+      fallback?.(signal);
+  }
+}
+
+export function processGroupExists(pid: number | undefined): boolean {
+  if (pid === undefined || process.platform === "win32") return false;
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch (error) {
+    return error instanceof Error && "code" in error && error.code === "EPERM";
+  }
+}
+
+/** The process group could not be proven safe to release after bounded cleanup. */
+export class ProcessGroupTerminationError extends Error {
+  constructor(pid: number | undefined) {
+    super(
+      `Unable to verify termination of owned process group ${pid ?? "unknown"}`,
+    );
+    this.name = "ProcessGroupTerminationError";
+  }
+}
+
+// Linux keeps orphaned zombies visible to kill(-pgid, 0) until their parent
+// reaps them. They cannot execute or write, so verification must distinguish
+// those entries from live group members.
+function hasLiveLinuxGroupMember(pid: number): boolean | undefined {
+  let entries: string[];
+  try {
+    entries = fs.readdirSync("/proc");
+  } catch {
+    return undefined;
+  }
+  let found = false;
+  for (const entry of entries) {
+    if (!/^\d+$/.test(entry)) continue;
+    let stat: string;
+    try {
+      stat = fs.readFileSync(`/proc/${entry}/stat`, "utf8");
+    } catch {
+      continue; // A process can exit between readdir and stat.
+    }
+    const closeParen = stat.lastIndexOf(")");
+    if (closeParen < 0) return undefined;
+    const fields = stat.slice(closeParen + 2).split(" ");
+    const state = fields[0];
+    const processGroup = Number(fields[2]);
+    if (processGroup === pid && state !== "Z" && state !== "X") found = true;
+  }
+  return found;
+}
+
+function hasLiveGroupMember(pid: number | undefined): boolean | undefined {
+  if (pid === undefined || process.platform === "win32") return false;
+  if (process.platform === "linux") return hasLiveLinuxGroupMember(pid);
+  return processGroupExists(pid);
+}
+
+/** Do not relinquish execution ownership merely because the group leader closed its pipes. */
+export async function drainProcessGroup(
+  pid: number | undefined,
+  fallback: (signal: NodeJS.Signals) => boolean,
+  graceMilliseconds = 5_000,
+): Promise<void> {
+  if (!processGroupExists(pid)) return;
+  signalProcessGroup(pid, "SIGTERM", fallback);
+  const deadline = Date.now() + Math.max(0, graceMilliseconds);
+  while (Date.now() < deadline && processGroupExists(pid)) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  if (processGroupExists(pid)) signalProcessGroup(pid, "SIGKILL", fallback);
+  const killDeadline =
+    Date.now() + Math.max(250, Math.min(graceMilliseconds, 2_000));
+  while (Date.now() < killDeadline) {
+    const live = hasLiveGroupMember(pid);
+    if (live === false) return;
+    if (live === undefined) {
+      ambiguityHandler.getStore()?.(pid);
+      throw new ProcessGroupTerminationError(pid);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  const live = hasLiveGroupMember(pid);
+  if (live !== false) {
+    ambiguityHandler.getStore()?.(pid);
+    throw new ProcessGroupTerminationError(pid);
+  }
+}

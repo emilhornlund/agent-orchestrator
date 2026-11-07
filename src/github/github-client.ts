@@ -17,6 +17,17 @@ import { getGitHubOperationProject } from "./github-operation-context.js";
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 import { ProjectResourceError } from "../startup/project-resource-error.js";
 import {
+  beginProcessEvidence,
+  drainProcessGroup,
+  getProcessRuntime,
+  processGroupExists,
+  signalProcessGroup,
+  appendBoundedOutput,
+  ProcessEvidenceError,
+  ProcessExecutionError,
+  getProcessFailureDiagnostic,
+} from "../process/process-runtime.js";
+import {
   GitHubCredentialProvider,
   type GitHubCredential,
   type GitHubCredentialEnvironment,
@@ -32,7 +43,6 @@ import {
   type ManagedPullRequestStatus,
 } from "./pull-request-status.js";
 
-const GITHUB_TIMEOUT_MS = 2 * 60 * 1000;
 const GITHUB_TERMINATION_GRACE_MS = 5_000;
 
 export interface CreatePullRequestOptions {
@@ -903,9 +913,16 @@ export function isRetryableGitHubError(error: unknown): boolean {
     return true;
   }
 
-  const messages = errorChain(error).map((entry) =>
-    entry.message.toLowerCase(),
-  );
+  const messages = errorChain(error).flatMap((entry) => {
+    const diagnostic =
+      entry instanceof ProcessExecutionError
+        ? getProcessFailureDiagnostic(entry)
+        : undefined;
+    return [
+      entry.message.toLowerCase(),
+      ...(diagnostic === undefined ? [] : [diagnostic.toLowerCase()]),
+    ];
+  });
   const message = messages.join("\n");
 
   if (messages.some((entry) => /\brate[- ]limit\b|\bratelimit\b/.test(entry))) {
@@ -1013,9 +1030,24 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
   environment,
 ) =>
   new Promise((resolve, reject) => {
+    const runtime = getProcessRuntime();
+    const timeoutMilliseconds =
+      (getGitHubOperationProject()?.opencode.timeoutMinutes ??
+        runtime.operationTimeoutMilliseconds / 60_000) * 60_000;
+    const environmentSecrets = [
+      environment?.GH_TOKEN,
+      environment?.GITHUB_TOKEN,
+      ...runtime.secretValues,
+    ].filter((value): value is string => value !== undefined);
+    const execution = beginProcessEvidence(
+      `gh ${args.join(" ")}`,
+      cwd,
+      environmentSecrets,
+    );
     const child = spawn("gh", args, {
       cwd,
       stdio: ["inherit", "pipe", "pipe"],
+      detached: process.platform !== "win32",
       ...(environment === undefined
         ? {}
         : { env: { ...process.env, ...environment } }),
@@ -1025,13 +1057,46 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
     let errorOutput = "";
     let settled = false;
     let timedOut = false;
+    let recorderFailure: Error | undefined;
     let forceKillTimeout: NodeJS.Timeout | undefined;
-    const environmentSecrets = [
-      environment?.GH_TOKEN,
-      environment?.GITHUB_TOKEN,
-    ];
     const stdoutRedactor = createSecretRedactor(environmentSecrets);
     const stderrRedactor = createSecretRedactor(environmentSecrets);
+
+    const record = (stream: "stdout" | "stderr", text: string): void => {
+      if (recorderFailure !== undefined || settled) return;
+      try {
+        execution.append(stream, text);
+        if (execution.failure !== undefined) throw execution.failure;
+        if (stream === "stdout")
+          output = appendBoundedOutput(output, text, stream);
+        else errorOutput = appendBoundedOutput(errorOutput, text, stream);
+      } catch (error) {
+        recorderFailure =
+          error instanceof Error
+            ? error
+            : new ProcessEvidenceError("GitHub process recording failed");
+        signalProcessGroup(child.pid, "SIGTERM", (signal) =>
+          child.kill(signal),
+        );
+        forceKillTimeout = setTimeout(
+          () =>
+            signalProcessGroup(child.pid, "SIGKILL", (signal) =>
+              child.kill(signal),
+            ),
+          GITHUB_TERMINATION_GRACE_MS,
+        );
+      }
+    };
+
+    let redactorsFlushed = false;
+    const flushRedactors = (): void => {
+      if (redactorsFlushed) return;
+      redactorsFlushed = true;
+      const stdoutRemainder = stdoutRedactor.flush();
+      const stderrRemainder = stderrRedactor.flush();
+      record("stdout", stdoutRemainder);
+      record("stderr", stderrRemainder);
+    };
 
     const timeout = setTimeout(() => {
       if (settled) {
@@ -1039,25 +1104,27 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
       }
 
       timedOut = true;
-      child.kill("SIGTERM");
+      signalProcessGroup(child.pid, "SIGTERM", (signal) => child.kill(signal));
 
       forceKillTimeout = setTimeout(() => {
-        if (settled) {
+        if (settled && !processGroupExists(child.pid)) {
           return;
         }
 
-        child.kill("SIGKILL");
-        settled = true;
-        reject(new Error(`GitHub CLI timed out after ${GITHUB_TIMEOUT_MS}ms`));
+        signalProcessGroup(child.pid, "SIGKILL", (signal) =>
+          child.kill(signal),
+        );
       }, GITHUB_TERMINATION_GRACE_MS);
-    }, GITHUB_TIMEOUT_MS);
+    }, timeoutMilliseconds);
 
     child.stdout.on("data", (chunk: Buffer) => {
-      output += stdoutRedactor.push(chunk.toString());
+      const text = stdoutRedactor.push(chunk.toString());
+      record("stdout", text);
     });
 
     child.stderr.on("data", (chunk: Buffer) => {
-      errorOutput += stderrRedactor.push(chunk.toString());
+      const text = stderrRedactor.push(chunk.toString());
+      record("stderr", text);
     });
 
     child.once("error", (error) => {
@@ -1065,43 +1132,124 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
         return;
       }
 
-      output += stdoutRedactor.flush();
-      errorOutput += stderrRedactor.flush();
+      flushRedactors();
       settled = true;
+      try {
+        execution.finish("spawn-failure", {
+          pid: child.pid,
+          error: redactSecrets(error.message, environmentSecrets),
+        });
+      } catch (finishError) {
+        settled = true;
+        clearTimeout(timeout);
+        runtime.signal?.removeEventListener("abort", abort);
+        reject(finishError);
+        return;
+      }
       clearTimeout(timeout);
+      runtime.signal?.removeEventListener("abort", abort);
       if (forceKillTimeout !== undefined) {
         clearTimeout(forceKillTimeout);
       }
 
       reject(
-        new Error(`Failed to start GitHub CLI: ${error.message}`, {
-          cause: error,
-        }),
+        new ProcessExecutionError(
+          "GitHub CLI",
+          execution.executionId,
+          "spawn-failure",
+        ),
       );
     });
 
-    child.once("close", (code) => {
+    child.once("close", async (code, signalName) => {
       if (settled) {
         return;
       }
 
-      output += stdoutRedactor.flush();
-      errorOutput += stderrRedactor.flush();
+      try {
+        await drainProcessGroup(child.pid, (signal) => child.kill(signal));
+      } catch (error) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        runtime.signal?.removeEventListener("abort", abort);
+        if (forceKillTimeout !== undefined) clearTimeout(forceKillTimeout);
+        try {
+          execution.finish("process-group-ambiguous", { pid: child.pid });
+        } catch (finishError) {
+          recorderFailure ??=
+            finishError instanceof Error
+              ? finishError
+              : new ProcessEvidenceError(
+                  "Process evidence finalization failed",
+                );
+        }
+        reject(error);
+        return;
+      }
+      if (settled) return;
+
+      flushRedactors();
       settled = true;
       clearTimeout(timeout);
+      runtime.signal?.removeEventListener("abort", abort);
       if (forceKillTimeout !== undefined) {
         clearTimeout(forceKillTimeout);
       }
+      const status = timedOut
+        ? "timeout"
+        : runtime.signal?.aborted
+          ? "interrupted"
+          : code === 0
+            ? "success"
+            : "nonzero";
+      recorderFailure ??= execution.failure;
+      try {
+        execution.finish(
+          recorderFailure === undefined ? status : "evidence-failure",
+          {
+            pid: child.pid,
+            exitCode: code ?? 1,
+            ...(signalName === null ? {} : { signal: signalName }),
+          },
+        );
+      } catch (finishError) {
+        reject(finishError);
+        return;
+      }
+      recorderFailure ??= execution.failure;
+      if (recorderFailure !== undefined) {
+        reject(recorderFailure);
+        return;
+      }
+
+      if (runtime.signal?.aborted) {
+        reject(
+          new Error("GitHub CLI execution interrupted by runtime shutdown"),
+        );
+        return;
+      }
 
       if (timedOut) {
-        reject(new Error(`GitHub CLI timed out after ${GITHUB_TIMEOUT_MS}ms`));
+        reject(
+          new ProcessExecutionError(
+            "GitHub CLI",
+            execution.executionId,
+            "timeout",
+          ),
+        );
         return;
       }
 
       if (code !== 0) {
         reject(
-          new Error(
-            `GitHub CLI exited with code ${code ?? 1}: ${redactSecrets(errorOutput.trim(), environmentSecrets)}`,
+          new ProcessExecutionError(
+            "GitHub CLI",
+            execution.executionId,
+            "nonzero",
+            code ?? 1,
+            signalName ?? undefined,
+            errorOutput.trim(),
           ),
         );
         return;
@@ -1109,6 +1257,18 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
 
       resolve(output.trim());
     });
+
+    const abort = (): void => {
+      if (settled) return;
+      signalProcessGroup(child.pid, "SIGTERM", (signal) => child.kill(signal));
+      forceKillTimeout = setTimeout(() => {
+        signalProcessGroup(child.pid, "SIGKILL", (signal) =>
+          child.kill(signal),
+        );
+      }, GITHUB_TERMINATION_GRACE_MS);
+    };
+    runtime.signal?.addEventListener("abort", abort, { once: true });
+    if (runtime.signal?.aborted) abort();
   });
 
 export class GitHubClient {
@@ -1135,6 +1295,7 @@ export class GitHubClient {
 
         return redactSecrets(output, credential.secretValues);
       } catch (error) {
+        if (error instanceof ProcessExecutionError) throw error;
         const safeError = redactError(error, credential.secretValues);
 
         if (

@@ -44,6 +44,19 @@ describe("Git and OpenCode startup compatibility", () => {
     expect(run).toHaveBeenCalledTimes(4);
   });
 
+  it("uses the supplied project timeout consistently for every startup probe", async () => {
+    const { commands, run } = runner(supported);
+    await validateGitAndOpenCode(commands, 17_000);
+    expect(run.mock.calls.map(([input]) => input.timeoutMilliseconds)).toEqual([
+      17_000, 17_000, 17_000, 17_000,
+    ]);
+    const secondProject = runner(supported);
+    await validateGitAndOpenCode(secondProject.commands, 83_000);
+    expect(
+      secondProject.run.mock.calls.map(([input]) => input.timeoutMilliseconds),
+    ).toEqual([83_000, 83_000, 83_000, 83_000]);
+  });
+
   it.each([
     ["missing Git", { ...supported, "git --version": undefined }],
     [

@@ -196,7 +196,7 @@ async function generatePullRequestDescription(options: {
         cardLog,
         failureStage,
         new Error(
-          `OpenCode exited with code ${result.exitCode}${result.errorOutput.trim().length > 0 ? `: ${result.errorOutput.trim()}` : ""}`,
+          `OpenCode exited with code ${result.exitCode}; diagnostics are available in the process execution log and session log ${sessionLogPath ?? getSessionLogPath(project.id, card.id)}`,
         ),
         attempt,
       );

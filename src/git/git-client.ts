@@ -1,8 +1,7 @@
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { promisify } from "node:util";
 
 import {
   canonicalizeGitHubRepository,
@@ -13,6 +12,7 @@ import { getGitHubOperationProject } from "../github/github-operation-context.js
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 import {
   containsSecret,
+  createSecretRedactor,
   redactError,
   redactSecrets,
 } from "../security/redact-secrets.js";
@@ -20,10 +20,15 @@ import {
   haveEquivalentImplementationChanges,
   isCompletePullRequestCommitRange,
 } from "./implementation-change-equivalence.js";
-
-const execFileAsync = promisify(execFile);
-
-const GIT_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+import {
+  beginProcessEvidence,
+  drainProcessGroup,
+  getProcessRuntime,
+  signalProcessGroup,
+  appendBoundedOutput,
+  ProcessEvidenceError,
+  ProcessExecutionError,
+} from "../process/process-runtime.js";
 
 export interface GitIdentity {
   name: string;
@@ -72,27 +77,190 @@ export function getGitIdentityEnvironment(
 }
 
 const defaultRunGit: RunGit = async (cwd, args, environment) => {
-  try {
-    const { stdout } = await execFileAsync("git", args, {
+  const runtime = getProcessRuntime();
+  const operationTimeoutMilliseconds =
+    (getGitHubOperationProject()?.opencode.timeoutMinutes ??
+      runtime.operationTimeoutMilliseconds / 60_000) * 60_000;
+  const secretValues = [
+    environment?.GH_TOKEN,
+    environment?.GITHUB_TOKEN,
+    ...runtime.secretValues,
+  ].filter((value): value is string => value !== undefined);
+  const execution = beginProcessEvidence(
+    `git ${args.join(" ")}`,
+    cwd,
+    secretValues,
+  );
+  return new Promise((resolve, reject) => {
+    const child = spawn("git", args, {
       cwd,
-      encoding: "utf8",
-      timeout: GIT_TIMEOUT_MS,
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: process.platform !== "win32",
       ...(environment === undefined
         ? {}
         : { env: { ...process.env, ...environment } }),
     });
-
-    return stdout.trim();
-  } catch (error) {
-    const message = redactSecrets(
-      error instanceof Error ? error.message : String(error),
-      [environment?.GH_TOKEN, environment?.GITHUB_TOKEN],
+    const stdoutRedactor = createSecretRedactor(secretValues);
+    const stderrRedactor = createSecretRedactor(secretValues);
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    let timedOut = false;
+    let recorderFailure: Error | undefined;
+    let killTimer: NodeJS.Timeout | undefined;
+    const append = (stream: "stdout" | "stderr", text: string): void => {
+      if (recorderFailure !== undefined || settled) return;
+      try {
+        execution.append(stream, text);
+        if (execution.failure !== undefined) throw execution.failure;
+        if (stream === "stdout")
+          stdout = appendBoundedOutput(stdout, text, stream);
+        else stderr = appendBoundedOutput(stderr, text, stream);
+      } catch (error) {
+        recorderFailure =
+          error instanceof Error
+            ? error
+            : new ProcessEvidenceError("Process recording failed");
+        signalProcessGroup(child.pid, "SIGTERM", (signal) =>
+          child.kill(signal),
+        );
+        killTimer = setTimeout(
+          () =>
+            signalProcessGroup(child.pid, "SIGKILL", (signal) =>
+              child.kill(signal),
+            ),
+          5_000,
+        );
+      }
+    };
+    const flush = (): void => {
+      append("stdout", stdoutRedactor.flush());
+      append("stderr", stderrRedactor.flush());
+    };
+    const timeout = setTimeout(() => {
+      if (settled) return;
+      timedOut = true;
+      signalProcessGroup(child.pid, "SIGTERM", (signal) => child.kill(signal));
+      killTimer = setTimeout(
+        () =>
+          signalProcessGroup(child.pid, "SIGKILL", (signal) =>
+            child.kill(signal),
+          ),
+        5_000,
+      );
+    }, operationTimeoutMilliseconds);
+    const abort = (): void => {
+      if (settled) return;
+      signalProcessGroup(child.pid, "SIGTERM", (signal) => child.kill(signal));
+      killTimer = setTimeout(
+        () =>
+          signalProcessGroup(child.pid, "SIGKILL", (signal) =>
+            child.kill(signal),
+          ),
+        5_000,
+      );
+    };
+    runtime.signal?.addEventListener("abort", abort, { once: true });
+    if (runtime.signal?.aborted) abort();
+    child.stdout.on("data", (chunk: Buffer) =>
+      append("stdout", stdoutRedactor.push(chunk.toString())),
     );
-
-    throw new Error(`git ${args.join(" ")} failed in ${cwd}: ${message}`, {
-      cause: error,
+    child.stderr.on("data", (chunk: Buffer) =>
+      append("stderr", stderrRedactor.push(chunk.toString())),
+    );
+    child.once("error", (error) => {
+      if (settled) return;
+      settled = true;
+      flush();
+      clearTimeout(timeout);
+      if (killTimer) clearTimeout(killTimer);
+      runtime.signal?.removeEventListener("abort", abort);
+      try {
+        execution.finish("spawn-failure", {
+          pid: child.pid,
+          error: redactSecrets(error.message, secretValues),
+        });
+      } catch (finishError) {
+        reject(finishError);
+        return;
+      }
+      reject(
+        new ProcessExecutionError(
+          "Git",
+          execution.executionId,
+          "spawn-failure",
+        ),
+      );
     });
-  }
+    child.once("close", async (code, signalName) => {
+      if (settled) return;
+      try {
+        await drainProcessGroup(child.pid, (signal) => child.kill(signal));
+      } catch (error) {
+        if (settled) return;
+        settled = true;
+        flush();
+        clearTimeout(timeout);
+        if (killTimer) clearTimeout(killTimer);
+        runtime.signal?.removeEventListener("abort", abort);
+        try {
+          execution.finish("process-group-ambiguous", { pid: child.pid });
+        } catch (finishError) {
+          recorderFailure ??=
+            finishError instanceof Error
+              ? finishError
+              : new ProcessEvidenceError(
+                  "Process evidence finalization failed",
+                );
+        }
+        reject(error);
+        return;
+      }
+      if (settled) return;
+      flush();
+      settled = true;
+      clearTimeout(timeout);
+      if (killTimer) clearTimeout(killTimer);
+      runtime.signal?.removeEventListener("abort", abort);
+      const interrupted = runtime.signal?.aborted === true;
+      try {
+        execution.finish(
+          recorderFailure !== undefined || execution.failure !== undefined
+            ? "evidence-failure"
+            : timedOut
+              ? "timeout"
+              : interrupted
+                ? "interrupted"
+                : code === 0
+                  ? "success"
+                  : "nonzero",
+          {
+            pid: child.pid,
+            exitCode: code ?? 1,
+            ...(signalName === null ? {} : { signal: signalName }),
+          },
+        );
+      } catch (error) {
+        recorderFailure ??=
+          error instanceof Error
+            ? error
+            : new ProcessEvidenceError("Process evidence finalization failed");
+      }
+      recorderFailure ??= execution.failure;
+      if (recorderFailure !== undefined) reject(recorderFailure);
+      else if (timedOut || interrupted || code !== 0) {
+        reject(
+          new ProcessExecutionError(
+            "Git",
+            execution.executionId,
+            timedOut ? "timeout" : interrupted ? "interrupted" : "nonzero",
+            code ?? 1,
+            signalName ?? undefined,
+          ),
+        );
+      } else resolve(stdout.trim());
+    });
+  });
 };
 
 export class GitClient {
@@ -137,6 +305,7 @@ export class GitClient {
 
         return redactSecrets(output, credential.secretValues);
       } catch (error) {
+        if (error instanceof ProcessExecutionError) throw error;
         const safeError = redactError(error, credential.secretValues);
 
         if (

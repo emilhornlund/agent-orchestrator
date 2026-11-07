@@ -134,6 +134,7 @@ describe("runStartup", () => {
     const validateProjectTrello = vi.fn().mockResolvedValue(undefined);
     const runOrchestrator = vi.fn().mockResolvedValue(undefined);
 
+    const validateToolchain = vi.fn().mockResolvedValue(undefined);
     await runStartup(
       config,
       {
@@ -151,7 +152,7 @@ describe("runStartup", () => {
       },
       new AbortController().signal,
       {
-        validateToolchain: vi.fn().mockResolvedValue(undefined),
+        validateToolchain,
         validateGitHubCli,
         validateProjectTrello,
         validateProjectGitHub: vi.fn().mockResolvedValue(undefined),
@@ -160,6 +161,10 @@ describe("runStartup", () => {
     );
 
     expect(validateGitHubCli).toHaveBeenCalledOnce();
+    expect(validateToolchain).toHaveBeenCalledWith(
+      expect.any(CommandRunner),
+      project.opencode.timeoutMinutes * 60_000,
+    );
     expect(runGit).toHaveBeenCalled();
     expect(validateProjectTrello).toHaveBeenCalledOnce();
     expect(runOrchestrator).toHaveBeenCalledOnce();

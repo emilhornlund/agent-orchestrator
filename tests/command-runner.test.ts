@@ -17,6 +17,7 @@ import {
   CommandRunner,
   type RunCommand,
 } from "../src/process/command-runner.js";
+import { PROCESS_EVIDENCE_MAX_BYTES } from "../src/process/process-runtime.js";
 
 interface FakeChild extends EventEmitter {
   pid?: number;
@@ -186,7 +187,7 @@ describe("CommandRunner", () => {
     }
   });
 
-  it("returns bounded redacted stdout and stderr only when capture is requested", async () => {
+  it("rejects oversized captured stdout instead of returning a truncated parseable prefix", async () => {
     const child = createFakeChild();
     const longOutput = `${"output token-a ".repeat(200)}\n`;
 
@@ -199,17 +200,16 @@ describe("CommandRunner", () => {
       return child;
     });
 
-    const result = await new CommandRunner().run({
+    const result = new CommandRunner().run({
       cwd: "/worktree",
       command: "yarn validate",
       captureOutput: true,
       secretValues: ["token-a"],
     });
-
-    expect(result.exitCode).toBe(0);
-    expect(result.output?.length).toBeLessThanOrEqual(2_000);
-    expect(result.errorOutput).toContain("warning [REDACTED]");
-    expect(result.output).not.toContain("token-a");
+    await expect(result).rejects.toThrow(
+      "stdout exceeded the 2000-byte output limit",
+    );
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
   });
 
   it("passes operation credentials to the child and redacts command output", async () => {
@@ -246,7 +246,82 @@ describe("CommandRunner", () => {
         env: expect.objectContaining({ GH_TOKEN: "token-a" }),
       },
     );
-    expect(stdoutWrite).toHaveBeenCalledWith("[REDACTED]\n");
+    expect(stdoutWrite).not.toHaveBeenCalled();
+  });
+
+  it("writes separately redacted stdout and stderr plus terminal execution evidence", async () => {
+    const child = createFakeChild();
+    const artifactDirectory = fs.mkdtempSync(
+      path.join(os.tmpdir(), "process-artifacts-"),
+    );
+    temporaryDirectories.push(artifactDirectory);
+    spawnMock.mockImplementationOnce(() => {
+      queueMicrotask(() => {
+        child.stdout.emit("data", Buffer.from("out secret-value\n"));
+        child.stderr.emit("data", Buffer.from("err secret-value\n"));
+        child.emit("close", 7);
+      });
+      return child;
+    });
+
+    await expect(
+      new CommandRunner().run({
+        cwd: "/worktree",
+        command: "test-command",
+        secretValues: ["secret-value"],
+        artifactDirectory,
+      }),
+    ).resolves.toEqual({ exitCode: 7 });
+
+    const [executionId] = fs.readdirSync(artifactDirectory);
+    expect(executionId).toBeDefined();
+    const directory = path.join(artifactDirectory, executionId!);
+    expect(fs.readFileSync(path.join(directory, "stdout.txt"), "utf8")).toBe(
+      "out [REDACTED]\n",
+    );
+    expect(fs.readFileSync(path.join(directory, "stderr.txt"), "utf8")).toBe(
+      "err [REDACTED]\n",
+    );
+    expect(
+      fs.readFileSync(path.join(directory, "execution.json"), "utf8"),
+    ).toContain('"status": "nonzero"');
+  });
+
+  it("rejects an artifact budget overflow even when output capture is disabled", async () => {
+    const child = createFakeChild();
+    const artifactDirectory = fs.mkdtempSync(
+      path.join(os.tmpdir(), "process-evidence-budget-"),
+    );
+    temporaryDirectories.push(artifactDirectory);
+    spawnMock.mockImplementationOnce(() => {
+      queueMicrotask(() => {
+        child.stdout.emit(
+          "data",
+          Buffer.alloc(PROCESS_EVIDENCE_MAX_BYTES + 1, 120),
+        );
+        child.emit("close", 0);
+      });
+      return child;
+    });
+
+    await expect(
+      new CommandRunner().run({
+        cwd: "/worktree",
+        command: "noisy-command",
+        captureOutput: false,
+        artifactDirectory,
+      }),
+    ).rejects.toThrow("Process evidence exceeded");
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+    const [executionId] = fs.readdirSync(artifactDirectory);
+    expect(executionId).toBeDefined();
+    const metadata = JSON.parse(
+      fs.readFileSync(
+        path.join(artifactDirectory, executionId!, "execution.json"),
+        "utf8",
+      ),
+    ) as { status: string; exitCode: number };
+    expect(metadata).toMatchObject({ status: "evidence-failure", exitCode: 0 });
   });
 
   it("terminates and rejects a command that exceeds its timeout", async () => {
@@ -268,6 +343,7 @@ describe("CommandRunner", () => {
 
     expect(child.kill).toHaveBeenNthCalledWith(1, "SIGTERM");
     expect(child.kill).toHaveBeenNthCalledWith(2, "SIGKILL");
+    child.emit("close", null);
     await rejection;
 
     vi.useRealTimers();
@@ -300,12 +376,40 @@ describe("CommandRunner", () => {
 
     await vi.advanceTimersByTimeAsync(6_000);
 
+    child.emit("close", null);
     await rejection;
     expect(fs.readFileSync(sessionLogPath, "utf8")).toContain(
       "timeout test output\n",
     );
 
     vi.useRealTimers();
+  });
+
+  it("terminates and settles when a child-output session-log append fails", async () => {
+    const child = createFakeChild();
+    const directory = fs.mkdtempSync(
+      path.join(os.tmpdir(), "injected-session-log-failure-"),
+    );
+    temporaryDirectories.push(directory);
+    const logDirectory = path.join(directory, "session");
+    const logPath = path.join(logDirectory, "output.log");
+    spawnMock.mockImplementationOnce(() => {
+      return child;
+    });
+
+    const request = new CommandRunner().run({
+      cwd: "/worktree",
+      command: "test-command",
+      sessionLogPath: logPath,
+    });
+    const rejection = expect(request).rejects.toThrow();
+    await new Promise((resolve) => setImmediate(resolve));
+    fs.rmSync(logDirectory, { recursive: true });
+    fs.writeFileSync(logDirectory, "not a directory");
+    child.stdout.emit("data", Buffer.from("output\n"));
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+    child.emit("close", null);
+    await rejection;
   });
 
   it("rejects an aborted command without moving workflow state", async () => {

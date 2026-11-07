@@ -12,6 +12,7 @@ import { logger, shouldWriteConsole } from "./logging/logger.js";
 import { createEmailNotifier } from "./notifications/email-notifier.js";
 import { OpenCodeClient } from "./opencode/opencode-client.js";
 import { CommandRunner } from "./process/command-runner.js";
+import { configureProcessRuntime } from "./process/process-runtime.js";
 import {
   installProcessHandlers,
   type ProcessEventSource,
@@ -42,6 +43,11 @@ export async function main(
   const config = loadConfig();
   const environment = parseEnvironment(process.env);
   addConfiguredSecretValues(lifecycle, config, environment);
+  configureProcessRuntime({
+    runtimeRoot: config.workflow.contextRoot,
+    signal: lifecycle.signal,
+    secretValues: lifecycle.getSecretValues(),
+  });
 
   const emailNotifier = createEmailNotifier(
     config.notifications?.email,
@@ -62,7 +68,7 @@ export async function main(
 
   const opencode = new OpenCodeClient(undefined, lifecycle.getSecretValues());
 
-  const commands = new CommandRunner();
+  const commands = new CommandRunner(undefined, lifecycle.signal);
 
   logger.event("Agent Orchestrator");
   logger.event(`Projects: ${config.projects.length}`);

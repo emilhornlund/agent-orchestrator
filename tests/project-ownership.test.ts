@@ -4,14 +4,16 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   acquireProjectOwnership,
   provisionCoordinationNamespace,
   ProjectOwnershipError,
+  withProjectRegistryLock,
 } from "../src/coordination/project-ownership.js";
 import { canonicalizeGitHubRepository } from "../src/config/config.js";
+import { configureProcessRuntime } from "../src/process/process-runtime.js";
 
 const testDirectory = path.dirname(fileURLToPath(import.meta.url));
 const temporaryRoots: string[] = [];
@@ -103,6 +105,107 @@ afterEach(() => {
 });
 
 describe("canonical project ownership coordination", () => {
+  it("cancels a blocked registry flock without leaking its descriptor", async () => {
+    const root = temporaryRoot();
+    const controller = new AbortController();
+    configureProcessRuntime({
+      runtimeRoot: root,
+      signal: controller.signal,
+      operationTimeoutMilliseconds: 1_000,
+    });
+    let releaseRegistry!: () => void;
+    let acquiredRegistry!: () => void;
+    const registryAcquired = new Promise<void>((resolve) => {
+      acquiredRegistry = resolve;
+    });
+    const held = withProjectRegistryLock(root, async () => {
+      acquiredRegistry();
+      await new Promise<void>((resolve) => {
+        releaseRegistry = resolve;
+      });
+    });
+    await registryAcquired;
+    const waiting = withProjectRegistryLock(root, () => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    controller.abort();
+    await expect(waiting).rejects.toMatchObject({
+      classification: "interrupted",
+    });
+    releaseRegistry();
+    await held;
+
+    const retryController = new AbortController();
+    configureProcessRuntime({
+      runtimeRoot: root,
+      signal: retryController.signal,
+      operationTimeoutMilliseconds: 1_000,
+    });
+    await expect(withProjectRegistryLock(root, () => "released")).resolves.toBe(
+      "released",
+    );
+    configureProcessRuntime({
+      runtimeRoot: os.tmpdir(),
+      signal: new AbortController().signal,
+    });
+  });
+
+  it("keeps flock stderr in its artifact instead of the ownership error", async () => {
+    const runtimeRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), "flock-safe-error-"),
+    );
+    temporaryRoots.push(runtimeRoot);
+    const binaries = path.join(runtimeRoot, "bin");
+    fs.mkdirSync(binaries);
+    const marker = "ACTUAL_FLOCK_STDERR_MARKER_c392";
+    const flock = path.join(binaries, "flock");
+    fs.writeFileSync(
+      flock,
+      `#!/usr/bin/env node\nprocess.stderr.write(${JSON.stringify(marker)}); process.exit(2);\n`,
+      { mode: 0o700 },
+    );
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${binaries}${path.delimiter}${originalPath ?? ""}`;
+    configureProcessRuntime({
+      runtimeRoot,
+      signal: new AbortController().signal,
+    });
+    const coordinationRoot = path.join(runtimeRoot, "coordination");
+    fs.mkdirSync(coordinationRoot);
+    provisionCoordinationNamespace(coordinationRoot, "test-host-namespace");
+    try {
+      let failure: unknown;
+      try {
+        await acquireProjectOwnership(
+          coordinationRoot,
+          { trelloBoardId: "board-safe", githubRepository: "owner/repo" },
+          "test-host-namespace",
+        );
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(Error);
+      const error = failure as Error;
+      expect(error.message).toContain("process-executions/");
+      expect(error.message).not.toContain(marker);
+      expect(JSON.stringify(error)).not.toContain(marker);
+      const executions = path.join(runtimeRoot, "process-executions");
+      const [executionId] = fs.readdirSync(executions);
+      expect(executionId).toBeDefined();
+      expect(
+        fs.readFileSync(
+          path.join(executions, executionId!, "stderr.txt"),
+          "utf8",
+        ),
+      ).toContain(marker);
+    } finally {
+      process.env.PATH = originalPath;
+      configureProcessRuntime({
+        runtimeRoot: os.tmpdir(),
+        signal: new AbortController().signal,
+      });
+    }
+  });
+
   it("canonicalizes equivalent GitHub transport spellings", () => {
     expect(canonicalizeGitHubRepository("Owner/Repo.git")).toBe("owner/repo");
     expect(canonicalizeGitHubRepository("Owner/Repo.GIT")).toBe("owner/repo");
@@ -287,7 +390,9 @@ describe("canonical project ownership coordination", () => {
             );
           }),
         ]),
-      ).rejects.toThrow(/Could not start host kernel locking utility/);
+      ).rejects.toThrow(
+        /flock spawn failure; diagnostics: process-executions\//,
+      );
     } finally {
       if (timeout !== undefined) clearTimeout(timeout);
       if (oldPath === undefined) delete process.env.PATH;
@@ -477,6 +582,213 @@ describe("canonical project ownership coordination", () => {
     expect(releaseB).toBe(releaseA);
     expect(() => lease.assertHeld()).toThrow(/no longer held/);
     await Promise.all([releaseA, releaseB]);
+  });
+
+  it("persists termination ambiguity across release and restart without blocking another project", async () => {
+    const root = temporaryRoot();
+    const identity = {
+      trelloBoardId: "ambiguous-board",
+      githubRepository: "Owner/Repo.git",
+    };
+    const lease = await acquireProjectOwnership(
+      root,
+      identity,
+      "test-host-namespace",
+    );
+    lease.markProcessGroupAmbiguous(48123, ["process-executions/example"]);
+    await lease.release();
+
+    await expect(
+      acquireProjectOwnership(
+        root,
+        {
+          trelloBoardId: "ambiguous-board",
+          githubRepository: "https://github.com/owner/repo",
+        },
+        "test-host-namespace",
+      ),
+    ).rejects.toThrow(/unresolved process-group termination ambiguity/);
+    const independent = await acquireProjectOwnership(
+      root,
+      {
+        trelloBoardId: "unaffected-board",
+        githubRepository: "other/repo",
+      },
+      "test-host-namespace",
+    );
+    independent.assertHeld();
+    await independent.release();
+  });
+
+  it.each([0, 1])(
+    "retains all integration locks when ambiguity marker %i cannot be published",
+    async (failedMarkerIndex) => {
+      const root = temporaryRoot();
+      const identity = {
+        trelloBoardId: `marker-failure-${failedMarkerIndex}`,
+        githubRepository: `marker/repo-${failedMarkerIndex}`,
+      };
+      const lease = await acquireProjectOwnership(
+        root,
+        identity,
+        "test-host-namespace",
+      );
+      const keys = [
+        createHash("sha256")
+          .update(`trello:${identity.trelloBoardId}`)
+          .digest("hex"),
+        createHash("sha256")
+          .update(`github:${identity.githubRepository}`)
+          .digest("hex"),
+      ].sort();
+      const markerToFail = path.join(
+        root,
+        `${keys[failedMarkerIndex]}.ambiguity.json`,
+      );
+      const originalOpenSync = fs.openSync;
+      const openSpy = vi
+        .spyOn(fs, "openSync")
+        .mockImplementation((file, flags, mode) => {
+          if (file === markerToFail) {
+            const error = new Error(
+              "injected marker persistence failure",
+            ) as NodeJS.ErrnoException;
+            error.code = "EACCES";
+            throw error;
+          }
+          return originalOpenSync(file, flags, mode);
+        });
+      try {
+        expect(() => lease.markProcessGroupAmbiguous(48123)).toThrow(
+          /injected/,
+        );
+        await expect(lease.release()).rejects.toThrow(/locks are retained/);
+      } finally {
+        openSpy.mockRestore();
+      }
+      await expect(
+        acquireProjectOwnership(root, identity, "test-host-namespace"),
+      ).rejects.toThrow(
+        /already held|unresolved process-group termination ambiguity/,
+      );
+      const independent = await acquireProjectOwnership(
+        root,
+        {
+          trelloBoardId: `unaffected-${failedMarkerIndex}`,
+          githubRepository: `other/repo-${failedMarkerIndex}`,
+        },
+        "test-host-namespace",
+      );
+      await independent.release();
+      lease.markProcessGroupAmbiguous(48123);
+      await lease.release();
+    },
+  );
+
+  it.each(["file", "directory"] as const)(
+    "does not accept an existing ambiguity marker until %s fsync succeeds",
+    async (syncTarget) => {
+      const root = temporaryRoot();
+      const identity = {
+        trelloBoardId: `sync-${syncTarget}`,
+        githubRepository: "sync/repo",
+      };
+      const lease = await acquireProjectOwnership(
+        root,
+        identity,
+        "test-host-namespace",
+      );
+      const key = createHash("sha256")
+        .update(`github:${identity.githubRepository}`)
+        .digest("hex");
+      const marker = path.join(root, `${key}.ambiguity.json`);
+      fs.writeFileSync(
+        marker,
+        `${JSON.stringify({
+          version: 1,
+          identity: JSON.stringify({
+            trelloBoardId: identity.trelloBoardId,
+            githubRepository: identity.githubRepository,
+          }),
+          processGroup: 48123,
+          hostname: os.hostname(),
+          bootId: null,
+          pidNamespace: null,
+          artifacts: [],
+          recordedAt: new Date().toISOString(),
+        })}\n`,
+        { mode: 0o600 },
+      );
+      const originalFsync = fs.fsyncSync;
+      let fail = true;
+      const fsyncSpy = vi.spyOn(fs, "fsyncSync").mockImplementation((fd) => {
+        const stat = fs.fstatSync(fd);
+        const isTarget =
+          syncTarget === "file"
+            ? stat.ino === fs.statSync(marker).ino &&
+              stat.dev === fs.statSync(marker).dev
+            : stat.isDirectory() && stat.ino === fs.statSync(root).ino;
+        if (fail && isTarget) {
+          fail = false;
+          const error = new Error(`injected ${syncTarget} fsync failure`);
+          (error as NodeJS.ErrnoException).code = "EIO";
+          throw error;
+        }
+        return originalFsync(fd);
+      });
+      try {
+        expect(() => lease.markProcessGroupAmbiguous(48123)).toThrow(
+          /fsync failure/,
+        );
+        await expect(lease.release()).rejects.toThrow(/locks are retained/);
+        await expect(
+          acquireProjectOwnership(root, identity, "test-host-namespace"),
+        ).rejects.toThrow(
+          /already held|unresolved process-group termination ambiguity/,
+        );
+        lease.markProcessGroupAmbiguous(48123);
+        await lease.release();
+      } finally {
+        fsyncSpy.mockRestore();
+      }
+      await expectCanAcquire(root);
+    },
+  );
+
+  it("keeps a child alive and ownership contended after fence persistence failure until retry succeeds", async () => {
+    const root = temporaryRoot();
+    const identity = {
+      trelloBoardId: "child-fence",
+      githubRepository: "child/fence",
+    };
+    const marker = path.join(
+      root,
+      `${createHash("sha256").update(`github:${identity.githubRepository}`).digest("hex")}.ambiguity.json`,
+    );
+    const retrySignal = path.join(root, "allow-fence-retry");
+    const script = `import fs from "node:fs";
+import { acquireProjectOwnership } from ${JSON.stringify(path.resolve(testDirectory, "../src/coordination/project-ownership.ts"))};
+const lease = await acquireProjectOwnership(${JSON.stringify(root)}, ${JSON.stringify(identity)}, "test-host-namespace");
+const open = fs.openSync; let blocked = true;
+fs.openSync = function(file, flags, mode) { if (blocked && file === ${JSON.stringify(marker)}) { const e = new Error("injected"); e.code = "EACCES"; throw e; } return open.call(this, file, flags, mode); };
+try { lease.markProcessGroupAmbiguous(48123); } catch {}
+console.log("WAITING");
+const control = setInterval(async () => { if (!fs.existsSync(${JSON.stringify(retrySignal)})) return; clearInterval(control); blocked = false; await new Promise(r => setTimeout(r, 1200)); console.log("FENCED"); await lease.release(); }, 25);`;
+    const child = launchProcess(script);
+    await waitForOutput(child, "WAITING");
+    expect(child.exitCode).toBeNull();
+    await expect(
+      acquireProjectOwnership(root, identity, "test-host-namespace"),
+    ).rejects.toThrow(
+      /already held|unresolved process-group termination ambiguity/,
+    );
+    expect(child.exitCode).toBeNull();
+    fs.writeFileSync(retrySignal, "retry");
+    await waitForOutput(child, "FENCED");
+    await waitForExit(child);
+    await expect(
+      acquireProjectOwnership(root, identity, "test-host-namespace"),
+    ).rejects.toThrow(/unresolved process-group termination ambiguity/);
   });
 
   it("retains ownership in the parent descriptor after the one-shot lock utility exits", async () => {

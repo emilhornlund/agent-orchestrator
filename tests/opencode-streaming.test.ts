@@ -12,6 +12,7 @@ import {
   OpenCodeRunAbortedError,
   OpenCodeTimeoutError,
 } from "../src/opencode/opencode-client.js";
+import { PROCESS_CAPTURE_MAX_BYTES } from "../src/process/process-runtime.js";
 
 interface FakeChild extends EventEmitter {
   pid?: number;
@@ -152,7 +153,7 @@ describe("OpenCode streaming output", () => {
     child.stdout.emit("data", Buffer.from("partial startup output\n"));
     child.emit("error", new Error("spawn failed"));
     await expect(result).rejects.toThrow(
-      "Failed to start OpenCode: spawn failed",
+      /OpenCode spawn failure; diagnostics: process-executions\//,
     );
     expect(fs.readFileSync(path.join(directory, "card.log"), "utf8")).toContain(
       "partial startup output\n",
@@ -180,6 +181,18 @@ describe("OpenCode streaming output", () => {
     expect(stderrWrite).not.toHaveBeenCalled();
     stdoutWrite.mockRestore();
     stderrWrite.mockRestore();
+  });
+
+  it("bounds captured OpenCode output and references the separate evidence artifact", async () => {
+    const child = fakeChild();
+    const result = run(child);
+    child.stdout.emit("data", Buffer.alloc(PROCESS_CAPTURE_MAX_BYTES + 1, "x"));
+    child.emit("close", 0);
+    await expect(result).rejects.toThrow(
+      new RegExp(
+        `stdout exceeded the ${PROCESS_CAPTURE_MAX_BYTES}-byte output limit; diagnostics: process-executions/`,
+      ),
+    );
   });
 
   it("rejects cancellation and timeout while retaining already-streamed output", async () => {

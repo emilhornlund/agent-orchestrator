@@ -37,13 +37,14 @@ async function probe(
   commands: CommandRunner,
   executable: "git" | "opencode",
   args: readonly string[],
+  timeoutMilliseconds: number,
 ): Promise<string> {
   let result;
   try {
     result = await commands.run({
       cwd: process.cwd(),
       command: [executable, ...args].join(" "),
-      timeoutMilliseconds: 5_000,
+      timeoutMilliseconds,
       captureOutput: true,
       suppressOutput: true,
     });
@@ -67,8 +68,14 @@ async function validateVersion(
   executable: "git" | "opencode",
   minimum: string,
   displayName: string,
+  timeoutMilliseconds: number,
 ): Promise<void> {
-  const output = await probe(commands, executable, ["--version"]);
+  const output = await probe(
+    commands,
+    executable,
+    ["--version"],
+    timeoutMilliseconds,
+  );
   const installed = parseVersion(output, displayName);
   const required = parseVersion(
     displayName === "Git" ? `git version ${minimum}` : minimum,
@@ -89,15 +96,28 @@ async function validateVersion(
 /** Checks only capabilities actually consumed by this application. */
 export async function validateGitAndOpenCode(
   commands: CommandRunner,
+  timeoutMilliseconds = 5 * 60_000,
 ): Promise<void> {
-  await validateVersion(commands, "git", MINIMUM_GIT_VERSION, "Git");
+  await validateVersion(
+    commands,
+    "git",
+    MINIMUM_GIT_VERSION,
+    "Git",
+    timeoutMilliseconds,
+  );
   await validateVersion(
     commands,
     "opencode",
     MINIMUM_OPENCODE_VERSION,
     "OpenCode",
+    timeoutMilliseconds,
   );
-  const gitCommands = await probe(commands, "git", ["--list-cmds=main"]);
+  const gitCommands = await probe(
+    commands,
+    "git",
+    ["--list-cmds=main"],
+    timeoutMilliseconds,
+  );
   const requiredGitCommands = [
     "branch",
     "cat-file",
@@ -120,7 +140,12 @@ export async function validateGitAndOpenCode(
       "Git",
       `installation is missing required commands: ${missingGitCommands.join(", ")}`,
     );
-  const help = await probe(commands, "opencode", ["run", "--help"]);
+  const help = await probe(
+    commands,
+    "opencode",
+    ["run", "--help"],
+    timeoutMilliseconds,
+  );
   const required = [
     "--auto",
     "--model",

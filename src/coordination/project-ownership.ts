@@ -5,6 +5,13 @@ import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 
 import { canonicalizeGitHubRepository } from "../config/config.js";
+import {
+  beginProcessEvidence,
+  drainProcessGroup,
+  ProcessExecutionError,
+  getProcessRuntime,
+  signalProcessGroup,
+} from "../process/process-runtime.js";
 
 export interface ProjectIntegrationIdentity {
   trelloBoardId: string;
@@ -32,7 +39,115 @@ export interface ProjectOwnershipLease {
   readonly instanceId: string;
   readonly token: string;
   assertHeld(): void;
+  markProcessGroupAmbiguous(
+    pid: number | undefined,
+    artifactRefs?: readonly string[],
+  ): void;
   release(): Promise<void>;
+}
+
+interface AmbiguityMarker {
+  version: 1;
+  identity: string;
+  processGroup: number | null;
+  hostname: string;
+  bootId: string | null;
+  pidNamespace: string | null;
+  artifacts: readonly string[];
+  recordedAt: string;
+}
+
+function ambiguityPath(root: string, key: string): string {
+  return path.join(root, `${key}.ambiguity.json`);
+}
+
+function publishAmbiguityMarker(
+  root: string,
+  key: string,
+  record: AmbiguityMarker,
+): void {
+  const destination = ambiguityPath(root, key);
+  let fd: number;
+  let created = false;
+  try {
+    fd = fs.openSync(
+      destination,
+      fs.constants.O_CREAT |
+        fs.constants.O_EXCL |
+        fs.constants.O_WRONLY |
+        fs.constants.O_NOFOLLOW,
+      0o600,
+    );
+    created = true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    fd = fs.openSync(
+      destination,
+      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
+    );
+  }
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile())
+      throw new ProjectOwnershipError("Unsafe ambiguity marker");
+    assertProtectedFile(stat, destination);
+    if (!created) {
+      const pathStat = fs.lstatSync(destination);
+      if (
+        pathStat.isSymbolicLink() ||
+        pathStat.dev !== stat.dev ||
+        pathStat.ino !== stat.ino
+      )
+        throw new ProjectOwnershipError(
+          "Ambiguity marker changed during validation",
+        );
+      const value = JSON.parse(
+        fs.readFileSync(fd, "utf8"),
+      ) as Partial<AmbiguityMarker>;
+      if (value.version !== 1 || value.identity !== record.identity)
+        throw new ProjectOwnershipError(
+          "Existing ambiguity marker has a different identity",
+        );
+    } else {
+      fs.writeFileSync(fd, `${JSON.stringify(record)}\n`);
+    }
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+  const directory = fs.openSync(root, fs.constants.O_RDONLY);
+  try {
+    fs.fsyncSync(directory);
+  } finally {
+    fs.closeSync(directory);
+  }
+}
+
+function assertNoAmbiguity(root: string, keys: readonly string[]): void {
+  for (const key of keys) {
+    const file = ambiguityPath(root, key);
+    try {
+      const stat = fs.lstatSync(file);
+      if (stat.isSymbolicLink() || !stat.isFile())
+        throw new Error("unsafe marker");
+      assertProtectedFile(stat, file);
+      const value = JSON.parse(
+        fs.readFileSync(file, "utf8"),
+      ) as Partial<AmbiguityMarker>;
+      if (value.version !== 1 || typeof value.identity !== "string")
+        throw new Error("malformed marker");
+      throw new ProjectOwnershipError(
+        `Project integration is blocked by unresolved process-group termination ambiguity; marker: ${file}. Preserve evidence and obtain operator verification that the recorded process group cannot execute before any recovery.`,
+      );
+    } catch (error) {
+      if (error instanceof ProjectOwnershipError) throw error;
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT")
+        throw new ProjectOwnershipError(
+          `Unsafe or malformed process ambiguity marker preserved at ${file}`,
+          { cause: error },
+        );
+    }
+  }
 }
 
 /** Runs a short host-wide registry transaction under a kernel flock. */
@@ -324,6 +439,7 @@ interface KernelLock {
   descriptor: number;
   device: number;
   inode: number;
+  execution: ReturnType<typeof beginProcessEvidence>;
 }
 
 async function acquireKernelLock(
@@ -331,6 +447,17 @@ async function acquireKernelLock(
   wait = false,
 ): Promise<KernelLock> {
   const descriptor = openLockFile(lockPath);
+  let execution: ReturnType<typeof beginProcessEvidence>;
+  try {
+    execution = beginProcessEvidence(
+      `flock ${wait ? "wait" : "nonblocking"} ${lockPath}`,
+      process.cwd(),
+      getProcessRuntime().secretValues,
+    );
+  } catch (error) {
+    fs.closeSync(descriptor);
+    throw error;
+  }
   let stat: fs.Stats;
   try {
     stat = fs.fstatSync(descriptor);
@@ -342,15 +469,22 @@ async function acquireKernelLock(
     assertProtectedFile(stat, lockPath);
   } catch (error) {
     fs.closeSync(descriptor);
+    execution.finish("spawn-failure", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     throw error;
   }
   let child: ChildProcess;
   try {
     child = spawn("flock", [...(wait ? [] : ["-n"]), "3"], {
       stdio: ["ignore", "ignore", "pipe", descriptor],
+      detached: process.platform !== "win32",
     });
   } catch (error) {
     fs.closeSync(descriptor);
+    execution.finish("spawn-failure", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     throw new ProjectOwnershipError(
       "Could not start host kernel locking utility (flock)",
       {
@@ -358,34 +492,112 @@ async function acquireKernelLock(
       },
     );
   }
+  const runtime = getProcessRuntime();
   try {
     await new Promise<void>((resolve, reject) => {
-      let stderr = "";
+      let cancellation: "timeout" | "interrupted" | undefined;
+      let forceKill: NodeJS.Timeout | undefined;
+      const cleanup = (): void => {
+        if (timer !== undefined) clearTimeout(timer);
+        if (forceKill !== undefined) clearTimeout(forceKill);
+        runtime.signal?.removeEventListener("abort", abort);
+      };
+      const abort = (): void => {
+        if (cancellation !== undefined) return;
+        cancellation = "interrupted";
+        signalProcessGroup(child.pid, "SIGTERM", (signal) =>
+          child.kill(signal),
+        );
+        forceKill = setTimeout(
+          () =>
+            signalProcessGroup(child.pid, "SIGKILL", (signal) =>
+              child.kill(signal),
+            ),
+          100,
+        );
+      };
+      const timer = setTimeout(() => {
+        if (cancellation !== undefined) return;
+        cancellation = "timeout";
+        signalProcessGroup(child.pid, "SIGTERM", (signal) =>
+          child.kill(signal),
+        );
+        forceKill = setTimeout(
+          () =>
+            signalProcessGroup(child.pid, "SIGKILL", (signal) =>
+              child.kill(signal),
+            ),
+          100,
+        );
+      }, runtime.operationTimeoutMilliseconds);
+      runtime.signal?.addEventListener("abort", abort, { once: true });
+      if (runtime.signal?.aborted) abort();
       child.stderr?.setEncoding("utf8").on("data", (chunk: string) => {
-        stderr += chunk;
+        execution.append("stderr", chunk);
       });
       let spawnError: Error | undefined;
       child.once("error", (error) => {
         spawnError = error;
       });
-      child.once("close", (code, signal) => {
-        if (spawnError !== undefined) {
-          reject(
-            new ProjectOwnershipError(
-              "Could not start host kernel locking utility (flock)",
-              { cause: spawnError },
-            ),
-          );
-        } else if (code === 0) {
-          resolve();
-        } else {
-          reject(
-            new ProjectOwnershipError(
-              code === 1
-                ? `Project integration ownership is already held (${lockPath})`
-                : `Could not acquire project integration lock (${lockPath}): ${stderr.trim() || `flock exited ${String(code)}${signal === null ? "" : ` from ${signal}`}`}`,
-            ),
-          );
+      child.once("close", async (code, signal) => {
+        cleanup();
+        try {
+          await drainProcessGroup(child.pid, (name) => child.kill(name));
+        } catch (error) {
+          reject(error);
+          return;
+        }
+        try {
+          if (spawnError !== undefined) {
+            execution.finish("spawn-failure", { error: spawnError.message });
+            reject(
+              new ProcessExecutionError(
+                "flock",
+                execution.executionId,
+                "spawn-failure",
+              ),
+            );
+          } else if (code === 0) {
+            if (execution.failure !== undefined) {
+              reject(execution.failure);
+              return;
+            }
+            execution.finish("lock-acquired", {
+              exitCode: 0,
+              ...(signal === null ? {} : { signal }),
+            });
+            resolve();
+          } else {
+            const status =
+              cancellation ?? (code === 1 ? "lock-contended" : "nonzero");
+            execution.finish(status, {
+              exitCode: code ?? 1,
+              ...(signal === null ? {} : { signal }),
+            });
+            reject(
+              cancellation === undefined
+                ? new ProjectOwnershipError(
+                    code === 1
+                      ? `Project integration ownership is already held (${lockPath})`
+                      : new ProcessExecutionError(
+                          "flock",
+                          execution.executionId,
+                          "nonzero",
+                          code ?? 1,
+                          signal ?? undefined,
+                        ).message,
+                  )
+                : new ProcessExecutionError(
+                    "flock",
+                    execution.executionId,
+                    cancellation,
+                    code ?? 1,
+                    signal ?? undefined,
+                  ),
+            );
+          }
+        } catch (error) {
+          reject(error);
         }
       });
     });
@@ -404,9 +616,21 @@ async function acquireKernelLock(
       descriptor,
       device: stat.dev,
       inode: stat.ino,
+      execution,
     };
   } catch (error) {
-    fs.closeSync(descriptor);
+    try {
+      fs.closeSync(descriptor);
+    } catch {
+      // Preserve the acquisition failure; descriptor cleanup was attempted.
+    }
+    try {
+      execution.finish("acquisition-failure", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    } catch {
+      // Preserve the original error and never let evidence failure escape cleanup.
+    }
     throw error;
   }
 }
@@ -450,10 +674,17 @@ export async function acquireProjectOwnership(
     );
   }
   const held: KernelLock[] = [];
+  const keys = resourceKeys(identity);
+  assertNoAmbiguity(root, keys);
   let state: "held" | "releasing" | "released" | "lost" = "held";
+  let ambiguityObserved = false;
+  const durableAmbiguityKeys = new Set<string>();
+  let fenceRetry: NodeJS.Timeout | undefined;
+  let fenceRecord: AmbiguityMarker | undefined;
+  let fenceWarningReported = false;
   let releasePromise: Promise<void> | undefined;
   try {
-    for (const key of resourceKeys(identity)) {
+    for (const key of keys) {
       const lockPath = path.join(root, `${key}.lock`);
       const metadataPath = path.join(root, `${key}.owner.json`);
       const lock = await acquireKernelLock(lockPath);
@@ -506,6 +737,7 @@ export async function acquireProjectOwnership(
     instanceId: `${os.hostname()}:${process.pid}:${randomUUID()}`,
     token: randomUUID(),
     assertHeld() {
+      assertNoAmbiguity(root, keys);
       const lost = held.some((lock) => {
         try {
           const descriptorStat = fs.fstatSync(lock.descriptor);
@@ -528,8 +760,96 @@ export async function acquireProjectOwnership(
         );
       }
     },
+    markProcessGroupAmbiguous(pid, artifacts = []) {
+      // Fail closed before touching the filesystem. If either marker cannot be
+      // durably published, release must retain both kernel locks.
+      ambiguityObserved = true;
+      state = "lost";
+      const record: AmbiguityMarker = {
+        version: 1,
+        identity: JSON.stringify({
+          trelloBoardId: identity.trelloBoardId.trim(),
+          githubRepository: canonicalizeGitHubRepository(
+            identity.githubRepository,
+          ),
+        }),
+        processGroup: pid ?? null,
+        hostname: os.hostname(),
+        bootId: (() => {
+          try {
+            return fs
+              .readFileSync("/proc/sys/kernel/random/boot_id", "utf8")
+              .trim();
+          } catch {
+            return null;
+          }
+        })(),
+        pidNamespace: (() => {
+          try {
+            return fs.readlinkSync("/proc/self/ns/pid");
+          } catch {
+            return null;
+          }
+        })(),
+        artifacts,
+        recordedAt: new Date().toISOString(),
+      };
+      fenceRecord = record;
+      let persistenceFailure: unknown;
+      for (const key of keys) {
+        try {
+          publishAmbiguityMarker(root, key, record);
+          durableAmbiguityKeys.add(key);
+        } catch (error) {
+          persistenceFailure ??= error;
+        }
+      }
+      if (durableAmbiguityKeys.size !== keys.length) {
+        if (!fenceWarningReported) {
+          fenceWarningReported = true;
+          process.stderr.write(
+            "OPERATOR REQUIRED: ambiguous process termination could not be durably fenced; service remains alive holding project ownership. Verify process termination and coordination storage before recovery.\n",
+          );
+        }
+        // Keep a referenced handle alive, and continue one bounded publication
+        // attempt per interval. Locks are never released until every fence is
+        // durably synced. SIGKILL or host failure can still end this guarantee.
+        if (fenceRetry === undefined) {
+          fenceRetry = setInterval(() => {
+            for (const key of keys) {
+              if (durableAmbiguityKeys.has(key)) continue;
+              try {
+                publishAmbiguityMarker(root, key, fenceRecord!);
+                durableAmbiguityKeys.add(key);
+              } catch {
+                // Retain locks and retry later; the initial sanitized warning
+                // is the sole alert for this publication episode.
+              }
+            }
+            if (durableAmbiguityKeys.size === keys.length && fenceRetry) {
+              clearInterval(fenceRetry);
+              fenceRetry = undefined;
+            }
+          }, 1_000);
+        }
+        throw persistenceFailure;
+      }
+    },
     release() {
       if (releasePromise !== undefined) return releasePromise;
+      if (
+        ambiguityObserved &&
+        keys.some((key) => !durableAmbiguityKeys.has(key))
+      )
+        return Promise.reject(
+          new ProjectOwnershipError(
+            "Process-group ambiguity markers are not durably present for every leased resource; ownership locks are retained",
+          ),
+        );
+      if (fenceRetry !== undefined) {
+        clearInterval(fenceRetry);
+        fenceRetry = undefined;
+      }
       state = "releasing";
       releasePromise = Promise.all(held.reverse().map(releaseKernelLock)).then(
         () => {
@@ -544,6 +864,7 @@ export async function acquireProjectOwnership(
 function releaseKernelLock(lock: KernelLock): Promise<void> {
   try {
     fs.closeSync(lock.descriptor);
+    lock.execution.finish("lock-released", { lockPath: lock.lockPath });
   } catch {
     // An already-closed descriptor does not keep a kernel lock alive.
   }

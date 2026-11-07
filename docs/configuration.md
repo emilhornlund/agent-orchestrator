@@ -138,6 +138,13 @@ old-version workers before enabling a version that understands this namespace: o
 and the lease cannot retroactively fence them. Distinct namespace IDs/hidden mounts are an operator deployment error that
 cannot be detected from either isolated mount. Multiple-machine coordination is not supported.
 
+If termination is ambiguous and a durable ambiguity marker cannot be published, the service emits one sanitized operator-required warning,
+continues controlled marker-publication retries, and remains alive with the integration locks held. Normal bootstrap/shutdown completion must
+not release those locks until every marker has been synced. A successful retry permits orderly shutdown while the marker continues to block
+reacquisition pending operator recovery. This is a fail-closed guarantee for normal process operation, not an immunity to `SIGKILL`, runtime
+crash, power loss, or host failure: those can close descriptors before the marker is durable. In that case an operator must independently
+verify the recorded process group and preserved evidence before recovering or clearing coordination state.
+
 Card context storage uses this layout, with project IDs, card IDs, and attachment filenames treated as untrusted single path
 components:
 

@@ -796,6 +796,7 @@ describe("GitHubClient", () => {
       {
         cwd: "/tmp/repository",
         stdio: ["inherit", "pipe", "pipe"],
+        detached: process.platform !== "win32",
       },
     );
   });
@@ -824,7 +825,9 @@ describe("GitHubClient", () => {
         title: "Example task",
         body: "Example body",
       }),
-    ).rejects.toThrow("GitHub CLI exited with code 2: permission denied");
+    ).rejects.toThrow(
+      /GitHub CLI exited with code 2; diagnostics: process-executions\//,
+    );
   });
 
   it("rejects when gh cannot be started", async () => {
@@ -849,7 +852,9 @@ describe("GitHubClient", () => {
         title: "Example task",
         body: "Example body",
       }),
-    ).rejects.toThrow("Failed to start GitHub CLI: spawn gh ENOENT");
+    ).rejects.toThrow(
+      /GitHub CLI spawn failure; diagnostics: process-executions\//,
+    );
   });
 
   it("rejects when gh succeeds without returning a URL", async () => {
@@ -901,7 +906,7 @@ describe("GitHubClient", () => {
     child.emit("close", null);
 
     await expect(request).rejects.toThrow(
-      "GitHub CLI timed out after 120000ms",
+      /GitHub CLI timeout; diagnostics: process-executions\//,
     );
   });
 
@@ -921,13 +926,14 @@ describe("GitHubClient", () => {
       body: "Example body",
     });
     const rejection = expect(request).rejects.toThrow(
-      "GitHub CLI timed out after 120000ms",
+      /GitHub CLI timeout; diagnostics: process-executions\//,
     );
 
     await vi.advanceTimersByTimeAsync(2 * 60 * 1000 + 5_000);
 
     expect(child.kill).toHaveBeenNthCalledWith(1, "SIGTERM");
     expect(child.kill).toHaveBeenNthCalledWith(2, "SIGKILL");
+    child.emit("close", null);
     await rejection;
   });
 

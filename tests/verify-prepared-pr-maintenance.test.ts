@@ -10,6 +10,7 @@ import { verifyPreparedPrMaintenance } from "../src/task-session/verify-prepared
 import type { ImplementationReviewResult } from "../src/task-session/implementation-review-result.js";
 
 const sha = (char: string) => char.repeat(40);
+const rawDiagnosticMarker = "RAW_MAINTENANCE_STDERR_MARKER_81ac";
 function fixture(
   options: {
     coverage?: boolean;
@@ -95,7 +96,7 @@ function fixture(
               ? 1
               : 0,
         output: "",
-        errorOutput: "gate diagnostic",
+        errorOutput: rawDiagnosticMarker,
       };
     }),
   };
@@ -187,6 +188,26 @@ describe("verifyPreparedPrMaintenance", () => {
       expect(f.store.inspect("maintenance")?.qualityVerification?.status).toBe(
         "uncertain",
       );
+    fs.rmSync(f.root, { recursive: true, force: true });
+  });
+
+  it("keeps failed gate raw diagnostics in quality evidence, not the thrown log-safe summary", async () => {
+    const f = fixture({ validationFails: true });
+    let thrown: unknown;
+    try {
+      await f.run();
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).not.toContain(rawDiagnosticMarker);
+    expect((thrown as Error).message).toContain("session log");
+    expect(
+      (
+        f.store.inspect("maintenance")?.qualityVerification as
+          { validation?: { diagnostic?: string } } | undefined
+      )?.validation?.diagnostic,
+    ).toContain(rawDiagnosticMarker);
     fs.rmSync(f.root, { recursive: true, force: true });
   });
 });

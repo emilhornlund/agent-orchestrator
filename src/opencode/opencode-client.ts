@@ -10,6 +10,16 @@ import {
   appendSessionSection,
 } from "../logging/session-log.js";
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
+import {
+  beginProcessEvidence,
+  drainProcessGroup,
+  getProcessRuntime,
+  signalProcessGroup,
+  ProcessEvidenceError,
+  appendBoundedOutput,
+  ProcessOutputLimitError,
+  ProcessExecutionError,
+} from "../process/process-runtime.js";
 
 const shutdownGraceMilliseconds = 5_000;
 
@@ -44,8 +54,10 @@ export class OpenCodeRunAbortedError extends Error {
 }
 
 export class OpenCodeTimeoutError extends Error {
-  constructor(timeoutMilliseconds: number) {
-    super(`OpenCode exceeded safety timeout of ${timeoutMilliseconds}ms`);
+  constructor(timeoutMilliseconds: number, executionId?: string) {
+    super(
+      `OpenCode exceeded safety timeout of ${timeoutMilliseconds}ms${executionId === undefined ? "" : `; diagnostics: process-executions/${executionId}/stderr.txt`}`,
+    );
     this.name = "OpenCodeTimeoutError";
   }
 }
@@ -292,27 +304,7 @@ export function signalProcessTree(
   signal: NodeJS.Signals,
   killChild: (signal: NodeJS.Signals) => boolean,
 ): void {
-  if (childPid === undefined || process.platform === "win32") {
-    killChild(signal);
-    return;
-  }
-
-  try {
-    process.kill(-childPid, signal);
-  } catch (error) {
-    const code =
-      error instanceof Error && "code" in error ? error.code : undefined;
-
-    if (code !== "ESRCH") {
-      logger.error(
-        `Failed to signal OpenCode process group with ${signal}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-
-      killChild(signal);
-    }
-  }
+  signalProcessGroup(childPid, signal, killChild);
 }
 
 const defaultRunOpenCode: RunOpenCode = async ({
@@ -331,7 +323,12 @@ const defaultRunOpenCode: RunOpenCode = async ({
   secretValues,
 }) =>
   new Promise((resolve, reject) => {
-    if (signal.aborted) {
+    const lifecycleSignal = getProcessRuntime().signal;
+    const effectiveSignal =
+      lifecycleSignal === undefined || lifecycleSignal === signal
+        ? signal
+        : AbortSignal.any([signal, lifecycleSignal]);
+    if (effectiveSignal.aborted) {
       reject(new OpenCodeRunAbortedError());
       return;
     }
@@ -349,6 +346,12 @@ const defaultRunOpenCode: RunOpenCode = async ({
         ].join("\n"),
       );
     }
+
+    const execution = beginProcessEvidence(
+      `opencode run --model ${model} --variant ${variant}`,
+      cwd,
+      secretValues,
+    );
 
     const child = spawn(
       "opencode",
@@ -378,8 +381,21 @@ const defaultRunOpenCode: RunOpenCode = async ({
     const stderrRedactor = createSecretRedactor(secretValues);
     let settled = false;
     let timedOut = false;
+    let recorderFailure: Error | undefined;
+    let captureFailure: Error | undefined;
+    let redactorsFlushed = false;
 
     let forceKillTimeout: NodeJS.Timeout | undefined;
+
+    function recordSession(text: string): void {
+      if (!sessionLogPath || text.length === 0) return;
+      try {
+        appendSessionLog(sessionLogPath, text);
+      } catch (error) {
+        recorderFailure ??=
+          error instanceof Error ? error : new Error(String(error));
+      }
+    }
 
     const safetyTimeout = setTimeout(() => {
       if (settled) {
@@ -389,8 +405,7 @@ const defaultRunOpenCode: RunOpenCode = async ({
       timedOut = true;
 
       if (sessionLogPath) {
-        appendSessionLog(
-          sessionLogPath,
+        recordSession(
           `\nOpenCode exceeded safety timeout of ${timeoutMilliseconds}ms; terminating\n`,
         );
       }
@@ -408,13 +423,10 @@ const defaultRunOpenCode: RunOpenCode = async ({
           return;
         }
 
-        if (sessionLogPath) {
-          appendSessionLog(
-            sessionLogPath,
+        if (sessionLogPath)
+          recordSession(
             "\nOpenCode did not exit after SIGTERM; sending SIGKILL\n",
           );
-        }
-
         signalProcessTree(child.pid, "SIGKILL", (signal) => child.kill(signal));
       }, shutdownGraceMilliseconds);
 
@@ -426,43 +438,83 @@ const defaultRunOpenCode: RunOpenCode = async ({
     }
 
     function flushOutput(): void {
+      if (redactorsFlushed) return;
+      redactorsFlushed = true;
       const stdout = stdoutRedactor.flush();
       const stderr = stderrRedactor.flush();
-      output += stdout;
-      errorOutput += stderr;
-      if (sessionLogPath) {
-        appendSessionLog(sessionLogPath, stdout);
-        appendSessionLog(sessionLogPath, stderr);
-      } else {
-        process.stdout.write(stdout);
-        process.stderr.write(stderr);
+      if (captureFailure === undefined) {
+        try {
+          output = appendBoundedOutput(output, stdout, "stdout");
+          errorOutput = appendBoundedOutput(errorOutput, stderr, "stderr");
+        } catch {
+          captureFailure = new ProcessOutputLimitError(
+            "stdout",
+            undefined,
+            execution.executionId,
+          );
+          terminate();
+        }
       }
+      execution.append("stdout", stdout);
+      execution.append("stderr", stderr);
+      recorderFailure ??= execution.failure;
+      recordSession(stdout);
+      recordSession(stderr);
+      if (recorderFailure !== undefined) terminate();
     }
 
-    signal.addEventListener("abort", handleAbort, { once: true });
+    effectiveSignal.addEventListener("abort", handleAbort, { once: true });
 
     child.stdout.on("data", (chunk: Buffer) => {
       const text = stdoutRedactor.push(chunk.toString());
 
-      output += text;
-
-      if (sessionLogPath) {
-        appendSessionLog(sessionLogPath, text);
-      } else {
-        process.stdout.write(text);
+      if (captureFailure === undefined) {
+        try {
+          output = appendBoundedOutput(output, text, "stdout");
+        } catch {
+          captureFailure = new ProcessOutputLimitError(
+            "stdout",
+            undefined,
+            execution.executionId,
+          );
+          terminate();
+        }
       }
+      execution.append("stdout", text);
+      if (execution.failure !== undefined) {
+        recorderFailure ??= execution.failure;
+        terminate();
+        return;
+      }
+
+      recordSession(text);
+      if (recorderFailure !== undefined) terminate();
     });
 
     child.stderr.on("data", (chunk: Buffer) => {
       const text = stderrRedactor.push(chunk.toString());
 
-      errorOutput += text;
-
-      if (sessionLogPath) {
-        appendSessionLog(sessionLogPath, text);
-      } else {
-        process.stderr.write(text);
+      if (captureFailure === undefined) {
+        try {
+          errorOutput = appendBoundedOutput(errorOutput, text, "stderr");
+        } catch {
+          captureFailure = new ProcessOutputLimitError(
+            "stderr",
+            undefined,
+            execution.executionId,
+          );
+          terminate();
+        }
       }
+      execution.append("stderr", text);
+      if (execution.failure !== undefined) {
+        recorderFailure ??= execution.failure;
+        terminate();
+        return;
+      }
+
+      recordSession(text);
+      if (recorderFailure !== undefined) terminate();
     });
 
     child.once("error", (error) => {
@@ -473,27 +525,65 @@ const defaultRunOpenCode: RunOpenCode = async ({
       flushOutput();
 
       logger.error(
-        `Failed to start OpenCode: ${redactSecrets(error.message, secretValues)}`,
+        `Failed to start OpenCode; diagnostics: process-executions/${execution.executionId}/stderr.txt`,
       );
 
       settled = true;
+      try {
+        execution.finish("spawn-failure", {
+          pid: child.pid,
+          error: redactSecrets(error.message, secretValues),
+        });
+      } catch (finishError) {
+        clearTimeout(safetyTimeout);
+        if (forceKillTimeout !== undefined) clearTimeout(forceKillTimeout);
+        effectiveSignal.removeEventListener("abort", handleAbort);
+        reject(finishError);
+        return;
+      }
       clearTimeout(safetyTimeout);
       if (forceKillTimeout !== undefined) {
         clearTimeout(forceKillTimeout);
       }
-      signal.removeEventListener("abort", handleAbort);
+      effectiveSignal.removeEventListener("abort", handleAbort);
 
       reject(
-        new Error(`Failed to start OpenCode: ${error.message}`, {
-          cause: error,
-        }),
+        new ProcessExecutionError(
+          "OpenCode",
+          execution.executionId,
+          "spawn-failure",
+        ),
       );
     });
 
-    child.once("close", (code) => {
+    child.once("close", async (code, signalName) => {
       if (settled) {
         return;
       }
+
+      try {
+        await drainProcessGroup(child.pid, (signal) => child.kill(signal));
+      } catch (error) {
+        if (settled) return;
+        flushOutput();
+        settled = true;
+        clearTimeout(safetyTimeout);
+        if (forceKillTimeout !== undefined) clearTimeout(forceKillTimeout);
+        effectiveSignal.removeEventListener("abort", handleAbort);
+        try {
+          execution.finish("process-group-ambiguous", { pid: child.pid });
+        } catch (finishError) {
+          recorderFailure ??=
+            finishError instanceof Error
+              ? finishError
+              : new ProcessEvidenceError(
+                  "OpenCode evidence finalization failed",
+                );
+        }
+        reject(error);
+        return;
+      }
+      if (settled) return;
 
       flushOutput();
 
@@ -502,14 +592,50 @@ const defaultRunOpenCode: RunOpenCode = async ({
       if (forceKillTimeout !== undefined) {
         clearTimeout(forceKillTimeout);
       }
-      signal.removeEventListener("abort", handleAbort);
-
-      if (timedOut) {
-        reject(new OpenCodeTimeoutError(timeoutMilliseconds));
+      effectiveSignal.removeEventListener("abort", handleAbort);
+      try {
+        execution.finish(
+          recorderFailure !== undefined ||
+            captureFailure !== undefined ||
+            execution.failure !== undefined
+            ? "evidence-failure"
+            : timedOut
+              ? "timeout"
+              : effectiveSignal.aborted
+                ? "interrupted"
+                : code === 0
+                  ? "success"
+                  : "nonzero",
+          {
+            pid: child.pid,
+            exitCode: code ?? 1,
+            ...(signalName === null ? {} : { signal: signalName }),
+          },
+        );
+      } catch (error) {
+        recorderFailure ??=
+          error instanceof Error
+            ? error
+            : new ProcessEvidenceError("OpenCode evidence finalization failed");
+      }
+      recorderFailure ??= execution.failure;
+      if (recorderFailure !== undefined) {
+        reject(recorderFailure);
+        return;
+      }
+      if (captureFailure !== undefined) {
+        reject(captureFailure);
         return;
       }
 
-      if (signal.aborted) {
+      if (timedOut) {
+        reject(
+          new OpenCodeTimeoutError(timeoutMilliseconds, execution.executionId),
+        );
+        return;
+      }
+
+      if (effectiveSignal.aborted) {
         reject(new OpenCodeRunAbortedError());
         return;
       }

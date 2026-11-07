@@ -70,7 +70,10 @@ export interface StartupDependencies {
 }
 
 export interface StartupOperations {
-  validateToolchain?: (commands: CommandRunner) => Promise<void>;
+  validateToolchain?: (
+    commands: CommandRunner,
+    timeoutMilliseconds?: number,
+  ) => Promise<void>;
   validateGitHubCli: (
     github: GitHubClient,
     projects: Config["projects"],
@@ -541,11 +544,13 @@ export async function runStartup(
     const validateToolchain = () =>
       (operations.validateToolchain ?? validateGitAndOpenCode)(
         dependencies.commands,
+        (config.projects[0]?.opencode.timeoutMinutes ?? 5) * 60_000,
       );
     if (config.projects[0] && leases[0])
       await ProjectRunAuthority.withProjectLease(
         config.projects[0].id,
         () => leases[0]!.assertHeld(),
+        (pid) => leases[0]!.markProcessGroupAmbiguous(pid),
         validateToolchain,
       );
     else await validateToolchain();
@@ -554,6 +559,8 @@ export async function runStartup(
       config.projects.map((project, index) => ({
         projectId: project.id,
         assertHeld: () => leases[index]!.assertHeld(),
+        markTerminationAmbiguous: (pid) =>
+          leases[index]!.markProcessGroupAmbiguous(pid),
       })),
       () => operations.validateGitHubCli(dependencies.github, config.projects),
     );
@@ -772,6 +779,7 @@ export async function runStartup(
           ProjectRunAuthority.withProjectLease(
             project.id,
             () => lease.assertHeld(),
+            (pid) => lease.markProcessGroupAmbiguous(pid),
             async () => {
               await ensureRepository(
                 dependencies.git,
@@ -789,6 +797,7 @@ export async function runStartup(
         await ProjectRunAuthority.withProjectLease(
           project.id,
           () => lease.assertHeld(),
+          (pid) => lease.markProcessGroupAmbiguous(pid),
           () => operations.validateProjectTrello(dependencies.trello, project),
         );
       } catch (error) {
@@ -838,6 +847,7 @@ export async function runStartup(
               ProjectRunAuthority.withProjectLease(
                 project.id,
                 () => lease.assertHeld(),
+                (pid) => lease.markProcessGroupAmbiguous(pid),
                 async () => {
                   await ensureRepository(
                     dependencies.git,
@@ -855,6 +865,7 @@ export async function runStartup(
             await ProjectRunAuthority.withProjectLease(
               project.id,
               () => lease.assertHeld(),
+              (pid) => lease.markProcessGroupAmbiguous(pid),
               () => operations.validateProjectTrello(trello, project),
             );
             pendingProjectValidations.delete(project.id);
