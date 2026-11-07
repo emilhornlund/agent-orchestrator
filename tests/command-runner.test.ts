@@ -86,7 +86,7 @@ describe("CommandRunner", () => {
         cwd: "/worktree",
         command: "yarn validate",
       }),
-    ).resolves.toEqual({ exitCode: 0 });
+    ).resolves.toMatchObject({ exitCode: 0 });
 
     expect(spawnMock).toHaveBeenCalledWith("yarn validate", {
       cwd: "/worktree",
@@ -134,7 +134,7 @@ describe("CommandRunner", () => {
         sessionLabel: "Repository validation",
         secretValues: ["token-a"],
       }),
-    ).resolves.toEqual({ exitCode: 0 });
+    ).resolves.toMatchObject({ exitCode: 0 });
 
     expect(stdoutWrite).not.toHaveBeenCalled();
     expect(stderrWrite).not.toHaveBeenCalled();
@@ -369,7 +369,7 @@ describe("CommandRunner", () => {
         secretValues: ["secret-value"],
         artifactDirectory,
       }),
-    ).resolves.toEqual({ exitCode: 7 });
+    ).resolves.toMatchObject({ exitCode: 7 });
 
     const [executionId] = fs.readdirSync(artifactDirectory);
     expect(executionId).toBeDefined();

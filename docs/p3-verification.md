@@ -101,19 +101,38 @@ below.
 
 ## Execution record
 
-Final-oracle rerun: `yarn validate` **passed** (142 files, 1,522 tests);
-`yarn test:p3` **passed** (35 files, 576 tests); and
-`yarn test:p3:container` **passed** (35 files, 576 tests). The suite now
-explicitly includes `production-diagnostic-wiring.integration.test.ts`. Its
-retention scenario expires the actual worker's daily log from configured
-`storageRoot` only after `completeRefinement` records a canonical verified
-terminal transition; the younger canonical history and actual retry/exhaustion,
-process diagnostic and artifact-reference evidence are reread in a child
-process. The retention unit oracle separately proves a valid expired finished
-execution is preserved when an active attempt references its real stderr file,
-while its otherwise equivalent unreferenced execution expires. The container
-context sentinel also passed (six synthetic sentinels excluded; four allowlisted
-COPY instructions retained).
+Latest rerun: `yarn test:p3` **passed** (36 files, 581 tests),
+`yarn validate` **passed** (lint, format check, typecheck, and 142 files / 1,525
+tests), and `yarn test:p3:container` **passed** (36 files, 581 tests). An
+earlier `yarn validate` attempt during final housekeeping failed: besides
+formatting/unused-variable findings in the in-progress GitHub client changes,
+two GitHub CI observation tests exposed that stale-SHA failures no longer
+contained their established safe `different commit SHA` diagnostic. Those
+findings were fixed (including preserving process-output provenance), then
+validation was rerun successfully; the historical failure is recorded here,
+not represented as a pass or erased by the later successful run. The focused P3 command now explicitly includes
+`tests/inspect-primary-session.test.ts`. That suite includes a real malformed
+OpenCode child response and verifies a cause-free safe error, execution/stdout
+artifact references, and raw-marker confinement to the stdout artifact. The
+suite also exercises malformed `gh` JSON from an actual child through
+`observeTaskSessionReviewCards` during worker polling under
+`ProjectRunAuthority`; it checks typed failure provenance, raw-marker
+confinement to the stdout artifact, absence from history, daily logs and
+console output, and that this malformed response is classified as
+non-retryable and handled once (there is no retry). This is distinct from the
+separate production-wired `production-diagnostic-wiring.integration.test.ts`
+scenario where a genuine `gh` HTTP 503 is classified as retryable: it records
+retry-scheduled decisions for attempts 1 and 2, then preserves state at the
+bounded third-attempt exhaustion. The production
+diagnostic retention scenario expires the actual worker's daily log from
+configured `storageRoot` only after `completeRefinement` records a canonical
+verified terminal transition; canonical history and retry/exhaustion, process
+diagnostic and artifact-reference evidence are reread in a child process. The
+retention unit oracle separately proves a valid expired finished execution is
+preserved when an active attempt references its real stderr file, while its
+otherwise equivalent unreferenced execution expires. The container context
+sentinel also passed (six synthetic sentinels excluded; four allowlisted COPY
+instructions retained).
 
 The synthetic context check created six throwaway config, `.env`, log, history,
 attempt and key sentinel files in a temporary build context; it verified all

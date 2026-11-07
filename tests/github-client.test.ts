@@ -10,7 +10,11 @@ vi.mock("node:child_process", () => ({
 
 import {
   GitHubClient,
+  MalformedGitHubResponseError,
   isRetryableGitHubError,
+  parseGitHubJson,
+  parsePaginatedGitHubResponse,
+  type GitHubOutputOrigin,
   type RunGitHubCommand,
 } from "../src/github/github-client.js";
 import type { ProjectConfig } from "../src/config/config.js";
@@ -36,7 +40,53 @@ function createFakeChild(): FakeChild {
   return child;
 }
 
+function successfulOutputRunner(outputs: string[]): RunGitHubCommand {
+  let index = 0;
+  return async (_cwd, _args, _environment, onSuccessfulOutput) => {
+    const current = index++;
+    onSuccessfulOutput?.({
+      executionId: `execution-${current}`,
+      stdoutArtifactReference: `process-executions/execution-${current}/stdout.txt`,
+    });
+    return outputs[current] ?? "";
+  };
+}
+
 describe("GitHubClient", () => {
+  it("retains invocation provenance for malformed JSON and pages without response data", () => {
+    const origin: GitHubOutputOrigin = {
+      executionId: "execution-123",
+      stdoutArtifactReference: "process-executions/execution-123/stdout.txt",
+    };
+    const parsers: Array<[string, () => unknown]> = [
+      [
+        "malformed JSON",
+        () => parseGitHubJson('{"sensitive":"private"', origin),
+      ],
+      [
+        "malformed page collection",
+        () =>
+          parsePaginatedGitHubResponse(
+            '{"sensitive":"private"}',
+            "check runs",
+            "check_runs",
+            origin,
+          ),
+      ],
+    ];
+    for (const [label, parse] of parsers) {
+      expect(label).toBeTruthy();
+      expect(parse).toThrow(MalformedGitHubResponseError);
+      try {
+        parse();
+      } catch (error) {
+        expect(error).toMatchObject(origin);
+        expect((error as Error).message).not.toContain("private");
+        expect((error as Error).cause).toBeUndefined();
+      }
+    }
+  });
+
   beforeEach(() => {
     spawnMock.mockReset();
   });
@@ -97,9 +147,9 @@ describe("GitHubClient", () => {
           JSON.stringify({ status: "diverged", ahead_by: 1, behind_by: 19 }),
         ),
     );
-    await expect(malformed.comparePullRequestHeadToBase(options)).resolves.toBe(
-      "uncertain",
-    );
+    await expect(
+      malformed.comparePullRequestHeadToBase(options),
+    ).rejects.toBeInstanceOf(MalformedGitHubResponseError);
     const live = "b".repeat(40);
     const gh = new GitHubClient(
       vi
@@ -482,7 +532,7 @@ describe("GitHubClient", () => {
         body: "Reply",
         project,
       }),
-    ).rejects.toThrow("malformed conversation reply");
+    ).rejects.toBeInstanceOf(MalformedGitHubResponseError);
   });
 
   it("collects bounded, redacted annotations for failed exact-head check runs", async () => {
@@ -1217,16 +1267,14 @@ describe("GitHubClient", () => {
       JSON.stringify([[{ sha: "a".repeat(40) }, { sha: "a".repeat(40) }]]),
       JSON.stringify([[{ sha: "not-a-sha" }]]),
     ]) {
-      const github = new GitHubClient(
-        vi.fn<RunGitHubCommand>().mockResolvedValue(output),
-      );
+      const github = new GitHubClient(successfulOutputRunner([output]));
       await expect(
         github.getPullRequestCommitShas({
           cwd: "/repo",
           repository: "example/repository",
           pullRequestNumber: 18,
         }),
-      ).rejects.toThrow();
+      ).rejects.toBeInstanceOf(MalformedGitHubResponseError);
     }
   });
 
@@ -1634,46 +1682,44 @@ describe("GitHubClient", () => {
   });
 
   it("rejects a malformed pull request list response", async () => {
+    const marker = "CHILD_STDOUT_UNTRUSTED_7f32";
     const github = new GitHubClient(
-      vi.fn<RunGitHubCommand>().mockResolvedValue(JSON.stringify({})),
+      vi.fn<RunGitHubCommand>().mockResolvedValue(`[${marker}`),
     );
 
-    await expect(
-      github.findChangesRequestedPullRequest({
-        cwd: "/repo",
-        repository: "example/repository",
-        headBranch: "agent/card-1",
-      }),
-    ).rejects.toThrow("invalid pull request list");
+    const result = github.findChangesRequestedPullRequest({
+      cwd: "/repo",
+      repository: "example/repository",
+      headBranch: "agent/card-1",
+    });
+    await expect(result).rejects.toBeInstanceOf(MalformedGitHubResponseError);
+    await expect(result).rejects.toThrow("invalid pull request list");
+    await expect(result).rejects.not.toThrow(marker);
   });
 
   it("rejects a malformed requested-changes review response", async () => {
-    const runGitHub = vi
-      .fn<RunGitHubCommand>()
-      .mockResolvedValueOnce(
-        JSON.stringify([
+    const runGitHub = successfulOutputRunner([
+      JSON.stringify([
+        {
+          url: "https://github.com/example/repository/pull/123",
+          number: 123,
+          reviewDecision: "CHANGES_REQUESTED",
+          headRefOid: "current-head-sha",
+        },
+      ]),
+      JSON.stringify([
+        [
           {
-            url: "https://github.com/example/repository/pull/123",
-            number: 123,
-            reviewDecision: "CHANGES_REQUESTED",
-            headRefOid: "current-head-sha",
+            id: 456,
+            body: 123,
+            commit_id: "current-head-sha",
+            state: "CHANGES_REQUESTED",
+            submitted_at: "2026-01-01T10:00:00Z",
+            user: { login: "reviewer-one" },
           },
-        ]),
-      )
-      .mockResolvedValueOnce(
-        JSON.stringify([
-          [
-            {
-              id: 456,
-              body: 123,
-              commit_id: "current-head-sha",
-              state: "CHANGES_REQUESTED",
-              submitted_at: "2026-01-01T10:00:00Z",
-              user: { login: "reviewer-one" },
-            },
-          ],
-        ]),
-      );
+        ],
+      ]),
+    ]);
 
     const github = new GitHubClient(runGitHub);
 
@@ -1683,7 +1729,7 @@ describe("GitHubClient", () => {
         repository: "example/repository",
         headBranch: "agent/card-1",
       }),
-    ).rejects.toThrow("invalid requested changes review");
+    ).rejects.toBeInstanceOf(MalformedGitHubResponseError);
   });
 
   it("ignores requested changes that target an older PR head", async () => {
@@ -2444,7 +2490,7 @@ describe("GitHubClient", () => {
         repository: "example/repository",
         headBranch: "agent/card-1",
       }),
-    ).rejects.toThrow("incomplete review thread response");
+    ).rejects.toBeInstanceOf(MalformedGitHubResponseError);
   });
 
   it("rejects malformed paginated review JSON", async () => {
@@ -2516,7 +2562,7 @@ describe("GitHubClient", () => {
         repository: "example/repository",
         headBranch: "agent/card-1",
       }),
-    ).rejects.toThrow("invalid inline review comment");
+    ).rejects.toBeInstanceOf(MalformedGitHubResponseError);
   });
 
   it("rejects malformed inline comment location metadata", async () => {
@@ -2566,7 +2612,7 @@ describe("GitHubClient", () => {
         repository: "example/repository",
         headBranch: "agent/card-1",
       }),
-    ).rejects.toThrow("invalid inline review comment");
+    ).rejects.toBeInstanceOf(MalformedGitHubResponseError);
   });
 
   it("preserves a requested review when it has no written feedback", async () => {

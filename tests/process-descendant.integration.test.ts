@@ -68,7 +68,7 @@ describe("managed process descendants", () => {
 
     await expect(
       runner.run({ cwd: process.cwd(), command, artifactDirectory }),
-    ).resolves.toEqual({ exitCode: 0 });
+    ).resolves.toMatchObject({ exitCode: 0 });
 
     const [executionId] = fs.readdirSync(artifactDirectory);
     expect(executionId).toBeDefined();

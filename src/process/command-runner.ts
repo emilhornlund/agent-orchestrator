@@ -86,6 +86,10 @@ export interface CommandRunResult {
   exitCode: number;
   output?: string;
   errorOutput?: string;
+  /** Stable identifier for the persisted process evidence, when available. */
+  executionId?: string;
+  /** Artifact-relative reference to the captured stdout. */
+  stdoutArtifactReference?: string;
 }
 
 export type RunCommand = (
@@ -155,21 +159,22 @@ const defaultRunCommand: RunCommand = async ({
       );
     }
 
+    const projectId = ProjectRunAuthority.currentProjectId();
+    const authority = projectId
+      ? ProjectRunAuthority.current(projectId)
+      : undefined;
+    const record = authority?.store.read();
+    const taskArtifactDirectory =
+      record && projectId
+        ? `${record.pinned.storageRoot}/artifacts/${encodeURIComponent(projectId)}/${encodeURIComponent(record.cardId)}/${encodeURIComponent(record.attemptId)}`
+        : undefined;
+    const artifactDirectoryOverride =
+      artifactDirectory ?? taskArtifactDirectory;
     const execution = beginProcessEvidence(
       command,
       cwd,
       effectiveSecretValues,
-      artifactDirectory ??
-        (() => {
-          const projectId = ProjectRunAuthority.currentProjectId();
-          const authority = projectId
-            ? ProjectRunAuthority.current(projectId)
-            : undefined;
-          const record = authority?.store.read();
-          return record && projectId
-            ? `${record.pinned.storageRoot}/artifacts/${encodeURIComponent(projectId)}/${encodeURIComponent(record.cardId)}/${encodeURIComponent(record.attemptId)}`
-            : undefined;
-        })(),
+      artifactDirectoryOverride,
     );
     const child = spawn(command, {
       cwd,
@@ -424,6 +429,11 @@ const defaultRunCommand: RunCommand = async ({
 
       resolve({
         exitCode: code ?? 1,
+        executionId: execution.executionId,
+        stdoutArtifactReference:
+          artifactDirectoryOverride === undefined
+            ? `process-executions/${execution.executionId}/stdout.txt`
+            : `${execution.executionId}/stdout.txt`,
         ...(captureOutput === true
           ? {
               output:
