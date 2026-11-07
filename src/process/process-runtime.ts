@@ -325,22 +325,32 @@ function hasLiveLinuxGroupMember(pid: number): boolean | undefined {
     return undefined;
   }
   let found = false;
+  let uncertain = false;
   for (const entry of entries) {
     if (!/^\d+$/.test(entry)) continue;
     let stat: string;
     try {
       stat = fs.readFileSync(`/proc/${entry}/stat`, "utf8");
-    } catch {
-      continue; // A process can exit between readdir and stat.
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT" && code !== "ESRCH") uncertain = true;
+      continue;
     }
     const closeParen = stat.lastIndexOf(")");
-    if (closeParen < 0) return undefined;
+    if (closeParen < 0) {
+      uncertain = true;
+      continue;
+    }
     const fields = stat.slice(closeParen + 2).split(" ");
     const state = fields[0];
     const processGroup = Number(fields[2]);
+    if (!/^[A-Z]$/.test(state ?? "") || !Number.isSafeInteger(processGroup)) {
+      uncertain = true;
+      continue;
+    }
     if (processGroup === pid && state !== "Z" && state !== "X") found = true;
   }
-  return found;
+  return found ? true : uncertain ? undefined : false;
 }
 
 function hasLiveGroupMember(pid: number | undefined): boolean | undefined {

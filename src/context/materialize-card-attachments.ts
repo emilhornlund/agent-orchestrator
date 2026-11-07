@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { getProcessRuntime } from "../process/process-runtime.js";
 
 import {
   resolveCardAttachmentPath,
@@ -672,6 +673,14 @@ async function downloadAttachmentToFile(
 
   let temporaryFile: TemporaryFile | undefined;
   let receivedBytes = 0;
+  const attachmentSecrets = getProcessRuntime()
+    .secretValues.filter((secret) => secret.length > 0)
+    .map((secret) => Buffer.from(secret, "utf8"));
+  const maxSecretLength = attachmentSecrets.reduce(
+    (maximum, secret) => Math.max(maximum, secret.length),
+    0,
+  );
+  let secretScanTail = Buffer.alloc(0);
 
   try {
     temporaryFile = await openTemporaryFile(finalPath, "download");
@@ -689,6 +698,17 @@ async function downloadAttachmentToFile(
           }
 
           const chunk = result.value;
+          const scanWindow = Buffer.concat([secretScanTail, chunk]);
+
+          if (attachmentSecrets.some((secret) => scanWindow.includes(secret))) {
+            throw new Error(
+              `Trello attachment "${attachment.name}" (${attachment.id}) contains a registered credential; refusing to materialize it for the agent`,
+            );
+          }
+
+          secretScanTail = scanWindow.subarray(
+            Math.max(0, scanWindow.length - Math.max(0, maxSecretLength - 1)),
+          );
           const nextReceivedBytes = receivedBytes + chunk.byteLength;
 
           if (nextReceivedBytes > maxAttachmentBytes) {

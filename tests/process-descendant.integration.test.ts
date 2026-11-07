@@ -13,6 +13,42 @@ import { configureProcessRuntime } from "../src/process/process-runtime.js";
 import { drainProcessGroup } from "../src/process/process-runtime.js";
 import { PROCESS_EVIDENCE_MAX_BYTES } from "../src/process/process-runtime.js";
 
+function expectNoLiveProcessGroup(pid: number): void {
+  if (process.platform === "linux") {
+    const liveMembers: string[] = [];
+    for (const entry of fs.readdirSync("/proc")) {
+      if (!/^\d+$/u.test(entry)) continue;
+      let stat: string;
+      try {
+        stat = fs.readFileSync(`/proc/${entry}/stat`, "utf8");
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          "code" in error &&
+          (error.code === "ENOENT" || error.code === "ESRCH")
+        )
+          continue;
+        throw error;
+      }
+      const closeParen = stat.lastIndexOf(")");
+      if (closeParen < 0)
+        throw new Error(
+          `Malformed /proc/${entry}/stat during process-group inspection`,
+        );
+      const fields = stat.slice(closeParen + 2).split(" ");
+      const state = fields[0];
+      const processGroup = Number(fields[2]);
+      if (!state || !Number.isSafeInteger(processGroup) || processGroup < 0)
+        throw new Error(`Malformed /proc/${entry}/stat process-group fields`);
+      if (processGroup === pid && state !== "Z" && state !== "X")
+        liveMembers.push(entry);
+    }
+    expect(liveMembers).toEqual([]);
+    return;
+  }
+  expect(() => process.kill(-pid, 0)).toThrow();
+}
+
 describe("managed process descendants", () => {
   const directories: string[] = [];
 
@@ -46,7 +82,7 @@ describe("managed process descendants", () => {
 
     // Close the race where a descendant closes inherited pipes then outlives its leader.
     await new Promise((resolve) => setTimeout(resolve, 150));
-    expect(() => process.kill(-metadata.pid, 0)).toThrow();
+    expectNoLiveProcessGroup(metadata.pid);
   }, 10_000);
 
   it("does not settle while a SIGTERM-resistant pipe-closed descendant can write", async () => {
@@ -87,7 +123,7 @@ describe("managed process descendants", () => {
     directories.push(runtimeRoot);
     const binaries = path.join(runtimeRoot, "bin");
     fs.mkdirSync(binaries);
-    const script = `#!/usr/bin/env node\nconst { spawn } = require("node:child_process");\nspawn(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], { stdio: "ignore" }).unref();\nif (process.argv[1].endsWith("/git")) process.stdout.write("git-status\\n");\nelse if (process.argv[1].endsWith("/opencode")) process.stdout.write("opencode-output\\n");\n`;
+    const script = `#!/usr/bin/env node\nif (process.argv[1].endsWith("/git")) process.stdout.write("git-status\\n");\nelse if (process.argv[1].endsWith("/opencode")) process.stdout.write("opencode-output\\n");\n`;
     for (const executable of ["git", "gh", "opencode"]) {
       const filename = path.join(binaries, executable);
       fs.writeFileSync(filename, script, { mode: 0o700 });
@@ -138,7 +174,7 @@ describe("managed process descendants", () => {
         expect(fs.existsSync(evidence.stdoutArtifact)).toBe(true);
         expect(fs.existsSync(evidence.stderrArtifact)).toBe(true);
         await new Promise((resolve) => setTimeout(resolve, 100));
-        expect(() => process.kill(-evidence.pid, 0)).toThrow();
+        expectNoLiveProcessGroup(evidence.pid);
       }
     } finally {
       process.env.PATH = originalPath;
@@ -423,7 +459,7 @@ describe("managed process descendants", () => {
         ) as { pid: number; status: string };
         expect(evidence.status).toBe("interrupted");
         await new Promise((resolve) => setTimeout(resolve, 100));
-        expect(() => process.kill(-evidence.pid, 0)).toThrow();
+        expectNoLiveProcessGroup(evidence.pid);
       }
     } finally {
       process.env.PATH = originalPath;

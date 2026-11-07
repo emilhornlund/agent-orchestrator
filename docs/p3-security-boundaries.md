@@ -25,11 +25,16 @@ field patterns are also redacted. This is a bounded defense for registered
 values and known representations; it is not a scanner for arbitrary transforms
 or unknown secrets. Context read from attachments or repositories is untrusted;
 prompt construction redacts registered values and recognizable credential
-patterns, but the scanner does not prove arbitrary repository data safe. The
+patterns, but the scanner does not prove arbitrary repository data safe. During
+attachment download, materialization rejects an upload containing a registered
+raw credential byte sequence (including across stream chunks) and does not
+publish its file or manifest. This is not a scan for encoded or unknown
+attachment secrets. Agents can still directly read repository files in ordinary
+writable runs, so no universal repository-content guarantee is made. The
 Trello comment and content parameters, `gh` CLI content arguments (including
 PR bodies/replies), and SMTP subject/body fields also pass through the same
 registered-secret sanitizer. This is applied at the relevant outbound content
 boundary; request authentication parameters are deliberately not redacted or
-rewritten. The unit suite verifies process manifests and redaction forms, but
-does not substitute for realistic outbound canary scans or prove every future
-route is covered.
+rewritten. `docs/p3-verification.md` records named synthetic capture tests and
+per-surface limits. These tests do not substitute for realistic outbound
+canary scans or prove every future route is covered.

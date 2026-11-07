@@ -3,6 +3,7 @@ import {
   type ChildProcess,
   type SpawnOptions,
 } from "node:child_process";
+import fs from "node:fs";
 
 export interface ProcessResult {
   code: number | null;
@@ -42,6 +43,42 @@ function signalGroup(pid: number, signal: NodeJS.Signals): void {
 }
 
 function groupExists(pid: number): boolean {
+  // Container PID 1 implementations do not always reap orphaned zombies.
+  // Zombies cannot execute or write, so treat a group containing only zombies
+  // as stopped (matching the production process-runtime oracle).
+  if (process.platform === "linux") {
+    let uncertain = false;
+    try {
+      for (const entry of fs.readdirSync("/proc")) {
+        if (!/^\d+$/u.test(entry)) continue;
+        try {
+          const stat = fs.readFileSync(`/proc/${entry}/stat`, "utf8");
+          const closeParen = stat.lastIndexOf(")");
+          if (closeParen < 0) {
+            uncertain = true;
+            continue;
+          }
+          const fields = stat.slice(closeParen + 2).split(" ");
+          const processGroup = Number(fields[2]);
+          if (
+            !/^[A-Z]$/u.test(fields[0] ?? "") ||
+            !Number.isSafeInteger(processGroup)
+          ) {
+            uncertain = true;
+            continue;
+          }
+          if (processGroup === pid && fields[0] !== "Z" && fields[0] !== "X")
+            return true;
+        } catch (error) {
+          const code = (error as NodeJS.ErrnoException).code;
+          if (code !== "ENOENT" && code !== "ESRCH") uncertain = true;
+        }
+      }
+      if (!uncertain) return false;
+    } catch {
+      // Fall back to kill(0) when procfs cannot provide a complete answer.
+    }
+  }
   try {
     process.kill(-pid, 0);
     return true;

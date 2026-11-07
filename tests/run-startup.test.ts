@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -44,6 +44,7 @@ import {
 } from "../src/trello/trello-client.js";
 import { ProjectResourceError } from "../src/startup/project-resource-error.js";
 import { acquireProjectRunOperatorContext } from "../src/operator/project-run-operator-context.js";
+import { drainProcessGroup } from "../src/process/process-runtime.js";
 
 function createProject(repositoryPath: string): ProjectConfig {
   return {
@@ -177,6 +178,81 @@ describe("runStartup", () => {
     expect(hostRegistry.projects).toEqual([
       expect.objectContaining({ projectId: project.id, activeAttempt: null }),
     ]);
+  });
+
+  it("routes ambiguity from startup toolchain dispatch into its held lease", async () => {
+    const project = createProject("/tmp/startup-ambiguous-repository");
+    const config = createConfig(project);
+    const pid = 41_723;
+    const originalKill = process.kill;
+    const killSpy = vi
+      .spyOn(process, "kill")
+      .mockImplementation((target, signal) => {
+        if (typeof target === "number" && target === -pid) return true;
+        return originalKill(target, signal);
+      });
+    const originalReaddir = fs.readdirSync;
+    const procSpy = vi
+      .spyOn(fs, "readdirSync")
+      .mockImplementation((directory, options) => {
+        if (directory === "/proc") {
+          const error = new Error(
+            "injected procfs access failure",
+          ) as NodeJS.ErrnoException;
+          error.code = "EACCES";
+          throw error;
+        }
+        return originalReaddir(directory, options as never) as never;
+      });
+    try {
+      await expect(
+        runStartup(
+          config,
+          {
+            trello: {} as TrelloClient,
+            git: new GitClient(validRepositoryGit()),
+            github: {} as GitHubClient,
+            opencode: {} as OpenCodeClient,
+            commands: new CommandRunner(),
+          },
+          new AbortController().signal,
+          {
+            validateToolchain: async () => {
+              await ProjectRunAuthority.dispatch(project.id, async () =>
+                drainProcessGroup(pid, () => true, 0),
+              );
+            },
+            validateGitHubCli: vi.fn().mockResolvedValue(undefined),
+            validateProjectTrello: vi.fn().mockResolvedValue(undefined),
+            validateProjectGitHub: vi.fn().mockResolvedValue(undefined),
+            runOrchestrator: vi.fn().mockResolvedValue(undefined),
+          },
+        ),
+      ).rejects.toThrow(/Unable to verify termination/);
+    } finally {
+      procSpy.mockRestore();
+      killSpy.mockRestore();
+    }
+    const key = createHash("sha256")
+      .update(`github:${project.repository.github}`)
+      .digest("hex");
+    const marker = JSON.parse(
+      fs.readFileSync(
+        path.join(config.workflow.coordinationRoot!, `${key}.ambiguity.json`),
+        "utf8",
+      ),
+    ) as { processGroup: number };
+    expect(marker.processGroup).toBe(pid);
+    await expect(
+      acquireProjectOwnership(
+        config.workflow.coordinationRoot!,
+        {
+          trelloBoardId: project.trello.boardId,
+          githubRepository: project.repository.github,
+        },
+        config.workflow.coordinationNamespaceId!,
+      ),
+    ).rejects.toThrow(/unresolved process-group termination ambiguity/);
   });
 
   it("resumes an active attempt on its old pins and defers redirected claims", async () => {

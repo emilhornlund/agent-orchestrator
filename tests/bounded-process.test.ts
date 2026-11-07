@@ -1,10 +1,33 @@
 import { describe, expect, it } from "vitest";
+import fs from "node:fs";
 import {
   spawnOwnedProcess,
   waitForOwnedProcess,
 } from "../scripts/bounded-process.js";
 
 function expectGroupGone(pid: number): void {
+  if (process.platform === "linux") {
+    const liveMembers = fs.readdirSync("/proc").filter((entry) => {
+      if (!/^\d+$/u.test(entry)) return false;
+      let stat: string;
+      try {
+        stat = fs.readFileSync(`/proc/${entry}/stat`, "utf8");
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === "ENOENT" || code === "ESRCH") return false;
+        throw error;
+      }
+      const closeParen = stat.lastIndexOf(")");
+      if (closeParen < 0) throw new Error(`Malformed /proc/${entry}/stat`);
+      const fields = stat.slice(closeParen + 2).split(" ");
+      const group = Number(fields[2]);
+      if (!/^[A-Z]$/u.test(fields[0] ?? "") || !Number.isSafeInteger(group))
+        throw new Error(`Malformed /proc/${entry}/stat`);
+      return group === pid && fields[0] !== "Z" && fields[0] !== "X";
+    });
+    expect(liveMembers).toEqual([]);
+    return;
+  }
   try {
     process.kill(-pid, 0);
     throw new Error(`owned process group ${pid} remains alive`);

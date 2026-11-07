@@ -14,6 +14,8 @@ import {
 } from "../src/coordination/project-ownership.js";
 import { canonicalizeGitHubRepository } from "../src/config/config.js";
 import { configureProcessRuntime } from "../src/process/process-runtime.js";
+import { drainProcessGroup } from "../src/process/process-runtime.js";
+import { ProjectRunAuthority } from "../src/task-session/project-run-authority.js";
 
 const testDirectory = path.dirname(fileURLToPath(import.meta.url));
 const temporaryRoots: string[] = [];
@@ -773,7 +775,8 @@ const open = fs.openSync; let blocked = true;
 fs.openSync = function(file, flags, mode) { if (blocked && file === ${JSON.stringify(marker)}) { const e = new Error("injected"); e.code = "EACCES"; throw e; } return open.call(this, file, flags, mode); };
 try { lease.markProcessGroupAmbiguous(48123); } catch {}
 console.log("WAITING");
-const control = setInterval(async () => { if (!fs.existsSync(${JSON.stringify(retrySignal)})) return; clearInterval(control); blocked = false; await new Promise(r => setTimeout(r, 1200)); console.log("FENCED"); await lease.release(); }, 25);`;
+const control = setInterval(async () => { if (!fs.existsSync(${JSON.stringify(retrySignal)})) return; clearInterval(control); blocked = false; await new Promise(r => setTimeout(r, 1200)); console.log("FENCED"); await lease.release(); }, 25);
+control.unref();`;
     const child = launchProcess(script);
     await waitForOutput(child, "WAITING");
     expect(child.exitCode).toBeNull();
@@ -809,6 +812,155 @@ const control = setInterval(async () => { if (!fs.existsSync(${JSON.stringify(re
     await lease.release();
     await expectCanAcquire(root);
   });
+
+  it("routes startup-scoped static dispatch process ambiguity into the active lease", async () => {
+    const root = temporaryRoot();
+    const identity = {
+      trelloBoardId: "static-dispatch-fence",
+      githubRepository: "dispatch/fence",
+    };
+    const lease = await acquireProjectOwnership(
+      root,
+      identity,
+      "test-host-namespace",
+    );
+    const child = spawn(
+      process.execPath,
+      ["-e", "setInterval(() => {}, 1000)"],
+      {
+        detached: true,
+        stdio: "ignore",
+      },
+    );
+    if (child.pid === undefined) throw new Error("child has no pid");
+    const childPid = child.pid;
+    const originalKill = process.kill;
+    const killSpy = vi
+      .spyOn(process, "kill")
+      .mockImplementation((pid, signal) => {
+        if (typeof pid === "number" && pid === -childPid) {
+          if (signal === 0) return true;
+          return true;
+        }
+        return originalKill(pid, signal);
+      });
+    const originalReaddir = fs.readdirSync;
+    const procSpy = vi
+      .spyOn(fs, "readdirSync")
+      .mockImplementation((directory, options) => {
+        if (directory === "/proc") {
+          const error = new Error(
+            "injected procfs visibility failure",
+          ) as NodeJS.ErrnoException;
+          error.code = "EACCES";
+          throw error;
+        }
+        return originalReaddir(directory, options as never) as never;
+      });
+    try {
+      await expect(
+        ProjectRunAuthority.withProjectLease(
+          "dispatch-project",
+          () => lease.assertHeld(),
+          (pid) => lease.markProcessGroupAmbiguous(pid),
+          () =>
+            ProjectRunAuthority.dispatch("dispatch-project", async () =>
+              drainProcessGroup(childPid, () => true, 0),
+            ),
+        ),
+      ).rejects.toThrow(/Unable to verify termination/);
+      const key = createHash("sha256")
+        .update(`github:${identity.githubRepository}`)
+        .digest("hex");
+      const marker = JSON.parse(
+        fs.readFileSync(path.join(root, `${key}.ambiguity.json`), "utf8"),
+      ) as { processGroup: number; identity: string };
+      expect(marker.processGroup).toBe(childPid);
+      expect(marker.identity).toContain(identity.githubRepository);
+    } finally {
+      procSpy.mockRestore();
+      killSpy.mockRestore();
+      child.kill("SIGKILL");
+      await new Promise<void>((resolve) => {
+        if (child.exitCode !== null || child.signalCode !== null) resolve();
+        else child.once("close", () => resolve());
+      });
+      await lease.release();
+    }
+    await expect(
+      acquireProjectOwnership(root, identity, "test-host-namespace"),
+    ).rejects.toThrow(/unresolved process-group termination ambiguity/);
+  });
+
+  it("stops claims on bootstrap SIGTERM and reacquires preserved attempt references", async () => {
+    const root = temporaryRoot();
+    const identity = {
+      trelloBoardId: "shutdown-board",
+      githubRepository: "shutdown/repo",
+    };
+    const worktree = path.join(root, "task-worktree");
+    fs.mkdirSync(worktree);
+    const dirtyEdit = path.join(worktree, "uncommitted-change.txt");
+    const references = path.join(root, "attempt-references.json");
+    const claimLedger = path.join(root, "claim-ledger.jsonl");
+    fs.writeFileSync(dirtyEdit, "preserve me\n");
+    fs.writeFileSync(
+      references,
+      `${JSON.stringify({ attemptId: "attempt-shutdown-1", worktree, branch: "agent/shutdown-1", openCodeSessionId: "session-1" })}\n`,
+    );
+    const script = `import fs from "node:fs";
+import { acquireProjectOwnership } from ${JSON.stringify(path.resolve(testDirectory, "../src/coordination/project-ownership.ts"))};
+const root = ${JSON.stringify(root)};
+const lease = await acquireProjectOwnership(root, ${JSON.stringify(identity)}, "test-host-namespace");
+const ledger = ${JSON.stringify(claimLedger)};
+let stopping = false;
+fs.appendFileSync(ledger, "claim\\n");
+console.log("CLAIMED");
+const polling = setInterval(() => { if (!stopping) fs.appendFileSync(ledger, "claim\\n"); }, 100);
+process.once("SIGTERM", async () => { stopping = true; clearInterval(polling); fs.appendFileSync(ledger, "shutdown\\n"); await lease.release(); console.log("RELEASED"); process.exit(0); });`;
+    const bootstrap = launchProcess(script);
+    await waitForOutput(bootstrap, "CLAIMED");
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    bootstrap.kill("SIGTERM");
+    await waitForOutput(bootstrap, "RELEASED");
+    await waitForExit(bootstrap);
+
+    const events = fs.readFileSync(claimLedger, "utf8").trim().split("\n");
+    expect(events.at(-1)).toBe("shutdown");
+    const claimsBeforeShutdown = events.filter((event) => event === "claim");
+    expect(claimsBeforeShutdown.length).toBeGreaterThan(0);
+    const retainedEdit = fs.readFileSync(dirtyEdit, "utf8");
+    const retainedReferences = JSON.parse(
+      fs.readFileSync(references, "utf8"),
+    ) as {
+      attemptId: string;
+      worktree: string;
+      branch: string;
+      openCodeSessionId: string;
+    };
+    expect(retainedEdit).toBe("preserve me\n");
+    expect(retainedReferences).toEqual({
+      attemptId: "attempt-shutdown-1",
+      worktree,
+      branch: "agent/shutdown-1",
+      openCodeSessionId: "session-1",
+    });
+
+    const restartedLease = await acquireProjectOwnership(
+      root,
+      identity,
+      "test-host-namespace",
+    );
+    restartedLease.assertHeld();
+    expect(fs.readFileSync(dirtyEdit, "utf8")).toBe(retainedEdit);
+    expect(JSON.parse(fs.readFileSync(references, "utf8"))).toEqual(
+      retainedReferences,
+    );
+    await restartedLease.release();
+    expect(fs.readFileSync(claimLedger, "utf8").trim().split("\n")).toEqual(
+      events,
+    );
+  }, 10_000);
 
   it("rejects FIFO marker and owner evidence without blocking", async () => {
     const markerRoot = temporaryRoot();
