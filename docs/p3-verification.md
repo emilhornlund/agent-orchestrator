@@ -18,7 +18,17 @@ resource was inspected or used to mutate an external service.
   subprocesses, environment allowlists, sanitization, structured/raw logging,
   retention, Git/GitHub/Trello/OpenCode/email clients, startup and ownership,
   probes, runtime shutdown and relevant recovery dispatch. It is not the full
-  workflow suite.
+  workflow suite. It explicitly includes
+  `tests/production-diagnostic-wiring.integration.test.ts`, which verifies
+  production worker diagnostic persistence and restart reconstruction.
+- Retention additionally associates legacy session files with active run records
+  using safe project/card-derived names, conservatively retains daily logs while
+  any attempt is active, and scans runtime-root `process-executions` metadata.
+  Only old executions with explicit terminal metadata are eligible for expiry;
+  running, ambiguous, malformed, and unrecognized executions remain evidence.
+  Typed `Logger.diagnostic` history stores enumerated domain codes, recovery
+  decisions and constrained artifact references; it does not persist raw child
+  error text.
 - Linux host and rootless Podman are the only executed environment variants.
   Container process-group assertions treat Linux zombies as non-live (a
   container init may not reap orphaned zombies); production liveness checks
@@ -89,10 +99,19 @@ below.
 
 ## Execution record
 
-Final combined-candidate local `yarn test:p3`: **30 files, 542 tests passed**.
-Final `yarn validate`: **passed** — ESLint, Prettier, TypeScript, and **139 files /
-1,503 tests passed**. Final `yarn test:p3:container`: synthetic context check
-passed, then **30 files / 542 tests passed** in the disposable main image.
+Final-oracle rerun: `yarn validate` **passed** (140 files, 1,508 tests);
+`yarn test:p3` **passed** (31 files, 547 tests); and
+`yarn test:p3:container` **passed** (31 files, 547 tests). The suite now
+explicitly includes `production-diagnostic-wiring.integration.test.ts`. Its
+retention scenario expires the actual worker's daily log from configured
+`storageRoot` only after `completeRefinement` records a canonical verified
+terminal transition; the younger canonical history and actual retry/exhaustion,
+process diagnostic and artifact-reference evidence are reread in a child
+process. The retention unit oracle separately proves a valid expired finished
+execution is preserved when an active attempt references its real stderr file,
+while its otherwise equivalent unreferenced execution expires. The container
+context sentinel also passed (six synthetic sentinels excluded; four allowlisted
+COPY instructions retained).
 
 The synthetic context check created six throwaway config, `.env`, log, history,
 attempt and key sentinel files in a temporary build context; it verified all

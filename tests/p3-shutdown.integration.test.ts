@@ -15,8 +15,16 @@ function readProcessStat(
   try {
     const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
     const closingParenthesis = stat.lastIndexOf(")");
-    const fields = stat.slice(closingParenthesis + 2).split(" ");
-    return { state: fields[0]!, processGroupId: Number(fields[2]) };
+    if (closingParenthesis < 0) throw new Error("Malformed /proc stat record");
+    const fields = stat
+      .slice(closingParenthesis + 2)
+      .trim()
+      .split(/\s+/u);
+    const state = fields[0];
+    const processGroupId = Number(fields[2]);
+    if (!/^[A-Z]$/u.test(state ?? "") || !Number.isSafeInteger(processGroupId))
+      throw new Error("Malformed /proc stat fields");
+    return { state: state!, processGroupId };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw error;

@@ -9,6 +9,7 @@ import { withActiveLogFile } from "../src/logging/active-log-files.js";
 import { cleanupLogRetention } from "../src/logging/log-retention.js";
 import { runRecordSchema } from "../src/task-session/run-record.js";
 import { RunStore, type RunStoreLease } from "../src/task-session/run-store.js";
+import { beginProcessEvidence } from "../src/process/process-runtime.js";
 
 const originalCwd = process.cwd();
 const now = new Date("2026-01-15T00:00:00.000Z");
@@ -269,6 +270,139 @@ describe("cleanupLogRetention", () => {
     );
     cleanupLogRetention(30, now, [root]);
     expect(fs.existsSync(artifact)).toBe(true);
+  });
+
+  it("protects legacy P2 HumanReview session logs inferred from safe task identity", () => {
+    useTemporaryWorkingDirectory();
+    const root = path.join(process.cwd(), "legacy-p2-runtime");
+    const session = path.join(process.cwd(), "logs", "sessions", "p", "c.log");
+    fs.mkdirSync(path.dirname(session), { recursive: true });
+    fs.writeFileSync(session, "legacy evidence");
+    fs.utimesSync(
+      session,
+      new Date("2025-12-01T00:00:00.000Z"),
+      new Date("2025-12-01T00:00:00.000Z"),
+    );
+    // P2-shaped imported HumanReview record: no modern sessionLogPaths/references.
+    writeAttempt(root, canonicalAttempt({ attemptId: "imported-p2" }));
+    cleanupLogRetention(14, now, [root]);
+    expect(fs.existsSync(session)).toBe(true);
+  });
+
+  it("expires finished process evidence but retains old running and ambiguous executions", () => {
+    useTemporaryWorkingDirectory();
+    const root = path.join(process.cwd(), "process-runtime");
+    const cutoffOld = new Date("2025-12-01T00:00:00.000Z");
+    const executions = path.join(root, "process-executions");
+    const finished = beginProcessEvidence(
+      "command",
+      process.cwd(),
+      [],
+      executions,
+    );
+    finished.finish("success");
+    const running = beginProcessEvidence(
+      "command",
+      process.cwd(),
+      [],
+      executions,
+    );
+    const ambiguous = beginProcessEvidence(
+      "command",
+      process.cwd(),
+      [],
+      executions,
+    );
+    ambiguous.finish("ambiguous");
+    for (const id of [
+      finished.executionId,
+      running.executionId,
+      ambiguous.executionId,
+    ]) {
+      const directory = path.join(root, "process-executions", id);
+      const metadataPath = path.join(directory, "execution.json");
+      const metadata = JSON.parse(
+        fs.readFileSync(metadataPath, "utf8"),
+      ) as Record<string, unknown>;
+      if (id !== running.executionId) {
+        metadata.startedAt = "2025-11-30T00:00:00.000Z";
+        metadata.finishedAt = "2025-12-01T00:00:00.000Z";
+        fs.writeFileSync(metadataPath, JSON.stringify(metadata));
+      }
+      for (const name of fs.readdirSync(directory))
+        fs.utimesSync(path.join(directory, name), cutoffOld, cutoffOld);
+    }
+    cleanupLogRetention(14, now, [root]);
+    expect(
+      fs.existsSync(
+        path.join(root, "process-executions", finished.executionId),
+      ),
+    ).toBe(false);
+    expect(
+      fs.existsSync(path.join(root, "process-executions", running.executionId)),
+    ).toBe(true);
+    expect(
+      fs.existsSync(
+        path.join(root, "process-executions", ambiguous.executionId),
+      ),
+    ).toBe(true);
+  });
+
+  it("fails closed on unknown or malformed process metadata and honors active artifact references", () => {
+    useTemporaryWorkingDirectory();
+    const root = path.join(process.cwd(), "process-metadata-runtime");
+    const executions = path.join(root, "process-executions");
+    const old = new Date("2025-12-01T00:00:00.000Z");
+    const fixtures = [
+      beginProcessEvidence("cmd", process.cwd(), [], executions),
+      beginProcessEvidence("cmd", process.cwd(), [], executions),
+      beginProcessEvidence("cmd", process.cwd(), [], executions),
+      beginProcessEvidence("cmd", process.cwd(), [], executions),
+      beginProcessEvidence("cmd", process.cwd(), [], executions),
+      beginProcessEvidence("cmd", process.cwd(), [], executions),
+    ];
+    for (const fixture of fixtures) fixture.finish("success");
+    fixtures.forEach((fixture, index) => {
+      const directory = path.join(executions, fixture.executionId);
+      const metadataPath = path.join(directory, "execution.json");
+      const metadata = JSON.parse(
+        fs.readFileSync(metadataPath, "utf8"),
+      ) as Record<string, unknown>;
+      metadata.startedAt = "2025-11-30T00:00:00.000Z";
+      metadata.finishedAt = "2025-12-01T00:00:00.000Z";
+      if (index === 0) metadata.status = "future-terminal-status";
+      if (index === 1) metadata.finishedAt = "not-a-timestamp";
+      if (index === 2) metadata.executionId = "different-id";
+      if (index === 3)
+        metadata.stdoutArtifact = path.join(directory, "..", "outside.txt");
+      fs.writeFileSync(metadataPath, JSON.stringify(metadata));
+      for (const name of fs.readdirSync(directory))
+        fs.utimesSync(path.join(directory, name), old, old);
+    });
+    const referenced = path.join(
+      executions,
+      fixtures[4]!.executionId,
+      "stderr.txt",
+    );
+    const unreferenced = path.join(
+      executions,
+      fixtures[5]!.executionId,
+      "stderr.txt",
+    );
+    writeAttempt(
+      root,
+      canonicalAttempt({ attemptId: "owner", artifacts: [referenced] }),
+    );
+
+    cleanupLogRetention(14, now, [root]);
+
+    for (const fixture of fixtures.slice(0, 4))
+      expect(fs.existsSync(path.join(executions, fixture.executionId))).toBe(
+        true,
+      );
+    expect(fs.existsSync(path.dirname(referenced))).toBe(true);
+    expect(fs.existsSync(referenced)).toBe(true);
+    expect(fs.existsSync(path.dirname(unreferenced))).toBe(false);
   });
 
   it("retains a terminal RunStore content-addressed artifact so the stored record remains readable", () => {

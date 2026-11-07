@@ -151,18 +151,20 @@ describe("canonical project ownership coordination", () => {
     });
   });
 
-  it("keeps flock stderr in its artifact instead of the ownership error", async () => {
+  it("captures and redacts split flock stdout and stderr without leaking diagnostics", async () => {
     const runtimeRoot = fs.mkdtempSync(
       path.join(os.tmpdir(), "flock-safe-error-"),
     );
     temporaryRoots.push(runtimeRoot);
     const binaries = path.join(runtimeRoot, "bin");
     fs.mkdirSync(binaries);
-    const marker = "ACTUAL_FLOCK_STDERR_MARKER_c392";
+    const marker = "ACTUAL_FLOCK/secret marker_c392";
+    const encoded = Buffer.from(marker).toString("base64url");
+    const percent = encodeURIComponent(marker);
     const flock = path.join(binaries, "flock");
     fs.writeFileSync(
       flock,
-      `#!/usr/bin/env node\nprocess.stderr.write(${JSON.stringify(marker)}); process.exit(2);\n`,
+      `#!/usr/bin/env node\nconst out=${JSON.stringify(encoded)}; const err=${JSON.stringify(percent)}; process.stdout.write(out.slice(0,7)); setTimeout(()=>process.stdout.write(out.slice(7)),5); process.stderr.write(err.slice(0,9)); setTimeout(()=>{process.stderr.write(err.slice(9)); process.exit(2)},10);\n`,
       { mode: 0o700 },
     );
     const originalPath = process.env.PATH;
@@ -170,6 +172,7 @@ describe("canonical project ownership coordination", () => {
     configureProcessRuntime({
       runtimeRoot,
       signal: new AbortController().signal,
+      secretValues: [marker],
     });
     const coordinationRoot = path.join(runtimeRoot, "coordination");
     fs.mkdirSync(coordinationRoot);
@@ -193,12 +196,80 @@ describe("canonical project ownership coordination", () => {
       const executions = path.join(runtimeRoot, "process-executions");
       const [executionId] = fs.readdirSync(executions);
       expect(executionId).toBeDefined();
-      expect(
+      const stdout = fs.readFileSync(
+        path.join(executions, executionId!, "stdout.txt"),
+        "utf8",
+      );
+      const stderr = fs.readFileSync(
+        path.join(executions, executionId!, "stderr.txt"),
+        "utf8",
+      );
+      expect(stdout).toContain("[REDACTED]");
+      expect(stderr).toContain("[REDACTED]");
+      for (const artifact of [stdout, stderr]) {
+        expect(artifact).not.toContain(marker);
+        expect(artifact).not.toContain(encoded);
+        expect(artifact).not.toContain(percent);
+      }
+      const metadata = JSON.parse(
         fs.readFileSync(
-          path.join(executions, executionId!, "stderr.txt"),
+          path.join(executions, executionId!, "execution.json"),
           "utf8",
         ),
-      ).toContain(marker);
+      ) as { status: string };
+      expect(metadata.status).toBe("nonzero");
+    } finally {
+      process.env.PATH = originalPath;
+      configureProcessRuntime({
+        runtimeRoot: os.tmpdir(),
+        signal: new AbortController().signal,
+      });
+    }
+  });
+
+  it("terminates flock on output overflow and records finalized evidence failure", async () => {
+    const runtimeRoot = temporaryRoot();
+    const binaries = path.join(runtimeRoot, "bin");
+    fs.mkdirSync(binaries);
+    const canary = "FLOCK_OUTPUT_LIMIT_CANARY";
+    fs.writeFileSync(
+      path.join(binaries, "flock"),
+      `#!${process.execPath}\nprocess.stderr.write(${JSON.stringify(canary)}); process.stdout.write("x".repeat(16 * 1024 * 1024 + 1)); setInterval(()=>{},30000);\n`,
+      { mode: 0o700 },
+    );
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${binaries}${path.delimiter}${originalPath ?? ""}`;
+    configureProcessRuntime({
+      runtimeRoot,
+      signal: new AbortController().signal,
+      operationTimeoutMilliseconds: 5_000,
+      secretValues: [canary],
+    });
+    const coordinationRoot = path.join(runtimeRoot, "coordination");
+    fs.mkdirSync(coordinationRoot);
+    provisionCoordinationNamespace(coordinationRoot, "flock-output-limit");
+    try {
+      await expect(
+        acquireProjectOwnership(
+          coordinationRoot,
+          { trelloBoardId: "limit-board", githubRepository: "owner/limit" },
+          "flock-output-limit",
+        ),
+      ).rejects.toThrow(/output limit/u);
+      const executions = path.join(runtimeRoot, "process-executions");
+      const [executionId] = fs.readdirSync(executions);
+      const base = path.join(executions, executionId!);
+      expect(fs.readFileSync(path.join(base, "stderr.txt"), "utf8")).toContain(
+        "[REDACTED]",
+      );
+      expect(
+        fs.readFileSync(path.join(base, "stderr.txt"), "utf8"),
+      ).not.toContain(canary);
+      const evidence = JSON.parse(
+        fs.readFileSync(path.join(base, "execution.json"), "utf8"),
+      ) as { status: string; evidenceFailure?: string };
+      expect(evidence.status).toBe("evidence-failure");
+      expect(evidence.evidenceFailure).toContain("output limit");
     } finally {
       process.env.PATH = originalPath;
       configureProcessRuntime({

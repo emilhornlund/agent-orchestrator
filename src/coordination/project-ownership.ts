@@ -7,12 +7,15 @@ import { createHash, randomUUID } from "node:crypto";
 import { canonicalizeGitHubRepository } from "../config/config.js";
 import { buildChildEnvironment } from "../process/child-environment.js";
 import {
+  PROCESS_CAPTURE_MAX_BYTES,
   beginProcessEvidence,
   drainProcessGroup,
   ProcessExecutionError,
+  ProcessOutputLimitError,
   getProcessRuntime,
   signalProcessGroup,
 } from "../process/process-runtime.js";
+import { createSecretRedactor } from "../security/redact-secrets.js";
 
 export interface ProjectIntegrationIdentity {
   trelloBoardId: string;
@@ -478,7 +481,7 @@ async function acquireKernelLock(
   let child: ChildProcess;
   try {
     child = spawn("flock", [...(wait ? [] : ["-n"]), "3"], {
-      stdio: ["ignore", "ignore", "pipe", descriptor],
+      stdio: ["ignore", "pipe", "pipe", descriptor],
       detached: process.platform !== "win32",
       env: buildChildEnvironment("flock"),
     });
@@ -499,6 +502,57 @@ async function acquireKernelLock(
     await new Promise<void>((resolve, reject) => {
       let cancellation: "timeout" | "interrupted" | undefined;
       let forceKill: NodeJS.Timeout | undefined;
+      let outputFailure: Error | undefined;
+      let stdoutBytes = 0;
+      let stderrBytes = 0;
+      let streamsFlushed = false;
+      const stdoutRedactor = createSecretRedactor(runtime.secretValues);
+      const stderrRedactor = createSecretRedactor(runtime.secretValues);
+      const append = (stream: "stdout" | "stderr", text: string): void => {
+        if (!text) return;
+        execution.append(stream, text);
+        if (execution.failure !== undefined && outputFailure === undefined) {
+          outputFailure = execution.failure;
+          terminate();
+        }
+      };
+      const terminate = (): void => {
+        signalProcessGroup(child.pid, "SIGTERM", (signal) =>
+          child.kill(signal),
+        );
+        forceKill ??= setTimeout(
+          () =>
+            signalProcessGroup(child.pid, "SIGKILL", (signal) =>
+              child.kill(signal),
+            ),
+          100,
+        );
+      };
+      const flushStreams = (): void => {
+        if (streamsFlushed) return;
+        streamsFlushed = true;
+        append("stdout", stdoutRedactor.flush());
+        append("stderr", stderrRedactor.flush());
+      };
+      const capture = (stream: "stdout" | "stderr", chunk: string): void => {
+        const bytes = Buffer.byteLength(chunk);
+        if (stream === "stdout") stdoutBytes += bytes;
+        else stderrBytes += bytes;
+        const count = stream === "stdout" ? stdoutBytes : stderrBytes;
+        if (count > PROCESS_CAPTURE_MAX_BYTES) {
+          outputFailure ??= new ProcessOutputLimitError(
+            stream,
+            PROCESS_CAPTURE_MAX_BYTES,
+            execution.executionId,
+          );
+          terminate();
+          return;
+        }
+        append(
+          stream,
+          (stream === "stdout" ? stdoutRedactor : stderrRedactor).push(chunk),
+        );
+      };
       const cleanup = (): void => {
         if (timer !== undefined) clearTimeout(timer);
         if (forceKill !== undefined) clearTimeout(forceKill);
@@ -507,42 +561,28 @@ async function acquireKernelLock(
       const abort = (): void => {
         if (cancellation !== undefined) return;
         cancellation = "interrupted";
-        signalProcessGroup(child.pid, "SIGTERM", (signal) =>
-          child.kill(signal),
-        );
-        forceKill = setTimeout(
-          () =>
-            signalProcessGroup(child.pid, "SIGKILL", (signal) =>
-              child.kill(signal),
-            ),
-          100,
-        );
+        terminate();
       };
       const timer = setTimeout(() => {
         if (cancellation !== undefined) return;
         cancellation = "timeout";
-        signalProcessGroup(child.pid, "SIGTERM", (signal) =>
-          child.kill(signal),
-        );
-        forceKill = setTimeout(
-          () =>
-            signalProcessGroup(child.pid, "SIGKILL", (signal) =>
-              child.kill(signal),
-            ),
-          100,
-        );
+        terminate();
       }, runtime.operationTimeoutMilliseconds);
       runtime.signal?.addEventListener("abort", abort, { once: true });
       if (runtime.signal?.aborted) abort();
-      child.stderr?.setEncoding("utf8").on("data", (chunk: string) => {
-        execution.append("stderr", chunk);
-      });
+      child.stdout
+        ?.setEncoding("utf8")
+        .on("data", (chunk: string) => capture("stdout", chunk));
+      child.stderr
+        ?.setEncoding("utf8")
+        .on("data", (chunk: string) => capture("stderr", chunk));
       let spawnError: Error | undefined;
       child.once("error", (error) => {
         spawnError = error;
       });
       child.once("close", async (code, signal) => {
         cleanup();
+        flushStreams();
         try {
           await drainProcessGroup(child.pid, (name) => child.kill(name));
         } catch (error) {
@@ -551,7 +591,12 @@ async function acquireKernelLock(
         }
         try {
           if (spawnError !== undefined) {
-            execution.finish("spawn-failure", { error: spawnError.message });
+            execution.finish("spawn-failure", {
+              error: spawnError.message,
+              ...(execution.failure === undefined
+                ? {}
+                : { evidenceFailure: execution.failure.message }),
+            });
             reject(
               new ProcessExecutionError(
                 "flock",
@@ -560,8 +605,31 @@ async function acquireKernelLock(
               ),
             );
           } else if (code === 0) {
-            if (execution.failure !== undefined) {
-              reject(execution.failure);
+            if (
+              outputFailure !== undefined ||
+              execution.failure !== undefined
+            ) {
+              execution.finish("evidence-failure", {
+                evidenceFailure:
+                  outputFailure?.message ?? execution.failure?.message,
+              });
+              reject(outputFailure ?? execution.failure);
+              return;
+            }
+            if (cancellation !== undefined) {
+              execution.finish(cancellation, {
+                exitCode: 0,
+                ...(signal === null ? {} : { signal }),
+              });
+              reject(
+                new ProcessExecutionError(
+                  "flock",
+                  execution.executionId,
+                  cancellation,
+                  0,
+                  signal ?? undefined,
+                ),
+              );
               return;
             }
             execution.finish("lock-acquired", {
@@ -570,6 +638,19 @@ async function acquireKernelLock(
             });
             resolve();
           } else {
+            if (
+              outputFailure !== undefined ||
+              execution.failure !== undefined
+            ) {
+              execution.finish("evidence-failure", {
+                exitCode: code ?? 1,
+                ...(signal === null ? {} : { signal }),
+                evidenceFailure:
+                  outputFailure?.message ?? execution.failure?.message,
+              });
+              reject(outputFailure ?? execution.failure);
+              return;
+            }
             const status =
               cancellation ?? (code === 1 ? "lock-contended" : "nonzero");
             execution.finish(status, {

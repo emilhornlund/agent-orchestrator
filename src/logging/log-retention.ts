@@ -165,6 +165,126 @@ function scanSessionLogs(
   }
 }
 
+function legacySessionPath(
+  root: string,
+  projectId: string,
+  cardId: string,
+): string | undefined {
+  if (
+    !projectId ||
+    !cardId ||
+    projectId === "." ||
+    projectId === ".." ||
+    cardId === "." ||
+    cardId === ".."
+  )
+    return undefined;
+  const safePart = (value: string) =>
+    value.replace(
+      /[^a-zA-Z0-9._-]/g,
+      (character) => `_${character.codePointAt(0)!.toString(16)}_`,
+    );
+  return path.resolve(
+    root,
+    "sessions",
+    safePart(projectId),
+    `${safePart(cardId)}.log`,
+  );
+}
+
+const terminalProcessStatuses = new Set([
+  "success",
+  "nonzero",
+  "timeout",
+  "interrupted",
+  "spawn-failure",
+  "evidence-failure",
+  "lock-acquired",
+  "lock-contended",
+  "lock-released",
+  "acquisition-failure",
+]);
+
+function isValidTimestamp(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) && new Date(parsed).toISOString() === value;
+}
+
+function isWithin(parent: string, candidate: string): boolean {
+  const relative = path.relative(parent, candidate);
+  return (
+    relative === "" ||
+    (!relative.startsWith(`..${path.sep}`) &&
+      relative !== ".." &&
+      !path.isAbsolute(relative))
+  );
+}
+
+function scanProcessExecutions(
+  runtimeRoot: string,
+  cutoff: number,
+  protectedPaths: ReadonlySet<string>,
+): void {
+  const directory = path.join(runtimeRoot, "process-executions");
+  for (const entry of readManagedDirectory(directory) ?? []) {
+    if (entry.isSymbolicLink() || !entry.isDirectory()) continue;
+    const executionDirectory = path.join(directory, entry.name);
+    try {
+      const metadataPath = path.join(executionDirectory, "execution.json");
+      const stats = fs.lstatSync(metadataPath);
+      if (stats.isSymbolicLink() || !stats.isFile()) continue;
+      const metadata: unknown = JSON.parse(
+        fs.readFileSync(metadataPath, "utf8"),
+      );
+      if (!metadata || typeof metadata !== "object") continue;
+      const value = metadata as {
+        executionId?: unknown;
+        status?: unknown;
+        startedAt?: unknown;
+        finishedAt?: unknown;
+        stdoutArtifact?: unknown;
+        stderrArtifact?: unknown;
+      };
+      // Unknown outcomes or incomplete identity/timing are not deletion proof.
+      if (
+        value.executionId !== entry.name ||
+        !/^[A-Za-z0-9_-]+$/.test(entry.name) ||
+        typeof value.status !== "string" ||
+        !terminalProcessStatuses.has(value.status) ||
+        !isValidTimestamp(value.startedAt) ||
+        !isValidTimestamp(value.finishedAt) ||
+        Date.parse(value.finishedAt) < Date.parse(value.startedAt) ||
+        typeof value.stdoutArtifact !== "string" ||
+        typeof value.stderrArtifact !== "string" ||
+        path.resolve(value.stdoutArtifact) !==
+          path.join(executionDirectory, "stdout.txt") ||
+        path.resolve(value.stderrArtifact) !==
+          path.join(executionDirectory, "stderr.txt")
+      )
+        continue;
+      if (
+        Date.parse(value.finishedAt) >= cutoff ||
+        stats.mtimeMs >= cutoff ||
+        [...protectedPaths].some((reference) =>
+          isWithin(executionDirectory, reference),
+        )
+      )
+        continue;
+      const files = readManagedDirectory(executionDirectory);
+      if (
+        !files ||
+        files.some((file) => file.isSymbolicLink() || !file.isFile())
+      )
+        continue;
+      fs.rmSync(executionDirectory, { recursive: true, force: false });
+    } catch (error) {
+      if (!isMissingPathError(error))
+        reportFailure("inspect", executionDirectory, error);
+    }
+  }
+}
+
 export function cleanupLogRetention(
   retentionDays: number,
   now = new Date(),
@@ -185,6 +305,7 @@ export function cleanupLogRetention(
   const protectedIds = new Set(protectedAttemptIds);
   const unsafeRoots = new Set<string>();
   let inventoryIsUncertain = false;
+  let hasActiveAttempt = false;
   // Inventory every root before deleting anything: references may cross roots.
   for (const runtimeRoot of effectiveRoots) {
     if (!hasSafeAncestors(runtimeRoot)) {
@@ -233,6 +354,7 @@ export function cleanupLogRetention(
           if (path.isAbsolute(artifact.path))
             protectedPaths.add(path.resolve(artifact.path));
         if (!terminal || protectedIds.has(id)) {
+          hasActiveAttempt ||= !terminal;
           protectedIds.add(id);
           for (const resource of record.resources)
             if (path.isAbsolute(resource.path))
@@ -240,6 +362,16 @@ export function cleanupLogRetention(
           for (const session of Object.values(record.sessions))
             if (path.isAbsolute(session))
               protectedPaths.add(path.resolve(session));
+          if (!terminal) {
+            for (const root of [process.cwd(), ...effectiveRoots]) {
+              const legacy = legacySessionPath(
+                path.join(root, "logs"),
+                record.projectId,
+                record.cardId,
+              );
+              if (legacy) protectedPaths.add(legacy);
+            }
+          }
         }
       } catch {
         unsafeRoots.add(runtimeRoot);
@@ -251,6 +383,8 @@ export function cleanupLogRetention(
   // retention deletion is safe, including legacy logs/sessions.
   if (inventoryIsUncertain) return;
   if (roots.some((root) => !hasSafeAncestors(root))) return;
+  for (const runtimeRoot of effectiveRoots)
+    scanProcessExecutions(runtimeRoot, cutoffMilliseconds, protectedPaths);
   for (const runtimeRoot of effectiveRoots) {
     if (unsafeRoots.has(runtimeRoot)) continue;
     const candidates: string[] = [];
@@ -297,10 +431,11 @@ export function cleanupLogRetention(
       }
 
       if (logEntry.isFile() && dailyLogFilePattern.test(logEntry.name)) {
-        removeIfExpired(
-          path.join(logsDirectory, logEntry.name),
-          cutoffMilliseconds,
-        );
+        if (!hasActiveAttempt)
+          removeIfExpired(
+            path.join(logsDirectory, logEntry.name),
+            cutoffMilliseconds,
+          );
         continue;
       }
 

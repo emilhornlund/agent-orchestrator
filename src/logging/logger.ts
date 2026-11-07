@@ -25,6 +25,29 @@ export interface LogContext {
   cardId?: string;
 }
 
+export interface DomainDiagnostic {
+  code:
+    | "task-failure"
+    | "trello-retry-deferred"
+    | "card-failure-transition-failed"
+    | "process-failed"
+    | "recovery-deferred";
+  classification:
+    | "external-operation"
+    | "process"
+    | "workflow-recovery"
+    | "internal-workflow";
+  recovery:
+    | "retry-scheduled"
+    | "manual-review"
+    | "state-preserved"
+    | "transition-failed"
+    | "none";
+  artifactReferences?: readonly string[];
+  attempt?: number;
+  maximumAttempts?: number;
+}
+
 function formatContext(context: LogContext): string {
   const parts: string[] = [];
 
@@ -167,6 +190,79 @@ export class Logger {
     if (shouldWriteConsole()) {
       console.error(formatConsole(this.context, message));
     }
+  }
+
+  /** Persist bounded, enumerated diagnostic facts without copying child/error text into authority history. */
+  diagnostic(diagnostic: DomainDiagnostic): void {
+    const enumValues = {
+      code: [
+        "task-failure",
+        "trello-retry-deferred",
+        "card-failure-transition-failed",
+        "process-failed",
+        "recovery-deferred",
+      ],
+      classification: [
+        "external-operation",
+        "process",
+        "workflow-recovery",
+        "internal-workflow",
+      ],
+      recovery: [
+        "retry-scheduled",
+        "manual-review",
+        "state-preserved",
+        "transition-failed",
+        "none",
+      ],
+    };
+    if (
+      !enumValues.code.includes(diagnostic.code) ||
+      !enumValues.classification.includes(diagnostic.classification) ||
+      !enumValues.recovery.includes(diagnostic.recovery) ||
+      (diagnostic.attempt !== undefined &&
+        (!Number.isSafeInteger(diagnostic.attempt) ||
+          diagnostic.attempt < 1)) ||
+      (diagnostic.maximumAttempts !== undefined &&
+        (!Number.isSafeInteger(diagnostic.maximumAttempts) ||
+          diagnostic.maximumAttempts < 1)) ||
+      (diagnostic.attempt === undefined) !==
+        (diagnostic.maximumAttempts === undefined) ||
+      (diagnostic.attempt !== undefined &&
+        diagnostic.maximumAttempts !== undefined &&
+        diagnostic.attempt > diagnostic.maximumAttempts)
+    )
+      throw new Error("Invalid workflow diagnostic fields");
+    const references = diagnostic.artifactReferences ?? [];
+    if (
+      references.some(
+        (reference) =>
+          !/^process-executions\/[A-Za-z0-9-]+\/(?:stdout|stderr)\.txt$/.test(
+            reference,
+          ),
+      )
+    )
+      throw new Error("Unsafe diagnostic artifact reference");
+    const context = this.context;
+    const authority = context.projectId
+      ? ProjectRunAuthority.current(context.projectId)
+      : undefined;
+    const record = authority?.store.read();
+    if (!record || !context.cardId || record.cardId !== context.cardId) return;
+    const historyPath = path.join(
+      record.pinned.storageRoot,
+      "history",
+      encodeURIComponent(context.projectId!),
+      encodeURIComponent(context.cardId),
+      encodeURIComponent(record.attemptId),
+      "events.jsonl",
+    );
+    mkdirSync(path.dirname(historyPath), { recursive: true, mode: 0o700 });
+    appendFileSync(
+      historyPath,
+      `${JSON.stringify({ timestamp: new Date().toISOString(), type: "workflow-diagnostic", level: "ERROR", summary: { category: diagnostic.classification, code: diagnostic.code, recovery: diagnostic.recovery, artifactReferences: references, ...(diagnostic.attempt === undefined ? {} : { attempt: diagnostic.attempt, maximumAttempts: diagnostic.maximumAttempts }) } })}\n`,
+      { encoding: "utf8", mode: 0o600 },
+    );
   }
 }
 

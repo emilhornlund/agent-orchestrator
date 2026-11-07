@@ -236,6 +236,7 @@ describe("production run history and retention survive process restart", () => {
         timeline: Array<{
           type: string;
           kind: string;
+          summary?: { code?: string; artifactReferences?: string[] };
           transition?: string;
           attemptId: string;
           revision: number;
@@ -266,7 +267,9 @@ describe("production run history and retention survive process restart", () => {
         afterRestart.resourceReferences.map((reference) => reference.path),
       ).toContain(activeLog);
       expect(
-        afterRestart.timeline.map((event) => event.transition ?? event.kind),
+        afterRestart.timeline
+          .map((event) => event.transition ?? event.kind)
+          .filter(Boolean),
       ).toEqual([
         "attempt-created",
         "claim",
@@ -276,10 +279,14 @@ describe("production run history and retention survive process restart", () => {
         "publication-completed",
         "ci-observed",
       ]);
-      expect(afterRestart.timeline.map((event) => event.revision)).toEqual([
-        1, 2, 3, 4, 5, 6, 7,
-      ]);
-      for (const event of afterRestart.timeline) {
+      expect(
+        afterRestart.timeline
+          .map((event) => event.revision)
+          .filter((revision) => revision !== undefined),
+      ).toEqual([1, 2, 3, 4, 5, 6, 7]);
+      for (const event of afterRestart.timeline.filter(
+        (entry) => entry.attemptId !== undefined,
+      )) {
         expect(event.attemptId).toBe("attempt-p3-restart");
         expect(Date.parse(event.timestamp)).not.toBeNaN();
         expect(Date.parse(event.startedAt)).not.toBeNaN();
@@ -295,6 +302,11 @@ describe("production run history and retention survive process restart", () => {
           "utf8",
         ),
       ).toContain("restart recovery inspected active Human Review state");
+      expect(
+        afterRestart.timeline.filter(
+          (event) => event.type === "workflow-diagnostic",
+        ),
+      ).toEqual([]);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
