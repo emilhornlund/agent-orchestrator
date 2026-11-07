@@ -14,6 +14,7 @@ import {
   type RunGitHubCommand,
 } from "../src/github/github-client.js";
 import type { ProjectConfig } from "../src/config/config.js";
+import { registerProcessSecrets } from "../src/process/process-runtime.js";
 import {
   AGENT_ORCHESTRATOR_STATUS_END,
   AGENT_ORCHESTRATOR_STATUS_START,
@@ -343,6 +344,95 @@ describe("GitHubClient", () => {
         } as ProjectConfig,
       }),
     ).rejects.toThrow("HTTP 403");
+  });
+
+  it("sanitizes PEM canaries in spawned GraphQL and conversation replies and validates sanitized receipts", async () => {
+    const pem =
+      "-----BEGIN PRIVATE KEY-----\nPEM /+=& canary\n-----END PRIVATE KEY-----";
+    registerProcessSecrets([pem]);
+    const threadLookup = {
+      data: {
+        repository: {
+          pullRequest: {
+            reviewThreads: {
+              nodes: [
+                {
+                  id: "PRRT_thread-id",
+                  isResolved: false,
+                  isOutdated: false,
+                  comments: {
+                    nodes: [
+                      {
+                        databaseId: 10,
+                        body: "review request",
+                        author: { login: "reviewer" },
+                        path: null,
+                        line: null,
+                        originalLine: null,
+                        diffHunk: null,
+                        pullRequestReview: { databaseId: 9 },
+                      },
+                    ],
+                    pageInfo: { hasNextPage: false },
+                  },
+                },
+              ],
+              pageInfo: { hasNextPage: false },
+            },
+          },
+        },
+      },
+    };
+    const nextSpawn = (output: string): void => {
+      const child = createFakeChild();
+      spawnMock.mockImplementationOnce(() => {
+        queueMicrotask(() => {
+          child.stdout.emit("data", Buffer.from(output));
+          child.emit("close", 0);
+        });
+        return child;
+      });
+    };
+    const suppliedBody = `Literal ${pem}; percent=${encodeURIComponent(pem)}; b64=${Buffer.from(pem).toString("base64url")}`;
+    const sanitizedBody =
+      "Literal [REDACTED]; percent=[REDACTED]; b64=[REDACTED]";
+
+    nextSpawn(JSON.stringify(threadLookup));
+    nextSpawn(
+      JSON.stringify({
+        data: {
+          addPullRequestReviewThreadReply: { comment: { databaseId: 201 } },
+        },
+      }),
+    );
+    await expect(
+      new GitHubClient().replyToReviewThread({
+        cwd: "/repo",
+        repository: "owner/repo",
+        pullRequestUrl: "https://github.com/owner/repo/pull/12",
+        threadId: "PRRT_thread-id",
+        body: suppliedBody,
+      }),
+    ).resolves.toMatchObject({ id: "201", kind: "review-thread" });
+    const graphArgs = spawnMock.mock.calls[1]![1] as string[];
+    expect(graphArgs).toContain("threadId=PRRT_thread-id");
+    expect(graphArgs).toContain(`body=${sanitizedBody}`);
+    expect(graphArgs.find((arg) => arg.startsWith("query="))).toContain(
+      "addPullRequestReviewThreadReply",
+    );
+
+    nextSpawn(JSON.stringify({ id: 202, body: sanitizedBody }));
+    await expect(
+      new GitHubClient().replyToConversationComment({
+        cwd: "/repo",
+        repository: "owner/repo",
+        pullRequestUrl: "https://github.com/owner/repo/pull/12",
+        body: suppliedBody,
+      }),
+    ).resolves.toEqual({ id: "202", kind: "conversation" });
+    const conversationArgs = spawnMock.mock.calls[2]![1] as string[];
+    expect(conversationArgs).toContain("repos/owner/repo/issues/12/comments");
+    expect(conversationArgs).toContain(`body=${sanitizedBody}`);
   });
 
   it("creates contextual conversation replies and validates repository ownership and responses", async () => {
@@ -769,9 +859,9 @@ describe("GitHubClient", () => {
         cwd: "/tmp/repository",
         repository: "example/repository",
         baseBranch: "main",
-        headBranch: "agent/example",
-        title: "Example task",
-        body: "Example body",
+        headBranch: "branch-token=rotation",
+        title: "Example token=rotation",
+        body: "Example body token=rotation",
       }),
     ).resolves.toEqual({
       url: "https://github.com/example/repository/pull/123",
@@ -787,18 +877,51 @@ describe("GitHubClient", () => {
         "--base",
         "main",
         "--head",
-        "agent/example",
+        "branch-token=rotation",
         "--title",
-        "Example task",
+        "Example token=rotation",
         "--body",
-        "Example body",
+        "Example body token=rotation",
       ],
       {
         cwd: "/tmp/repository",
         stdio: ["inherit", "pipe", "pipe"],
         detached: process.platform !== "win32",
+        env: expect.objectContaining({
+          PATH: process.env.PATH,
+          HOME: process.env.HOME,
+        }),
       },
     );
+  });
+
+  it("redacts registered PEM canaries only in outbound gh content arguments", async () => {
+    const pem =
+      "-----BEGIN PRIVATE KEY-----\nsynthetic-gh-pem\n-----END PRIVATE KEY-----";
+    registerProcessSecrets([pem]);
+    const child = createFakeChild();
+    spawnMock.mockImplementationOnce(() => {
+      queueMicrotask(() => {
+        child.stdout.emit(
+          "data",
+          Buffer.from("https://github.com/example/repository/pull/123\n"),
+        );
+        child.emit("close", 0);
+      });
+      return child;
+    });
+    await new GitHubClient().createPullRequest({
+      cwd: "/repo",
+      repository: "example/repository",
+      baseBranch: "main",
+      headBranch: "branch-token=rotation",
+      title: `Contains ${pem}`,
+      body: `Details ${Buffer.from(pem).toString("base64url")}`,
+    });
+    const args = spawnMock.mock.calls[0]![1] as string[];
+    expect(args[args.indexOf("--head") + 1]).toBe("branch-token=rotation");
+    expect(args[args.indexOf("--title") + 1]).toBe("Contains [REDACTED]");
+    expect(args[args.indexOf("--body") + 1]).toBe("Details [REDACTED]");
   });
 
   it("rejects when gh exits non-zero", async () => {

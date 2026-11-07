@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { buildChildEnvironment } from "../process/child-environment.js";
 
 import {
   canonicalizeGitHubRepository,
@@ -11,6 +12,7 @@ import {
   containsSecret,
   createSecretRedactor,
   redactError,
+  redactRegisteredSecrets,
   redactSecrets,
 } from "../security/redact-secrets.js";
 import { getGitHubOperationProject } from "./github-operation-context.js";
@@ -1044,13 +1046,29 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
       cwd,
       environmentSecrets,
     );
-    const child = spawn("gh", args, {
+    const contentFlags = new Set([
+      "--body",
+      "--title",
+      "--comment",
+      "--message",
+      "--subject",
+      "--notes",
+    ]);
+    const safeArguments = args.map((argument, index) => {
+      if (index > 0 && contentFlags.has(args[index - 1]!)) {
+        return redactRegisteredSecrets(argument, environmentSecrets);
+      }
+      const separator = argument.indexOf("=");
+      const flag = separator < 0 ? argument : argument.slice(0, separator);
+      return separator > 0 && contentFlags.has(flag)
+        ? `${flag}=${redactRegisteredSecrets(argument.slice(separator + 1), environmentSecrets)}`
+        : argument;
+    });
+    const child = spawn("gh", safeArguments, {
       cwd,
       stdio: ["inherit", "pipe", "pipe"],
       detached: process.platform !== "win32",
-      ...(environment === undefined
-        ? {}
-        : { env: { ...process.env, ...environment } }),
+      env: buildChildEnvironment("github", environment),
     });
 
     let output = "";
@@ -1865,6 +1883,10 @@ export class GitHubClient {
       );
     }
     const credential = await this.resolveCredential(options.project);
+    const dispatchedBody = redactRegisteredSecrets(options.body, [
+      ...getProcessRuntime().secretValues,
+      ...credential.secretValues,
+    ]);
     const threads = await this.findReviewThreads(
       {
         cwd: options.cwd,
@@ -1891,7 +1913,7 @@ export class GitHubClient {
         "-F",
         `threadId=${options.threadId}`,
         "-F",
-        `body=${options.body}`,
+        `body=${dispatchedBody}`,
       ],
       credential,
     );
@@ -1976,6 +1998,10 @@ export class GitHubClient {
       throw new Error("Conversation reply body must not be blank");
     }
     const credential = await this.resolveCredential(options.project);
+    const dispatchedBody = redactRegisteredSecrets(options.body, [
+      ...getProcessRuntime().secretValues,
+      ...credential.secretValues,
+    ]);
     const output = await this.run(
       options.cwd,
       [
@@ -1984,7 +2010,7 @@ export class GitHubClient {
         "POST",
         `repos/${options.repository}/issues/${number}/comments`,
         "-f",
-        `body=${options.body}`,
+        `body=${dispatchedBody}`,
       ],
       credential,
     );
@@ -2002,7 +2028,7 @@ export class GitHubClient {
       !Number.isSafeInteger(response.id) ||
       response.id <= 0 ||
       typeof response.body !== "string" ||
-      response.body !== options.body
+      response.body !== dispatchedBody
     ) {
       throw new Error("GitHub CLI returned a malformed conversation reply");
     }

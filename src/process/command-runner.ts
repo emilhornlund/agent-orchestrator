@@ -1,4 +1,8 @@
 import { spawn } from "node:child_process";
+import {
+  buildChildEnvironment,
+  type ChildProcessFamily,
+} from "./child-environment.js";
 
 import {
   appendSessionLog,
@@ -66,6 +70,7 @@ export interface CommandRunOptions {
   maxCaptureOutputLength?: number;
   suppressOutput?: boolean;
   environment?: Record<string, string>;
+  processFamily?: ChildProcessFamily;
   secretValues?: readonly string[];
   sessionLogPath?: string;
   sessionLabel?: string;
@@ -106,6 +111,7 @@ const defaultRunCommand: RunCommand = async ({
   maxCaptureOutputLength,
   suppressOutput,
   environment,
+  processFamily,
   secretValues,
   sessionLogPath,
   sessionLabel,
@@ -155,9 +161,7 @@ const defaultRunCommand: RunCommand = async ({
       shell: true,
       stdio: ["inherit", "pipe", "pipe"],
       detached: process.platform !== "win32",
-      ...(environment === undefined
-        ? {}
-        : { env: { ...process.env, ...environment } }),
+      env: buildChildEnvironment(processFamily ?? "command", environment),
     });
 
     let settled = false;

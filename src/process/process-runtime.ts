@@ -3,10 +3,12 @@ import path from "node:path";
 import fs from "node:fs";
 import { randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { redactSecrets } from "../security/redact-secrets.js";
 
 let runtimeRoot: string | undefined;
 let lifecycleSignal: AbortSignal | undefined;
 let secretValues: readonly string[] = [];
+const registeredSecrets = new Set<string>();
 let operationTimeoutMilliseconds = 2 * 60 * 1_000;
 const ambiguityHandler = new AsyncLocalStorage<
   (pid: number | undefined) => void
@@ -99,6 +101,8 @@ export function configureProcessRuntime(options: {
   runtimeRoot = path.resolve(options.runtimeRoot);
   lifecycleSignal = options.signal;
   secretValues = options.secretValues ?? [];
+  for (const value of secretValues)
+    if (value.length > 0) registeredSecrets.add(value);
   operationTimeoutMilliseconds =
     options.operationTimeoutMilliseconds ?? operationTimeoutMilliseconds;
 }
@@ -114,9 +118,15 @@ export function getProcessRuntime(): {
       runtimeRoot ??
       path.join(os.tmpdir(), "agent-orchestrator-process-artifacts"),
     ...(lifecycleSignal === undefined ? {} : { signal: lifecycleSignal }),
-    secretValues,
+    secretValues: [...new Set([...secretValues, ...registeredSecrets])],
     operationTimeoutMilliseconds,
   };
+}
+
+/** Register credentials created at runtime (for example scoped App tokens). */
+export function registerProcessSecrets(values: readonly string[]): void {
+  for (const value of values)
+    if (value.length > 0) registeredSecrets.add(value);
 }
 
 export function beginProcessEvidence(
@@ -133,15 +143,13 @@ export function beginProcessEvidence(
   const stdoutPath = path.join(directory, "stdout.txt");
   const stderrPath = path.join(directory, "stderr.txt");
   const startedAt = new Date().toISOString();
-  const safeCommand = secrets.reduce(
-    (text, secret) => (secret ? text.replaceAll(secret, "[REDACTED]") : text),
-    command,
-  );
+  const safeCommand = redactSecrets(command, secrets);
+  const safeCwd = redactSecrets(cwd, secrets);
   const metadataPath = path.join(directory, "execution.json");
   const writeMetadata = (metadata: Record<string, unknown>) =>
     fs.writeFileSync(
       metadataPath,
-      `${JSON.stringify({ executionId, command: safeCommand, cwd, startedAt, stdoutArtifact: stdoutPath, stderrArtifact: stderrPath, ...metadata }, null, 2)}\n`,
+      `${JSON.stringify({ executionId, command: safeCommand, cwd: safeCwd, startedAt, stdoutArtifact: stdoutPath, stderrArtifact: stderrPath, ...metadata }, null, 2)}\n`,
       { mode: 0o600 },
     );
   try {

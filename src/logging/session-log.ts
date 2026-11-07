@@ -2,6 +2,7 @@ import { appendFileSync, mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
 
 import { withActiveLogFile } from "./active-log-files.js";
+import { sanitizeControlledText } from "../security/redact-secrets.js";
 
 function sanitizePathPart(value: string): string {
   return value.replace(/[^a-zA-Z0-9._-]/g, (character) => {
@@ -26,6 +27,7 @@ export function removeSessionLog(projectId: string, cardId: string): void {
 }
 
 export function appendSessionLog(filePath: string, content: string): void {
+  content = sanitizeControlledText(content);
   mkdirSync(path.dirname(filePath), {
     recursive: true,
   });

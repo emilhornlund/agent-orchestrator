@@ -1,4 +1,6 @@
 import { logger, shouldWriteConsole } from "../logging/logger.js";
+import { getProcessRuntime } from "../process/process-runtime.js";
+import { redactSecrets } from "../security/redact-secrets.js";
 
 export type FatalErrorSource =
   "startup failure" | "uncaught exception" | "unhandled promise rejection";
@@ -70,43 +72,22 @@ function stringifyThrownValue(error: unknown): string {
   }
 }
 
-function redactSecrets(
-  text: string,
-  secretValues: ReadonlySet<string>,
-): string {
-  let redacted = text;
-
-  for (const secretValue of [...secretValues].sort(
-    (left, right) => right.length - left.length,
-  )) {
-    redacted = redacted.replaceAll(secretValue, "[REDACTED]");
-  }
-
-  redacted = redacted.replace(/(\bBearer\s+)[^\s,;]+/gi, "$1[REDACTED]");
-  redacted = redacted.replace(
-    /([?&](?:key|token|api[_-]?key|access[_-]?token|password|secret)=)[^&#\s]+/gi,
-    "$1[REDACTED]",
-  );
-  redacted = redacted.replace(
-    /(\b["']?(?:api[_-]?key|token|password|secret|authorization|credential|username)["']?\s*[:=]\s*["']?)[^\s,"'};]+/gi,
-    "$1[REDACTED]",
-  );
-
-  return redacted;
-}
-
 export function formatFatalDiagnostic(
   source: FatalErrorSource,
   error: unknown,
   secretValues: readonly (string | undefined)[] = [],
 ): string {
   const secrets = new Set(
-    [...getEnvironmentSecretValues(), ...secretValues].filter(
+    [
+      ...getEnvironmentSecretValues(),
+      ...getProcessRuntime().secretValues,
+      ...secretValues,
+    ].filter(
       (value): value is string => value !== undefined && value.length > 0,
     ),
   );
 
-  const details = redactSecrets(stringifyThrownValue(error), secrets);
+  const details = redactSecrets(stringifyThrownValue(error), [...secrets]);
 
   return `Fatal ${source}; requesting coordinated shutdown. ${details}`;
 }

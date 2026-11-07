@@ -39,6 +39,7 @@ describe("OpenCode streaming output", () => {
 
   afterEach(() => {
     fs.rmSync(directory, { recursive: true, force: true });
+    vi.unstubAllEnvs();
     vi.useRealTimers();
   });
 
@@ -74,6 +75,69 @@ describe("OpenCode streaming output", () => {
       output: "stdout event\n",
       errorOutput: "stderr event\n",
     });
+  });
+
+  it("uses only each project's explicitly selected provider credential at spawn", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "openai-project-secret");
+    vi.stubEnv("ANTHROPIC_API_KEY", "anthropic-project-secret");
+    vi.stubEnv("TRELLO_API_KEY", "must-not-leak");
+    const modelRuns = [
+      [
+        "openai/gpt-test",
+        "OPENAI_API_KEY",
+        "openai-project-secret",
+        "ANTHROPIC_API_KEY",
+      ],
+      [
+        "anthropic/claude-test",
+        "ANTHROPIC_API_KEY",
+        "anthropic-project-secret",
+        "OPENAI_API_KEY",
+      ],
+    ] as const;
+
+    for (const [model, allowedKey, allowedValue, excludedKey] of modelRuns) {
+      const child = fakeChild();
+      spawnMock.mockReturnValueOnce(child);
+      const result = new OpenCodeClient().run({
+        cwd: directory,
+        model,
+        variant: "high",
+        timeoutMilliseconds: 60_000,
+        prompt: "work",
+        signal: new AbortController().signal,
+      });
+      const env = spawnMock.mock.calls.at(-1)![2].env as NodeJS.ProcessEnv;
+      expect(env[allowedKey]).toBe(allowedValue);
+      expect(env).not.toHaveProperty(excludedKey);
+      expect(env).not.toHaveProperty("TRELLO_API_KEY");
+      child.emit("close", 0);
+      await expect(result).resolves.toMatchObject({ exitCode: 0 });
+    }
+  });
+
+  it("redacts registered PEM literal and encoded forms from the actual OpenCode prompt argument", async () => {
+    const pem =
+      "-----BEGIN PRIVATE KEY-----\nsynthetic-open-code-pem\n-----END PRIVATE KEY-----";
+    const child = fakeChild();
+    spawnMock.mockReturnValue(child);
+    const prompt = `Inspect this attachment: ${pem}; encoded=${Buffer.from(pem).toString("base64url")}`;
+    const result = new OpenCodeClient().run({
+      cwd: directory,
+      model: "openai/gpt-test",
+      variant: "high",
+      timeoutMilliseconds: 60_000,
+      prompt,
+      signal: new AbortController().signal,
+      secretValues: [pem],
+    });
+    const args = spawnMock.mock.calls[0]![1] as string[];
+    const actualPrompt = args.at(-1)!;
+    expect(actualPrompt).not.toContain(pem);
+    expect(actualPrompt).not.toContain(Buffer.from(pem).toString("base64url"));
+    expect(actualPrompt.match(/\[REDACTED\]/gu)).toHaveLength(2);
+    child.emit("close", 0);
+    await expect(result).resolves.toMatchObject({ exitCode: 0 });
   });
 
   it("redacts secrets split across chunks and captures full structured output", async () => {

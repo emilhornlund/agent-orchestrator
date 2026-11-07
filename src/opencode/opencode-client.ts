@@ -1,4 +1,8 @@
 import { spawn } from "node:child_process";
+import {
+  buildChildEnvironment,
+  providerFromModel,
+} from "../process/child-environment.js";
 
 import { logger } from "../logging/logger.js";
 import {
@@ -359,7 +363,7 @@ const defaultRunOpenCode: RunOpenCode = async ({
         cwd,
         model,
         variant,
-        prompt,
+        prompt: redactSecrets(prompt, secretValues),
         ...(sessionId === undefined ? {} : { sessionId }),
         ...(captureSessionId === undefined ? {} : { captureSessionId }),
       }),
@@ -368,8 +372,12 @@ const defaultRunOpenCode: RunOpenCode = async ({
         stdio: ["inherit", "pipe", "pipe"],
         detached: process.platform !== "win32",
         env: {
-          ...process.env,
-          ...environment,
+          ...buildChildEnvironment(
+            "opencode",
+            environment,
+            process.env,
+            providerFromModel(model),
+          ),
           OPENCODE_CONFIG_CONTENT: buildOpenCodeConfigContent(readOnly),
         },
       },
@@ -676,6 +684,7 @@ export class OpenCodeClient {
 
     const secretValues = [
       ...this.configuredSecretValues,
+      ...getProcessRuntime().secretValues,
       ...(options.secretValues ?? []),
     ];
     const result = await this.runOpenCode({

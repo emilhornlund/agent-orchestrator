@@ -1,8 +1,10 @@
 import { createPrivateKey, sign } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { open } from "node:fs/promises";
 import path from "node:path";
 
 import type { GitHubAppConfig } from "../config/config.js";
+import { registerProcessSecrets } from "../process/process-runtime.js";
 
 const GITHUB_API_URL = "https://api.github.com";
 const GITHUB_API_VERSION = "2022-11-28";
@@ -187,6 +189,27 @@ function parseTokenResponse(
 const defaultRequest: RequestGitHubAppToken = (input, init) =>
   globalThis.fetch(input, init);
 
+async function readProtectedPrivateKey(
+  privateKeyPath: string,
+): Promise<string> {
+  const handle = await open(
+    privateKeyPath,
+    constants.O_RDONLY | constants.O_NOFOLLOW,
+  );
+  try {
+    const info = await handle.stat();
+    if (!info.isFile() || (info.mode & 0o077) !== 0) {
+      throw new Error("Private key file must be a regular owner-only file");
+    }
+    if (typeof process.getuid === "function" && info.uid !== process.getuid()) {
+      throw new Error("Private key file is not owned by the orchestrator user");
+    }
+    return await handle.readFile("utf8");
+  } finally {
+    await handle.close();
+  }
+}
+
 export class GitHubAppAuthenticator {
   private readonly readPrivateKey: ReadGitHubAppPrivateKey;
   private readonly signJwt: SignGitHubAppJwt;
@@ -199,9 +222,7 @@ export class GitHubAppAuthenticator {
   private readonly pendingExchanges = new Map<string, Promise<string>>();
 
   constructor(options: GitHubAppAuthenticatorOptions = {}) {
-    this.readPrivateKey =
-      options.readPrivateKey ??
-      ((privateKeyPath) => readFile(privateKeyPath, "utf8"));
+    this.readPrivateKey = options.readPrivateKey ?? readProtectedPrivateKey;
     this.signJwt = options.signJwt ?? defaultSignJwt;
     this.request = options.request ?? defaultRequest;
     this.now = options.now ?? Date.now;
@@ -264,6 +285,7 @@ export class GitHubAppAuthenticator {
 
     try {
       privateKeyPem = await this.readPrivateKey(githubApp.privateKeyPath);
+      registerProcessSecrets([privateKeyPem]);
     } catch {
       throw new GitHubAppCredentialError("private key read");
     }

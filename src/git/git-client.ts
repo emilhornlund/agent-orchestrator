@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { buildChildEnvironment } from "../process/child-environment.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -96,9 +97,7 @@ const defaultRunGit: RunGit = async (cwd, args, environment) => {
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
       detached: process.platform !== "win32",
-      ...(environment === undefined
-        ? {}
-        : { env: { ...process.env, ...environment } }),
+      env: buildChildEnvironment("git", environment),
     });
     const stdoutRedactor = createSecretRedactor(secretValues);
     const stderrRedactor = createSecretRedactor(secretValues);

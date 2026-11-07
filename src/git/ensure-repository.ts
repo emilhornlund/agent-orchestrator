@@ -68,6 +68,7 @@ export async function ensureRepository(
         credential.mode === "github-app"
           ? `${cloneCommand} -- -c credential.helper=`
           : cloneCommand,
+      processFamily: "github",
       ...(Object.keys(credential.environment).length === 0
         ? {}
         : {

@@ -93,6 +93,10 @@ describe("CommandRunner", () => {
       shell: true,
       stdio: ["inherit", "pipe", "pipe"],
       detached: process.platform !== "win32",
+      env: expect.objectContaining({
+        PATH: process.env.PATH,
+        HOME: process.env.HOME,
+      }),
     });
   });
 
@@ -233,6 +237,7 @@ describe("CommandRunner", () => {
       cwd: "/worktree",
       command: "gh repo clone owner/repository /repo",
       environment: { GH_TOKEN: "token-a" },
+      processFamily: "github",
       secretValues: ["token-a"],
     });
 

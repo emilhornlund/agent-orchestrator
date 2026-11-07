@@ -5,6 +5,7 @@ import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 
 import { canonicalizeGitHubRepository } from "../config/config.js";
+import { buildChildEnvironment } from "../process/child-environment.js";
 import {
   beginProcessEvidence,
   drainProcessGroup,
@@ -479,6 +480,7 @@ async function acquireKernelLock(
     child = spawn("flock", [...(wait ? [] : ["-n"]), "3"], {
       stdio: ["ignore", "ignore", "pipe", descriptor],
       detached: process.platform !== "win32",
+      env: buildChildEnvironment("flock"),
     });
   } catch (error) {
     fs.closeSync(descriptor);

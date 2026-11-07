@@ -5,12 +5,24 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   beginProcessEvidence,
   ProcessEvidenceError,
+  getProcessRuntime,
+  registerProcessSecrets,
 } from "../src/process/process-runtime.js";
+import { redactSecrets } from "../src/security/redact-secrets.js";
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "process-runtime-test-"));
 afterEach(() => vi.restoreAllMocks());
 
 describe("process evidence failure containment", () => {
+  it("registers dynamically issued project tokens for subsequent redaction", () => {
+    const token = "dynamic-app-installation-token-unique";
+    registerProcessSecrets([token]);
+    expect(getProcessRuntime().secretValues).toContain(token);
+    expect(
+      redactSecrets(`response ${token}`, getProcessRuntime().secretValues),
+    ).toBe("response [REDACTED]");
+  });
+
   it("rejects initialization failure as typed error and removes partial artifacts", () => {
     const write = vi.spyOn(fs, "writeFileSync").mockImplementationOnce(() => {
       throw new Error("disk full");

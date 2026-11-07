@@ -6,6 +6,7 @@ import {
   TrelloRequestAbortedError,
   TrelloRequestError,
 } from "../src/trello/trello-client.js";
+import { registerProcessSecrets } from "../src/process/process-runtime.js";
 
 describe("TrelloClient", () => {
   afterEach(() => {
@@ -1021,6 +1022,77 @@ describe("TrelloClient", () => {
     expect(requestOptions?.body).toBe(
       JSON.stringify({ name: "Refined task", desc: description }),
     );
+  });
+
+  it("preserves operational identifiers and legitimate token-like content", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: "card-token=rotation",
+          name: "Task token=rotation",
+          desc: "Reference token=rotation",
+          idList: "list-token=rotation",
+          idLabels: [],
+          url: "https://trello.com/c/example",
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    const client = new TrelloClient({
+      apiKey: "test-key",
+      token: "test-token",
+    });
+    await client.updateCardContent(
+      "card-token=rotation",
+      "Task token=rotation",
+      "Reference token=rotation",
+    );
+    const [requestUrl, requestOptions] = fetchMock.mock.calls[0] ?? [];
+    const url = new URL(String(requestUrl));
+    expect(url.pathname).toBe("/1/cards/card-token=rotation");
+    expect(url.searchParams.get("key")).toBe("test-key");
+    expect(url.searchParams.get("token")).toBe("test-token");
+    expect(JSON.parse(String(requestOptions?.body))).toEqual({
+      name: "Task token=rotation",
+      desc: "Reference token=rotation",
+    });
+  });
+
+  it("redacts a registered PEM canary from outbound card content, not selectors or auth", async () => {
+    const pem =
+      "-----BEGIN PRIVATE KEY-----\nsynthetic-pem-canary\n-----END PRIVATE KEY-----";
+    registerProcessSecrets([pem]);
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: "card-token=rotation",
+          name: "Task",
+          desc: "[REDACTED]",
+          idList: "list-token=rotation",
+          idLabels: [],
+          url: "https://trello.com/c/example",
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    const client = new TrelloClient({
+      apiKey: "api-key-canary",
+      token: "trello-token-canary",
+    });
+    await client.updateCardContent(
+      "card-token=rotation",
+      "Task",
+      `Private data: ${pem}; encoded=${Buffer.from(pem).toString("base64url")}`,
+    );
+    const [requestUrl, requestOptions] = fetchMock.mock.calls[0] ?? [];
+    const url = new URL(String(requestUrl));
+    expect(url.searchParams.get("key")).toBe("api-key-canary");
+    expect(url.searchParams.get("token")).toBe("trello-token-canary");
+    expect(url.pathname).toBe("/1/cards/card-token=rotation");
+    expect(JSON.parse(String(requestOptions?.body))).toEqual({
+      name: "Task",
+      desc: "Private data: [REDACTED]; encoded=[REDACTED]",
+    });
   });
 
   it("adds an existing label to a card", async () => {

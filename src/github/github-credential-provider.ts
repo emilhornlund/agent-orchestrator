@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url";
 
 import type { ProjectConfig } from "../config/config.js";
+import { registerProcessSecrets } from "../process/process-runtime.js";
 import {
   GitHubAppApiError,
   GitHubAppAuthenticator,
@@ -95,6 +96,8 @@ export class GitHubCredentialProvider {
     } catch (error) {
       throw new GitHubCredentialResolutionError(project, error);
     }
+
+    registerProcessSecrets([token]);
 
     return {
       mode: "github-app",

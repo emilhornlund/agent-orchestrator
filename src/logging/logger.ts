@@ -2,6 +2,7 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 
 import { withActiveLogFile } from "./active-log-files.js";
+import { sanitizeControlledText } from "../security/redact-secrets.js";
 
 export interface LogContext {
   projectId?: string;
@@ -34,6 +35,7 @@ function writeToFile(
   context: LogContext,
   message: string,
 ): void {
+  message = sanitizeControlledText(message);
   const filePath = getLogFilePath();
 
   mkdirSync(path.dirname(filePath), {
@@ -53,6 +55,7 @@ function writeToFile(
 }
 
 function formatConsole(context: LogContext, message: string): string {
+  message = sanitizeControlledText(message);
   const prefix = `${new Date().toISOString()} ${formatContext(context)}`;
 
   return `${prefix}${message.replace(/\r\n|\r|\n/g, (lineBreak) => {
