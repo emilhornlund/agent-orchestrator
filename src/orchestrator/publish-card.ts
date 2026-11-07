@@ -37,6 +37,11 @@ import { PublishedCardStateError } from "./published-card-state-error.js";
 import { getElapsedWorkflowTime } from "./workflow-duration.js";
 import { WorkflowError } from "./workflow-error.js";
 import { writeTrustedCommitState } from "./trusted-commit-state.js";
+import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
+import {
+  resumeInitialPublication,
+  PublicationWaitingError,
+} from "./initial-publication.js";
 
 export interface PublishCardOptions {
   trello: TrelloClient;
@@ -61,6 +66,68 @@ export interface PublishCardOptions {
   beforePushVerification?: () => Promise<void>;
   expectedExistingPullRequestUrl?: string;
   verifiedDescriptionFacts?: () => readonly string[];
+}
+
+/** Presentation is finalized before the durable payload is hashed. Recovery
+ * uses that exact body and never asks an agent to regenerate dispatched text. */
+export async function prepareInitialPublicationBody(
+  options: Omit<PublishCardOptions, "commitSha">,
+  generateDescription = true,
+): Promise<string> {
+  let description = options.pullRequestDescription;
+  const verifiedFacts = options.verifiedDescriptionFacts?.() ?? [];
+  if (options.opencode && generateDescription)
+    description = await generatePullRequestDescription({
+      git: options.git,
+      opencode: options.opencode,
+      project: options.project,
+      card: options.card,
+      worktreePath: options.worktreePath,
+      commitSha: await options.git.getHeadSha(options.worktreePath),
+      reviewResult: options.reviewResult,
+      remediationResult: options.remediationResult,
+      signal: options.signal ?? new AbortController().signal,
+      verifiedFacts,
+      cardLog: logger.child({
+        projectId: options.project.id,
+        cardId: options.card.id,
+      }),
+    });
+  let body = renderDeterministicPullRequestBody(
+    options.card,
+    options.project.repository.gitIdentity.name,
+  );
+  if (description)
+    body = renderPullRequestDescription(
+      verifiedFacts.length
+        ? description
+        : {
+            ...description,
+            validation: [
+              "No verified validation or test results are available.",
+            ],
+          },
+      options.card,
+      options.project.repository.gitIdentity.name,
+    );
+  body += `\n\nReview: ${options.reviewResult}\nRemediation: ${options.remediationResult}`;
+  if (options.exhaustedReview) {
+    body += `\n\n## Automated review — human action required\nThis PR has **not** passed automated review.\n${options.exhaustedReview.blockingFindings
+      .slice(0, 20)
+      .map(
+        (finding) =>
+          `> ${[finding.summary, finding.detail].join(": ").replace(/\s+/gu, " ").slice(0, 400)}`,
+      )
+      .join("\n")}`;
+    body += options.exhaustedReview.requirementAssessments
+      .filter((assessment) => assessment.status === "unsatisfied")
+      .map(
+        (assessment) =>
+          `\n> Unsatisfied requirement: ${assessment.requirementId}`,
+      )
+      .join("");
+  }
+  return body;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -409,6 +476,32 @@ export async function publishCard({
   beforePushVerification,
   expectedExistingPullRequestUrl,
 }: PublishCardOptions): Promise<void> {
+  if (
+    expectedExistingPullRequestUrl === undefined &&
+    ProjectRunAuthority.isProjectLeaseScoped(project.id) &&
+    !ProjectRunAuthority.current(project.id)
+  )
+    throw new Error(
+      "Lease-scoped initial publication requires durable attempt authority",
+    );
+  // Production initial publication cannot opt out of the journal. Existing-PR
+  // correction/body/draft routes are the subsequent P4-T3 integration.
+  if (ProjectRunAuthority.current(project.id)) {
+    const resumed = await resumeInitialPublication({
+      project,
+      git,
+      github,
+      trello,
+      ...(opencode === undefined ? {} : { opencode }),
+      ...(emailNotifier === undefined ? {} : { emailNotifier }),
+      ...(signal === undefined ? {} : { signal }),
+    });
+    if (resumed) throw new PublicationWaitingError();
+    if (expectedExistingPullRequestUrl === undefined)
+      throw new Error(
+        "Legacy initial publication has no durable dispatch provenance; preserve the trusted commit and reconcile explicitly",
+      );
+  }
   void commands;
   const cardLog = logger.child({
     projectId: project.id,

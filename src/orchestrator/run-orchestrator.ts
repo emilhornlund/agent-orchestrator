@@ -64,6 +64,7 @@ import {
 import { WorkflowError } from "./workflow-error.js";
 import type { ProjectRunWorkerContext } from "../task-session/project-run-authority.js";
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
+import { resumeInitialPublication } from "./initial-publication.js";
 import { getCardsForDiscovery } from "./trello-list-discovery.js";
 import { getWorkflowKind } from "./workflow-kind.js";
 import { isCardStartDateReached } from "./card-start-eligibility.js";
@@ -743,6 +744,25 @@ async function runProjectWorkerInner(
           .info(
             `Canonical attempt is waiting (${authorityRecord?.wait.reason ?? "checkpoint unavailable"}); no workflow mutations will be dispatched`,
           );
+        await sleep(pollIntervalMilliseconds, signal);
+        continue;
+      }
+      // An already-pinned publication has its own paced service readback.
+      // Re-running deferred startup resource validation here would funnel a
+      // Trello outage into the legacy exhausted/manual-restart block instead
+      // of resuming this same checkpoint when the service recovers.
+      if (
+        runContext?.authority &&
+        (await resumeInitialPublication({
+          project,
+          trello,
+          git,
+          github,
+          signal,
+          opencode,
+          ...(emailNotifier === undefined ? {} : { emailNotifier }),
+        }))
+      ) {
         await sleep(pollIntervalMilliseconds, signal);
         continue;
       }

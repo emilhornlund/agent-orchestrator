@@ -98,6 +98,10 @@ import { verifyMergedTaskPrHeadContinuity } from "./verify-merged-task-pr-head-c
 import { TaskMutationBlockStore } from "./task-mutation-block-store.js";
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 import type { RunRecord } from "../task-session/run-record.js";
+import {
+  resumeInitialPublication,
+  PublicationWaitingError,
+} from "./initial-publication.js";
 
 const lastLoggedCiState = new Map<string, string>();
 const reportedMissingMaintenancePlans = new Set<string>();
@@ -756,6 +760,22 @@ export async function runTaskSessionWorkflow(
     signal,
     emailNotifier,
   } = options;
+  // Publication resumes before general session recovery/list discovery. A lost
+  // move acknowledgment can leave the card in Review while its task checkpoint
+  // is still publication; neither absence from Working nor an outage may claim
+  // new work or turn this into an absorbing attention-required operation.
+  if (
+    await resumeInitialPublication({
+      project,
+      trello,
+      git,
+      github,
+      signal,
+      opencode: openCode,
+      ...(emailNotifier === undefined ? {} : { emailNotifier }),
+    })
+  )
+    return;
   const validationCommand = project.repository.validationCommand;
   if (
     validationCommand === undefined ||
@@ -4010,6 +4030,11 @@ export async function runTaskSessionWorkflow(
   } catch (error) {
     const failedRecord =
       mutation === null ? null : taskStore.read(mutation.cardId);
+    if (error instanceof PublicationWaitingError) {
+      if (mutation && queue.ownsActive(mutation.eventId))
+        queue.fail(mutation.eventId);
+      return;
+    }
     if (
       mutation !== null &&
       failedRecord?.phase === "attention-required" &&

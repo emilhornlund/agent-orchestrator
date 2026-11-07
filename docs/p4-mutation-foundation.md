@@ -1,5 +1,9 @@
 # P4-T1: durable workflow mutation foundation
 
+The T1 snapshot below is retained as foundation evidence. Initial production
+publication is subsequently integrated by [P4-T2](p4-initial-publication.md);
+remaining global mutation routes and notification delivery are not claimed here.
+
 This is foundation evidence, not P4 completion or realistic provider evidence.
 Production publication, Trello/GitHub/Git mutation routing, and email delivery
 remain T2, T3, and T4 respectively. No external service was contacted.

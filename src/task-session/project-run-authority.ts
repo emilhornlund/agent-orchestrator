@@ -494,6 +494,15 @@ export class ProjectRunAuthority {
     );
   }
 
+  /** Distinguishes unowned utility calls from production lease scopes, also
+   * when one runtime context contains several independent project leases. */
+  static isProjectLeaseScoped(projectId: string): boolean {
+    const leases = projectLeaseContext.getStore();
+    if (leases && !leases.has(projectId))
+      throw new RunStoreConflictError("Scoped project lease mismatch");
+    return leases !== undefined;
+  }
+
   mutate<T>(
     key: string,
     initial: unknown,

@@ -32,6 +32,16 @@ unknown worktree or discard changes as a first response.
 
 ## Restart and task ownership
 
+New initial publications use the [P4 initial-publication checkpoint](p4-initial-publication.md).
+Commit, push, PR creation and initial Trello synchronization retain their original
+mutation intents and verified identities across restart. These checkpoints use
+automatic paced rechecks when GitHub or Trello is unavailable; they do not enter
+the older exhausted/manual-Ready recovery policy described below. Do not move a
+publication-waiting card to Ready to request another claim. Ambiguous dispatch
+without acceptance or non-delivery proof remains owned and explicitly pending.
+Legacy trusted commits without publication dispatch provenance are preserved for
+explicit reconciliation, not automatically upgraded into permission to create a PR.
+
 After restart, `pollProject` calls the unified task-session coordinator. It checks queue ownership and persisted task phase before
 resuming any work. The primary session is verified with
 `opencode session list --format json --pure --max-count 10000` from the owned worktree; its ID and directory must match the

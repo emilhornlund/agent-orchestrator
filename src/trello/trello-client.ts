@@ -591,6 +591,23 @@ export class TrelloClient {
     );
   }
 
+  getCardComments(cardId: string): Promise<{ id: string; text: string }[]> {
+    return this.get(
+      `/cards/${cardId}/actions`,
+      z.array(
+        z.object({
+          id: z.string().min(1),
+          type: z.literal("commentCard"),
+          data: z.object({ text: z.string() }),
+        }),
+      ),
+      { filter: "commentCard", limit: "1000" },
+      "card action lookup",
+    ).then((actions) =>
+      actions.map((action) => ({ id: action.id, text: action.data.text })),
+    );
+  }
+
   moveCard(
     cardId: string,
     listId: string,

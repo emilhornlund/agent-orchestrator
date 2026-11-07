@@ -2581,7 +2581,10 @@ export class GitHubClient {
     const pullRequestOutput = runResult.output.trim();
 
     if (pullRequestOutput.length === 0) {
-      return null;
+      throw new MalformedGitHubResponseError(
+        "pull request state list",
+        runResult.origin,
+      );
     }
 
     return (
@@ -3048,6 +3051,48 @@ export class GitHubClient {
     return {
       url: parsePullRequestUrl(output, outputOrigin),
     };
+  }
+
+  /** Independent creation readback; a create response is never this evidence. */
+  async getPullRequestPublicationFields(options: {
+    cwd: string;
+    repository: string;
+    pullRequestUrl: string;
+    project?: ProjectConfig;
+  }): Promise<{ title: string; body: string; isDraft: boolean }> {
+    getPullRequestNumberForRepository(
+      options.pullRequestUrl,
+      options.repository,
+    );
+    const credential = await this.resolveCredential(options.project);
+    const result = await this.runWithOrigin(
+      options.cwd,
+      [
+        "pr",
+        "view",
+        options.pullRequestUrl,
+        "--repo",
+        options.repository,
+        "--json",
+        "title,body,isDraft",
+      ],
+      credential,
+    );
+    return validateGitHubJson(
+      result.output,
+      (value) => {
+        if (
+          !isRecord(value) ||
+          typeof value.title !== "string" ||
+          typeof value.body !== "string" ||
+          typeof value.isDraft !== "boolean"
+        )
+          throw new Error("Malformed publication fields");
+        return { title: value.title, body: value.body, isDraft: value.isDraft };
+      },
+      result.origin,
+      "pull request publication fields",
+    );
   }
 
   async validateCliCompatibility(

@@ -38,6 +38,19 @@ export interface GitIdentity {
   signingKey?: string | undefined;
 }
 
+export interface GitPublicationDestinations {
+  fetch: string;
+  push: string;
+}
+
+/** Verbatim Git commits still need a final LF. Preserve all other whitespace;
+ * never let repository commit.cleanup choose the journal's message semantics. */
+export function prepareVerbatimCommitMessage(message: string): string {
+  if (!message.trim() || message.includes("\0"))
+    throw new Error("Invalid publication commit message");
+  return message.endsWith("\n") ? message : `${message}\n`;
+}
+
 export type GitEnvironment = Record<string, string>;
 
 export interface GitRebaseState {
@@ -369,6 +382,96 @@ export class GitClient {
       throw new Error(
         `Repository origin mismatch: configured ${expected}, checkout origin is ${actual}`,
       );
+  }
+
+  /** Resolve Git's effective destinations (including insteadOf/pushInsteadOf),
+   * not merely remote.origin.url. Multiple push URLs mean multiple effects and
+   * are refused, even when they spell the same repository. Returned URLs are
+   * terminal under rewriting so passing them explicitly cannot rewrite twice. */
+  async resolvePublicationDestinations(
+    repositoryPath: string,
+    expectedRepository: string,
+  ): Promise<GitPublicationDestinations> {
+    const expected = canonicalizeGitHubRepository(expectedRepository);
+    const configured = await this.runGit(repositoryPath, [
+      "config",
+      "--null",
+      "--get-regexp",
+      "^remote\\.origin\\.(url|pushurl)$|^url\\..*\\.(insteadof|pushinsteadof)$",
+    ]);
+    const entries = configured.split("\0").filter(Boolean);
+    // NUL framing retains empty URL values that a trimmed get-url result alone
+    // could hide. Do not turn an empty/multiple configured destination into one.
+    if (
+      entries.filter((entry) => entry.startsWith("remote.origin.url\n"))
+        .length !== 1 ||
+      entries.filter((entry) => entry.startsWith("remote.origin.pushurl\n"))
+        .length > 1
+    )
+      throw new Error(
+        "Publication requires a single configured origin destination per direction",
+      );
+    const resolve = async (remote: string, push: boolean): Promise<string> => {
+      const output = await this.runGit(repositoryPath, [
+        "remote",
+        "get-url",
+        ...(push ? ["--push"] : []),
+        "--all",
+        remote,
+      ]);
+      const urls = output.trim().split(/\r?\n/u);
+      if (
+        urls.length !== 1 ||
+        !urls[0] ||
+        !/^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)/iu.test(
+          urls[0],
+        )
+      )
+        throw new Error(
+          "Publication requires one supported GitHub destination per direction",
+        );
+      let actual: string;
+      try {
+        actual = canonicalizeGitHubRepository(urls[0]);
+      } catch {
+        throw new Error(
+          "Publication Git destination is not a supported repository identity",
+        );
+      }
+      if (actual !== expected)
+        throw new Error(
+          "Publication Git destination differs from the pinned repository",
+        );
+      return urls[0];
+    };
+    const fetch = await resolve("origin", false);
+    const push = await resolve("origin", true);
+    // Explicit URL arguments can be rewritten again. Fail closed on any
+    // additional non-identity rewrite of a resolved destination (including
+    // pushInsteadOf on an explicit pushurl, and insteadOf on push readback).
+    // This intentionally rejects ambiguous chained/overlapping mappings rather
+    // than emulating Git's precedence or mutating repository configuration.
+    for (const entry of entries) {
+      if (entry.startsWith("remote.origin.")) continue;
+      const match = /^url\.(.*)\.(insteadof|pushinsteadof)\n([\s\S]*)$/u.exec(
+        entry,
+      );
+      if (!match)
+        throw new Error("Malformed publication Git URL rewrite configuration");
+      const base = match[1]!,
+        kind = match[2]!,
+        prefix = match[3]!;
+      for (const url of kind === "insteadof" ? [fetch, push] : [push]) {
+        if (
+          url.startsWith(prefix) &&
+          `${base}${url.slice(prefix.length)}` !== url
+        )
+          throw new Error(
+            "Publication concrete destination is subject to another Git URL rewrite",
+          );
+      }
+    }
+    return { fetch, push };
   }
 
   async fetch(
@@ -787,14 +890,49 @@ export class GitClient {
     return this.runGit(repositoryPath, ["log", "-1", "--format=%B"]);
   }
 
+  /** Framing keeps the process adapter's outer trim from altering message
+   * bytes. Slice the frames, not whitespace; embedded frame text is harmless. */
+  async getVerbatimCommitMessage(repositoryPath: string): Promise<string> {
+    const start = "orchestrator-message-start\0";
+    const end = "\0orchestrator-message-end";
+    const output = await this.runGit(repositoryPath, [
+      "log",
+      "-1",
+      "--no-show-signature",
+      "--no-notes",
+      "--format=orchestrator-message-start%x00%B%x00orchestrator-message-end",
+    ]);
+    if (!output.startsWith(start) || !output.endsWith(end))
+      throw new Error("Malformed framed commit message");
+    return output.slice(start.length, -end.length);
+  }
+
   async stageAll(repositoryPath: string): Promise<void> {
     await this.runGit(repositoryPath, ["add", "-A"]);
+  }
+
+  async getIndexTreeSha(repositoryPath: string): Promise<string> {
+    return this.runGit(repositoryPath, ["write-tree"]);
+  }
+
+  async getCommitTreeSha(repositoryPath: string): Promise<string> {
+    return this.runGit(repositoryPath, ["rev-parse", "HEAD^{tree}"]);
+  }
+
+  async getCommitParentShas(repositoryPath: string): Promise<string[]> {
+    const parents = await this.runGit(repositoryPath, [
+      "log",
+      "-1",
+      "--format=%P",
+    ]);
+    return parents.trim().split(/\s+/u).filter(Boolean);
   }
 
   async commit(
     repositoryPath: string,
     messageFilePath: string,
     identity: GitIdentity,
+    cleanup?: "verbatim",
   ): Promise<void> {
     const signingOptions =
       identity.signingKey === undefined
@@ -809,7 +947,13 @@ export class GitClient {
           ];
     await this.runGit(
       repositoryPath,
-      [...signingOptions, "commit", "-F", messageFilePath],
+      [
+        ...signingOptions,
+        "commit",
+        ...(cleanup === undefined ? [] : ["--cleanup=verbatim"]),
+        "-F",
+        messageFilePath,
+      ],
       getGitIdentityEnvironment(identity),
     );
   }

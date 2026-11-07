@@ -14,7 +14,17 @@ import {
   writePendingCommitState,
   writeTrustedCommitState,
 } from "./trusted-commit-state.js";
-import { publishCard, type PublishCardOptions } from "./publish-card.js";
+import {
+  publishCard,
+  prepareInitialPublicationBody,
+  type PublishCardOptions,
+} from "./publish-card.js";
+import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
+import {
+  beginInitialPublication,
+  resumeInitialPublication,
+  PublicationWaitingError,
+} from "./initial-publication.js";
 
 export interface PublishTaskSessionCardOptions extends Omit<
   PublishCardOptions,
@@ -46,7 +56,34 @@ function assertPublicationEvidence(
 export async function publishTaskSessionCard(
   options: PublishTaskSessionCardOptions,
 ): Promise<string> {
+  if (
+    ProjectRunAuthority.current(options.project.id) &&
+    (await resumeInitialPublication(options))
+  )
+    throw new PublicationWaitingError();
   assertPublicationEvidence(options.initialEvidence, options.exhaustedReview);
+  if (
+    options.expectedExistingPullRequestUrl === undefined &&
+    ProjectRunAuthority.isProjectLeaseScoped(options.project.id) &&
+    !ProjectRunAuthority.current(options.project.id)
+  )
+    throw new Error(
+      "Lease-scoped initial publication requires durable attempt authority",
+    );
+  if (
+    options.expectedExistingPullRequestUrl === undefined &&
+    ProjectRunAuthority.current(options.project.id)
+  ) {
+    const preparedEvidence = await options.verifyPreparedContent();
+    assertPublicationEvidence(preparedEvidence, options.exhaustedReview);
+    beginInitialPublication(
+      options,
+      await prepareInitialPublicationBody(options, false),
+      preparedEvidence.currentContentIdentity,
+    );
+    await resumeInitialPublication(options);
+    throw new PublicationWaitingError();
+  }
   const headBefore = await options.git.getHeadSha(options.worktreePath);
   if (readPendingCommitState(options.project, options.card.id) !== null)
     throw new Error("Unresolved pending task commit intent requires recovery");
