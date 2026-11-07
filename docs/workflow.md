@@ -189,7 +189,13 @@ Polling resumes the same checkpoint after service recovery without recreating th
 PR or initial commit. A negative lookup does not authorize resending an ambiguous
 creation. Existing uncertain legacy publications without dispatch provenance stay
 preserved and blocked rather than being treated as fresh creation attempts.
-Remaining existing-PR mutations are being integrated separately in P4-T3.
+Remaining existing-PR mutations and refinement/terminal mutation foundations use
+the [P4-T3 routing inventory](p4-mutation-routing.md). Under production attempt
+authority, pending workflow comments, field updates, Git effects and cleanup
+dispatches retain ownership until independently reconciled; negative reads do not
+authorize resending. The legacy best-effort descriptions elsewhere on this page
+do not override that journal/release gate. Email delivery remains separate,
+nonblocking work for P4-T4; complete lifecycle/race closure remains P7/P9/P10.
 
 Before publication, the task worktree fetches `origin/<defaultBranch>` but does not rebase. A missing task branch or fast-forward
 update is published with an ordinary push. A branch requiring a rewrite or conflict continuation is refused and preserved. The

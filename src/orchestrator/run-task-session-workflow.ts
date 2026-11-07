@@ -2145,6 +2145,46 @@ export async function runTaskSessionWorkflow(
   // archived or manually moved card. Do not resume Working/refinement writers.
   if (hasUnresolvedLegacyMaintenance) return;
   const activeMutation = queue.getActive();
+  // A claim move can be accepted before its local task projection is created.
+  // Bind that verified original effect rather than treating the owned Working
+  // card as a fresh task (or sending the move again).
+  const claimAuthority = ProjectRunAuthority.current(project.id);
+  const claimRun = claimAuthority?.store.read();
+  if (
+    claimRun?.lifecycle === "planning" &&
+    activeMutation?.kind === "implementation" &&
+    workingCards.some((card) => card.id === claimRun.cardId) &&
+    taskStore.read(claimRun.cardId) === null &&
+    activeMutation.cardId === claimRun.cardId &&
+    hasVerifiedWorkflowMove(claimAuthority!, claimRun.pinned.lists.working)
+  ) {
+    const ownedPath = path.join(claimRun.pinned.worktreeRoot, claimRun.cardId);
+    if (
+      (await git.getCurrentBranch(ownedPath)) !== `agent/${claimRun.cardId}` ||
+      (await git.getCommonGitDirectory(ownedPath)) !==
+        (await git.getCommonGitDirectory(claimRun.pinned.repositoryPath))
+    )
+      throw new Error("Accepted claim has ambiguous worktree provenance");
+    taskStore.create({
+      version: 1,
+      projectId: project.id,
+      cardId: claimRun.cardId,
+      phase: "planning",
+      expectedBranch: `agent/${claimRun.cardId}`,
+      operationKey: activeMutation.operationKey,
+      setup: {
+        command: project.repository.setupCommand ?? null,
+        status:
+          project.repository.setupCommand === undefined
+            ? "not-required"
+            : "pending",
+      },
+      revision: 1,
+      retryCounters: { validation: 0, review: 0, ci: 0, humanFeedback: 0 },
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+  }
   if (
     workingCards.length === 1 &&
     activeMutation?.kind === "refinement" &&
@@ -4028,6 +4068,19 @@ export async function runTaskSessionWorkflow(
     taskStore.compareAndSwap(activeCard.id, current.revision, ci);
     if (mutation !== null) queue.complete(mutation.eventId);
   } catch (error) {
+    if (
+      ProjectRunAuthority.current(project.id)
+        ?.store.read()
+        ?.pendingOperations.some(
+          (entry) =>
+            entry.id.startsWith("workflow:") &&
+            !["completed", "cancelled"].includes(entry.status),
+        )
+    ) {
+      if (mutation && queue.ownsActive(mutation.eventId))
+        queue.releaseForRecovery(mutation.eventId);
+      throw error;
+    }
     const failedRecord =
       mutation === null ? null : taskStore.read(mutation.cardId);
     if (error instanceof PublicationWaitingError) {
@@ -4172,3 +4225,4 @@ export async function runTaskSessionWorkflow(
     throw error;
   }
 }
+import { hasVerifiedWorkflowMove } from "./reconcile-workflow-mutations.js";

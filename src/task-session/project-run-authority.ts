@@ -494,6 +494,10 @@ export class ProjectRunAuthority {
     );
   }
 
+  static hasProjectLeaseScope(): boolean {
+    return projectLeaseContext.getStore() !== undefined;
+  }
+
   /** Distinguishes unowned utility calls from production lease scopes, also
    * when one runtime context contains several independent project leases. */
   static isProjectLeaseScoped(projectId: string): boolean {

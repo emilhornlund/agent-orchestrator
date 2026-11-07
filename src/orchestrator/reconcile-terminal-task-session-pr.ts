@@ -1,4 +1,6 @@
 import path from "node:path";
+import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
+import { throwIfWorkflowMutationPending } from "../task-session/workflow-mutation.js";
 
 import type { ProjectConfig } from "../config/config.js";
 import { cleanupWorktree } from "../git/cleanup-worktree.js";
@@ -159,20 +161,24 @@ export async function completeMergedTaskSessionPullRequest(options: {
     cardLog.event(
       `Merged pull request transitioned card to Done: ${pullRequest.url}`,
     );
-    if (options.completionComment !== undefined) {
-      try {
-        await trello.addComment(card.id, options.completionComment);
-      } catch (error) {
-        cardLog.warn(
-          `Could not add merged PR completion note: ${message(error)}`,
-        );
-      }
-    }
     await notifyCompletion(
       options.emailNotifier,
       { project, card, pullRequestUrl: pullRequest.url },
       cardLog,
     );
+  }
+  if (
+    options.completionComment !== undefined &&
+    (!alreadyDone || ProjectRunAuthority.current(project.id))
+  ) {
+    try {
+      await trello.addComment(card.id, options.completionComment);
+    } catch (error) {
+      throwIfWorkflowMutationPending(project.id);
+      cardLog.warn(
+        `Could not add merged PR completion note: ${message(error)}`,
+      );
+    }
   }
   if (options.preserveWorktree) {
     cardLog.warn(
@@ -214,6 +220,8 @@ export async function returnClosedTaskSessionPullRequestToBacklog(options: {
     cardLog.event(
       `Closed pull request returned card to Backlog: ${pullRequest.url}`,
     );
+  }
+  if (!alreadyBacklog || ProjectRunAuthority.current(project.id)) {
     try {
       await trello.addComment(
         card.id,
@@ -224,6 +232,7 @@ export async function returnClosedTaskSessionPullRequestToBacklog(options: {
         ].join("\n"),
       );
     } catch (error) {
+      throwIfWorkflowMutationPending(project.id);
       cardLog.error(`Could not add closed PR note: ${message(error)}`);
     }
   }

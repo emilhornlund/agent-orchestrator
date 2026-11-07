@@ -800,7 +800,7 @@ describe("P1 production lifecycle through pollProject", () => {
       firstPr!.headRefOid = sha;
       for (
         let attempt = 0;
-        attempt < 3 && lists.get("first") === project.trello.reviewListId;
+        attempt < 12 && activeAuthority !== undefined;
         attempt += 1
       )
         await poll();

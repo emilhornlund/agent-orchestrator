@@ -13,10 +13,19 @@ import { GitHubCredentialProvider } from "../github/github-credential-provider.j
 import { getGitHubOperationProject } from "../github/github-operation-context.js";
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 import {
+  mutationAuthority,
+  consumeJournaledDispatch,
+  assertJournaledTransport,
+  rejectJournaledDispatch,
+  workflowMutation,
+} from "../task-session/workflow-mutation.js";
+import type { GitMutationRequest } from "./git-mutation-request.js";
+import {
   containsSecret,
   createSecretRedactor,
   redactError,
   redactSecrets,
+  sanitizeControlledText,
 } from "../security/redact-secrets.js";
 import {
   haveEquivalentImplementationChanges,
@@ -280,6 +289,309 @@ const defaultRunGit: RunGit = async (cwd, args, environment) => {
 };
 
 export class GitClient {
+  /** Concrete Git journal readback. Requests contain objects/refs, never shell
+   * commands. Reconciliation observes the original object, not today's HEAD. */
+  async reconcileMutation(
+    request: GitMutationRequest,
+    project?: ProjectConfig,
+  ): Promise<void> {
+    rejectJournaledDispatch();
+    const authority = mutationAuthority(project?.id);
+    if (!authority)
+      throw new Error("Git reconciliation requires attempt authority");
+    const run = authority.store.read()!;
+    const args = request.args;
+    const branch = `agent/${run.cardId}`;
+    const worktree = path.join(run.pinned.worktreeRoot, run.cardId);
+    if (request.route === "git-worktree") {
+      const value = request.args;
+      if (
+        value.cwd !== run.pinned.repositoryPath ||
+        value.worktree !== worktree ||
+        value.branch !== branch ||
+        !run.resources.some(
+          (resource) =>
+            resource.kind === "worktree" && resource.path === worktree,
+        )
+      )
+        throw new Error(
+          "Worktree creation differs from attempt resource intent",
+        );
+      await workflowMutation({
+        authority,
+        kind: "git-worktree",
+        target: `git:worktree:${encodeURIComponent(worktree)}`,
+        request,
+        send: async () => {
+          if (value.createBranch)
+            await this.addWorktreeWithNewBranch(
+              value.cwd,
+              value.worktree,
+              value.branch,
+              value.start,
+            );
+          else {
+            if (
+              (await this.getRefSha(
+                value.cwd,
+                `refs/heads/${value.branch}`,
+              )) !== value.start
+            )
+              throw new Error("Worktree branch changed after intent");
+            await this.addWorktree(value.cwd, value.worktree, value.branch);
+          }
+        },
+        observe: async () => {
+          if (
+            !fs.existsSync(value.worktree) ||
+            fs.lstatSync(value.worktree).isSymbolicLink()
+          )
+            return null;
+          const actual = {
+            branch: await this.getCurrentBranch(value.worktree),
+            sha: await this.getHeadSha(value.worktree),
+            common: await this.getCommonGitDirectory(value.worktree),
+          };
+          return actual.branch === value.branch &&
+            actual.sha === value.start &&
+            actual.common === (await this.getCommonGitDirectory(value.cwd))
+            ? { id: value.worktree, fields: actual, result: true }
+            : null;
+        },
+      });
+      return;
+    }
+    if (
+      request.route !== "git-cleanup" &&
+      (args.cwd !== worktree || request.args.branch !== branch)
+    )
+      throw new Error("Git mutation differs from pinned task worktree/branch");
+    if (
+      request.route === "git-cleanup" &&
+      (args.cwd !== run.pinned.repositoryPath ||
+        !run.resources.some(
+          (resource) =>
+            resource.kind ===
+              (request.args.kind === "worktree" ? "worktree" : "branch") &&
+            resource.path ===
+              (request.args.kind === "worktree"
+                ? request.args.resource
+                : `refs/heads/${request.args.resource}`),
+        ))
+    )
+      throw new Error("Cleanup resource is not owned by this attempt");
+    const common = await this.getCommonGitDirectory(run.pinned.repositoryPath);
+    if (
+      request.route !== "git-cleanup" &&
+      (await this.getCommonGitDirectory(args.cwd)) !== common
+    )
+      throw new Error("Git common repository differs from attempt");
+    const verifyDestination = async (destination: string, fetch?: string) => {
+      const actual = await this.resolvePublicationDestinations(
+        args.cwd,
+        run.pinned.repository,
+      );
+      if (
+        actual.push !== destination ||
+        (fetch !== undefined && actual.fetch !== fetch)
+      )
+        throw new Error("Git destination changed after intent");
+    };
+    if (request.route === "git-commit") {
+      const value = request.args;
+      await workflowMutation({
+        authority,
+        kind: "git-commit",
+        target: `git:${branch}`,
+        request,
+        send: async () => {
+          if (
+            (await this.getHeadSha(value.cwd)) !== value.parent ||
+            (await this.getIndexTreeSha(value.cwd)) !== value.tree ||
+            (await this.getCurrentBranch(value.cwd)) !== value.branch ||
+            (await this.getRefSha(value.cwd, `refs/heads/${value.branch}`)) !==
+              value.parent
+          )
+            throw new Error("Commit inputs changed after intent");
+          const temporary = fs.mkdtempSync(
+            path.join(os.tmpdir(), "orchestrator-journal-commit-"),
+          );
+          const messagePath = path.join(temporary, "message");
+          try {
+            fs.writeFileSync(messagePath, value.message, { mode: 0o600 });
+            await this.commit(
+              value.cwd,
+              messagePath,
+              value.identity,
+              "verbatim",
+            );
+          } finally {
+            fs.rmSync(temporary, { recursive: true, force: true });
+          }
+        },
+        observe: async () => {
+          const parents = await this.getCommitParentShas(value.cwd);
+          const sha = await this.getHeadSha(value.cwd);
+          return parents.length === 1 &&
+            (await this.getCurrentBranch(value.cwd)) === value.branch &&
+            (await this.getRefSha(value.cwd, `refs/heads/${value.branch}`)) ===
+              sha &&
+            parents[0] === value.parent &&
+            (await this.getCommitTreeSha(value.cwd)) === value.tree &&
+            (await this.getVerbatimCommitMessage(value.cwd)) ===
+              value.message &&
+            !(await this.hasChanges(value.cwd))
+            ? {
+                id: sha,
+                fields: {
+                  sha,
+                  parents,
+                  tree: value.tree,
+                  message: value.message,
+                  branch: value.branch,
+                  ref: `refs/heads/${value.branch}`,
+                },
+                result: true,
+              }
+            : null;
+        },
+      });
+    } else if (request.route === "git-push") {
+      const value = request.args;
+      await workflowMutation({
+        authority,
+        kind: "git-push",
+        target: `git:${value.destination}:${value.branch}`,
+        request,
+        send: async () => {
+          await verifyDestination(value.destination, value.fetch);
+          if (
+            (await this.getHeadSha(value.cwd)) !== value.sha ||
+            (await this.getCurrentBranch(value.cwd)) !== value.branch ||
+            (await this.getRefSha(value.cwd, `refs/heads/${value.branch}`)) !==
+              value.sha
+          )
+            throw new Error("Push task branch/ref changed after intent");
+          await this.push(
+            value.cwd,
+            value.destination,
+            value.branch,
+            project,
+            value.sha,
+          );
+        },
+        observe: async () => {
+          await verifyDestination(value.destination, value.fetch);
+          const sha = await this.getRemoteBranchSha(
+            value.cwd,
+            value.destination,
+            value.branch,
+            project,
+          );
+          return sha === value.sha
+            ? {
+                id: sha,
+                fields: {
+                  sha,
+                  destination: value.destination,
+                  ref: `refs/heads/${value.branch}`,
+                },
+                result: true,
+              }
+            : null;
+        },
+      });
+    } else {
+      const value = request.args;
+      await workflowMutation({
+        authority,
+        kind: "git-cleanup",
+        target: `git:${value.kind}:${encodeURIComponent(value.resource)}`,
+        request,
+        send: async () => {
+          if (value.kind === "worktree") {
+            if (!fs.existsSync(value.resource)) return;
+            if (
+              fs.lstatSync(value.resource).isSymbolicLink() ||
+              (await this.getCommonGitDirectory(value.resource)) !== common ||
+              (await this.getCurrentBranch(value.resource)) !== branch ||
+              (await this.getHeadSha(value.resource)) !== value.sha ||
+              (await this.hasChanges(value.resource))
+            )
+              throw new Error("Unsafe worktree cleanup");
+            await this.removeWorktree(value.cwd, value.resource);
+          } else if (value.kind === "branch") {
+            if (
+              (await this.getRefSha(
+                value.cwd,
+                `refs/heads/${value.resource}`,
+              )) !== value.sha
+            )
+              throw new Error("Cleanup branch changed after intent");
+            if (value.sha !== null)
+              await this.deleteBranch(value.cwd, value.resource);
+          } else {
+            if (!value.destination)
+              throw new Error("Remote cleanup destination missing");
+            await verifyDestination(value.destination);
+            if (
+              (await this.getRemoteBranchSha(
+                value.cwd,
+                value.destination,
+                value.resource,
+                project,
+              )) !== value.sha
+            )
+              throw new Error("Remote cleanup ref changed after intent");
+            if (value.sha !== null)
+              await this.deleteRemoteBranch(
+                value.cwd,
+                value.destination,
+                value.resource,
+                project,
+              );
+          }
+        },
+        observe: async () => {
+          let absent: boolean;
+          if (value.kind === "worktree") {
+            const registrations = await this.runGit(value.cwd, [
+              "worktree",
+              "list",
+              "--porcelain",
+            ]);
+            absent =
+              !fs.existsSync(value.resource) &&
+              !registrations.split("\n").includes(`worktree ${value.resource}`);
+          } else if (value.kind === "branch")
+            absent =
+              (await this.getRefSha(
+                value.cwd,
+                `refs/heads/${value.resource}`,
+              )) === null;
+          else {
+            if (!value.destination)
+              throw new Error("Remote cleanup destination missing");
+            await verifyDestination(value.destination);
+            absent =
+              (await this.getRemoteBranchSha(
+                value.cwd,
+                value.destination,
+                value.resource,
+                project,
+              )) === null;
+          }
+          return absent
+            ? {
+                id: `removed:${encodeURIComponent(value.resource)}`,
+                fields: { absent, resource: value.resource, kind: value.kind },
+                result: true,
+              }
+            : null;
+        },
+      });
+    }
+  }
   private readonly runGit: RunGit;
 
   constructor(
@@ -289,10 +601,33 @@ export class GitClient {
     this.runGit = async (cwd, args, environment) => {
       const project = getGitHubOperationProject();
       const projectId = project?.id ?? ProjectRunAuthority.currentProjectId();
-      const dispatch = () =>
-        environment === undefined
+      const dispatch = () => {
+        let commandIndex = 0;
+        while (args[commandIndex] === "-c") commandIndex += 2;
+        const command = args[commandIndex];
+        if (
+          [
+            "push",
+            "commit",
+            "add",
+            "reset",
+            "clean",
+            "update-ref",
+            "fetch",
+            "init",
+          ].includes(command ?? "") ||
+          (command === "worktree" &&
+            ["add", "remove", "prune"].includes(
+              args[commandIndex + 1] ?? "",
+            )) ||
+          (command === "branch" && args[commandIndex + 1] === "-D") ||
+          (command === "remote" && args[commandIndex + 1] === "add")
+        )
+          assertJournaledTransport();
+        return environment === undefined
           ? runGit(cwd, args)
           : runGit(cwd, args, environment);
+      };
       return projectId === undefined
         ? dispatch()
         : ProjectRunAuthority.dispatch(projectId, dispatch);
@@ -480,6 +815,7 @@ export class GitClient {
     branch: string,
     project?: ProjectConfig,
   ): Promise<void> {
+    rejectJournaledDispatch();
     await this.runAuthenticated(
       repositoryPath,
       ["fetch", remote, branch],
@@ -610,10 +946,66 @@ export class GitClient {
     remote: string,
     branch: string,
     project?: ProjectConfig,
+    intendedSha?: string,
   ): Promise<void> {
+    const authority = mutationAuthority(project?.id);
+    let journaled = false;
+    let pushSha: string | undefined;
+    if (authority) {
+      const run = authority.store.read()!;
+      const destinations = await this.resolvePublicationDestinations(
+        repositoryPath,
+        run.pinned.repository,
+      );
+      if (remote !== "origin" && remote !== destinations.push)
+        throw new Error("Unpinned Git push destination");
+      const sha = intendedSha ?? (await this.getHeadSha(repositoryPath));
+      pushSha = sha;
+      journaled = consumeJournaledDispatch(authority, {
+        route: "git-push",
+        args: {
+          cwd: repositoryPath,
+          branch,
+          destination: remote,
+          fetch: destinations.fetch,
+          sha,
+        },
+      });
+      if (journaled) {
+        if (
+          (await this.getCurrentBranch(repositoryPath)) !== branch ||
+          (await this.getRefSha(repositoryPath, `refs/heads/${branch}`)) !==
+            sha ||
+          (await this.getHeadSha(repositoryPath)) !== sha
+        )
+          throw new Error("Push task branch/ref changed before transport");
+      } else {
+        await this.reconcileMutation(
+          {
+            route: "git-push",
+            args: {
+              cwd: repositoryPath,
+              branch,
+              destination: destinations.push,
+              fetch: destinations.fetch,
+              sha,
+            },
+          },
+          project,
+        );
+        return;
+      }
+    }
     await this.runAuthenticated(
       repositoryPath,
-      ["push", "--set-upstream", remote, branch],
+      journaled
+        ? [
+            "push",
+            "--no-follow-tags",
+            remote,
+            `${pushSha!}:refs/heads/${branch}`,
+          ]
+        : ["push", "--set-upstream", remote, branch],
       project,
     );
   }
@@ -709,6 +1101,7 @@ export class GitClient {
     pullRequestHeadSha: string;
     pullRequestCommitShas: readonly string[];
   }): Promise<boolean> {
+    rejectJournaledDispatch();
     const shaPattern = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu;
     if (
       !shaPattern.test(options.implementationCommit) ||
@@ -882,6 +1275,7 @@ export class GitClient {
     ref: string,
     sha: string,
   ): Promise<void> {
+    rejectJournaledDispatch();
     const zero = "0".repeat(sha.length);
     await this.runGit(repositoryPath, ["update-ref", ref, sha, zero]);
   }
@@ -908,6 +1302,7 @@ export class GitClient {
   }
 
   async stageAll(repositoryPath: string): Promise<void> {
+    rejectJournaledDispatch();
     await this.runGit(repositoryPath, ["add", "-A"]);
   }
 
@@ -934,6 +1329,48 @@ export class GitClient {
     identity: GitIdentity,
     cleanup?: "verbatim",
   ): Promise<void> {
+    identity = { ...identity };
+    const authority = mutationAuthority(undefined);
+    let dispatchedMessage: string | undefined;
+    if (authority) {
+      const rawMessage = fs.readFileSync(messageFilePath, "utf8");
+      const message = prepareVerbatimCommitMessage(
+        sanitizeControlledText(rawMessage),
+      );
+      const request: Extract<GitMutationRequest, { route: "git-commit" }> = {
+        route: "git-commit",
+        args: {
+          cwd: repositoryPath,
+          branch: await this.getCurrentBranch(repositoryPath),
+          parent: await this.getHeadSha(repositoryPath),
+          tree: await this.getIndexTreeSha(repositoryPath),
+          message,
+          identity: {
+            name: identity.name,
+            email: identity.email,
+            ...(identity.signingKey ? { signingKey: identity.signingKey } : {}),
+          },
+        },
+      };
+      if (
+        consumeJournaledDispatch(authority, {
+          ...request,
+          args: { ...request.args, message: rawMessage, cleanup },
+        })
+      ) {
+        if (
+          (await this.getRefSha(
+            repositoryPath,
+            `refs/heads/${request.args.branch}`,
+          )) !== request.args.parent
+        )
+          throw new Error("Commit task ref changed before transport");
+        dispatchedMessage = rawMessage;
+      } else {
+        await this.reconcileMutation(request);
+        return;
+      }
+    }
     const signingOptions =
       identity.signingKey === undefined
         ? []
@@ -945,17 +1382,34 @@ export class GitClient {
             "-c",
             "commit.gpgSign=true",
           ];
-    await this.runGit(
-      repositoryPath,
-      [
-        ...signingOptions,
-        "commit",
-        ...(cleanup === undefined ? [] : ["--cleanup=verbatim"]),
-        "-F",
-        messageFilePath,
-      ],
-      getGitIdentityEnvironment(identity),
-    );
+    // Capture exact authorized bytes in a private file: a caller-controlled -F
+    // path must not change the payload after capability consumption.
+    const directory =
+      dispatchedMessage === undefined
+        ? undefined
+        : fs.mkdtempSync(path.join(os.tmpdir(), "journal-commit-transport-"));
+    const transportMessagePath = directory
+      ? path.join(directory, "message")
+      : messageFilePath;
+    if (directory)
+      fs.writeFileSync(transportMessagePath, dispatchedMessage!, {
+        mode: 0o600,
+      });
+    try {
+      await this.runGit(
+        repositoryPath,
+        [
+          ...signingOptions,
+          "commit",
+          ...(cleanup === undefined ? [] : ["--cleanup=verbatim"]),
+          "-F",
+          transportMessagePath,
+        ],
+        getGitIdentityEnvironment(identity),
+      );
+    } finally {
+      if (directory) fs.rmSync(directory, { recursive: true, force: true });
+    }
   }
 
   async getCommitCountBetween(
@@ -997,6 +1451,28 @@ export class GitClient {
     worktreePath: string,
     branch: string,
   ): Promise<void> {
+    const authority = mutationAuthority(undefined);
+    if (authority) {
+      const start = await this.getRefSha(
+        repositoryPath,
+        `refs/heads/${branch}`,
+      );
+      if (!start) throw new Error("Worktree branch has no observed object");
+      const request: GitMutationRequest = {
+        route: "git-worktree",
+        args: {
+          cwd: repositoryPath,
+          worktree: worktreePath,
+          branch,
+          start,
+          createBranch: false,
+        },
+      };
+      if (!consumeJournaledDispatch(authority, request)) {
+        await this.reconcileMutation(request);
+        return;
+      }
+    }
     await this.runGit(repositoryPath, [
       "worktree",
       "add",
@@ -1011,6 +1487,24 @@ export class GitClient {
     branch: string,
     startPoint: string,
   ): Promise<void> {
+    const authority = mutationAuthority(undefined);
+    if (authority) {
+      const request: Extract<GitMutationRequest, { route: "git-worktree" }> = {
+        route: "git-worktree",
+        args: {
+          cwd: repositoryPath,
+          worktree: worktreePath,
+          branch,
+          start: await this.resolveCommitSha(repositoryPath, startPoint),
+          createBranch: true,
+        },
+      };
+      if (!consumeJournaledDispatch(authority, request)) {
+        await this.reconcileMutation(request);
+        return;
+      }
+      startPoint = request.args.start;
+    }
     await this.runGit(repositoryPath, [
       "worktree",
       "add",
@@ -1025,26 +1519,77 @@ export class GitClient {
     repositoryPath: string,
     worktreePath: string,
   ): Promise<void> {
+    const authority = mutationAuthority(undefined);
+    if (authority) {
+      // Refuse unsafe cleanup before publishing a dispatch obligation. Repeat
+      // the checks inside the sender to fence changes between intent and send.
+      if (
+        fs.existsSync(worktreePath) &&
+        (fs.lstatSync(worktreePath).isSymbolicLink() ||
+          (await this.hasChanges(worktreePath)))
+      )
+        throw new Error(
+          "Unsafe worktree cleanup; artifacts preserved without dispatch",
+        );
+      const request: GitMutationRequest = {
+        route: "git-cleanup",
+        args: {
+          cwd: repositoryPath,
+          resource: worktreePath,
+          kind: "worktree",
+          sha: fs.existsSync(worktreePath)
+            ? await this.getHeadSha(worktreePath)
+            : null,
+        },
+      };
+      if (!consumeJournaledDispatch(authority, request)) {
+        await this.reconcileMutation(request);
+        return;
+      }
+    }
     await this.runGit(repositoryPath, ["worktree", "remove", worktreePath]);
   }
 
   async deleteBranch(repositoryPath: string, branch: string): Promise<void> {
+    const authority = mutationAuthority(undefined);
+    if (authority) {
+      const request: GitMutationRequest = {
+        route: "git-cleanup",
+        args: {
+          cwd: repositoryPath,
+          resource: branch,
+          kind: "branch",
+          sha: await this.getRefSha(repositoryPath, `refs/heads/${branch}`),
+        },
+      };
+      if (!consumeJournaledDispatch(authority, request)) {
+        await this.reconcileMutation(request);
+        return;
+      }
+    }
     await this.runGit(repositoryPath, ["branch", "-D", branch]);
   }
 
   async pruneWorktrees(repositoryPath: string): Promise<void> {
+    rejectJournaledDispatch();
+    // Broad pruning has no attempt-scoped destination. Owned removals already
+    // remove their registration; never prune unrelated worktrees in production.
+    if (mutationAuthority(undefined)) return;
     await this.runGit(repositoryPath, ["worktree", "prune"]);
   }
 
   async resetHard(repositoryPath: string): Promise<void> {
+    rejectJournaledDispatch();
     await this.runGit(repositoryPath, ["reset", "--hard", "HEAD"]);
   }
 
   async resetHardTo(repositoryPath: string, ref: string): Promise<void> {
+    rejectJournaledDispatch();
     await this.runGit(repositoryPath, ["reset", "--hard", ref]);
   }
 
   async cleanUntracked(repositoryPath: string): Promise<void> {
+    rejectJournaledDispatch();
     await this.runGit(repositoryPath, ["clean", "-fd"]);
   }
 
@@ -1119,6 +1664,34 @@ export class GitClient {
     branch: string,
     project?: ProjectConfig,
   ): Promise<void> {
+    const authority = mutationAuthority(project?.id);
+    if (authority) {
+      const destinations = await this.resolvePublicationDestinations(
+        repositoryPath,
+        authority.store.read()!.pinned.repository,
+      );
+      if (remote !== "origin" && remote !== destinations.push)
+        throw new Error("Unpinned remote cleanup");
+      const request: GitMutationRequest = {
+        route: "git-cleanup",
+        args: {
+          cwd: repositoryPath,
+          resource: branch,
+          kind: "remote-branch",
+          sha: await this.getRemoteBranchSha(
+            repositoryPath,
+            destinations.push,
+            branch,
+            project,
+          ),
+          destination: destinations.push,
+        },
+      };
+      if (!consumeJournaledDispatch(authority, request)) {
+        await this.reconcileMutation(request, project);
+        return;
+      }
+    }
     await this.runAuthenticated(
       repositoryPath,
       ["push", remote, "--delete", branch],

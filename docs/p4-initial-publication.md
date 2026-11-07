@@ -3,6 +3,18 @@
 This records the initial-publication integration after T1. It does not declare
 P4 complete, change advisory policy, or establish live provider compatibility.
 
+The subsequent [P4-T3 routing inventory](p4-mutation-routing.md) covers remaining
+client mutations. T2's sender now explicitly carries its existing journal dispatch
+scope, avoiding nested T3 intents while preserving the original `initial:*`
+identities, destination fences, crash recovery and verification sequence.
+That scope is now a single-use capability bound to current durable dispatch proof
+and the exact operation/target/payload, never a boolean authority bypass. New
+commit payloads retain identity/signing fields, commit discovery verifies the
+actual checked-out task branch/local ref, and push transport explicitly uses the
+recorded immutable SHA with a full destination ref. Old accepted commit payloads
+remain readable for discovery; missing identity proof does not authorize a new
+commit dispatch. The T3 inventory records the independent-review regressions.
+
 ## Production route and authority
 
 `publishTaskSessionCard` establishes a versioned `initial-publication-v1`

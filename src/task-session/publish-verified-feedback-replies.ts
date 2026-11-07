@@ -161,6 +161,14 @@ export async function publishVerifiedFeedbackReplies(
       continue;
     }
 
+    if (
+      entry.replyState === "sending" ||
+      entry.replyState === "outcome-unknown"
+    ) {
+      throw new FeedbackReplyPublicationError(
+        `Reply outcome remains uncertain for ${feedbackId}; absence does not authorize resending`,
+      );
+    }
     updateLedgerEntry(options.ledgerStore, options.cardId, feedbackId, {
       status: "verified",
       remediationCommitSha: options.publishedCommitSha,

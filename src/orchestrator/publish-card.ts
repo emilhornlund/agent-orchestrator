@@ -925,8 +925,10 @@ export async function publishCard({
 
     cardLog.info("Trello card updated with workflow summary");
   } catch (error) {
+    if (error instanceof WorkflowMutationWaitingError) throw error;
     cardLog.error(
       `Failed to add workflow summary to Trello card: ${getErrorMessage(error)}`,
     );
   }
 }
+import { WorkflowMutationWaitingError } from "../task-session/workflow-mutation.js";

@@ -19,6 +19,7 @@ import { runTaskSessionWorkflow } from "./run-task-session-workflow.js";
 import { WorkflowError } from "./workflow-error.js";
 import type { TrelloCard, TrelloClient } from "../trello/trello-client.js";
 import type { ProjectRunAuthority } from "../task-session/project-run-authority.js";
+import { reconcileWorkflowMutations } from "./reconcile-workflow-mutations.js";
 
 export type PollingProject = ProjectConfig & {
   contextRoot?: string;
@@ -90,8 +91,10 @@ export async function pollProject(
   if (signal.aborted) return;
 
   const execute = () =>
-    withActiveProjectContext(project.id, () =>
-      runTaskSessionWorkflow({
+    withActiveProjectContext(project.id, async () => {
+      if (await reconcileWorkflowMutations({ project, trello, github, git }))
+        return;
+      return runTaskSessionWorkflow({
         project,
         trello,
         git,
@@ -140,8 +143,26 @@ export async function pollProject(
                 ),
             }),
           ),
-      }),
-    );
-  if (authority) await authority.run(execute);
-  else await execute();
+      });
+    });
+  try {
+    if (authority) await authority.run(execute);
+    else await execute();
+  } catch (error) {
+    if (
+      !authority?.store
+        .read()
+        ?.pendingOperations.some(
+          (entry) =>
+            entry.id.startsWith("workflow:") &&
+            !["completed", "cancelled"].includes(entry.status),
+        )
+    )
+      throw error;
+    logger
+      .child({ projectId: project.id })
+      .info(
+        "Pending workflow effect retains project ownership; reconciliation will precede further work",
+      );
+  }
 }

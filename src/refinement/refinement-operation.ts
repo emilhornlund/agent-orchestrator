@@ -8,7 +8,12 @@ import {
 } from "../notifications/email-notifier.js";
 import type { OpenCodeClient } from "../opencode/opencode-client.js";
 import { addRefinementCompletionComment } from "../refinement/refinement-completion.js";
-import { finalizeRefinement } from "../refinement/finalize-refinement.js";
+import {
+  finalizeRefinement,
+  refinementMutationSnapshotKey,
+  refinementMutationSnapshotSchema,
+} from "../refinement/finalize-refinement.js";
+import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 import { runRefinement } from "../refinement/run-refinement.js";
 import type { TrelloCard, TrelloClient } from "../trello/trello-client.js";
 import { getElapsedRefinementWorkflowTime } from "../orchestrator/workflow-duration.js";
@@ -26,15 +31,21 @@ export async function runRefinementOperation(input: {
   attachmentContext?: CardAttachmentPromptContext;
   emailNotifier?: EmailNotifier;
 }): Promise<void> {
-  const result = await runRefinement(
-    input.git,
-    input.opencode,
-    input.project,
-    input.card,
-    input.worktreePath,
-    input.signal,
-    input.attachmentContext,
+  const snapshot = ProjectRunAuthority.current(input.project.id)?.read(
+    refinementMutationSnapshotKey,
+    refinementMutationSnapshotSchema.parse,
   );
+  const result =
+    snapshot?.intended ??
+    (await runRefinement(
+      input.git,
+      input.opencode,
+      input.project,
+      input.card,
+      input.worktreePath,
+      input.signal,
+      input.attachmentContext,
+    ));
 
   input.cardLog.event(
     `OpenCode refinement completed with classification: ${result.type}`,

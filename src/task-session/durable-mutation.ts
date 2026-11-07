@@ -28,6 +28,7 @@ export const mutationPolicies = {
   "git-commit": "discoverable",
   "git-push": "discoverable",
   "git-cleanup": "desired-state",
+  "git-worktree": "discoverable",
 } as const;
 
 export const mutationIntentSchema = z.strictObject({
@@ -328,7 +329,14 @@ export function applyMutationEvent(
         throw new Error("Response contradicts conclusive non-delivery");
       dispatch.response = { outcome: event.outcome, evidence: event.evidence };
     } else {
-      if (next.nextRecheckAt && now < next.nextRecheckAt)
+      // A same-owner accepted response may be followed immediately by positive
+      // independent readback. Negative/unknown reads and recovery discovery are
+      // still paced; this exception never authorizes dispatch or resending.
+      const immediateReadback =
+        event.outcome === "verified" &&
+        dispatch.ownerGeneration === ownerGeneration &&
+        dispatch.response?.outcome === "accepted";
+      if (next.nextRecheckAt && now < next.nextRecheckAt && !immediateReadback)
         throw new Error("Mutation recheck is not due");
       if (
         ["absent", "uncertain"].includes(event.outcome) &&

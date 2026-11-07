@@ -187,6 +187,8 @@ export async function failCard(
     });
     cardLog.event("Failure handling: failure comment added to Trello card");
   } catch (commentError) {
+    if (commentError instanceof WorkflowMutationWaitingError)
+      throw commentError;
     const commentFailure = toFailureError(commentError);
 
     annotateFailure(originalError, {
@@ -201,3 +203,4 @@ export async function failCard(
 
   throw originalError;
 }
+import { WorkflowMutationWaitingError } from "../task-session/workflow-mutation.js";

@@ -1,9 +1,10 @@
 import fs from "node:fs";
+import { withJournaledDispatch } from "../task-session/workflow-mutation.js";
 import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
 import type { ProjectConfig } from "../config/config.js";
-import type { GitClient } from "../git/git-client.js";
+import type { GitClient, GitIdentity } from "../git/git-client.js";
 import { prepareVerbatimCommitMessage } from "../git/git-client.js";
 import type {
   GitHubClient,
@@ -395,7 +396,9 @@ export async function resumeInitialPublication(options: {
         );
       event(id, { type: "dispatch", nextRecheckAt: next() });
       try {
-        await authority.dispatch(send);
+        await authority.dispatch(() =>
+          withJournaledDispatch(authority, id, send),
+        );
         event(id, {
           type: "response",
           outcome: "accepted",
@@ -560,6 +563,7 @@ export async function resumeInitialPublication(options: {
         tree: string;
         message: string;
         cleanup: "verbatim";
+        identity?: GitIdentity | undefined;
       };
       if (commitEntry?.mutation) {
         const reference = authority.store
@@ -573,6 +577,13 @@ export async function resumeInitialPublication(options: {
             tree: gitSha,
             message: nonBlank,
             cleanup: z.literal("verbatim"),
+            identity: z
+              .strictObject({
+                name: nonBlank,
+                email: nonBlank,
+                signingKey: nonBlank.optional(),
+              })
+              .optional(),
           })
           .parse(JSON.parse(fs.readFileSync(reference.path, "utf8")));
       } else {
@@ -582,10 +593,19 @@ export async function resumeInitialPublication(options: {
           tree: gitSha.parse(await git.getIndexTreeSha(cwd)),
           message: checkpoint.message!,
           cleanup: "verbatim",
+          identity: project.repository.gitIdentity,
         };
         if (payload.tree === (await git.getCommitTreeSha(cwd)))
           throw new PublicationSafetyError("No meaningful changes to commit");
       }
+      if (
+        !payload.identity &&
+        (!commitEntry?.mutation?.dispatches.length ||
+          mutationProvenNotDelivered(commitEntry.mutation))
+      )
+        throw new PublicationSafetyError(
+          "Legacy commit intent lacks durable signing/identity fields; preserve without new dispatch",
+        );
       await step(
         "commit",
         "git-commit",
@@ -605,6 +625,9 @@ export async function resumeInitialPublication(options: {
             return null;
           }
           if (
+            (await git.getCurrentBranch(cwd)) !== checkpoint!.branch ||
+            (await git.getRefSha(cwd, `refs/heads/${checkpoint!.branch}`)) !==
+              head ||
             (await git.getCommitParentShas(cwd)).join(" ") !== payload.parent ||
             (await git.getCommitTreeSha(cwd)) !== payload.tree ||
             (await git.getVerbatimCommitMessage(cwd)) !== payload.message ||
@@ -622,12 +645,7 @@ export async function resumeInitialPublication(options: {
           try {
             const file = path.join(directory, "message");
             fs.writeFileSync(file, payload.message, { mode: 0o600 });
-            await git.commit(
-              cwd,
-              file,
-              project.repository.gitIdentity,
-              payload.cleanup,
-            );
+            await git.commit(cwd, file, payload.identity!, payload.cleanup);
           } finally {
             fs.rmSync(directory, { recursive: true, force: true });
           }
@@ -788,7 +806,13 @@ export async function resumeInitialPublication(options: {
             "Publication destination guard stopped dispatch before invoking Git push",
           );
         }
-        await git.push(cwd, destinations.push, checkpoint!.branch, project);
+        await git.push(
+          cwd,
+          destinations.push,
+          checkpoint!.branch,
+          project,
+          sha,
+        );
       },
     );
     const marker = `<!-- agent-orchestrator-publication:${run.attemptId} -->`;

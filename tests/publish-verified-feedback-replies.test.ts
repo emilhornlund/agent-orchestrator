@@ -147,4 +147,47 @@ describe("publishVerifiedFeedbackReplies", () => {
     ]);
     expect(sendReply).toHaveBeenCalledOnce();
   });
+
+  it("never turns legacy unknown-send absence into resend, including after reopening the ledger", async () => {
+    const f = fixture();
+    const effects: string[] = [];
+    let inFlight: string | undefined;
+    const sendReply = vi.fn(async (_entry, body: string) => {
+      inFlight = body;
+      throw new Error("write remains in flight");
+    });
+    const absent = async () => ({ status: "absent" as const });
+    await expect(
+      publishVerifiedFeedbackReplies({
+        ...f.base,
+        reconcileReply: absent,
+        sendReply,
+      }),
+    ).rejects.toThrow("uncertain");
+    const ledgerStore = new FeedbackLedgerStore(
+      path.join(root, "state"),
+      f.base.project,
+    );
+    await expect(
+      publishVerifiedFeedbackReplies({
+        ...f.base,
+        ledgerStore,
+        reconcileReply: absent,
+        sendReply,
+      }),
+    ).rejects.toThrow("absence does not authorize");
+    effects.push(inFlight!);
+    await publishVerifiedFeedbackReplies({
+      ...f.base,
+      ledgerStore,
+      reconcileReply: async () => ({ status: "found", replyId: "late-901" }),
+      sendReply,
+    });
+    expect(sendReply).toHaveBeenCalledOnce();
+    expect(effects).toHaveLength(1);
+    expect(ledgerStore.read("card")?.entries[0]).toMatchObject({
+      replyState: "sent",
+      replyId: "late-901",
+    });
+  });
 });

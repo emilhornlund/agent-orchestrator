@@ -65,6 +65,7 @@ import { WorkflowError } from "./workflow-error.js";
 import type { ProjectRunWorkerContext } from "../task-session/project-run-authority.js";
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 import { resumeInitialPublication } from "./initial-publication.js";
+import { reconcileWorkflowMutations } from "./reconcile-workflow-mutations.js";
 import { getCardsForDiscovery } from "./trello-list-discovery.js";
 import { getWorkflowKind } from "./workflow-kind.js";
 import { isCardStartDateReached } from "./card-start-eligibility.js";
@@ -730,6 +731,13 @@ async function runProjectWorkerInner(
           ),
         );
       }
+      if (
+        runContext?.authority &&
+        (await reconcileWorkflowMutations({ project, trello, github, git }))
+      ) {
+        await sleep(Math.max(pollIntervalMilliseconds, 15_000), signal);
+        continue;
+      }
       const authorityRecord = runContext?.authority?.store.read();
       const resumableLegacyAttempt =
         authorityRecord?.lifecycle === "waiting" &&
@@ -877,6 +885,22 @@ async function runProjectWorkerInner(
         return;
       }
 
+      const pendingMutations = runContext?.authority?.store
+        .read()
+        ?.pendingOperations.some(
+          (entry) =>
+            entry.id.startsWith("workflow:") &&
+            !["completed", "cancelled"].includes(entry.status),
+        );
+      if (pendingMutations) {
+        logger
+          .child({ projectId: project.id })
+          .info(
+            "Workflow mutation pending; ownership and completed effects retained for paced readback",
+          );
+        await sleep(Math.max(pollIntervalMilliseconds, 15_000), signal);
+        continue;
+      }
       const alreadyTerminal = runContext?.authority?.store.read();
       if (
         runContext?.authority &&

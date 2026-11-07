@@ -4,6 +4,12 @@ The T1 snapshot below is retained as foundation evidence. Initial production
 publication is subsequently integrated by [P4-T2](p4-initial-publication.md);
 remaining global mutation routes and notification delivery are not claimed here.
 
+Concrete remaining workflow routes and their evidence are now inventoried in
+[P4-T3](p4-mutation-routing.md). T3 adds discoverable owned-worktree creation and
+permits immediate positive independent verification only after a same-owner
+accepted response; negative/unknown/recovery reads remain paced. The historical
+T1-only scope and evidence below are otherwise retained.
+
 This is foundation evidence, not P4 completion or realistic provider evidence.
 Production publication, Trello/GitHub/Git mutation routing, and email delivery
 remain T2, T3, and T4 respectively. No external service was contacted.
