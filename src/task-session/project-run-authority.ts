@@ -324,17 +324,18 @@ export class ProjectRunAuthority {
         trelloVerifiedAt: evidence.trelloVerifiedAt,
       },
     );
-    await this.releaseAttempt?.();
+    await this.releaseVerifiedTerminal();
     return completed;
   }
 
   async releaseVerifiedTerminal(): Promise<void> {
-    const current = this.store.read();
+    const current = this.store.assertCurrentLease(this.ownerGeneration);
     if (
       !current ||
       !["done", "refined", "failed", "cancelled"].includes(current.lifecycle) ||
       current.terminalSync !== "verified" ||
-      current.terminalEvidence === null
+      current.terminalEvidence === null ||
+      !current.pendingOperations.every(isConclusiveOperationResolution)
     )
       throw new RunStoreConflictError(
         "Attempt release requires verified terminal synchronization",

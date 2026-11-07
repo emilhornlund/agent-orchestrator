@@ -12,6 +12,14 @@ import {
   terminalEvidenceSchema,
 } from "./run-record.js";
 import { taskExecutionEventTypes } from "./task-execution-record.js";
+import {
+  applyMutationEvent,
+  mutationEventSchema,
+  mutationIntentSchema,
+  mutationPolicies,
+  mutationProvenNotDelivered,
+  type MutationIntent,
+} from "./durable-mutation.js";
 
 export class RunStoreConflictError extends Error {
   constructor(message: string) {
@@ -278,6 +286,212 @@ export class RunStore {
   private readonly identity: ReturnType<typeof pinnedIdentitySchema.parse>;
   readonly storageRoot: string;
   readonly attemptId: string;
+
+  /** Intent shares the existing operation ledger and atomic authority. */
+  persistMutationIntent(
+    expectedRevision: number,
+    ownerGeneration: number,
+    operationId: string,
+    rawIntent: MutationIntent,
+    now: string,
+  ): RunRecord {
+    const current = this.assertCurrentLease(ownerGeneration);
+    if (current.revision !== expectedRevision)
+      throw new RunStoreConflictError("Stale mutation intent revision");
+    if (["done", "refined", "failed", "cancelled"].includes(current.lifecycle))
+      throw new RunStoreConflictError(
+        "Cannot add workflow mutations to terminal attempt",
+      );
+    const intent = mutationIntentSchema.parse(rawIntent);
+    const existing = current.pendingOperations.find(
+      (entry) => entry.id === operationId,
+    );
+    if (existing) {
+      if (
+        existing.mutation?.cancellation ||
+        (existing.mutation &&
+          (existing.mutation.executionFence.id !== current.operation.id ||
+            existing.mutation.executionFence.generation !==
+              current.operation.generation))
+      )
+        throw new RunStoreConflictError(
+          "Cannot rebind a superseded or cancelled mutation identity; retain its history",
+        );
+      if (JSON.stringify(existing.mutation?.intent) !== JSON.stringify(intent))
+        throw new RunStoreConflictError(
+          "Mutation identity cannot be reused with a different payload or target",
+        );
+      return current;
+    }
+    if (!current.artifacts.some((artifact) => artifact.id === intent.payloadId))
+      throw new Error("Mutation payload must be a referenced durable artifact");
+    const next = parseRunRecord({
+      ...current,
+      revision: current.revision + 1,
+      updatedAt: now,
+      pendingOperations: [
+        ...current.pendingOperations,
+        {
+          id: operationId,
+          kind: intent.kind,
+          status: "pending",
+          generation: 1,
+          expectedRevision: current.revision,
+          prerequisites: [],
+          intent,
+          mutation: {
+            version: 1,
+            intent,
+            policy: mutationPolicies[intent.kind],
+            createdAt: now,
+            executionFence: {
+              id: current.operation.id,
+              generation: current.operation.generation,
+            },
+            dispatches: [],
+            observations: [],
+            nextRecheckAt: null,
+            attentionRequired: false,
+          },
+        },
+      ],
+    });
+    this.assertLease(current);
+    atomicJson(this.recordPath, next);
+    this.appendTimeline(current, next, "mutation-intent");
+    return next;
+  }
+
+  /** Persist dispatch BEFORE the remote request. A crash afterward is uncertain.
+   * Discovery uses the new owner fence after restart; old worker responses do not.
+   * This method never dispatches or retries an external call itself. */
+  recordMutationEvent(
+    expectedRevision: number,
+    ownerGeneration: number,
+    operationId: string,
+    operationGeneration: number,
+    rawEvent: unknown,
+    now: string,
+  ): RunRecord {
+    const current = this.assertCurrentLease(ownerGeneration);
+    const entry = current.pendingOperations.find(
+      (operation) => operation.id === operationId,
+    );
+    if (
+      current.revision !== expectedRevision ||
+      !entry?.mutation ||
+      entry.generation !== operationGeneration
+    )
+      throw new RunStoreConflictError(
+        "Stale mutation revision or operation generation",
+      );
+    const event = mutationEventSchema.parse(rawEvent);
+    if (
+      event.type !== "observe" &&
+      event.type !== "cancel" &&
+      (entry.mutation.executionFence.id !== current.operation.id ||
+        entry.mutation.executionFence.generation !==
+          current.operation.generation)
+    )
+      throw new RunStoreConflictError(
+        "Superseded execution cannot dispatch or complete a mutation; reconcile its effect",
+      );
+    if (event.type === "cancel") {
+      const terminal = ["done", "refined", "failed", "cancelled"].includes(
+        current.lifecycle,
+      );
+      const superseded =
+        entry.mutation.executionFence.id !== current.operation.id ||
+        entry.mutation.executionFence.generation !==
+          current.operation.generation;
+      if (
+        (event.reason === "terminal-observed" && !terminal) ||
+        (event.reason === "execution-superseded" && !superseded)
+      )
+        throw new RunStoreConflictError(
+          "Cancellation requires an authoritative terminal observation or superseding execution fence",
+        );
+    }
+    if (
+      event.type === "dispatch" &&
+      ["done", "refined", "failed", "cancelled"].includes(current.lifecycle)
+    )
+      throw new RunStoreConflictError(
+        "Terminal attempt cannot dispatch workflow effects",
+      );
+    if (
+      event.type !== "dispatch" &&
+      !current.artifacts.some(
+        (artifact) => artifact.id === event.evidence.artifactId,
+      )
+    )
+      throw new Error("Mutation evidence must reference a durable artifact");
+    const mutation = applyMutationEvent(
+      entry.mutation,
+      event,
+      ownerGeneration,
+      now,
+      { id: current.operation.id, generation: current.operation.generation },
+    );
+    const verification = mutation.observations.find(
+      (observation) => observation.outcome === "verified",
+    );
+    const status = mutation.cancellation
+      ? "cancelled"
+      : verification
+        ? "completed"
+        : mutationProvenNotDelivered(mutation)
+          ? "failed"
+          : mutation.dispatches.length
+            ? "ambiguous"
+            : "pending";
+    const next = parseRunRecord({
+      ...current,
+      revision: current.revision + 1,
+      updatedAt: now,
+      pendingOperations: current.pendingOperations.map((operation) =>
+        operation.id === operationId
+          ? {
+              ...operation,
+              mutation,
+              status,
+              generation: Math.max(1, mutation.dispatches.length),
+              ...(verification
+                ? { completionEvidence: verification.evidence.observationId }
+                : {}),
+            }
+          : operation,
+      ),
+    });
+    this.assertLease(current);
+    atomicJson(this.recordPath, next);
+    this.appendTimeline(current, next, `mutation-${event.type}`);
+    return next;
+  }
+
+  /** Attach a durable payload/evidence artifact without changing workflow state. */
+  referenceMutationArtifact(
+    expectedRevision: number,
+    ownerGeneration: number,
+    artifact: RunRecord["artifacts"][number],
+  ): RunRecord {
+    const current = this.assertCurrentLease(ownerGeneration);
+    if (current.revision !== expectedRevision)
+      throw new RunStoreConflictError("Stale artifact revision");
+    const next = parseRunRecord({
+      ...current,
+      revision: current.revision + 1,
+      artifacts: current.artifacts.some((entry) => entry.id === artifact.id)
+        ? current.artifacts
+        : [...current.artifacts, artifact],
+      updatedAt: new Date().toISOString(),
+    });
+    this.validateArtifacts(next);
+    this.assertLease(current);
+    atomicJson(this.recordPath, next);
+    this.appendTimeline(current, next, "mutation-artifact");
+    return next;
+  }
 
   private appendTimeline(
     prior: RunRecord | null,
@@ -689,6 +903,16 @@ export class RunStore {
       : lifecycleTransition;
     if (effectiveTransition) {
       const { event, to } = effectiveTransition;
+      if (
+        to !== "waiting" &&
+        !options.terminal &&
+        current.pendingOperations.some(
+          (entry) => entry.mutation && !isConclusiveOperationResolution(entry),
+        )
+      )
+        throw new RunStoreConflictError(
+          "Reconcile pending workflow mutations before advancing lifecycle",
+        );
       const allowed = runTransitionMatrix[event]?.[current.lifecycle];
       if (
         allowed === undefined ||
@@ -863,6 +1087,16 @@ export class RunStore {
       "cancelled",
     ].includes(event);
     if (
+      !terminalObservation &&
+      event !== "wait-entered" &&
+      current.pendingOperations.some(
+        (entry) => entry.mutation && !isConclusiveOperationResolution(entry),
+      )
+    )
+      throw new RunStoreConflictError(
+        "Reconcile pending workflow mutations before advancing lifecycle",
+      );
+    if (
       event !== "claim" &&
       event !== "implementation-claimed" &&
       event !== "refinement-claimed" &&
@@ -945,6 +1179,17 @@ export class RunStore {
     const before = structuredClone(current);
     const callbackInput = deepFreeze(structuredClone(current));
     const changed = update(callbackInput);
+    if (
+      JSON.stringify(
+        changed.pendingOperations.filter((entry) => entry.mutation),
+      ) !==
+      JSON.stringify(
+        current.pendingOperations.filter((entry) => entry.mutation),
+      )
+    )
+      throw new RunStoreConflictError(
+        "Workflow transitions cannot rewrite the durable mutation journal",
+      );
     if (JSON.stringify(current) !== JSON.stringify(before))
       throw new Error("Transition callback mutated the authoritative snapshot");
     if (
@@ -1117,7 +1362,11 @@ export class RunStore {
         operation.id === operationId &&
         operation.generation === operationGeneration,
     );
-    if (!entry || !["pending", "ambiguous"].includes(entry.status))
+    if (
+      !entry ||
+      entry.mutation ||
+      !["pending", "ambiguous"].includes(entry.status)
+    )
       throw new RunStoreConflictError(
         "Operation is not awaiting authoritative outcome discovery",
       );

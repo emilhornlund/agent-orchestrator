@@ -1,4 +1,8 @@
 import { z } from "zod";
+import {
+  durableMutationSchema,
+  mutationProvenNotDelivered,
+} from "./durable-mutation.js";
 
 const identifier = z
   .string()
@@ -168,9 +172,17 @@ const artifactReference = z.strictObject({
   mediaType: z.string().min(1).optional(),
 });
 const operation = z.strictObject({
+  mutation: durableMutationSchema.optional(),
   id: identifier,
   kind: identifier,
-  status: z.enum(["pending", "running", "ambiguous", "completed", "failed"]),
+  status: z.enum([
+    "pending",
+    "running",
+    "ambiguous",
+    "completed",
+    "failed",
+    "cancelled",
+  ]),
   generation: z.number().int().positive().safe(),
   expectedRevision: z.number().int().positive().safe(),
   prerequisites: z.array(identifier),
@@ -313,6 +325,78 @@ export const runRecordSchema = z
             "Operation expected revision cannot be ahead of current revision",
         });
     for (const [index, op] of run.pendingOperations.entries()) {
+      if (op.mutation) {
+        if (
+          op.mutation.cancellation &&
+          (op.mutation.cancellation.ownerGeneration > run.owner.generation ||
+            (op.mutation.cancellation.reason === "terminal-observed" &&
+              !["done", "refined", "failed", "cancelled"].includes(
+                run.lifecycle,
+              )))
+        )
+          ctx.addIssue({
+            code: "custom",
+            path: ["pendingOperations", index],
+            message:
+              "Cancellation must retain authoritative terminal/owner provenance",
+          });
+        const refs = [
+          op.mutation.intent.payloadId,
+          ...op.mutation.dispatches.flatMap((entry) =>
+            entry.response ? [entry.response.evidence.artifactId] : [],
+          ),
+          ...op.mutation.observations.map((entry) => entry.evidence.artifactId),
+          ...(op.mutation.cancellation
+            ? [op.mutation.cancellation.evidence.artifactId]
+            : []),
+        ];
+        if (
+          refs.some(
+            (id) => !run.artifacts.some((artifact) => artifact.id === id),
+          ) ||
+          JSON.stringify(op.intent) !== JSON.stringify(op.mutation.intent)
+        )
+          ctx.addIssue({
+            code: "custom",
+            path: ["pendingOperations", index],
+            message:
+              "Mutation payload/evidence references and intent must agree",
+          });
+        const verified = op.mutation.observations.find(
+          (entry) => entry.outcome === "verified",
+        );
+        const expectedStatus = op.mutation.cancellation
+          ? "cancelled"
+          : verified
+            ? "completed"
+            : mutationProvenNotDelivered(op.mutation)
+              ? "failed"
+              : op.mutation.dispatches.length
+                ? "ambiguous"
+                : "pending";
+        if (
+          op.status !== expectedStatus ||
+          op.kind !== op.mutation.intent.kind ||
+          op.resolutionEvidence !== undefined ||
+          (op.mutation.cancellation && op.completionEvidence !== undefined) ||
+          (verified &&
+            op.completionEvidence !== verified.evidence.observationId) ||
+          op.generation !== Math.max(1, op.mutation.dispatches.length)
+        )
+          ctx.addIssue({
+            code: "custom",
+            path: ["pendingOperations", index],
+            message:
+              "Mutation state must match durable dispatch/verification evidence",
+          });
+      }
+      if (op.status === "cancelled" && !op.mutation?.cancellation)
+        ctx.addIssue({
+          code: "custom",
+          path: ["pendingOperations", index],
+          message:
+            "Cancelled operation requires never-dispatched mutation cancellation evidence",
+        });
       if (op.status === "completed" && op.completionEvidence === undefined)
         ctx.addIssue({
           code: "custom",
@@ -321,6 +405,7 @@ export const runRecordSchema = z
         });
       if (
         op.status === "failed" &&
+        op.mutation === undefined &&
         op.resolutionEvidence?.disposition !== "conclusively-not-accepted"
       )
         ctx.addIssue({
@@ -347,6 +432,24 @@ export const runRecordSchema = z
             "Discovered operation state must match its evidence disposition",
         });
     }
+    const correlations = run.pendingOperations.flatMap((entry) =>
+      entry.mutation ? [entry.mutation.intent.correlationId] : [],
+    );
+    if (new Set(correlations).size !== correlations.length)
+      ctx.addIssue({
+        code: "custom",
+        path: ["pendingOperations"],
+        message: "Mutation correlation identities must be unique",
+      });
+    if (
+      new Set(run.pendingOperations.map((entry) => entry.id)).size !==
+      run.pendingOperations.length
+    )
+      ctx.addIssue({
+        code: "custom",
+        path: ["pendingOperations"],
+        message: "Operation identities must be unique",
+      });
     for (const budget of Object.values(run.budgets))
       if (budget.used > budget.limit)
         ctx.addIssue({
@@ -467,6 +570,13 @@ export const runRecordSchema = z
 export type RunRecord = z.infer<typeof runRecordSchema>;
 export type RunOperation = z.infer<typeof operation>;
 export function isConclusiveOperationResolution(op: RunOperation): boolean {
+  if (op.mutation?.cancellation)
+    return op.status === "cancelled" && op.mutation.dispatches.length === 0;
+  if (op.mutation)
+    return (
+      op.status === "completed" ||
+      (op.status === "failed" && mutationProvenNotDelivered(op.mutation))
+    );
   return (
     (op.status === "completed" &&
       op.completionEvidence !== undefined &&
