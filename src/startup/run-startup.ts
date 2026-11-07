@@ -742,7 +742,23 @@ export async function runStartup(
       }
     }
     runBestEffortStartupCleanup("log retention", () =>
-      cleanupLogRetention(config.workflow.logRetentionDays),
+      cleanupLogRetention(
+        config.workflow.logRetentionDays,
+        new Date(),
+        [
+          ...new Set([
+            config.workflow.contextRoot,
+            ...[...previousPins.values()].map((pin) => pin.storageRoot),
+          ]),
+        ],
+        [...projectRunContexts.values()]
+          .flatMap((context) =>
+            context.pinned
+              ? [context.authority?.store.read()?.attemptId ?? ""]
+              : [],
+          )
+          .filter(Boolean),
+      ),
     );
     runBestEffortStartupCleanup("card context retention", () =>
       cleanupCardContextRetention(

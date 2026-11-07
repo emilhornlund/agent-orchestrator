@@ -83,15 +83,19 @@ function logDescriptionFallback(
   stage: string,
   error: unknown,
   attempt?: "initial attempt" | "corrective retry",
+  processExecutionId?: string,
 ): void {
   const failureType =
     error instanceof PullRequestDescriptionParseError
-      ? ` (${error.failureType})`
-      : "";
+      ? error.failureType
+      : "execution-failure";
   const attemptText = attempt === undefined ? "" : ` on ${attempt}`;
+  const artifactRef = processExecutionId
+    ? `; process execution: process-executions/${processExecutionId}`
+    : "; process execution log reference unavailable";
 
   cardLog.warn(
-    `Pull request description generation failed${attemptText} during ${stage}${failureType}: ${getErrorMessage(error)}. Using deterministic fallback pull request body.`,
+    `Pull request description generation failed${attemptText} during ${stage} (${failureType})${artifactRef}. Using deterministic fallback pull request body.`,
   );
 }
 
@@ -257,7 +261,7 @@ async function generatePullRequestDescription(options: {
     }
 
     cardLog.warn(
-      `Pull request description generation failed on initial attempt during structured output parsing${error instanceof PullRequestDescriptionParseError ? ` (${error.failureType})` : ""}: ${getErrorMessage(error)}. Requesting one corrective retry.`,
+      `Pull request description generation failed on initial attempt during structured output parsing (${error instanceof PullRequestDescriptionParseError ? error.failureType : "execution-failure"})${result.processExecutionId ? `; process execution: process-executions/${result.processExecutionId}` : ""}. Requesting one corrective retry.`,
     );
 
     let snapshotBeforeRetry;
@@ -312,6 +316,7 @@ async function generatePullRequestDescription(options: {
         "corrective structured output parsing and validation",
         retryError,
         "corrective retry",
+        correctiveResult?.processExecutionId,
       );
       return undefined;
     }

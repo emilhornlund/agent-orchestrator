@@ -135,7 +135,7 @@ notifications:
 
 workflow:
   pollIntervalSeconds: 15
-  logRetentionDays: 14
+  logRetentionDays: 30
   contextRetentionDays: 14
   # Optional; defaults to /opt/.agent-context. Keep this outside repositories and worktree roots.
   contextRoot: "/opt/.agent-context"

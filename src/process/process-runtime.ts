@@ -13,6 +13,38 @@ let operationTimeoutMilliseconds = 2 * 60 * 1_000;
 const ambiguityHandler = new AsyncLocalStorage<
   (pid: number | undefined) => void
 >();
+export interface ProcessArtifactEvent {
+  type: "process-started" | "process-finished";
+  executionId: string;
+  startedAt: string;
+  finishedAt?: string;
+  durationMilliseconds?: number;
+  status?: string;
+  stdoutArtifact: string;
+  stderrArtifact: string;
+  metadataArtifact: string;
+}
+
+const taskArtifactContext = new AsyncLocalStorage<{
+  root: string;
+  projectId: string;
+  cardId: string;
+  attemptId: string;
+  recordEvent?: (event: ProcessArtifactEvent) => void;
+}>();
+
+export function withTaskProcessArtifacts<T>(
+  context: {
+    root: string;
+    projectId: string;
+    cardId: string;
+    attemptId: string;
+    recordEvent?: (event: ProcessArtifactEvent) => void;
+  },
+  operation: () => T,
+): T {
+  return taskArtifactContext.run(context, operation);
+}
 
 export function withProcessGroupAmbiguityHandler<T>(
   handler: (pid: number | undefined) => void,
@@ -135,17 +167,36 @@ export function beginProcessEvidence(
   secrets: readonly string[] = [],
   artifactRootOverride?: string,
 ) {
-  const executionsRoot =
-    artifactRootOverride ??
-    path.join(getProcessRuntime().artifactRoot, "process-executions");
+  const taskContext = taskArtifactContext.getStore();
+  const executionsRoot = artifactRootOverride
+    ? artifactRootOverride
+    : taskContext
+      ? path.join(
+          taskContext.root,
+          "artifacts",
+          encodeURIComponent(taskContext.projectId),
+          encodeURIComponent(taskContext.cardId),
+          encodeURIComponent(taskContext.attemptId),
+          "process-executions",
+        )
+      : path.join(getProcessRuntime().artifactRoot, "process-executions");
   const executionId = randomUUID();
   const directory = path.join(executionsRoot, executionId);
   const stdoutPath = path.join(directory, "stdout.txt");
   const stderrPath = path.join(directory, "stderr.txt");
   const startedAt = new Date().toISOString();
+  const startedMilliseconds = Date.now();
   const safeCommand = redactSecrets(command, secrets);
   const safeCwd = redactSecrets(cwd, secrets);
   const metadataPath = path.join(directory, "execution.json");
+  taskContext?.recordEvent?.({
+    type: "process-started",
+    executionId,
+    startedAt,
+    stdoutArtifact: stdoutPath,
+    stderrArtifact: stderrPath,
+    metadataArtifact: metadataPath,
+  });
   const writeMetadata = (metadata: Record<string, unknown>) =>
     fs.writeFileSync(
       metadataPath,
@@ -198,10 +249,24 @@ export function beginProcessEvidence(
       if (finished) return;
       finished = true;
       try {
+        const finishedAt = new Date().toISOString();
+        const durationMilliseconds = Date.now() - startedMilliseconds;
         writeMetadata({
-          finishedAt: new Date().toISOString(),
+          finishedAt,
+          durationMilliseconds,
           status,
           ...fields,
+        });
+        taskContext?.recordEvent?.({
+          type: "process-finished",
+          executionId,
+          startedAt,
+          finishedAt,
+          durationMilliseconds,
+          status,
+          stdoutArtifact: stdoutPath,
+          stderrArtifact: stderrPath,
+          metadataArtifact: metadataPath,
         });
       } catch (error) {
         throw new ProcessEvidenceError("Could not finalize process evidence", {

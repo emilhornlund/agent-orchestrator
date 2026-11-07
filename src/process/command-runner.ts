@@ -154,7 +154,17 @@ const defaultRunCommand: RunCommand = async ({
       command,
       cwd,
       effectiveSecretValues,
-      artifactDirectory,
+      artifactDirectory ??
+        (() => {
+          const projectId = ProjectRunAuthority.currentProjectId();
+          const authority = projectId
+            ? ProjectRunAuthority.current(projectId)
+            : undefined;
+          const record = authority?.store.read();
+          return record && projectId
+            ? `${record.pinned.storageRoot}/artifacts/${encodeURIComponent(projectId)}/${encodeURIComponent(record.cardId)}/${encodeURIComponent(record.attemptId)}`
+            : undefined;
+        })(),
     );
     const child = spawn(command, {
       cwd,

@@ -62,7 +62,7 @@ must be unique.
 | Key                       | Meaning and validation                                                                    |
 | ------------------------- | ----------------------------------------------------------------------------------------- |
 | `pollIntervalSeconds`     | Positive integer interval between project polling cycles                                  |
-| `logRetentionDays`        | Positive integer number of days for managed log retention; defaults to `14` when omitted  |
+| `logRetentionDays`        | Positive integer number of days for managed log retention; defaults to `30` when omitted  |
 | `contextRetentionDays`    | Positive integer number of days for card context retention; defaults to `14` when omitted |
 | `contextRoot`             | Optional absolute root for card context; defaults to `/opt/.agent-context`                |
 | `coordinationRoot`        | Required absolute host-visible directory for canonical project ownership coordination     |

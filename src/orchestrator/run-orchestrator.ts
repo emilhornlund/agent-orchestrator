@@ -1174,7 +1174,25 @@ export async function runOrchestrator(
       }
 
       runBestEffortRetention("log retention", () =>
-        cleanupLogRetention(config.workflow.logRetentionDays),
+        cleanupLogRetention(
+          config.workflow.logRetentionDays,
+          new Date(),
+          [
+            ...new Set([
+              config.workflow.contextRoot,
+              ...(projectRunContexts
+                ? [...projectRunContexts.values()].flatMap((context) =>
+                    context.pinned ? [context.pinned.storageRoot] : [],
+                  )
+                : []),
+            ]),
+          ],
+          projectRunContexts
+            ? [...projectRunContexts.values()].flatMap(
+                (context) => context.authority?.store.read()?.attemptId ?? [],
+              )
+            : [],
+        ),
       );
       runBestEffortRetention("card context retention", () =>
         cleanupCardContextRetention(

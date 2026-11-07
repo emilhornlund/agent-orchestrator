@@ -47,6 +47,7 @@ export interface OpenCodeRunResult {
   exitCode: number;
   output: string;
   errorOutput: string;
+  processExecutionId?: string;
   sessionId?: string;
 }
 
@@ -652,6 +653,7 @@ const defaultRunOpenCode: RunOpenCode = async ({
         exitCode: code ?? 1,
         output,
         errorOutput,
+        processExecutionId: execution.executionId,
       });
     });
   });

@@ -1,5 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import {
   RunRegistry,
   RunStore,
@@ -15,7 +17,10 @@ import {
   prepareProjectAttempt,
   updateProjectActiveAttempt,
 } from "../coordination/project-registry.js";
-import { withProcessGroupAmbiguityHandler } from "../process/process-runtime.js";
+import {
+  withProcessGroupAmbiguityHandler,
+  withTaskProcessArtifacts,
+} from "../process/process-runtime.js";
 
 const authorityContext = new AsyncLocalStorage<ProjectRunAuthority>();
 interface ProjectLeaseCapability {
@@ -37,6 +42,7 @@ export class ProjectRunAuthority {
     private readonly markTerminationAmbiguous?: (
       pid: number | undefined,
     ) => void,
+    readonly cardId?: string,
   ) {
     if (
       !projectId ||
@@ -116,6 +122,7 @@ export class ProjectRunAuthority {
           null,
         ),
       (pid) => options.projectLease.markProcessGroupAmbiguous(pid),
+      record.cardId,
     );
   }
 
@@ -257,6 +264,7 @@ export class ProjectRunAuthority {
           null,
         ),
       (pid) => options.projectLease.markProcessGroupAmbiguous(pid),
+      options.cardId,
     );
   }
 
@@ -372,7 +380,36 @@ export class ProjectRunAuthority {
   }
 
   run<T>(operation: () => T): T {
-    return authorityContext.run(this, operation);
+    return authorityContext.run(this, () =>
+      withTaskProcessArtifacts(
+        {
+          root: this.store.storageRoot,
+          projectId: this.projectId,
+          cardId: this.cardId ?? "task",
+          attemptId: this.store.attemptId,
+          recordEvent: (event) => {
+            const recordPath = path.join(
+              this.store.storageRoot,
+              "history",
+              encodeURIComponent(this.projectId),
+              encodeURIComponent(this.cardId ?? "task"),
+              encodeURIComponent(this.store.attemptId),
+              "events.jsonl",
+            );
+            fs.mkdirSync(path.dirname(recordPath), {
+              recursive: true,
+              mode: 0o700,
+            });
+            fs.appendFileSync(
+              recordPath,
+              `${JSON.stringify({ timestamp: new Date().toISOString(), ...event })}\n`,
+              { encoding: "utf8", mode: 0o600 },
+            );
+          },
+        },
+        operation,
+      ),
+    );
   }
 
   assertHeld(): void {

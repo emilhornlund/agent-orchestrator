@@ -993,6 +993,63 @@ describe("publishCard", () => {
     );
   });
 
+  it("does not forward unknown JSON field names from child output into logs", async () => {
+    const marker = "RAW_PR_JSON_FIELD_MARKER_82fd";
+    const warnings = vi
+      .spyOn(Logger.prototype, "warn")
+      .mockImplementation(() => {});
+    const invalid = JSON.stringify({
+      summary: "description",
+      changes: [],
+      validation: [],
+      [marker]: "untrusted output",
+    });
+    const opencode = {
+      run: vi.fn().mockResolvedValue({
+        exitCode: 0,
+        output: invalid,
+        errorOutput: "",
+        processExecutionId: "controlled-execution-id",
+      }),
+    } as unknown as OpenCodeClient;
+    const createPullRequest = vi.fn().mockResolvedValue({
+      url: "https://github.com/example/repository/pull/123",
+    });
+    const git = createPublicationGit({
+      getChangedFiles: vi.fn().mockResolvedValue("src/example.ts"),
+      getCommitMessage: vi.fn().mockResolvedValue("implement example"),
+    });
+    const trello = {
+      moveCard: vi.fn().mockResolvedValue(createCard()),
+      getListTransitions: vi.fn().mockResolvedValue([]),
+      addComment: vi.fn().mockResolvedValue(undefined),
+    } as unknown as TrelloClient;
+    const github = {
+      findPullRequest: vi.fn().mockResolvedValue(null),
+      createPullRequest,
+    } as unknown as GitHubClient;
+
+    await publishCard({
+      trello,
+      git,
+      github,
+      opencode,
+      project: createProject(),
+      card: createCard(),
+      worktreePath: "/worktree",
+      branch: "agent/card-1",
+      commitSha: "abc123",
+      reviewResult: "Passed",
+      remediationResult: "Not required",
+    });
+
+    const logged = warnings.mock.calls.map(([message]) => message).join("\n");
+    expect(logged).not.toContain(marker);
+    expect(logged).toContain("schema validation");
+    expect(logged).toContain("process-executions/controlled-execution-id");
+    warnings.mockRestore();
+  });
+
   it("retains verified publication when the corrective description snapshot fails", async () => {
     const git = createPublicationGit({
       getChangedFiles: vi.fn().mockResolvedValue("src/task.ts"),

@@ -2,7 +2,11 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { isActiveLogFile } from "./active-log-files.js";
-import { logger } from "./logger.js";
+import { getLoggerRuntimeRoot, logger } from "./logger.js";
+import {
+  isConclusiveOperationResolution,
+  parseRunRecord,
+} from "../task-session/run-record.js";
 
 const millisecondsPerDay = 24 * 60 * 60 * 1000;
 const dailyLogFilePattern = /^(?:test-)?orchestrator-\d{4}-\d{2}-\d{2}\.log$/;
@@ -64,6 +68,28 @@ function readManagedDirectory(directoryPath: string): fs.Dirent[] | undefined {
   }
 }
 
+function hasSafeAncestors(absolutePath: string): boolean {
+  const resolved = path.resolve(absolutePath);
+  const parsed = path.parse(resolved);
+  let current = parsed.root;
+  for (const component of path
+    .relative(parsed.root, resolved)
+    .split(path.sep)) {
+    if (!component) continue;
+    current = path.join(current, component);
+    try {
+      const stats = fs.lstatSync(current);
+      if (stats.isSymbolicLink()) return false;
+      if (!stats.isDirectory()) return false;
+    } catch (error) {
+      if (isMissingPathError(error)) return true;
+      reportFailure("inspect", current, error);
+      return false;
+    }
+  }
+  return true;
+}
+
 function removeIfExpired(filePath: string, cutoffMilliseconds: number): void {
   if (isActiveLogFile(filePath)) {
     return;
@@ -100,6 +126,7 @@ function removeIfExpired(filePath: string, cutoffMilliseconds: number): void {
 function scanSessionLogs(
   sessionsDirectory: string,
   cutoffMilliseconds: number,
+  protectedPaths: ReadonlySet<string>,
 ): void {
   const projectDirectories = readManagedDirectory(sessionsDirectory);
 
@@ -131,10 +158,9 @@ function scanSessionLogs(
         continue;
       }
 
-      removeIfExpired(
-        path.join(projectDirectoryPath, sessionFile.name),
-        cutoffMilliseconds,
-      );
+      const filePath = path.join(projectDirectoryPath, sessionFile.name);
+      if (!protectedPaths.has(path.resolve(filePath)))
+        removeIfExpired(filePath, cutoffMilliseconds);
     }
   }
 }
@@ -142,33 +168,157 @@ function scanSessionLogs(
 export function cleanupLogRetention(
   retentionDays: number,
   now = new Date(),
+  runtimeRoots: readonly string[] = [],
+  protectedAttemptIds: readonly string[] = [],
 ): void {
   const cutoffMilliseconds = now.getTime() - retentionDays * millisecondsPerDay;
-  const logsDirectory = path.join(process.cwd(), "logs");
-  const logEntries = readManagedDirectory(logsDirectory);
-
-  if (logEntries === undefined) {
-    return;
+  const effectiveRoots = runtimeRoots.length
+    ? runtimeRoots
+    : [getLoggerRuntimeRoot()];
+  const roots = [
+    ...new Set([
+      path.join(process.cwd(), "logs"),
+      ...effectiveRoots.map((root) => path.join(root, "orchestrator-logs")),
+    ]),
+  ];
+  const protectedPaths = new Set<string>();
+  const protectedIds = new Set(protectedAttemptIds);
+  const unsafeRoots = new Set<string>();
+  let inventoryIsUncertain = false;
+  // Inventory every root before deleting anything: references may cross roots.
+  for (const runtimeRoot of effectiveRoots) {
+    if (!hasSafeAncestors(runtimeRoot)) {
+      unsafeRoots.add(runtimeRoot);
+      inventoryIsUncertain = true;
+      continue;
+    }
+    const attemptsPath = path.join(runtimeRoot, "attempts");
+    let attempts: fs.Dirent[] | undefined;
+    try {
+      const s = fs.lstatSync(attemptsPath);
+      if (s.isSymbolicLink() || !s.isDirectory()) {
+        unsafeRoots.add(runtimeRoot);
+        inventoryIsUncertain = true;
+        continue;
+      }
+      attempts = fs.readdirSync(attemptsPath, { withFileTypes: true });
+    } catch (error) {
+      if (isMissingPathError(error)) continue;
+      unsafeRoots.add(runtimeRoot);
+      inventoryIsUncertain = true;
+      continue;
+    }
+    for (const entry of attempts) {
+      if (!entry.name.endsWith(".json")) continue;
+      const file = path.join(attemptsPath, entry.name),
+        id = entry.name.slice(0, -5);
+      try {
+        if (entry.isSymbolicLink() || !entry.isFile())
+          throw new Error("unsupported attempt entry");
+        const record = parseRunRecord(
+          JSON.parse(fs.readFileSync(file, "utf8")),
+        );
+        if (record.attemptId !== id)
+          throw new Error("attempt filename identity mismatch");
+        const terminal =
+          ["done", "refined", "failed", "cancelled"].includes(
+            record.lifecycle,
+          ) &&
+          record.terminalSync === "verified" &&
+          record.terminalEvidence !== null &&
+          record.pendingOperations.every(isConclusiveOperationResolution);
+        // Record artifacts are content-addressed state referenced by the
+        // durable run envelope, including after the run becomes terminal.
+        for (const artifact of record.artifacts)
+          if (path.isAbsolute(artifact.path))
+            protectedPaths.add(path.resolve(artifact.path));
+        if (!terminal || protectedIds.has(id)) {
+          protectedIds.add(id);
+          for (const resource of record.resources)
+            if (path.isAbsolute(resource.path))
+              protectedPaths.add(path.resolve(resource.path));
+          for (const session of Object.values(record.sessions))
+            if (path.isAbsolute(session))
+              protectedPaths.add(path.resolve(session));
+        }
+      } catch {
+        unsafeRoots.add(runtimeRoot);
+        inventoryIsUncertain = true;
+      }
+    }
   }
+  // A malformed owner can hide cross-root references. In that case no
+  // retention deletion is safe, including legacy logs/sessions.
+  if (inventoryIsUncertain) return;
+  if (roots.some((root) => !hasSafeAncestors(root))) return;
+  for (const runtimeRoot of effectiveRoots) {
+    if (unsafeRoots.has(runtimeRoot)) continue;
+    const candidates: string[] = [];
+    const walk = (directory: string, depth: number): void => {
+      if (depth > 12) {
+        unsafeRoots.add(runtimeRoot);
+        return;
+      }
+      const entries = readManagedDirectory(directory);
+      if (entries === undefined) return;
+      for (const entry of entries) {
+        if (entry.isSymbolicLink()) {
+          unsafeRoots.add(runtimeRoot);
+          continue;
+        }
+        const target = path.join(directory, entry.name);
+        if (entry.isDirectory()) {
+          walk(target, depth + 1);
+          continue;
+        }
+        if (
+          !entry.isFile() ||
+          protectedPaths.has(path.resolve(target)) ||
+          [...protectedIds].some((id) => target.includes(id))
+        )
+          continue;
+        candidates.push(target);
+      }
+    };
+    walk(path.join(runtimeRoot, "history"), 0);
+    walk(path.join(runtimeRoot, "artifacts"), 0);
+    if (!unsafeRoots.has(runtimeRoot))
+      for (const candidate of candidates)
+        removeIfExpired(candidate, cutoffMilliseconds);
+  }
+  for (const logsDirectory of roots) {
+    const logEntries = readManagedDirectory(logsDirectory);
 
-  for (const logEntry of logEntries) {
-    if (logEntry.isSymbolicLink()) {
-      continue;
-    }
+    if (logEntries === undefined) continue;
 
-    if (logEntry.isFile() && dailyLogFilePattern.test(logEntry.name)) {
-      removeIfExpired(
-        path.join(logsDirectory, logEntry.name),
-        cutoffMilliseconds,
-      );
-      continue;
-    }
+    for (const logEntry of logEntries) {
+      if (logEntry.isSymbolicLink()) {
+        continue;
+      }
 
-    if (logEntry.isDirectory() && logEntry.name === "sessions") {
-      scanSessionLogs(
-        path.join(logsDirectory, logEntry.name),
-        cutoffMilliseconds,
-      );
+      if (logEntry.isFile() && dailyLogFilePattern.test(logEntry.name)) {
+        removeIfExpired(
+          path.join(logsDirectory, logEntry.name),
+          cutoffMilliseconds,
+        );
+        continue;
+      }
+
+      if (logEntry.isFile() && logEntry.name === "execution.json") {
+        removeIfExpired(
+          path.join(logsDirectory, logEntry.name),
+          cutoffMilliseconds,
+        );
+        continue;
+      }
+
+      if (logEntry.isDirectory() && logEntry.name === "sessions") {
+        scanSessionLogs(
+          path.join(logsDirectory, logEntry.name),
+          cutoffMilliseconds,
+          protectedPaths,
+        );
+      }
     }
   }
 }

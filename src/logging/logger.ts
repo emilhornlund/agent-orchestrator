@@ -3,6 +3,22 @@ import path from "node:path";
 
 import { withActiveLogFile } from "./active-log-files.js";
 import { sanitizeControlledText } from "../security/redact-secrets.js";
+import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
+
+let logRoot = path.join(process.cwd(), "logs");
+let configuredRuntimeRoot = false;
+
+/** Set before startup housekeeping; managed diagnostics live outside the checkout. */
+export function configureLoggerRuntime(root: string): void {
+  logRoot = path.resolve(root, "orchestrator-logs");
+  configuredRuntimeRoot = true;
+}
+
+export function getLoggerRuntimeRoot(): string {
+  return process.env.VITEST === "true" || !configuredRuntimeRoot
+    ? process.cwd()
+    : path.dirname(logRoot);
+}
 
 export interface LogContext {
   projectId?: string;
@@ -23,11 +39,25 @@ function formatContext(context: LogContext): string {
   return parts.length > 0 ? `${parts.join(" ")} ` : "";
 }
 
+function classifySummary(message: string): string {
+  const text = message.toLowerCase();
+  if (text.includes("retry") || text.includes("attempt")) return "retry";
+  if (text.includes("recover") || text.includes("reconcil")) return "recovery";
+  if (text.includes("validation") || text.includes("coverage"))
+    return "quality";
+  if (text.includes("review")) return "review";
+  if (text.includes("transition") || text.includes("completed"))
+    return "workflow-progress";
+  return "diagnostic";
+}
+
 function getLogFilePath(): string {
   const date = new Date().toISOString().slice(0, 10);
   const prefix = process.env.VITEST === "true" ? "test-" : "";
 
-  return path.join(process.cwd(), "logs", `${prefix}orchestrator-${date}.log`);
+  const root =
+    process.env.VITEST === "true" ? path.join(process.cwd(), "logs") : logRoot;
+  return path.join(root, `${prefix}orchestrator-${date}.log`);
 }
 
 function writeToFile(
@@ -44,6 +74,36 @@ function writeToFile(
 
   const timestamp = new Date().toISOString();
   const contextText = formatContext(context);
+
+  // Append-only, attempt-scoped timeline. RunRecord remains the sole workflow
+  // authority; this is diagnostic evidence only.
+  const authority = context.projectId
+    ? ProjectRunAuthority.current(context.projectId)
+    : undefined;
+  if (authority && context.cardId) {
+    const record = authority.store.read();
+    if (record?.cardId === context.cardId) {
+      const historyPath = path.join(
+        record.pinned.storageRoot,
+        "history",
+        encodeURIComponent(context.projectId!),
+        encodeURIComponent(context.cardId),
+        encodeURIComponent(record.attemptId),
+        "events.jsonl",
+      );
+      mkdirSync(path.dirname(historyPath), { recursive: true, mode: 0o700 });
+      appendFileSync(
+        historyPath,
+        `${JSON.stringify({
+          timestamp,
+          type: "workflow-diagnostic",
+          level,
+          summary: { category: classifySummary(message) },
+        })}\n`,
+        { encoding: "utf8", mode: 0o600 },
+      );
+    }
+  }
 
   withActiveLogFile(filePath, () => {
     appendFileSync(
