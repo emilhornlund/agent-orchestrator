@@ -171,8 +171,12 @@ const taskSetupState = z.strictObject({
 });
 
 const terminalFailureState = z.strictObject({
-  kind: z.literal("implementation"),
+  kind: z.enum(["implementation", "clarification"]),
   reason: z.string().min(1).max(4_000),
+  clarificationArtifact: z
+    .string()
+    .regex(/^sha256:[0-9a-f]{64}$/u)
+    .optional(),
   outcome: z.enum(["confirmed", "pending"]),
 });
 

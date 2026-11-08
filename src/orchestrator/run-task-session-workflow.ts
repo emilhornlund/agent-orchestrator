@@ -47,11 +47,16 @@ import {
 } from "../process/setup-commit-scope.js";
 import { OPERATION_RECOVERY_MAX_EXECUTIONS } from "../task-session/operation-recovery-policy.js";
 import { type TrelloCard, type TrelloClient } from "../trello/trello-client.js";
+import { NotificationPreparationError } from "../notifications/notification-outbox.js";
+import { hasVerifiedWorkflowMove } from "./reconcile-workflow-mutations.js";
 import { buildTaskSessionReviewRepairPrompt } from "../opencode/build-task-session-review-repair-prompt.js";
 import type { ImplementationReviewResult } from "../task-session/implementation-review-result.js";
 import { buildTaskSessionCiRepairPrompt } from "../opencode/build-task-session-ci-repair-prompt.js";
 import { inspectPrimaryOpenCodeSession } from "../opencode/inspect-primary-session.js";
-import { runTaskPlanningOperation } from "../task-session/run-task-planning.js";
+import {
+  runTaskPlanningOperation,
+  TaskClarificationRequiredError,
+} from "../task-session/run-task-planning.js";
 import { runPlanVerification } from "../task-session/run-plan-verification.js";
 import {
   runTaskSessionImplementation,
@@ -1003,6 +1008,7 @@ export async function runTaskSessionWorkflow(
     cardId: string,
     operationKey: string,
     reason: string,
+    kind: "implementation" | "clarification" = "implementation",
   ): Promise<void> => {
     const failureCard = await trello.getCard(cardId);
     enqueueNotification(
@@ -1013,7 +1019,10 @@ export async function runTaskSessionWorkflow(
       buildFailedEmail({
         project,
         card: { name: failureCard.name, url: failureCard.url },
-        category: "primary implementation failure",
+        category:
+          kind === "clarification"
+            ? "essential task information missing"
+            : "primary implementation failure",
         reason,
       }),
       {
@@ -1025,11 +1034,17 @@ export async function runTaskSessionWorkflow(
     await trello.addComment(
       cardId,
       [
-        "Agent Orchestrator failed during primary implementation.",
+        kind === "clarification"
+          ? "Agent Orchestrator needs clarification before work can proceed."
+          : "Agent Orchestrator failed during primary implementation.",
         "",
-        "Category: primary implementation failure",
+        `Category: ${kind === "clarification" ? "essential task information missing" : "primary implementation failure"}`,
         `Reason: ${reason}`,
-        "Partial work and diagnostics are preserved.",
+        ...(kind === "clarification"
+          ? [
+              "Please clarify the questions above, then explicitly move this card to Ready for Agent.",
+            ]
+          : ["Partial work and diagnostics are preserved."]),
         "To retry deliberately, move this card to Ready for Agent.",
       ].join("\n"),
     );
@@ -3058,7 +3073,10 @@ export async function runTaskSessionWorkflow(
       (candidate) => candidate.id === strandedMutation.cardId,
     );
     if (!alreadyFailed) {
-      if (strandedRecord.terminalFailure?.kind !== "implementation") {
+      if (
+        strandedRecord.terminalFailure?.kind !== "implementation" &&
+        strandedRecord.terminalFailure?.kind !== "clarification"
+      ) {
         // This state predates the terminal-failure protocol. Keep the task,
         // queue and worktree intact, but never throw the same un-actionable
         // error every poll (which sends repeated attention emails).
@@ -3127,7 +3145,8 @@ export async function runTaskSessionWorkflow(
         "Terminal failure identity changed during reconciliation",
       );
     if (
-      currentRecord.terminalFailure?.kind === "implementation" &&
+      (currentRecord.terminalFailure?.kind === "implementation" ||
+        currentRecord.terminalFailure?.kind === "clarification") &&
       currentRecord.terminalFailure.outcome !== "confirmed"
     ) {
       try {
@@ -3135,21 +3154,66 @@ export async function runTaskSessionWorkflow(
           strandedMutation.cardId,
           currentRecord.operationKey,
           currentRecord.terminalFailure.reason,
+          currentRecord.terminalFailure.kind,
         );
       } catch (error) {
         if (queue.ownsActive(owner.eventId))
           queue.releaseForRecovery(owner.eventId);
         throw error;
       }
-      taskStore.compareAndSwap(currentRecord.cardId, currentRecord.revision, {
-        ...currentRecord,
-        terminalFailure: {
-          ...currentRecord.terminalFailure,
-          outcome: "confirmed",
+    }
+    // Canonical project authority must observe the terminal failure only after
+    // Failed-list readback and all journaled effects have reconciled. Also run
+    // this projection when the compatibility record was already confirmed but
+    // the process stopped before updating the canonical RunStore.
+    const latestTerminalRecord = taskStore.read(strandedMutation.cardId);
+    if (latestTerminalRecord?.terminalFailure === undefined) {
+      // Preserve legacy terminal records: they have no verified failure
+      // outcome to project into canonical RunStore terminal evidence.
+      queue.complete(owner.eventId);
+      return;
+    }
+    if (
+      latestTerminalRecord === null ||
+      (latestTerminalRecord.terminalFailure?.kind !== "implementation" &&
+        latestTerminalRecord.terminalFailure?.kind !== "clarification")
+    )
+      throw new Error(
+        "Terminal failure disappeared before canonical projection",
+      );
+    const confirmedFailure = {
+      ...latestTerminalRecord,
+      terminalFailure: {
+        ...latestTerminalRecord.terminalFailure,
+        outcome: "confirmed" as const,
+      },
+      revision: latestTerminalRecord.revision + 1,
+      updatedAt: timestamp(latestTerminalRecord),
+    };
+    if (
+      ProjectRunAuthority.current(project.id) &&
+      latestTerminalRecord.pullRequest === undefined &&
+      latestTerminalRecord.externalRecovery === undefined
+    ) {
+      taskStore.compareAndSwap(
+        latestTerminalRecord.cardId,
+        latestTerminalRecord.revision,
+        confirmedFailure,
+        {
+          event: "failed",
+          evidence: noPullRequestFailureEvidence(
+            project,
+            latestTerminalRecord.cardId,
+            latestTerminalRecord.operationKey,
+          ),
         },
-        revision: currentRecord.revision + 1,
-        updatedAt: timestamp(currentRecord),
-      });
+      );
+    } else if (latestTerminalRecord.terminalFailure.outcome !== "confirmed") {
+      taskStore.compareAndSwap(
+        latestTerminalRecord.cardId,
+        latestTerminalRecord.revision,
+        confirmedFailure,
+      );
     }
     queue.complete(owner.eventId);
     return;
@@ -3418,7 +3482,8 @@ export async function runTaskSessionWorkflow(
       if (
         latestFailureRecord === null ||
         latestFailureRecord.operationKey !== record.operationKey ||
-        latestFailureRecord.terminalFailure?.kind !== "implementation"
+        (latestFailureRecord.terminalFailure?.kind !== "implementation" &&
+          latestFailureRecord.terminalFailure?.kind !== "clarification")
       )
         throw new Error(`Terminal failure identity changed for ${card.id}`);
       try {
@@ -3426,6 +3491,7 @@ export async function runTaskSessionWorkflow(
           card.id,
           latestFailureRecord.operationKey,
           latestFailureRecord.terminalFailure.reason,
+          latestFailureRecord.terminalFailure.kind,
         );
       } catch (error) {
         if (queue.ownsActive(owner.eventId))
@@ -4240,22 +4306,113 @@ export async function runTaskSessionWorkflow(
     if (taskRecord.phase === "planning") {
       if (planStore.read(activeCard.id) === null) {
         cardLog.event("Planning started");
-        await runTaskPlanningOperation({
-          taskRecordStore: taskStore,
-          planStore,
-          openCode,
-          projectId: project.id,
-          card: activeCard,
-          ...(attachmentContext === undefined ? {} : { attachmentContext }),
-          runOptions: {
-            timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
-            signal,
-            sessionLabel: "Task-session planning",
-            sessionLogPath,
-            ...(project.opencode.planning ?? {}),
-            cwd: worktreePath,
-          },
-        });
+        try {
+          await runTaskPlanningOperation({
+            taskRecordStore: taskStore,
+            planStore,
+            openCode,
+            projectId: project.id,
+            card: activeCard,
+            ...(attachmentContext === undefined ? {} : { attachmentContext }),
+            runOptions: {
+              timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
+              signal,
+              sessionLabel: "Task-session planning",
+              sessionLogPath,
+              ...(project.opencode.planning ?? {}),
+              cwd: worktreePath,
+            },
+          });
+        } catch (error) {
+          if (!(error instanceof TaskClarificationRequiredError)) throw error;
+          if (mutation === null || !queue.ownsActive(mutation.eventId))
+            throw new Error(
+              "Clarification result has no current task ownership",
+              {
+                cause: error,
+              },
+            );
+          const current = taskStore.read(activeCard.id);
+          if (
+            current === null ||
+            current.operationKey !== operationKey ||
+            current.phase !== "planning" ||
+            current.pullRequest !== undefined ||
+            current.externalRecovery !== undefined
+          )
+            throw new Error(
+              "Clarification outcome does not match an unpublished owned planning task",
+              { cause: error },
+            );
+          const observedPullRequest = await github.findPullRequestState({
+            cwd: project.repository.path,
+            repository: project.repository.github,
+            headBranch: worktree.branch,
+            baseBranch: project.repository.defaultBranch,
+            project,
+          });
+          if (observedPullRequest !== null) {
+            queue.releaseForRecovery(mutation.eventId);
+            return;
+          }
+          const currentCard = await trello.getCard(activeCard.id);
+          if (
+            currentCard.id !== activeCard.id ||
+            currentCard.idList !== project.trello.workingListId
+          ) {
+            queue.releaseForRecovery(mutation.eventId);
+            return;
+          }
+          const clarification = error.clarification;
+          const reason = `${clarification.reason}\n\nQuestions:\n${clarification.questions.map((question) => `- ${question}`).join("\n")}`;
+          const artifact = taskStore.writePrimaryResultArtifact(
+            `${activeCard.id}-clarification`,
+            {
+              version: 1,
+              decision: clarification,
+              task: {
+                projectId: project.id,
+                cardId: activeCard.id,
+                operationKey,
+                title: currentCard.name,
+                description: currentCard.desc,
+                listId: currentCard.idList,
+                labels: currentCard.idLabels,
+              },
+              attachmentContext:
+                attachmentContext === undefined
+                  ? null
+                  : {
+                      projectId: attachmentContext.projectId,
+                      cardId: attachmentContext.cardId,
+                      manifest: attachmentContext.manifest,
+                    },
+            },
+          );
+          const terminal = transitionTaskExecutionRecord(current, {
+            type: "attention-required",
+            eventId: `${operationKey}:clarification-required`,
+            projectId: project.id,
+            cardId: activeCard.id,
+            operationKey,
+            occurredAt: timestamp(current),
+          });
+          taskStore.compareAndSwap(activeCard.id, current.revision, {
+            ...terminal,
+            terminalFailure: {
+              kind: "clarification",
+              reason: reason.slice(0, 4_000),
+              clarificationArtifact: artifact.reference,
+              outcome: "pending",
+            },
+          });
+          cardLog.event("Essential task clarification durably recorded");
+          // The existing terminal-failure reconciler performs the verified
+          // Failed move and journaled comment on this or the next poll.
+          if (mutation && queue.ownsActive(mutation.eventId))
+            queue.releaseForRecovery(mutation.eventId);
+          return;
+        }
         cardLog.event("Planning completed");
       }
       const savedPlan = planStore.read(activeCard.id);
@@ -5828,7 +5985,8 @@ export async function runTaskSessionWorkflow(
     if (
       mutation !== null &&
       failedRecord?.phase === "attention-required" &&
-      failedRecord.terminalFailure?.kind === "implementation" &&
+      (failedRecord.terminalFailure?.kind === "implementation" ||
+        failedRecord.terminalFailure?.kind === "clarification") &&
       failedRecord.terminalFailure.outcome === "pending" &&
       queue.ownsActive(mutation.eventId) &&
       !signal.aborted
@@ -5859,7 +6017,8 @@ export async function runTaskSessionWorkflow(
       if (
         latest === null ||
         latest.operationKey !== mutation.operationKey ||
-        latest.terminalFailure?.kind !== "implementation"
+        (latest.terminalFailure?.kind !== "implementation" &&
+          latest.terminalFailure?.kind !== "clarification")
       )
         throw new Error(
           `Terminal failure identity changed for ${mutation.cardId}`,
@@ -5870,6 +6029,7 @@ export async function runTaskSessionWorkflow(
           mutation.cardId,
           latest.operationKey,
           latest.terminalFailure.reason,
+          latest.terminalFailure.kind,
         );
       } catch (finalizationError) {
         if (queue.ownsActive(mutation.eventId))
@@ -5973,5 +6133,3 @@ export async function runTaskSessionWorkflow(
     throw error;
   }
 }
-import { hasVerifiedWorkflowMove } from "./reconcile-workflow-mutations.js";
-import { NotificationPreparationError } from "../notifications/notification-outbox.js";

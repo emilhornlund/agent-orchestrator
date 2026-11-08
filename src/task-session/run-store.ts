@@ -961,11 +961,18 @@ export class RunStore {
             ? current.lifecycle
             : lifecycle,
       wait:
-        derived.runState?.wait ??
-        options.runState?.wait ??
-        (lifecycle === "waiting"
-          ? current.wait
-          : { reason: null, dependency: null, since: null, retryAt: null }),
+        options.terminal !== undefined
+          ? { reason: null, dependency: null, since: null, retryAt: null }
+          : (derived.runState?.wait ??
+            options.runState?.wait ??
+            (lifecycle === "waiting"
+              ? current.wait
+              : {
+                  reason: null,
+                  dependency: null,
+                  since: null,
+                  retryAt: null,
+                })),
       compatibility: { ...current.compatibility, [options.key]: validated },
       ...(options.terminal === undefined
         ? {}

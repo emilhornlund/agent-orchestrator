@@ -663,7 +663,8 @@ export class ProjectRunAuthority {
           );
         if (
           options.terminal?.event === "failed" &&
-          (validated.terminalFailure?.kind !== "implementation" ||
+          ((validated.terminalFailure?.kind !== "implementation" &&
+            validated.terminalFailure?.kind !== "clarification") ||
             validated.terminalFailure.outcome !== "confirmed" ||
             validated.pullRequest !== undefined ||
             validated.externalRecovery !== undefined)

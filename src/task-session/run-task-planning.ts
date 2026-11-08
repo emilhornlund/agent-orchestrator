@@ -11,7 +11,11 @@ import { runWithPrimaryTaskSession } from "./primary-task-session.js";
 import type { PendingPrimaryInspection } from "./run-primary-operation.js";
 import { TaskExecutionStore } from "./task-execution-store.js";
 import { TaskPlanStore, type StoredTaskPlan } from "./task-plan-store.js";
-import { parseTaskPlan, type TaskPlan } from "./task-plan.js";
+import {
+  parseTaskPlanningResult,
+  type TaskClarificationResult,
+  type TaskPlan,
+} from "./task-plan.js";
 
 export class TaskPlanningOperationError extends Error {
   constructor(
@@ -21,6 +25,15 @@ export class TaskPlanningOperationError extends Error {
   ) {
     super(message, options);
     this.name = "TaskPlanningOperationError";
+  }
+}
+
+export class TaskClarificationRequiredError extends Error {
+  constructor(public readonly clarification: TaskClarificationResult) {
+    super(
+      `Essential task information is missing: ${clarification.reason}. Questions: ${clarification.questions.join("; ")}`,
+    );
+    this.name = "TaskClarificationRequiredError";
   }
 }
 
@@ -56,13 +69,16 @@ export interface TaskPlanningOperationResult {
   runResult: OpenCodeRunResult;
 }
 
-function parsePlanArtifact(output: string): TaskPlan {
+function parsePlanArtifact(
+  output: string,
+): ReturnType<typeof parseTaskPlanningResult> {
   const assistantText = extractOpenCodeTextOutput(output);
   let value: unknown;
 
   try {
     value = JSON.parse(assistantText) as unknown;
   } catch (error) {
+    if (error instanceof TaskClarificationRequiredError) throw error;
     throw new TaskPlanningOperationError(
       "OpenCode planning response was not a JSON plan artifact",
       undefined,
@@ -70,7 +86,7 @@ function parsePlanArtifact(output: string): TaskPlan {
     );
   }
 
-  return parseTaskPlan(value);
+  return parseTaskPlanningResult(value);
 }
 
 export async function runTaskPlanningOperation(
@@ -124,8 +140,18 @@ export async function runTaskPlanningOperation(
   let plan: TaskPlan;
 
   try {
-    plan = parsePlanArtifact(runResult.output);
+    const result = parsePlanArtifact(runResult.output);
+    if ("outcome" in result) {
+      if (result.projectId !== projectId || result.cardId !== card.id)
+        throw new TaskPlanningOperationError(
+          `OpenCode clarification identity does not match ${projectId}/${card.id}`,
+          runResult,
+        );
+      throw new TaskClarificationRequiredError(result);
+    }
+    plan = result;
   } catch (error) {
+    if (error instanceof TaskClarificationRequiredError) throw error;
     throw new TaskPlanningOperationError(
       "Could not parse and validate the OpenCode task plan",
       runResult,

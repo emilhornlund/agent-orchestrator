@@ -12,10 +12,16 @@ import {
   type RunOpenCode,
 } from "../src/opencode/opencode-client.js";
 import { buildTaskPlanningPrompt } from "../src/opencode/build-task-planning-prompt.js";
-import { runTaskPlanningOperation } from "../src/task-session/run-task-planning.js";
+import {
+  runTaskPlanningOperation,
+  TaskClarificationRequiredError,
+} from "../src/task-session/run-task-planning.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
 import { TaskPlanStore } from "../src/task-session/task-plan-store.js";
-import type { TaskPlan } from "../src/task-session/task-plan.js";
+import {
+  parseTaskPlanningResult,
+  type TaskPlan,
+} from "../src/task-session/task-plan.js";
 import type {
   TrelloAttachment,
   TrelloCard,
@@ -261,6 +267,67 @@ describe("buildTaskPlanningPrompt", () => {
 });
 
 describe("runTaskPlanningOperation", () => {
+  it("accepts only an authenticated, evidence-backed actionable clarification and leaves planning unadvanced", async () => {
+    const fixture = createFixture();
+    const clarification = {
+      version: 1,
+      outcome: "clarification-required",
+      projectId,
+      cardId: card.id,
+      evidenceExamined: [
+        "Read the card description and searched the repository for existing preference persistence",
+        "Read acceptance.md attachment context",
+      ],
+      reason:
+        "The task does not say whether preferences are per-user or shared.",
+      questions: [
+        "Should preferences be isolated per account or shared across all users?",
+      ],
+    };
+    expect(parseTaskPlanningResult(clarification)).toEqual(clarification);
+    expect(() =>
+      parseTaskPlanningResult({ ...clarification, cardId: "" }),
+    ).toThrow();
+    expect(() =>
+      parseTaskPlanningResult({ ...clarification, questions: [] }),
+    ).toThrow();
+    expect(() =>
+      parseTaskPlanningResult({ ...clarification, surprise: true }),
+    ).toThrow();
+
+    await expect(
+      runTaskPlanningOperation({
+        taskRecordStore: fixture.executionStore,
+        planStore: fixture.planStore,
+        openCode: new OpenCodeClient(
+          createRunOpenCode(JSON.stringify(clarification)),
+        ),
+        projectId,
+        card,
+        attachments,
+        attachmentContext: fixture.attachmentContext,
+        runOptions: {
+          cwd: fixture.worktreePath,
+          timeoutMilliseconds: 60_000,
+          signal: new AbortController().signal,
+        },
+      }),
+    ).rejects.toBeInstanceOf(TaskClarificationRequiredError);
+    expect(fixture.planStore.read(card.id)).toBeNull();
+    expect(fixture.executionStore.read(card.id)).toMatchObject({
+      phase: "planning",
+      sessionCreationStatus: "bound",
+    });
+  });
+
+  it("keeps an understandable plan with blockers as a plan instead of inferring clarification", () => {
+    const plan = {
+      ...validPlan,
+      blockers: ["Independent review may still identify a quality concern."],
+    };
+    expect(parseTaskPlanningResult(plan)).toEqual(plan);
+  });
+
   it("runs the primary planning session, validates, and stores only its plan artifact", async () => {
     const fixture = createFixture();
     const runOpenCode = createRunOpenCode(JSON.stringify(validPlan));
