@@ -37,6 +37,7 @@ import type { CommandRunner } from "../process/command-runner.js";
 import { runRepositorySetup } from "../process/run-setup.js";
 import { type TrelloCard, type TrelloClient } from "../trello/trello-client.js";
 import { buildTaskSessionReviewRepairPrompt } from "../opencode/build-task-session-review-repair-prompt.js";
+import type { ImplementationReviewResult } from "../task-session/implementation-review-result.js";
 import { buildTaskSessionCiRepairPrompt } from "../opencode/build-task-session-ci-repair-prompt.js";
 import { inspectPrimaryOpenCodeSession } from "../opencode/inspect-primary-session.js";
 import { runTaskPlanningOperation } from "../task-session/run-task-planning.js";
@@ -3890,18 +3891,239 @@ export async function runTaskSessionWorkflow(
     taskRecord = taskStore.read(activeCard.id);
     if (taskRecord === null)
       throw new Error("Task record disappeared before implementation");
+    const validationOptions = {
+      project,
+      cardId: activeCard.id,
+      expectedBranch: worktree.branch,
+      operationKey,
+      worktreePath,
+      taskRecordStore: taskStore,
+      git,
+      commands,
+      signal,
+      timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
+    };
+
+    // A review repair is a durable primary operation, not a request to restart
+    // the task's initial implementation. Recover it before the generic
+    // implementation or validation routes can dispatch another operation.
+    if (
+      (taskRecord.phase === "implementation" ||
+        taskRecord.phase === "validation") &&
+      taskRecord.reviewRepair?.activePrimaryOperation !== undefined
+    ) {
+      if (taskRecord.phase === "implementation") {
+        taskRecord = taskStore.compareAndSwap(
+          activeCard.id,
+          taskRecord.revision,
+          {
+            ...transitionTaskExecutionRecord(
+              taskRecord,
+              event(taskRecord, "implementation-completed"),
+            ),
+            retryCounters: { ...taskRecord.retryCounters, validation: 0 },
+            validationRepair: {
+              cycleId: operationKey,
+              status: "active",
+            },
+          },
+        );
+      }
+      const expectedSession = taskRecord.primarySessionId;
+      if (expectedSession === undefined)
+        throw new Error("Reserved review repair has no primary session");
+      let recoveredQuality:
+        | Awaited<ReturnType<typeof runTaskSessionValidationWithRepairs>>
+        | undefined;
+      let recoveredValidation: TaskSessionValidationResult | undefined;
+      let recoveredCoverage: TaskSessionValidationResult | null = null;
+      const runReservedReview = async (
+        previousFindings: readonly NonNullable<
+          NonNullable<TaskExecutionRecord["reviewRepair"]>["findings"]
+        >[number][] = taskStore.read(activeCard.id)?.reviewRepair?.findings ??
+          [],
+      ) => {
+        if (recoveredValidation === undefined)
+          throw new Error("Reserved review repair quality was not restored");
+        const result = await runTaskSessionReview({
+          project,
+          card: activeCard,
+          expectedBranch: worktree.branch,
+          operationKey,
+          worktreePath,
+          taskRecordStore: taskStore,
+          planStore,
+          git,
+          openCode,
+          validation: recoveredValidation,
+          coverage: recoveredCoverage,
+          previousFindings,
+          ...(attachmentContext === undefined ? {} : { attachmentContext }),
+          runOptions: {
+            model: project.opencode.review.model,
+            variant: project.opencode.review.variant,
+            timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
+            signal,
+          },
+        });
+        return {
+          review: result.review,
+          contentIdentity: result.contentIdentity,
+        };
+      };
+      const runReservedRepair = async (
+        review: ImplementationReviewResult,
+        attempt: number,
+        operationId: string,
+        persistedPrompt?: string,
+      ) => {
+        const current = taskStore.read(activeCard.id);
+        if (current === null)
+          throw new Error(
+            "Task record disappeared during review repair recovery",
+          );
+        if (current.phase === "review") {
+          const implementation = transitionTaskExecutionRecord(
+            current,
+            event(current, "review-failed"),
+          );
+          taskStore.compareAndSwap(
+            activeCard.id,
+            current.revision,
+            implementation,
+          );
+        }
+        const plan = planStore.read(activeCard.id);
+        if (plan === null)
+          throw new Error(
+            "Approved plan disappeared during review repair recovery",
+          );
+        const prompt =
+          persistedPrompt ??
+          buildTaskSessionReviewRepairPrompt({
+            projectId: project.id,
+            card: activeCard,
+            approvedPlan: plan.plan,
+            review,
+            attempt,
+            maxAttempts: project.opencode.remediation.maxPasses,
+            ...(attachmentContext === undefined ? {} : { attachmentContext }),
+          });
+        const repaired = await runWithPrimaryTaskSession(
+          taskStore,
+          openCode,
+          project.id,
+          activeCard.id,
+          { ...commonRunOptions, cwd: worktreePath, prompt },
+          { inspect: inspectSessionForWorktree(worktreePath) },
+          {
+            role: "primary",
+            operationId,
+            activity: "review-correction",
+            inspectPending: (entry) =>
+              inspectPrimaryOperationEvidence(
+                taskStore,
+                activeCard.id,
+                entry.id,
+                {
+                  trustedRoot:
+                    ProjectRunAuthority.current(project.id)?.store
+                      .storageRoot ?? getProcessRuntime().artifactRoot,
+                  cwd: worktreePath,
+                },
+              ),
+          },
+        );
+        if (repaired.exitCode !== 0)
+          throw new Error(
+            `Primary review repair exited with code ${repaired.exitCode}`,
+          );
+        const latest = taskStore.read(activeCard.id);
+        if (latest === null)
+          throw new Error(
+            "Task record disappeared after review repair recovery",
+          );
+        if (latest.phase === "implementation") {
+          const validation = transitionTaskExecutionRecord(
+            latest,
+            event(latest, "implementation-completed"),
+          );
+          const inValidation = taskStore.compareAndSwap(
+            activeCard.id,
+            latest.revision,
+            validation,
+          );
+          updateRecord(taskStore, inValidation, {
+            retryCounters: { ...inValidation.retryCounters, validation: 0 },
+            validationRepair: { cycleId: operationKey, status: "active" },
+          });
+        }
+      };
+      try {
+        await runTaskSessionReviewWithRepairs({
+          maxAttempts: project.opencode.remediation.maxPasses,
+          store: taskStore,
+          projectId: project.id,
+          cardId: activeCard.id,
+          operationKey,
+          expectedPrimarySessionId: expectedSession,
+          runReview: runReservedReview,
+          repair: runReservedRepair,
+          buildRepairPrompt: (review, attempt) => {
+            const approvedPlan = planStore.read(activeCard.id);
+            if (approvedPlan === null)
+              throw new Error("Approved plan disappeared during review repair");
+            return buildTaskSessionReviewRepairPrompt({
+              projectId: project.id,
+              card: activeCard,
+              approvedPlan: approvedPlan.plan,
+              review,
+              attempt,
+              maxAttempts: project.opencode.remediation.maxPasses,
+              ...(attachmentContext === undefined ? {} : { attachmentContext }),
+            });
+          },
+          rerunQuality: async () => {
+            recoveredQuality = await runTaskSessionValidationWithRepairs({
+              validation: validationOptions,
+              openCode,
+              planStore,
+              card: activeCard,
+              expectedPrimarySessionId: expectedSession,
+              inspectPrimarySession: inspectSessionForWorktree(worktreePath),
+              primaryOperationEvidence: {
+                trustedRoot:
+                  ProjectRunAuthority.current(project.id)?.store.storageRoot ??
+                  getProcessRuntime().artifactRoot,
+                cwd: worktreePath,
+              },
+              ...(attachmentContext === undefined ? {} : { attachmentContext }),
+              repairRunOptions: {
+                model: project.opencode.remediation.model,
+                variant: project.opencode.remediation.variant,
+                timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
+                signal,
+              },
+            });
+            recoveredValidation = recoveredQuality.validation;
+            recoveredCoverage = recoveredQuality.coverage;
+          },
+          getCurrentContentIdentity: () =>
+            getTaskSessionSourceSnapshotIdentity(git, worktreePath),
+        });
+      } catch (error) {
+        const primaryRecoveryError = findPrimaryRecoveryError(error);
+        if (primaryRecoveryError !== undefined) throw primaryRecoveryError;
+        throw error;
+      }
+      taskRecord = taskStore.read(activeCard.id);
+      if (taskRecord === null)
+        throw new Error("Task record disappeared after review repair recovery");
+    }
     if (
       taskRecord.phase === "planning" ||
       taskRecord.phase === "implementation"
     ) {
-      if (
-        taskRecord.phase === "implementation" &&
-        taskRecord.reviewRepair?.status === "active"
-      ) {
-        throw new Error(
-          "Interrupted review repair does not contain its persisted findings; manual attention is required",
-        );
-      }
       cardLog.event("Implementation started");
       await runTaskSessionImplementation({
         taskRecordStore: taskStore,
@@ -3938,18 +4160,6 @@ export async function runTaskSessionWorkflow(
       });
       cardLog.event("Implementation completed");
     }
-    const validationOptions = {
-      project,
-      cardId: activeCard.id,
-      expectedBranch: worktree.branch,
-      operationKey,
-      worktreePath,
-      taskRecordStore: taskStore,
-      git,
-      commands,
-      signal,
-      timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
-    };
     const phaseRecord = taskStore.read(activeCard.id);
     if (phaseRecord === null)
       throw new Error("Task record disappeared before local quality gates");

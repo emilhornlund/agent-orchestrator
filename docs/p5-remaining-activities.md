@@ -1,7 +1,8 @@
 # P5 remaining activities — WIP, not deployment-ready
 
 **Status: NOT READY FOR DEPLOYMENT. T2 and P5 are NOT COMPLETE.** The current
-branch is a preserved, uncommitted T2 work-in-progress checkpoint. The recorded
+branch contains committed R1 work and an uncommitted R2 implementation
+candidate. The recorded
 1,936-test validation predates the independent-review findings below; it is not
 current acceptance, and no product acceptance or phase approval is implied.
 Keep all existing source, tests, scripts, and evidence artifacts. Do not discard
@@ -38,11 +39,12 @@ scope. Do not combine activities.
 > evidence/limits, and unresolved issues. Full `yarn validate` is required once
 > after the ordered T2 fixes/review, not repeatedly after every focused activity.
 
-## Ordered T2 recovery activities (all pending)
+## Ordered T2 recovery activities (R1 committed; R2–R6 unresolved)
 
 ### R1 — Recover published sessions from durable PR identity and owning checkpoint
 
-**Status:** pending; HIGH, blocking. The current gate at workflow symbol
+**Status:** committed on the current branch; R1 implementation activity is
+complete. This does not claim T2 or P5 completion. The prior gate at workflow symbol
 `runTaskSessionWorkflow` (locate with `rg`) prevents recovery from reaching
 published-session reconstruction; `executionRecoveryCard` also ignores its
 result. Published correction-phase implementation is restricted to PR
@@ -82,7 +84,7 @@ minimum integration needed for this recovery path.
 
 ### R2 — Give active primary operation precedence over legacy review remediation
 
-**Status:** pending; HIGH, blocking. Legacy `reviewRemediationFailure` is
+**Status:** implementation candidate in the worktree; HIGH, blocking. Legacy `reviewRemediationFailure` is
 processed before active-primary reservation. After partial edits, restart can
 refuse the active operation; an unchanged fallback can publish without review
 of the active operation. Primary errors may also be incorrectly represented by

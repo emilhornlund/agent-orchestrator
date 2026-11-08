@@ -9,10 +9,11 @@ commit the WIP checkpoint after that review; this is not product approval.
 
 The ordered remaining work, acceptance boundaries, and reusable implementer
 instruction are in [`p5-remaining-activities.md`](p5-remaining-activities.md).
-The next implementation activity is **R1** in that backlog. Do not start T3,
-T4, T5, or later P5 work until the earlier ordered activities are resolved.
-R1–R5 are all pending; partial source edits left by aborted remediation do not
-count as completed or verified activities.
+R1 is committed on the current branch. **R2** is the current implementation
+candidate in the worktree and awaits independent review. Do not start T3, T4,
+T5, or later P5 work until the earlier ordered activities are resolved. R2–R5
+remain pending acceptance; partial source edits left by aborted remediation do
+not count as completed or verified activities. T2 and P5 remain incomplete.
 
 Latest checkpoint validation after the permitted formatting-only change passed
 `TMPDIR="$PWD/node_modules/.p5-tmp" yarn validate`: lint, format, typecheck, and

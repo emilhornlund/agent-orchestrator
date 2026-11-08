@@ -152,7 +152,9 @@ function assertOwner(
     record.cardId !== options.cardId ||
     record.operationKey !== options.operationKey ||
     record.primarySessionId !== options.expectedPrimarySessionId ||
-    (record.phase !== "review" && record.phase !== "validation")
+    (record.phase !== "review" &&
+      record.phase !== "validation" &&
+      record.phase !== "implementation")
   ) {
     throw new TaskSessionReviewRepairError(
       "Review repair requires the owned review-phase task and exact primary session",
@@ -611,29 +613,30 @@ export async function runTaskSessionReviewWithRepairs(
 
     const repairAttempt = attempts + 1;
     const operationId = `${options.operationKey}:review:${cycleId}:pass:${repairAttempt}`;
-    {
-      const prompt =
-        options.buildRepairPrompt?.(ledger.review, repairAttempt) ??
-        JSON.stringify({ review: ledger.review, attempt: repairAttempt });
-      const promptArtifact = options.store.writePrimaryResultArtifact(
-        `${operationId}:prompt`,
-        { prompt, review: ledger.review },
-      );
-      record = updateRecord(options.store, record, {
-        retryCounters: { ...record.retryCounters, review: repairAttempt },
-        reviewRepair: {
-          cycleId,
-          status: "active",
-          maxAttempts: record.reviewRepair?.maxAttempts ?? options.maxAttempts,
-          findings: ledger.findings,
-          activePrimaryOperation: {
-            operationId,
-            pass: repairAttempt,
-            promptArtifact,
-          },
+    const prompt =
+      options.buildRepairPrompt?.(ledger.review, repairAttempt) ??
+      JSON.stringify({ review: ledger.review, attempt: repairAttempt });
+    const promptArtifact = options.store.writePrimaryResultArtifact(
+      `${operationId}:prompt`,
+      { prompt, review: ledger.review },
+    );
+    record = updateRecord(options.store, record, {
+      retryCounters: { ...record.retryCounters, review: repairAttempt },
+      // Once a primary repair is durably reserved, older remediation-failure
+      // state must not be allowed to classify or publish around it.
+      reviewRemediationFailure: undefined,
+      reviewRepair: {
+        cycleId,
+        status: "active",
+        maxAttempts: record.reviewRepair?.maxAttempts ?? options.maxAttempts,
+        findings: ledger.findings,
+        activePrimaryOperation: {
+          operationId,
+          pass: repairAttempt,
+          promptArtifact,
         },
-      });
-    }
+      },
+    });
     logReviewDiagnostic(options, "remediation-started", {
       reviewPass: attempts + 1,
       remediationAttempt: repairAttempt,
@@ -647,7 +650,7 @@ export async function runTaskSessionReviewWithRepairs(
     let failureCategory: "remediation-execution" | "validation" =
       "remediation-execution";
     try {
-      await options.repair(ledger.review, repairAttempt, operationId);
+      await options.repair(ledger.review, repairAttempt, operationId, prompt);
       failureCategory = "validation";
       await options.rerunQuality();
       const afterQuality = options.store.read(options.cardId);
@@ -698,16 +701,20 @@ export async function runTaskSessionReviewWithRepairs(
           { cause: error },
           { before, after, unchanged: false },
         );
-      updateRecord(options.store, latest, {
-        reviewRemediationFailure: {
-          cycleId,
-          attempt: repairAttempt,
-          before,
-          after,
-          unchanged,
-          diagnostic: "Review remediation did not complete",
-        },
-      });
+      if (
+        latest.reviewRepair?.activePrimaryOperation?.operationId !== operationId
+      ) {
+        updateRecord(options.store, latest, {
+          reviewRemediationFailure: {
+            cycleId,
+            attempt: repairAttempt,
+            before,
+            after,
+            unchanged,
+            diagnostic: "Review remediation did not complete",
+          },
+        });
+      }
       logReviewDiagnostic(options, "cycle-failed", {
         category: failureCategory,
         reviewPass: attempts + 1,
