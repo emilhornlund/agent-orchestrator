@@ -1,8 +1,8 @@
 # P5 remaining activities — WIP, not deployment-ready
 
 **Status: NOT READY FOR DEPLOYMENT. T2 and P5 are NOT COMPLETE.** The current
-branch contains committed R1 and R2 work and an uncommitted R3 implementation
-candidate. The recorded
+branch contains committed R1, R2, and R3 work; R4 is an uncommitted candidate.
+The recorded
 1,936-test validation predates the independent-review findings below; it is not
 current acceptance, and no product acceptance or phase approval is implied.
 Keep all existing source, tests, scripts, and evidence artifacts. Do not discard
@@ -122,9 +122,10 @@ budgets, PR correction policy, or unrelated operation replay.
 
 ### R3 — Sanitize reconstruction secrets before persistence and encoding
 
-**Status:** implementation candidate in the worktree; HIGH, blocking. Reconstruction can persist raw card/plan/
-diff/history/untracked content and can encode a whole source file as base64,
-thereby bypassing the intended redaction channel.
+**Status:** committed at `2ca333c`; HIGH, blocking activity complete, subject to
+the later consolidated R6 review. This activity addressed reconstruction
+artifacts persisting untrusted card/plan/diff/history/untracked content and
+encoding whole source files before the intended redaction channel.
 
 **Requirements/scenarios:** P3/P5 shared boundary; REQ-SEC-001, REQ-SEC-002,
 REQ-SEC-003, REQ-LOG-001, REQ-LOG-002, REQ-CTX-001, REQ-CTX-002,
@@ -155,15 +156,19 @@ logging/process redaction outside this artifact path.
 
 ### R4 — Replace false duplicate-comment oracle with canonical mutation journal
 
-**Status:** pending; MEDIUM, blocking to trustworthy failure evidence. Existing
-failure-finalization test substitutes a comment body through a `Set`, collapsing
-duplicate effects, then expects two submits after a lost response. It cannot
-prove the real append-only Trello mutation behavior.
+**Status:** implementation candidate in the worktree; MEDIUM, blocking to
+trustworthy failure evidence. The canonical project-authority integration now
+uses the production `TrelloClient` journal and an append-only transport ledger
+with unique effect IDs. The legacy task-execution boundary substitute also
+records each accepted append independently rather than collapsing equal text.
 
 **Requirements/scenarios:** REQ-PR-003, REQ-NOT-001, REQ-NOT-002,
 REQ-WF-001, REQ-TR-001, REQ-TR-003; VER-PR-003-01, VER-PR-003-02,
 VER-PR-003-03, VER-NOT-001-01, VER-NOT-002-01, VER-WF-001-02,
 VER-WF-001-03, VER-TR-001-01, VER-TR-003-01.
+
+**Tested subset in this candidate:** VER-PR-003-01, VER-PR-003-03,
+VER-NOT-002-01, and VER-WF-001-03.
 
 **Inspect likely files/symbols:** canonical `ProjectRunAuthority`,
 `TrelloClient` comment mutation journal, terminal-failure finalization, and
@@ -175,8 +180,9 @@ with unique effect IDs and a ledger. Cover initially negative lookup followed
 by late acceptance: do not submit a second comment, retain project ownership
 until reconciliation establishes outcome, and deduplicate notification outbox
 delivery without allowing nonblocking email uncertainty to block workflow
-completion. The test must fail if a duplicate real append effect is attempted;
-do not assert behavior by collapsing identical strings in a Set.
+completion. The canonical journal test verifies one POST and one append effect;
+the append-only ledger makes any duplicate accepted effect observable. Do not
+claim provider exactly-once semantics.
 
 **Focused checks:** canonical project authority, Trello mutation journal,
 terminal failure recovery and notification outbox suites, plus late-acceptance

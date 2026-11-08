@@ -62,7 +62,7 @@ describe("terminal failure recovery", () => {
       url: "https://trello.example/card",
     };
     let currentList = project.trello.workingListId;
-    const postedComments = new Set<string>();
+    const postedComments: { effectId: string; text: string }[] = [];
     let failFirstCommentResponse = true;
     const trello = {
       getCards: vi.fn(async (listId: string) =>
@@ -74,7 +74,13 @@ describe("terminal failure recovery", () => {
       }),
       getCard: vi.fn(async () => ({ ...card, idList: currentList })),
       addComment: vi.fn(async (_id: string, text: string) => {
-        postedComments.add(text);
+        // Record each accepted append separately. Identical text is not an
+        // idempotency oracle; the canonical late-acceptance behavior is tested
+        // with a real TrelloClient in workflow-mutations.integration.test.ts.
+        postedComments.push({
+          effectId: `effect-${postedComments.length + 1}`,
+          text,
+        });
         if (failFirstCommentResponse) {
           failFirstCommentResponse = false;
           throw new Error("simulated response loss after comment acceptance");
@@ -159,7 +165,9 @@ describe("terminal failure recovery", () => {
     const emailNotifier = {
       deliveryTarget: "test-inbox@example.invalid",
       isEventEnabled: (event: string) => event === "failed",
-      send: vi.fn(async () => undefined),
+      send: vi.fn(async () => {
+        throw new Error("notification response is ambiguous");
+      }),
     };
     const runWorkflow = () =>
       runTaskSessionWorkflow({
@@ -191,10 +199,14 @@ describe("terminal failure recovery", () => {
       primarySessionId: "session-preserved",
       terminalFailure: { outcome: "confirmed" },
     });
-    expect(postedComments).toHaveLength(1);
+    expect(postedComments).toHaveLength(2);
     expect(trello.addComment).toHaveBeenCalledTimes(2);
     expect(outbox.records()).toHaveLength(1);
     expect(outbox.records()[0]?.event).toBe("failed");
+    await outbox.drain(emailNotifier, vi.fn());
+    // Notification uncertainty is best-effort and cannot roll back the already
+    // confirmed terminal workflow transition.
+    expect(store.read(cardId)?.terminalFailure?.outcome).toBe("confirmed");
     expect(outbox.records()[0]?.message.text).toContain(
       "Primary operation execution budget is exhausted",
     );

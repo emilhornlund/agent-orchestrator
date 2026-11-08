@@ -138,6 +138,7 @@ function fixture(refinement = false) {
     dueComplete: false,
   };
   const comments: { id: string; text: string }[] = [];
+  const commentEffects: { effectId: string; text: string }[] = [];
   const ledger: string[] = [];
   let late: (() => void) | undefined;
   let delay = false;
@@ -173,7 +174,9 @@ function fixture(refinement = false) {
     if (method === "POST" && url.pathname.endsWith("/comments")) {
       const text = url.searchParams.get("text")!;
       const accept = () => {
-        comments.push({ id: `comment-${comments.length + 1}`, text });
+        const effectId = `trello-effect-${commentEffects.length + 1}`;
+        commentEffects.push({ effectId, text });
+        comments.push({ id: effectId, text });
         ledger.push("accepted:comment");
       };
       if (delay) {
@@ -213,6 +216,7 @@ function fixture(refinement = false) {
     git,
     card,
     comments,
+    commentEffects,
     ledger,
     url,
     run,
@@ -1160,23 +1164,34 @@ describe("production workflow client journal", () => {
       f.run(() => f.trello.addComment("card", "Outcome")),
     ).rejects.toBeInstanceOf(WorkflowMutationWaitingError);
     expect(f.store.read()!.pendingOperations[0]!.status).not.toBe("completed");
+    expect(() => f.authority().assertHeld()).not.toThrow();
     const reads = f.ledger.length;
     await f.reconcile();
     expect(f.ledger).toHaveLength(reads);
+    expect(f.commentEffects).toEqual([]);
     f.tick();
     await f.reconcile();
     expect(f.comments).toHaveLength(0);
+    expect(() => f.authority().assertHeld()).not.toThrow();
     f.restart();
+    expect(() => f.authority().assertHeld()).not.toThrow();
     f.acceptLate();
     f.tick();
     await f.reconcile();
     expect(f.comments).toHaveLength(1);
+    expect(f.commentEffects).toHaveLength(1);
+    expect(f.commentEffects[0]?.effectId).toBe("trello-effect-1");
+    expect(f.commentEffects[0]?.text).toMatch(
+      /^Outcome\n\n<!-- agent-orchestrator-mutation:/,
+    );
     expect(
       f.ledger.filter((item) => item === "POST:/1/cards/card/actions/comments"),
     ).toHaveLength(1);
     expect(f.store.read()!.pendingOperations[0]!.status).toBe("completed");
+    expect(() => f.authority().assertHeld()).not.toThrow();
     await f.run(() => f.trello.addComment("card", "Outcome"));
     expect(f.comments).toHaveLength(1);
+    expect(f.commentEffects).toHaveLength(1);
   });
 
   it("retries only a concretely rejected Trello write at a paced dispatch generation", async () => {
