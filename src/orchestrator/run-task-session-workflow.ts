@@ -2792,6 +2792,17 @@ export async function runTaskSessionWorkflow(
     );
     if (initialRecord.phase !== "human-feedback" && !resumableFeedbackReview)
       continue;
+    // A healthy, idle Human Review task has no operation to resume. Avoid
+    // turning a routine poll into a primary-session/worktree recovery check;
+    // that check is required immediately before acting on feedback, but an
+    // idle review remains owned by the human. PR terminal state was already
+    // authoritatively observed above and remains handled by the terminal path.
+    const idleHumanReview =
+      initialRecord.phase === "human-feedback" &&
+      !resumableFeedbackReview &&
+      observation.feedbackIds.length === 0 &&
+      observation.requestedChanges === null &&
+      observation.conversationComments.length === 0;
     const card = latestHumanReviewCards.find(
       (candidate) => candidate.id === initialRecord.cardId,
     );
@@ -2799,13 +2810,16 @@ export async function runTaskSessionWorkflow(
       throw new Error(
         `Observed task-session review card disappeared: ${initialRecord.cardId}`,
       );
-    const recovery = await reconcileOwnedTaskForResume(
-      card,
-      initialRecord,
-      path.join(project.repository.worktreeRoot, card.id),
-    );
-    if (recovery === null || recovery.status !== "resume") continue;
-    const record = recovery.record;
+    const recovery = idleHumanReview
+      ? null
+      : await reconcileOwnedTaskForResume(
+          card,
+          initialRecord,
+          path.join(project.repository.worktreeRoot, card.id),
+        );
+    if (!idleHumanReview && (recovery === null || recovery.status !== "resume"))
+      continue;
+    const record = recovery?.record ?? initialRecord;
     if (record.primarySessionId === undefined) continue;
     if (resumableFeedbackReview) {
       // Durable one-shot authorization. An unsuccessful retry must not be

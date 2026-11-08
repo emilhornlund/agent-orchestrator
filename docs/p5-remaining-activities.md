@@ -1,18 +1,19 @@
-# P5 remaining activities — WIP, not deployment-ready
+# P5 remaining activities — R1–R5 scoped PASS; R6 validation PASS, review pending
 
-**Status: NOT READY FOR DEPLOYMENT. T2 and P5 are NOT COMPLETE.** The current
-branch contains committed R1, R2, and R3 work; R4 is an uncommitted candidate.
-The recorded
-1,936-test validation predates the independent-review findings below; it is not
-current acceptance, and no product acceptance or phase approval is implied.
+**Status: R1–R5 implemented, committed, and independently passed at scoped
+offline review; R6 integrated validation now passes and consolidated independent
+review remains pending. T2 and P5 are
+NOT COMPLETE and this is NOT deployment approval.** The WIP checkpoint was
+preserved as `c0f3a8c`; current R1–R5 commits are `8a877cc`, `82022b7`,
+`2ca333c`, `2e14672`, and `bda892f`. The previously recorded 1,936-test
+validation predates these revisions and is historical, not current acceptance.
 Keep all existing source, tests, scripts, and evidence artifacts. Do not discard
-work or remove artifacts as part of this backlog. The supervisor will perform
-one checkpoint-preservation review before committing the WIP checkpoint; that
-review is not product approval.
+work or remove historical artifacts. R6 integrates review and full validation;
+neither a scoped PASS nor `yarn validate` alone implies product acceptance.
 
 This is the ordered work list. Resolve each activity in order, one at a time.
-Items are pending, including items with candidate tests or historical live
-evidence. Requirements and scenario IDs below refer to
+R1–R5 are complete at their scoped activity gate; R6 review remains pending. Requirements
+and scenario IDs below refer to
 [`requirements.md`](requirements.md), [`specification.md`](specification.md),
 and [`verification.md`](verification.md); the architectural phase scope is
 [`rewrite-plan.md`](rewrite-plan.md), especially P5. None of these entries
@@ -39,12 +40,12 @@ scope. Do not combine activities.
 > evidence/limits, and unresolved issues. Full `yarn validate` is required once
 > after the ordered T2 fixes/review, not repeatedly after every focused activity.
 
-## Ordered T2 recovery activities (R1–R2 committed; R3–R6 unresolved)
+## Ordered T2 recovery activities (R1–R5 scoped PASS; R6 pending)
 
 ### R1 — Recover published sessions from durable PR identity and owning checkpoint
 
-**Status:** committed on the current branch; R1 implementation activity is
-complete. This does not claim T2 or P5 completion. The prior gate at workflow symbol
+**Status:** committed (`8a877cc`); scoped offline checks and independent scoped
+review PASS. This does not claim T2 or P5 completion. The prior gate at workflow symbol
 `runTaskSessionWorkflow` (locate with `rg`) prevents recovery from reaching
 published-session reconstruction; `executionRecoveryCard` also ignores its
 result. Published correction-phase implementation is restricted to PR
@@ -84,8 +85,8 @@ minimum integration needed for this recovery path.
 
 ### R2 — Give active primary operation precedence over legacy review remediation
 
-**Status:** committed on the current branch; R2 implementation activity is
-complete. This does not claim T2 or P5 completion. Legacy `reviewRemediationFailure` is
+**Status:** committed (`82022b7`); scoped offline checks and independent scoped
+review PASS. This does not claim T2 or P5 completion. Legacy `reviewRemediationFailure` is
 processed before active-primary reservation. After partial edits, restart can
 refuse the active operation; an unchanged fallback can publish without review
 of the active operation. Primary errors may also be incorrectly represented by
@@ -122,8 +123,8 @@ budgets, PR correction policy, or unrelated operation replay.
 
 ### R3 — Sanitize reconstruction secrets before persistence and encoding
 
-**Status:** committed at `2ca333c`; HIGH, blocking activity complete, subject to
-the later consolidated R6 review. This activity addressed reconstruction
+**Status:** committed at `2ca333c`; scoped offline checks and independent scoped
+review PASS, subject to the integrated R6 review. This activity addressed reconstruction
 artifacts persisting untrusted card/plan/diff/history/untracked content and
 encoding whole source files before the intended redaction channel.
 
@@ -156,8 +157,8 @@ logging/process redaction outside this artifact path.
 
 ### R4 — Replace false duplicate-comment oracle with canonical mutation journal
 
-**Status:** implementation candidate in the worktree; MEDIUM, blocking to
-trustworthy failure evidence. The canonical project-authority integration now
+**Status:** committed at `2e14672`; scoped offline checks and independent scoped
+review PASS. The canonical project-authority integration now
 uses the production `TrelloClient` journal and an append-only transport ledger
 with unique effect IDs. The legacy task-execution boundary substitute also
 records each accepted append independently rather than collapsing equal text.
@@ -193,8 +194,9 @@ do not expand into all mutation classes.
 
 ### R5 — Make the reconstruction harness neutral and independently observable
 
-**Status:** offline harness and deterministic child/parent regression pass;
-external/live evidence remains unverified. No live probe has been executed for
+**Status:** committed at `bda892f`; offline harness and deterministic child/parent
+regression independently reviewed and PASS. External/live evidence remains
+unverified. No live probe has been executed for
 this revision: model/service access was not separately authorized. The retained
 historical probe is explicitly invalid for R5: its prompt disclosed the
 expected facts, its `.gitignore` was uncommitted before worktree creation, and
@@ -247,7 +249,9 @@ evidence, change product defaults, or assert full lifecycle/production behavior.
 
 ### R6 — One consolidated T2 independent review and full validation
 
-**Status:** pending until R1–R5 have individually passed their activity checks.
+**Status:** remediation and full validation PASS; consolidated independent
+review remains pending. R1–R5 have individually passed their scoped offline
+checks and independent scoped reviews. This task does not claim phase completion.
 
 **Requirements/scenarios:** all P5 T2 mappings listed in `rewrite-plan.md` P5,
 including REQ-WF-002, REQ-WF-003, REQ-PR-003, REQ-REC-001 through
@@ -264,10 +268,39 @@ evidence; it was not proven fixed by isolated reruns. A passing validation is
 not phase completion or product acceptance. No source is claimed to have
 passed review before this activity is complete.
 
-**Checks:** `TMPDIR="$PWD/node_modules/.p5-tmp" yarn validate`, plus any mapped
-T2 scenarios not exercised by this command, classified honestly as passed,
-blocked, partial, or unverified. No production service use unless separately
+**Checks:** `TMPDIR="$PWD/node_modules/.p5-tmp" yarn validate`, plus mapped
+T2 scenarios at their required evidence levels, classified honestly as passed,
+blocked, partial, or unverified. The local scripted OpenCode child/parent
+harness is offline PASS, not live OpenCode, Trello/GitHub, container/deployment,
+or full lifecycle evidence. No production service use unless separately
 authorized.
+
+**R6 validation record (2026-11-08):** The initial full command was run after
+R1–R5 integration. The first run stopped at `prettier --check .` because
+`docs/p5-t2-verification.md` needed formatting; only the three scoped P5 docs
+were formatted automatically. The rerun passed ESLint, Prettier check, and
+TypeScript typecheck, then failed in Vitest: **12 failed, 1,952 passed / 1,964
+total, across 2 failed and 159 passed / 161 total files**. The 2 failures in
+`tests/task-session-auto-merge-lifecycle.test.ts` expected phase
+`human-feedback`, observed `attention-required` (both cases). The 10 failures in
+`tests/task-session-maintenance-dispatch.test.ts` threw
+`TypeError: github.findPullRequestState is not a function` during reconciliation.
+The idle Human Review regression was fixed by avoiding unnecessary session and
+worktree recovery when no feedback operation is pending; authoritative PR
+terminal observation and pre-operation recovery remain in place. A subsequent
+integrated review identified a list-ownership mismatch during published
+feedback correction: durable PR identity plus feedback-remediation ownership
+keeps implementation, validation, review, and publication checkpoints in Human Review without
+implementing the separate P7 move-to-Working policy. A true move away from the
+owning list still creates a manual-move wait. The integrated restart fixture
+now retains Human Review through the actual production feedback checkpoint and
+covers both reachable and confirmed-lost primary sessions; terminal precedence
+remains exercised. Maintenance fixtures also provide authoritative PR/CI,
+trusted-commit, worktree, and session state. Typecheck, lint, and format checks
+passed; the final focused suites passed **63/63** across five files. The
+post-finding `TMPDIR="$PWD/node_modules/.p5-tmp" yarn validate` passed with
+**1,966 tests across 161 files**. This does not replace integrated independent review, mapped
+scenario evidence, or phase/product acceptance.
 
 **Stop boundary:** Do not begin T3/T4/T5 or claim T2/P5 complete. Completion
 decisions remain with the phase planner/supervisor.

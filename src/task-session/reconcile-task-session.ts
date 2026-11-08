@@ -182,8 +182,20 @@ function clearWaitAndResume(
 
 function expectedTrelloList(
   project: ProjectConfig,
-  phase: TaskExecutionPhase,
+  record: TaskExecutionRecord,
 ): string {
+  const { phase } = record;
+  // A feedback-remediation checkpoint has durable ownership evidence that it
+  // belongs to an already-published PR. Its phase can temporarily move back
+  // through implementation/validation/review/publication while the card
+  // intentionally remains in Human Review. PR identity alone is insufficient:
+  // other workflow checkpoints may legitimately still own a Working card.
+  if (
+    record.pullRequest !== undefined &&
+    record.feedbackRemediation !== undefined &&
+    phase !== "done"
+  )
+    return project.trello.reviewListId;
   if (phase === "human-feedback" || phase === "ci")
     return project.trello.reviewListId;
   if (phase === "done") return project.trello.doneListId;
@@ -302,7 +314,7 @@ export async function reconcileTaskSession(
       "Repository setup state is missing, changed, or has an uncertain outcome",
     );
   }
-  if (snapshot.trelloListId !== expectedTrelloList(project, record.phase)) {
+  if (snapshot.trelloListId !== expectedTrelloList(project, record)) {
     if (record.phase === "done")
       return preserveAttention(
         taskRecordStore,

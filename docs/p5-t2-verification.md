@@ -1,11 +1,13 @@
-# P5 T2 isolated OpenCode verification — historical candidate evidence
+# P5 T2 evidence map — R1–R5 scoped offline PASS; R6 validation PASS, review pending
 
-> **WIP only: NOT READY FOR DEPLOYMENT; T2/P5 NOT COMPLETE.** The evidence
-> below records candidate probes and historical test results, not current
-> acceptance or independent-review approval. Independent review found
-> unresolved safety defects and invalid oracles. See
+> **R1–R5 passed scoped offline checks and independent scoped review; R6
+> full validation now passes; consolidated integrated review remains pending. T2/P5 are NOT COMPLETE and
+> this is NOT deployment approval.** This record preserves earlier candidate
+> probe outcomes and maps current offline tests separately. Scoped PASS is not
+> integrated acceptance. See
 > [`p5-remaining-activities.md`](p5-remaining-activities.md) for the ordered
-> backlog. No source is represented as having passed independent review.
+> backlog. No live/provider, container/deployment, or full-lifecycle evidence is
+> inferred from an offline test.
 
 This opt-in harness makes real model requests. It does not use Trello/GitHub,
 does not read application configuration, and does not delete OpenCode sessions.
@@ -64,7 +66,7 @@ and dedicated controlled failure scenarios; this script does not emulate them.
 Provider errors/unsupported model variants are BLOCKED, never a pass, and must
 not trigger blind retries.
 
-## Superseded integrated candidate evidence (2026-11-08; not acceptance)
+## Current R1–R5 offline evidence and historical validation
 
 The A5 policy is three **actual primary executions total** (one initial plus at
 most two recoveries), shared default sourced from existing service retry limits;
@@ -74,7 +76,35 @@ persisted before actual process dispatch. The fresh-child process-finish /
 ledger-CAS gap is now exercised below; T2 still has scenario-matrix gaps and is
 not complete or approved.
 
-Candidate commands (temporary files beneath `node_modules/.p5-tmp`):
+Focused offline evidence includes the following regression tests; this list does
+not constitute a complete P5 scenario pass:
+
+- `tests/review-repair-workflow-recovery.test.ts` exercises production workflow
+  recovery of reserved review repairs before generic gates, including
+  pre-dispatch, post-result persistence, last-pass reservation clearance, and
+  later-pass durable prompt recovery.
+- `tests/primary-task-session.test.ts` includes
+  `persists and dispatches sanitized builder context through canonical artifacts
+without changing a real Git worktree`, which checks canaries are absent from
+  persisted artifacts and outbound reconstruction content.
+- `tests/p5-t2-session-reconstruction-harness.test.ts` runs the neutral scripted
+  OpenCode child/parent harness and verifies production replacement-bound
+  verification before counted primary dispatch.
+- Other directly relevant test files include
+  `tests/task-session-dispatch.test.ts`,
+  `tests/run-task-session-ci-repairs.test.ts`,
+  `tests/run-task-session-feedback-remediation.test.ts`,
+  `tests/run-task-session-validation-repairs.test.ts`,
+  `tests/run-task-session-review-repairs.test.ts`,
+  `tests/run-primary-operation.test.ts`,
+  `tests/primary-operation-ledger.test.ts`,
+  `tests/inspect-primary-operation.test.ts`,
+  `tests/persist-primary-operation-recovery.test.ts`,
+  `tests/build-primary-session-context.test.ts`,
+  `tests/primary-result-artifact.test.ts`, and
+  `tests/task-session-terminal-failure-recovery.test.ts`.
+
+Historical focused candidate commands (temporary files beneath `node_modules/.p5-tmp`):
 
 ```sh
 TMPDIR="$PWD/node_modules/.p5-tmp" yarn lint:fix
@@ -102,21 +132,50 @@ was found. The focused integrated selection passed **206/206 tests across 19
 files**. Final `TMPDIR="$PWD/node_modules/.p5-tmp" yarn validate` passed for
 this candidate: lint, format, typecheck, and **1,936 tests across 159 files**.
 Full code health does not itself close external-service or lifecycle scenario
-coverage.
+coverage. This historical validation predates R1–R5 and is not the required R6
+validation.
+
+### R6 integrated validation (2026-11-08)
+
+The initial `TMPDIR="$PWD/node_modules/.p5-tmp" yarn validate` after R1–R5
+integration stopped at Prettier because this evidence document needed formatting;
+Prettier was then run on the three scoped P5 docs. On rerun, lint, format check,
+and typecheck passed, but Vitest failed with **12
+failed, 1,952 passed / 1,964 tests total**, across **2 failed and 159 passed /
+161 files total**. `tests/task-session-auto-merge-lifecycle.test.ts` had two
+failures expecting phase `human-feedback` but receiving `attention-required`.
+`tests/task-session-maintenance-dispatch.test.ts` had ten failures because the
+test GitHub stub lacked `findPullRequestState`, throwing during reconciliation.
+The idle Human Review bug was fixed by avoiding unnecessary recovery checks on
+polls with no pending feedback operation; terminal PR observation and
+pre-operation recovery remain intact. The maintenance fixture now supplies
+authoritative PR/CI, trusted-commit, worktree, and OpenCode session state. A
+subsequent integrated review found that a published feedback correction moves
+the durable task through implementation/validation/review/publication while its
+card remains in Human Review. Reconciliation uses durable PR identity together
+with feedback-remediation ownership to recognize that list and still waits on a
+genuine manual move. PR identity alone does not override normal Working-list
+expectations for other checkpoints. The production restart regression covers
+reachable and confirmed-lost sessions without moving the card to Working
+artificially; the existing terminal precedence case remains. Five focused suites
+passed **63/63**; typecheck, lint, and format checks passed. The post-finding
+`TMPDIR="$PWD/node_modules/.p5-tmp" yarn validate` passed with **1,966 tests
+across 161 files**. This is validation evidence only; integrated independent
+review and mapped scenario evidence remain pending. No live service was used.
 
 ### Scenario mapping / evidence gaps
 
-| Requirement / scenario                                | Candidate evidence                                                                                                                                                                                                                               | Qualification                                                                                                                                                                                                       |
-| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| REQ-PR-003; VER-PR-003-01/02/03                       | Three failed primary executions persist exhaustion; stateful workflow recovery verifies `Failed`, one explanatory Trello comment, preserved partial work, deduplicated failed outbox event, and pending comment ownership through response loss. | Live Trello/GitHub are deliberately not contacted; the configured service boundaries are replaced by stateful adapters.                                                                                             |
-| REQ-REC-001; VER-REC-001-01                           | Real child finalizes OpenCode success; parent is killed before ledger CAS; fresh child adopts cached result with one execution and zero prepared dispatches.                                                                                     | P3 shutdown/descendant tests cover host process-tree termination; this T2 fixture targets the additional OpenCode-result/ledger-CAS gap.                                                                            |
-| REQ-REC-002; VER-REC-002-01                           | `tests/p5-t2-session-reconstruction-harness.test.ts` runs the actual reconstruction harness and fresh-parent resume through a scripted local OpenCode CLI; production reconstruction-role verification precedes one counted primary resume.      | Offline isolated fixture only. The prior real probe is invalid R5 evidence (answer-revealing prompt, incorrect ignore setup, manual verification); the revised live probe remains unexecuted pending authorization. |
-| REQ-REC-003/004; VER-REC-003-01/004-01                | Durable primary wait/exhaustion tests; P4 stateful route-crash matrices; task-session reconciliation, mutation-queue and canonical project-ownership suites.                                                                                     | These deterministic suites cover the respective failure and ownership transitions; no live Trello/GitHub service is contacted, per task constraint.                                                                 |
-| REQ-REC-005/006; VER-REC-005-01/02, VER-REC-006-01/02 | P2 upgrade-artifact/legacy-import and P3 shutdown/process-descendant/adapter-matrix tests pass in full validation; real T2 restart fixtures also preserve source/worktree/index/all refs.                                                        | Prior-phase generic shutdown/upgrade/process tests are inherited evidence; this task adds T2-specific session and process-result recovery rather than repeating container rollout.                                  |
-| REQ-IMP-002/004; VER-IMP-002-01, VER-IMP-004-01/02    | Context builder plus real read-only reconstruction/resume fixture; source checkout, staged index, untracked/ignored files and all refs fingerprint unchanged; a second deterministic loss retains lineage.                                       | Repeated loss after a live code edit is covered by deterministic baseline/lineage regression; only the first replacement cycle is billable real-model evidence.                                                     |
-| REQ-CTX-001; VER-CTX-001-01                           | The scripted child/parent harness checks distinct plan (`cobalt91`) and actual attachment (`lantern47`) text in production context and observes both in scripted responses to neutral prompts.                                                   | Offline isolated fixture only; no Trello attachment download is covered. The historical live prompt included answer facts and is invalid as neutral recall evidence.                                                |
-| REQ-CTX-002; VER-CTX-002-01                           | No R5-specific clarification evidence.                                                                                                                                                                                                           | Unverified by this harness; do not infer clarification acceptance from retrieval/context continuity.                                                                                                                |
-| REQ-TST-001/002; VER-TST-001-01/02, VER-TST-002-01    | The R5 scripted child/parent regression test executes the disposable Git/OpenCode-harness path and independently inspects fixture evidence.                                                                                                      | This single deterministic case is not a complete lifecycle/fault matrix or realistic external-service baseline; those obligations remain unverified/partial.                                                        |
+| Requirement / scenario                                | Current offline test/evidence                                                                                                                                                                                     | Qualification                                                                                                                                            |
+| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| REQ-PR-003; VER-PR-003-01/02/03                       | `tests/task-session-terminal-failure-recovery.test.ts`, `tests/project-run-authority-lifecycle.test.ts`, and P4 mutation/outbox suites exercise terminal failure, comments, ownership, and notification effects.  | Stateful offline adapters only; no live Trello/GitHub semantics or provider exactly-once guarantee.                                                      |
+| REQ-REC-001; VER-REC-001-01                           | `tests/run-primary-operation.test.ts` (`reconciles process-finalized success after restart before ledger completion without dispatch`); retained isolated process replay evidence.                                | Offline regression and historical isolated execution; neither establishes live provider lifecycle.                                                       |
+| REQ-REC-002; VER-REC-002-01                           | `tests/p5-t2-session-reconstruction-harness.test.ts` runs revised neutral harness/fresh-parent resume; `tests/primary-task-session.test.ts` exercises production reconstruction boundaries.                       | Scripted harness PASS is offline only. Earlier real probe is invalid R5 evidence; revised live probe is unexecuted and unverified pending authorization. |
+| REQ-REC-003/004; VER-REC-003-01/004-01                | `tests/persist-primary-operation-recovery.test.ts`, `tests/task-session-dispatch.test.ts`, P4 stateful route-crash, reconciliation, mutation-queue and project-ownership suites.                                  | Deterministic offline transition evidence only; no live Trello/GitHub service is contacted.                                                              |
+| REQ-REC-005/006; VER-REC-005-01/02, VER-REC-006-01/02 | Inherited `tests/p2-upgrade-artifact.test.ts`, P3 shutdown/process-descendant/adapter-matrix suites, and R1–R5 restart regressions.                                                                               | Does not cover every required container/deployment variant; relevant mapped variants remain partial or unverified.                                       |
+| REQ-IMP-002/004; VER-IMP-002-01, VER-IMP-004-01/02    | `tests/build-primary-session-context.test.ts`, `tests/primary-task-session.test.ts` (baseline/lineage regression), and reconstruction harness; fixture fingerprints cover checkout/worktree/index/refs and files. | Offline context/Git fixture evidence. Historical live fixture is invalid R5 acceptance; no revised live replacement cycle has run.                       |
+| REQ-CTX-001; VER-CTX-001-01                           | `tests/p5-t2-session-reconstruction-harness.test.ts` checks distinct plan and actual attachment facts in production context and scripted neutral responses.                                                       | Offline isolated fixture only; no Trello attachment-download/provider evidence.                                                                          |
+| REQ-CTX-002; VER-CTX-002-01                           | No R5-specific clarification evidence is identified in this harness map.                                                                                                                                          | Unverified here; do not infer clarification acceptance from retrieval/context continuity.                                                                |
+| REQ-TST-001/002; VER-TST-001-01/02, VER-TST-002-01    | `tests/p5-t2-session-reconstruction-harness.test.ts` executes disposable Git/OpenCode harness and inspects evidence; other tests exercise deterministic faults and workflow recovery.                             | Not a full lifecycle/fault matrix or realistic external-service baseline; obligations remain partial or unverified at required levels.                   |
 
 ### Production OpenCode role inventory
 

@@ -813,6 +813,51 @@ describe("reconcileTaskSession", () => {
     expect(blocked.status).not.toBe("resume");
   });
 
+  it("keeps a published feedback-correction checkpoint in Human Review and still protects manual moves", async () => {
+    const f = fixture("validation");
+    const initial = f.store.read("card");
+    if (initial === null) throw new Error("Expected validation checkpoint");
+    f.store.compareAndSwap("card", initial.revision, {
+      ...initial,
+      pullRequest: {
+        number: 1,
+        url: "https://github.com/o/r/pull/1",
+        headSha: f.sha,
+      },
+      feedbackRemediation: {
+        operationId: "feedback:published-correction",
+        status: "changed",
+        headSha: f.sha,
+        ledgerRevision: 1,
+      },
+      revision: initial.revision + 1,
+    });
+    const prSnapshot = {
+      pullRequest: {
+        number: 1,
+        url: "https://github.com/o/r/pull/1",
+        headSha: f.sha,
+        state: "OPEN" as const,
+      },
+      trustedCommitSha: f.sha,
+    };
+
+    const unexpectedWorkingMove = await f.reconcile({
+      ...prSnapshot,
+      trelloListId: "working",
+    });
+    expect(unexpectedWorkingMove.status).toBe("waiting");
+    expect(unexpectedWorkingMove.record.recoveryWait?.kind).toBe("manual-move");
+
+    const returnedReviewCard = await f.reconcile(
+      { ...prSnapshot, trelloListId: "review" },
+      () => Date.now() + 5_000,
+    );
+    expect(returnedReviewCard.status).toBe("resume");
+    expect(returnedReviewCard.record.phase).toBe("validation");
+    expect(returnedReviewCard.record.recoveryWait).toBeUndefined();
+  });
+
   it("keeps a failed-CI checkpoint blocked when its OPEN PR card is in Backlog, then verifies safe return", async () => {
     const f = fixture("ci");
     const moved = await f.reconcile({
