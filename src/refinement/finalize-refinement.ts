@@ -1,4 +1,6 @@
 import type { ProjectConfig } from "../config/config.js";
+import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
+import { sanitizeControlledText } from "../security/redact-secrets.js";
 import {
   TrelloRequestAbortedError,
   type TrelloCard,
@@ -6,6 +8,15 @@ import {
 } from "../trello/trello-client.js";
 
 import type { RefinementResult } from "./refinement-result.js";
+
+import {
+  refinementMutationSnapshotSchema,
+  refinementMutationSnapshotKey,
+} from "./refinement-mutation-snapshot.js";
+export {
+  refinementMutationSnapshotSchema,
+  refinementMutationSnapshotKey,
+} from "./refinement-mutation-snapshot.js";
 
 function getClassificationLabelId(
   project: ProjectConfig,
@@ -29,6 +40,7 @@ export async function finalizeRefinement(
   card: TrelloCard,
   result: RefinementResult,
   signal?: AbortSignal,
+  beforeFinalMove?: () => void,
 ): Promise<void> {
   const classificationLabelId = getClassificationLabelId(project, result.type);
 
@@ -37,6 +49,50 @@ export async function finalizeRefinement(
     project.trello.improvementLabelId,
     project.trello.bugLabelId,
   ];
+  const authority = ProjectRunAuthority.current(project.id);
+  if (authority) {
+    const snapshot = refinementMutationSnapshotSchema.parse({
+      cardId: card.id,
+      original: {
+        title: sanitizeControlledText(card.name),
+        description: sanitizeControlledText(card.desc),
+        labels: card.idLabels,
+      },
+      intended: {
+        title: sanitizeControlledText(result.title),
+        description: sanitizeControlledText(result.description),
+        type: result.type,
+        labels: [
+          ...card.idLabels.filter(
+            (id) =>
+              ![
+                ...classificationLabelIds,
+                project.trello.refinementLabelId,
+              ].includes(id),
+          ),
+          classificationLabelId,
+        ],
+      },
+    });
+    const prior = authority.read(
+      refinementMutationSnapshotKey,
+      refinementMutationSnapshotSchema.parse,
+    );
+    if (
+      prior &&
+      JSON.stringify(prior.intended) !== JSON.stringify(snapshot.intended)
+    )
+      throw new Error(
+        "Refinement intended result changed; preserve original fields for reconciliation",
+      );
+    if (!prior)
+      authority.mutate(
+        refinementMutationSnapshotKey,
+        null,
+        () => ({ value: snapshot, result: undefined }),
+        refinementMutationSnapshotSchema.parse,
+      );
+  }
 
   if (signal?.aborted) {
     throw new TrelloRequestAbortedError();
@@ -72,5 +128,6 @@ export async function finalizeRefinement(
     throw new TrelloRequestAbortedError();
   }
 
+  beforeFinalMove?.();
   await trello.moveCard(card.id, project.trello.backlogListId);
 }

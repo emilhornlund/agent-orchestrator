@@ -12,6 +12,12 @@ import type { GitClient } from "../git/git-client.js";
 import type { GitHubClient } from "../github/github-client.js";
 import { logger, type Logger } from "../logging/logger.js";
 import type { EmailNotifier } from "../notifications/email-notifier.js";
+import {
+  drainNotifications,
+  NotificationPreparationError,
+  deferNotificationPreparation,
+  notificationPreparationDue,
+} from "../notifications/notification-outbox.js";
 import type { OpenCodeClient } from "../opencode/opencode-client.js";
 import type { CommandRunner } from "../process/command-runner.js";
 import { runRefinementCardWorkflow } from "../refinement/run-refinement-card.js";
@@ -19,6 +25,7 @@ import { runTaskSessionWorkflow } from "./run-task-session-workflow.js";
 import { WorkflowError } from "./workflow-error.js";
 import type { TrelloCard, TrelloClient } from "../trello/trello-client.js";
 import type { ProjectRunAuthority } from "../task-session/project-run-authority.js";
+import { reconcileWorkflowMutations } from "./reconcile-workflow-mutations.js";
 
 export type PollingProject = ProjectConfig & {
   contextRoot?: string;
@@ -90,8 +97,14 @@ export async function pollProject(
   if (signal.aborted) return;
 
   const execute = () =>
-    withActiveProjectContext(project.id, () =>
-      runTaskSessionWorkflow({
+    withActiveProjectContext(project.id, async () => {
+      drainNotifications(project.id, emailNotifier, (message) =>
+        logger.child({ projectId: project.id }).warn(message),
+      );
+      if (await reconcileWorkflowMutations({ project, trello, github, git }))
+        return;
+      if (!notificationPreparationDue(project.id)) return;
+      return runTaskSessionWorkflow({
         project,
         trello,
         git,
@@ -140,8 +153,35 @@ export async function pollProject(
                 ),
             }),
           ),
-      }),
-    );
-  if (authority) await authority.run(execute);
-  else await execute();
+      });
+    });
+  try {
+    if (authority) await authority.run(execute);
+    else await execute();
+  } catch (error) {
+    if (error instanceof NotificationPreparationError) {
+      const defer = () =>
+        deferNotificationPreparation(project.id, (message) =>
+          logger.child({ projectId: project.id }).warn(message),
+        );
+      if (authority) authority.run(defer);
+      else defer();
+      return;
+    }
+    if (
+      !authority?.store
+        .read()
+        ?.pendingOperations.some(
+          (entry) =>
+            entry.id.startsWith("workflow:") &&
+            !["completed", "cancelled"].includes(entry.status),
+        )
+    )
+      throw error;
+    logger
+      .child({ projectId: project.id })
+      .info(
+        "Pending workflow effect retains project ownership; reconciliation will precede further work",
+      );
+  }
 }

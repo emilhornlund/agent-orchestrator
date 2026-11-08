@@ -4,7 +4,8 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { pathToFileURL } from "node:url";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Config, ProjectConfig } from "../src/config/config.js";
 import { GitClient, type RunGit } from "../src/git/git-client.js";
 import {
@@ -34,6 +35,7 @@ const execFile = promisify(nodeExecFile);
 let roots: string[] = [];
 const leases: ProjectOwnershipLease[] = [];
 afterEach(async () => {
+  vi.useRealTimers();
   await Promise.all(leases.splice(0).map((lease) => lease.release()));
   for (const root of roots) fs.rmSync(root, { recursive: true, force: true });
   roots = [];
@@ -55,7 +57,7 @@ describe("P1 production lifecycle through pollProject", () => {
       ackLoss: boolean;
     }) =>
       ackLoss
-        ? "blocks an accepted PR whose create acknowledgement was lost without claiming the next card"
+        ? "reconciles an accepted PR whose create acknowledgement was lost without claiming the next card"
         : `publishes a ${draft ? "draft" : "normal"} PR and waits for human ${terminal} before releasing the next card`,
     async ({ draft, terminal, destination, ackLoss }) => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "p1-lifecycle-"));
@@ -88,12 +90,24 @@ describe("P1 production lifecycle through pollProject", () => {
       const gitCalls: string[][] = [];
       const runGit: RunGit = async (cwd, args, override) => {
         gitCalls.push([...args]);
-        const result = await execFile("git", args, {
-          cwd,
-          env: { ...env, ...override },
-          encoding: "utf8",
-          timeout: 20_000,
-        });
+        const result = await execFile(
+          "git",
+          [
+            ...(["fetch", "push", "ls-remote"].includes(args[0] ?? "")
+              ? [
+                  "-c",
+                  `url.${pathToFileURL(remote).href}.insteadOf=https://github.com/owner/repo.git`,
+                ]
+              : []),
+            ...args,
+          ],
+          {
+            cwd,
+            env: { ...env, ...override },
+            encoding: "utf8",
+            timeout: 20_000,
+          },
+        );
         return result.stdout.trim();
       };
       let git = new GitClient(runGit);
@@ -110,6 +124,13 @@ describe("P1 production lifecycle through pollProject", () => {
       await gitRun(source, "add", ".");
       await gitRun(source, "commit", "-m", "initial");
       await gitRun(source, "push", "-u", "origin", "main");
+      await gitRun(
+        source,
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/repo.git",
+      );
 
       const project: ProjectConfig & { contextRoot: string } = {
         id: "p1",
@@ -272,6 +293,18 @@ describe("P1 production lifecycle through pollProject", () => {
             detail: comment,
           });
         },
+        getCardComments: async (id: string) =>
+          ledger
+            .filter(
+              (entry) =>
+                entry.service === "trello" &&
+                entry.action === "comment" &&
+                entry.id === id,
+            )
+            .map((entry, index) => ({
+              id: `comment-${index}`,
+              text: entry.detail!,
+            })),
         getCardAttachments: async () => [],
       } as unknown as TrelloClient;
       type PullRequestFixture = {
@@ -282,6 +315,8 @@ describe("P1 production lifecycle through pollProject", () => {
         isDraft: boolean;
         reviewDecision: string;
         headBranch: string;
+        title: string;
+        body: string;
       };
       const prs = new Map<string, PullRequestFixture>();
       const requests: string[] = [];
@@ -324,6 +359,15 @@ describe("P1 production lifecycle through pollProject", () => {
           );
           if (pr) pr.isDraft = true;
         },
+        getPullRequestPublicationFields: async (input: {
+          pullRequestUrl: string;
+        }) => {
+          const pr = [...prs.values()].find(
+            (candidate) => candidate.url === input.pullRequestUrl,
+          );
+          if (!pr) throw new Error("PR not found");
+          return { title: pr.title, body: pr.body, isDraft: pr.isDraft };
+        },
         createPullRequest: async (input: {
           headBranch: string;
           draft?: boolean;
@@ -350,7 +394,7 @@ describe("P1 production lifecycle through pollProject", () => {
               `missing pushed remote head for ${input.headBranch}`,
             );
           const number = prs.size + 41;
-          const url = `https://github.test/owner/repo/pull/${number}`;
+          const url = `https://github.com/owner/repo/pull/${number}`;
           const pr: PullRequestFixture = {
             number,
             url,
@@ -359,6 +403,8 @@ describe("P1 production lifecycle through pollProject", () => {
             isDraft: input.draft === true,
             reviewDecision: "REVIEW_REQUIRED",
             headBranch: input.headBranch,
+            title: input.title,
+            body: input.body,
           };
           prs.set(input.headBranch, pr);
           accepted.push(url);
@@ -565,7 +611,9 @@ describe("P1 production lifecycle through pollProject", () => {
       const signal = new AbortController().signal;
       const authorities = new Map<string, ProjectRunAuthority>();
       let activeAuthority: ProjectRunAuthority | undefined;
+      vi.useFakeTimers({ toFake: ["Date"] });
       const poll = async () => {
+        vi.setSystemTime(Date.now() + 15_001);
         if (activeAuthority === undefined) {
           const eligible = await trello.getCards(project.trello.readyListId);
           const selected = eligible.find((card) =>
@@ -643,9 +691,8 @@ describe("P1 production lifecycle through pollProject", () => {
       };
       loseCreateAcknowledgement = ackLoss;
       if (ackLoss) {
-        await expect(poll()).rejects.toThrow(
-          "simulated lost create-PR acknowledgement after acceptance",
-        );
+        for (let pass = 0; pass < 8 && accepted.length === 0; pass++)
+          await poll();
         expect(accepted).toHaveLength(1);
         expect(prs.get("agent/first")).toBeDefined();
         // Reconstruct application clients around independently retained service resources.
@@ -653,9 +700,6 @@ describe("P1 production lifecycle through pollProject", () => {
         github = Object.assign(
           Object.create(Object.getPrototypeOf(github)) as GitHubClient,
           github,
-        );
-        await expect(poll()).rejects.toThrow(
-          "A pull request exists but its identity was not persisted; refusing to guess publication ownership",
         );
         expect(requests).toEqual(["agent/first"]);
         expect(accepted).toHaveLength(1);
@@ -684,7 +728,7 @@ describe("P1 production lifecycle through pollProject", () => {
         expect(store.read("next")).toBeNull();
         expect(fs.existsSync(path.join(worktrees, "next"))).toBe(false);
         expect(openCodeCards).not.toContain("next");
-        expect(store.read("first")?.phase).toBe("attention-required");
+        expect(store.read("first")?.phase).toBe("publication");
         expect(
           fs.existsSync(
             path.join(contextRoot, "task-executions", project.id, "first.json"),
@@ -696,12 +740,12 @@ describe("P1 production lifecycle through pollProject", () => {
               service === "github" && action === "accept:create-pr",
           ),
         ).toBe(true);
-        // Characterization: after accepted create and lost acknowledgement, production restart currently refuses to infer PR ownership.
-        return;
+        // P4 replaces the P1 characterization blockage: the retained dispatch
+        // and correlation marker now authorize readback, never another create.
       }
       for (
         let attempt = 0;
-        attempt < 5 && store.read("first")?.phase !== "human-feedback";
+        attempt < 15 && store.read("first")?.phase !== "human-feedback";
         attempt += 1
       )
         await poll();
@@ -756,7 +800,7 @@ describe("P1 production lifecycle through pollProject", () => {
       firstPr!.headRefOid = sha;
       for (
         let attempt = 0;
-        attempt < 3 && lists.get("first") === project.trello.reviewListId;
+        attempt < 12 && activeAuthority !== undefined;
         attempt += 1
       )
         await poll();

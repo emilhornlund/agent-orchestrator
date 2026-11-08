@@ -1,6 +1,16 @@
 import { z } from "zod";
 import { sanitizeControlledText } from "../security/redact-secrets.js";
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
+import {
+  mutationAuthority,
+  consumeJournaledDispatch,
+  assertJournaledTransport,
+  workflowMutation,
+} from "../task-session/workflow-mutation.js";
+import {
+  refinementMutationSnapshotKey,
+  refinementMutationSnapshotSchema,
+} from "../refinement/refinement-mutation-snapshot.js";
 
 export interface TrelloClientOptions {
   apiKey: string;
@@ -35,6 +45,7 @@ export interface TrelloCard {
   idLabels: string[];
   url: string;
   start?: string;
+  dueComplete?: boolean | undefined;
 }
 
 export interface TrelloAttachment {
@@ -85,6 +96,18 @@ export type TrelloRequestOperation =
   | "attachment metadata"
   | "attachment download";
 
+function rejectedMutation(
+  error: unknown,
+  operation: TrelloRequestOperation,
+): { status: number; operation: string } | undefined {
+  return error instanceof TrelloRequestError &&
+    error.operation === operation &&
+    error.status !== undefined &&
+    [400, 401, 403, 404, 405, 422].includes(error.status)
+    ? { status: error.status, operation }
+    : undefined;
+}
+
 const trelloBoardSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -117,6 +140,7 @@ const trelloCardResponseSchema = z.object({
   idLabels: z.array(z.string()),
   url: z.string(),
   start: trelloTimestampSchema.nullable().optional(),
+  dueComplete: z.boolean().optional(),
 });
 
 const trelloCardSchema = trelloCardResponseSchema.transform(
@@ -380,6 +404,8 @@ export class TrelloClient {
     init?: RequestInit,
   ): Promise<Response> {
     const dispatch = async (): Promise<Response> => {
+      if (init?.method && !["GET", "HEAD"].includes(init.method))
+        assertJournaledTransport();
       try {
         return await fetch(url, init);
       } catch (error) {
@@ -591,6 +617,23 @@ export class TrelloClient {
     );
   }
 
+  getCardComments(cardId: string): Promise<{ id: string; text: string }[]> {
+    return this.get(
+      `/cards/${cardId}/actions`,
+      z.array(
+        z.object({
+          id: z.string().min(1),
+          type: z.literal("commentCard"),
+          data: z.object({ text: z.string() }),
+        }),
+      ),
+      { filter: "commentCard", limit: "1000" },
+      "card action lookup",
+    ).then((actions) =>
+      actions.map((action) => ({ id: action.id, text: action.data.text })),
+    );
+  }
+
   moveCard(
     cardId: string,
     listId: string,
@@ -598,6 +641,63 @@ export class TrelloClient {
       dueComplete?: boolean;
     } = {},
   ): Promise<TrelloCard> {
+    options = { ...options };
+    const authority = mutationAuthority(undefined);
+    if (
+      !consumeJournaledDispatch(authority, {
+        route: "trello-move",
+        args: { cardId, listId, options },
+      }) &&
+      authority
+    ) {
+      const run = authority.store.read()!;
+      if (
+        cardId !== run.cardId ||
+        !Object.values(run.pinned.lists).includes(listId)
+      )
+        throw new Error("Trello move differs from pinned attempt destination");
+      if (listId === run.pinned.lists.ready)
+        throw new Error(
+          "Automatic requeue is not an allowed workflow transition",
+        );
+      if (listId === run.pinned.lists.failed && run.publicationState !== "none")
+        throw new Error("An active or uncertain PR cannot be moved to Failed");
+      return workflowMutation({
+        authority,
+        kind: "trello-move",
+        rejected: (error) => rejectedMutation(error, "card move"),
+        target: `trello:${run.pinned.boardId}:${cardId}`,
+        request: { route: "trello-move", args: { cardId, listId, options } },
+        preflight: async () => {
+          const current = await this.observeMutationCard(authority);
+          const allowedSources =
+            listId === run.pinned.lists.working
+              ? run.publicationState === "none"
+                ? [run.pinned.lists.ready, run.pinned.lists.working]
+                : [run.pinned.lists.review, run.pinned.lists.working]
+              : listId === run.pinned.lists.failed
+                ? [
+                    run.pinned.lists.ready,
+                    run.pinned.lists.working,
+                    run.pinned.lists.failed,
+                  ]
+                : [run.pinned.lists.working, run.pinned.lists.review, listId];
+          if (!allowedSources.includes(current.idList))
+            throw new Error(
+              "Unexpected manual Trello destination; preserving pending move",
+            );
+        },
+        send: () => this.moveCard(cardId, listId, options),
+        observe: async () => {
+          const card = await this.observeMutationCard(authority);
+          return card.idList === listId &&
+            (options.dueComplete === undefined ||
+              card.dueComplete === options.dueComplete)
+            ? { id: card.id, fields: card, result: card }
+            : null;
+        },
+      });
+    }
     const parameters: Record<string, string | boolean> = {
       idList: listId,
       pos: "top",
@@ -620,6 +720,55 @@ export class TrelloClient {
     title: string,
     description: string,
   ): Promise<TrelloCard> {
+    const authority = mutationAuthority(undefined);
+    if (
+      !consumeJournaledDispatch(authority, {
+        route: "trello-content",
+        args: { cardId, title, description },
+      }) &&
+      authority
+    ) {
+      this.assertRefinementMutation(authority, cardId);
+      title = sanitizeControlledText(title);
+      description = sanitizeControlledText(description);
+      return workflowMutation({
+        authority,
+        kind: "trello-content",
+        rejected: (error) => rejectedMutation(error, "card content update"),
+        target: `trello:${authority.store.read()!.pinned.boardId}:${cardId}`,
+        request: {
+          route: "trello-content",
+          args: { cardId, title, description },
+        },
+        preflight: async () => {
+          const current = await this.observeMutationCard(authority);
+          const snapshot = authority.read(
+            refinementMutationSnapshotKey,
+            refinementMutationSnapshotSchema.parse,
+          );
+          if (
+            !snapshot ||
+            snapshot.intended.title !== title ||
+            snapshot.intended.description !== description ||
+            !(
+              (current.name === snapshot.original.title &&
+                current.desc === snapshot.original.description) ||
+              (current.name === title && current.desc === description)
+            )
+          )
+            throw new Error(
+              "Refinement fields conflict with original/intended snapshot",
+            );
+        },
+        send: () => this.updateCardContent(cardId, title, description),
+        observe: async () => {
+          const card = await this.observeMutationCard(authority);
+          return card.name === title && card.desc === description
+            ? { id: card.id, fields: card, result: card }
+            : null;
+        },
+      });
+    }
     return this.put(
       `/cards/${cardId}`,
       {
@@ -632,6 +781,7 @@ export class TrelloClient {
   }
 
   async addLabel(cardId: string, labelId: string): Promise<void> {
+    if (await this.journalLabel(cardId, labelId, true)) return;
     await this.postWithoutResponse(
       `/cards/${cardId}/idLabels`,
       {
@@ -642,10 +792,49 @@ export class TrelloClient {
   }
 
   async removeLabel(cardId: string, labelId: string): Promise<void> {
+    if (await this.journalLabel(cardId, labelId, false)) return;
     await this.delete(`/cards/${cardId}/idLabels/${labelId}`, "label update");
   }
 
   addComment(cardId: string, text: string): Promise<TrelloCommentAction> {
+    const authority = mutationAuthority(undefined);
+    if (
+      !consumeJournaledDispatch(authority, {
+        route: "trello-comment",
+        args: { cardId, text },
+      }) &&
+      authority
+    ) {
+      if (cardId !== authority.store.read()!.cardId)
+        throw new Error("Trello comment card differs from attempt");
+      text = sanitizeControlledText(text);
+      return workflowMutation({
+        authority,
+        kind: "trello-comment",
+        rejected: (error) => rejectedMutation(error, "comment"),
+        target: `trello:${authority.store.read()!.pinned.boardId}:${cardId}`,
+        request: { route: "trello-comment", args: { cardId, text } },
+        preflight: async () => {
+          await this.observeMutationCard(authority);
+        },
+        send: async (marker) => {
+          return this.addComment(cardId, `${text}\n\n${marker}`);
+        },
+        observe: async (marker) => {
+          await this.observeMutationCard(authority);
+          const comments = (await this.getCardComments(cardId)).filter(
+            (comment) => comment.text === `${text}\n\n${marker}`,
+          );
+          if (comments.length !== 1) return null;
+          const result = {
+            id: comments[0]!.id,
+            type: "commentCard",
+            date: new Date().toISOString(),
+          };
+          return { id: result.id, fields: comments[0], result };
+        },
+      });
+    }
     // Trello documents comment text as a query parameter; this endpoint does
     // not document the JSON request-body alternative supported by card PUTs.
     return this.post(
@@ -654,6 +843,82 @@ export class TrelloClient {
       trelloCommentActionSchema,
       "comment",
     );
+  }
+
+  private assertRefinementMutation(
+    authority: ProjectRunAuthority,
+    cardId: string,
+  ): void {
+    const run = authority.store.read()!;
+    if (run.cardId !== cardId || run.taskKind !== "refinement")
+      throw new Error(
+        "Only the owned refinement card may change content or labels",
+      );
+  }
+
+  private async observeMutationCard(
+    authority: ProjectRunAuthority,
+  ): Promise<TrelloCard> {
+    const run = authority.store.read()!;
+    const actual = await this.get(
+      `/cards/${run.cardId}`,
+      trelloCardResponseSchema.extend({ idBoard: z.string() }),
+    );
+    if (actual.id !== run.cardId || actual.idBoard !== run.pinned.boardId)
+      throw new Error("Trello readback differs from pinned board/card");
+    return trelloCardSchema.parse(actual);
+  }
+
+  private async journalLabel(
+    cardId: string,
+    labelId: string,
+    present: boolean,
+  ): Promise<boolean> {
+    const authority = mutationAuthority(undefined);
+    if (
+      consumeJournaledDispatch(authority, {
+        route: "trello-labels",
+        args: { cardId, labelId, present },
+      }) ||
+      !authority
+    )
+      return false;
+    this.assertRefinementMutation(authority, cardId);
+    await workflowMutation({
+      authority,
+      kind: "trello-labels",
+      rejected: (error) => rejectedMutation(error, "label update"),
+      target: `trello:${authority.store.read()!.pinned.boardId}:${cardId}:${labelId}`,
+      request: { route: "trello-labels", args: { cardId, labelId, present } },
+      preflight: async () => {
+        await this.observeMutationCard(authority);
+        const snapshot = authority.read(
+          refinementMutationSnapshotKey,
+          refinementMutationSnapshotSchema.parse,
+        );
+        if (
+          !snapshot ||
+          snapshot.intended.labels.includes(labelId) !== present ||
+          !(await this.getLabels(authority.store.read()!.pinned.boardId)).some(
+            (label) => label.id === labelId,
+          )
+        )
+          throw new Error(
+            "Refinement label is not a verified intended board field",
+          );
+      },
+      send: () =>
+        present
+          ? this.addLabel(cardId, labelId)
+          : this.removeLabel(cardId, labelId),
+      observe: async () => {
+        const card = await this.observeMutationCard(authority);
+        return card.idLabels.includes(labelId) === present
+          ? { id: card.id, fields: card, result: true }
+          : null;
+      },
+    });
+    return true;
   }
 
   private async get<T>(

@@ -8,6 +8,9 @@ import { logger } from "../logging/logger.js";
 import { getSessionLogPath } from "../logging/session-log.js";
 import {
   notifyHumanReview,
+  enqueueNotification,
+  buildHumanReviewEmail,
+  publicationNotificationIssues,
   type EmailNotifier,
 } from "../notifications/email-notifier.js";
 import {
@@ -37,6 +40,11 @@ import { PublishedCardStateError } from "./published-card-state-error.js";
 import { getElapsedWorkflowTime } from "./workflow-duration.js";
 import { WorkflowError } from "./workflow-error.js";
 import { writeTrustedCommitState } from "./trusted-commit-state.js";
+import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
+import {
+  resumeInitialPublication,
+  PublicationWaitingError,
+} from "./initial-publication.js";
 
 export interface PublishCardOptions {
   trello: TrelloClient;
@@ -61,6 +69,68 @@ export interface PublishCardOptions {
   beforePushVerification?: () => Promise<void>;
   expectedExistingPullRequestUrl?: string;
   verifiedDescriptionFacts?: () => readonly string[];
+}
+
+/** Presentation is finalized before the durable payload is hashed. Recovery
+ * uses that exact body and never asks an agent to regenerate dispatched text. */
+export async function prepareInitialPublicationBody(
+  options: Omit<PublishCardOptions, "commitSha">,
+  generateDescription = true,
+): Promise<string> {
+  let description = options.pullRequestDescription;
+  const verifiedFacts = options.verifiedDescriptionFacts?.() ?? [];
+  if (options.opencode && generateDescription)
+    description = await generatePullRequestDescription({
+      git: options.git,
+      opencode: options.opencode,
+      project: options.project,
+      card: options.card,
+      worktreePath: options.worktreePath,
+      commitSha: await options.git.getHeadSha(options.worktreePath),
+      reviewResult: options.reviewResult,
+      remediationResult: options.remediationResult,
+      signal: options.signal ?? new AbortController().signal,
+      verifiedFacts,
+      cardLog: logger.child({
+        projectId: options.project.id,
+        cardId: options.card.id,
+      }),
+    });
+  let body = renderDeterministicPullRequestBody(
+    options.card,
+    options.project.repository.gitIdentity.name,
+  );
+  if (description)
+    body = renderPullRequestDescription(
+      verifiedFacts.length
+        ? description
+        : {
+            ...description,
+            validation: [
+              "No verified validation or test results are available.",
+            ],
+          },
+      options.card,
+      options.project.repository.gitIdentity.name,
+    );
+  body += `\n\nReview: ${options.reviewResult}\nRemediation: ${options.remediationResult}`;
+  if (options.exhaustedReview) {
+    body += `\n\n## Automated review — human action required\nThis PR has **not** passed automated review.\n${options.exhaustedReview.blockingFindings
+      .slice(0, 20)
+      .map(
+        (finding) =>
+          `> ${[finding.summary, finding.detail].join(": ").replace(/\s+/gu, " ").slice(0, 400)}`,
+      )
+      .join("\n")}`;
+    body += options.exhaustedReview.requirementAssessments
+      .filter((assessment) => assessment.status === "unsatisfied")
+      .map(
+        (assessment) =>
+          `\n> Unsatisfied requirement: ${assessment.requirementId}`,
+      )
+      .join("");
+  }
+  return body;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -409,6 +479,32 @@ export async function publishCard({
   beforePushVerification,
   expectedExistingPullRequestUrl,
 }: PublishCardOptions): Promise<void> {
+  if (
+    expectedExistingPullRequestUrl === undefined &&
+    ProjectRunAuthority.isProjectLeaseScoped(project.id) &&
+    !ProjectRunAuthority.current(project.id)
+  )
+    throw new Error(
+      "Lease-scoped initial publication requires durable attempt authority",
+    );
+  // Production initial publication cannot opt out of the journal. Existing-PR
+  // correction/body/draft routes are the subsequent P4-T3 integration.
+  if (ProjectRunAuthority.current(project.id)) {
+    const resumed = await resumeInitialPublication({
+      project,
+      git,
+      github,
+      trello,
+      ...(opencode === undefined ? {} : { opencode }),
+      ...(emailNotifier === undefined ? {} : { emailNotifier }),
+      ...(signal === undefined ? {} : { signal }),
+    });
+    if (resumed) throw new PublicationWaitingError();
+    if (expectedExistingPullRequestUrl === undefined)
+      throw new Error(
+        "Legacy initial publication has no durable dispatch provenance; preserve the trusted commit and reconcile explicitly",
+      );
+  }
   void commands;
   const cardLog = logger.child({
     projectId: project.id,
@@ -768,6 +864,53 @@ export async function publishCard({
 
   cardLog.event("Moving Trello card to Human Review...");
 
+  // All reconstruction inputs are durable before the final external transition,
+  // including before duration/draft reads that may fail or be interrupted.
+  let observedDraft: boolean | undefined;
+  if (ProjectRunAuthority.current(project.id)) {
+    try {
+      observedDraft = (
+        await github.getPullRequestPublicationFields({
+          cwd: worktreePath,
+          repository: project.repository.github,
+          pullRequestUrl: pullRequest.url,
+          project,
+        })
+      ).isDraft;
+    } catch {
+      cardLog.warn(
+        "PR draft observation unavailable before notification preparation",
+      );
+    }
+  }
+  if (emailNotifier && (emailNotifier.isEventEnabled?.("humanReview") ?? true))
+    enqueueNotification(
+      emailNotifier,
+      project.id,
+      "humanReview",
+      publishedCommitSha,
+      buildHumanReviewEmail({
+        project,
+        card,
+        pullRequestUrl: pullRequest.url,
+        commitSha: publishedCommitSha,
+        reviewResult,
+        remediationResult,
+        ...(observedDraft === undefined ? {} : { actualDraft: observedDraft }),
+        outstandingIssues: publicationNotificationIssues(
+          reviewResult,
+          remediationResult,
+        ),
+        publicationContext:
+          "Verified PR publication; notification awaits Human Review destination verification.",
+      }),
+      {
+        cardId: card.id,
+        listId: project.trello.reviewListId,
+        boardId: project.trello.boardId,
+      },
+    );
+
   try {
     await trello.moveCard(card.id, project.trello.reviewListId);
   } catch (error) {
@@ -792,10 +935,30 @@ export async function publishCard({
     cardLog,
   );
 
+  let actualDraft: boolean | undefined;
+  if (ProjectRunAuthority.current(project.id)) {
+    try {
+      actualDraft = (
+        await github.getPullRequestPublicationFields({
+          cwd: worktreePath,
+          repository: project.repository.github,
+          pullRequestUrl: pullRequest.url,
+          project,
+        })
+      ).isDraft;
+    } catch {
+      cardLog.warn(
+        "PR draft status could not be independently observed for notification",
+      );
+    }
+  }
+
   if (
     emailNotifier !== undefined &&
     (emailNotifier.isEventEnabled?.("humanReview") ?? true) &&
-    (claimHumanReviewNotification === undefined ||
+    // Unowned utility compatibility only; production uses the durable outbox.
+    (ProjectRunAuthority.current(project.id) !== undefined ||
+      claimHumanReviewNotification === undefined ||
       claimHumanReviewNotification(publishedCommitSha))
   ) {
     await notifyHumanReview(
@@ -807,6 +970,11 @@ export async function publishCard({
         commitSha: publishedCommitSha,
         reviewResult,
         remediationResult,
+        ...(actualDraft === undefined ? {} : { actualDraft }),
+        outstandingIssues: publicationNotificationIssues(
+          reviewResult,
+          remediationResult,
+        ),
         ...(elapsedWorkflowTime === undefined ? {} : { elapsedWorkflowTime }),
         publicationContext:
           "The pull request was published and the card was moved to Human Review by the implementation workflow.",
@@ -832,8 +1000,10 @@ export async function publishCard({
 
     cardLog.info("Trello card updated with workflow summary");
   } catch (error) {
+    if (error instanceof WorkflowMutationWaitingError) throw error;
     cardLog.error(
       `Failed to add workflow summary to Trello card: ${getErrorMessage(error)}`,
     );
   }
 }
+import { WorkflowMutationWaitingError } from "../task-session/workflow-mutation.js";

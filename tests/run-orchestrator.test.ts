@@ -1105,6 +1105,8 @@ describe("runOrchestrator", () => {
         "Failure category: Workflow",
         "Failure reason: Multiple active cards are in Working: card-1, card-2",
         "Affected card IDs: card-1, card-2",
+        "Trello card: https://trello.com/c/card-1",
+        "Trello card: https://trello.com/c/card-2",
         "Session logs:",
         "- logs/sessions/project-a/card-1.log",
         "Failure handling: project remains blocked for operator investigation",

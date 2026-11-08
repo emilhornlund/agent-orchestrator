@@ -1,4 +1,5 @@
 import type { Logger } from "../logging/logger.js";
+import { WorkflowMutationWaitingError } from "../task-session/workflow-mutation.js";
 import type { TrelloCard, TrelloClient } from "../trello/trello-client.js";
 
 import type { RefinementResult } from "./refinement-result.js";
@@ -32,6 +33,7 @@ export async function addRefinementCompletionComment(
     );
     cardLog.info("Trello card updated with refinement summary");
   } catch (error) {
+    if (error instanceof WorkflowMutationWaitingError) throw error;
     cardLog.error(
       `Failed to add refinement summary to Trello card: ${error instanceof Error ? error.message : String(error)}`,
     );

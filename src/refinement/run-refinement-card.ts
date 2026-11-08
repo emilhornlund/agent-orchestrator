@@ -21,6 +21,7 @@ import {
   type TrelloClient,
 } from "../trello/trello-client.js";
 import { failCard } from "../orchestrator/fail-card.js";
+import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 
 export type RefinementProject = ProjectConfig & {
   contextRoot?: string;
@@ -140,6 +141,17 @@ export async function runRefinementCardWorkflow(options: {
       );
     }
   } catch (error) {
+    if (error instanceof NotificationPreparationError) throw error;
+    if (
+      ProjectRunAuthority.current(project.id)
+        ?.store.read()
+        ?.pendingOperations.some(
+          (entry) =>
+            entry.mutation &&
+            !["completed", "cancelled", "failed"].includes(entry.status),
+        )
+    )
+      throw error;
     if (isWorkflowAbort(error, signal)) {
       cardLog.event("Refinement workflow interrupted by orchestrator shutdown");
       return;
@@ -169,3 +181,4 @@ export async function runRefinementCardWorkflow(options: {
     );
   }
 }
+import { NotificationPreparationError } from "../notifications/notification-outbox.js";

@@ -4,11 +4,18 @@ import type { GitClient } from "../git/git-client.js";
 import type { Logger } from "../logging/logger.js";
 import {
   notifyRefinementCompletion,
+  enqueueNotification,
+  buildRefinementCompletionEmail,
   type EmailNotifier,
 } from "../notifications/email-notifier.js";
 import type { OpenCodeClient } from "../opencode/opencode-client.js";
 import { addRefinementCompletionComment } from "../refinement/refinement-completion.js";
-import { finalizeRefinement } from "../refinement/finalize-refinement.js";
+import {
+  finalizeRefinement,
+  refinementMutationSnapshotKey,
+  refinementMutationSnapshotSchema,
+} from "../refinement/finalize-refinement.js";
+import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 import { runRefinement } from "../refinement/run-refinement.js";
 import type { TrelloCard, TrelloClient } from "../trello/trello-client.js";
 import { getElapsedRefinementWorkflowTime } from "../orchestrator/workflow-duration.js";
@@ -26,19 +33,48 @@ export async function runRefinementOperation(input: {
   attachmentContext?: CardAttachmentPromptContext;
   emailNotifier?: EmailNotifier;
 }): Promise<void> {
-  const result = await runRefinement(
-    input.git,
-    input.opencode,
-    input.project,
-    input.card,
-    input.worktreePath,
-    input.signal,
-    input.attachmentContext,
+  const snapshot = ProjectRunAuthority.current(input.project.id)?.read(
+    refinementMutationSnapshotKey,
+    refinementMutationSnapshotSchema.parse,
   );
+  const result =
+    snapshot?.intended ??
+    (await runRefinement(
+      input.git,
+      input.opencode,
+      input.project,
+      input.card,
+      input.worktreePath,
+      input.signal,
+      input.attachmentContext,
+    ));
 
   input.cardLog.event(
     `OpenCode refinement completed with classification: ${result.type}`,
   );
+
+  const prepareCompletion = () => {
+    if (
+      input.emailNotifier &&
+      (input.emailNotifier.isEventEnabled?.("refinementComplete") ?? true)
+    )
+      enqueueNotification(
+        input.emailNotifier,
+        input.project.id,
+        "refinementComplete",
+        input.card.url,
+        buildRefinementCompletionEmail({
+          project: input.project,
+          card: input.card,
+          result,
+        }),
+        {
+          cardId: input.card.id,
+          listId: input.project.trello.backlogListId,
+          boardId: input.project.trello.boardId,
+        },
+      );
+  };
 
   await finalizeRefinement(
     input.trello,
@@ -46,6 +82,7 @@ export async function runRefinementOperation(input: {
     input.card,
     result,
     input.signal,
+    prepareCompletion,
   );
 
   input.cardLog.event("Refined card returned to Backlog");

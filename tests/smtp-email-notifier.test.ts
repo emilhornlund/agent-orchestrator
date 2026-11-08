@@ -1,5 +1,20 @@
 import net from "node:net";
 import tls from "node:tls";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import {
+  NotificationOutbox,
+  NOTIFICATION_RECHECK_MS,
+  NotificationNotDeliveredError,
+} from "../src/notifications/notification-outbox.js";
+import {
+  buildHumanReviewEmail,
+  buildFailedEmail,
+  buildAttentionRequiredEmail,
+  buildRefinementCompletionEmail,
+} from "../src/notifications/email-notifier.js";
+import type { ProjectConfig } from "../src/config/config.js";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -96,6 +111,8 @@ interface SmtpTestServerOptions {
   rejectAuthentication?: boolean;
   onAuthentication?: () => void;
   onMessage?: (payload: string, encrypted: boolean) => void;
+  rejectData?: boolean;
+  loseAcceptanceResponse?: boolean;
 }
 
 function createSmtpTestServer(options: SmtpTestServerOptions): net.Server {
@@ -223,8 +240,13 @@ function createSmtpTestServer(options: SmtpTestServerOptions): net.Server {
           const payload = input.slice(0, terminator);
           input = input.slice(terminator + "\r\n.\r\n".length);
           receivingData = false;
-          options.onMessage?.(payload, socket instanceof tls.TLSSocket);
-          socket.write("250 message accepted\r\n");
+          if (options.rejectData)
+            socket.write("451 message rejected before acceptance\r\n");
+          else {
+            options.onMessage?.(payload, socket instanceof tls.TLSSocket);
+            if (options.loseAcceptanceResponse) socket.destroy();
+            else socket.write("250 message accepted\r\n");
+          }
           continue;
         }
 
@@ -261,6 +283,217 @@ function notifier(port: number, secure: boolean): SmtpEmailNotifier {
 }
 
 describe("SmtpEmailNotifier", () => {
+  it("proves DNS non-submission using an injected resolver without external DNS access", async () => {
+    const sender = new SmtpEmailNotifier({
+      recipients: ["reviewers@example.com"],
+      from: "agent@example.com",
+      host: "smtp.invalid",
+      port: 465,
+      secure: true,
+      username: "smtp-user",
+      password: "smtp-password",
+      timeoutMilliseconds: 1_000,
+      tls: {
+        lookup: (_hostname, _options, callback) =>
+          callback(
+            Object.assign(new Error("Injected DNS resolution failure"), {
+              code: "ENOTFOUND",
+            }),
+            "",
+            4,
+          ),
+      },
+    });
+    await expect(
+      sender.send({ subject: "Task", text: "Task" }),
+    ).rejects.toBeInstanceOf(NotificationNotDeliveredError);
+  });
+  it.each(["tcp-refused", "tls-setup"] as const)(
+    "safely retries proven %s non-submission after restart and pacing",
+    async (failure) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "smtp-setup-outbox-"));
+      try {
+        const received: string[] = [];
+        const server = createSmtpTestServer({
+          implicitTls: true,
+          onMessage: (payload) => received.push(payload),
+        });
+        const port = await listen(server);
+        if (failure === "tcp-refused")
+          await new Promise<void>((resolve) => server.close(() => resolve()));
+        let now = 0;
+        const open = () =>
+          new NotificationOutbox(
+            root,
+            "p",
+            () => {},
+            () => now,
+          );
+        open().enqueue("event", { subject: "Task", text: "Project p" });
+        const untrusted = new SmtpEmailNotifier({
+          recipients: ["reviewers@example.com"],
+          from: "agent-orchestrator@example.com",
+          host: "127.0.0.1",
+          port,
+          secure: true,
+          username: "smtp-user",
+          password: "smtp-password",
+          timeoutMilliseconds: 1_000,
+        });
+        await open().drain(untrusted, () => {});
+        expect(open().records()[0]?.dispatches[0]?.outcome).toBe(
+          "known-not-delivered",
+        );
+        expect(received).toHaveLength(0);
+        if (failure === "tcp-refused")
+          await new Promise<void>((resolve) =>
+            server.listen(port, "127.0.0.1", () => resolve()),
+          );
+        await open().drain(notifier(port, true), () => {});
+        expect(open().records()[0]?.dispatches).toHaveLength(1);
+        now += NOTIFICATION_RECHECK_MS;
+        await open().drain(notifier(port, true), () => {});
+        expect(received).toHaveLength(1);
+        expect(open().records()[0]?.dispatches).toHaveLength(2);
+        expect(open().records()[0]?.dispatches[1]?.outcome).toBe("confirmed");
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+  it("delivers all four event types and actual normal/draft evidence through the durable outbox", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "smtp-outbox-"));
+    try {
+      const received: string[] = [];
+      const port = await listen(
+        createSmtpTestServer({
+          implicitTls: true,
+          onMessage: (payload) => received.push(payload),
+        }),
+      );
+      const project = { id: "p" } as ProjectConfig;
+      const card = {
+        id: "c",
+        name: "Task",
+        url: "https://trello.com/c/c",
+        desc: "",
+        idList: "review",
+        idLabels: [],
+      };
+      const outbox = new NotificationOutbox(root, "p", () => {});
+      for (const draft of [false, true])
+        outbox.enqueue(
+          `ready:${draft}`,
+          buildHumanReviewEmail({
+            project,
+            card,
+            pullRequestUrl: "https://github.com/o/r/pull/1",
+            commitSha: "sha",
+            reviewResult: "advisory failed",
+            remediationResult: "exhausted",
+            publicationContext: "Verified PR",
+            actualDraft: draft,
+            outstandingIssues: ["validation failed"],
+          }),
+        );
+      outbox.enqueue(
+        "failed",
+        buildFailedEmail({
+          project,
+          card,
+          category: "Workflow",
+          reason: "Primary failed",
+        }),
+        "failed",
+      );
+      outbox.enqueue(
+        "attention",
+        buildAttentionRequiredEmail({
+          project,
+          cardIds: ["c"],
+          category: "Workflow",
+          reason: "Dependency unavailable",
+        }),
+        "attentionRequired",
+      );
+      outbox.enqueue(
+        "refinement",
+        buildRefinementCompletionEmail({
+          project,
+          card,
+          result: { title: "Task", type: "feature", description: "Refined" },
+        }),
+        "refinementComplete",
+      );
+      await outbox.drain(notifier(port, true), () => {});
+      await new NotificationOutbox(root, "p", () => {}).drain(
+        notifier(port, true),
+        () => {},
+      );
+      expect(received).toHaveLength(5);
+      const bodies = received.join("\n");
+      expect(bodies).toContain("Actual draft status: true");
+      expect(bodies).toContain("Actual draft status: false");
+      expect(bodies).toContain("validation failed");
+      expect(bodies).toContain("https://trello.com/c/c");
+      for (const entry of outbox.records())
+        expect(bodies.replace(/\r\n[\t ]+/gu, " ")).toContain(
+          `Message-ID: ${entry.messageId}`,
+        );
+      expect(
+        outbox
+          .records()
+          .every((entry) => entry.dispatches.at(-1)?.outcome === "confirmed"),
+      ).toBe(true);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["reject", "lost-ack"] as const)(
+    "persists actual SMTP %s across restart and never blindly duplicates acceptance",
+    async (mode) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "smtp-outbox-"));
+      try {
+        const received: string[] = [];
+        const options: SmtpTestServerOptions = {
+          implicitTls: true,
+          rejectData: mode === "reject",
+          loseAcceptanceResponse: mode === "lost-ack",
+          onMessage: (payload) => received.push(payload),
+        };
+        const port = await listen(createSmtpTestServer(options));
+        let now = 0;
+        const open = () =>
+          new NotificationOutbox(
+            root,
+            "p",
+            () => {},
+            () => now,
+          );
+        open().enqueue("ready", {
+          subject: "Task",
+          text: "Project p / task c",
+        });
+        await open().drain(notifier(port, true), () => {});
+        expect(open().records()[0]?.dispatches[0]?.outcome).toBe(
+          mode === "reject" ? "known-not-delivered" : "ambiguous",
+        );
+        options.rejectData = false;
+        options.loseAcceptanceResponse = false;
+        now += NOTIFICATION_RECHECK_MS;
+        await open().drain(notifier(port, true), () => {});
+        now += NOTIFICATION_RECHECK_MS;
+        await open().drain(notifier(port, true), () => {});
+        expect(received).toHaveLength(1);
+        expect(open().records()[0]?.dispatches).toHaveLength(
+          mode === "reject" ? 2 : 1,
+        );
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
   it("delivers through a required STARTTLS connection", async () => {
     let payload = "";
     let encrypted = false;

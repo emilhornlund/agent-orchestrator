@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ZodError } from "zod";
 
 import {
   isRetryableTrelloError,
@@ -9,6 +10,51 @@ import {
 import { registerProcessSecrets } from "../src/process/process-runtime.js";
 
 describe("TrelloClient", () => {
+  it("reads actual comment text and identities for initial-publication reconciliation", async () => {
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify([
+          {
+            id: "comment-1",
+            type: "commentCard",
+            data: { text: "Publication [correlation]" },
+          },
+        ]),
+        { status: 200 },
+      ),
+    );
+    const client = new TrelloClient({
+      apiKey: "test-key",
+      token: "test-token",
+    });
+    await expect(client.getCardComments("card-1")).resolves.toEqual([
+      { id: "comment-1", text: "Publication [correlation]" },
+    ]);
+    const url = new URL(String(fetch.mock.calls[0]?.[0]));
+    expect(url.pathname).toBe("/1/cards/card-1/actions");
+    expect(url.searchParams.get("filter")).toBe("commentCard");
+    expect(url.searchParams.get("limit")).toBe("1000");
+  });
+
+  it.each([
+    {},
+    [{ id: "comment-1", type: "commentCard", data: {} }],
+    [{ id: "comment-1", type: "updateCard", data: { text: "not a comment" } }],
+  ])(
+    "rejects malformed comment readback rather than reporting absence: %j",
+    async (body) => {
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        new Response(JSON.stringify(body), { status: 200 }),
+      );
+      const client = new TrelloClient({
+        apiKey: "test-key",
+        token: "test-token",
+      });
+      await expect(client.getCardComments("card-1")).rejects.toBeInstanceOf(
+        ZodError,
+      );
+    },
+  );
   afterEach(() => {
     vi.restoreAllMocks();
   });

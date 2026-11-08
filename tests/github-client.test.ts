@@ -53,6 +53,55 @@ function successfulOutputRunner(outputs: string[]): RunGitHubCommand {
 }
 
 describe("GitHubClient", () => {
+  it("reads actual initial-publication fields independently from creation", async () => {
+    const run = vi.fn().mockResolvedValue(
+      JSON.stringify({
+        title: "Task",
+        body: "body with correlation marker",
+        isDraft: true,
+      }),
+    );
+    const client = new GitHubClient(run);
+    await expect(
+      client.getPullRequestPublicationFields({
+        cwd: "/repo",
+        repository: "owner/repo",
+        pullRequestUrl: "https://github.com/owner/repo/pull/4",
+      }),
+    ).resolves.toEqual({
+      title: "Task",
+      body: "body with correlation marker",
+      isDraft: true,
+    });
+    expect(run.mock.calls[0]?.[1]).toEqual([
+      "pr",
+      "view",
+      "https://github.com/owner/repo/pull/4",
+      "--repo",
+      "owner/repo",
+      "--json",
+      "title,body,isDraft",
+    ]);
+  });
+
+  it.each([
+    "",
+    "{}",
+    '{"title":"Task","body":"body","isDraft":"true"}',
+    "not-json",
+  ])(
+    "rejects malformed initial-publication readback %s without treating it as absence",
+    async (output) => {
+      const client = new GitHubClient(successfulOutputRunner([output]));
+      await expect(
+        client.getPullRequestPublicationFields({
+          cwd: "/repo",
+          repository: "owner/repo",
+          pullRequestUrl: "https://github.com/owner/repo/pull/4",
+        }),
+      ).rejects.toBeInstanceOf(MalformedGitHubResponseError);
+    },
+  );
   it("retains invocation provenance for malformed JSON and pages without response data", () => {
     const origin: GitHubOutputOrigin = {
       executionId: "execution-123",
@@ -1173,6 +1222,17 @@ describe("GitHubClient", () => {
         headBranch: "agent/card-1",
       }),
     ).resolves.toBeNull();
+  });
+
+  it("rejects blank all-state PR discovery output instead of authorizing another creation", async () => {
+    const client = new GitHubClient(successfulOutputRunner([""]));
+    await expect(
+      client.findPullRequestState({
+        cwd: "/repo",
+        repository: "owner/repo",
+        headBranch: "agent/card",
+      }),
+    ).rejects.toBeInstanceOf(MalformedGitHubResponseError);
   });
 
   it("returns current merge state facts when a base branch is requested", async () => {

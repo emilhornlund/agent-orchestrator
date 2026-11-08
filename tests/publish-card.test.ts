@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import os from "node:os";
+import path from "node:path";
 
 import type { ProjectConfig } from "../src/config/config.js";
 import { GitClient, type RunGit } from "../src/git/git-client.js";
@@ -37,7 +39,7 @@ function createProject(validationCommand?: string): ProjectConfig {
       path: "/tmp/example-repository",
       github: "example/repository",
       defaultBranch: "main",
-      worktreeRoot: "/tmp/example-worktrees",
+      worktreeRoot: path.join(os.tmpdir(), "example-worktrees"),
       ...(validationCommand === undefined ? {} : { validationCommand }),
       gitIdentity: {
         name: "Configured Git Author",

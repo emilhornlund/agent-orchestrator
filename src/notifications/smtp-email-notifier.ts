@@ -3,12 +3,14 @@ import type { ConnectionOptions } from "node:tls";
 import tls from "node:tls";
 
 import nodemailer from "nodemailer";
+import { NotificationNotDeliveredError } from "./notification-outbox.js";
 import { sanitizeControlledText } from "../security/redact-secrets.js";
 
 import type {
   EmailMessage,
   EmailNotificationEvent,
   EmailNotifier,
+  EmailDeliveryReceipt,
 } from "./email-notifier.js";
 
 type SmtpSocket = net.Socket | tls.TLSSocket;
@@ -53,6 +55,26 @@ function deliveryError(
   options: SmtpEmailNotifierOptions,
 ): Error {
   const message = getErrorMessage(error);
+  // A concrete SMTP negative reply is proof only when the transaction failed
+  // before message acceptance. Socket errors/timeouts, including after DATA,
+  // deliberately retain possible acceptance.
+  if (
+    error &&
+    typeof error === "object" &&
+    "responseCode" in error &&
+    typeof error.responseCode === "number" &&
+    error.responseCode >= 400 &&
+    error.responseCode <= 599 &&
+    "command" in error &&
+    typeof error.command === "string" &&
+    /^(DATA|AUTH|MAIL FROM|RCPT TO|STARTTLS|EHLO|HELO|CONN)/u.test(
+      error.command,
+    )
+  ) {
+    return new NotificationNotDeliveredError(
+      "SMTP delivery failed: transaction rejected before acceptance",
+    );
+  }
 
   if (message === "SMTP delivery aborted") {
     return new Error(message);
@@ -66,14 +88,43 @@ function deliveryError(
 export class SmtpEmailNotifier implements EmailNotifier {
   constructor(private readonly options: SmtpEmailNotifierOptions) {}
 
+  get deliveryTarget(): string {
+    return JSON.stringify({
+      host: this.options.host,
+      port: this.options.port,
+      secure: this.options.secure,
+      from: this.options.from,
+      recipients: this.options.recipients,
+    });
+  }
+
   isEventEnabled(event: EmailNotificationEvent): boolean {
     return this.options.events?.[event] ?? true;
   }
 
-  async send(message: EmailMessage): Promise<void> {
+  async send(message: EmailMessage): Promise<EmailDeliveryReceipt> {
     if (this.options.signal?.aborted) {
-      throw new Error("SMTP delivery aborted");
+      throw new NotificationNotDeliveredError(
+        "SMTP delivery aborted before submission",
+      );
     }
+
+    // Observe protocol progress, not error wording/codes. Nodemailer's client
+    // transaction hook runs before writing DATA. Before that point no message
+    // content can have been accepted, including DNS/TCP/TLS/auth setup failures.
+    // Nothing from the hook is emitted or persisted (AUTH/content may be secret).
+    let submissionPossible = false;
+    const protocolLogger = {
+      debug(data: { tnx?: string }, text: string) {
+        if (data.tnx === "client" && /^DATA(?:\s|$)/u.test(text))
+          submissionPossible = true;
+      },
+      trace() {},
+      info() {},
+      warn() {},
+      error() {},
+      fatal() {},
+    };
 
     let activeSocket: SmtpSocket | undefined;
     let finishSocketSetup: ((error: Error) => void) | undefined;
@@ -170,8 +221,10 @@ export class SmtpEmailNotifier implements EmailNotifier {
       connectionTimeout: this.options.timeoutMilliseconds,
       greetingTimeout: this.options.timeoutMilliseconds,
       socketTimeout: this.options.timeoutMilliseconds,
+      debug: true,
+      logger: protocolLogger,
       ...(this.options.tls === undefined ? {} : { tls: this.options.tls }),
-      ...(this.options.signal === undefined ? {} : { getSocket }),
+      getSocket,
     });
     let abortHandler: (() => void) | undefined;
     let rejectAborted: ((reason?: unknown) => void) | undefined;
@@ -207,14 +260,29 @@ export class SmtpEmailNotifier implements EmailNotifier {
             to: this.options.recipients,
             subject: sanitizeControlledText(message.subject),
             text: sanitizeControlledText(message.text),
+            ...(message.messageId ? { messageId: message.messageId } : {}),
           });
 
-      if (aborted === undefined) {
-        await delivery;
-      } else {
-        await Promise.race([delivery, aborted]);
-      }
+      const receipt: unknown =
+        aborted === undefined
+          ? await delivery
+          : await Promise.race([delivery, aborted]);
+      const info = receipt as { messageId?: unknown; rejected?: unknown };
+      return {
+        providerId: sanitizeControlledText(
+          typeof info.messageId === "string"
+            ? info.messageId
+            : (message.messageId ?? "SMTP relay"),
+        ),
+        partial: Array.isArray(info.rejected) && info.rejected.length > 0,
+      };
     } catch (error) {
+      if (!submissionPossible)
+        throw new NotificationNotDeliveredError(
+          abortRequested
+            ? "SMTP delivery aborted before submission"
+            : "SMTP delivery failed before DATA submission",
+        );
       throw deliveryError(error, this.options);
     } finally {
       if (this.options.signal !== undefined && abortHandler !== undefined) {

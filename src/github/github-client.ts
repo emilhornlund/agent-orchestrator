@@ -18,6 +18,7 @@ import {
 } from "../security/redact-secrets.js";
 import { getGitHubOperationProject } from "./github-operation-context.js";
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
+import { sanitizeControlledText } from "../security/redact-secrets.js";
 import { ProjectResourceError } from "../startup/project-resource-error.js";
 import {
   beginProcessEvidence,
@@ -1378,6 +1379,53 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
   });
 
 export class GitHubClient {
+  private async sanitizeMutationBody(
+    body: string,
+    project?: ProjectConfig,
+  ): Promise<string> {
+    const credential = await this.resolveCredential(project);
+    return sanitizeControlledText(
+      redactRegisteredSecrets(body, [
+        ...getProcessRuntime().secretValues,
+        ...credential.secretValues,
+      ]),
+    );
+  }
+  private assertMutationPullRequest(
+    authority: ProjectRunAuthority,
+    repository: string,
+    url: string,
+  ): void {
+    const run = authority.store.read()!;
+    const number = getPullRequestNumberForRepository(url, repository);
+    if (
+      repository !== run.pinned.repository ||
+      !run.resources.some(
+        (resource) =>
+          resource.kind === "pull-request" &&
+          resource.id === String(number) &&
+          resource.path === url,
+      )
+    )
+      throw new Error("GitHub mutation differs from pinned task PR identity");
+  }
+
+  private async assertMutationOpen(options: {
+    cwd: string;
+    repository: string;
+    pullRequestUrl: string;
+    project?: ProjectConfig;
+  }): Promise<void> {
+    const state = await this.getPullRequestStateByNumber({
+      ...options,
+      pullRequestNumber: getPullRequestNumberForRepository(
+        options.pullRequestUrl,
+        options.repository,
+      ),
+    });
+    if (state.state !== "OPEN")
+      throw new Error("Terminal PR cannot accept new automated mutations");
+  }
   private readonly credentials: GitHubCredentialProvider;
 
   constructor(
@@ -1394,6 +1442,18 @@ export class GitHubClient {
     onSuccessfulOutput?: (origin: GitHubOutputOrigin) => void,
   ): Promise<string> {
     const dispatch = async (): Promise<string> => {
+      if (
+        (args[0] === "pr" &&
+          ["create", "edit", "ready"].includes(args[1] ?? "")) ||
+        (args[0] === "api" &&
+          ((args.includes("--method") &&
+            args[args.indexOf("--method") + 1] !== "GET") ||
+            args.some(
+              (arg) =>
+                arg.startsWith("query=") && /\bmutation\s*[({]/u.test(arg),
+            )))
+      )
+        assertJournaledTransport();
       try {
         const canCaptureOrigin =
           onSuccessfulOutput !== undefined &&
@@ -2017,6 +2077,84 @@ export class GitHubClient {
   async replyToReviewThread(
     options: CreateReviewThreadReplyOptions,
   ): Promise<GitHubContextualReply> {
+    options = { ...options };
+    const authority = mutationAuthority(options.project?.id);
+    if (
+      !consumeJournaledDispatch(authority, {
+        route: "github-thread-reply",
+        args: {
+          cwd: options.cwd,
+          repository: options.repository,
+          pullRequestUrl: options.pullRequestUrl,
+          threadId: options.threadId,
+          body: options.body,
+        },
+      }) &&
+      authority
+    ) {
+      options = {
+        ...options,
+        body: await this.sanitizeMutationBody(options.body, options.project),
+      };
+      this.assertMutationPullRequest(
+        authority,
+        options.repository,
+        options.pullRequestUrl,
+      );
+      const request = {
+        route: "github-thread-reply",
+        args: {
+          cwd: options.cwd,
+          repository: options.repository,
+          pullRequestUrl: options.pullRequestUrl,
+          threadId: options.threadId,
+          body: options.body,
+        },
+      };
+      return workflowMutation({
+        authority,
+        kind: "github-reply",
+        target: `${options.pullRequestUrl}:${options.threadId}`,
+        request,
+        preflight: () => this.assertMutationOpen(options),
+        send: async (marker) => {
+          return this.replyToReviewThread({
+            ...options,
+            body: `${options.body}\n\n${marker}`,
+          });
+        },
+        observe: async (marker) => {
+          const credential = await this.resolveCredential(options.project);
+          const number = getPullRequestNumberForRepository(
+            options.pullRequestUrl,
+            options.repository,
+          );
+          const threads = await this.findReviewThreads(
+            {
+              cwd: options.cwd,
+              repository: options.repository,
+              headBranch: "mutation-readback",
+              ...(options.project ? { project: options.project } : {}),
+            },
+            number,
+            credential,
+          );
+          const comments =
+            threads
+              .find((thread) => thread.id === options.threadId)
+              ?.comments.filter(
+                (comment) => comment.body === `${options.body}\n\n${marker}`,
+              ) ?? [];
+          if (comments.length !== 1) return null;
+          const result: GitHubContextualReply = {
+            id: String(comments[0]!.id),
+            kind: "review-thread",
+            threadId: options.threadId,
+          };
+          return { id: result.id, fields: comments[0], result };
+        },
+      });
+    }
     const pullRequestNumber = getPullRequestNumberForRepository(
       options.pullRequestUrl,
       options.repository,
@@ -2144,6 +2282,64 @@ export class GitHubClient {
   async replyToConversationComment(
     options: CreateConversationReplyOptions,
   ): Promise<GitHubContextualReply> {
+    options = { ...options };
+    const authority = mutationAuthority(options.project?.id);
+    if (
+      !consumeJournaledDispatch(authority, {
+        route: "github-conversation-reply",
+        args: {
+          cwd: options.cwd,
+          repository: options.repository,
+          pullRequestUrl: options.pullRequestUrl,
+          body: options.body,
+        },
+      }) &&
+      authority
+    ) {
+      options = {
+        ...options,
+        body: await this.sanitizeMutationBody(options.body, options.project),
+      };
+      this.assertMutationPullRequest(
+        authority,
+        options.repository,
+        options.pullRequestUrl,
+      );
+      return workflowMutation({
+        authority,
+        kind: "github-reply",
+        target: options.pullRequestUrl,
+        request: {
+          route: "github-conversation-reply",
+          args: {
+            cwd: options.cwd,
+            repository: options.repository,
+            pullRequestUrl: options.pullRequestUrl,
+            body: options.body,
+          },
+        },
+        preflight: () => this.assertMutationOpen(options),
+        send: async (marker) => {
+          return this.replyToConversationComment({
+            ...options,
+            body: `${options.body}\n\n${marker}`,
+          });
+        },
+        observe: async (marker) => {
+          const comments = (
+            await this.getPullRequestConversationComments(options)
+          ).filter(
+            (comment) => comment.body === `${options.body}\n\n${marker}`,
+          );
+          if (comments.length !== 1) return null;
+          const result: GitHubContextualReply = {
+            id: String(comments[0]!.id),
+            kind: "conversation",
+          };
+          return { id: result.id, fields: comments[0], result };
+        },
+      });
+    }
     const number = getPullRequestNumberForRepository(
       options.pullRequestUrl,
       options.repository,
@@ -2312,6 +2508,55 @@ export class GitHubClient {
     body: string;
     project?: ProjectConfig;
   }): Promise<void> {
+    options = { ...options };
+    const authority = mutationAuthority(options.project?.id);
+    if (
+      !consumeJournaledDispatch(authority, {
+        route: "github-pr-body",
+        args: {
+          cwd: options.cwd,
+          repository: options.repository,
+          pullRequestUrl: options.pullRequestUrl,
+          body: options.body,
+        },
+      }) &&
+      authority
+    ) {
+      options = {
+        ...options,
+        body: await this.sanitizeMutationBody(options.body, options.project),
+      };
+      this.assertMutationPullRequest(
+        authority,
+        options.repository,
+        options.pullRequestUrl,
+      );
+      await workflowMutation({
+        authority,
+        kind: "github-pr-body",
+        target: options.pullRequestUrl,
+        request: {
+          route: "github-pr-body",
+          args: {
+            cwd: options.cwd,
+            repository: options.repository,
+            pullRequestUrl: options.pullRequestUrl,
+            body: options.body,
+          },
+        },
+        preflight: () => this.assertMutationOpen(options),
+        send: async () => {
+          return this.editPullRequestDescription(options);
+        },
+        observe: async () => {
+          const body = await this.getPullRequestDescription(options);
+          return body === options.body
+            ? { id: options.pullRequestUrl, fields: { body }, result: true }
+            : null;
+        },
+      });
+      return;
+    }
     const credential = await this.resolveCredential(options.project);
     const pullRequestUrl = parsePullRequestUrl(options.pullRequestUrl);
     await this.run(
@@ -2332,6 +2577,7 @@ export class GitHubClient {
   async updatePullRequestDescriptionStatus(
     options: PullRequestDescriptionStatusOptions,
   ): Promise<boolean> {
+    rejectJournaledDispatch();
     const credential = await this.resolveCredential(options.project);
     const pullRequestUrl = parsePullRequestUrl(options.pullRequestUrl);
     const runResult = await this.runWithOrigin(
@@ -2362,19 +2608,7 @@ export class GitHubClient {
     }
 
     // The body read immediately above is intentional: never write a body from an earlier poll.
-    await this.run(
-      options.cwd,
-      [
-        "pr",
-        "edit",
-        pullRequestUrl,
-        "--repo",
-        options.repository,
-        "--body",
-        nextBody,
-      ],
-      credential,
-    );
+    await this.editPullRequestDescription({ ...options, body: nextBody });
 
     return true;
   }
@@ -2581,7 +2815,10 @@ export class GitHubClient {
     const pullRequestOutput = runResult.output.trim();
 
     if (pullRequestOutput.length === 0) {
-      return null;
+      throw new MalformedGitHubResponseError(
+        "pull request state list",
+        runResult.origin,
+      );
     }
 
     return (
@@ -2973,6 +3210,49 @@ export class GitHubClient {
     pullRequestUrl: string;
     project?: ProjectConfig;
   }): Promise<void> {
+    options = { ...options };
+    const authority = mutationAuthority(options.project?.id);
+    if (
+      !consumeJournaledDispatch(authority, {
+        route: "github-pr-draft",
+        args: {
+          cwd: options.cwd,
+          repository: options.repository,
+          pullRequestUrl: options.pullRequestUrl,
+        },
+      }) &&
+      authority
+    ) {
+      this.assertMutationPullRequest(
+        authority,
+        options.repository,
+        options.pullRequestUrl,
+      );
+      await workflowMutation({
+        authority,
+        kind: "github-pr-draft",
+        target: options.pullRequestUrl,
+        request: {
+          route: "github-pr-draft",
+          args: {
+            cwd: options.cwd,
+            repository: options.repository,
+            pullRequestUrl: options.pullRequestUrl,
+          },
+        },
+        preflight: () => this.assertMutationOpen(options),
+        send: async () => {
+          return this.ensurePullRequestDraft(options);
+        },
+        observe: async () => {
+          const fields = await this.getPullRequestPublicationFields(options);
+          return fields.isDraft
+            ? { id: options.pullRequestUrl, fields, result: true }
+            : null;
+        },
+      });
+      return;
+    }
     const credential = await this.resolveCredential(options.project);
     const url = parsePullRequestUrl(options.pullRequestUrl);
     const inspect = async (): Promise<boolean> => {
@@ -3016,6 +3296,26 @@ export class GitHubClient {
   async createPullRequest(
     options: CreatePullRequestOptions,
   ): Promise<PullRequest> {
+    options = { ...options };
+    const authority = mutationAuthority(options.project?.id);
+    if (
+      !consumeJournaledDispatch(authority, {
+        route: "github-pr-create",
+        args: {
+          cwd: options.cwd,
+          repository: options.repository,
+          baseBranch: options.baseBranch,
+          headBranch: options.headBranch,
+          title: options.title,
+          body: options.body,
+          draft: options.draft ?? false,
+        },
+      }) &&
+      authority
+    )
+      throw new Error(
+        "PR creation requires the initial publication reconciler",
+      );
     const credential = await this.resolveCredential(options.project);
     let outputOrigin: GitHubOutputOrigin | undefined;
     const output = await this.run(
@@ -3048,6 +3348,48 @@ export class GitHubClient {
     return {
       url: parsePullRequestUrl(output, outputOrigin),
     };
+  }
+
+  /** Independent creation readback; a create response is never this evidence. */
+  async getPullRequestPublicationFields(options: {
+    cwd: string;
+    repository: string;
+    pullRequestUrl: string;
+    project?: ProjectConfig;
+  }): Promise<{ title: string; body: string; isDraft: boolean }> {
+    getPullRequestNumberForRepository(
+      options.pullRequestUrl,
+      options.repository,
+    );
+    const credential = await this.resolveCredential(options.project);
+    const result = await this.runWithOrigin(
+      options.cwd,
+      [
+        "pr",
+        "view",
+        options.pullRequestUrl,
+        "--repo",
+        options.repository,
+        "--json",
+        "title,body,isDraft",
+      ],
+      credential,
+    );
+    return validateGitHubJson(
+      result.output,
+      (value) => {
+        if (
+          !isRecord(value) ||
+          typeof value.title !== "string" ||
+          typeof value.body !== "string" ||
+          typeof value.isDraft !== "boolean"
+        )
+          throw new Error("Malformed publication fields");
+        return { title: value.title, body: value.body, isDraft: value.isDraft };
+      },
+      result.origin,
+      "pull request publication fields",
+    );
   }
 
   async validateCliCompatibility(
@@ -3139,3 +3481,10 @@ export class GitHubClient {
       );
   }
 }
+import {
+  mutationAuthority,
+  consumeJournaledDispatch,
+  assertJournaledTransport,
+  rejectJournaledDispatch,
+  workflowMutation,
+} from "../task-session/workflow-mutation.js";

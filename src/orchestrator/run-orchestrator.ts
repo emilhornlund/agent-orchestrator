@@ -63,7 +63,17 @@ import {
 } from "./reconciliation-block-storage.js";
 import { WorkflowError } from "./workflow-error.js";
 import type { ProjectRunWorkerContext } from "../task-session/project-run-authority.js";
+import {
+  NotificationOutbox,
+  drainNotifications,
+  notificationTriggerObserver,
+  NotificationPreparationError,
+  deferNotificationPreparation,
+} from "../notifications/notification-outbox.js";
+import { prepareAttentionNotification } from "../notifications/email-notifier.js";
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
+import { resumeInitialPublication } from "./initial-publication.js";
+import { reconcileWorkflowMutations } from "./reconcile-workflow-mutations.js";
 import { getCardsForDiscovery } from "./trello-list-discovery.js";
 import { getWorkflowKind } from "./workflow-kind.js";
 import { isCardStartDateReached } from "./card-start-eligibility.js";
@@ -415,7 +425,12 @@ async function runProjectWorkerInner(
       .error(
         `Project attempt authority is blocked; this project will remain isolated: ${runContext.blockedReason}`,
       );
-    while (!signal.aborted) await sleep(pollIntervalMilliseconds, signal);
+    while (!signal.aborted) {
+      drainNotifications(project.id, emailNotifier, (message) =>
+        logger.child({ projectId: project.id }).warn(message),
+      );
+      await sleep(pollIntervalMilliseconds, signal);
+    }
     return;
   }
 
@@ -508,6 +523,9 @@ async function runProjectWorkerInner(
 
   while (!signal.aborted) {
     const blockedPreparedConflict = blockedPreparedConflicts.get(project.id);
+    drainNotifications(project.id, emailNotifier, (message) =>
+      logger.child({ projectId: project.id }).warn(message),
+    );
 
     if (blockedPreparedConflict !== undefined) {
       const recovered = await hasPreparedConflictRecovery(
@@ -729,6 +747,13 @@ async function runProjectWorkerInner(
           ),
         );
       }
+      if (
+        runContext?.authority &&
+        (await reconcileWorkflowMutations({ project, trello, github, git }))
+      ) {
+        await sleep(Math.max(pollIntervalMilliseconds, 15_000), signal);
+        continue;
+      }
       const authorityRecord = runContext?.authority?.store.read();
       const resumableLegacyAttempt =
         authorityRecord?.lifecycle === "waiting" &&
@@ -743,6 +768,25 @@ async function runProjectWorkerInner(
           .info(
             `Canonical attempt is waiting (${authorityRecord?.wait.reason ?? "checkpoint unavailable"}); no workflow mutations will be dispatched`,
           );
+        await sleep(pollIntervalMilliseconds, signal);
+        continue;
+      }
+      // An already-pinned publication has its own paced service readback.
+      // Re-running deferred startup resource validation here would funnel a
+      // Trello outage into the legacy exhausted/manual-restart block instead
+      // of resuming this same checkpoint when the service recovers.
+      if (
+        runContext?.authority &&
+        (await resumeInitialPublication({
+          project,
+          trello,
+          git,
+          github,
+          signal,
+          opencode,
+          ...(emailNotifier === undefined ? {} : { emailNotifier }),
+        }))
+      ) {
         await sleep(pollIntervalMilliseconds, signal);
         continue;
       }
@@ -834,6 +878,7 @@ async function runProjectWorkerInner(
       if (completedAttempt && runContext && !runContext.authority)
         return "authority-released";
     } catch (error) {
+      if (error instanceof NotificationPreparationError) throw error;
       if (
         isShutdownCancellation(error, signal) ||
         (signal.aborted && signal.reason === "fatal")
@@ -857,6 +902,22 @@ async function runProjectWorkerInner(
         return;
       }
 
+      const pendingMutations = runContext?.authority?.store
+        .read()
+        ?.pendingOperations.some(
+          (entry) =>
+            entry.id.startsWith("workflow:") &&
+            !["completed", "cancelled"].includes(entry.status),
+        );
+      if (pendingMutations) {
+        logger
+          .child({ projectId: project.id })
+          .info(
+            "Workflow mutation pending; ownership and completed effects retained for paced readback",
+          );
+        await sleep(Math.max(pollIntervalMilliseconds, 15_000), signal);
+        continue;
+      }
       const alreadyTerminal = runContext?.authority?.store.read();
       if (
         runContext?.authority &&
@@ -1175,6 +1236,15 @@ async function runProjectWorkerInner(
       }
 
       if (newlyBlockedReconciliation !== undefined) {
+        if (!cardFailureHandled)
+          prepareAttentionNotification(emailNotifier, {
+            project,
+            category: failureDescription.category,
+            reason: failureDescription.reason,
+            ...(cardIds.length ? { cardIds } : {}),
+            ...(sessionLogPaths.length ? { sessionLogPaths } : {}),
+            ...(handlingOutcome === undefined ? {} : { handlingOutcome }),
+          });
         newlyBlockedReconciliation.notificationIdentity =
           currentFailureIdentity;
         newlyBlockedReconciliation.failureIdentity = currentFailureBaseIdentity;
@@ -1258,6 +1328,23 @@ async function runProjectWorker(
   runContext?: ProjectRunWorkerContext,
 ): Promise<void> {
   let currentContext = runContext;
+  const outbox = runContext?.projectLease
+    ? new NotificationOutbox(
+        runContext.pinned?.storageRoot ??
+          project.contextRoot ??
+          DEFAULT_CONTEXT_ROOT,
+        project.id,
+        () => runContext.projectLease!.assertHeld(),
+        Date.now,
+        notificationTriggerObserver(
+          runContext.pinned?.storageRoot ??
+            project.contextRoot ??
+            DEFAULT_CONTEXT_ROOT,
+          project.id,
+          () => runContext.projectLease!.assertHeld(),
+        ),
+      )
+    : undefined;
   while (!signal.aborted) {
     const execute = () =>
       runProjectWorkerInner(
@@ -1273,9 +1360,24 @@ async function runProjectWorker(
         deferredTrelloValidation,
         currentContext,
       );
-    const outcome = currentContext?.authority
-      ? await currentContext.authority.run(execute)
-      : await execute();
+    const owned = () =>
+      currentContext?.authority
+        ? currentContext.authority.run(execute)
+        : execute();
+    let outcome: "authority-released" | undefined;
+    try {
+      outcome = outbox ? await outbox.run(owned) : await owned();
+    } catch (error) {
+      if (!(error instanceof NotificationPreparationError)) throw error;
+      const defer = () =>
+        deferNotificationPreparation(project.id, (message) =>
+          logger.child({ projectId: project.id }).warn(message),
+        );
+      if (currentContext?.authority) currentContext.authority.run(defer);
+      else defer();
+      await sleep(Math.max(pollIntervalMilliseconds, 15_000), signal);
+      continue;
+    }
     if (outcome !== "authority-released") return;
     if (currentContext) {
       const { authority: _releasedAuthority, ...releasedContext } =

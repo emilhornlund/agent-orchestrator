@@ -324,17 +324,18 @@ export class ProjectRunAuthority {
         trelloVerifiedAt: evidence.trelloVerifiedAt,
       },
     );
-    await this.releaseAttempt?.();
+    await this.releaseVerifiedTerminal();
     return completed;
   }
 
   async releaseVerifiedTerminal(): Promise<void> {
-    const current = this.store.read();
+    const current = this.store.assertCurrentLease(this.ownerGeneration);
     if (
       !current ||
       !["done", "refined", "failed", "cancelled"].includes(current.lifecycle) ||
       current.terminalSync !== "verified" ||
-      current.terminalEvidence === null
+      current.terminalEvidence === null ||
+      !current.pendingOperations.every(isConclusiveOperationResolution)
     )
       throw new RunStoreConflictError(
         "Attempt release requires verified terminal synchronization",
@@ -491,6 +492,19 @@ export class ProjectRunAuthority {
         ? projectLeaseContext.getStore()?.keys().next().value
         : undefined)
     );
+  }
+
+  static hasProjectLeaseScope(): boolean {
+    return projectLeaseContext.getStore() !== undefined;
+  }
+
+  /** Distinguishes unowned utility calls from production lease scopes, also
+   * when one runtime context contains several independent project leases. */
+  static isProjectLeaseScoped(projectId: string): boolean {
+    const leases = projectLeaseContext.getStore();
+    if (leases && !leases.has(projectId))
+      throw new RunStoreConflictError("Scoped project lease mismatch");
+    return leases !== undefined;
   }
 
   mutate<T>(
