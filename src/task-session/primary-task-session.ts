@@ -16,6 +16,7 @@ import {
 } from "./run-primary-operation.js";
 import type { PendingPrimaryInspection } from "./run-primary-operation.js";
 import { bindPrimaryExecutionEvidence } from "./primary-operation-ledger.js";
+import { sanitizePrimarySessionContextBundle } from "./build-primary-session-context.js";
 
 export class PrimaryTaskSessionError extends Error {
   constructor(message: string, options?: ErrorOptions) {
@@ -576,6 +577,7 @@ function persistRecoveryContext(
   forbiddenPaths: string[] = [],
   persistArtifact?: PrimarySessionRecoveryOptions["persistArtifact"],
 ): { reference: string; path: string; contents: string } {
+  bundle = sanitizePrimarySessionContextBundle(bundle);
   const contents = `${JSON.stringify(bundle)}\n`;
   if (Buffer.byteLength(contents) > 8 * 1024 * 1024)
     throw new PrimaryTaskSessionError("Recovery context exceeds size limit");

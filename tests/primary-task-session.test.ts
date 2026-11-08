@@ -18,6 +18,14 @@ import {
   type PrimarySessionRecoveryOptions,
 } from "../src/task-session/primary-task-session.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
+import { createHash } from "node:crypto";
+import { registerProcessSecrets } from "../src/process/process-runtime.js";
+import { execFileSync } from "node:child_process";
+import { GitClient } from "../src/git/git-client.js";
+import { buildPrimarySessionContext } from "../src/task-session/build-primary-session-context.js";
+import { RunStore } from "../src/task-session/run-store.js";
+import { ProjectRunAuthority } from "../src/task-session/project-run-authority.js";
+import { getTaskSessionSourceSnapshotIdentity } from "../src/task-session/source-snapshot.js";
 import type { TaskExecutionRecord } from "../src/task-session/task-execution-record.js";
 
 const advisoryFixtureExecution = {
@@ -508,6 +516,14 @@ describe("runWithPrimaryTaskSession", () => {
         sessionCreationStatus: "bound",
       }),
     );
+    const canaries = [
+      "artifact-card-key",
+      "artifact-plan-key",
+      "artifact-diff-key",
+      "artifact-history-key",
+      "artifact-feedback-key",
+    ];
+    registerProcessSecrets(canaries);
     const runOpenCode = vi.fn<RunOpenCode>(async () => {
       expect(store.read("card-one")).toMatchObject({
         primarySessionId: "ses_lost",
@@ -538,18 +554,25 @@ describe("runWithPrimaryTaskSession", () => {
           repositoryPath: "/owned/worktree",
           repositoryHead: "a".repeat(40),
           card: {
-            title: "current card",
-            description: "Description",
+            title: `safe card ${canaries[0]}`,
+            description: "useful card description",
             current: true,
           },
-          plan: { status: "absent" },
+          plan: {
+            status: "available",
+            content: JSON.stringify({ summary: `useful plan ${canaries[1]}` }),
+          },
           attachmentManifest: { status: "available", content: "[]" },
-          currentDiff: "diff",
-          history: "prior work",
+          currentDiff: JSON.stringify({ diff: `useful diff ${canaries[2]}` }),
+          history: JSON.stringify({ history: `useful history ${canaries[3]}` }),
           feedback: {
             status: "available",
             references: ["feedback:1"],
-            content: JSON.stringify({ entries: [{ id: "feedback:1" }] }),
+            content: JSON.stringify({
+              entries: [
+                { id: "feedback:1", text: `useful feedback ${canaries[4]}` },
+              ],
+            }),
           },
         },
         forbiddenPaths: [
@@ -578,6 +601,297 @@ describe("runWithPrimaryTaskSession", () => {
       store.read("card-one")?.sessionRecovery?.replacementSessionIds,
     ).toEqual(["ses_replacement"]);
     expect(fs.readdirSync(contextDirectory)).toHaveLength(1);
+    const saved = store.read("card-one")!.sessionRecovery!;
+    const artifactBytes = fs.readFileSync(saved.contextPath!);
+    expect(
+      `sha256:${createHash("sha256").update(artifactBytes).digest("hex")}`,
+    ).toBe(saved.contextReference);
+    const artifact = artifactBytes.toString("utf8");
+    const outbound = runOpenCode.mock.calls[0]![0].prompt;
+    for (const canary of canaries) {
+      expect(artifact).not.toContain(canary);
+      expect(outbound).not.toContain(canary);
+    }
+    const decoded = JSON.parse(artifact);
+    expect(decoded.card.title).toContain("safe card");
+    expect(JSON.parse(decoded.plan.content).summary).toContain("useful plan");
+    expect(JSON.parse(decoded.currentDiff).diff).toContain("useful diff");
+    expect(JSON.parse(decoded.history).history).toContain("useful history");
+    expect(JSON.parse(decoded.feedback.content).entries[0].text).toContain(
+      "useful feedback",
+    );
+    expect(outbound).toContain("useful feedback");
+  });
+
+  it("persists and dispatches sanitized builder context through canonical artifacts without changing a real Git worktree", async () => {
+    const { project } = createFixture();
+    const repo = project.repository.path;
+    const gitRun = (args: string[]) =>
+      execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trimEnd();
+    execFileSync("git", ["init", "-b", "main"], { cwd: repo });
+    gitRun(["config", "user.name", "Fixture"]);
+    gitRun(["config", "user.email", "fixture@example.test"]);
+    fs.writeFileSync(path.join(repo, "tracked.txt"), "tracked original\n");
+    gitRun(["add", "tracked.txt"]);
+    gitRun(["commit", "-m", "fixture"]);
+    fs.writeFileSync(
+      path.join(repo, "untracked.txt"),
+      "safe untracked fact; untracked-canary",
+    );
+    fs.writeFileSync(
+      path.join(repo, "tracked.txt"),
+      "tracked original\nstaged safe diff; diff-canary\n",
+    );
+    gitRun(["add", "tracked.txt"]);
+    const attachmentRoot = path.join(temporaryRoot!, "external");
+    const attachmentPath = path.join(
+      attachmentRoot,
+      "project-one",
+      "card-one",
+      "attachments",
+      "brief.txt",
+    );
+    fs.mkdirSync(path.dirname(attachmentPath), { recursive: true });
+    fs.writeFileSync(attachmentPath, "safe attachment fact; attachment-canary");
+    const feedback = JSON.stringify({
+      entries: [
+        {
+          id: "feedback-one",
+          text: 'safe feedback; quote " slash \\\n newline-canary',
+        },
+      ],
+    });
+    const canaries = [
+      "card-canary",
+      "plan-canary",
+      "diff-canary",
+      "history-canary",
+      "attachment-canary",
+      "untracked-canary",
+      'quote " slash \\\n newline-canary',
+    ];
+    registerProcessSecrets(canaries);
+    const contextRoot = path.join(temporaryRoot!, "contexts");
+    const gitClient = new GitClient();
+    const executionRecord = {
+      ...createRecord("project-one", "card-one", {
+        phase: "implementation",
+        expectedBranch: "agent/card-one",
+        primarySessionId: "ses_lost",
+        sessionCreationStatus: "bound",
+        operationKey: "history-canary",
+      }),
+      reviewObservation: {
+        headSha: gitRun(["rev-parse", "HEAD"]),
+        observedAt: new Date().toISOString(),
+        ciEvaluation: {
+          status: "waiting",
+          expectedCheckNames: [],
+          missingChecks: [],
+          pendingChecks: [],
+          failureCheckNames: [],
+        },
+        feedbackIds: ["feedback-one"],
+      },
+    } as TaskExecutionRecord;
+    const bundle = await buildPrimarySessionContext({
+      git: gitClient,
+      projectId: "project-one",
+      card: {
+        id: "card-one",
+        name: "task card-canary",
+        desc: "safe card fact",
+        idList: "working",
+        idLabels: [],
+        url: "https://trello.example/card-one",
+      },
+      attemptId: "attempt-one",
+      worktreePath: repo,
+      record: executionRecord,
+      plan: { summary: "safe plan fact; plan-canary" },
+      feedbackContent: feedback,
+      attachments: {
+        contextRoot: attachmentRoot,
+        projectId: "project-one",
+        cardId: "card-one",
+        manifest: {
+          attachments: [
+            {
+              id: "attachment-one",
+              name: "brief.txt",
+              mimeType: "text/plain",
+              bytes: null,
+              url: "https://example.test/brief",
+              isUpload: true,
+              localFilename: "brief.txt",
+            },
+          ],
+        },
+      },
+    });
+    const coordination = path.join(temporaryRoot!, "state");
+    const runStore = new RunStore(
+      coordination,
+      "attempt-one",
+      {
+        integrationId: "fixture",
+        projectId: "project-one",
+        boardId: "board",
+        lists: {
+          ready: "ready",
+          working: "working",
+          review: "review",
+          failed: "failed",
+          done: "done",
+          backlog: "backlog",
+        },
+        repository: "owner/repo",
+        repositoryPath: repo,
+        worktreeRoot: project.repository.worktreeRoot,
+        storageRoot: coordination,
+      },
+      {
+        integrationId: "fixture",
+        instanceId: "fixture-instance",
+        token: "fixture-token",
+        assertHeld: () => undefined,
+      },
+    );
+    runStore.create({
+      version: 1,
+      revision: 1,
+      projectId: "project-one",
+      cardId: "card-one",
+      attemptId: "attempt-one",
+      taskKind: "implementation",
+      pinned: {
+        integrationId: "fixture",
+        projectId: "project-one",
+        boardId: "board",
+        lists: {
+          ready: "ready",
+          working: "working",
+          review: "review",
+          failed: "failed",
+          done: "done",
+          backlog: "backlog",
+        },
+        repository: "owner/repo",
+        repositoryPath: repo,
+        worktreeRoot: project.repository.worktreeRoot,
+        storageRoot: coordination,
+      },
+      lifecycle: "implementation",
+      checkpoint: "implementation",
+      publicationState: "none",
+      operation: { id: null, kind: null, generation: 0 },
+      wait: { reason: null, dependency: null, since: null, retryAt: null },
+      owner: {
+        instanceId: "fixture-instance",
+        token: "fixture-token",
+        generation: 1,
+      },
+      resources: [],
+      pendingOperations: [],
+      queue: [],
+      budgets: {},
+      sessions: {},
+      artifacts: [],
+      expectedTrelloListId: null,
+      terminalSync: "not-applicable",
+      terminalEvidence: null,
+      legacy: {},
+      compatibility: {},
+      updatedAt: new Date().toISOString(),
+    });
+    const authority = new ProjectRunAuthority("project-one", runStore, 1);
+    const artifactStore = new TaskExecutionStore(
+      coordination,
+      project,
+      authority,
+    );
+    const persistedRecord = { ...executionRecord };
+    delete persistedRecord.reviewObservation;
+    artifactStore.create(persistedRecord as TaskExecutionRecord);
+    const fingerprint = () =>
+      JSON.stringify({
+        head: gitRun(["rev-parse", "HEAD"]),
+        status: gitRun(["status", "--porcelain=v1", "-uall"]),
+        index: gitRun(["ls-files", "--stage"]),
+        refs: gitRun(["for-each-ref", "--format=%(refname) %(objectname)"]),
+        tracked: fs.readFileSync(path.join(repo, "tracked.txt")),
+        untracked: fs.readFileSync(path.join(repo, "untracked.txt")),
+      });
+    const before = fingerprint();
+    const actualBaseline = {
+      sourceIdentity: await getTaskSessionSourceSnapshotIdentity(
+        gitClient,
+        repo,
+      ),
+      head: gitRun(["rev-parse", "HEAD"]),
+      branch: gitRun(["branch", "--show-current"]),
+      branchRef: gitRun(["rev-parse", "HEAD"]),
+      refsIdentity: createHash("sha256")
+        .update(gitRun(["for-each-ref", "--format=%(refname) %(objectname)"]))
+        .digest("hex"),
+    };
+    const run = vi.fn<RunOpenCode>().mockResolvedValue({
+      exitCode: 0,
+      output: sessionEvent("ses_replacement"),
+      errorOutput: "",
+    });
+    await runWithPrimaryTaskSession(
+      artifactStore,
+      new OpenCodeClient(run),
+      "project-one",
+      "card-one",
+      { ...createRunOptions(), cwd: repo, readOnly: true },
+      {
+        inspect: async () => "confirmed-absent",
+        context: bundle,
+        contextDirectory: contextRoot,
+        forbiddenPaths: [repo, project.repository.worktreeRoot],
+        attemptId: "attempt-one",
+        baseline: actualBaseline,
+        persistArtifact: (content) => {
+          const artifact = runStore.writeArtifact(content, "application/json");
+          return { reference: artifact.id, path: artifact.path };
+        },
+      },
+      {
+        role: "reconstruction",
+        operationId: "attempt-one:reconstruction",
+        readOnlyAcknowledged: true,
+      },
+    );
+    expect(fingerprint()).toBe(before);
+    const recovery = artifactStore.read("card-one")!.sessionRecovery!;
+    const stored = fs.readFileSync(recovery.contextPath!);
+    expect(`sha256:${createHash("sha256").update(stored).digest("hex")}`).toBe(
+      recovery.contextReference,
+    );
+    const parsed = JSON.parse(stored.toString("utf8"));
+    const outbound = run.mock.calls[0]![0].prompt;
+    for (const secret of canaries) {
+      expect(stored.toString("utf8")).not.toContain(secret);
+      expect(outbound).not.toContain(secret);
+    }
+    expect(parsed.plan.content).toContain("safe plan fact");
+    expect(parsed.attachmentManifest.content).toContain("safe attachment fact");
+    expect(JSON.parse(parsed.feedback.content).entries[0].text).toContain(
+      "safe feedback",
+    );
+    const history = JSON.parse(parsed.history);
+    const ledger = JSON.parse(history.feedbackLedger);
+    expect(ledger.entries[0].text).not.toContain(canaries[6]);
+    expect(ledger.entries[0].text).toContain("safe feedback");
+    expect(
+      Buffer.from(
+        JSON.parse(parsed.currentDiff).untracked[0].contentBase64,
+        "base64",
+      ).toString(),
+    ).toContain("safe untracked fact");
+    expect(outbound).toContain("safe card fact");
   });
 
   it("starts a new reconstruction lineage after verified recovery and a later repository edit/loss", async () => {

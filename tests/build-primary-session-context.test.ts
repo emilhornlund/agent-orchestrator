@@ -6,6 +6,7 @@ import type { GitClient } from "../src/git/git-client.js";
 import { buildPrimarySessionContext } from "../src/task-session/build-primary-session-context.js";
 import type { TaskExecutionRecord } from "../src/task-session/task-execution-record.js";
 import type { TrelloCard } from "../src/trello/trello-client.js";
+import { registerProcessSecrets } from "../src/process/process-runtime.js";
 
 let root: string;
 beforeEach(() => {
@@ -164,6 +165,27 @@ describe("buildPrimarySessionContext", () => {
     });
   });
 
+  it("inventories binary untracked content without emitting or rewriting its bytes", async () => {
+    const worktreePath = path.join(root, "binary-repo");
+    fs.mkdirSync(worktreePath);
+    const original = Buffer.from([0xff, 0x00, 0xc3, 0x28, 0x80]);
+    const filePath = path.join(worktreePath, "binary.dat");
+    fs.writeFileSync(filePath, original);
+    const bundle = await buildPrimarySessionContext({
+      git: git(worktreePath, { untracked: ["binary.dat"] }),
+      projectId: "project-one",
+      card,
+      attemptId: "attempt",
+      worktreePath,
+      record,
+      plan: null,
+    });
+    const entry = JSON.parse(bundle.currentDiff).untracked[0];
+    expect(entry.contentStatus).toBe("unsupported-binary");
+    expect(entry.contentBase64).toBe("");
+    expect(fs.readFileSync(filePath)).toEqual(original);
+  });
+
   it("rejects mismatched attachment identity and symlinked untracked inputs", async () => {
     const worktreePath = path.join(root, "repo");
     fs.mkdirSync(worktreePath);
@@ -214,5 +236,118 @@ describe("buildPrimarySessionContext", () => {
         plan: null,
       }),
     ).rejects.toThrow("Symlink traversal");
+  });
+
+  it("sanitizes registered secrets across reconstruction fields before base64 encoding", async () => {
+    const canaries = [
+      "card-canary-91",
+      "plan-canary-82",
+      "diff-canary-73",
+      "history-canary-64",
+      "feedback-canary-55",
+      "file-canary-46",
+      "attachment-canary-37",
+      'quoted "canary" \\\nvalue',
+    ];
+    registerProcessSecrets(canaries);
+    const worktreePath = path.join(root, "repo");
+    const attachmentRoot = path.join(root, "external");
+    fs.mkdirSync(worktreePath);
+    const attachmentPath = path.join(
+      attachmentRoot,
+      "project-one",
+      card.id,
+      "attachments",
+      "note.txt",
+    );
+    fs.mkdirSync(path.dirname(attachmentPath), { recursive: true });
+    fs.writeFileSync(attachmentPath, `safe attachment ${canaries[6]}`);
+    fs.writeFileSync(
+      path.join(worktreePath, "new.txt"),
+      `safe file ${canaries[5]}`,
+    );
+    const bundle = await buildPrimarySessionContext({
+      git: git(worktreePath, {
+        staged: `safe diff ${canaries[2]}`,
+        unstaged: `safe unstaged ${canaries[3]}`,
+        untracked: ["new.txt"],
+      }),
+      projectId: "project-one",
+      card: {
+        ...card,
+        name: `Task ${canaries[0]}`,
+        desc: `safe card ${canaries[0]}`,
+      },
+      attemptId: "attempt",
+      worktreePath,
+      record: {
+        ...record,
+        operationKey: `safe history ${canaries[4]}`,
+      } as TaskExecutionRecord,
+      plan: { summary: `safe plan ${canaries[1]} ${canaries[7]}` },
+      feedbackContent: `safe feedback ${canaries[4]}`,
+      attachments: {
+        contextRoot: attachmentRoot,
+        projectId: "project-one",
+        cardId: card.id,
+        manifest: {
+          attachments: [
+            {
+              id: "attachment",
+              name: "note.txt",
+              mimeType: "text/plain",
+              bytes: null,
+              url: "https://example.test",
+              isUpload: true,
+              localFilename: "note.txt",
+            },
+          ],
+        },
+      },
+    });
+    const serialized = JSON.stringify(bundle);
+    for (const canary of canaries) expect(serialized).not.toContain(canary);
+    expect(serialized).toContain("safe");
+    const untracked = JSON.parse(bundle.currentDiff).untracked[0];
+    expect(Buffer.from(untracked.contentBase64, "base64").toString()).toContain(
+      "safe file",
+    );
+    expect(
+      Buffer.from(untracked.contentBase64, "base64").toString(),
+    ).not.toContain(canaries[5]);
+    expect(
+      JSON.parse(bundle.attachmentManifest.content!).manifest[0]
+        .readableContent,
+    ).toContain("safe attachment");
+  });
+
+  it("sanitizes quoted assignment and nested feedback-ledger values before JSON encoding", async () => {
+    const secret = 'quote " slash \\ and\nnewline';
+    registerProcessSecrets([secret]);
+    const worktreePath = path.join(root, "nested-repo");
+    fs.mkdirSync(worktreePath);
+    const bundle = await buildPrimarySessionContext({
+      git: git(worktreePath, { staged: `password="${secret}"` }),
+      projectId: "project-one",
+      card,
+      attemptId: "attempt",
+      worktreePath,
+      record: {
+        ...record,
+        reviewObservation: { feedbackIds: ["feedback-one"] },
+      } as TaskExecutionRecord,
+      plan: { text: `retain safe fact; ${secret}` },
+      feedbackContent: JSON.stringify({
+        entries: [{ id: "feedback-one", text: `nested ${secret}` }],
+      }),
+    });
+    const diff = JSON.parse(bundle.currentDiff);
+    const history = JSON.parse(bundle.history);
+    const ledger = JSON.parse(history.feedbackLedger);
+    const plan = JSON.parse(bundle.plan.content!);
+    expect(diff.staged).not.toContain(secret);
+    expect(ledger.entries[0].text).not.toContain(secret);
+    expect(plan.text).not.toContain(secret);
+    expect(plan.text).toContain("retain safe fact");
   });
 });

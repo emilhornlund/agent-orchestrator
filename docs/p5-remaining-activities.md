@@ -1,7 +1,7 @@
 # P5 remaining activities — WIP, not deployment-ready
 
 **Status: NOT READY FOR DEPLOYMENT. T2 and P5 are NOT COMPLETE.** The current
-branch contains committed R1 work and an uncommitted R2 implementation
+branch contains committed R1 and R2 work and an uncommitted R3 implementation
 candidate. The recorded
 1,936-test validation predates the independent-review findings below; it is not
 current acceptance, and no product acceptance or phase approval is implied.
@@ -39,7 +39,7 @@ scope. Do not combine activities.
 > evidence/limits, and unresolved issues. Full `yarn validate` is required once
 > after the ordered T2 fixes/review, not repeatedly after every focused activity.
 
-## Ordered T2 recovery activities (R1 committed; R2–R6 unresolved)
+## Ordered T2 recovery activities (R1–R2 committed; R3–R6 unresolved)
 
 ### R1 — Recover published sessions from durable PR identity and owning checkpoint
 
@@ -84,7 +84,8 @@ minimum integration needed for this recovery path.
 
 ### R2 — Give active primary operation precedence over legacy review remediation
 
-**Status:** implementation candidate in the worktree; HIGH, blocking. Legacy `reviewRemediationFailure` is
+**Status:** committed on the current branch; R2 implementation activity is
+complete. This does not claim T2 or P5 completion. Legacy `reviewRemediationFailure` is
 processed before active-primary reservation. After partial edits, restart can
 refuse the active operation; an unchanged fallback can publish without review
 of the active operation. Primary errors may also be incorrectly represented by
@@ -121,7 +122,7 @@ budgets, PR correction policy, or unrelated operation replay.
 
 ### R3 — Sanitize reconstruction secrets before persistence and encoding
 
-**Status:** pending; HIGH, blocking. Reconstruction can persist raw card/plan/
+**Status:** implementation candidate in the worktree; HIGH, blocking. Reconstruction can persist raw card/plan/
 diff/history/untracked content and can encode a whole source file as base64,
 thereby bypassing the intended redaction channel.
 

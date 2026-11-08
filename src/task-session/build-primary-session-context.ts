@@ -18,6 +18,78 @@ import { redactSecrets } from "../security/redact-secrets.js";
 const INLINE_ATTACHMENT_MAX_BYTES = 128 * 1024;
 const INLINE_ATTACHMENT_TOTAL_MAX_BYTES = 512 * 1024;
 
+function sanitizeContextValue(value: unknown): unknown {
+  const secrets = getProcessRuntime().secretValues;
+  const sanitize = (item: unknown): unknown => {
+    if (typeof item === "string") return redactSecrets(item, secrets);
+    if (Array.isArray(item)) return item.map(sanitize);
+    if (item !== null && typeof item === "object")
+      return Object.fromEntries(
+        Object.entries(item).map(([key, child]) => [
+          redactSecrets(key, secrets),
+          sanitize(child),
+        ]),
+      );
+    return item;
+  };
+  return sanitize(value);
+}
+
+function stringifySanitized(value: unknown): string {
+  return JSON.stringify(sanitizeContextValue(value));
+}
+
+/** Sanitize the complete bundle at its persistence boundary, before encoding or hashing. */
+export function sanitizePrimarySessionContextBundle(
+  bundle: PrimarySessionContextBundle,
+): PrimarySessionContextBundle {
+  const secrets = getProcessRuntime().secretValues;
+  const sanitize = sanitizeContextValue;
+  const sanitizeOpaque = (text: string | undefined): string | undefined => {
+    if (text === undefined) return undefined;
+    try {
+      return JSON.stringify(sanitize(JSON.parse(text) as unknown));
+    } catch {
+      return redactSecrets(text, secrets);
+    }
+  };
+  const prepared: PrimarySessionContextBundle = {
+    ...bundle,
+    plan: {
+      ...bundle.plan,
+      ...(bundle.plan.content === undefined ? {} : { content: "" }),
+    },
+    attachmentManifest: {
+      ...bundle.attachmentManifest,
+      ...(bundle.attachmentManifest.content === undefined
+        ? {}
+        : {
+            content: "",
+          }),
+    },
+    feedback: {
+      ...bundle.feedback,
+      references: bundle.feedback.references.map((item) =>
+        redactSecrets(item, secrets),
+      ),
+      ...(bundle.feedback.content === undefined ? {} : { content: "" }),
+    },
+    currentDiff: "",
+    history: "",
+  };
+  const sanitized = sanitize(prepared) as PrimarySessionContextBundle;
+  if (bundle.plan.content !== undefined)
+    sanitized.plan.content = sanitizeOpaque(bundle.plan.content) ?? "";
+  if (bundle.attachmentManifest.content !== undefined)
+    sanitized.attachmentManifest.content =
+      sanitizeOpaque(bundle.attachmentManifest.content) ?? "";
+  if (bundle.feedback.content !== undefined)
+    sanitized.feedback.content = sanitizeOpaque(bundle.feedback.content) ?? "";
+  sanitized.currentDiff = sanitizeOpaque(bundle.currentDiff) ?? "";
+  sanitized.history = sanitizeOpaque(bundle.history) ?? "";
+  return sanitized;
+}
+
 export async function buildPrimarySessionContext(input: {
   git: Pick<
     GitClient,
@@ -76,12 +148,28 @@ export async function buildPrimarySessionContext(input: {
       throw new Error(
         "Untracked reconstruction inventory exceeds bundle limit",
       );
-    const bytes = fs.readFileSync(absolute);
+    const sourceBytes = fs.readFileSync(absolute);
+    let contentBase64: string | undefined;
+    try {
+      const text = new TextDecoder("utf-8", { fatal: true }).decode(
+        sourceBytes,
+      );
+      const safeText = redactSecrets(text, getProcessRuntime().secretValues);
+      contentBase64 = Buffer.from(safeText, "utf8").toString("base64");
+    } catch {
+      // Do not emit raw or transformed binary bytes as reconstruction content.
+    }
+    const bytes =
+      contentBase64 === undefined
+        ? sourceBytes
+        : Buffer.from(contentBase64, "base64");
     return {
       path: relativePath,
       sha256: createHash("sha256").update(bytes).digest("hex"),
       hashBytes: bytes.byteLength,
-      contentBase64: bytes.toString("base64"),
+      contentBase64: contentBase64 ?? "",
+      contentStatus:
+        contentBase64 === undefined ? "unsupported-binary" : "available",
     };
   });
   if (
@@ -150,7 +238,7 @@ export async function buildPrimarySessionContext(input: {
       ? { status: "absent" as const }
       : {
           status: "available" as const,
-          content: JSON.stringify({
+          content: stringifySanitized({
             manifest: attachmentInventory,
             usableLocations: attachmentLines,
           }),
@@ -181,7 +269,15 @@ export async function buildPrimarySessionContext(input: {
         "Primary-session feedback references are not resolvable in the current ledger",
       );
   }
-  return {
+  const sanitizedFeedbackLedger = (): string | null => {
+    if (feedbackContent === undefined) return null;
+    try {
+      return stringifySanitized(JSON.parse(feedbackContent) as unknown);
+    } catch {
+      return redactSecrets(feedbackContent, getProcessRuntime().secretValues);
+    }
+  };
+  return sanitizePrimarySessionContextBundle({
     version: 1,
     projectId: input.projectId,
     cardId: input.card.id,
@@ -196,9 +292,9 @@ export async function buildPrimarySessionContext(input: {
     plan:
       input.plan === null
         ? { status: "absent" }
-        : { status: "available", content: JSON.stringify(input.plan) },
+        : { status: "available", content: stringifySanitized(input.plan) },
     attachmentManifest: attachmentContext,
-    currentDiff: JSON.stringify({
+    currentDiff: stringifySanitized({
       status: status.trim().length === 0 ? "clean" : "changed",
       sourceIdentity,
       staged,
@@ -206,7 +302,7 @@ export async function buildPrimarySessionContext(input: {
       index,
       untracked: files,
     }),
-    history: JSON.stringify({
+    history: stringifySanitized({
       attemptId: input.attemptId,
       operationKey: input.record.operationKey,
       phase: input.record.phase,
@@ -214,7 +310,7 @@ export async function buildPrimarySessionContext(input: {
       retryCounters: input.record.retryCounters,
       lastEvent: input.record.lastEvent ?? null,
       taskRecord: input.record,
-      feedbackLedger: feedbackContent ?? null,
+      feedbackLedger: sanitizedFeedbackLedger(),
       recovery: input.record.sessionRecovery ?? null,
     }),
     feedback:
@@ -223,7 +319,7 @@ export async function buildPrimarySessionContext(input: {
         : {
             status: "available",
             references: feedbackIds,
-            content: feedbackContent!,
+            content: sanitizedFeedbackLedger()!,
           },
-  };
+  });
 }
