@@ -22,6 +22,13 @@ import {
 } from "../trello/trello-client.js";
 import { failCard } from "../orchestrator/fail-card.js";
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
+import type { CommandRunner } from "../process/command-runner.js";
+import {
+  RefinementSetupAmbiguousError,
+  RefinementSetupFailedError,
+  assertRefinementSetupBaselineUnchanged,
+  runRefinementSetup,
+} from "./run-refinement-setup.js";
 
 export type RefinementProject = ProjectConfig & {
   contextRoot?: string;
@@ -62,6 +69,7 @@ function reportCleanupFailure(
 export async function runRefinementCardWorkflow(options: {
   trello: TrelloClient;
   git: GitClient;
+  commands: CommandRunner;
   openCode: OpenCodeClient;
   project: RefinementProject;
   card: TrelloCard;
@@ -85,6 +93,32 @@ export async function runRefinementCardWorkflow(options: {
       (await prepareWorktree(git, project, card.id));
     cardLog.info(`Branch: ${worktree.branch}`);
     cardLog.info(`Worktree: ${worktree.path}`);
+    const postSetupBaseline = await runRefinementSetup({
+      commands: options.commands,
+      git,
+      project,
+      cardId: card.id,
+      worktreePath: worktree.path,
+      signal,
+      cardLog,
+    });
+    if (postSetupBaseline !== undefined) {
+      try {
+        await assertRefinementSetupBaselineUnchanged({
+          git,
+          worktreePath: worktree.path,
+          baseline: postSetupBaseline,
+          signal,
+        });
+      } catch (error) {
+        if (error instanceof RefinementSetupAmbiguousError) throw error;
+        throw new RefinementSetupAmbiguousError(
+          "Could not inspect the worktree against its persisted post-setup baseline; preserving it and blocking refinement dispatch",
+          { cause: error },
+        );
+      }
+    }
+    clearRefinementResult(worktree.path);
     cardContextPreparationFailed = true;
     const attachmentContext = await options.prepareAttachmentContext(
       card,
@@ -100,6 +134,9 @@ export async function runRefinementCardWorkflow(options: {
       project,
       card,
       worktreePath: worktree.path,
+      ...(postSetupBaseline === undefined
+        ? {}
+        : { repositoryBaseline: postSetupBaseline }),
       signal,
       cardLog,
       ...(attachmentContext === undefined ? {} : { attachmentContext }),
@@ -142,6 +179,11 @@ export async function runRefinementCardWorkflow(options: {
     }
   } catch (error) {
     if (error instanceof NotificationPreparationError) throw error;
+    if (
+      error instanceof RefinementSetupAmbiguousError ||
+      error instanceof RefinementSetupFailedError
+    )
+      throw error;
     if (
       ProjectRunAuthority.current(project.id)
         ?.store.read()

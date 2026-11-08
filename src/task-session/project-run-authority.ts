@@ -328,6 +328,41 @@ export class ProjectRunAuthority {
     return completed;
   }
 
+  async failRefinement(evidence: {
+    observationId: string;
+    observedAt: string;
+    trelloObservationId: string;
+    trelloVerifiedAt: string;
+  }): Promise<RunRecord> {
+    const current = this.store.read();
+    if (
+      !current ||
+      current.taskKind !== "refinement" ||
+      current.lifecycle !== "refinement" ||
+      current.publicationState !== "none"
+    )
+      throw new RunStoreConflictError(
+        "Only an unpublished active refinement attempt can fail terminally",
+      );
+    return this.store.transition(
+      current.revision,
+      this.ownerGeneration,
+      null,
+      "failed",
+      "refinement",
+      "failed",
+      (snapshot) => snapshot,
+      {
+        prOutcome: "no-pr-failure",
+        prObservationId: evidence.observationId,
+        prVerifiedAt: evidence.observedAt,
+        trelloListId: current.pinned.lists.failed,
+        trelloObservationId: evidence.trelloObservationId,
+        trelloVerifiedAt: evidence.trelloVerifiedAt,
+      },
+    );
+  }
+
   async releaseVerifiedTerminal(): Promise<void> {
     const current = this.store.assertCurrentLease(this.ownerGeneration);
     if (

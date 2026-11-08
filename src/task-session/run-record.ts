@@ -148,6 +148,7 @@ export const runTransitionMatrix: Readonly<
   },
   failed: {
     planning: "failed",
+    refinement: "failed",
     implementation: "failed",
     validation: "failed",
     review: "failed",

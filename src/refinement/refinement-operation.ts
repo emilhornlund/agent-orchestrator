@@ -28,6 +28,7 @@ export async function runRefinementOperation(input: {
   project: ProjectConfig;
   card: TrelloCard;
   worktreePath: string;
+  repositoryBaseline?: Buffer;
   signal: AbortSignal;
   cardLog: Logger;
   attachmentContext?: CardAttachmentPromptContext;
@@ -47,6 +48,7 @@ export async function runRefinementOperation(input: {
       input.worktreePath,
       input.signal,
       input.attachmentContext,
+      input.repositoryBaseline,
     ));
 
   input.cardLog.event(

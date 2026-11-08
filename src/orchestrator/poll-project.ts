@@ -139,6 +139,7 @@ export async function pollProject(
             runRefinementCardWorkflow({
               trello,
               git,
+              commands,
               openCode: opencode,
               project,
               card,

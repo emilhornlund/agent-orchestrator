@@ -111,6 +111,11 @@ import { getCardsForDiscovery } from "./trello-list-discovery.js";
 import { isCardStartDateReached } from "./card-start-eligibility.js";
 import { getWorkflowKind } from "./workflow-kind.js";
 import {
+  hasExhaustedRefinementSetup,
+  RefinementSetupAmbiguousError,
+  RefinementSetupFailedError,
+} from "../refinement/run-refinement-setup.js";
+import {
   readRejectedCommitState,
   readTrustedCommitState,
   readPendingCommitState,
@@ -189,6 +194,98 @@ async function completeRefinementAuthority(
     trelloObservationId: `backlog-readback:${cardId}:${observedAt}`,
     trelloVerifiedAt: observedAt,
   });
+}
+
+async function finalizeRefinementSetupFailure(options: {
+  authority: ProjectRunAuthority;
+  queue: TaskMutationQueue;
+  queueEventId: string;
+  trello: TrelloClient;
+  project: ProjectConfig;
+  card: TrelloCard;
+  reason: string;
+  signal: AbortSignal;
+}): Promise<void> {
+  const { authority, queue, queueEventId, trello, project, card, signal } =
+    options;
+  const current = authority.store.assertCurrentLease(authority.ownerGeneration);
+  if (current.taskKind !== "refinement" || current.cardId !== card.id)
+    throw new Error(
+      "Setup failure does not match the canonical refinement attempt",
+    );
+  if (
+    current.lifecycle === "failed" &&
+    current.terminalEvidence?.prOutcome === "no-pr-failure"
+  ) {
+    const failed = await getCardsForDiscovery(
+      trello,
+      project.id,
+      project.trello.failedListId,
+      "Could not verify terminal refinement setup failure",
+      signal,
+    );
+    if (!failed.some((candidate) => candidate.id === card.id))
+      throw new Error("Canonical failed refinement is absent from Failed");
+    if (queue.getActive()?.eventId === queueEventId)
+      queue.complete(queueEventId);
+    await authority.releaseVerifiedTerminal();
+    return;
+  }
+  if (
+    current.lifecycle !== "refinement" ||
+    !hasExhaustedRefinementSetup(authority, card.id)
+  )
+    throw new Error("Refinement setup failure is not durably exhausted");
+  const failed = await getCardsForDiscovery(
+    trello,
+    project.id,
+    project.trello.failedListId,
+    "Could not inspect Failed list before refinement setup failure finalization",
+    signal,
+  );
+  const comment = [
+    "Agent Orchestrator failed during repository setup for refinement.",
+    "",
+    "Category: repository setup",
+    `Reason: ${options.reason.slice(0, 1_000)}`,
+    "Setup-produced worktree changes and process diagnostics have been preserved.",
+    "To retry deliberately, move this card to Ready for Agent.",
+  ].join("\n");
+  await trello.addComment(card.id, comment);
+  if (!failed.some((candidate) => candidate.id === card.id)) {
+    const working = await getCardsForDiscovery(
+      trello,
+      project.id,
+      project.trello.workingListId,
+      "Could not verify Working before refinement setup failure finalization",
+      signal,
+    );
+    if (!working.some((candidate) => candidate.id === card.id))
+      throw new Error(
+        "Refinement setup failure card is in neither Working nor Failed",
+      );
+    await trello.moveCard(card.id, project.trello.failedListId);
+  }
+  const confirmed = await getCardsForDiscovery(
+    trello,
+    project.id,
+    project.trello.failedListId,
+    "Could not verify Failed transition after refinement setup failure",
+    signal,
+  );
+  if (!confirmed.some((candidate) => candidate.id === card.id))
+    throw new Error(
+      "Trello did not confirm refinement setup failure in Failed",
+    );
+  const observedAt = new Date().toISOString();
+  await authority.failRefinement({
+    observationId: `refinement-setup-failed:${card.id}:${current.attemptId}`,
+    observedAt,
+    trelloObservationId: `trello-failed-readback:${card.id}:${observedAt}`,
+    trelloVerifiedAt: observedAt,
+  });
+  queue.complete(queueEventId);
+  await authority.releaseVerifiedTerminal();
 }
 
 function updateRecord(
@@ -2864,6 +2961,67 @@ export async function runTaskSessionWorkflow(
     if (feedbackResult === "attention-required") feedbackNeedsAttention = true;
   }
   if (feedbackNeedsAttention) return;
+  const refinementAuthority = ProjectRunAuthority.current(project.id);
+  const canonicalRun = refinementAuthority?.store.read();
+  if (
+    refinementAuthority &&
+    canonicalRun?.taskKind === "refinement" &&
+    canonicalRun.lifecycle === "failed" &&
+    canonicalRun.terminalEvidence?.prOutcome === "no-pr-failure"
+  ) {
+    const failed = await getCardsForDiscovery(
+      trello,
+      project.id,
+      project.trello.failedListId,
+      "Could not verify terminal refinement failure before releasing ownership",
+      signal,
+    );
+    if (!failed.some((candidate) => candidate.id === canonicalRun.cardId))
+      throw new Error("Terminal refinement failure is not present in Failed");
+    const event = queue.getActive();
+    if (event?.kind === "refinement" && event.cardId === canonicalRun.cardId) {
+      const owner = queue.claimForRecovery(event.eventId);
+      if (owner === null)
+        throw new Error("Could not recover terminal refinement queue event");
+      queue.complete(owner.eventId);
+    }
+    await refinementAuthority.releaseVerifiedTerminal();
+    return;
+  }
+  const pendingRefinementFailure = queue.getActive();
+  if (
+    refinementAuthority &&
+    pendingRefinementFailure?.kind === "refinement" &&
+    hasExhaustedRefinementSetup(
+      refinementAuthority,
+      pendingRefinementFailure.cardId,
+    )
+  ) {
+    const owner = queue.claimForRecovery(pendingRefinementFailure.eventId);
+    if (owner === null)
+      throw new Error(
+        "Could not claim exhausted refinement setup for recovery",
+      );
+    try {
+      const failureCard = await trello.getCard(owner.cardId);
+      await finalizeRefinementSetupFailure({
+        authority: refinementAuthority,
+        queue,
+        queueEventId: owner.eventId,
+        trello,
+        project,
+        card: failureCard,
+        reason:
+          "Repository setup failed after three bounded executions; setup effects and process evidence are preserved",
+        signal,
+      });
+    } catch (error) {
+      if (queue.ownsActive(owner.eventId))
+        queue.releaseForRecovery(owner.eventId);
+      throw error;
+    }
+    return;
+  }
   const strandedMutation = queue.getActive();
   const strandedTask =
     strandedMutation?.kind === "implementation"
@@ -3102,7 +3260,35 @@ export async function runTaskSessionWorkflow(
       else queue.complete(recovered.eventId);
       return;
     } catch (error) {
-      if (error instanceof NotificationPreparationError)
+      if (error instanceof RefinementSetupFailedError) {
+        try {
+          const authority = ProjectRunAuthority.current(project.id);
+          if (!authority)
+            throw new Error("Refinement failure has no canonical authority", {
+              cause: error,
+            });
+          await finalizeRefinementSetupFailure({
+            authority,
+            queue,
+            queueEventId: recovered.eventId,
+            trello,
+            project,
+            card,
+            reason:
+              "Repository setup failed after three bounded executions; setup effects and process evidence are preserved",
+            signal,
+          });
+          return;
+        } catch (finalizationError) {
+          if (queue.ownsActive(recovered.eventId))
+            queue.releaseForRecovery(recovered.eventId);
+          throw finalizationError;
+        }
+      }
+      if (
+        error instanceof NotificationPreparationError ||
+        error instanceof RefinementSetupAmbiguousError
+      )
         queue.releaseForRecovery(recovered.eventId);
       else queue.fail(recovered.eventId);
       throw error;
@@ -3760,7 +3946,41 @@ export async function runTaskSessionWorkflow(
         project.trello.workingListId,
       );
       cardLog.event("Card claimed; transition to Working succeeded");
-      await options.processRefinement(claimedCard ?? card, worktree);
+      try {
+        await options.processRefinement(claimedCard ?? card, worktree);
+      } catch (error) {
+        if (error instanceof RefinementSetupFailedError) {
+          try {
+            const authority = ProjectRunAuthority.current(project.id);
+            if (!authority)
+              throw new Error("Refinement failure has no canonical authority", {
+                cause: error,
+              });
+            await finalizeRefinementSetupFailure({
+              authority,
+              queue,
+              queueEventId: mutation.eventId,
+              trello,
+              project,
+              card: claimedCard ?? card,
+              reason:
+                "Repository setup failed after three bounded executions; setup effects and process evidence are preserved",
+              signal,
+            });
+            return;
+          } catch (finalizationError) {
+            if (queue.ownsActive(mutation.eventId))
+              queue.releaseForRecovery(mutation.eventId);
+            throw finalizationError;
+          }
+        }
+        if (error instanceof RefinementSetupAmbiguousError) {
+          if (queue.ownsActive(mutation.eventId))
+            queue.releaseForRecovery(mutation.eventId);
+          return;
+        }
+        throw error;
+      }
       await completeRefinementAuthority(
         ProjectRunAuthority.current(project.id),
         trello,
