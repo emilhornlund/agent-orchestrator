@@ -141,6 +141,7 @@ export async function runRefinementCardWorkflow(options: {
       );
     }
   } catch (error) {
+    if (error instanceof NotificationPreparationError) throw error;
     if (
       ProjectRunAuthority.current(project.id)
         ?.store.read()
@@ -180,3 +181,4 @@ export async function runRefinementCardWorkflow(options: {
     );
   }
 }
+import { NotificationPreparationError } from "../notifications/notification-outbox.js";

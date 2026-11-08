@@ -2,8 +2,11 @@ import type { ProjectConfig } from "../config/config.js";
 import { logger } from "../logging/logger.js";
 import {
   notifyFailed,
+  enqueueNotification,
+  buildFailedEmail,
   type EmailNotifier,
 } from "../notifications/email-notifier.js";
+import { NotificationPreparationError } from "../notifications/notification-outbox.js";
 import {
   isRetryableTrelloError,
   type TrelloCard,
@@ -97,6 +100,30 @@ export async function failCard(
       : {}),
   });
 
+  if (originalError instanceof NotificationPreparationError)
+    throw originalError;
+  if (
+    card &&
+    emailNotifier &&
+    (emailNotifier.isEventEnabled?.("failed") ?? true)
+  )
+    enqueueNotification(
+      emailNotifier,
+      project.id,
+      "failed",
+      card.url,
+      buildFailedEmail({
+        project,
+        card,
+        category: failureDescription.category,
+        reason: failureDescription.reason,
+      }),
+      {
+        cardId,
+        listId: project.trello.failedListId,
+        boardId: project.trello.boardId,
+      },
+    );
   try {
     await trello.moveCard(cardId, project.trello.failedListId);
   } catch (failureMoveError) {

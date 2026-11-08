@@ -9,6 +9,8 @@ import type { PullRequestState } from "../github/github-client.js";
 import { logger, type Logger } from "../logging/logger.js";
 import {
   notifyCompletion,
+  enqueueNotification,
+  buildCompletionEmail,
   type EmailNotifier,
 } from "../notifications/email-notifier.js";
 import { type TrelloCard, type TrelloClient } from "../trello/trello-client.js";
@@ -144,6 +146,27 @@ export async function completeMergedTaskSessionPullRequest(options: {
     clearTerminalConflict(project, card, options.preparedConflict, cardLog);
   const alreadyDone = card.idList === project.trello.doneListId;
   if (!alreadyDone) {
+    if (
+      options.emailNotifier &&
+      (options.emailNotifier.isEventEnabled?.("done") ?? true)
+    )
+      enqueueNotification(
+        options.emailNotifier,
+        project.id,
+        "done",
+        pullRequest.url,
+        buildCompletionEmail({
+          project,
+          card,
+          pullRequestUrl: pullRequest.url,
+        }),
+        {
+          cardId: card.id,
+          listId: project.trello.doneListId,
+          boardId: project.trello.boardId,
+          dueComplete: true,
+        },
+      );
     try {
       await trello.moveCard(card.id, project.trello.doneListId, {
         dueComplete: true,

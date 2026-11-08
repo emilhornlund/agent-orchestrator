@@ -4,7 +4,12 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { afterEach, describe, expect, it } from "vitest";
-import { RunStore, type RunStoreLease } from "../src/task-session/run-store.js";
+import {
+  RunStore,
+  RunRegistry,
+  type RunStoreLease,
+} from "../src/task-session/run-store.js";
+import { NotificationOutbox } from "../src/notifications/notification-outbox.js";
 import {
   parseRunRecord,
   isConclusiveOperationResolution,
@@ -981,5 +986,95 @@ describe("durable workflow mutation foundation (REQ-WF-001)", () => {
       f.reopen().read()!.pendingOperations[0]!.mutation!.dispatches[0]!
         .response!.outcome,
     ).toBe("accepted");
+  });
+
+  it("releases terminal workflow and hands off the registry while old notification acceptance remains ambiguous", async () => {
+    const f = fixture("human-review");
+    const outbox = new NotificationOutbox(
+      f.pinned.storageRoot,
+      "p",
+      () => {},
+      () => 0,
+    );
+    outbox.enqueue("attempt:ready", { subject: "PR ready", text: "Task card" });
+    await outbox.drain(
+      {
+        send: async () => {
+          throw new Error("lost SMTP acknowledgment");
+        },
+      },
+      () => {},
+    );
+    const current = f.store.read()!;
+    const terminal = f.store.transition(
+      current.revision,
+      1,
+      null,
+      "merged",
+      "human-review",
+      "done",
+      (run) => run,
+      {
+        prOutcome: "merged",
+        prObservationId: "pr",
+        prVerifiedAt: at(0),
+        trelloListId: "done",
+        trelloObservationId: "card",
+        trelloVerifiedAt: at(0),
+      },
+    );
+    let released = false;
+    await new ProjectRunAuthority("p", f.store, 1, async () => {
+      released = true;
+    }).releaseVerifiedTerminal();
+    expect(released).toBe(true);
+    expect(terminal.pendingOperations).toEqual([]);
+    const registry = new RunRegistry(
+      f.pinned.storageRoot,
+      "integration",
+      f.lease,
+    );
+    registry.handoff(f.store, null, 1);
+    const next = new RunStore(f.pinned.storageRoot, "next", f.pinned, f.lease);
+    next.create({
+      ...terminal,
+      attemptId: "next",
+      artifacts: [],
+      cardId: "next-card",
+      revision: 1,
+      lifecycle: "preparing",
+      checkpoint: "preparing",
+      publicationState: "none",
+      terminalSync: "not-applicable",
+      terminalEvidence: null,
+      expectedTrelloListId: null,
+    });
+    registry.handoff(next, registry.read(), 2);
+    expect(registry.read()?.attemptId).toBe("next");
+    const reopened = new NotificationOutbox(
+      f.pinned.storageRoot,
+      "p",
+      () => {},
+      () => 15_000,
+    );
+    let sends = 0;
+    reopened.enqueue(
+      "next:failed",
+      { subject: "Failed", text: "Next task" },
+      "failed",
+    );
+    await reopened.drain(
+      {
+        send: async () => {
+          sends++;
+        },
+      },
+      () => {},
+    );
+    expect(sends).toBe(1);
+    expect(
+      reopened.records().find((entry) => entry.eventKey === "attempt:ready")
+        ?.dispatches[0]?.outcome,
+    ).toBe("ambiguous");
   });
 });

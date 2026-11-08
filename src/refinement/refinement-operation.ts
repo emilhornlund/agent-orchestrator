@@ -4,6 +4,8 @@ import type { GitClient } from "../git/git-client.js";
 import type { Logger } from "../logging/logger.js";
 import {
   notifyRefinementCompletion,
+  enqueueNotification,
+  buildRefinementCompletionEmail,
   type EmailNotifier,
 } from "../notifications/email-notifier.js";
 import type { OpenCodeClient } from "../opencode/opencode-client.js";
@@ -51,12 +53,36 @@ export async function runRefinementOperation(input: {
     `OpenCode refinement completed with classification: ${result.type}`,
   );
 
+  const prepareCompletion = () => {
+    if (
+      input.emailNotifier &&
+      (input.emailNotifier.isEventEnabled?.("refinementComplete") ?? true)
+    )
+      enqueueNotification(
+        input.emailNotifier,
+        input.project.id,
+        "refinementComplete",
+        input.card.url,
+        buildRefinementCompletionEmail({
+          project: input.project,
+          card: input.card,
+          result,
+        }),
+        {
+          cardId: input.card.id,
+          listId: input.project.trello.backlogListId,
+          boardId: input.project.trello.boardId,
+        },
+      );
+  };
+
   await finalizeRefinement(
     input.trello,
     input.project,
     input.card,
     result,
     input.signal,
+    prepareCompletion,
   );
 
   input.cardLog.event("Refined card returned to Backlog");

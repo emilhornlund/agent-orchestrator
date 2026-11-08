@@ -82,7 +82,7 @@ for (let pass = 0; pass < 8; pass++) {
     {} as never,
     f.project,
     new AbortController().signal,
-    undefined,
+    { send: async () => {} },
     undefined,
     undefined,
     f.authority,

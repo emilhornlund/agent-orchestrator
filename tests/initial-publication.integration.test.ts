@@ -721,7 +721,37 @@ describe("initial publication production checkpoint with independent simulated s
         if (effect !== "projection")
           expect(operation(restarted, effect)?.status).toBe("ambiguous");
         await through(restarted, "comment");
-        if (effect === "projection") await poll(restarted);
+        if (effect === "projection") {
+          // The killed writer had committed the workflow projection but never
+          // reached notifyHumanReview. Its durable event must already exist.
+          const outbox = new NotificationOutbox(
+            restarted.store.storageRoot,
+            restarted.project.id,
+            () => restarted.authority.assertHeld(),
+          );
+          expect(outbox.records()).toHaveLength(1);
+          expect(outbox.records()[0]?.dispatches).toEqual([]);
+          const sink: string[] = [];
+          await outbox.drain(
+            {
+              send: async (message) => {
+                sink.push(message.text);
+              },
+            },
+            () => {},
+          );
+          await outbox.drain(
+            {
+              send: async (message) => {
+                sink.push(message.text);
+              },
+            },
+            () => {},
+          );
+          expect(sink).toHaveLength(1);
+          expect(sink[0]).toContain("Actual draft status:");
+          await poll(restarted);
+        }
         expect(task(restarted)?.phase).toBe("ci");
         expect(
           restarted.authority.run(() =>
@@ -1218,3 +1248,4 @@ describe("initial publication production checkpoint with independent simulated s
     },
   );
 });
+import { NotificationOutbox } from "../src/notifications/notification-outbox.js";

@@ -12,6 +12,12 @@ import type { GitClient } from "../git/git-client.js";
 import type { GitHubClient } from "../github/github-client.js";
 import { logger, type Logger } from "../logging/logger.js";
 import type { EmailNotifier } from "../notifications/email-notifier.js";
+import {
+  drainNotifications,
+  NotificationPreparationError,
+  deferNotificationPreparation,
+  notificationPreparationDue,
+} from "../notifications/notification-outbox.js";
 import type { OpenCodeClient } from "../opencode/opencode-client.js";
 import type { CommandRunner } from "../process/command-runner.js";
 import { runRefinementCardWorkflow } from "../refinement/run-refinement-card.js";
@@ -92,8 +98,12 @@ export async function pollProject(
 
   const execute = () =>
     withActiveProjectContext(project.id, async () => {
+      drainNotifications(project.id, emailNotifier, (message) =>
+        logger.child({ projectId: project.id }).warn(message),
+      );
       if (await reconcileWorkflowMutations({ project, trello, github, git }))
         return;
+      if (!notificationPreparationDue(project.id)) return;
       return runTaskSessionWorkflow({
         project,
         trello,
@@ -149,6 +159,15 @@ export async function pollProject(
     if (authority) await authority.run(execute);
     else await execute();
   } catch (error) {
+    if (error instanceof NotificationPreparationError) {
+      const defer = () =>
+        deferNotificationPreparation(project.id, (message) =>
+          logger.child({ projectId: project.id }).warn(message),
+        );
+      if (authority) authority.run(defer);
+      else defer();
+      return;
+    }
     if (
       !authority?.store
         .read()

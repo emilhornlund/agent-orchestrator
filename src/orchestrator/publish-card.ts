@@ -8,6 +8,9 @@ import { logger } from "../logging/logger.js";
 import { getSessionLogPath } from "../logging/session-log.js";
 import {
   notifyHumanReview,
+  enqueueNotification,
+  buildHumanReviewEmail,
+  publicationNotificationIssues,
   type EmailNotifier,
 } from "../notifications/email-notifier.js";
 import {
@@ -861,6 +864,53 @@ export async function publishCard({
 
   cardLog.event("Moving Trello card to Human Review...");
 
+  // All reconstruction inputs are durable before the final external transition,
+  // including before duration/draft reads that may fail or be interrupted.
+  let observedDraft: boolean | undefined;
+  if (ProjectRunAuthority.current(project.id)) {
+    try {
+      observedDraft = (
+        await github.getPullRequestPublicationFields({
+          cwd: worktreePath,
+          repository: project.repository.github,
+          pullRequestUrl: pullRequest.url,
+          project,
+        })
+      ).isDraft;
+    } catch {
+      cardLog.warn(
+        "PR draft observation unavailable before notification preparation",
+      );
+    }
+  }
+  if (emailNotifier && (emailNotifier.isEventEnabled?.("humanReview") ?? true))
+    enqueueNotification(
+      emailNotifier,
+      project.id,
+      "humanReview",
+      publishedCommitSha,
+      buildHumanReviewEmail({
+        project,
+        card,
+        pullRequestUrl: pullRequest.url,
+        commitSha: publishedCommitSha,
+        reviewResult,
+        remediationResult,
+        ...(observedDraft === undefined ? {} : { actualDraft: observedDraft }),
+        outstandingIssues: publicationNotificationIssues(
+          reviewResult,
+          remediationResult,
+        ),
+        publicationContext:
+          "Verified PR publication; notification awaits Human Review destination verification.",
+      }),
+      {
+        cardId: card.id,
+        listId: project.trello.reviewListId,
+        boardId: project.trello.boardId,
+      },
+    );
+
   try {
     await trello.moveCard(card.id, project.trello.reviewListId);
   } catch (error) {
@@ -885,10 +935,30 @@ export async function publishCard({
     cardLog,
   );
 
+  let actualDraft: boolean | undefined;
+  if (ProjectRunAuthority.current(project.id)) {
+    try {
+      actualDraft = (
+        await github.getPullRequestPublicationFields({
+          cwd: worktreePath,
+          repository: project.repository.github,
+          pullRequestUrl: pullRequest.url,
+          project,
+        })
+      ).isDraft;
+    } catch {
+      cardLog.warn(
+        "PR draft status could not be independently observed for notification",
+      );
+    }
+  }
+
   if (
     emailNotifier !== undefined &&
     (emailNotifier.isEventEnabled?.("humanReview") ?? true) &&
-    (claimHumanReviewNotification === undefined ||
+    // Unowned utility compatibility only; production uses the durable outbox.
+    (ProjectRunAuthority.current(project.id) !== undefined ||
+      claimHumanReviewNotification === undefined ||
       claimHumanReviewNotification(publishedCommitSha))
   ) {
     await notifyHumanReview(
@@ -900,6 +970,11 @@ export async function publishCard({
         commitSha: publishedCommitSha,
         reviewResult,
         remediationResult,
+        ...(actualDraft === undefined ? {} : { actualDraft }),
+        outstandingIssues: publicationNotificationIssues(
+          reviewResult,
+          remediationResult,
+        ),
         ...(elapsedWorkflowTime === undefined ? {} : { elapsedWorkflowTime }),
         publicationContext:
           "The pull request was published and the card was moved to Human Review by the implementation workflow.",

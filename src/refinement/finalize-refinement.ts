@@ -40,6 +40,7 @@ export async function finalizeRefinement(
   card: TrelloCard,
   result: RefinementResult,
   signal?: AbortSignal,
+  beforeFinalMove?: () => void,
 ): Promise<void> {
   const classificationLabelId = getClassificationLabelId(project, result.type);
 
@@ -127,5 +128,6 @@ export async function finalizeRefinement(
     throw new TrelloRequestAbortedError();
   }
 
+  beforeFinalMove?.();
   await trello.moveCard(card.id, project.trello.backlogListId);
 }

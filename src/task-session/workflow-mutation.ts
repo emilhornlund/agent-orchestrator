@@ -6,6 +6,7 @@ import { sanitizeControlledText } from "../security/redact-secrets.js";
 import { ProjectRunAuthority } from "./project-run-authority.js";
 import type { MutationEvent, MutationIntent } from "./durable-mutation.js";
 import { mutationProvenNotDelivered } from "./durable-mutation.js";
+import type { RunRecord } from "./run-record.js";
 
 function canonicalJson(value: unknown): string {
   return JSON.stringify(value, (_key, item: unknown) =>
@@ -419,6 +420,31 @@ export interface WorkflowMutationRequest {
   args: unknown;
 }
 
+/** Deterministic identity used both by dispatch and by pre-dispatch event obligations. */
+export function workflowMutationIdentity(
+  run: RunRecord,
+  kind: MutationIntent["kind"],
+  target: string,
+  request: WorkflowMutationRequest,
+): string {
+  const hash = createHash("sha256")
+    .update(sanitizeControlledText(JSON.stringify(request)))
+    .digest("hex");
+  const prefix = `workflow:${run.operation.generation}:${kind}:${hash}`;
+  const previous = run.pendingOperations
+    .filter(
+      (entry) =>
+        entry.id.startsWith("workflow:") &&
+        entry.kind === kind &&
+        entry.mutation?.intent.target === target &&
+        entry.mutation.executionFence.generation === run.operation.generation,
+    )
+    .at(-1);
+  return previous?.id.startsWith(`${prefix}:`)
+    ? previous.id
+    : `${prefix}:${run.pendingOperations.length}`;
+}
+
 /** Small journal protocol shared by concrete client reconcilers, not a replay
  * engine. Only the concrete adapter supplies destination validation/readback. */
 export async function workflowMutation<T>(options: {
@@ -437,24 +463,14 @@ export async function workflowMutation<T>(options: {
 }): Promise<T> {
   const { authority } = options;
   const run = authority.store.assertCurrentLease(authority.ownerGeneration);
-  const hash = createHash("sha256")
-    .update(sanitizeControlledText(JSON.stringify(options.request)))
-    .digest("hex");
-  const prefix = `workflow:${run.operation.generation}:${options.kind}:${hash}`;
-  const previous = run.pendingOperations
-    .filter(
-      (entry) =>
-        entry.id.startsWith("workflow:") &&
-        entry.kind === options.kind &&
-        entry.mutation?.intent.target === options.target &&
-        entry.mutation.executionFence.generation === run.operation.generation,
-    )
-    .at(-1);
   const id =
     reconciliationContext.getStore() ??
-    (previous?.id.startsWith(`${prefix}:`)
-      ? previous.id
-      : `${prefix}:${run.pendingOperations.length}`);
+    workflowMutationIdentity(
+      run,
+      options.kind,
+      options.target,
+      options.request,
+    );
   const existing = run.pendingOperations.find((entry) => entry.id === id);
   if (
     !reconciliationContext.getStore() &&

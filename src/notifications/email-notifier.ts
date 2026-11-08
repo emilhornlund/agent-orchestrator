@@ -1,4 +1,11 @@
 import type { Logger } from "../logging/logger.js";
+import { logger } from "../logging/logger.js";
+import { createHash } from "node:crypto";
+import { workflowMutationIdentity } from "../task-session/workflow-mutation.js";
+import {
+  refinementMutationSnapshotKey,
+  refinementMutationSnapshotSchema,
+} from "../refinement/refinement-mutation-snapshot.js";
 import type { TrelloCard } from "../trello/trello-client.js";
 
 import type {
@@ -8,8 +15,18 @@ import type {
 import type { RefinementResult } from "../refinement/refinement-result.js";
 import { presentExternalDiagnostic } from "../security/bounded-diagnostic.js";
 import { SmtpEmailNotifier } from "./smtp-email-notifier.js";
+import {
+  NotificationOutbox,
+  NotificationPreparationError,
+  createNotificationObligation,
+  notificationObligationSchema,
+  type NotificationTrigger,
+} from "./notification-outbox.js";
+import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
+import { sanitizeControlledText } from "../security/redact-secrets.js";
 
 export interface EmailMessage {
+  messageId?: string;
   subject: string;
   text: string;
 }
@@ -22,8 +39,18 @@ export type EmailNotificationEvent =
   | "attentionRequired";
 
 export interface EmailNotifier {
-  send(message: EmailMessage): Promise<void>;
+  readonly deliveryTarget?: string;
+  send(message: EmailMessage): Promise<void | EmailDeliveryReceipt>;
+  /** Authoritative provider evidence only; absence is ambiguous, not rejection. */
+  lookupDelivery?(
+    messageId: string,
+  ): Promise<"confirmed" | "known-not-delivered" | "ambiguous">;
   isEventEnabled?(event: EmailNotificationEvent): boolean;
+}
+
+export interface EmailDeliveryReceipt {
+  providerId: string;
+  partial: boolean;
 }
 
 export interface HumanReviewNotificationDetails {
@@ -35,6 +62,8 @@ export interface HumanReviewNotificationDetails {
   remediationResult: string;
   elapsedWorkflowTime?: string;
   publicationContext: string;
+  actualDraft?: boolean;
+  outstandingIssues?: string[];
 }
 
 export interface FailedNotificationDetails {
@@ -83,6 +112,8 @@ export function buildHumanReviewEmail(
       `Pull request URL: ${details.pullRequestUrl}`,
       `Commit: ${details.commitSha}`,
       `Publication context: ${details.publicationContext}`,
+      `Actual draft status: ${details.actualDraft === undefined ? "not observed" : details.actualDraft}`,
+      `Outstanding issues: ${details.outstandingIssues === undefined ? "See review and remediation evidence below; no complete issue assessment recorded" : details.outstandingIssues.join("; ") || "None recorded in the available publication evidence"}`,
       `Review result: ${details.reviewResult}`,
       `Remediation result: ${details.remediationResult}`,
       ...(details.elapsedWorkflowTime === undefined
@@ -90,6 +121,17 @@ export function buildHumanReviewEmail(
         : [`Elapsed workflow time: ${details.elapsedWorkflowTime}`]),
     ].join("\n"),
   };
+}
+
+/** Only explicit successful/not-required status tokens establish no issue for
+ * these existing routes. Full material-issue dispositions are supplied by P6. */
+export function publicationNotificationIssues(
+  review: string,
+  remediation: string,
+): string[] {
+  return [review, remediation].filter(
+    (value) => !["Passed", "Not required"].includes(value),
+  );
 }
 
 export function buildFailedEmail(
@@ -123,6 +165,9 @@ export function buildAttentionRequiredEmail(
       ...(details.cardIds === undefined || details.cardIds.length === 0
         ? []
         : [`Affected card IDs: ${details.cardIds.join(", ")}`]),
+      ...(details.cardIds ?? []).map(
+        (id) => `Trello card: https://trello.com/c/${encodeURIComponent(id)}`,
+      ),
       ...(details.sessionLogPaths === undefined ||
       details.sessionLogPaths.length === 0
         ? []
@@ -178,7 +223,153 @@ export function buildCompletionEmail(
 }
 
 function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return sanitizeControlledText(
+    error instanceof Error ? error.message : String(error),
+  );
+}
+
+export function enqueueNotification(
+  notifier: EmailNotifier | undefined,
+  projectId: string,
+  event: EmailNotificationEvent,
+  identity: string,
+  message: EmailMessage,
+  trigger?: NotificationTrigger,
+): NotificationOutbox | undefined {
+  if (!notifier || !isEventEnabled(notifier, event)) return undefined;
+  try {
+    const outbox = NotificationOutbox.current(projectId);
+    if (outbox) {
+      const authority = ProjectRunAuthority.current(projectId);
+      const attempt = authority?.store.attemptId ?? "project";
+      const eventKey = `${projectId}:${attempt}:${event}:${identity}`;
+      if (!authority) {
+        outbox.enqueue(
+          eventKey,
+          message,
+          event,
+          notifier.deliveryTarget,
+          trigger,
+        );
+        return outbox;
+      }
+      if (trigger) {
+        const run = authority.store.assertCurrentLease(
+          authority.ownerGeneration,
+        );
+        const request = {
+          route: "trello-move",
+          args: {
+            cardId: trigger.cardId,
+            listId: trigger.listId,
+            options:
+              trigger.dueComplete === undefined
+                ? {}
+                : { dueComplete: trigger.dueComplete },
+          },
+        };
+        const digest = (value: unknown) =>
+          createHash("sha256")
+            .update(sanitizeControlledText(JSON.stringify(value)))
+            .digest("hex");
+        const snapshot =
+          event === "refinementComplete"
+            ? refinementMutationSnapshotSchema.parse(
+                run.compatibility[refinementMutationSnapshotKey],
+              )
+            : undefined;
+        trigger = {
+          ...trigger,
+          binding: {
+            attemptId: run.attemptId,
+            operationId: workflowMutationIdentity(
+              run,
+              "trello-move",
+              `trello:${trigger.boardId}:${trigger.cardId}`,
+              request,
+            ),
+            payloadId: `sha256:${digest(request)}`,
+            executionGeneration: run.operation.generation,
+            ...(snapshot ? { refinementHash: digest(snapshot.intended) } : {}),
+          },
+        };
+      }
+      const candidate = createNotificationObligation(
+        projectId,
+        eventKey,
+        message,
+        event,
+        notifier.deliveryTarget,
+        trigger,
+      );
+      const key = `notification-event-${candidate.id}`;
+      const durable =
+        authority.read(key, notificationObligationSchema.parse) ??
+        authority.mutate(
+          key,
+          candidate,
+          (value) => ({
+            value,
+            result: notificationObligationSchema.parse(value),
+          }),
+          notificationObligationSchema.parse,
+        );
+      try {
+        outbox.materialize(durable);
+      } catch {
+        // The immutable event obligation is already durable under RunStore.
+        // Delivery-file failure is not a workflow completion/release failure.
+        authority.assertHeld();
+        logger
+          .child({ projectId })
+          .warn(
+            "Notification delivery storage unavailable; authoritative event obligation retained for delivery recovery",
+          );
+      }
+    } else if (ProjectRunAuthority.hasProjectLeaseScope()) {
+      throw new Error(
+        "Production notification requires pinned durable outbox scope",
+      );
+    }
+    return outbox;
+  } catch (cause) {
+    throw new NotificationPreparationError(
+      "Notification event preparation failed; preserve workflow for retry",
+      { cause },
+    );
+  }
+}
+
+export function prepareAttentionNotification(
+  notifier: EmailNotifier | undefined,
+  details: AttentionRequiredNotificationDetails,
+): void {
+  enqueueNotification(
+    notifier,
+    details.project.id,
+    "attentionRequired",
+    `${details.category}:${details.reason}:${details.cardIds?.join(",") ?? ""}`,
+    buildAttentionRequiredEmail(details),
+  );
+}
+
+async function deliverEvent(
+  notifier: EmailNotifier,
+  projectId: string,
+  event: EmailNotificationEvent,
+  identity: string,
+  message: EmailMessage,
+  log: Logger,
+): Promise<void> {
+  const outbox = enqueueNotification(
+    notifier,
+    projectId,
+    event,
+    identity,
+    message,
+  );
+  if (outbox) outbox.start(notifier, (diagnostic) => log.warn(diagnostic));
+  else await notifier.send(message); // Explicitly unowned utility compatibility.
 }
 
 function isEventEnabled(
@@ -198,9 +389,17 @@ export async function notifyHumanReview(
   }
 
   try {
-    await notifier.send(buildHumanReviewEmail(details));
-    cardLog.event("Human Review email notification sent");
+    await deliverEvent(
+      notifier,
+      details.project.id,
+      "humanReview",
+      details.commitSha,
+      buildHumanReviewEmail(details),
+      cardLog,
+    );
+    cardLog.event("Human Review email notification processed");
   } catch (error) {
+    if (error instanceof NotificationPreparationError) throw error;
     cardLog.error(
       `Human Review email notification failed: ${getErrorMessage(error)}`,
     );
@@ -217,9 +416,17 @@ export async function notifyFailed(
   }
 
   try {
-    await notifier.send(buildFailedEmail(details));
-    cardLog.event("Failed email notification sent");
+    await deliverEvent(
+      notifier,
+      details.project.id,
+      "failed",
+      details.card.url,
+      buildFailedEmail(details),
+      cardLog,
+    );
+    cardLog.event("Failed email notification processed");
   } catch (error) {
+    if (error instanceof NotificationPreparationError) throw error;
     cardLog.error(
       `Failed email notification failed: ${getErrorMessage(error)}`,
     );
@@ -239,9 +446,17 @@ export async function notifyAttentionRequired(
   }
 
   try {
-    await notifier.send(buildAttentionRequiredEmail(details));
-    projectLog.event("Attention-required email notification sent");
+    await deliverEvent(
+      notifier,
+      details.project.id,
+      "attentionRequired",
+      `${details.category}:${details.reason}:${details.cardIds?.join(",") ?? ""}`,
+      buildAttentionRequiredEmail(details),
+      projectLog,
+    );
+    projectLog.event("Attention-required email notification processed");
   } catch (error) {
+    if (error instanceof NotificationPreparationError) throw error;
     projectLog.error(
       `Attention-required email notification failed: ${getErrorMessage(error)}`,
     );
@@ -261,9 +476,17 @@ export async function notifyRefinementCompletion(
   }
 
   try {
-    await notifier.send(buildRefinementCompletionEmail(details));
-    cardLog.event("Refinement completion email notification sent");
+    await deliverEvent(
+      notifier,
+      details.project.id,
+      "refinementComplete",
+      details.card.url,
+      buildRefinementCompletionEmail(details),
+      cardLog,
+    );
+    cardLog.event("Refinement completion email notification processed");
   } catch (error) {
+    if (error instanceof NotificationPreparationError) throw error;
     cardLog.error(
       `Refinement completion email notification failed: ${getErrorMessage(error)}`,
     );
@@ -280,9 +503,17 @@ export async function notifyCompletion(
   }
 
   try {
-    await notifier.send(buildCompletionEmail(details));
-    cardLog.event("Completion email notification sent");
+    await deliverEvent(
+      notifier,
+      details.project.id,
+      "done",
+      details.pullRequestUrl,
+      buildCompletionEmail(details),
+      cardLog,
+    );
+    cardLog.event("Completion email notification processed");
   } catch (error) {
+    if (error instanceof NotificationPreparationError) throw error;
     cardLog.error(
       `Completion email notification failed: ${getErrorMessage(error)}`,
     );

@@ -37,6 +37,10 @@ import { logger } from "../logging/logger.js";
 import {
   notifyAttentionRequired,
   notifyHumanReview,
+  enqueueNotification,
+  buildHumanReviewEmail,
+  buildAttentionRequiredEmail,
+  publicationNotificationIssues,
   type EmailNotifier,
 } from "../notifications/email-notifier.js";
 
@@ -994,6 +998,38 @@ export async function resumeInitialPublication(options: {
       );
     task = taskStore.read(checkpoint.cardId)!;
     assertExecution();
+    // Durable event handoff precedes the local completion projection. Recovery
+    // can finish the workflow without needing the email transport to succeed.
+    enqueueNotification(
+      options.emailNotifier,
+      project.id,
+      "humanReview",
+      sha,
+      buildHumanReviewEmail({
+        project,
+        card: {
+          id: task.cardId,
+          name: checkpoint.title,
+          url: checkpoint.cardUrl,
+          desc: "",
+          idList: run.pinned.lists.review,
+          idLabels: [],
+        },
+        pullRequestUrl: pr.url,
+        commitSha: sha,
+        reviewResult: checkpoint.reviewResult,
+        remediationResult: checkpoint.remediationResult,
+        actualDraft: checkpoint.draft,
+        outstandingIssues: publicationNotificationIssues(
+          checkpoint.reviewResult,
+          checkpoint.remediationResult,
+        ),
+        publicationContext: `Verified initial publication; draft: ${checkpoint.draft}.`,
+        ...(checkpoint.elapsedWorkflowTime
+          ? { elapsedWorkflowTime: checkpoint.elapsedWorkflowTime }
+          : {}),
+      }),
+    );
     taskStore.compareAndSwap(
       task.cardId,
       task.revision,
@@ -1017,8 +1053,7 @@ export async function resumeInitialPublication(options: {
     });
     if (
       options.emailNotifier &&
-      (options.emailNotifier.isEventEnabled?.("humanReview") ?? true) &&
-      taskStore.claimHumanReviewNotification(task.cardId, sha)
+      (options.emailNotifier.isEventEnabled?.("humanReview") ?? true)
     )
       await notifyHumanReview(
         options.emailNotifier,
@@ -1065,6 +1100,22 @@ export async function resumeInitialPublication(options: {
         .warn(
           `Initial publication waiting (${waitingReason}); next controlled check in ${PUBLICATION_RECHECK_MS}ms. Inspect journal payloads, observations and process artifacts; no uncertain effect will be resent.`,
         );
+    if (attention) {
+      const details = {
+        project,
+        cardIds: [checkpoint.cardId],
+        category: "Git/GitHub",
+        reason:
+          "Initial publication remains uncertain; ownership and artifacts are preserved and controlled reconciliation continues.",
+      };
+      enqueueNotification(
+        options.emailNotifier,
+        project.id,
+        "attentionRequired",
+        `${details.category}:${details.reason}:${details.cardIds.join(",")}`,
+        buildAttentionRequiredEmail(details),
+      );
+    }
     save(authority, {
       ...checkpoint,
       retryAt: next(),

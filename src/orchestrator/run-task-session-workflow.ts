@@ -15,7 +15,10 @@ import { establishCiCheckExpectations } from "../github/ci-check-expectations.js
 import { evaluateCiChecks } from "../github/evaluate-ci-checks.js";
 import { getSessionLogPath } from "../logging/session-log.js";
 import type { EmailNotifier } from "../notifications/email-notifier.js";
-import { notifyAttentionRequired } from "../notifications/email-notifier.js";
+import {
+  notifyAttentionRequired,
+  prepareAttentionNotification,
+} from "../notifications/email-notifier.js";
 import type { OpenCodeClient } from "../opencode/opencode-client.js";
 import { buildCommitPrompt } from "../opencode/build-commit-prompt.js";
 import {
@@ -890,6 +893,12 @@ export async function runTaskSessionWorkflow(
     if (!eventIdentityMatches) {
       orphanRecoveryBlocked = true;
       const diagnostic = `Mutation ${queued.eventId} (${queued.kind}, ${queued.status}) has an ambiguous Ready-event identity; preserved for operator recovery`;
+      prepareAttentionNotification(emailNotifier, {
+        project,
+        category: "Workflow",
+        reason: diagnostic,
+        cardIds: [queued.cardId],
+      });
       if (
         mutationBlockStore.report(
           `orphan:${queued.eventId}`,
@@ -916,6 +925,12 @@ export async function runTaskSessionWorkflow(
     if (queued.status === "failed") {
       orphanRecoveryBlocked = true;
       const diagnostic = `Failed mutation ${queued.eventId} (${queued.kind}, failed) retains recovery obligations; it was not retired and requires verified task recovery or operator intervention`;
+      prepareAttentionNotification(emailNotifier, {
+        project,
+        category: "Workflow",
+        reason: diagnostic,
+        cardIds: [queued.cardId],
+      });
       if (
         mutationBlockStore.report(
           `orphan:${queued.eventId}`,
@@ -2232,7 +2247,9 @@ export async function runTaskSessionWorkflow(
       else queue.complete(recovered.eventId);
       return;
     } catch (error) {
-      queue.fail(recovered.eventId);
+      if (error instanceof NotificationPreparationError)
+        queue.releaseForRecovery(recovered.eventId);
+      else queue.fail(recovered.eventId);
       throw error;
     }
   }
@@ -2643,6 +2660,12 @@ export async function runTaskSessionWorkflow(
       );
       if (priorCompleted !== undefined) {
         const diagnostic = `Ready card ${card.id} has a completed implementation mutation ${priorCompleted.eventId} but no task record; its outcome is ambiguous and operator recovery is required before scheduling`;
+        prepareAttentionNotification(emailNotifier, {
+          project,
+          category: "Workflow",
+          reason: diagnostic,
+          cardIds: [card.id],
+        });
         if (
           mutationBlockStore.report(
             `orphan:${priorCompleted.eventId}`,
@@ -2671,6 +2694,12 @@ export async function runTaskSessionWorkflow(
       );
       if (liveAttempts.length > 1) {
         const diagnostic = `Ready card ${card.id} has multiple nonterminal mutation attempts for the same operation identity (${liveAttempts.map((event) => event.eventId).join(", ")}); preserved for operator recovery`;
+        prepareAttentionNotification(emailNotifier, {
+          project,
+          category: "Workflow",
+          reason: diagnostic,
+          cardIds: [card.id],
+        });
         if (
           mutationBlockStore.report(
             `attempts:${baseEventId}`,
@@ -4068,6 +4097,11 @@ export async function runTaskSessionWorkflow(
     taskStore.compareAndSwap(activeCard.id, current.revision, ci);
     if (mutation !== null) queue.complete(mutation.eventId);
   } catch (error) {
+    if (error instanceof NotificationPreparationError) {
+      if (mutation && queue.ownsActive(mutation.eventId))
+        queue.releaseForRecovery(mutation.eventId);
+      throw error;
+    }
     if (
       ProjectRunAuthority.current(project.id)
         ?.store.read()
@@ -4226,3 +4260,4 @@ export async function runTaskSessionWorkflow(
   }
 }
 import { hasVerifiedWorkflowMove } from "./reconcile-workflow-mutations.js";
+import { NotificationPreparationError } from "../notifications/notification-outbox.js";
