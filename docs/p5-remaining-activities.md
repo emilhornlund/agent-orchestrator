@@ -193,11 +193,12 @@ do not expand into all mutation classes.
 
 ### R5 — Make the reconstruction harness neutral and independently observable
 
-**Status:** pending; MEDIUM. Current prompt supplies all requested answers. The
-fixture `.gitignore` was written in the source checkout but was uncommitted, so
-the intended ignored file is actually untracked in the worktree. The
-replacement-bound check relies on manual verification rather than production
-reconstruction verification.
+**Status:** offline harness and deterministic child/parent regression pass;
+external/live evidence remains unverified. No live probe has been executed for
+this revision: model/service access was not separately authorized. The retained
+historical probe is explicitly invalid for R5: its prompt disclosed the
+expected facts, its `.gitignore` was uncommitted before worktree creation, and
+replacement-bound verification was manual rather than production verification.
 
 **Requirements/scenarios:** REQ-REC-002, REQ-REC-006, REQ-IMP-004,
 REQ-CTX-001, REQ-CTX-002, REQ-TST-001, REQ-TST-002;
@@ -211,26 +212,35 @@ VER-TST-001-02, VER-TST-002-01.
 worktree fingerprint helpers. Find exact fixture commands and assertions with
 `rg`; retain existing artifacts.
 
-**Acceptance:** Ask a neutral question that does not contain expected answers.
-Commit `.gitignore` in the disposable fixture before creating a worktree. Then
-verify the designated ignored file with `git check-ignore`; separately prove a
-designated untracked file remains untracked with Git status. Make plan and
-attachment facts distinct and assert their actual text reaches context. With a fresh parent,
-exercise production replacement-bound reconstruction verification before the
-actual primary dispatch; the verification itself is uncounted, while the real
-primary dispatch is counted. Independently verify persisted fingerprints and
-source/index/ref/worktree preservation. Correct docs' evidence links/IDs to the
-actual retained run; keep claims narrow (isolated fixture, not provider
-lifecycle).
+**Acceptance:** The revised real harness now uses neutral recall questions,
+commits `.gitignore` in its disposable source before worktree creation, checks
+the designated ignored file using `git check-ignore`, and separately checks the
+designated untracked file with Git status. It checks that distinct plan and
+attachment facts, including actual attachment text, reach production context.
+Its fresh parent calls `runWithPrimaryTaskSession` in the production
+`reconstruction` role while the replacement is `replacement-bound`, before the
+normal primary role dispatch. Reconstruction is uncounted; the subsequent
+primary operation is counted. Existing source/worktree fingerprint checks are
+retained. The deterministic test
+`tests/p5-t2-session-reconstruction-harness.test.ts` executes the real harness
+and fresh-parent script with a local scripted OpenCode CLI. It asserts production
+verification precedes primary resume, neither prompt embeds expected facts, the
+replacement primary operation has one execution, reconstruction has zero
+primary executions, Git-ignore/status classification is correct, and persisted
+fingerprints remain stable. This is offline isolated-fixture evidence, not
+provider lifecycle evidence. Historical probe artifacts must be retained but
+must not be promoted as R5 acceptance.
 
-**Focused checks:** run the reconstruction harness's deterministic/unit tests
-and the opt-in real OpenCode harness only if credentials/service are available
-and explicitly authorized. Command candidates: `TMPDIR="$PWD/node_modules/.p5-tmp"
-yarn vitest run <reconstruction test paths>` and, when executing its real model
-probe, `TMPDIR="$PWD/node_modules/.p5-tmp" P5_T2_MODEL=<explicit-model>
+**Focused checks:**
+`TMPDIR="$PWD/node_modules/.p5-tmp" yarn vitest run
+tests/p5-t2-session-reconstruction-harness.test.ts` plus context builder and
+primary-session tests, typecheck, lint and format checks. The live
+OpenCode command is opt-in only and requires separate authorization:
+`TMPDIR="$PWD/node_modules/.p5-tmp" P5_T2_MODEL=<explicit-model>
 P5_T2_VARIANT=<explicit-variant> yarn tsx
-scripts/p5-t2-session-reconstruction.ts`. A blocked/unavailable live probe is
-not a pass; do not loop or silently substitute.
+scripts/p5-t2-session-reconstruction.ts`. No live execution is implied by an
+offline pass; blocked, unavailable, or unauthorized live evidence remains
+unverified and is not a pass.
 
 **Stop boundary:** Do not rewrite other harnesses, delete or regenerate old
 evidence, change product defaults, or assert full lifecycle/production behavior.

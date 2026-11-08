@@ -70,6 +70,16 @@ try {
     "-qm",
     "fixture",
   ]);
+  git(["add", ".gitignore"]);
+  git([
+    "-c",
+    "user.name=verification",
+    "-c",
+    "user.email=verification.invalid",
+    "commit",
+    "-qm",
+    "fixture ignore rules",
+  ]);
   git(["branch", "-M", "main"]);
   git(["update-ref", "refs/remotes/origin/main", "HEAD"]);
   git(["worktree", "add", "-q", "-b", "agent/p5-t2-reconstruction", worktree]);
@@ -86,6 +96,28 @@ try {
     join(worktree, "preserve.ignored-fixture"),
     "preserve ignored bytes\n",
   );
+  const ignoredCheck = spawnSync(
+    "git",
+    ["check-ignore", "-q", "preserve.ignored-fixture"],
+    { cwd: worktree },
+  );
+  if (ignoredCheck.status !== 0)
+    throw new Error("Designated ignored fixture is not ignored by Git");
+  const status = git(
+    ["status", "--porcelain", "--untracked-files=all"],
+    worktree,
+  );
+  if (
+    !status
+      .split("\n")
+      .some((line) => line.endsWith("untracked-fixture.txt")) ||
+    status.split("\n").some((line) => line.endsWith("preserve.ignored-fixture"))
+  )
+    throw new Error(
+      "Git status did not distinguish untracked and ignored fixtures",
+    );
+  evidence.ignoredFixtureVerified = true;
+  evidence.untrackedFixtureStatus = status;
   const projectId = "p5-t2-session-reconstruction";
   const cardId = "fixture-card";
   const operationId = "fixture-operation:implementation";
@@ -203,7 +235,8 @@ try {
       timeoutMilliseconds: 120_000,
       signal: new AbortController().signal,
       readOnly: true,
-      prompt: `Recall ${constellation} and reply READY.`,
+      prompt:
+        "What details do you remember from the preceding task conversation?",
       environment,
     },
     {},
@@ -352,7 +385,9 @@ try {
   });
   if (
     context.attachmentManifest.status !== "available" ||
-    typeof context.attachmentManifest.content !== "string"
+    typeof context.attachmentManifest.content !== "string" ||
+    context.plan.status !== "available" ||
+    typeof context.plan.content !== "string"
   )
     throw new Error(
       "Fixture attachment content was not available in recovery context",
@@ -364,6 +399,8 @@ try {
     throw new Error(
       "Production reconstruction context did not inline current text attachment content",
     );
+  if (!context.plan.content.includes(planFact))
+    throw new Error("Production reconstruction context omitted the plan fact");
   const fingerprint = async () => {
     const sourceIdentity = await getTaskSessionReadOnlyIdentity(
       gitClient,
@@ -420,7 +457,7 @@ try {
       signal: new AbortController().signal,
       readOnly: true,
       prompt:
-        "Acknowledge the supplied reconstructed task context read-only. Do not modify files; reply READY.",
+        "What task details are present in the supplied reconstruction context? Do not modify files.",
       environment,
     },
     {

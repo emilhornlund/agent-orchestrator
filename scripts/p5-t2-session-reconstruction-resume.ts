@@ -131,6 +131,52 @@ if (store.read(fixture.cardId)?.sessionRecovery?.status !== "replacement-bound")
 const before = await fingerprint();
 const sourceBefore = await sourceCheckoutFingerprint();
 assertPrimarySessionReconstructionReadOnly(fixture.baseline, before);
+const reconstructionVerification = await runWithPrimaryTaskSession(
+  store,
+  new OpenCodeClient(),
+  fixture.projectId,
+  fixture.cardId,
+  {
+    cwd: fixture.worktree,
+    model: fixture.model,
+    variant: fixture.variant,
+    timeoutMilliseconds: 120_000,
+    signal: new AbortController().signal,
+    readOnly: true,
+    prompt: "Summarize the available task context without changing files.",
+    environment,
+  },
+  {
+    inspect,
+    context: fixture.context,
+    baseline: fixture.baseline,
+    attemptId: fixture.attemptId,
+    contextDirectory: path.join(fixture.runtime, "recovery-context"),
+    forbiddenPaths: [fixture.source, fixture.project.repository.worktreeRoot],
+  },
+  {
+    role: "reconstruction",
+    operationId: `${fixture.operationId}:production-reconstruction-verification`,
+    readOnlyAcknowledged: true,
+  },
+);
+if (reconstructionVerification.exitCode !== 0)
+  throw new Error(
+    "Production replacement-bound reconstruction verification failed",
+  );
+const verifiedRecord = store.read(fixture.cardId);
+if (verifiedRecord?.sessionRecovery?.status !== "replacement-bound")
+  throw new Error("Production verification changed the replacement binding");
+store.compareAndSwap(fixture.cardId, verifiedRecord.revision, {
+  ...verifiedRecord,
+  sessionRecovery: {
+    ...verifiedRecord.sessionRecovery,
+    status: "reconstruction-verified",
+    reconstructionBaseline: undefined,
+  },
+  revision: verifiedRecord.revision + 1,
+  updatedAt: new Date().toISOString(),
+});
 const result = await runWithPrimaryTaskSession(
   store,
   new OpenCodeClient(),
@@ -143,13 +189,8 @@ const result = await runWithPrimaryTaskSession(
     timeoutMilliseconds: 120_000,
     signal: new AbortController().signal,
     readOnly: true,
-    prompt: [
-      "Resume the bound replacement session normally in this fresh parent process.",
-      `Recall the harmless constellation: ${fixture.constellation}.`,
-      `Return the independent plan fact: ${fixture.planFact}.`,
-      `Return the independent attachment fact: ${fixture.attachmentFact}.`,
-      "Do not modify files; this is a read-only continuity verification.",
-    ].join("\n"),
+    prompt:
+      "What useful task facts are available in your context? Do not modify files.",
     environment,
   },
   {
@@ -217,6 +258,7 @@ for (const fact of [
 process.stdout.write(
   `${JSON.stringify({
     replacementSessionId: latest.primarySessionId,
+    reconstructionVerificationExitCode: reconstructionVerification.exitCode,
     operationId: `${fixture.operationId}:post-reconstruction-resume`,
     executions: store.read(fixture.cardId)?.primaryOperations?.[
       `${fixture.operationId}:post-reconstruction-resume`
