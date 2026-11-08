@@ -93,6 +93,7 @@ export async function pollProject(
   onHumanReviewCardsObserved?: (cardIds: string[]) => void,
   onHumanReviewCardLeft?: (cardId: string) => void,
   authority?: ProjectRunAuthority,
+  retryIntervalMs?: number,
 ): Promise<void> {
   if (signal.aborted) return;
 
@@ -112,6 +113,7 @@ export async function pollProject(
         openCode: opencode,
         commands,
         signal,
+        ...(retryIntervalMs === undefined ? {} : { retryIntervalMs }),
         ...(emailNotifier === undefined ? {} : { emailNotifier }),
         ...(onHumanReviewCardsObserved === undefined
           ? {}

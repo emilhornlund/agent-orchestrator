@@ -74,6 +74,86 @@ import { prepareAttentionNotification } from "../notifications/email-notifier.js
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 import { resumeInitialPublication } from "./initial-publication.js";
 import { reconcileWorkflowMutations } from "./reconcile-workflow-mutations.js";
+import { parseTaskExecutionRecord } from "../task-session/task-execution-record.js";
+import { isConclusiveOperationResolution } from "../task-session/run-record.js";
+import { isRetryableGitHubError } from "../github/github-client.js";
+
+export function hasDueTaskSessionRecoveryWait(
+  authorityRecord: import("../task-session/run-record.js").RunRecord | null,
+  now = Date.now(),
+): boolean {
+  if (!authorityRecord || authorityRecord.lifecycle !== "waiting") return false;
+  const projection =
+    authorityRecord.compatibility[`task-execution-${authorityRecord.cardId}`];
+  if (projection === undefined) return false;
+  const taskProjection = parseTaskExecutionRecord(projection);
+  const recoveryWait = taskProjection.recoveryWait;
+  return (
+    taskProjection.phase !== "attention-required" &&
+    recoveryWait !== undefined &&
+    now >= Date.parse(recoveryWait.retryAt)
+  );
+}
+
+export function persistEssentialDependencyWait(
+  authority: ProjectRunAuthority | undefined,
+  cardId: string | undefined,
+  retryIntervalMs: number,
+  dependency: string,
+): string | undefined {
+  const ownedCardId = cardId ?? authority?.cardId;
+  if (!authority || !ownedCardId || authority.cardId !== ownedCardId)
+    return undefined;
+  const run = authority.store.read();
+  if (
+    !run ||
+    run.cardId !== ownedCardId ||
+    run.pendingOperations.some(
+      (operation) => !isConclusiveOperationResolution(operation),
+    )
+  )
+    return undefined;
+  const key = `task-execution-${ownedCardId}`;
+  const current = run.compatibility[key];
+  if (current === undefined) return undefined;
+  const task = parseTaskExecutionRecord(current);
+  if (["attention-required", "done"].includes(task.phase)) return undefined;
+  const now = new Date();
+  const since = task.recoveryWait?.since ?? now.toISOString();
+  const notificationId = `${task.projectId}/${task.cardId}/${task.operationKey}/dependency`;
+  authority.mutateTaskExecution({
+    key,
+    initial: null,
+    operation: (raw) => {
+      const latest = parseTaskExecutionRecord(raw);
+      if (latest.revision !== task.revision || latest.phase !== task.phase)
+        throw new Error(
+          "Task checkpoint changed while scheduling dependency recovery",
+        );
+      return {
+        value: {
+          ...latest,
+          recoveryWait: {
+            kind: "dependency",
+            reason: `Essential dependency unavailable: ${dependency}`,
+            resumePhase: latest.recoveryWait?.resumePhase ?? latest.phase,
+            since,
+            retryAt: new Date(now.getTime() + retryIntervalMs).toISOString(),
+            attempts: (latest.recoveryWait?.attempts ?? 0) + 1,
+            notificationId,
+          },
+          revision: latest.revision + 1,
+          updatedAt: new Date(
+            Math.max(now.getTime(), Date.parse(latest.updatedAt) + 1),
+          ).toISOString(),
+        },
+        result: undefined,
+      };
+    },
+    validate: parseTaskExecutionRecord,
+  });
+  return notificationId;
+}
 import { getCardsForDiscovery } from "./trello-list-discovery.js";
 import { getWorkflowKind } from "./workflow-kind.js";
 import { isCardStartDateReached } from "./card-start-eligibility.js";
@@ -400,6 +480,7 @@ async function runProjectWorkerInner(
   runContext?: ProjectRunWorkerContext,
 ): Promise<"authority-released" | undefined> {
   const githubReconciliationAttempts = new Map<string, number>();
+  const githubReadAttempts = new Map<string, number>();
   const trelloTransientAttempts = new Map<string, number>();
   const preparedConflictAttempts = new Map<string, number>();
   const blockedPreparedConflicts = new Map<string, BlockedPreparedConflict>();
@@ -755,13 +836,18 @@ async function runProjectWorkerInner(
         continue;
       }
       const authorityRecord = runContext?.authority?.store.read();
+      const recoverableTaskWaitDue = hasDueTaskSessionRecoveryWait(
+        authorityRecord ?? null,
+      );
       const resumableLegacyAttempt =
         authorityRecord?.lifecycle === "waiting" &&
         authorityRecord.legacy.recoveryDisposition === "task-session-reconcile";
       if (
         runContext?.authority &&
         (!authorityRecord ||
-          (authorityRecord.lifecycle === "waiting" && !resumableLegacyAttempt))
+          (authorityRecord.lifecycle === "waiting" &&
+            !resumableLegacyAttempt &&
+            !recoverableTaskWaitDue))
       ) {
         logger
           .child({ projectId: project.id })
@@ -833,7 +919,8 @@ async function runProjectWorkerInner(
             undefined,
             onHumanReviewCardsObserved,
             onHumanReviewCardLeft,
-            ...(runContext?.authority ? [runContext.authority] : []),
+            runContext?.authority,
+            pollIntervalMilliseconds,
           ),
         );
       } else {
@@ -849,7 +936,8 @@ async function runProjectWorkerInner(
             emailNotifier,
             onHumanReviewCardsObserved,
             onHumanReviewCardLeft,
-            ...(runContext?.authority ? [runContext.authority] : []),
+            runContext?.authority,
+            pollIntervalMilliseconds,
           ),
         );
       }
@@ -951,6 +1039,32 @@ async function runProjectWorkerInner(
       }
 
       if (error instanceof TrelloListDiscoveryError) {
+        const authority = runContext?.authority;
+        const run = authority?.store.read();
+        const taskValue = run?.compatibility[`task-execution-${run.cardId}`];
+        const priorWait =
+          taskValue === undefined
+            ? undefined
+            : parseTaskExecutionRecord(taskValue).recoveryWait?.notificationId;
+        const waitId = persistEssentialDependencyWait(
+          authority,
+          authority?.cardId,
+          pollIntervalMilliseconds,
+          "trello:list-discovery",
+        );
+        if (waitId !== undefined) {
+          if (waitId !== priorWait)
+            logger
+              .child({
+                projectId: project.id,
+                ...(authority?.cardId ? { cardId: authority.cardId } : {}),
+              })
+              .warn(
+                `Essential dependency wait ${waitId} scheduled after ${error.attempts} bounded Trello list-read attempts`,
+              );
+          await sleep(pollIntervalMilliseconds, signal);
+          continue;
+        }
         logger
           .child({ projectId: project.id })
           .warn(
@@ -958,6 +1072,43 @@ async function runProjectWorkerInner(
           );
         await sleep(pollIntervalMilliseconds, signal);
         continue;
+      }
+
+      if (
+        !(error instanceof RetryableGitHubReconciliationError) &&
+        isRetryableGitHubError(error) &&
+        runContext?.authority?.cardId
+      ) {
+        const cardId = runContext.authority.cardId;
+        const attemptKey = `${cardId}:github-essential-read`;
+        const attempt = (githubReadAttempts.get(attemptKey) ?? 0) + 1;
+        githubReadAttempts.set(attemptKey, attempt);
+        if (attempt < MAX_GITHUB_RECONCILIATION_ATTEMPTS) {
+          await sleep(getRetryBackoffDelayMilliseconds(attempt), signal);
+          continue;
+        }
+        const run = runContext.authority.store.read();
+        const taskValue = run?.compatibility[`task-execution-${cardId}`];
+        const priorWait =
+          taskValue === undefined
+            ? undefined
+            : parseTaskExecutionRecord(taskValue).recoveryWait?.notificationId;
+        const waitId = persistEssentialDependencyWait(
+          runContext.authority,
+          cardId,
+          pollIntervalMilliseconds,
+          "github:essential-read",
+        );
+        if (waitId !== undefined) {
+          if (waitId !== priorWait)
+            logger
+              .child({ projectId: project.id, cardId })
+              .warn(
+                `Essential dependency wait ${waitId} scheduled after ${attempt} bounded GitHub read attempts`,
+              );
+          await sleep(pollIntervalMilliseconds, signal);
+          continue;
+        }
       }
 
       let failureContext = getFailureContext(error);
@@ -1037,6 +1188,29 @@ async function runProjectWorkerInner(
           continue;
         }
 
+        const activeRun = runContext?.authority?.store.read();
+        const activeTaskValue =
+          activeRun?.compatibility[`task-execution-${error.cardId}`];
+        const previousWaitId =
+          activeTaskValue === undefined
+            ? undefined
+            : parseTaskExecutionRecord(activeTaskValue).recoveryWait
+                ?.notificationId;
+        const waitId = persistEssentialDependencyWait(
+          runContext?.authority,
+          error.cardId,
+          pollIntervalMilliseconds,
+          `github:${error.operation}`,
+        );
+        if (waitId !== undefined) {
+          if (waitId !== previousWaitId)
+            projectLog.warn(
+              `Essential dependency wait ${waitId} scheduled after bounded GitHub read retries; verified ${activeRun?.checkpoint} checkpoint retained`,
+            );
+          await sleep(pollIntervalMilliseconds, signal);
+          continue;
+        }
+
         const handlingOutcome = `blocked ${error.operation} reconciliation after ${attempt} failed attempts; resolve the failure and move card ${error.cardId} from its reconciliation list to Ready for Agent to resume`;
 
         blockedReconciliations.set(attemptKey, {
@@ -1094,6 +1268,40 @@ async function runProjectWorkerInner(
 
         if (attempt < MAX_TRELLO_RECONCILIATION_ATTEMPTS) {
           await sleep(getRetryBackoffDelayMilliseconds(attempt), signal);
+          continue;
+        }
+
+        const activeRun = runContext?.authority?.store.read();
+        const recoveryCardId = cardId ?? runContext?.authority?.cardId;
+        const activeTaskValue = recoveryCardId
+          ? activeRun?.compatibility[`task-execution-${recoveryCardId}`]
+          : undefined;
+        const previousWaitId =
+          activeTaskValue === undefined
+            ? undefined
+            : parseTaskExecutionRecord(activeTaskValue).recoveryWait
+                ?.notificationId;
+        const retryableRead = [
+          "board lookup",
+          "list lookup",
+          "card lookup",
+          "card action lookup",
+          "transition history",
+        ].includes(operation);
+        const waitId = retryableRead
+          ? persistEssentialDependencyWait(
+              runContext?.authority,
+              recoveryCardId,
+              pollIntervalMilliseconds,
+              `trello:${operation}`,
+            )
+          : undefined;
+        if (waitId !== undefined && retryableRead) {
+          if (waitId !== previousWaitId)
+            projectLog.warn(
+              `Essential dependency wait ${waitId} scheduled after bounded Trello read retries; verified ${activeRun?.checkpoint} checkpoint retained`,
+            );
+          await sleep(pollIntervalMilliseconds, signal);
           continue;
         }
 

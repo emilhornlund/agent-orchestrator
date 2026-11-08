@@ -12,6 +12,8 @@ import type {
   TaskExecutionPhase,
   TaskExecutionRecord,
 } from "../src/task-session/task-execution-record.js";
+import { hasDueTaskSessionRecoveryWait } from "../src/orchestrator/run-orchestrator.js";
+import type { RunRecord } from "../src/task-session/run-record.js";
 
 let root: string;
 afterEach(() => {
@@ -30,6 +32,7 @@ function fixture(phase: TaskExecutionPhase = "validation") {
     trello: {
       workingListId: "working",
       reviewListId: "review",
+      backlogListId: "backlog",
       doneListId: "done",
     },
     repository: { path: repositoryPath, worktreeRoot },
@@ -72,7 +75,7 @@ function fixture(phase: TaskExecutionPhase = "validation") {
         : null,
     remoteBranchHeadSha: null,
     trelloListId:
-      phase === "human-feedback"
+      phase === "human-feedback" || phase === "ci"
         ? "review"
         : phase === "done"
           ? "done"
@@ -98,7 +101,10 @@ function fixture(phase: TaskExecutionPhase = "validation") {
     uncertainReplyIds: [],
     reconciledReplyIds: [],
   };
-  const reconcile = (snapshot: Partial<TaskSessionRecoverySnapshot> = {}) =>
+  const reconcile = (
+    snapshot: Partial<TaskSessionRecoverySnapshot> = {},
+    now?: () => number,
+  ) =>
     reconcileTaskSession({
       project,
       cardId: "card",
@@ -106,23 +112,123 @@ function fixture(phase: TaskExecutionPhase = "validation") {
       operationKey: "operation",
       worktreePath,
       taskRecordStore: store,
+      retryIntervalMs: 1_000,
+      ...(now === undefined ? {} : { now }),
       readAuthoritativeSnapshot: async () => ({ ...baseSnapshot, ...snapshot }),
     });
   return { project, store, sha, reconcile };
 }
 
 describe("reconcileTaskSession", () => {
+  it("worker gate authorizes only a schema-valid due task recovery wait", () => {
+    const run = {
+      lifecycle: "waiting",
+      cardId: "card",
+      compatibility: {
+        "task-execution-card": {
+          version: 1,
+          projectId: "project",
+          cardId: "card",
+          phase: "validation",
+          primarySessionId: "session",
+          sessionCreationStatus: "bound",
+          expectedBranch: "agent/card",
+          operationKey: "operation",
+          revision: 1,
+          retryCounters: { validation: 0, review: 0, ci: 0, humanFeedback: 0 },
+          createdAt: "2026-10-24T09:00:00.000Z",
+          updatedAt: "2026-10-24T09:00:00.000Z",
+          recoveryWait: {
+            kind: "dependency",
+            reason: "dependency outage",
+            resumePhase: "validation",
+            since: "2026-10-24T09:00:00.000Z",
+            retryAt: "2026-10-24T09:00:01.000Z",
+            attempts: 1,
+            notificationId: "project/card/operation/dependency",
+          },
+        },
+      },
+    } as unknown as RunRecord;
+    expect(
+      hasDueTaskSessionRecoveryWait(
+        run,
+        Date.parse("2026-10-24T09:00:00.500Z"),
+      ),
+    ).toBe(false);
+    expect(
+      hasDueTaskSessionRecoveryWait(
+        run,
+        Date.parse("2026-10-24T09:00:01.000Z"),
+      ),
+    ).toBe(true);
+    expect(
+      hasDueTaskSessionRecoveryWait(
+        { ...run, lifecycle: "implementation" },
+        Date.now(),
+      ),
+    ).toBe(false);
+    expect(
+      hasDueTaskSessionRecoveryWait({ ...run, compatibility: {} }, Date.now()),
+    ).toBe(false);
+  });
   it("resumes a verified restart at its persisted phase", async () => {
     const f = fixture();
     const result = await f.reconcile();
     expect(result).toMatchObject({ status: "resume", phase: "validation" });
   });
 
+  it("keeps the authoritative checkpoint recoverable when a dependency read fails", async () => {
+    const f = fixture("validation");
+    const result = await reconcileTaskSession({
+      project: f.project,
+      cardId: "card",
+      expectedBranch: "agent/card",
+      operationKey: "operation",
+      worktreePath: path.join(f.project.repository.worktreeRoot, "card"),
+      taskRecordStore: f.store,
+      retryIntervalMs: 1_000,
+      readAuthoritativeSnapshot: async () => {
+        throw new Error("GitHub service unavailable");
+      },
+    });
+    expect(result).toMatchObject({
+      status: "waiting",
+      checkpoint: "validation",
+    });
+    expect(f.store.read("card")?.phase).toBe("validation");
+    const persisted = f.store.read("card")!;
+    expect(persisted.recoveryWait?.reason).toContain(
+      "snapshot could not be read",
+    );
+    const restarted = new TaskExecutionStore(
+      path.join(root, "state"),
+      f.project,
+    );
+    let reads = 0;
+    const early = await reconcileTaskSession({
+      project: f.project,
+      cardId: "card",
+      expectedBranch: "agent/card",
+      operationKey: "operation",
+      worktreePath: path.join(f.project.repository.worktreeRoot, "card"),
+      taskRecordStore: restarted,
+      retryIntervalMs: 1_000,
+      now: () => Date.parse(persisted.recoveryWait!.since) + 1,
+      readAuthoritativeSnapshot: async () => {
+        reads += 1;
+        throw new Error("should be paced");
+      },
+    });
+    expect(early.status).toBe("waiting");
+    expect(reads).toBe(0);
+  });
+
   it("persists attention-required for missing session identity and untrusted partial publication", async () => {
     const f = fixture();
     const result = await f.reconcile({ primarySessionAccessible: null });
-    expect(result.status).toBe("attention-required");
-    expect(f.store.read("card")?.phase).toBe("attention-required");
+    expect(result.status).toBe("waiting");
+    expect(f.store.read("card")?.phase).toBe("validation");
 
     const publication = fixture("publication");
     const partial = await publication.reconcile({
@@ -281,6 +387,87 @@ describe("reconcileTaskSession", () => {
     expect((await mismatch.reconcile({ trelloListId: "review" })).status).toBe(
       "attention-required",
     );
+  });
+
+  it.each(["MERGED", "CLOSED"] as const)(
+    "preserves terminal %s observation while reconciling a Human Review wait",
+    async (state) => {
+      const f = fixture("human-feedback");
+      await f.reconcile({ trelloListId: "working" });
+      const terminal = await f.reconcile(
+        {
+          trelloListId: "review",
+          pullRequest: {
+            number: 1,
+            url: "https://github.com/o/r/pull/1",
+            headSha: f.sha,
+            state,
+          },
+        },
+        () => Date.now() + 5_000,
+      );
+      expect(terminal.status).toBe("terminal-observed");
+      expect(terminal.record.recoveryWait).toBeDefined();
+    },
+  );
+
+  it("persists manual-move wait and only resumes after the complete safety snapshot passes", async () => {
+    const f = fixture("validation");
+    const moved = await f.reconcile({ trelloListId: "review" });
+    expect(moved.status).toBe("waiting");
+    expect(moved.record.recoveryWait).toMatchObject({
+      reason: expect.stringContaining("unexpected list"),
+      attempts: 1,
+    });
+    const alternating = await f.reconcile(
+      { trelloListId: "other" },
+      () => Date.now() + 2_000,
+    );
+    expect(alternating.status).toBe("waiting");
+    expect(alternating.record.recoveryWait?.attempts).toBe(2);
+    expect(alternating.record.recoveryWait?.notificationId).toBe(
+      moved.record.recoveryWait?.notificationId,
+    );
+    const blocked = await f.reconcile(
+      { trelloListId: "working", worktreeRebaseActive: true },
+      () => Date.now() + 10_000,
+    );
+    expect(blocked.status).toBe("attention-required");
+    expect(f.store.read("card")?.phase).toBe("attention-required");
+    expect(f.store.read("card")?.recoveryWait).toBeUndefined();
+    expect(blocked.status).not.toBe("resume");
+  });
+
+  it("keeps a failed-CI checkpoint blocked when its OPEN PR card is in Backlog, then verifies safe return", async () => {
+    const f = fixture("ci");
+    const moved = await f.reconcile({
+      trelloListId: "backlog",
+      ciEvaluation: {
+        status: "failed",
+        expectedHeadSha: f.sha,
+        expectedCheckNames: ["Build"],
+        failures: [],
+      },
+    });
+    expect(moved.status).toBe("waiting");
+    expect(moved.record.phase).toBe("ci");
+    expect(moved.record.recoveryWait?.kind).toBe("manual-move");
+
+    const restored = await f.reconcile(
+      {
+        trelloListId: "review",
+        ciEvaluation: {
+          status: "failed",
+          expectedHeadSha: f.sha,
+          expectedCheckNames: ["Build"],
+          failures: [],
+        },
+      },
+      () => Date.now() + 5_000,
+    );
+    expect(restored.status).toBe("resume");
+    expect(restored.record.phase).toBe("ci");
+    expect(restored.record.recoveryWait).toBeUndefined();
   });
 
   it("fails closed on malformed durable records and untrusted local commits", async () => {

@@ -50,6 +50,7 @@ export interface ObserveTaskSessionReviewCardsOptions {
   taskRecordStore: TaskExecutionStore;
   github: GitHubClient;
   cwd?: string;
+  terminalOnlyCardIds?: ReadonlySet<string>;
 }
 
 function nextTimestamp(previous: string): string {
@@ -144,6 +145,7 @@ export async function observeTaskSessionReviewCards(
       });
       continue;
     }
+    if (options.terminalOnlyCardIds?.has(card.id)) continue;
     if (pullRequest.headRefOid !== headSha) {
       throw new Error(
         `Authoritative pull request identity or head changed for Human Review card ${card.id}`,

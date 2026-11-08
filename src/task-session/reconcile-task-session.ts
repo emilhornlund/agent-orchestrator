@@ -8,6 +8,8 @@ import type {
 import { transitionTaskExecutionRecord } from "./task-execution-transition.js";
 import { loadOwnedTaskExecutionRecord } from "./task-execution-ownership.js";
 import { assertOwnedTaskWorktreePath } from "./run-task-session-implementation.js";
+import { isRetryableGitHubError } from "../github/github-client.js";
+import { isRetryableTrelloError } from "../trello/trello-client.js";
 
 export interface TaskSessionRecoverySnapshot {
   primarySessionAccessible: boolean | null;
@@ -39,6 +41,13 @@ export interface ReconcileTaskSessionOptions {
   worktreePath: string;
   taskRecordStore: TaskExecutionStore;
   signal?: AbortSignal;
+  retryIntervalMs?: number;
+  now?: () => number;
+  readTerminalPullRequest?: (record: TaskExecutionRecord) => Promise<{
+    number: number;
+    url: string;
+    state: "OPEN" | "CLOSED" | "MERGED";
+  } | null>;
   readAuthoritativeSnapshot: (
     record: TaskExecutionRecord,
   ) => Promise<TaskSessionRecoverySnapshot>;
@@ -47,10 +56,17 @@ export interface ReconcileTaskSessionOptions {
 export type TaskSessionRecoveryResult =
   | { status: "resume"; phase: TaskExecutionPhase; record: TaskExecutionRecord }
   | {
+      status: "waiting";
+      checkpoint: TaskExecutionPhase;
+      reason: string;
+      record: TaskExecutionRecord;
+    }
+  | {
       status: "attention-required";
       reason: string;
       record: TaskExecutionRecord;
     }
+  | { status: "terminal-observed"; record: TaskExecutionRecord }
   | { status: "complete"; record: TaskExecutionRecord };
 
 function bumpTimestamp(record: TaskExecutionRecord): string {
@@ -78,15 +94,76 @@ function preserveAttention(
     operationKey: record.operationKey,
     occurredAt: bumpTimestamp(record),
   });
-  const persisted = store.compareAndSwap(record.cardId, record.revision, next);
+  const persisted = store.compareAndSwap(record.cardId, record.revision, {
+    ...next,
+    recoveryWait: undefined,
+  });
   return { status: "attention-required", reason, record: persisted };
+}
+
+function persistWait(
+  store: TaskExecutionStore,
+  record: TaskExecutionRecord,
+  options: ReconcileTaskSessionOptions,
+  reason: string,
+  kind: "dependency" | "manual-move" = "dependency",
+): TaskSessionRecoveryResult {
+  const interval = options.retryIntervalMs;
+  if (interval === undefined || !Number.isSafeInteger(interval) || interval < 1)
+    throw new Error("Recovery wait requires the configured retry interval");
+  const now = options.now?.() ?? Date.now();
+  const since = record.recoveryWait?.since ?? new Date(now).toISOString();
+  const retryAt = new Date(now + interval).toISOString();
+  const notificationId = `${record.projectId}/${record.cardId}/${record.operationKey}/${kind}`;
+  const next: TaskExecutionRecord = {
+    ...record,
+    recoveryWait: {
+      kind,
+      reason,
+      resumePhase:
+        record.recoveryWait?.resumePhase ??
+        (record.phase as Exclude<
+          TaskExecutionPhase,
+          "done" | "attention-required"
+        >),
+      since,
+      retryAt,
+      attempts: (record.recoveryWait?.attempts ?? 0) + 1,
+      notificationId,
+    },
+    revision: record.revision + 1,
+    updatedAt: new Date(now).toISOString(),
+  };
+  const persisted = store.compareAndSwap(record.cardId, record.revision, next);
+  return {
+    status: "waiting",
+    checkpoint: next.recoveryWait!.resumePhase,
+    reason,
+    record: persisted,
+  };
+}
+
+function clearWaitAndResume(
+  store: TaskExecutionStore,
+  record: TaskExecutionRecord,
+): TaskSessionRecoveryResult {
+  const recovered = record.recoveryWait
+    ? store.compareAndSwap(record.cardId, record.revision, {
+        ...record,
+        recoveryWait: undefined,
+        revision: record.revision + 1,
+        updatedAt: bumpTimestamp(record),
+      })
+    : record;
+  return { status: "resume", phase: recovered.phase, record: recovered };
 }
 
 function expectedTrelloList(
   project: ProjectConfig,
   phase: TaskExecutionPhase,
 ): string {
-  if (phase === "human-feedback") return project.trello.reviewListId;
+  if (phase === "human-feedback" || phase === "ci")
+    return project.trello.reviewListId;
   if (phase === "done") return project.trello.doneListId;
   return project.trello.workingListId;
 }
@@ -120,6 +197,24 @@ export async function reconcileTaskSession(
     expectedBranch,
     operationKey,
   });
+  if (
+    options.readTerminalPullRequest &&
+    (record.phase === "ci" || record.phase === "human-feedback") &&
+    record.pullRequest !== undefined
+  ) {
+    const terminal = await options.readTerminalPullRequest(record);
+    if (
+      terminal !== null &&
+      terminal.number === record.pullRequest.number &&
+      terminal.url === record.pullRequest.url &&
+      (terminal.state === "MERGED" || terminal.state === "CLOSED")
+    ) {
+      // This is only a handoff hint. The existing terminal observer must still
+      // verify PR ownership/head continuity and perform the external terminal
+      // workflow; local session/worktree checks are not allowed to hide it.
+      return { status: "terminal-observed", record };
+    }
+  }
   if (record.phase === "attention-required") {
     return {
       status: "attention-required",
@@ -127,6 +222,40 @@ export async function reconcileTaskSession(
       record,
     };
   }
+  if (
+    record.recoveryWait &&
+    (options.now?.() ?? Date.now()) < Date.parse(record.recoveryWait.retryAt)
+  )
+    return {
+      status: "waiting",
+      checkpoint: record.recoveryWait.resumePhase,
+      reason: record.recoveryWait.reason,
+      record,
+    };
+  let snapshot: TaskSessionRecoverySnapshot;
+  try {
+    snapshot = await options.readAuthoritativeSnapshot(record);
+  } catch (error) {
+    if (options.signal?.aborted) throw error;
+    const reason = `Authoritative recovery snapshot could not be read: ${error instanceof Error ? error.message : String(error)}`;
+    // Only recognized transient provider failures are waits. Git/worktree,
+    // malformed response, ancestry and safety failures must not be relabeled
+    // as outages; they remain attention checkpoints and fail closed.
+    if (isRetryableGitHubError(error) || isRetryableTrelloError(error))
+      return persistWait(taskRecordStore, record, options, reason);
+    return preserveAttention(taskRecordStore, record, reason);
+  }
+  const expectedTerminalPr = record.pullRequest;
+  if (
+    (record.phase === "ci" || record.phase === "human-feedback") &&
+    expectedTerminalPr !== undefined &&
+    snapshot.pullRequest !== null &&
+    snapshot.pullRequest.number === expectedTerminalPr.number &&
+    snapshot.pullRequest.url === expectedTerminalPr.url &&
+    (snapshot.pullRequest.state === "MERGED" ||
+      snapshot.pullRequest.state === "CLOSED")
+  )
+    return { status: "terminal-observed", record };
   if (
     record.sessionCreationStatus === "creating" ||
     record.sessionCreationStatus === "ambiguous" ||
@@ -151,21 +280,10 @@ export async function reconcileTaskSession(
       "Repository setup state is missing, changed, or has an uncertain outcome",
     );
   }
-  let snapshot: TaskSessionRecoverySnapshot;
-  try {
-    snapshot = await options.readAuthoritativeSnapshot(record);
-  } catch (error) {
-    if (options.signal?.aborted) throw error;
-    return preserveAttention(
-      taskRecordStore,
-      record,
-      `Authoritative recovery snapshot could not be read: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
   if (
     record.primarySessionId !== undefined &&
     record.phase !== "done" &&
-    snapshot.primarySessionAccessible !== true
+    snapshot.primarySessionAccessible === false
   ) {
     return preserveAttention(
       taskRecordStore,
@@ -173,11 +291,26 @@ export async function reconcileTaskSession(
       "Bound primary session is inaccessible or its state is unknown",
     );
   }
-  if (snapshot.trelloListId !== expectedTrelloList(project, record.phase)) {
-    return preserveAttention(
+  if (snapshot.primarySessionAccessible === null && record.phase !== "done")
+    return persistWait(
       taskRecordStore,
       record,
+      options,
+      "Bound primary session accessibility is unknown",
+    );
+  if (snapshot.trelloListId !== expectedTrelloList(project, record.phase)) {
+    if (record.phase === "done")
+      return preserveAttention(
+        taskRecordStore,
+        record,
+        `Trello card is in unexpected list ${snapshot.trelloListId} for phase ${record.phase}`,
+      );
+    return persistWait(
+      taskRecordStore,
+      record,
+      options,
       `Trello card is in unexpected list ${snapshot.trelloListId} for phase ${record.phase}`,
+      "manual-move",
     );
   }
   if (requiresWorktree(record.phase)) {
@@ -255,7 +388,7 @@ export async function reconcileTaskSession(
         "Partially published task has no unambiguous trusted commit/remote state",
       );
     }
-    return { status: "resume", phase: record.phase, record };
+    return clearWaitAndResume(taskRecordStore, record);
   }
   if (requiresPullRequest(record.phase)) {
     const expectedPr = record.pullRequest;
@@ -331,5 +464,5 @@ export async function reconcileTaskSession(
     );
   }
   if (record.phase === "done") return { status: "complete", record };
-  return { status: "resume", phase: record.phase, record };
+  return clearWaitAndResume(taskRecordStore, record);
 }

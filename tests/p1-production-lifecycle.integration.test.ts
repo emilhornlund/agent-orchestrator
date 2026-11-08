@@ -43,8 +43,27 @@ afterEach(async () => {
 
 describe("P1 production lifecycle through pollProject", () => {
   it.each([
-    { draft: false, terminal: "merged", destination: "done", ackLoss: false },
-    { draft: true, terminal: "closed", destination: "backlog", ackLoss: false },
+    {
+      draft: false,
+      terminal: "merged",
+      destination: "done",
+      ackLoss: false,
+      terminalReadRaceAt: 2,
+    },
+    {
+      draft: true,
+      terminal: "closed",
+      destination: "backlog",
+      ackLoss: false,
+      terminalReadRaceAt: 3,
+    },
+    {
+      draft: false,
+      terminal: "merged",
+      destination: "done",
+      ackLoss: false,
+      terminalReadRaceAt: 3,
+    },
     { draft: false, terminal: "merged", destination: "done", ackLoss: true },
   ] as const)(
     ({
@@ -59,7 +78,13 @@ describe("P1 production lifecycle through pollProject", () => {
       ackLoss
         ? "reconciles an accepted PR whose create acknowledgement was lost without claiming the next card"
         : `publishes a ${draft ? "draft" : "normal"} PR and waits for human ${terminal} before releasing the next card`,
-    async ({ draft, terminal, destination, ackLoss }) => {
+    async ({
+      draft,
+      terminal,
+      destination,
+      ackLoss,
+      terminalReadRaceAt = 2,
+    }) => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "p1-lifecycle-"));
       roots.push(root);
       const home = path.join(root, "home");
@@ -322,6 +347,10 @@ describe("P1 production lifecycle through pollProject", () => {
       const requests: string[] = [];
       const accepted: string[] = [];
       let loseCreateAcknowledgement = false;
+      let feedbackReads = 0;
+      let terminalRaceTarget: "MERGED" | "CLOSED" | null = null;
+      let terminalRaceReads = 0;
+      let terminalRaceReadAt = 2;
       let github = {
         findPullRequest: async (input: { headBranch: string }) => {
           const pr = prs.get(input.headBranch);
@@ -329,6 +358,11 @@ describe("P1 production lifecycle through pollProject", () => {
         },
         findPullRequestState: async (input: { headBranch: string }) => {
           const pr = prs.get(input.headBranch);
+          if (terminalRaceTarget !== null && pr?.state === "OPEN") {
+            terminalRaceReads += 1;
+            if (terminalRaceReads === terminalRaceReadAt)
+              pr.state = terminalRaceTarget;
+          }
           ledger.push({
             service: "github",
             action: "read:pr-state",
@@ -446,7 +480,10 @@ describe("P1 production lifecycle through pollProject", () => {
           ],
         }),
         findChangesRequestedPullRequest: async () => null,
-        getPullRequestConversationComments: async () => [],
+        getPullRequestConversationComments: async () => {
+          feedbackReads += 1;
+          return [];
+        },
         mergePullRequest: async (input: { pullRequestUrl?: string }) => {
           ledger.push({
             service: "github",
@@ -757,6 +794,49 @@ describe("P1 production lifecycle through pollProject", () => {
       expect(requests).toEqual(["agent/first"]);
       expect(accepted).toEqual([firstPr?.url]);
       expect(lists.get("first")).toBe("review");
+      const recoveryStore = new TaskExecutionStore(
+        contextRoot,
+        project,
+        activeAuthority!,
+      );
+      const checkpoint = recoveryStore.read("first")!;
+      recoveryStore.compareAndSwap("first", checkpoint.revision, {
+        ...checkpoint,
+        recoveryWait: {
+          kind: "dependency",
+          reason: "Human Review dependency temporarily unavailable",
+          resumePhase: "human-feedback",
+          since: new Date().toISOString(),
+          retryAt: new Date(Date.now() + 60_000).toISOString(),
+          attempts: 1,
+          notificationId: "p1/first/human-feedback/dependency",
+        },
+        revision: checkpoint.revision + 1,
+        updatedAt: new Date().toISOString(),
+      });
+      const feedbackReadsBeforeWait = feedbackReads;
+      lists.set("first", "backlog");
+      await poll();
+      expect(recoveryStore.read("first")).toMatchObject({
+        phase: "human-feedback",
+        recoveryWait: { resumePhase: "human-feedback" },
+      });
+      expect(feedbackReads).toBe(feedbackReadsBeforeWait);
+      expect(lists.get("next")).toBe("ready");
+      lists.set("first", "review");
+      const returned = recoveryStore.read("first")!;
+      recoveryStore.compareAndSwap("first", returned.revision, {
+        ...returned,
+        recoveryWait: {
+          ...returned.recoveryWait!,
+          retryAt: new Date(Date.now() - 1).toISOString(),
+        },
+        revision: returned.revision + 1,
+        updatedAt: new Date().toISOString(),
+      });
+      await poll();
+      expect(recoveryStore.read("first")?.recoveryWait).toBeUndefined();
+      expect(recoveryStore.read("first")?.phase).toBe("human-feedback");
       await poll();
       expect(lists.get("next")).toBe("ready");
       expect(
@@ -790,14 +870,53 @@ describe("P1 production lifecycle through pollProject", () => {
           await gitRun(source, "rev-list", "--count", `${initialHead}..${sha}`),
         ),
       ).toBe(1);
+      // Exercise terminal handling against the canonical authority-backed task
+      // projection, including a durable recovery wait (not a standalone store).
+      const terminalTaskStore = new TaskExecutionStore(
+        contextRoot,
+        project,
+        activeAuthority!,
+      );
+      const waitingTask = terminalTaskStore.read("first")!;
+      terminalTaskStore.compareAndSwap("first", waitingTask.revision, {
+        ...waitingTask,
+        recoveryWait: {
+          kind: "dependency",
+          reason: "GitHub temporarily unavailable",
+          resumePhase: "human-feedback",
+          since: new Date().toISOString(),
+          retryAt: new Date(
+            Date.now() + (terminalReadRaceAt === 3 ? -1 : 60_000),
+          ).toISOString(),
+          attempts: 1,
+          notificationId: "p1/first/terminal-test/dependency",
+        },
+        revision: waitingTask.revision + 1,
+        updatedAt: new Date().toISOString(),
+      });
+      expect(terminalTaskStore.read("first")?.recoveryWait).toBeDefined();
       ledger.push({
         service: "github",
         action: `human-${terminal}`,
         actor: "human",
         id: "41",
       });
-      firstPr!.state = terminal === "merged" ? "MERGED" : "CLOSED";
+      // The ordinary review observer first sees OPEN. The independent recovery
+      // read then sees the PR become terminal while the card is still in Review.
+      firstPr!.state = "OPEN";
       firstPr!.headRefOid = sha;
+      terminalRaceTarget = terminal === "merged" ? "MERGED" : "CLOSED";
+      terminalRaceReadAt = terminalReadRaceAt;
+      const openCodeCountBeforeRace = openCodeCards.length;
+      await poll();
+      expect(terminalRaceReads).toBe(terminalReadRaceAt);
+      expect(terminalTaskStore.read("first")).toMatchObject({
+        phase: "human-feedback",
+        recoveryWait: { resumePhase: "human-feedback" },
+      });
+      expect(authorities.get("first")?.store.read()?.lifecycle).toBe("waiting");
+      expect(lists.get("first")).toBe("review");
+      expect(openCodeCards).toHaveLength(openCodeCountBeforeRace);
       for (
         let attempt = 0;
         attempt < 12 && activeAuthority !== undefined;
@@ -805,11 +924,15 @@ describe("P1 production lifecycle through pollProject", () => {
       )
         await poll();
       expect(lists.get("first")).toBe(destination);
+      expect(terminalRaceReads).toBeGreaterThanOrEqual(2);
       const firstAuthority = authorities.get("first");
       expect(firstAuthority?.store.read()).toMatchObject({
         lifecycle: terminal === "merged" ? "done" : "cancelled",
         terminalSync: "verified",
       });
+      expect(terminalTaskStore.read("first")?.recoveryWait).toBeUndefined();
+      if (terminal === "merged")
+        expect(terminalTaskStore.read("first")?.phase).toBe("done");
       const terminalReadback = await (
         trello as unknown as {
           getCard: (id: string) => Promise<TrelloCard>;
@@ -863,23 +986,22 @@ describe("P1 production lifecycle through pollProject", () => {
           (event) => event.id === "next" && event.action === "move:working",
         ),
       ).toBe(true);
+      const terminalDestinationReadIndex = ledger.reduce(
+        (lastIndex, entry, index) =>
+          entry.id === "first" &&
+          entry.action === "read-card" &&
+          entry.detail === destination
+            ? index
+            : lastIndex,
+        -1,
+      );
       expect(
         ledger.findIndex(
           ({ actor, action }) =>
             actor === "human" && action === `human-${terminal}`,
         ),
-      ).toBeLessThan(
-        ledger.findIndex(
-          ({ id, action, detail }) =>
-            id === "first" && action === "read-card" && detail === destination,
-        ),
-      );
-      expect(
-        ledger.findIndex(
-          ({ id, action, detail }) =>
-            id === "first" && action === "read-card" && detail === destination,
-        ),
-      ).toBeLessThan(
+      ).toBeLessThan(terminalDestinationReadIndex);
+      expect(terminalDestinationReadIndex).toBeLessThan(
         ledger.findIndex(
           ({ id, action }) => id === "next" && action === "move:working",
         ),
@@ -929,5 +1051,6 @@ describe("P1 production lifecycle through pollProject", () => {
         ),
       ).toBe(true);
     },
+    20_000,
   );
 });

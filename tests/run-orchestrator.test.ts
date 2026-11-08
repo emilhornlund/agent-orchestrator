@@ -238,7 +238,7 @@ describe("runOrchestrator", () => {
       let workerBudgets:
         ReturnType<ProjectRunAuthority["store"]["read"]> | undefined;
       pollProject.mockImplementation(async (...args) => {
-        const authority = args.at(-1) as ProjectRunAuthority;
+        const authority = args.at(-2) as ProjectRunAuthority;
         workerBudgets = authority.store.read();
         controller.abort();
       });
@@ -355,7 +355,7 @@ describe("runOrchestrator", () => {
       let workerError: unknown;
       pollProject.mockImplementation(async (...args) => {
         dispatches += 1;
-        const authority = args.at(-1) as ProjectRunAuthority;
+        const authority = args.at(-2) as ProjectRunAuthority;
         observedAuthority = authority;
         try {
           const operationKey = "validation-budget-operation";
@@ -622,7 +622,7 @@ describe("runOrchestrator", () => {
       let pollCount = 0;
       pollProject.mockImplementation(async (...args) => {
         pollCount += 1;
-        const authority = args.at(-1) as ProjectRunAuthority;
+        const authority = args.at(-2) as ProjectRunAuthority;
         expect(ProjectRunAuthority.current(project.id)).toBe(authority);
         if (pollCount === 1) {
           expect(authority.store.read()?.cardId).toBe("refinement-card");
@@ -752,6 +752,8 @@ describe("runOrchestrator", () => {
       undefined,
       expect.anything(),
       expect.anything(),
+      undefined,
+      1_000,
     );
 
     expect(pollProject).toHaveBeenCalledWith(
@@ -765,6 +767,8 @@ describe("runOrchestrator", () => {
       undefined,
       expect.anything(),
       expect.anything(),
+      undefined,
+      1_000,
     );
   });
 
@@ -2314,6 +2318,8 @@ describe("runOrchestrator", () => {
       expect.anything(),
       expect.anything(),
       expect.anything(),
+      undefined,
+      1_000,
     );
     expect(notifier.send).toHaveBeenCalledOnce();
     expect(fs.readFileSync(filePath, "utf8")).toBe(malformed);

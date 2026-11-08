@@ -119,6 +119,7 @@ export interface RunTaskSessionWorkflowOptions {
   openCode: OpenCodeClient;
   commands: CommandRunner;
   signal: AbortSignal;
+  retryIntervalMs?: number;
   emailNotifier?: EmailNotifier;
   prepareAttachmentContext: (
     card: TrelloCard,
@@ -257,6 +258,7 @@ async function completeMergedTaskSession(options: {
     if (authority && run && run.lifecycle !== "done") {
       const next = {
         ...record,
+        recoveryWait: undefined,
         revision: record.revision + 1,
         updatedAt: timestamp(record),
       };
@@ -327,7 +329,7 @@ async function completeMergedTaskSession(options: {
         );
       }
       terminalProjection = transitionTaskExecutionRecord(
-        { ...latest, reviewObservation: undefined },
+        { ...latest, recoveryWait: undefined, reviewObservation: undefined },
         {
           type: "pull-request-merged",
           eventId: `${latest.operationKey}:pull-request-merged`,
@@ -340,6 +342,7 @@ async function completeMergedTaskSession(options: {
     } else {
       terminalProjection = {
         ...latest,
+        recoveryWait: undefined,
         revision: latest.revision + 1,
         updatedAt: timestamp(latest),
       };
@@ -420,6 +423,7 @@ async function persistClosedRunTerminal(
     latest.revision,
     {
       ...latest,
+      recoveryWait: undefined,
       revision: latest.revision + 1,
       updatedAt: timestamp(latest),
     },
@@ -505,6 +509,49 @@ async function readTaskSessionRecoverySnapshot(options: {
 }): Promise<TaskSessionRecoverySnapshot> {
   const { project, card, record, worktreePath, git, github, commands, signal } =
     options;
+  const pullRequestLookup = {
+    cwd: project.repository.path,
+    repository: project.repository.github,
+    headBranch: record.expectedBranch ?? `agent/${card.id}`,
+    baseBranch: project.repository.defaultBranch,
+    project,
+  };
+  const earlyPullRequest =
+    record.phase === "publication" ||
+    record.phase === "ci" ||
+    record.phase === "human-feedback" ||
+    record.phase === "done"
+      ? await github.findPullRequestState(pullRequestLookup)
+      : null;
+  if (
+    earlyPullRequest !== null &&
+    (earlyPullRequest.state === "MERGED" || earlyPullRequest.state === "CLOSED")
+  ) {
+    const number = Number(
+      new URL(earlyPullRequest.url).pathname.split("/").at(-1),
+    );
+    return {
+      primarySessionAccessible: null,
+      worktreeExists: false,
+      worktreeBranch: null,
+      worktreeHeadSha: null,
+      worktreeRebaseActive: false,
+      trustedCommitSha: null,
+      remoteBranchHeadSha: null,
+      trelloListId: card.idList,
+      pullRequest: {
+        number,
+        url: earlyPullRequest.url,
+        headSha:
+          earlyPullRequest.headRefOid ?? record.pullRequest?.headSha ?? "",
+        state: earlyPullRequest.state,
+      },
+      ciEvaluation: null,
+      feedbackHeadSha: null,
+      uncertainReplyIds: [],
+      reconciledReplyIds: [],
+    };
+  }
   const stat = fs.lstatSync(worktreePath, { throwIfNoEntry: false });
   const worktreeExists = stat !== undefined;
   const isDirectory = stat?.isDirectory() === true && !stat.isSymbolicLink();
@@ -572,26 +619,14 @@ async function readTaskSessionRecoverySnapshot(options: {
     throw new Error("Task worktree HEAD descends from a rejected commit");
   }
 
-  let pullRequest: {
-    number: number;
-    url: string;
-    headSha: string;
-    state: "OPEN" | "CLOSED" | "MERGED";
-  } | null = null;
-  const pullRequestLookup = {
-    cwd: project.repository.path,
-    repository: project.repository.github,
-    headBranch: record.expectedBranch ?? `agent/${card.id}`,
-    baseBranch: project.repository.defaultBranch,
-    project,
-  };
+  let pullRequest = null as TaskSessionRecoverySnapshot["pullRequest"];
+  const actual = earlyPullRequest;
   if (
     record.phase === "publication" ||
     record.phase === "ci" ||
     record.phase === "human-feedback" ||
     record.phase === "done"
   ) {
-    const actual = await github.findPullRequestState(pullRequestLookup);
     if (actual !== null) {
       if (actual.headRefOid === undefined)
         throw new Error("Authoritative pull request has no observed head SHA");
@@ -705,6 +740,30 @@ async function readTaskSessionRecoverySnapshot(options: {
         : null,
     uncertainReplyIds: [],
     reconciledReplyIds: [],
+  };
+}
+
+async function readTerminalPullRequestState(
+  project: ProjectConfig,
+  github: GitHubClient,
+  record: TaskExecutionRecord,
+): Promise<{
+  number: number;
+  url: string;
+  state: "OPEN" | "CLOSED" | "MERGED";
+} | null> {
+  const pullRequest = await github.findPullRequestState({
+    cwd: project.repository.path,
+    repository: project.repository.github,
+    headBranch: record.expectedBranch ?? `agent/${record.cardId}`,
+    baseBranch: project.repository.defaultBranch,
+    project,
+  });
+  if (pullRequest === null) return null;
+  return {
+    number: Number(new URL(pullRequest.url).pathname.split("/").at(-1)),
+    url: pullRequest.url,
+    state: pullRequest.state,
   };
 }
 
@@ -985,6 +1044,30 @@ export async function runTaskSessionWorkflow(
     "Could not retrieve task-session Human Review cards",
     signal,
   );
+  const canonicalCardId = ProjectRunAuthority.current(project.id)?.cardId;
+  const canonicalTask = canonicalCardId
+    ? taskStore.read(canonicalCardId)
+    : null;
+  let executionRecoveryCard: TrelloCard | undefined;
+  if (
+    canonicalCardId &&
+    (canonicalTask?.phase === "human-feedback" || canonicalTask?.phase === "ci")
+  ) {
+    const currentCard =
+      humanReviewCards.find((candidate) => candidate.id === canonicalCardId) ??
+      (await trello.getCard(canonicalCardId));
+    // A published PR's terminal outcome is independent of the local session
+    // and worktree. Include the owned card in the read-only terminal observer
+    // even if an operator moved it out of Human Review; execution recovery is
+    // deliberately deferred until after terminal reconciliation.
+    if (!humanReviewCards.some((candidate) => candidate.id === canonicalCardId))
+      humanReviewCards.push(currentCard);
+    if (
+      canonicalTask.recoveryWait !== undefined ||
+      currentCard.idList !== project.trello.reviewListId
+    )
+      executionRecoveryCard = currentCard;
+  }
   options.onHumanReviewCardsObserved?.(humanReviewCards.map((card) => card.id));
   await reconcileUnobservedTerminalPrEvents({
     project,
@@ -1002,6 +1085,9 @@ export async function runTaskSessionWorkflow(
     taskRecordStore: taskStore,
     github,
     cwd: project.repository.path,
+    ...(executionRecoveryCard === undefined
+      ? {}
+      : { terminalOnlyCardIds: new Set([executionRecoveryCard.id]) }),
   });
   const pendingTerminalMutation = queue.getActive();
   if (pendingTerminalMutation?.kind === "terminal-pr") {
@@ -1140,6 +1226,8 @@ export async function runTaskSessionWorkflow(
       if (outcome === "completed") options.onHumanReviewCardLeft?.(cardId);
     }
   }
+  let executionRecoveryBlocked = false;
+  const recoveryCheckedThisPoll = new Set<string>();
   for (const observation of observations) {
     if (observation.state !== "OPEN") {
       const record = taskStore.read(observation.cardId);
@@ -1218,6 +1306,56 @@ export async function runTaskSessionWorkflow(
       }
       return;
     }
+    const executionCard = humanReviewCards.find(
+      (candidate) => candidate.id === observation.cardId,
+    );
+    const recoveryRecord = taskStore.read(observation.cardId);
+    const isCanonicalActiveTask =
+      ProjectRunAuthority.current(project.id)?.cardId === observation.cardId;
+    if (
+      observation.state === "OPEN" &&
+      executionCard &&
+      recoveryRecord &&
+      (isCanonicalActiveTask ||
+        recoveryRecord.recoveryWait !== undefined ||
+        executionCard.idList !== project.trello.reviewListId)
+    ) {
+      const recoveryPath = path.join(
+        project.repository.worktreeRoot,
+        observation.cardId,
+      );
+      const recovery = await reconcileTaskSession({
+        project,
+        cardId: observation.cardId,
+        expectedBranch: `agent/${observation.cardId}`,
+        operationKey: recoveryRecord.operationKey,
+        worktreePath: recoveryPath,
+        taskRecordStore: taskStore,
+        signal,
+        readTerminalPullRequest: (record) =>
+          readTerminalPullRequestState(project, github, record),
+        ...(options.retryIntervalMs === undefined
+          ? {}
+          : { retryIntervalMs: options.retryIntervalMs }),
+        readAuthoritativeSnapshot: (record) =>
+          readTaskSessionRecoverySnapshot({
+            project,
+            card: executionCard,
+            record,
+            worktreePath: recoveryPath,
+            git,
+            github,
+            commands,
+            signal,
+          }),
+      });
+      if (recovery.status !== "resume") {
+        executionRecoveryBlocked = true;
+        continue;
+      }
+      recoveryCheckedThisPoll.add(observation.cardId);
+    }
+    if (executionRecoveryBlocked) continue;
     let record = taskStore.read(observation.cardId);
     const ciStateKey = `${project.id}/${observation.cardId}/${observation.headSha}`;
     const ciState = observation.ciEvaluation.status;
@@ -1831,6 +1969,47 @@ export async function runTaskSessionWorkflow(
     );
     // Passing CI and local quality evidence never authorizes an orchestrator merge.
   }
+  if (executionRecoveryBlocked) return;
+  if (executionRecoveryCard !== undefined) {
+    const recoveryRecord = taskStore.read(executionRecoveryCard.id);
+    if (recoveryRecord === null)
+      throw new Error(
+        `Canonical recovery task disappeared: ${executionRecoveryCard.id}`,
+      );
+    const recoveryPath = path.join(
+      project.repository.worktreeRoot,
+      executionRecoveryCard.id,
+    );
+    await reconcileTaskSession({
+      project,
+      cardId: executionRecoveryCard.id,
+      expectedBranch: `agent/${executionRecoveryCard.id}`,
+      operationKey: recoveryRecord.operationKey,
+      worktreePath: recoveryPath,
+      taskRecordStore: taskStore,
+      signal,
+      readTerminalPullRequest: (record) =>
+        readTerminalPullRequestState(project, github, record),
+      ...(options.retryIntervalMs === undefined
+        ? {}
+        : { retryIntervalMs: options.retryIntervalMs }),
+      readAuthoritativeSnapshot: (record) =>
+        readTaskSessionRecoverySnapshot({
+          project,
+          card: executionRecoveryCard,
+          record,
+          worktreePath: recoveryPath,
+          git,
+          github,
+          commands,
+          signal,
+        }),
+    });
+    // Defer all execution until another poll after the safety snapshot. This
+    // prevents a second list discovery in this poll from bypassing a wait that
+    // was resumed while the card moved away and returned.
+    return;
+  }
   const latestHumanReviewCards = await getCardsForDiscovery(
     trello,
     project.id,
@@ -1838,6 +2017,19 @@ export async function runTaskSessionWorkflow(
     "Could not re-read task-session Human Review cards",
     signal,
   );
+  const latestCanonicalCardId = ProjectRunAuthority.current(project.id)?.cardId;
+  const latestCanonicalTask = latestCanonicalCardId
+    ? taskStore.read(latestCanonicalCardId)
+    : null;
+  if (
+    latestCanonicalCardId &&
+    (latestCanonicalTask?.phase === "ci" ||
+      latestCanonicalTask?.phase === "human-feedback") &&
+    !latestHumanReviewCards.some(
+      (candidate) => candidate.id === latestCanonicalCardId,
+    )
+  )
+    latestHumanReviewCards.push(await trello.getCard(latestCanonicalCardId));
   options.onHumanReviewCardsObserved?.(
     latestHumanReviewCards.map((card) => card.id),
   );
@@ -1858,6 +2050,51 @@ export async function runTaskSessionWorkflow(
     signal,
     observedReviewCardIds: latestHumanReviewCards.map((card) => card.id),
   });
+  for (const observation of latestObservations) {
+    if (observation.state !== "OPEN") continue;
+    const card = latestHumanReviewCards.find(
+      (candidate) => candidate.id === observation.cardId,
+    );
+    const record = taskStore.read(observation.cardId);
+    if (!card || !record) continue;
+    if (
+      ProjectRunAuthority.current(project.id)?.cardId !== observation.cardId &&
+      record.recoveryWait === undefined &&
+      card.idList === project.trello.reviewListId &&
+      !recoveryCheckedThisPoll.has(observation.cardId)
+    )
+      continue;
+    const recoveryPath = path.join(
+      project.repository.worktreeRoot,
+      observation.cardId,
+    );
+    const recovery = await reconcileTaskSession({
+      project,
+      cardId: observation.cardId,
+      expectedBranch: `agent/${observation.cardId}`,
+      operationKey: record.operationKey,
+      worktreePath: recoveryPath,
+      taskRecordStore: taskStore,
+      signal,
+      readTerminalPullRequest: (ownedRecord) =>
+        readTerminalPullRequestState(project, github, ownedRecord),
+      ...(options.retryIntervalMs === undefined
+        ? {}
+        : { retryIntervalMs: options.retryIntervalMs }),
+      readAuthoritativeSnapshot: (ownedRecord) =>
+        readTaskSessionRecoverySnapshot({
+          project,
+          card,
+          record: ownedRecord,
+          worktreePath: recoveryPath,
+          git,
+          github,
+          commands,
+          signal,
+        }),
+    });
+    if (recovery.status !== "resume") return;
+  }
   if (project.maintenance?.enabled === true) {
     for (const observation of latestObservations) {
       if (
@@ -2155,6 +2392,17 @@ export async function runTaskSessionWorkflow(
     "Could not inspect task-session Working cards",
     signal,
   );
+  const ownedCardId = ProjectRunAuthority.current(project.id)?.cardId;
+  const ownedTask = ownedCardId ? taskStore.read(ownedCardId) : null;
+  if (
+    ownedCardId &&
+    ownedTask &&
+    ownedTask.phase !== "human-feedback" &&
+    ownedTask.phase !== "ci" &&
+    !workingCards.some((candidate) => candidate.id === ownedCardId)
+  ) {
+    workingCards.push(await trello.getCard(ownedCardId));
+  }
   // Terminal PR observation/reconciliation above is read-only-safe, but legacy
   // maintenance may represent a branch effect for any card, including an
   // archived or manually moved card. Do not resume Working/refinement writers.
@@ -2495,6 +2743,7 @@ export async function runTaskSessionWorkflow(
         reviewRemediationFailure: undefined,
       });
     }
+    const priorRecoveryNotificationId = record.recoveryWait?.notificationId;
     const recovery = await reconcileTaskSession({
       project,
       cardId: card.id,
@@ -2503,6 +2752,11 @@ export async function runTaskSessionWorkflow(
       worktreePath,
       taskRecordStore: taskStore,
       signal,
+      readTerminalPullRequest: (ownedRecord) =>
+        readTerminalPullRequestState(project, github, ownedRecord),
+      ...(options.retryIntervalMs === undefined
+        ? {}
+        : { retryIntervalMs: options.retryIntervalMs }),
       readAuthoritativeSnapshot: (ownedRecord) =>
         readTaskSessionRecoverySnapshot({
           project,
@@ -2516,6 +2770,18 @@ export async function runTaskSessionWorkflow(
         }),
     });
     if (recovery.status !== "resume") {
+      if (recovery.status === "waiting") {
+        if (
+          recovery.record.recoveryWait?.notificationId !==
+          priorRecoveryNotificationId
+        ) {
+          logger
+            .child({ projectId: project.id, cardId: card.id })
+            .warn(
+              `Recovery wait ${recovery.record.recoveryWait?.notificationId ?? "unknown"}: verified ${recovery.checkpoint} checkpoint; authoritative dependency read will be retried on a later project poll: ${recovery.reason}`,
+            );
+        }
+      }
       if (
         recovery.status === "attention-required" &&
         record.phase !== "attention-required"

@@ -104,6 +104,24 @@ const retryCountersSchema = z.strictObject({
   humanFeedback: z.number().int().nonnegative(),
 });
 
+const recoveryWaitSchema = z.strictObject({
+  kind: z.enum(["dependency", "manual-move"]),
+  reason: nonBlankIdentifier,
+  resumePhase: z.enum([
+    "planning",
+    "implementation",
+    "validation",
+    "review",
+    "publication",
+    "ci",
+    "human-feedback",
+  ]),
+  since: z.string().datetime(),
+  retryAt: z.string().datetime(),
+  attempts: z.number().int().nonnegative().safe(),
+  notificationId: nonBlankIdentifier,
+});
+
 const taskSessionContentIdentity = z.string().regex(/^sha256:[0-9a-f]{64}$/u);
 
 const validationEvidenceSchema = z.strictObject({
@@ -212,6 +230,7 @@ const taskExecutionRecordSchema = z
     projectId: ownerId,
     cardId: ownerId,
     phase: z.enum(taskExecutionPhases),
+    recoveryWait: recoveryWaitSchema.optional(),
     primarySessionId: nonBlankIdentifier.optional(),
     sessionCreationStatus: sessionCreationStatus.optional(),
     setup: taskSetupState.optional(),
