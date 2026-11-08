@@ -1133,13 +1133,31 @@ describe("initial publication production checkpoint with independent simulated s
     async (fault) => {
       const f = fixture();
       await begin(f);
+      const attentionAt = Date.now() + 5 * 60_000;
       if (fault === "before-create") f.services.change({ githubOutage: true });
       else {
         f.services.change({ loseCreationResponse: true });
         await through(f, "push");
         f.services.change({ githubOutage: true });
       }
-      for (let count = 0; count < 25; count++) await poll(f);
+      await poll(f);
+      const beforePacedPolls = f.services.entries();
+      await poll(f, false);
+      await poll(f, false);
+      expect(f.services.entries()).toEqual(beforePacedPolls);
+
+      // Exercise repeated due checks without paying for 25 real Git/fsync cycles
+      // just to advance Date. Leave a full recheck interval before the threshold.
+      vi.setSystemTime(attentionAt - PUBLICATION_RECHECK_MS - 1);
+      await poll(f, false);
+      expect(
+        f.store.read()!.compatibility["initial-publication-v1"],
+      ).toMatchObject({ attention: false, attentionNotified: false });
+      vi.setSystemTime(attentionAt);
+      await poll(f, false);
+      expect(
+        f.store.read()!.compatibility["initial-publication-v1"],
+      ).toMatchObject({ attention: true, attentionNotified: true });
       expect(task(f)?.phase).toBe("publication");
       expect(f.store.read()!.lifecycle).toBe("publication");
       expect(
