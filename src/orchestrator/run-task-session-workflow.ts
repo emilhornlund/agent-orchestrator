@@ -34,7 +34,11 @@ import {
   repositorySnapshotsEqual,
 } from "../opencode/commit-result.js";
 import type { CommandRunner } from "../process/command-runner.js";
-import { runRepositorySetup } from "../process/run-setup.js";
+import {
+  captureSetupEffects,
+  runRepositorySetup,
+} from "../process/run-setup.js";
+import { OPERATION_RECOVERY_MAX_EXECUTIONS } from "../task-session/operation-recovery-policy.js";
 import { type TrelloCard, type TrelloClient } from "../trello/trello-client.js";
 import { buildTaskSessionReviewRepairPrompt } from "../opencode/build-task-session-review-repair-prompt.js";
 import type { ImplementationReviewResult } from "../task-session/implementation-review-result.js";
@@ -123,7 +127,11 @@ import {
   persistPrimaryOperationRecovery,
 } from "../task-session/persist-primary-operation-recovery.js";
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
-import { getProcessRuntime } from "../process/process-runtime.js";
+import {
+  getProcessRuntime,
+  isVerifiedStoppedExecution,
+  isVerifiedSuccessfulExecution,
+} from "../process/process-runtime.js";
 import type { RunRecord } from "../task-session/run-record.js";
 import {
   resumeInitialPublication,
@@ -1245,6 +1253,7 @@ export async function runTaskSessionWorkflow(
         operationKey: ownedRecord.operationKey,
         worktreePath,
         taskRecordStore: taskStore,
+        setupGit: git,
         signal,
         readTerminalPullRequest: (current) =>
           readTerminalPullRequestState(project, github, current),
@@ -3037,6 +3046,8 @@ export async function runTaskSessionWorkflow(
           project.repository.setupCommand === undefined
             ? "not-required"
             : "pending",
+        attempts: 0,
+        history: [],
       },
       revision: 1,
       retryCounters: { validation: 0, review: 0, ci: 0, humanFeedback: 0 },
@@ -3805,6 +3816,8 @@ export async function runTaskSessionWorkflow(
             project.repository.setupCommand === undefined
               ? "not-required"
               : "pending",
+          attempts: 0,
+          history: [],
         },
         revision: 1,
         retryCounters: { validation: 0, review: 0, ci: 0, humanFeedback: 0 },
@@ -3813,32 +3826,175 @@ export async function runTaskSessionWorkflow(
       });
     }
     const worktreePath = worktree.path;
-    const recordBeforeSetup = taskStore.read(activeCard.id);
-    if (
-      project.repository.setupCommand !== undefined &&
-      recordBeforeSetup?.setup?.status === "pending"
-    ) {
-      updateRecord(taskStore, recordBeforeSetup, {
-        setup: { command: project.repository.setupCommand, status: "active" },
-      });
-      const setup = await runRepositorySetup(commands, {
-        cwd: worktreePath,
-        command: project.repository.setupCommand,
-        timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
-        signal,
-        sessionLogPath: getSessionLogPath(project.id, activeCard.id),
-        sessionLabel: "Task-session repository setup",
-      });
-      if (setup.exitCode !== 0) {
-        throw new Error(
-          `Task-session repository setup exited with code ${setup.exitCode}`,
+    let recordBeforeSetup = taskStore.read(activeCard.id);
+    if (project.repository.setupCommand !== undefined) {
+      for (
+        let retry = 0;
+        retry < OPERATION_RECOVERY_MAX_EXECUTIONS &&
+        recordBeforeSetup?.setup?.status === "pending";
+        retry += 1
+      ) {
+        const attemptRecord = recordBeforeSetup;
+        const before = taskStore.writePrimaryResultArtifact(
+          `setup-before-${activeCard.id}-${recordBeforeSetup.revision}`,
+          JSON.parse(
+            (await captureSetupEffects(git, worktreePath, signal)).toString(
+              "utf8",
+            ),
+          ) as unknown,
         );
-      }
-      const setupRecord = taskStore.read(activeCard.id);
-      if (setupRecord !== null)
-        updateRecord(taskStore, setupRecord, {
-          setup: { command: project.repository.setupCommand, status: "passed" },
+        updateRecord(taskStore, attemptRecord, {
+          setup: {
+            command: project.repository.setupCommand,
+            status: "active",
+            worktreePath,
+            before: before.reference,
+            attempts: (attemptRecord.setup?.attempts ?? 0) + 1,
+            history: attemptRecord.setup?.history ?? [],
+          },
         });
+        let setupResult:
+          Awaited<ReturnType<typeof runRepositorySetup>> | undefined;
+        let setupError: unknown;
+        const setupArtifactDirectory = taskStore.processExecutionDirectory(
+          activeCard.id,
+        );
+        try {
+          setupResult = await runRepositorySetup(commands, {
+            cwd: worktreePath,
+            command: project.repository.setupCommand,
+            timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
+            signal,
+            ...(setupArtifactDirectory === undefined
+              ? {}
+              : { artifactDirectory: setupArtifactDirectory }),
+            sessionLogPath: getSessionLogPath(project.id, activeCard.id),
+            sessionLabel: "Task-session repository setup",
+            onExecutionStarted: (executionId) => {
+              const runningRecord = taskStore.read(activeCard.id);
+              if (
+                runningRecord?.setup?.status !== "active" ||
+                runningRecord.setup.executionId !== undefined
+              )
+                throw new Error(
+                  "Setup execution binding conflicts with persisted intent",
+                );
+              updateRecord(taskStore, runningRecord, {
+                setup: { ...runningRecord.setup, executionId },
+              });
+            },
+          });
+          if (setupResult.exitCode !== 0)
+            setupError = new Error(
+              `Task-session repository setup exited with code ${setupResult.exitCode}`,
+            );
+        } catch (error) {
+          setupError = error;
+        }
+        const after = taskStore.writePrimaryResultArtifact(
+          `setup-after-${activeCard.id}-${attemptRecord.revision}`,
+          JSON.parse(
+            (
+              await captureSetupEffects(git, worktreePath, signal, true)
+            ).toString("utf8"),
+          ) as unknown,
+        );
+        const setupRecord = taskStore.read(activeCard.id);
+        if (setupRecord !== null) {
+          const setupState = setupRecord.setup;
+          if (!setupState || setupState.status !== "active")
+            throw new Error("Setup state changed while setup was running");
+          const executionId =
+            setupResult?.executionId ?? setupState.executionId;
+          const processEvidence = executionId
+            ? taskStore.readProcessExecution(activeCard.id, executionId)
+            : null;
+          const expectedExecution =
+            executionId !== undefined && setupState.command !== null
+              ? {
+                  executionId,
+                  command: setupState.command,
+                  cwd: worktreePath,
+                }
+              : undefined;
+          const successfulEvidence =
+            expectedExecution !== undefined &&
+            isVerifiedSuccessfulExecution(processEvidence, expectedExecution);
+          const stopped =
+            expectedExecution !== undefined &&
+            isVerifiedStoppedExecution(processEvidence, expectedExecution);
+          if (
+            setupError === undefined &&
+            (setupResult?.exitCode !== 0 || !successfulEvidence)
+          )
+            setupError = new Error(
+              "Setup completion lacks authoritative successful process evidence",
+            );
+          const attempts = setupState.attempts ?? 1;
+          const mayRetry =
+            setupError !== undefined &&
+            stopped &&
+            attempts < OPERATION_RECOVERY_MAX_EXECUTIONS;
+          const history = [
+            ...(setupState.history ?? []),
+            {
+              command: setupState.command!,
+              worktreePath,
+              before: setupState.before!,
+              after: after.reference,
+              ...(executionId === undefined ? {} : { executionId }),
+              exitCode: setupResult?.exitCode ?? null,
+              outcome:
+                setupError === undefined && successfulEvidence
+                  ? ("passed" as const)
+                  : stopped
+                    ? ("failed" as const)
+                    : ("ambiguous" as const),
+            },
+          ];
+          updateRecord(taskStore, setupRecord, {
+            setup: {
+              ...setupState,
+              status:
+                setupError === undefined && successfulEvidence
+                  ? "passed"
+                  : !stopped
+                    ? "ambiguous"
+                    : mayRetry
+                      ? "pending"
+                      : "failed",
+              after: after.reference,
+              history,
+              ...(executionId === undefined ? {} : { executionId }),
+              ...(setupResult === undefined
+                ? {}
+                : { exitCode: setupResult.exitCode }),
+              ...(setupError === undefined
+                ? {}
+                : {
+                    diagnostic:
+                      setupError instanceof Error
+                        ? setupError.message.slice(0, 2_000)
+                        : String(setupError).slice(0, 2_000),
+                  }),
+            },
+          });
+        }
+        recordBeforeSetup = taskStore.read(activeCard.id);
+        if (
+          signal.aborted &&
+          (recordBeforeSetup?.setup?.status === "pending" ||
+            recordBeforeSetup?.setup?.status === "ambiguous")
+        )
+          throw new TaskSessionImplementationWaitingError(
+            "Setup was interrupted after its effects were recorded; resume from the persisted setup checkpoint",
+          );
+        if (
+          setupError !== undefined &&
+          recordBeforeSetup?.setup?.status !== "pending"
+        )
+          throw setupError;
+      }
     }
     const attachmentContext =
       await options.prepareAttachmentContext(activeCard);

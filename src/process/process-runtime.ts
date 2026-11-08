@@ -33,6 +33,79 @@ const taskArtifactContext = new AsyncLocalStorage<{
   recordEvent?: (event: ProcessArtifactEvent) => void;
 }>();
 
+function processStartIdentity(pid: number | undefined): string | undefined {
+  if (pid === undefined || process.platform !== "linux") return undefined;
+  try {
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+    const closeParen = stat.lastIndexOf(")");
+    const fields = stat.slice(closeParen + 2).split(" ");
+    const startTicks = fields[19];
+    return startTicks && /^\d+$/u.test(startTicks) ? startTicks : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** `null` is uncertainty (including unsupported platforms), never proof of absence. */
+export function isSameProcessInstance(
+  pid: number,
+  expectedStartIdentity: unknown,
+): boolean | null {
+  if (typeof expectedStartIdentity !== "string") return null;
+  const actual = processStartIdentity(pid);
+  if (actual === undefined) return null;
+  return actual === expectedStartIdentity;
+}
+
+export interface ProcessExecutionEvidence {
+  executionId: string;
+  command: string;
+  cwd: string;
+  status: string;
+  treeStopped?: boolean;
+  dispatchState?: string;
+  exitCode?: number;
+}
+
+export function isVerifiedStoppedExecution(
+  value: unknown,
+  expected: { executionId: string; command: string; cwd: string },
+): value is ProcessExecutionEvidence {
+  if (typeof value !== "object" || value === null) return false;
+  const evidence = value as Record<string, unknown>;
+  if (
+    evidence.executionId !== expected.executionId ||
+    evidence.command !== expected.command ||
+    typeof evidence.cwd !== "string" ||
+    path.resolve(evidence.cwd) !== path.resolve(expected.cwd) ||
+    typeof evidence.status !== "string"
+  )
+    return false;
+  return (
+    (evidence.treeStopped === true &&
+      ["nonzero", "timeout", "interrupted"].includes(evidence.status)) ||
+    (evidence.status === "spawn-failure" &&
+      evidence.dispatchState === "not-dispatched")
+  );
+}
+
+export function isVerifiedSuccessfulExecution(
+  value: unknown,
+  expected: { executionId: string; command: string; cwd: string },
+): value is ProcessExecutionEvidence {
+  if (typeof value !== "object" || value === null) return false;
+  const evidence = value as Record<string, unknown>;
+  return (
+    evidence.executionId === expected.executionId &&
+    evidence.command === expected.command &&
+    typeof evidence.cwd === "string" &&
+    path.resolve(evidence.cwd) === path.resolve(expected.cwd) &&
+    evidence.status === "success" &&
+    evidence.exitCode === 0 &&
+    evidence.treeStopped === true
+  );
+}
+
 export function withTaskProcessArtifacts<T>(
   context: {
     root: string;
@@ -207,7 +280,7 @@ export function beginProcessEvidence(
     fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
     fs.writeFileSync(stdoutPath, "", { mode: 0o600 });
     fs.writeFileSync(stderrPath, "", { mode: 0o600 });
-    writeMetadata({ status: "running" });
+    writeMetadata({ status: "running", dispatchState: "dispatch-pending" });
   } catch (error) {
     try {
       fs.rmSync(directory, { recursive: true, force: true });
@@ -225,6 +298,17 @@ export function beginProcessEvidence(
     executionId,
     metadataPath,
     artifactRoot: executionsRoot,
+    dispatched(pid: number | undefined) {
+      const startIdentity = processStartIdentity(pid);
+      writeMetadata({
+        status: "running",
+        dispatchState: "dispatched",
+        pid,
+        ...(startIdentity === undefined
+          ? {}
+          : { pidStartIdentity: startIdentity }),
+      });
+    },
     get failure() {
       return failure;
     },

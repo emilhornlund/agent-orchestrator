@@ -1,5 +1,7 @@
+import path from "node:path";
 import type { ProjectConfig } from "../config/config.js";
 import type { CiCheckEvaluation } from "../github/evaluate-ci-checks.js";
+import type { GitClient } from "../git/git-client.js";
 import { TaskExecutionStore } from "./task-execution-store.js";
 import type {
   TaskExecutionRecord,
@@ -10,6 +12,16 @@ import { loadOwnedTaskExecutionRecord } from "./task-execution-ownership.js";
 import { assertOwnedTaskWorktreePath } from "./run-task-session-implementation.js";
 import { isRetryableGitHubError } from "../github/github-client.js";
 import { isRetryableTrelloError } from "../trello/trello-client.js";
+import {
+  assertSetupInventoryIdentity,
+  captureSetupEffects,
+} from "../process/run-setup.js";
+import { OPERATION_RECOVERY_MAX_EXECUTIONS } from "./operation-recovery-policy.js";
+import {
+  isSameProcessInstance,
+  isVerifiedStoppedExecution,
+  isVerifiedSuccessfulExecution,
+} from "../process/process-runtime.js";
 
 export interface TaskSessionRecoverySnapshot {
   primarySessionAccessible:
@@ -41,6 +53,7 @@ export interface ReconcileTaskSessionOptions {
   operationKey: string;
   worktreePath: string;
   taskRecordStore: TaskExecutionStore;
+  setupGit?: GitClient;
   signal?: AbortSignal;
   retryIntervalMs?: number;
   now?: () => number;
@@ -210,6 +223,79 @@ function requiresPullRequest(phase: TaskExecutionPhase): boolean {
   return phase === "ci" || phase === "human-feedback" || phase === "done";
 }
 
+function readSetupInventory(
+  store: TaskExecutionStore,
+  reference: string | undefined,
+  worktreePath: string,
+  branch: string,
+): void {
+  if (reference === undefined)
+    throw new Error("Setup inventory evidence is missing");
+  const inventory = store.readPrimaryResultArtifact(reference);
+  assertSetupInventoryIdentity(inventory, worktreePath, branch);
+}
+
+function readSetupExecution(
+  store: TaskExecutionStore,
+  cardId: string,
+  executionId: string | undefined,
+  command: string | null,
+  worktreePath: string,
+): Record<string, unknown> | null {
+  if (!executionId || command === null) return null;
+  const raw = store.readProcessExecution(cardId, executionId);
+  if (typeof raw !== "object" || raw === null) return null;
+  const evidence = raw as Record<string, unknown>;
+  const matches =
+    evidence.executionId === executionId &&
+    evidence.command === command &&
+    typeof evidence.cwd === "string" &&
+    path.resolve(evidence.cwd) === path.resolve(worktreePath);
+  return matches ? evidence : null;
+}
+
+async function hasVerifiedSetupExhaustion(
+  store: TaskExecutionStore,
+  record: TaskExecutionRecord,
+  worktreePath: string,
+  branch: string,
+): Promise<boolean> {
+  const setup = record.setup;
+  if (
+    !setup ||
+    setup.attempts !== OPERATION_RECOVERY_MAX_EXECUTIONS ||
+    setup.history?.length !== OPERATION_RECOVERY_MAX_EXECUTIONS
+  )
+    return false;
+  try {
+    for (const attempt of setup.history) {
+      if (attempt.outcome !== "failed") return false;
+      readSetupInventory(store, attempt.before, worktreePath, branch);
+      readSetupInventory(store, attempt.after, worktreePath, branch);
+      const execution = readSetupExecution(
+        store,
+        record.cardId,
+        attempt.executionId,
+        attempt.command,
+        worktreePath,
+      );
+      if (
+        !execution ||
+        !attempt.executionId ||
+        !isVerifiedStoppedExecution(execution, {
+          executionId: attempt.executionId,
+          command: attempt.command,
+          cwd: worktreePath,
+        })
+      )
+        return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function checkObservationIsStale(
   snapshot: TaskSessionRecoverySnapshot,
   expectedHead: string,
@@ -225,12 +311,196 @@ export async function reconcileTaskSession(
 ): Promise<TaskSessionRecoveryResult> {
   const { project, cardId, expectedBranch, operationKey, taskRecordStore } =
     options;
-  const record = loadOwnedTaskExecutionRecord(taskRecordStore, {
+  let record = loadOwnedTaskExecutionRecord(taskRecordStore, {
     projectId: project.id,
     cardId,
     expectedBranch,
     operationKey,
   });
+  if (record.setup?.status === "active" && record.setup.executionId) {
+    try {
+      readSetupInventory(
+        taskRecordStore,
+        record.setup.before,
+        options.worktreePath,
+        expectedBranch,
+      );
+    } catch (error) {
+      return preserveAttention(
+        taskRecordStore,
+        record,
+        `Setup baseline evidence is invalid: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    const execution = taskRecordStore.readProcessExecution(
+      record.cardId,
+      record.setup.executionId,
+    );
+    const evidence = execution as {
+      executionId?: unknown;
+      command?: unknown;
+      cwd?: unknown;
+      status?: unknown;
+      exitCode?: unknown;
+      treeStopped?: unknown;
+      dispatchState?: unknown;
+      pid?: unknown;
+      pidStartIdentity?: unknown;
+    } | null;
+    if (
+      evidence?.executionId === record.setup.executionId &&
+      evidence.command === record.setup.command &&
+      typeof evidence.cwd === "string" &&
+      path.resolve(evidence.cwd) === path.resolve(options.worktreePath) &&
+      evidence.status === "running"
+    ) {
+      const pid = evidence.pid;
+      if (typeof pid === "number" && Number.isSafeInteger(pid) && pid > 0) {
+        try {
+          process.kill(pid, 0);
+          const sameInstance = isSameProcessInstance(
+            pid,
+            evidence.pidStartIdentity,
+          );
+          if (sameInstance === false)
+            return preserveAttention(
+              taskRecordStore,
+              record,
+              "Setup process identity was reused; preserving ambiguous execution without replay",
+            );
+          return persistWait(
+            taskRecordStore,
+            record,
+            options,
+            sameInstance === true
+              ? "Repository setup process is still running; waiting without replay"
+              : "Repository setup process identity cannot be verified; waiting without replay",
+          );
+        } catch (error) {
+          if (!(
+            error instanceof Error &&
+            "code" in error &&
+            error.code === "ESRCH"
+          ))
+            return persistWait(
+              taskRecordStore,
+              record,
+              options,
+              "Repository setup process liveness is unavailable; waiting without replay",
+            );
+        }
+      }
+    }
+    const expectedSetupExecution =
+      record.setup.command === null
+        ? undefined
+        : {
+            executionId: record.setup.executionId,
+            command: record.setup.command,
+            cwd: options.worktreePath,
+          };
+    if (
+      expectedSetupExecution !== undefined &&
+      isVerifiedSuccessfulExecution(evidence, expectedSetupExecution)
+    ) {
+      if (!options.setupGit)
+        return preserveAttention(
+          taskRecordStore,
+          record,
+          "Cannot capture recovered setup effects without the bounded Git client",
+        );
+      const after = taskRecordStore.writePrimaryResultArtifact(
+        `setup-recovered-after-${record.cardId}-${record.revision}`,
+        JSON.parse(
+          (
+            await captureSetupEffects(
+              options.setupGit,
+              options.worktreePath,
+              options.signal,
+              true,
+            )
+          ).toString("utf8"),
+        ) as unknown,
+      );
+      record = taskRecordStore.compareAndSwap(record.cardId, record.revision, {
+        ...record,
+        setup: {
+          ...record.setup,
+          status: "passed",
+          after: after.reference,
+          exitCode: 0,
+          history: [
+            ...(record.setup.history ?? []),
+            {
+              command: record.setup.command!,
+              worktreePath: options.worktreePath,
+              before: record.setup.before!,
+              after: after.reference,
+              executionId: record.setup.executionId,
+              exitCode: 0,
+              outcome: "passed" as const,
+            },
+          ],
+        },
+        revision: record.revision + 1,
+        updatedAt: new Date(
+          Math.max(Date.now(), Date.parse(record.updatedAt) + 1),
+        ).toISOString(),
+      });
+    } else if (
+      expectedSetupExecution !== undefined &&
+      isVerifiedStoppedExecution(evidence, expectedSetupExecution)
+    ) {
+      if (!options.setupGit)
+        return preserveAttention(
+          taskRecordStore,
+          record,
+          "Cannot capture setup effects without the bounded Git client",
+        );
+      const after = await captureSetupEffects(
+        options.setupGit,
+        options.worktreePath,
+        options.signal,
+        true,
+      );
+      const artifact = taskRecordStore.writePrimaryResultArtifact(
+        `setup-recovered-failed-${record.cardId}-${record.revision}`,
+        JSON.parse(after.toString("utf8")) as unknown,
+      );
+      const attempts = record.setup.attempts ?? 1;
+      const retryAllowed = attempts < OPERATION_RECOVERY_MAX_EXECUTIONS;
+      record = taskRecordStore.compareAndSwap(record.cardId, record.revision, {
+        ...record,
+        setup: {
+          ...record.setup,
+          status: retryAllowed ? "pending" : "failed",
+          after: artifact.reference,
+          exitCode:
+            typeof evidence.exitCode === "number" ? evidence.exitCode : null,
+          diagnostic: `Setup process ended with ${String(evidence.status)}`,
+          history: [
+            ...(record.setup.history ?? []),
+            {
+              command: record.setup.command!,
+              worktreePath: options.worktreePath,
+              before: record.setup.before!,
+              after: artifact.reference,
+              executionId: record.setup.executionId,
+              exitCode:
+                typeof evidence.exitCode === "number"
+                  ? evidence.exitCode
+                  : null,
+              outcome: "failed" as const,
+            },
+          ],
+        },
+        revision: record.revision + 1,
+        updatedAt: new Date(
+          Math.max(Date.now(), Date.parse(record.updatedAt) + 1),
+        ).toISOString(),
+      });
+    }
+  }
   if (
     options.readTerminalPullRequest &&
     record.phase !== "done" &&
@@ -255,6 +525,52 @@ export async function reconcileTaskSession(
       reason: "Task was already escalated",
       record,
     };
+  }
+  if (record.setup?.status === "passed") {
+    try {
+      readSetupInventory(
+        taskRecordStore,
+        record.setup.before,
+        options.worktreePath,
+        expectedBranch,
+      );
+      readSetupInventory(
+        taskRecordStore,
+        record.setup.after,
+        options.worktreePath,
+        expectedBranch,
+      );
+      const evidence = readSetupExecution(
+        taskRecordStore,
+        record.cardId,
+        record.setup.executionId,
+        record.setup.command,
+        options.worktreePath,
+      );
+      if (
+        !evidence ||
+        evidence.status !== "success" ||
+        evidence.exitCode !== 0 ||
+        evidence.treeStopped !== true ||
+        record.setup.exitCode !== 0 ||
+        !record.setup.history?.some(
+          (attempt) =>
+            attempt.executionId === record.setup!.executionId &&
+            attempt.outcome === "passed" &&
+            attempt.before === record.setup!.before &&
+            attempt.after === record.setup!.after,
+        )
+      )
+        throw new Error(
+          "Setup process result does not bind the stored effects",
+        );
+    } catch (error) {
+      return preserveAttention(
+        taskRecordStore,
+        record,
+        `Completed setup evidence could not be verified: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
   if (
     record.recoveryWait &&
@@ -306,8 +622,48 @@ export async function reconcileTaskSession(
     (project.repository.setupCommand !== undefined &&
       record.setup === undefined) ||
     (record.setup !== undefined &&
-      record.setup.command !== (project.repository.setupCommand ?? null))
+      record.setup.command !== (project.repository.setupCommand ?? null)) ||
+    (record.setup?.status === "passed" &&
+      record.setup.worktreePath !== options.worktreePath) ||
+    record.setup?.status === "ambiguous" ||
+    record.setup?.status === "failed"
   ) {
+    if (
+      record.setup?.status === "failed" &&
+      record.pullRequest === undefined &&
+      (await hasVerifiedSetupExhaustion(
+        taskRecordStore,
+        record,
+        options.worktreePath,
+        expectedBranch,
+      ))
+    ) {
+      const reason =
+        record.setup.diagnostic ??
+        "Repository setup exhausted safe recovery attempts before implementation";
+      const next = transitionTaskExecutionRecord(record, {
+        type: "attention-required",
+        eventId: `${record.operationKey}:setup-failed:${record.revision}`,
+        projectId: record.projectId,
+        cardId: record.cardId,
+        operationKey: record.operationKey,
+        occurredAt: bumpTimestamp(record),
+      });
+      const persisted = taskRecordStore.compareAndSwap(
+        record.cardId,
+        record.revision,
+        {
+          ...next,
+          recoveryWait: undefined,
+          terminalFailure: {
+            kind: "implementation",
+            reason: reason.slice(0, 4_000),
+            outcome: "pending",
+          },
+        },
+      );
+      return { status: "attention-required", reason, record: persisted };
+    }
     return preserveAttention(
       taskRecordStore,
       record,

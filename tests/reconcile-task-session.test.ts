@@ -2,8 +2,18 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { execFileSync } from "node:child_process";
+import { GitClient } from "../src/git/git-client.js";
+import { CommandRunner } from "../src/process/command-runner.js";
+import {
+  captureSetupEffects,
+  runRepositorySetup,
+} from "../src/process/run-setup.js";
+import { beginProcessEvidence } from "../src/process/process-runtime.js";
 import type { ProjectConfig } from "../src/config/config.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
+import { RunStore } from "../src/task-session/run-store.js";
+import { ProjectRunAuthority } from "../src/task-session/project-run-authority.js";
 import {
   persistTaskSessionContextWait,
   reconcileTaskSession,
@@ -39,6 +49,7 @@ function fixture(phase: TaskExecutionPhase = "validation") {
     repository: { path: repositoryPath, worktreeRoot },
   } as ProjectConfig;
   const store = new TaskExecutionStore(path.join(root, "state"), project);
+  const git = new GitClient();
   const sha = "a".repeat(40);
   const record: TaskExecutionRecord = {
     version: 1,
@@ -113,14 +124,654 @@ function fixture(phase: TaskExecutionPhase = "validation") {
       operationKey: "operation",
       worktreePath,
       taskRecordStore: store,
+      setupGit: git,
       retryIntervalMs: 1_000,
       ...(now === undefined ? {} : { now }),
       readAuthoritativeSnapshot: async () => ({ ...baseSnapshot, ...snapshot }),
     });
-  return { project, store, sha, worktreePath, reconcile };
+  return { project, store, git, sha, worktreePath, baseSnapshot, reconcile };
+}
+
+function canonicalSetupFixture() {
+  const f = fixture("planning");
+  const storageRoot = path.join(root, "canonical-state");
+  const integrationId = JSON.stringify({
+    trelloBoardId: "board",
+    githubRepository: "owner/repo",
+  });
+  const lease = {
+    integrationId,
+    instanceId: "setup-recovery-instance",
+    token: `setup-lease-${Date.now()}-${Math.random()}`,
+    assertHeld() {},
+  };
+  const pinned = {
+    integrationId,
+    projectId: f.project.id,
+    boardId: "board",
+    lists: {
+      ready: "ready",
+      working: "working",
+      review: "review",
+      failed: "failed",
+      done: "done",
+      backlog: "backlog",
+    },
+    repository: "owner/repo",
+    repositoryPath: f.project.repository.path,
+    worktreeRoot: f.project.repository.worktreeRoot,
+    storageRoot,
+  };
+  const runStore = new RunStore(storageRoot, "attempt-card", pinned, lease);
+  runStore.create({
+    version: 1,
+    revision: 1,
+    projectId: f.project.id,
+    cardId: "card",
+    attemptId: "attempt-card",
+    taskKind: "implementation",
+    pinned,
+    lifecycle: "planning",
+    checkpoint: "planning",
+    publicationState: "none",
+    operation: { id: null, kind: null, generation: 0 },
+    wait: { reason: null, dependency: null, since: null, retryAt: null },
+    owner: { instanceId: lease.instanceId, token: lease.token, generation: 1 },
+    resources: [],
+    pendingOperations: [],
+    queue: [],
+    budgets: {},
+    sessions: {},
+    artifacts: [],
+    expectedTrelloListId: null,
+    terminalSync: "not-applicable",
+    terminalEvidence: null,
+    legacy: {},
+    compatibility: {},
+    updatedAt: new Date().toISOString(),
+  });
+  const authority = new ProjectRunAuthority(f.project.id, runStore, 1);
+  const store = new TaskExecutionStore(storageRoot, f.project, authority);
+  store.create(f.store.read("card")!);
+  const reconcile = (
+    snapshot: Partial<TaskSessionRecoverySnapshot> = {},
+    now?: () => number,
+  ) =>
+    reconcileTaskSession({
+      project: f.project,
+      cardId: "card",
+      expectedBranch: "agent/card",
+      operationKey: "operation",
+      worktreePath: f.worktreePath,
+      taskRecordStore: store,
+      setupGit: f.git,
+      retryIntervalMs: 1_000,
+      ...(now === undefined ? {} : { now }),
+      readAuthoritativeSnapshot: async () => ({
+        ...f.baseSnapshot,
+        ...snapshot,
+      }),
+    });
+  return { ...f, store, runStore, authority, reconcile };
 }
 
 describe("reconcileTaskSession", () => {
+  it("adopts a completed setup process from authoritative evidence after restart", async () => {
+    const f = canonicalSetupFixture();
+    const setupCommand = "printf recovered >> base.txt";
+    f.project.repository.setupCommand = setupCommand;
+    execFileSync("git", ["init", "-q"], { cwd: f.worktreePath });
+    execFileSync("git", ["config", "user.email", "test@example.invalid"], {
+      cwd: f.worktreePath,
+    });
+    execFileSync("git", ["config", "user.name", "Setup recovery"], {
+      cwd: f.worktreePath,
+    });
+    fs.writeFileSync(path.join(f.worktreePath, "base.txt"), "base");
+    execFileSync("git", ["add", "."], { cwd: f.worktreePath });
+    execFileSync("git", ["commit", "-qm", "fixture"], { cwd: f.worktreePath });
+    execFileSync("git", ["branch", "-m", "agent/card"], {
+      cwd: f.worktreePath,
+    });
+    const before = f.store.writePrimaryResultArtifact(
+      "setup-before-recovery",
+      JSON.parse(
+        (await captureSetupEffects(f.git, f.worktreePath)).toString("utf8"),
+      ) as unknown,
+    );
+    const current = f.store.read("card")!;
+    f.store.compareAndSwap("card", current.revision, {
+      ...current,
+      setup: {
+        command: setupCommand,
+        status: "active",
+        worktreePath: f.worktreePath,
+        before: before.reference,
+      },
+      revision: current.revision + 1,
+      updatedAt: "2026-10-24T09:00:01.000Z",
+    });
+    let executionId: string | undefined;
+    await runRepositorySetup(new CommandRunner(), {
+      cwd: f.worktreePath,
+      command: "printf recovered >> base.txt",
+      timeoutMilliseconds: 5_000,
+      artifactDirectory: f.store.processExecutionDirectory("card")!,
+      sessionLogPath: path.join(root, "setup.log"),
+      sessionLabel: "setup recovery fixture",
+      onExecutionStarted: (id) => {
+        executionId = id;
+        const active = f.store.read("card")!;
+        f.store.compareAndSwap("card", active.revision, {
+          ...active,
+          setup: { ...active.setup!, executionId: id },
+          revision: active.revision + 1,
+          updatedAt: new Date(Date.parse(active.updatedAt) + 1).toISOString(),
+        });
+      },
+    });
+    await expect(f.reconcile()).resolves.toMatchObject({ status: "resume" });
+    expect(f.store.read("card")?.setup).toMatchObject({
+      status: "passed",
+      executionId,
+      exitCode: 0,
+      after: expect.stringMatching(/^sha256:/u),
+    });
+    fs.writeFileSync(
+      path.join(f.worktreePath, "agent.txt"),
+      "agent edited after setup",
+    );
+    await expect(f.reconcile()).resolves.toMatchObject({ status: "resume" });
+    const executionPath = path.join(
+      f.store.processExecutionDirectory("card")!,
+      executionId!,
+      "execution.json",
+    );
+    const metadata = JSON.parse(
+      fs.readFileSync(executionPath, "utf8"),
+    ) as Record<string, unknown>;
+    fs.writeFileSync(
+      executionPath,
+      JSON.stringify({ ...metadata, command: "different command" }),
+    );
+    await expect(f.reconcile()).resolves.toMatchObject({
+      status: "attention-required",
+    });
+  });
+
+  it("rejects a content-corrupted persisted setup inventory on recovery", async () => {
+    const f = canonicalSetupFixture();
+    const command = "true";
+    f.project.repository.setupCommand = command;
+    execFileSync("git", ["init", "-q"], { cwd: f.worktreePath });
+    execFileSync("git", ["config", "user.email", "test@example.invalid"], {
+      cwd: f.worktreePath,
+    });
+    execFileSync("git", ["config", "user.name", "Setup recovery"], {
+      cwd: f.worktreePath,
+    });
+    fs.writeFileSync(path.join(f.worktreePath, "base.txt"), "base");
+    execFileSync("git", ["add", "."], { cwd: f.worktreePath });
+    execFileSync("git", ["commit", "-qm", "fixture"], { cwd: f.worktreePath });
+    execFileSync("git", ["branch", "-m", "agent/card"], {
+      cwd: f.worktreePath,
+    });
+    const current = f.store.read("card")!;
+    const before = f.store.writePrimaryResultArtifact(
+      "setup-before-corrupt-check",
+      JSON.parse(
+        (await captureSetupEffects(f.git, f.worktreePath)).toString("utf8"),
+      ) as unknown,
+    );
+    f.store.compareAndSwap("card", current.revision, {
+      ...current,
+      setup: {
+        command,
+        status: "active",
+        worktreePath: f.worktreePath,
+        before: before.reference,
+        attempts: 1,
+        history: [],
+      },
+      revision: current.revision + 1,
+      updatedAt: new Date(Date.parse(current.updatedAt) + 1).toISOString(),
+    });
+    let executionId: string | undefined;
+    await runRepositorySetup(new CommandRunner(), {
+      cwd: f.worktreePath,
+      command,
+      timeoutMilliseconds: 5_000,
+      artifactDirectory: f.store.processExecutionDirectory("card")!,
+      sessionLogPath: path.join(root, "corrupt-artifact-setup.log"),
+      sessionLabel: "setup corrupt-artifact fixture",
+      onExecutionStarted: (id) => {
+        executionId = id;
+        const active = f.store.read("card")!;
+        f.store.compareAndSwap("card", active.revision, {
+          ...active,
+          setup: { ...active.setup!, executionId: id },
+          revision: active.revision + 1,
+          updatedAt: new Date(Date.parse(active.updatedAt) + 1).toISOString(),
+        });
+      },
+    });
+    await expect(f.reconcile()).resolves.toMatchObject({ status: "resume" });
+    const after = f.store.read("card")!.setup!.after!;
+    const artifactPath = path.join(
+      f.runStore.storageRoot,
+      "artifacts",
+      "attempt-card",
+      `sha256-${after.slice("sha256:".length)}`,
+    );
+    fs.writeFileSync(artifactPath, "corrupt content identity");
+    await expect(f.reconcile()).resolves.toMatchObject({
+      status: "attention-required",
+      reason: expect.stringContaining("digest"),
+    });
+    expect(f.store.readProcessExecution("card", executionId!)).toMatchObject({
+      executionId,
+      command,
+    });
+  });
+
+  it("waits on an authoritative live setup process and never replays it", async () => {
+    const f = canonicalSetupFixture();
+    const command = "touch setup-live-marker; sleep 20";
+    f.project.repository.setupCommand = command;
+    execFileSync("git", ["init", "-q"], { cwd: f.worktreePath });
+    execFileSync("git", ["config", "user.email", "test@example.invalid"], {
+      cwd: f.worktreePath,
+    });
+    execFileSync("git", ["config", "user.name", "Setup recovery"], {
+      cwd: f.worktreePath,
+    });
+    fs.writeFileSync(path.join(f.worktreePath, "base.txt"), "base");
+    execFileSync("git", ["add", "."], { cwd: f.worktreePath });
+    execFileSync("git", ["commit", "-qm", "fixture"], { cwd: f.worktreePath });
+    execFileSync("git", ["branch", "-m", "agent/card"], {
+      cwd: f.worktreePath,
+    });
+    const current = f.store.read("card")!;
+    const before = f.store.writePrimaryResultArtifact(
+      "setup-before-live",
+      JSON.parse(
+        (await captureSetupEffects(f.git, f.worktreePath)).toString("utf8"),
+      ) as unknown,
+    );
+    f.store.compareAndSwap("card", current.revision, {
+      ...current,
+      setup: {
+        command,
+        status: "active",
+        worktreePath: f.worktreePath,
+        before: before.reference,
+        attempts: 1,
+        history: [],
+      },
+      revision: current.revision + 1,
+      updatedAt: new Date(Date.parse(current.updatedAt) + 1).toISOString(),
+    });
+    const controller = new AbortController();
+    let executionId: string | undefined;
+    const running = runRepositorySetup(new CommandRunner(), {
+      cwd: f.worktreePath,
+      command,
+      timeoutMilliseconds: 30_000,
+      signal: controller.signal,
+      artifactDirectory: f.store.processExecutionDirectory("card")!,
+      sessionLogPath: path.join(root, "live-setup.log"),
+      sessionLabel: "live setup recovery fixture",
+      onExecutionStarted: (id) => {
+        executionId = id;
+        const active = f.store.read("card")!;
+        f.store.compareAndSwap("card", active.revision, {
+          ...active,
+          setup: { ...active.setup!, executionId: id },
+          revision: active.revision + 1,
+          updatedAt: new Date(Date.parse(active.updatedAt) + 1).toISOString(),
+        });
+      },
+    });
+    try {
+      const marker = path.join(f.worktreePath, "setup-live-marker");
+      const deadline = Date.now() + 5_000;
+      while (!fs.existsSync(marker) && Date.now() < deadline)
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(fs.existsSync(marker)).toBe(true);
+      await expect(f.reconcile()).resolves.toMatchObject({ status: "waiting" });
+      expect(f.store.read("card")?.setup).toMatchObject({
+        status: "active",
+        executionId,
+      });
+    } finally {
+      controller.abort();
+      await expect(running).rejects.toThrow();
+    }
+    await expect(
+      f.reconcile({}, () => Date.now() + 2_000),
+    ).resolves.toMatchObject({ status: "resume" });
+    expect(f.store.read("card")?.setup).toMatchObject({
+      status: "pending",
+      attempts: 1,
+      history: [{ outcome: "failed" }],
+    });
+  });
+
+  it("recovers a real process-runtime not-dispatched spawn-failure record", async () => {
+    const f = canonicalSetupFixture();
+    const command = "unavailable-shell-command";
+    f.project.repository.setupCommand = command;
+    execFileSync("git", ["init", "-q"], { cwd: f.worktreePath });
+    execFileSync("git", ["config", "user.email", "test@example.invalid"], {
+      cwd: f.worktreePath,
+    });
+    execFileSync("git", ["config", "user.name", "Setup recovery"], {
+      cwd: f.worktreePath,
+    });
+    fs.writeFileSync(path.join(f.worktreePath, "base.txt"), "base");
+    execFileSync("git", ["add", "."], { cwd: f.worktreePath });
+    execFileSync("git", ["commit", "-qm", "fixture"], { cwd: f.worktreePath });
+    execFileSync("git", ["branch", "-m", "agent/card"], {
+      cwd: f.worktreePath,
+    });
+    const before = f.store.writePrimaryResultArtifact(
+      "setup-before-spawn-failure",
+      JSON.parse(
+        (await captureSetupEffects(f.git, f.worktreePath)).toString("utf8"),
+      ) as unknown,
+    );
+    const execution = beginProcessEvidence(
+      command,
+      f.worktreePath,
+      [],
+      f.store.processExecutionDirectory("card"),
+    );
+    const current = f.store.read("card")!;
+    f.store.compareAndSwap("card", current.revision, {
+      ...current,
+      setup: {
+        command,
+        status: "active",
+        worktreePath: f.worktreePath,
+        before: before.reference,
+        executionId: execution.executionId,
+        attempts: 1,
+        history: [],
+      },
+      revision: current.revision + 1,
+      updatedAt: new Date(Date.parse(current.updatedAt) + 1).toISOString(),
+    });
+    execution.finish("spawn-failure", {
+      error: "spawn failed before dispatch",
+    });
+    await expect(f.reconcile()).resolves.toMatchObject({ status: "resume" });
+    expect(f.store.read("card")?.setup).toMatchObject({
+      status: "pending",
+      attempts: 1,
+      history: [{ outcome: "failed", executionId: execution.executionId }],
+    });
+  });
+
+  it("retries a stopped timed-out setup after restart within the shared operation bound", async () => {
+    const f = canonicalSetupFixture();
+    const setupCommand = "touch timeout-effect; sleep 10";
+    f.project.repository.setupCommand = setupCommand;
+    execFileSync("git", ["init", "-q"], { cwd: f.worktreePath });
+    execFileSync("git", ["config", "user.email", "test@example.invalid"], {
+      cwd: f.worktreePath,
+    });
+    execFileSync("git", ["config", "user.name", "Setup recovery"], {
+      cwd: f.worktreePath,
+    });
+    fs.writeFileSync(path.join(f.worktreePath, "base.txt"), "base");
+    execFileSync("git", ["add", "."], { cwd: f.worktreePath });
+    execFileSync("git", ["commit", "-qm", "fixture"], { cwd: f.worktreePath });
+    execFileSync("git", ["branch", "-m", "agent/card"], {
+      cwd: f.worktreePath,
+    });
+    const before = f.store.writePrimaryResultArtifact(
+      "setup-before-timeout",
+      JSON.parse(
+        (await captureSetupEffects(f.git, f.worktreePath)).toString("utf8"),
+      ) as unknown,
+    );
+    const current = f.store.read("card")!;
+    f.store.compareAndSwap("card", current.revision, {
+      ...current,
+      setup: {
+        command: setupCommand,
+        status: "active",
+        worktreePath: f.worktreePath,
+        before: before.reference,
+        attempts: 1,
+        history: [],
+      },
+      revision: current.revision + 1,
+      updatedAt: "2026-10-24T09:00:01.000Z",
+    });
+    let executionId: string | undefined;
+    await expect(
+      runRepositorySetup(new CommandRunner(), {
+        cwd: f.worktreePath,
+        command: setupCommand,
+        timeoutMilliseconds: 50,
+        artifactDirectory: f.store.processExecutionDirectory("card")!,
+        sessionLogPath: path.join(root, "timeout-setup.log"),
+        sessionLabel: "setup timeout recovery fixture",
+        onExecutionStarted: (id) => {
+          executionId = id;
+          const active = f.store.read("card")!;
+          f.store.compareAndSwap("card", active.revision, {
+            ...active,
+            setup: { ...active.setup!, executionId: id },
+            revision: active.revision + 1,
+            updatedAt: new Date(Date.parse(active.updatedAt) + 1).toISOString(),
+          });
+        },
+      }),
+    ).rejects.toThrow(/timeout/i);
+    await expect(f.reconcile()).resolves.toMatchObject({ status: "resume" });
+    expect(f.store.read("card")?.setup).toMatchObject({
+      status: "pending",
+      attempts: 1,
+      history: [{ outcome: "failed", executionId }],
+    });
+  });
+
+  it("requires three authoritative stopped executions before pre-PR terminal finalization", async () => {
+    const f = canonicalSetupFixture();
+    const command = "exit 17";
+    f.project.repository.setupCommand = command;
+    execFileSync("git", ["init", "-q"], { cwd: f.worktreePath });
+    execFileSync("git", ["config", "user.email", "test@example.invalid"], {
+      cwd: f.worktreePath,
+    });
+    execFileSync("git", ["config", "user.name", "Setup recovery"], {
+      cwd: f.worktreePath,
+    });
+    fs.writeFileSync(path.join(f.worktreePath, "base.txt"), "base");
+    execFileSync("git", ["add", "."], { cwd: f.worktreePath });
+    execFileSync("git", ["commit", "-qm", "fixture"], { cwd: f.worktreePath });
+    execFileSync("git", ["branch", "-m", "agent/card"], {
+      cwd: f.worktreePath,
+    });
+
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      const current = f.store.read("card")!;
+      const before = f.store.writePrimaryResultArtifact(
+        `setup-before-${attempt}`,
+        JSON.parse(
+          (await captureSetupEffects(f.git, f.worktreePath)).toString("utf8"),
+        ) as unknown,
+      );
+      f.store.compareAndSwap("card", current.revision, {
+        ...current,
+        setup: {
+          command,
+          status: "active",
+          worktreePath: f.worktreePath,
+          before: before.reference,
+          attempts: attempt,
+          history: current.setup?.history ?? [],
+        },
+        revision: current.revision + 1,
+        updatedAt: new Date(Date.parse(current.updatedAt) + 1).toISOString(),
+      });
+      await expect(
+        runRepositorySetup(new CommandRunner(), {
+          cwd: f.worktreePath,
+          command,
+          timeoutMilliseconds: 5_000,
+          artifactDirectory: f.store.processExecutionDirectory("card")!,
+          sessionLogPath: path.join(root, `setup-${attempt}.log`),
+          sessionLabel: `setup failure ${attempt}`,
+          onExecutionStarted: (executionId) => {
+            const active = f.store.read("card")!;
+            f.store.compareAndSwap("card", active.revision, {
+              ...active,
+              setup: { ...active.setup!, executionId },
+              revision: active.revision + 1,
+              updatedAt: new Date(
+                Date.parse(active.updatedAt) + 1,
+              ).toISOString(),
+            });
+          },
+        }),
+      ).resolves.toMatchObject({ exitCode: 17 });
+
+      const recovered = await f.reconcile();
+      if (attempt < 3) expect(recovered.status).toBe("resume");
+      else
+        expect(recovered).toMatchObject({
+          status: "attention-required",
+          record: {
+            phase: "attention-required",
+            terminalFailure: { kind: "implementation", outcome: "pending" },
+            setup: {
+              status: "failed",
+              attempts: 3,
+              history: [
+                { outcome: "failed" },
+                { outcome: "failed" },
+                { outcome: "failed" },
+              ],
+            },
+          },
+        });
+    }
+  });
+
+  it("refuses completed setup with missing or fabricated effect references", async () => {
+    const f = fixture();
+    f.project.repository.setupCommand = "yarn install";
+    const current = f.store.read("card")!;
+    f.store.compareAndSwap("card", current.revision, {
+      ...current,
+      setup: {
+        command: "yarn install",
+        status: "passed",
+        worktreePath: f.worktreePath,
+        before: `sha256:${"1".repeat(64)}`,
+        after: `sha256:${"2".repeat(64)}`,
+        executionId: "setup-process-1",
+        exitCode: 0,
+      },
+      revision: current.revision + 1,
+      updatedAt: "2026-10-24T09:00:01.000Z",
+    });
+    await expect(f.reconcile()).resolves.toMatchObject({
+      status: "attention-required",
+    });
+    f.project.repository.setupCommand = "changed setup";
+    await expect(f.reconcile()).resolves.toMatchObject({
+      status: "attention-required",
+    });
+  });
+
+  it("does not replay setup when its execution outcome or completed effects are ambiguous", async () => {
+    const f = fixture();
+    f.project.repository.setupCommand = "yarn install";
+    for (const setup of [
+      {
+        command: "yarn install",
+        status: "active" as const,
+        worktreePath: f.worktreePath,
+      },
+      {
+        command: "yarn install",
+        status: "passed" as const,
+        worktreePath: f.worktreePath,
+      },
+      {
+        command: "yarn install",
+        status: "failed" as const,
+        worktreePath: f.worktreePath,
+      },
+    ]) {
+      const current = f.store.read("card")!;
+      f.store.compareAndSwap("card", current.revision, {
+        ...current,
+        setup,
+        revision: current.revision + 1,
+        updatedAt: new Date(Date.parse(current.updatedAt) + 1).toISOString(),
+      });
+      await expect(f.reconcile()).resolves.toMatchObject({
+        status: "attention-required",
+      });
+      const persisted = f.store.read("card")!;
+      if (persisted.phase === "attention-required") break;
+    }
+  });
+
+  it("does not terminally fail setup without authoritative stopped-attempt evidence", async () => {
+    const f = fixture();
+    f.project.repository.setupCommand = "setup";
+    const current = f.store.read("card")!;
+    f.store.compareAndSwap("card", current.revision, {
+      ...current,
+      setup: {
+        command: "setup",
+        status: "failed",
+        attempts: 3,
+        history: [],
+        diagnostic: "Setup failed after bounded retries",
+      },
+      revision: current.revision + 1,
+      updatedAt: "2026-10-24T09:00:01.000Z",
+    });
+    await expect(f.reconcile()).resolves.toMatchObject({
+      status: "attention-required",
+      record: {
+        phase: "attention-required",
+      },
+    });
+    expect(f.store.read("card")?.terminalFailure).toBeUndefined();
+  });
+
+  it("preserves an open PR and ownership instead of terminally failing setup", async () => {
+    const f = fixture("human-feedback");
+    f.project.repository.setupCommand = "setup";
+    const current = f.store.read("card")!;
+    f.store.compareAndSwap("card", current.revision, {
+      ...current,
+      setup: {
+        command: "setup",
+        status: "failed",
+        attempts: 3,
+        history: [],
+        diagnostic: "Setup evidence is incomplete",
+      },
+      revision: current.revision + 1,
+      updatedAt: "2026-10-24T09:00:01.000Z",
+    });
+    const result = await f.reconcile();
+    expect(result).toMatchObject({ status: "attention-required" });
+    expect(f.store.read("card")).toMatchObject({
+      pullRequest: { number: 1, url: "https://github.com/o/r/pull/1" },
+    });
+    expect(f.store.read("card")?.terminalFailure).toBeUndefined();
+  });
+
   it("routes only confirmed absence to the durable primary reconstruction gate", async () => {
     const f = fixture();
     await expect(

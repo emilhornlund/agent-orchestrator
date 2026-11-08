@@ -77,6 +77,7 @@ export type RunGit = (
   cwd: string,
   args: string[],
   environment?: GitEnvironment,
+  signalOverride?: AbortSignal | null,
 ) => Promise<string>;
 
 export function getGitIdentityEnvironment(
@@ -90,8 +91,15 @@ export function getGitIdentityEnvironment(
   };
 }
 
-const defaultRunGit: RunGit = async (cwd, args, environment) => {
+const defaultRunGit: RunGit = async (
+  cwd,
+  args,
+  environment,
+  signalOverride,
+) => {
   const runtime = getProcessRuntime();
+  const signal =
+    signalOverride === null ? undefined : (signalOverride ?? runtime.signal);
   const operationTimeoutMilliseconds =
     (getGitHubOperationProject()?.opencode.timeoutMinutes ??
       runtime.operationTimeoutMilliseconds / 60_000) * 60_000;
@@ -176,8 +184,8 @@ const defaultRunGit: RunGit = async (cwd, args, environment) => {
         5_000,
       );
     };
-    runtime.signal?.addEventListener("abort", abort, { once: true });
-    if (runtime.signal?.aborted) abort();
+    signal?.addEventListener("abort", abort, { once: true });
+    if (signal?.aborted) abort();
     child.stdout.on("data", (chunk: Buffer | string) =>
       append(
         "stdout",
@@ -200,7 +208,7 @@ const defaultRunGit: RunGit = async (cwd, args, environment) => {
       flush();
       clearTimeout(timeout);
       if (killTimer) clearTimeout(killTimer);
-      runtime.signal?.removeEventListener("abort", abort);
+      signal?.removeEventListener("abort", abort);
       try {
         execution.finish("spawn-failure", {
           pid: child.pid,
@@ -228,7 +236,7 @@ const defaultRunGit: RunGit = async (cwd, args, environment) => {
         flush();
         clearTimeout(timeout);
         if (killTimer) clearTimeout(killTimer);
-        runtime.signal?.removeEventListener("abort", abort);
+        signal?.removeEventListener("abort", abort);
         try {
           execution.finish("process-group-ambiguous", { pid: child.pid });
         } catch (finishError) {
@@ -247,8 +255,8 @@ const defaultRunGit: RunGit = async (cwd, args, environment) => {
       settled = true;
       clearTimeout(timeout);
       if (killTimer) clearTimeout(killTimer);
-      runtime.signal?.removeEventListener("abort", abort);
-      const interrupted = runtime.signal?.aborted === true;
+      signal?.removeEventListener("abort", abort);
+      const interrupted = signal?.aborted === true;
       try {
         execution.finish(
           recorderFailure !== undefined || execution.failure !== undefined
@@ -599,7 +607,7 @@ export class GitClient {
     runGit: RunGit = defaultRunGit,
     private readonly credentials: GitHubCredentialProvider = new GitHubCredentialProvider(),
   ) {
-    this.runGit = async (cwd, args, environment) => {
+    this.runGit = async (cwd, args, environment, signalOverride) => {
       const project = getGitHubOperationProject();
       const projectId = project?.id ?? ProjectRunAuthority.currentProjectId();
       const dispatch = () => {
@@ -625,6 +633,10 @@ export class GitClient {
           (command === "remote" && args[commandIndex + 1] === "add")
         )
           assertJournaledTransport();
+        if (signalOverride !== undefined)
+          return environment === undefined
+            ? runGit(cwd, args, undefined, signalOverride)
+            : runGit(cwd, args, environment, signalOverride);
         return environment === undefined
           ? runGit(cwd, args)
           : runGit(cwd, args, environment);
@@ -1038,12 +1050,16 @@ export class GitClient {
     return output.length > 0;
   }
 
-  async getStatus(repositoryPath: string): Promise<string> {
-    return this.runGit(repositoryPath, [
-      "status",
-      "--porcelain=v1",
-      "--untracked-files=all",
-    ]);
+  async getStatus(
+    repositoryPath: string,
+    signalOverride?: AbortSignal | null,
+  ): Promise<string> {
+    return this.runGit(
+      repositoryPath,
+      ["status", "--porcelain=v1", "--untracked-files=all"],
+      undefined,
+      signalOverride,
+    );
   }
 
   async getDiff(repositoryPath: string, staged = false): Promise<string> {
@@ -1053,39 +1069,50 @@ export class GitClient {
     );
   }
 
-  async getUntrackedFiles(repositoryPath: string): Promise<string[]> {
-    const output = await this.runGit(repositoryPath, [
-      "ls-files",
-      "--others",
-      "--exclude-standard",
-      "--full-name",
-      "-z",
-    ]);
+  async getUntrackedFiles(
+    repositoryPath: string,
+    signalOverride?: AbortSignal | null,
+  ): Promise<string[]> {
+    const output = await this.runGit(
+      repositoryPath,
+      ["ls-files", "--others", "--exclude-standard", "--full-name", "-z"],
+      undefined,
+      signalOverride,
+    );
 
     return output.split("\0").filter((filePath) => filePath.length > 0);
   }
 
-  async getIgnoredFiles(repositoryPath: string): Promise<string[]> {
-    const output = await this.runGit(repositoryPath, [
-      "ls-files",
-      "--others",
-      "--ignored",
-      "--exclude-standard",
-      "--full-name",
-      "-z",
-    ]);
+  async getIgnoredFiles(
+    repositoryPath: string,
+    signalOverride?: AbortSignal | null,
+  ): Promise<string[]> {
+    const output = await this.runGit(
+      repositoryPath,
+      [
+        "ls-files",
+        "--others",
+        "--ignored",
+        "--exclude-standard",
+        "--full-name",
+        "-z",
+      ],
+      undefined,
+      signalOverride,
+    );
     return output.split("\0").filter((filePath) => filePath.length > 0);
   }
 
-  async getHeadTrackedFiles(repositoryPath: string): Promise<string[]> {
-    const output = await this.runGit(repositoryPath, [
-      "ls-tree",
-      "--full-tree",
-      "-r",
-      "--name-only",
-      "-z",
-      "HEAD",
-    ]);
+  async getHeadTrackedFiles(
+    repositoryPath: string,
+    signalOverride?: AbortSignal | null,
+  ): Promise<string[]> {
+    const output = await this.runGit(
+      repositoryPath,
+      ["ls-tree", "--full-tree", "-r", "--name-only", "-z", "HEAD"],
+      undefined,
+      signalOverride,
+    );
 
     return output.split("\0").filter((filePath) => filePath.length > 0);
   }
@@ -1098,8 +1125,16 @@ export class GitClient {
     return (await this.getStatus(repositoryPath)).length > 0;
   }
 
-  async getHeadSha(repositoryPath: string): Promise<string> {
-    return this.runGit(repositoryPath, ["rev-parse", "HEAD"]);
+  async getHeadSha(
+    repositoryPath: string,
+    signalOverride?: AbortSignal | null,
+  ): Promise<string> {
+    return this.runGit(
+      repositoryPath,
+      ["rev-parse", "HEAD"],
+      undefined,
+      signalOverride,
+    );
   }
 
   async getCommitParentSha(repositoryPath: string): Promise<string> {
@@ -1459,8 +1494,16 @@ export class GitClient {
     return count;
   }
 
-  async getCurrentBranch(repositoryPath: string): Promise<string> {
-    return this.runGit(repositoryPath, ["branch", "--show-current"]);
+  async getCurrentBranch(
+    repositoryPath: string,
+    signalOverride?: AbortSignal | null,
+  ): Promise<string> {
+    return this.runGit(
+      repositoryPath,
+      ["branch", "--show-current"],
+      undefined,
+      signalOverride,
+    );
   }
 
   async getChangedFiles(

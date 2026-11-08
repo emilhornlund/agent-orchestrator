@@ -27,6 +27,7 @@ import type { OpenCodeClient } from "../src/opencode/opencode-client.js";
 import { getRefinementResultPath } from "../src/refinement/refinement-result.js";
 import { CommandRunner } from "../src/process/command-runner.js";
 import { runOrchestrator } from "../src/orchestrator/run-orchestrator.js";
+import { pollProject } from "../src/orchestrator/poll-project.js";
 import type { TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
 import {
   runStartup,
@@ -45,9 +46,14 @@ describe("resuming canonical preparing attempts", () => {
   it.each([
     { taskKind: "implementation", cardId: "implementation-card" },
     { taskKind: "refinement", cardId: "refinement-card" },
+    {
+      taskKind: "implementation",
+      cardId: "interrupted-setup-card",
+      interruptSetup: true,
+    },
   ] as const)(
-    "claims and runs the persisted $taskKind attempt under a new lease",
-    async ({ taskKind, cardId }) => {
+    "claims and runs the persisted $taskKind attempt under a new lease ($cardId)",
+    async ({ taskKind, cardId, interruptSetup = false }) => {
       root = fs.mkdtempSync(path.join(os.tmpdir(), "preparing-resume-"));
       const repositoryPath = path.join(root, "repo");
       const worktreeRoot = path.join(root, "worktrees");
@@ -79,7 +85,13 @@ describe("resuming canonical preparing attempts", () => {
           defaultBranch: "main",
           worktreeRoot,
           validationCommand: "validate",
-          ...(taskKind === "implementation" ? { setupCommand: "setup" } : {}),
+          ...(taskKind === "implementation"
+            ? {
+                setupCommand: interruptSetup
+                  ? "if [ ! -f setup-once ]; then touch setup-once; sleep 1; else true; fi"
+                  : "true",
+              }
+            : {}),
           gitIdentity: { name: "Agent", email: "agent@example.test" },
         },
         opencode: {
@@ -220,11 +232,17 @@ describe("resuming canonical preparing attempts", () => {
         },
         getStatus: async () => "",
         getCurrentBranch: async () => `agent/${cardId}`,
+        getHeadSha: async () => "a".repeat(40),
+        getHeadTrackedFiles: async () => [],
+        getUntrackedFiles: async () => [],
+        getIgnoredFiles: async () => [],
         getRebaseState: async () => null,
         getConflictedPaths: async () => [],
       } as unknown as GitClient;
+      let agentRuns = 0;
       const openCode = {
         run: async (options: { cwd: string }) => {
+          agentRuns += 1;
           effectStates.push(authority.store.read()!.lifecycle);
           const resultPath = getRefinementResultPath(options.cwd);
           fs.mkdirSync(path.dirname(resultPath), { recursive: true });
@@ -240,14 +258,15 @@ describe("resuming canonical preparing attempts", () => {
         },
       } as unknown as OpenCodeClient;
       let setupRuns = 0;
-      const commands = {
-        run: async () => {
-          effectStates.push(authority.store.read()!.lifecycle);
-          setupRuns += 1;
-          controller.abort();
-          return { exitCode: 1, output: "setup failed", errorOutput: "" };
-        },
-      } as unknown as CommandRunner;
+      const actualCommands = new CommandRunner();
+      const commands = new CommandRunner(async (commandOptions) => {
+        effectStates.push(authority.store.read()!.lifecycle);
+        setupRuns += 1;
+        if (interruptSetup) setTimeout(() => controller.abort(), 100);
+        const result = await actualCommands.run(commandOptions);
+        if (!interruptSetup) controller.abort();
+        return result;
+      });
       const controller = new AbortController();
       const safetyStop = setTimeout(() => controller.abort(), 1_000);
       const github = {} as GitHubClient;
@@ -276,6 +295,45 @@ describe("resuming canonical preparing attempts", () => {
         ]),
       );
       clearTimeout(safetyStop);
+
+      if (interruptSetup) {
+        expect(setupRuns).toBe(1);
+        expect(agentRuns).toBe(0);
+        expect(
+          new TaskExecutionStore(storageRoot, project, authority).read(cardId),
+        ).toMatchObject({
+          setup: {
+            status: "pending",
+            attempts: 1,
+            history: [{ outcome: "failed" }],
+          },
+        });
+        const restartSignal = new AbortController();
+        const restartProject = { ...project, contextRoot: storageRoot };
+        const restartRunner = new CommandRunner();
+        const restartCommands = new CommandRunner(async (commandOptions) => {
+          setupRuns += 1;
+          const result = await restartRunner.run(commandOptions);
+          restartSignal.abort();
+          return result;
+        });
+        await expect(
+          pollProject(
+            trello,
+            git,
+            github,
+            openCode,
+            restartCommands,
+            restartProject,
+            restartSignal.signal,
+            undefined,
+            undefined,
+            undefined,
+            authority,
+            1_000,
+          ),
+        ).rejects.toThrow(/aborted/i);
+      }
 
       expect(registry.reconcile()?.attemptId).toBe(attemptId);
       expect(authority.store.read()).toMatchObject(
@@ -374,10 +432,25 @@ describe("resuming canonical preparing attempts", () => {
         ),
       ).toBe(true);
       if (taskKind === "implementation") {
-        expect(setupRuns).toBe(1);
+        expect(setupRuns).toBe(interruptSetup ? 2 : 1);
         expect(
           new TaskExecutionStore(storageRoot, project, authority).read(cardId),
-        ).toMatchObject({ phase: "planning", setup: { status: "active" } });
+        ).toMatchObject({
+          phase: "planning",
+          setup: {
+            status: "passed",
+            attempts: interruptSetup ? 2 : 1,
+            command: project.repository.setupCommand,
+            worktreePath: path.join(worktreeRoot, cardId),
+            before: expect.stringMatching(/^sha256:/u),
+            after: expect.stringMatching(/^sha256:/u),
+            executionId: expect.any(String),
+            exitCode: 0,
+            history: interruptSetup
+              ? [{ outcome: "failed" }, { outcome: "passed" }]
+              : [{ outcome: "passed" }],
+          },
+        });
       }
     },
     20_000,
@@ -419,7 +492,7 @@ describe("resuming canonical preparing attempts", () => {
           github: "owner/repo",
           defaultBranch: "main",
           worktreeRoot,
-          setupCommand: "setup",
+          setupCommand: "true",
           validationCommand: "validate",
           gitIdentity: { name: "Agent", email: "agent@example.test" },
         },
@@ -745,17 +818,23 @@ describe("resuming canonical preparing attempts", () => {
         },
         getStatus: async () => "",
         getCurrentBranch: async () => "agent/fresh-card-after-legacy-import",
+        getHeadSha: async () => "a".repeat(40),
+        getHeadTrackedFiles: async () => [],
+        getUntrackedFiles: async () => [],
+        getIgnoredFiles: async () => [],
         getRebaseState: async () => null,
         getConflictedPaths: async () => [],
         pruneWorktrees: async () => undefined,
       } as unknown as GitClient;
-      const commands = new CommandRunner(async () => {
+      const actualCommands = new CommandRunner();
+      const commands = new CommandRunner(async (commandOptions) => {
         setupRuns += 1;
         effects.push(
           `setup:${resumedAuthority?.store.read()?.lifecycle}:${registryForFreshAttempt().read()?.attemptId}`,
         );
+        const result = await actualCommands.run(commandOptions);
         controller.abort();
-        return { exitCode: 1, output: "setup failed", errorOutput: "" };
+        return result;
       });
       let resumedLease: ProjectOwnershipLease | undefined;
       const resumedState: {
@@ -836,7 +915,14 @@ describe("resuming canonical preparing attempts", () => {
       expect(listId).toBe(activeProject.trello.workingListId);
       expect(resumedState.task).toMatchObject({
         phase: "planning",
-        setup: { status: "active" },
+        setup: {
+          status: "passed",
+          command: "true",
+          before: expect.stringMatching(/^sha256:/u),
+          after: expect.stringMatching(/^sha256:/u),
+          executionId: expect.any(String),
+          exitCode: 0,
+        },
       });
       expect(fs.readFileSync(legacyPath)).toEqual(originalLegacyBytes);
       expect(

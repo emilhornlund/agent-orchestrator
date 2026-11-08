@@ -583,6 +583,61 @@ export class TaskExecutionStore {
     }
   }
 
+  readProcessExecution(cardId: string, executionId: string): unknown | null {
+    assertSafePathComponent(executionId, "process execution ID");
+    if (this.authority === undefined) return null;
+    const run = this.authority.store.read();
+    if (
+      !run ||
+      run.cardId !== cardId ||
+      run.pinned.projectId !== this.projectId
+    )
+      return null;
+    const directory = path.join(
+      run.pinned.storageRoot,
+      "artifacts",
+      encodeURIComponent(run.pinned.projectId),
+      encodeURIComponent(run.cardId),
+      encodeURIComponent(run.attemptId),
+      executionId,
+    );
+    const metadataPath = path.join(directory, "execution.json");
+    let parent = path.parse(metadataPath).root;
+    for (const component of path
+      .relative(parent, path.dirname(metadataPath))
+      .split(path.sep)
+      .filter(Boolean)) {
+      parent = path.join(parent, component);
+      const parentStat = fs.lstatSync(parent, { throwIfNoEntry: false });
+      if (parentStat === undefined) return null;
+      if (parentStat.isSymbolicLink() || !parentStat.isDirectory())
+        throw new Error("Unsafe process execution artifact path");
+    }
+    const stat = fs.lstatSync(metadataPath, { throwIfNoEntry: false });
+    if (stat === undefined) return null;
+    if (stat.isSymbolicLink() || !stat.isFile() || stat.size > 64 * 1024)
+      throw new Error("Unsafe process execution metadata");
+    return JSON.parse(fs.readFileSync(metadataPath, "utf8")) as unknown;
+  }
+
+  processExecutionDirectory(cardId: string): string | undefined {
+    if (this.authority === undefined) return undefined;
+    const run = this.authority.store.read();
+    if (
+      !run ||
+      run.cardId !== cardId ||
+      run.pinned.projectId !== this.projectId
+    )
+      return undefined;
+    return path.join(
+      run.pinned.storageRoot,
+      "artifacts",
+      encodeURIComponent(run.pinned.projectId),
+      encodeURIComponent(run.cardId),
+      encodeURIComponent(run.attemptId),
+    );
+  }
+
   private validateFallbackArtifact(
     filePath: string,
     digest: string,

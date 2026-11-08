@@ -121,7 +121,49 @@ const sessionRecoveryStateSchema = z.strictObject({
 
 const taskSetupState = z.strictObject({
   command: z.string().min(1).nullable(),
-  status: z.enum(["not-required", "pending", "active", "passed"]),
+  status: z.enum([
+    "not-required",
+    "pending",
+    "active",
+    "passed",
+    "failed",
+    "ambiguous",
+  ]),
+  worktreePath: z.string().min(1).optional(),
+  before: z
+    .string()
+    .regex(/^sha256:[0-9a-f]{64}$/u)
+    .optional(),
+  after: z
+    .string()
+    .regex(/^sha256:[0-9a-f]{64}$/u)
+    .optional(),
+  executionId: nonBlankIdentifier.optional(),
+  exitCode: z.number().int().nullable().optional(),
+  diagnostic: z.string().max(2_000).optional(),
+  attempts: z
+    .number()
+    .int()
+    .nonnegative()
+    .max(OPERATION_RECOVERY_MAX_EXECUTIONS)
+    .optional(),
+  history: z
+    .array(
+      z.strictObject({
+        command: z.string().min(1),
+        worktreePath: z.string().min(1),
+        before: z.string().regex(/^sha256:[0-9a-f]{64}$/u),
+        after: z
+          .string()
+          .regex(/^sha256:[0-9a-f]{64}$/u)
+          .optional(),
+        executionId: nonBlankIdentifier.optional(),
+        exitCode: z.number().int().nullable().optional(),
+        outcome: z.enum(["passed", "failed", "ambiguous"]),
+      }),
+    )
+    .max(OPERATION_RECOVERY_MAX_EXECUTIONS)
+    .optional(),
 });
 
 const terminalFailureState = z.strictObject({

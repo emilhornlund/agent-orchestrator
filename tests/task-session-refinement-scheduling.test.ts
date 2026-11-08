@@ -178,6 +178,10 @@ describe("task-session refinement scheduling", () => {
           : "",
       ),
       getCurrentBranch: vi.fn(async () => `agent/${readyCard.id}`),
+      getHeadSha: vi.fn(async () => "a".repeat(40)),
+      getHeadTrackedFiles: vi.fn(async () => []),
+      getUntrackedFiles: vi.fn(async () => []),
+      getIgnoredFiles: vi.fn(async () => []),
       getRebaseState: vi.fn(async () => null),
       getConflictedPaths: vi.fn(async () => []),
       removeWorktree: vi.fn(async (_repo: string, worktreePath: string) => {
@@ -431,6 +435,12 @@ describe("task-session refinement scheduling", () => {
           fs.mkdirSync(worktreePath, { recursive: true });
         },
       ),
+      getCurrentBranch: vi.fn(async () => "agent/first-implementation"),
+      getHeadSha: vi.fn(async () => "a".repeat(40)),
+      getStatus: vi.fn(async () => ""),
+      getHeadTrackedFiles: vi.fn(async () => []),
+      getUntrackedFiles: vi.fn(async () => []),
+      getIgnoredFiles: vi.fn(async () => []),
     } as unknown as GitClient;
     const githubRun = vi.fn();
     const openCodeRun = vi.fn();
