@@ -24,6 +24,13 @@ import { publishTaskSessionCard } from "../src/orchestrator/publish-task-session
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
 import { getTaskSessionSourceSnapshotIdentity } from "../src/task-session/source-snapshot.js";
 import { TaskMutationQueue } from "../src/task-session/task-mutation-queue.js";
+import {
+  getSetupTrackedDelta,
+  resolveSetupCommitScope,
+  setupFileIdentity,
+  type PersistedSetupDisposition,
+} from "../src/process/setup-commit-scope.js";
+import { captureSetupEffects } from "../src/process/run-setup.js";
 import type { VerifiedPublicationDecisionInput } from "../src/task-session/verified-publication-decision.js";
 import {
   createPublicationFixture,
@@ -46,6 +53,7 @@ function fixture() {
 async function begin(
   f: ReturnType<typeof fixture>,
   message = "feat: implement task",
+  setupDisposition?: PersistedSetupDisposition,
 ) {
   const identity = await getTaskSessionSourceSnapshotIdentity(
     f.git,
@@ -64,11 +72,97 @@ async function begin(
         commitMessage: message,
         reviewResult: "Passed",
         remediationResult: "Not required",
+        ...(setupDisposition === undefined ? {} : { setupDisposition }),
       },
       "Trello: https://trello.com/c/card",
       identity,
     ),
   );
+}
+
+async function createSetupDisposition(
+  f: ReturnType<typeof fixture>,
+  unrelatedPath: string,
+): Promise<PersistedSetupDisposition> {
+  const taskStore = f.authority.run(
+    () => new TaskExecutionStore(f.project.contextRoot, f.project),
+  );
+  const existing = task(f)!;
+  const before = JSON.parse(
+    (await captureSetupEffects(f.git, f.worktreePath)).toString("utf8"),
+  ) as Parameters<typeof getSetupTrackedDelta>[0];
+  fs.writeFileSync(path.join(f.worktreePath, "yarn.lock"), "task dependency\n");
+  fs.writeFileSync(path.join(f.worktreePath, unrelatedPath), "preserve me\n");
+  f.isolated.git(f.worktreePath, "add", unrelatedPath);
+  const after = JSON.parse(
+    (await captureSetupEffects(f.git, f.worktreePath)).toString("utf8"),
+  ) as Parameters<typeof getSetupTrackedDelta>[1];
+  const { candidates, contextDigest } = getSetupTrackedDelta(
+    before,
+    after,
+    after,
+  );
+  const verdict = {
+    version: 1 as const,
+    contextDigest,
+    changes: candidates.map((file) => ({
+      path: file.path,
+      identity: setupFileIdentity(file),
+      relevant: file.path === "yarn.lock",
+    })),
+  };
+  const scope = resolveSetupCommitScope(before, after, after, verdict);
+  const beforeArtifact = taskStore.writePrimaryResultArtifact(
+    "setup-before-integration",
+    before,
+  );
+  const afterArtifact = taskStore.writePrimaryResultArtifact(
+    "setup-after-integration",
+    after,
+  );
+  const scopeArtifact = taskStore.writePrimaryResultArtifact(
+    "setup-scope-integration",
+    {
+      version: 1,
+      before: beforeArtifact.reference,
+      after: afterArtifact.reference,
+      current: after,
+      verdict,
+      scope,
+    },
+  );
+  f.authority.run(() =>
+    taskStore.compareAndSwap(f.services.card().id, existing.revision, {
+      ...existing,
+      revision: existing.revision + 1,
+      updatedAt: new Date().toISOString(),
+      setup: {
+        command: "yarn install",
+        status: "passed",
+        worktreePath: f.worktreePath,
+        before: beforeArtifact.reference,
+        after: afterArtifact.reference,
+        relevance: scopeArtifact.reference,
+        attempts: 1,
+        history: [
+          {
+            command: "yarn install",
+            worktreePath: f.worktreePath,
+            before: beforeArtifact.reference,
+            after: afterArtifact.reference,
+            exitCode: 0,
+            outcome: "passed",
+          },
+        ],
+      },
+    }),
+  );
+  return {
+    version: 1,
+    artifactReference: scopeArtifact.reference,
+    contextDigest,
+    exclude: scope.exclude,
+  };
 }
 async function poll(
   f: ReturnType<typeof reopenPublicationFixture>,
@@ -118,6 +212,134 @@ function task(f: ReturnType<typeof reopenPublicationFixture>) {
     new TaskExecutionStore(f.project.contextRoot, f.project).read("card"),
   );
 }
+
+describe("setup-aware initial publication commit scope", () => {
+  it("commits relevant setup output, excludes unrelated setup bytes, and preserves them", async () => {
+    const f = fixture();
+    const disposition = await createSetupDisposition(f, "unrelated.setup");
+    await begin(f, "feat: setup aware task", disposition);
+    await through(f, "pr");
+    expect(f.isolated.git(f.worktreePath, "show", "HEAD:yarn.lock")).toBe(
+      "task dependency",
+    );
+    expect(() =>
+      f.isolated.git(f.worktreePath, "show", "HEAD:unrelated.setup"),
+    ).toThrow();
+    expect(
+      fs.readFileSync(path.join(f.worktreePath, "unrelated.setup"), "utf8"),
+    ).toBe("preserve me\n");
+    expect(f.isolated.git(f.worktreePath, "status", "--porcelain")).toContain(
+      "?? unrelated.setup",
+    );
+    expect(
+      f.isolated.git(
+        path.join(f.root, "remote.git"),
+        "show",
+        "refs/heads/agent/card:yarn.lock",
+      ),
+    ).toBe("task dependency");
+    expect(f.services.read().requests.length).toBeGreaterThan(0);
+  });
+
+  it("blocks an old configured-setup publication checkpoint without a scope artifact", async () => {
+    const f = fixture();
+    await begin(f);
+    f.project.repository.setupCommand = "yarn install";
+    const parent = await f.git.getHeadSha(f.worktreePath);
+    await expect(poll(f, false)).rejects.toThrow(/scope proof/u);
+    expect(await f.git.getHeadSha(f.worktreePath)).toBe(parent);
+    expect(f.services.read().requests).toHaveLength(0);
+    expect(
+      f.isolated.git(f.worktreePath, "rev-list", "--count", "main..HEAD"),
+    ).toBe("0");
+  });
+
+  it("does not begin a configured-setup publication without durable disposition", async () => {
+    const f = fixture();
+    f.project.repository.setupCommand = "yarn install";
+    const parent = await f.git.getHeadSha(f.worktreePath);
+    await expect(begin(f)).rejects.toThrow(/commit-scope disposition/u);
+    expect(await f.git.getHeadSha(f.worktreePath)).toBe(parent);
+    expect(f.services.read().requests).toHaveLength(0);
+  });
+
+  it("blocks malformed or stale setup judgments before real Git commit or push", async () => {
+    const f = fixture();
+    const before = {
+      files: [
+        {
+          path: "package.json",
+          kind: "file",
+          mode: 0o644,
+          sha256: "before",
+          bytes: 6,
+        },
+      ],
+      tracked: ["package.json"],
+      committable: ["package.json"],
+      untracked: [],
+    };
+    const after = {
+      files: [
+        {
+          path: "package.json",
+          kind: "file",
+          mode: 0o644,
+          sha256: "after",
+          bytes: 5,
+        },
+      ],
+      tracked: ["package.json"],
+      committable: ["package.json"],
+      untracked: [],
+    };
+    const digest = getSetupTrackedDelta(before, after, after).contextDigest;
+    const beforeHead = await f.git.getHeadSha(f.worktreePath);
+    const stale = {
+      version: 1,
+      contextDigest: digest,
+      changes: [
+        {
+          path: "package.json",
+          identity: setupFileIdentity(after.files[0]!),
+          relevant: true,
+        },
+      ],
+    };
+    expect(() => resolveSetupCommitScope(before, after, after, null)).toThrow();
+    expect(() =>
+      resolveSetupCommitScope(
+        before,
+        after,
+        { ...after, files: [{ ...after.files[0]!, sha256: "later" }] },
+        stale,
+      ),
+    ).toThrow(/context-stale/u);
+    expect(await f.git.getHeadSha(f.worktreePath)).toBe(beforeHead);
+    expect(f.services.read().requests).toHaveLength(0);
+    expect(
+      f.isolated.git(f.worktreePath, "rev-list", "--count", "main..HEAD"),
+    ).toBe("0");
+  });
+
+  it("blocks a setup-included file changed after the verdict when resuming a checkpoint", async () => {
+    const f = fixture();
+    const disposition = await createSetupDisposition(f, "unrelated.setup");
+    await begin(f, "feat: setup scope resume", disposition);
+    const parent = await f.git.getHeadSha(f.worktreePath);
+    fs.writeFileSync(
+      path.join(f.worktreePath, "yarn.lock"),
+      "tampered after review\n",
+    );
+    const reopened = reopenPublicationFixture(f.root);
+    await expect(poll(reopened, false)).rejects.toThrow(/stale/u);
+    expect(await reopened.git.getHeadSha(reopened.worktreePath)).toBe(parent);
+    expect(reopened.services.read().requests).toHaveLength(0);
+    expect(
+      fs.readFileSync(path.join(reopened.worktreePath, "yarn.lock"), "utf8"),
+    ).toBe("tampered after review\n");
+  });
+});
 
 async function killPublicationAt(
   f: ReturnType<typeof fixture>,

@@ -34,6 +34,7 @@ import {
 } from "../opencode/pull-request-description.js";
 import { renderPullRequestDescription } from "../opencode/render-pull-request-description.js";
 import type { CommandRunner } from "../process/command-runner.js";
+import type { PersistedSetupDisposition } from "../process/setup-commit-scope.js";
 
 import { toFailureError } from "./failure-diagnostic.js";
 import { PublishedCardStateError } from "./published-card-state-error.js";
@@ -69,6 +70,7 @@ export interface PublishCardOptions {
   beforePushVerification?: () => Promise<void>;
   expectedExistingPullRequestUrl?: string;
   verifiedDescriptionFacts?: () => readonly string[];
+  setupDisposition?: PersistedSetupDisposition;
 }
 
 /** Presentation is finalized before the durable payload is hashed. Recovery

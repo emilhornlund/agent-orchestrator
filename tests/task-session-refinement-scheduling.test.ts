@@ -221,6 +221,7 @@ describe("task-session refinement scheduling", () => {
       ),
       getHeadSha: vi.fn(async () => "a".repeat(40)),
       getHeadTrackedFiles: vi.fn(async () => []),
+      getCommittableChangedPaths: vi.fn(async () => []),
       getUntrackedFiles: vi.fn(async () => []),
       getIgnoredFiles: vi.fn(async () => []),
       getRebaseState: vi.fn(async () => null),
@@ -590,6 +591,7 @@ describe("task-session refinement scheduling", () => {
       getHeadSha: vi.fn(async () => "a".repeat(40)),
       getStatus: vi.fn(async () => ""),
       getHeadTrackedFiles: vi.fn(async () => []),
+      getCommittableChangedPaths: vi.fn(async () => []),
       getUntrackedFiles: vi.fn(async () => []),
       getIgnoredFiles: vi.fn(async () => []),
     } as unknown as GitClient;
@@ -723,6 +725,7 @@ describe("task-session refinement scheduling", () => {
         getCurrentBranch: vi.fn(async () => `agent/${card.id}`),
         getHeadSha: vi.fn(async () => "a".repeat(40)),
         getHeadTrackedFiles: vi.fn(async () => []),
+        getCommittableChangedPaths: vi.fn(async () => []),
         getUntrackedFiles: vi.fn(async () => []),
         getIgnoredFiles: vi.fn(async () => []),
         getRebaseState: vi.fn(async () => {

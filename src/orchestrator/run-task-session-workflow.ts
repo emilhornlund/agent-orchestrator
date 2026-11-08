@@ -36,8 +36,15 @@ import {
 import type { CommandRunner } from "../process/command-runner.js";
 import {
   captureSetupEffects,
+  assertSetupInventoryIdentity,
   runRepositorySetup,
 } from "../process/run-setup.js";
+import {
+  buildSetupRelevancePrompt,
+  getSetupTrackedDelta,
+  resolveSetupCommitScope,
+  type PersistedSetupDisposition,
+} from "../process/setup-commit-scope.js";
 import { OPERATION_RECOVERY_MAX_EXECUTIONS } from "../task-session/operation-recovery-policy.js";
 import { type TrelloCard, type TrelloClient } from "../trello/trello-client.js";
 import { buildTaskSessionReviewRepairPrompt } from "../opencode/build-task-session-review-repair-prompt.js";
@@ -5332,6 +5339,7 @@ export async function runTaskSessionWorkflow(
         "Trusted publication commit does not match the recovered worktree HEAD",
       );
     let commitMessage: string | undefined;
+    let setupDisposition: PersistedSetupDisposition | undefined;
     if (recoveredTrustedCommit === null) {
       const commitOptions = commitMessageRunOptions(
         project,
@@ -5340,6 +5348,114 @@ export async function runTaskSessionWorkflow(
       );
       clearCommitResult(worktreePath);
       const snapshotBefore = await captureRepositorySnapshot(git, worktreePath);
+      const setupCheckpoint = taskStore.read(activeCard.id)?.setup;
+      if (setupCheckpoint?.command !== null && setupCheckpoint !== undefined) {
+        if (
+          setupCheckpoint.status !== "passed" ||
+          setupCheckpoint.before === undefined ||
+          setupCheckpoint.after === undefined
+        )
+          throw new Error(
+            "Setup attribution is unavailable or uncertain; initial publication blocked",
+          );
+        const beforeInventory = taskStore.readPrimaryResultArtifact(
+          setupCheckpoint.before,
+        );
+        const afterInventory = taskStore.readPrimaryResultArtifact(
+          setupCheckpoint.after,
+        );
+        assertSetupInventoryIdentity(
+          beforeInventory,
+          worktreePath,
+          worktree.branch,
+        );
+        assertSetupInventoryIdentity(
+          afterInventory,
+          worktreePath,
+          worktree.branch,
+        );
+        const currentInventory = JSON.parse(
+          (await captureSetupEffects(git, worktreePath, signal)).toString(
+            "utf8",
+          ),
+        ) as unknown;
+        assertSetupInventoryIdentity(
+          currentInventory,
+          worktreePath,
+          worktree.branch,
+        );
+        const { candidates, contextDigest } = getSetupTrackedDelta(
+          beforeInventory,
+          afterInventory,
+          currentInventory,
+        );
+        let relevanceVerdict: unknown = {
+          version: 1,
+          contextDigest,
+          changes: [],
+        };
+        if (candidates.length > 0) {
+          const judgment = await openCode.run({
+            ...commitOptions,
+            cwd: worktreePath,
+            prompt: buildSetupRelevancePrompt(
+              activeCard.name,
+              beforeInventory,
+              afterInventory,
+              currentInventory,
+            ),
+            readOnly: true,
+            sessionLabel: "Setup change relevance judgment",
+          });
+          if (judgment.exitCode !== 0)
+            throw new Error(
+              `Setup relevance judgment failed with exit code ${judgment.exitCode}; initial publication blocked`,
+            );
+          relevanceVerdict = JSON.parse(judgment.output.trim()) as unknown;
+        }
+        const resolvedScope = resolveSetupCommitScope(
+          beforeInventory as Parameters<typeof resolveSetupCommitScope>[0],
+          afterInventory as Parameters<typeof resolveSetupCommitScope>[1],
+          currentInventory as Parameters<typeof resolveSetupCommitScope>[2],
+          relevanceVerdict,
+        );
+        const afterJudgmentSnapshot = await captureRepositorySnapshot(
+          git,
+          worktreePath,
+        );
+        if (!repositorySnapshotsEqual(snapshotBefore, afterJudgmentSnapshot))
+          throw new Error(
+            "Setup relevance judgment modified repository content; initial publication blocked",
+          );
+        const persistedJudgment = taskStore.writePrimaryResultArtifact(
+          `setup-relevance-${activeCard.id}-${taskStore.read(activeCard.id)?.revision ?? 0}`,
+          {
+            version: 1,
+            before: setupCheckpoint.before,
+            after: setupCheckpoint.after,
+            current: currentInventory,
+            verdict: relevanceVerdict,
+            scope: resolvedScope,
+          },
+        );
+        const judgmentRecord = taskStore.read(activeCard.id);
+        if (!judgmentRecord?.setup)
+          throw new Error(
+            "Setup attribution state disappeared before publication",
+          );
+        updateRecord(taskStore, judgmentRecord, {
+          setup: {
+            ...judgmentRecord.setup,
+            relevance: persistedJudgment.reference,
+          },
+        });
+        setupDisposition = {
+          version: 1,
+          artifactReference: persistedJudgment.reference,
+          contextDigest: resolvedScope.contextDigest,
+          exclude: resolvedScope.exclude,
+        };
+      }
       // AI commit-message generation is optional presentation metadata. Never
       // let it strand a usable implementation, but retain the repository
       // snapshot safety check below even when generation fails.
@@ -5576,6 +5692,7 @@ export async function runTaskSessionWorkflow(
         worktreePath,
         branch: worktree.branch,
         commitMessage,
+        ...(setupDisposition === undefined ? {} : { setupDisposition }),
         reviewResult:
           finalReview.review.verdict === "pass"
             ? "Passed"

@@ -112,6 +112,7 @@ export async function assertRefinementSetupBaselineUnchanged(options: {
       head: string;
       status: string;
       tracked: string[];
+      committable: string[];
       untracked: string[];
       ignored: string[];
       files: { path: string }[];
@@ -126,6 +127,9 @@ export async function assertRefinementSetupBaselineUnchanged(options: {
         .filter((line) => line.slice(3) !== refinementResultRelativePath)
         .join("\n"),
       tracked: inventory.tracked.filter(
+        (file) => file !== refinementResultRelativePath,
+      ),
+      committable: inventory.committable.filter(
         (file) => file !== refinementResultRelativePath,
       ),
       untracked: inventory.untracked.filter(

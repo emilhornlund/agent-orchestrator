@@ -1083,6 +1083,30 @@ export class GitClient {
     return output.split("\0").filter((filePath) => filePath.length > 0);
   }
 
+  async getUnstagedChangedPaths(repositoryPath: string): Promise<string[]> {
+    const [diff, untracked] = await Promise.all([
+      this.runGit(repositoryPath, ["diff", "--name-only", "-z"]),
+      this.getUntrackedFiles(repositoryPath),
+    ]);
+    return [...new Set([...diff.split("\0"), ...untracked].filter(Boolean))];
+  }
+
+  async getCommittableChangedPaths(
+    repositoryPath: string,
+    signalOverride?: AbortSignal | null,
+  ): Promise<string[]> {
+    const [tracked, untracked] = await Promise.all([
+      this.runGit(
+        repositoryPath,
+        ["diff", "--no-renames", "HEAD", "--name-only", "-z"],
+        undefined,
+        signalOverride,
+      ),
+      this.getUntrackedFiles(repositoryPath, signalOverride),
+    ]);
+    return [...new Set([...tracked.split("\0"), ...untracked].filter(Boolean))];
+  }
+
   async getIgnoredFiles(
     repositoryPath: string,
     signalOverride?: AbortSignal | null,
@@ -1367,6 +1391,42 @@ export class GitClient {
   async stageAll(repositoryPath: string): Promise<void> {
     rejectJournaledDispatch();
     await this.runGit(repositoryPath, ["add", "-A"]);
+  }
+
+  /** Stage the complete task worktree except reviewed unrelated paths. */
+  async stageAllExcept(
+    repositoryPath: string,
+    excludedPaths: string[],
+  ): Promise<void> {
+    rejectJournaledDispatch();
+    const uniquePaths = [...new Set(excludedPaths)];
+    for (const filePath of uniquePaths) {
+      if (
+        filePath.length === 0 ||
+        filePath.startsWith("/") ||
+        filePath.split(/[\\/]/u).includes("..") ||
+        filePath.includes("\0")
+      )
+        throw new Error(`Unsafe path excluded from task commit: ${filePath}`);
+    }
+    await this.runGit(repositoryPath, ["add", "-A"]);
+    if (uniquePaths.length > 0)
+      await this.runGit(repositoryPath, [
+        "restore",
+        "--staged",
+        "--",
+        ...uniquePaths.map((filePath) => `:(literal)${filePath}`),
+      ]);
+    const staged = await this.runGit(repositoryPath, [
+      "diff",
+      "--cached",
+      "--name-only",
+      "-z",
+      "HEAD",
+    ]);
+    const stagedPaths = staged.split("\0").filter(Boolean);
+    if (uniquePaths.some((excluded) => stagedPaths.includes(excluded)))
+      throw new Error("Excluded setup changes remain in the Git index");
   }
 
   async getIndexTreeSha(repositoryPath: string): Promise<string> {

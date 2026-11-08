@@ -325,7 +325,7 @@ describe("task-session production dispatch", () => {
         getRefsIdentity: vi.fn(async () => "refs-v1"),
         fetch: vi.fn(async () => undefined),
         push: vi.fn(async () => undefined),
-        stageAll: vi.fn(async () => undefined),
+        stageAllExcept: vi.fn(async () => undefined),
         commit: vi.fn(async () => undefined),
       } as unknown as GitClient;
       let feedbackMode = false;
@@ -1051,7 +1051,7 @@ describe("task-session production dispatch", () => {
       getDiff: vi.fn(async (_cwd: string, staged = false) =>
         staged ? "" : "implementation diff",
       ),
-      stageAll: vi.fn(async () => undefined),
+      stageAllExcept: vi.fn(async () => undefined),
       commit: vi.fn(async () => {
         headSha = commitHeads[commitIndex++]!;
       }),

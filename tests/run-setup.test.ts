@@ -3,7 +3,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { getProcessRuntime } from "../src/process/process-runtime.js";
+import {
+  configureProcessRuntime,
+  getProcessRuntime,
+} from "../src/process/process-runtime.js";
 import { GitClient } from "../src/git/git-client.js";
 
 import { WorkflowError } from "../src/orchestrator/workflow-error.js";
@@ -16,8 +19,261 @@ import {
   captureSetupEffects,
   runRepositorySetup,
 } from "../src/process/run-setup.js";
+import {
+  getSetupTrackedDelta,
+  resolveSetupCommitScope,
+  setupFileIdentity,
+} from "../src/process/setup-commit-scope.js";
 
 describe("runRepositorySetup", () => {
+  it("finishes the bounded setup inventory after runtime cancellation but stops baseline reads", async () => {
+    const root = fs.mkdtempSync(
+      path.join(os.tmpdir(), "setup-aborted-inventory-"),
+    );
+    const worktree = path.join(root, "repo");
+    fs.mkdirSync(worktree);
+    const git = (args: string[]) =>
+      execFileSync("git", args, { cwd: worktree, stdio: "ignore" });
+    const controller = new AbortController();
+    try {
+      git(["init", "-q"]);
+      git(["config", "user.email", "test@example.invalid"]);
+      git(["config", "user.name", "Setup inventory test"]);
+      fs.writeFileSync(path.join(worktree, "tracked.txt"), "before\n");
+      git(["add", "."]);
+      git(["commit", "-qm", "baseline"]);
+      fs.writeFileSync(path.join(worktree, "tracked.txt"), "after\n");
+      controller.abort();
+      configureProcessRuntime({ runtimeRoot: root, signal: controller.signal });
+      const client = new GitClient();
+
+      await expect(
+        captureSetupEffects(client, worktree, controller.signal),
+      ).rejects.toThrow(/abort/i);
+      const effects = JSON.parse(
+        (
+          await captureSetupEffects(client, worktree, controller.signal, true)
+        ).toString("utf8"),
+      ) as { status: string; committable: string[] };
+      expect(effects.status).toContain("tracked.txt");
+      expect(effects.committable).toContain("tracked.txt");
+    } finally {
+      configureProcessRuntime({
+        runtimeRoot: os.tmpdir(),
+        signal: new AbortController().signal,
+      });
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts only a complete current-content-bound setup relevance verdict", () => {
+    const before = {
+      files: [
+        {
+          path: "package.json",
+          kind: "file",
+          mode: 0o644,
+          sha256: "a",
+          bytes: 1,
+        },
+      ],
+      tracked: ["package.json"],
+      committable: ["package.json"],
+      untracked: [],
+    };
+    const after = {
+      files: [
+        {
+          path: "package.json",
+          kind: "file",
+          mode: 0o644,
+          sha256: "b",
+          bytes: 1,
+        },
+        { path: "yarn.lock", kind: "file", mode: 0o644, sha256: "c", bytes: 1 },
+      ],
+      tracked: ["package.json"],
+      committable: ["package.json", "yarn.lock"],
+      untracked: ["yarn.lock"],
+    };
+    const delta = getSetupTrackedDelta(before, after, after);
+    const verdict = {
+      version: 1,
+      contextDigest: delta.contextDigest,
+      changes: [
+        {
+          path: "package.json",
+          identity: setupFileIdentity(after.files[0]!),
+          relevant: true,
+        },
+        {
+          path: "yarn.lock",
+          identity: setupFileIdentity(after.files[1]!),
+          relevant: false,
+        },
+      ],
+    };
+    expect(
+      resolveSetupCommitScope(before, after, after, verdict),
+    ).toMatchObject({
+      include: ["package.json"],
+      exclude: [{ path: "yarn.lock" }],
+    });
+    expect(() =>
+      resolveSetupCommitScope(before, after, after, {
+        version: 1,
+        contextDigest: delta.contextDigest,
+        changes: [],
+      }),
+    ).toThrow(/cover/u);
+    expect(() => resolveSetupCommitScope(before, after, after, null)).toThrow(
+      /malformed/u,
+    );
+    expect(() =>
+      resolveSetupCommitScope(
+        before,
+        after,
+        {
+          ...after,
+          files: [after.files[0]!],
+          untracked: [],
+        },
+        verdict,
+      ),
+    ).toThrow(/context-stale/u);
+    expect(() =>
+      resolveSetupCommitScope(before, after, after, {
+        ...verdict,
+        changes: verdict.changes.map((change) => ({
+          ...change,
+          identity: "sha256:stale",
+        })),
+      }),
+    ).toThrow(/stale/u);
+    const differentBefore = {
+      ...before,
+      files: [{ ...before.files[0]!, sha256: "different-before" }],
+    };
+    expect(() =>
+      resolveSetupCommitScope(differentBefore, after, after, verdict),
+    ).toThrow(/context-stale/u);
+  });
+
+  it("judges mode-only tracked changes while excluding ignored dependencies from setup scope", () => {
+    const before = {
+      files: [
+        { path: "run.sh", kind: "file", mode: 0o644, sha256: "same", bytes: 1 },
+        {
+          path: "node_modules/pkg/data",
+          kind: "file",
+          mode: 0o644,
+          sha256: "old",
+          bytes: 1,
+        },
+      ],
+      tracked: ["run.sh"],
+      committable: ["run.sh"],
+      untracked: [],
+    };
+    const after = {
+      files: [
+        { path: "run.sh", kind: "file", mode: 0o755, sha256: "same", bytes: 1 },
+        {
+          path: "node_modules/pkg/data",
+          kind: "file",
+          mode: 0o644,
+          sha256: "new",
+          bytes: 1,
+        },
+      ],
+      tracked: ["run.sh"],
+      committable: ["run.sh"],
+      untracked: [],
+    };
+    const delta = getSetupTrackedDelta(before, after, after);
+    expect(delta.candidates.map((file) => file.path)).toEqual(["run.sh"]);
+    const scope = resolveSetupCommitScope(before, after, after, {
+      version: 1,
+      contextDigest: delta.contextDigest,
+      changes: [
+        {
+          path: "run.sh",
+          identity: setupFileIdentity(after.files[0]!),
+          relevant: false,
+        },
+      ],
+    });
+    expect(scope.exclude).toMatchObject([{ path: "run.sh" }]);
+  });
+
+  it("keeps excluded setup output in the worktree while staging other task changes", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "setup-scope-git-"));
+    const worktree = path.join(root, "repo");
+    fs.mkdirSync(worktree);
+    const git = (args: string[]) =>
+      execFileSync("git", args, { cwd: worktree, stdio: "ignore" });
+    try {
+      git(["init", "-q"]);
+      git(["config", "user.email", "test@example.invalid"]);
+      git(["config", "user.name", "Setup scope test"]);
+      fs.writeFileSync(path.join(worktree, ".gitignore"), "node_modules/\n");
+      fs.writeFileSync(path.join(worktree, "task.txt"), "base");
+      fs.writeFileSync(path.join(worktree, "unrelated.txt"), "base");
+      git(["add", "."]);
+      git(["commit", "-qm", "base"]);
+      fs.writeFileSync(path.join(worktree, "task.txt"), "task change");
+      fs.writeFileSync(path.join(worktree, "unrelated.txt"), "setup change");
+      fs.chmodSync(path.join(worktree, "unrelated.txt"), 0o755);
+      fs.mkdirSync(path.join(worktree, "node_modules", "dependency"), {
+        recursive: true,
+      });
+      fs.writeFileSync(
+        path.join(worktree, "node_modules", "dependency", "generated"),
+        "ignored",
+      );
+      await new GitClient().stageAllExcept(worktree, ["unrelated.txt"]);
+      const output = (args: string[]) =>
+        execFileSync("git", args, { cwd: worktree });
+      const staged = output(["diff", "--cached", "--name-only"]).toString();
+      expect(staged).toBe("task.txt\n");
+      expect(
+        fs.readFileSync(path.join(worktree, "unrelated.txt"), "utf8"),
+      ).toBe("setup change");
+      expect(output(["status", "--porcelain"]).toString()).toContain(
+        " M unrelated.txt",
+      );
+      expect(
+        output(["status", "--porcelain", "--ignored"]).toString(),
+      ).toContain("!! node_modules/");
+      output([
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "-qm",
+        "task",
+      ]);
+      expect(output(["show", "HEAD:unrelated.txt"]).toString()).toBe("base");
+      expect(output(["ls-tree", "HEAD", "unrelated.txt"]).toString()).toContain(
+        "100644",
+      );
+      expect(
+        fs.readFileSync(path.join(worktree, "unrelated.txt"), "utf8"),
+      ).toBe("setup change");
+      expect(
+        (fs.statSync(path.join(worktree, "unrelated.txt")).mode & 0o111) !== 0,
+      ).toBe(true);
+      expect(
+        fs.readFileSync(
+          path.join(worktree, "node_modules", "dependency", "generated"),
+          "utf8",
+        ),
+      ).toBe("ignored");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
   it("executes the configured setup command through CommandRunner", async () => {
     const runCommand = vi.fn<RunCommand>().mockResolvedValue({ exitCode: 0 });
     const runner = new CommandRunner(runCommand);

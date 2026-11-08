@@ -20,6 +20,8 @@ import {
   type PublishCardOptions,
 } from "./publish-card.js";
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
+import { captureSetupEffects } from "../process/run-setup.js";
+import { setupFileIdentity } from "../process/setup-commit-scope.js";
 import {
   beginInitialPublication,
   resumeInitialPublication,
@@ -52,10 +54,68 @@ function assertPublicationEvidence(
   }
 }
 
+async function assertScopedPostCommitWorktree(
+  options: PublishTaskSessionCardOptions,
+): Promise<void> {
+  if (options.setupDisposition === undefined) {
+    const status = await options.git.getStatus(options.worktreePath);
+    if (status.trim())
+      throw new Error(`Task-session commit left repository changes: ${status}`);
+    return;
+  }
+  const excluded = options.setupDisposition.exclude;
+  const actualPaths = (
+    await options.git.getUnstagedChangedPaths(options.worktreePath)
+  ).sort();
+  if (
+    JSON.stringify(actualPaths) !==
+    JSON.stringify(excluded.map((entry) => entry.path).sort())
+  )
+    throw new Error("Task publication worktree contains unexpected changes");
+  if (
+    (await options.git.getIndexTreeSha(options.worktreePath)) !==
+    (await options.git.getCommitTreeSha(options.worktreePath))
+  )
+    throw new Error("Task publication index differs from committed tree");
+  const inventory = JSON.parse(
+    (await captureSetupEffects(options.git, options.worktreePath)).toString(
+      "utf8",
+    ),
+  ) as {
+    files: {
+      path: string;
+      kind: string;
+      mode: number;
+      sha256?: string;
+      bytes?: number;
+      target?: string;
+    }[];
+  };
+  const byPath = new Map(inventory.files.map((file) => [file.path, file]));
+  for (const entry of excluded) {
+    const current = byPath.get(entry.path);
+    if (
+      (entry.identity === "absent" && current !== undefined) ||
+      (entry.identity !== "absent" &&
+        (!current || setupFileIdentity(current) !== entry.identity))
+    )
+      throw new Error(
+        `Preserved setup content changed after review: ${entry.path}`,
+      );
+  }
+}
+
 /** Commit one verified task snapshot, then reuse the established safe publication path. */
 export async function publishTaskSessionCard(
   options: PublishTaskSessionCardOptions,
 ): Promise<string> {
+  if (
+    options.project.repository.setupCommand !== undefined &&
+    options.setupDisposition === undefined
+  )
+    throw new Error(
+      "Setup commit disposition is unavailable; initial task publication blocked",
+    );
   if (
     ProjectRunAuthority.current(options.project.id) &&
     (await resumeInitialPublication(options))
@@ -107,7 +167,10 @@ export async function publishTaskSessionCard(
       encoding: "utf8",
       mode: 0o600,
     });
-    await options.git.stageAll(options.worktreePath);
+    await options.git.stageAllExcept(
+      options.worktreePath,
+      options.setupDisposition?.exclude.map((file) => file.path) ?? [],
+    );
     await options.git.commit(
       options.worktreePath,
       messagePath,
@@ -132,12 +195,7 @@ export async function publishTaskSessionCard(
       `Expected exactly one task-session commit, found ${commitCount}`,
     );
   }
-  const remainingChanges = await options.git.getStatus(options.worktreePath);
-  if (remainingChanges.length > 0) {
-    throw new Error(
-      `Task-session commit left repository changes: ${remainingChanges}`,
-    );
-  }
+  await assertScopedPostCommitWorktree(options);
 
   writeTrustedCommitState(options.project, options.card.id, {
     version: 1,
@@ -155,17 +213,12 @@ export async function publishTaskSessionCard(
     ...options,
     commitSha,
     beforePushVerification: async () => {
+      await assertScopedPostCommitWorktree(options);
       const preparedEvidence = await options.verifyPreparedContent();
       const preparedHead = await options.git.getHeadSha(options.worktreePath);
+      await assertScopedPostCommitWorktree(options);
       const allowStaleExhaustedReview =
         options.exhaustedReview !== undefined && preparedHead !== commitSha;
-      if (
-        allowStaleExhaustedReview &&
-        (await options.git.getStatus(options.worktreePath)).trim().length > 0
-      )
-        throw new Error(
-          "Refusing exhausted-review publication from a dirty rebased worktree",
-        );
       assertPublicationEvidence(
         preparedEvidence,
         options.exhaustedReview,

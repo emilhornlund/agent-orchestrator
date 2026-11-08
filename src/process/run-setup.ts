@@ -27,6 +27,7 @@ export async function captureSetupEffects(
   const files: {
     path: string;
     kind: string;
+    mode: number;
     bytes?: number;
     sha256?: string;
     target?: string;
@@ -41,6 +42,7 @@ export async function captureSetupEffects(
         files.push({
           path: relative,
           kind: "symlink",
+          mode: stat.mode & 0o7777,
           target: fs.readlinkSync(absolute),
         });
       } else if (stat.isDirectory()) walk(absolute);
@@ -49,10 +51,16 @@ export async function captureSetupEffects(
         files.push({
           path: relative,
           kind: "file",
+          mode: stat.mode & 0o7777,
           bytes: content.byteLength,
           sha256: createHash("sha256").update(content).digest("hex"),
         });
-      } else files.push({ path: relative, kind: "special" });
+      } else
+        files.push({
+          path: relative,
+          kind: "special",
+          mode: stat.mode & 0o7777,
+        });
     }
   };
   walk(root);
@@ -64,6 +72,9 @@ export async function captureSetupEffects(
     status: await readGit(() => gitClient.getStatus(root, gitSignal)),
     tracked: await readGit(() =>
       gitClient.getHeadTrackedFiles(root, gitSignal),
+    ),
+    committable: await readGit(() =>
+      gitClient.getCommittableChangedPaths(root, gitSignal),
     ),
     untracked: await readGit(() =>
       gitClient.getUntrackedFiles(root, gitSignal),
@@ -82,7 +93,19 @@ export function assertSetupInventoryIdentity(
   worktree: string;
   branch: string;
   head: string;
-  files: { path: string; kind: string; sha256?: string; bytes?: number }[];
+  files: {
+    path: string;
+    kind: string;
+    mode: number;
+    sha256?: string;
+    bytes?: number;
+    target?: string;
+  }[];
+  tracked: string[];
+  committable: string[];
+  untracked: string[];
+  ignored: string[];
+  status: string;
 } {
   if (typeof value !== "object" || value === null)
     throw new Error("Setup inventory artifact is malformed");
@@ -95,6 +118,7 @@ export function assertSetupInventoryIdentity(
     !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu.test(inventory.head) ||
     !Array.isArray(inventory.files) ||
     !Array.isArray(inventory.tracked) ||
+    !Array.isArray(inventory.committable) ||
     !Array.isArray(inventory.untracked) ||
     !Array.isArray(inventory.ignored) ||
     typeof inventory.status !== "string"
@@ -112,6 +136,13 @@ export function assertSetupInventoryIdentity(
     )
       throw new Error("Setup inventory contains an invalid file identity");
     const entry = file as Record<string, unknown>;
+    if (
+      typeof entry.mode !== "number" ||
+      !Number.isSafeInteger(entry.mode) ||
+      entry.mode < 0 ||
+      entry.mode > 0o7777
+    )
+      throw new Error("Setup inventory contains invalid file mode identity");
     if (
       entry.kind === "file" &&
       (typeof entry.sha256 !== "string" ||
