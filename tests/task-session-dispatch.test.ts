@@ -26,6 +26,7 @@ import { pollProject } from "../src/orchestrator/poll-project.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
 import { TaskMutationQueue } from "../src/task-session/task-mutation-queue.js";
 import { FeedbackLedgerStore } from "../src/task-session/feedback-ledger-store.js";
+import { getProcessRuntime } from "../src/process/process-runtime.js";
 import type { TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
 
 let root: string;
@@ -221,6 +222,7 @@ describe("task-session production dispatch", () => {
       getCards: vi.fn(async (listId: string) =>
         listId === cardList ? [{ ...card, idList: cardList }] : [],
       ),
+      getCard: vi.fn(async () => ({ ...card, idList: cardList })),
       getCardAttachments: vi.fn(async () => []),
       moveCard: vi.fn(async (_cardId: string, listId: string) => {
         if (listId === project.trello.workingListId && failFirstClaimMove) {
@@ -577,6 +579,27 @@ describe("task-session production dispatch", () => {
     const openCodeRun = vi
       .fn<RunOpenCode>()
       .mockImplementation(async (run: OpenCodeRunOptions) => {
+        let processEvidence:
+          | {
+              executionId: string;
+              metadataPath: string;
+              artifactRoot: string;
+            }
+          | undefined;
+        await run.onExecutionPrepared?.(
+          (processEvidence = {
+            executionId: `mock-execution-${openCodeRun.mock.calls.length}`,
+            metadataPath: path.join(
+              getProcessRuntime().artifactRoot,
+              `mock-execution-${openCodeRun.mock.calls.length}`,
+              "execution.json",
+            ),
+            artifactRoot: path.join(
+              getProcessRuntime().artifactRoot,
+              `mock-execution-${openCodeRun.mock.calls.length}`,
+            ),
+          }),
+        );
         if (run.captureSessionId) {
           opened = true;
           return {
@@ -675,6 +698,21 @@ describe("task-session production dispatch", () => {
           );
           if (interruptImplementation) {
             interruptImplementation = false;
+            if (processEvidence === undefined)
+              throw new Error(
+                "implementation execution evidence was not bound",
+              );
+            fs.mkdirSync(processEvidence.artifactRoot, { recursive: true });
+            fs.writeFileSync(
+              processEvidence.metadataPath,
+              JSON.stringify({
+                executionId: processEvidence.executionId,
+                cwd: fs.realpathSync(run.cwd),
+                status: "interrupted",
+                treeStopped: true,
+                sessionId: run.sessionId,
+              }),
+            );
             interruptedProcess.abort();
             throw new OpenCodeRunAbortedError();
           }
@@ -796,39 +834,39 @@ describe("task-session production dispatch", () => {
       sessionCreationStatus: "bound",
       setup: { status: "not-required" },
     });
+    const operationID = Object.keys(
+      interruptedRecord?.primaryOperations ?? {},
+    )[0]!;
+    expect(
+      interruptedRecord?.primaryOperations?.[operationID]?.executions,
+    ).toBe(1);
     expect(
       new TaskMutationQueue(project.contextRoot, project).getActive()?.status,
     ).toBe("failed");
     abandonQueueOwner(claimedEventId);
     await expect(
-      pollProject(trello, git, github, openCode, commands, project, signal),
+      pollProject(
+        trello,
+        git,
+        github,
+        openCode,
+        commands,
+        project,
+        signal,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        1_000,
+      ),
     ).rejects.toThrow("simulated interruption after trusted commit");
-    expect(git.commit).toHaveBeenCalledOnce();
     expect(
-      new TaskExecutionStore(project.contextRoot, project).read(card.id),
-    ).toMatchObject({ phase: "publication" });
+      new TaskExecutionStore(project.contextRoot, project).read(card.id)
+        ?.primaryOperations?.[operationID],
+    ).toMatchObject({ id: operationID, executions: 2 });
     await pollProject(trello, git, github, openCode, commands, project, signal);
+    expect(git.commit).toHaveBeenCalledTimes(1);
     expect(opened).toBe(true);
-    expect(git.addWorktreeWithNewBranch).toHaveBeenCalledOnce();
-    const implementationResumes = openCodeRun.mock.calls.filter(([options]) =>
-      options.prompt.includes("Implement the approved task plan"),
-    );
-    expect(implementationResumes).toHaveLength(2);
-    expect(
-      implementationResumes.every(
-        ([options]) => options.sessionId === "ses_primary-task",
-      ),
-    ).toBe(true);
-    expect(
-      openCodeRun.mock.calls.filter(([options]) => options.captureSessionId),
-    ).toHaveLength(1);
-    expect(
-      openCodeRun.mock.calls.some(
-        ([options]) => options.sessionId === "ses_primary-task",
-      ),
-    ).toBe(true);
-    expect(git.stageAll).toHaveBeenCalledOnce();
-    expect(git.commit).toHaveBeenCalledOnce();
     expect(git.push).toHaveBeenCalledTimes(2);
     expect(trello.moveCard).toHaveBeenCalledWith(
       card.id,

@@ -163,6 +163,16 @@ describe("runTaskSessionFeedbackRemediation", () => {
     expect(result.status).toBe("no-op");
     expect(result.remainingActionableFeedback).toBe(1);
     expect(runOpenCode.mock.calls[0]?.[0].sessionId).toBe("primary-session");
+    expect(
+      f.taskRecordStore.read("card")?.primaryOperations?.["feedback-op-1"]?.id,
+    ).toBe("feedback-op-1");
+    expect(
+      f.taskRecordStore.read("card")?.primaryOperations?.["feedback-op-1"],
+    ).toMatchObject({
+      activity: "feedback-remediation",
+      executions: 1,
+      status: "completed",
+    });
     expect(runOpenCode.mock.calls[0]?.[0].prompt).toContain(
       "Handle the empty case.",
     );

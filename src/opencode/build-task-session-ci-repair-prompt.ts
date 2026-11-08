@@ -2,6 +2,10 @@ import type { FailedCheckDiagnostic } from "../github/github-client.js";
 import type { TaskPlan } from "../task-session/task-plan.js";
 import type { TrelloCard } from "../trello/trello-client.js";
 import { taskSessionRepositoryGuidance } from "./task-session-prompt-guidance.js";
+import {
+  buildCardAttachmentPromptLines,
+  type CardAttachmentPromptContext,
+} from "../context/card-attachment-prompt.js";
 
 export function buildTaskSessionCiRepairPrompt(input: {
   projectId: string;
@@ -11,6 +15,7 @@ export function buildTaskSessionCiRepairPrompt(input: {
   attempt: number;
   maxAttempts: number;
   diagnostics: readonly FailedCheckDiagnostic[];
+  attachmentContext?: CardAttachmentPromptContext;
 }): string {
   if (
     input.approvedPlan.projectId !== input.projectId ||
@@ -30,6 +35,7 @@ export function buildTaskSessionCiRepairPrompt(input: {
     "Repair the required GitHub CI failures on the current PR head in the existing primary task session.",
     `Task: ${JSON.stringify({ projectId: input.projectId, cardId: input.card.id, title: input.card.name })}`,
     `Original task description: ${input.card.desc}`,
+    ...buildCardAttachmentPromptLines(input.attachmentContext),
     `Current PR head: ${input.headSha}`,
     `Bounded CI repair attempt ${input.attempt} of ${input.maxAttempts}.`,
     "Approved plan:",

@@ -12,7 +12,8 @@ import { isRetryableGitHubError } from "../github/github-client.js";
 import { isRetryableTrelloError } from "../trello/trello-client.js";
 
 export interface TaskSessionRecoverySnapshot {
-  primarySessionAccessible: boolean | null;
+  primarySessionAccessible:
+    "reachable" | "confirmed-absent" | "conflict" | "unknown" | boolean | null;
   worktreeExists: boolean;
   worktreeBranch: string | null;
   worktreeHeadSha: string | null;
@@ -55,6 +56,7 @@ export interface ReconcileTaskSessionOptions {
 
 export type TaskSessionRecoveryResult =
   | { status: "resume"; phase: TaskExecutionPhase; record: TaskExecutionRecord }
+  | { status: "reconstruction-required"; record: TaskExecutionRecord }
   | {
       status: "waiting";
       checkpoint: TaskExecutionPhase;
@@ -107,6 +109,7 @@ function persistWait(
   options: ReconcileTaskSessionOptions,
   reason: string,
   kind: "dependency" | "manual-move" = "dependency",
+  patch: Partial<TaskExecutionRecord> = {},
 ): TaskSessionRecoveryResult {
   const interval = options.retryIntervalMs;
   if (interval === undefined || !Number.isSafeInteger(interval) || interval < 1)
@@ -117,6 +120,7 @@ function persistWait(
   const notificationId = `${record.projectId}/${record.cardId}/${record.operationKey}/${kind}`;
   const next: TaskExecutionRecord = {
     ...record,
+    ...patch,
     recoveryWait: {
       kind,
       reason,
@@ -141,6 +145,24 @@ function persistWait(
     reason,
     record: persisted,
   };
+}
+
+export function persistTaskSessionContextWait(
+  store: TaskExecutionStore,
+  record: TaskExecutionRecord,
+  options: ReconcileTaskSessionOptions,
+  reason: string,
+): TaskSessionRecoveryResult {
+  return persistWait(store, record, options, reason, "dependency", {
+    sessionRecovery: {
+      ...(record.sessionRecovery ?? {
+        originalSessionId: record.primarySessionId ?? "unknown-session",
+        status: "inspection-pending" as const,
+      }),
+      contextAvailability: "unavailable",
+      contextAvailabilityReason: reason.slice(0, 1_000),
+    },
+  });
 }
 
 function clearWaitAndResume(
@@ -280,24 +302,6 @@ export async function reconcileTaskSession(
       "Repository setup state is missing, changed, or has an uncertain outcome",
     );
   }
-  if (
-    record.primarySessionId !== undefined &&
-    record.phase !== "done" &&
-    snapshot.primarySessionAccessible === false
-  ) {
-    return preserveAttention(
-      taskRecordStore,
-      record,
-      "Bound primary session is inaccessible or its state is unknown",
-    );
-  }
-  if (snapshot.primarySessionAccessible === null && record.phase !== "done")
-    return persistWait(
-      taskRecordStore,
-      record,
-      options,
-      "Bound primary session accessibility is unknown",
-    );
   if (snapshot.trelloListId !== expectedTrelloList(project, record.phase)) {
     if (record.phase === "done")
       return preserveAttention(
@@ -388,7 +392,8 @@ export async function reconcileTaskSession(
         "Partially published task has no unambiguous trusted commit/remote state",
       );
     }
-    return clearWaitAndResume(taskRecordStore, record);
+    // Publication verification is one checkpoint, not an escape hatch from
+    // the common primary-session recovery gate below.
   }
   if (requiresPullRequest(record.phase)) {
     const expectedPr = record.pullRequest;
@@ -464,5 +469,64 @@ export async function reconcileTaskSession(
     );
   }
   if (record.phase === "done") return { status: "complete", record };
+  if (record.sessionRecovery?.status === "reconstruction-blocked")
+    return preserveAttention(
+      taskRecordStore,
+      record,
+      "Primary session reconstruction failed its read-only verification; manual recovery is required",
+    );
+  if (record.sessionRecovery?.status === "reconstruction-process-failed")
+    return persistWait(
+      taskRecordStore,
+      record,
+      options,
+      "Primary reconstruction process failed after binding; awaiting approved retry policy",
+    );
+  if (
+    snapshot.primarySessionAccessible === "conflict" ||
+    snapshot.primarySessionAccessible === false
+  )
+    return preserveAttention(
+      taskRecordStore,
+      record,
+      "Bound primary session identity conflicts with the task worktree",
+    );
+  if (
+    snapshot.primarySessionAccessible === null ||
+    snapshot.primarySessionAccessible === "unknown"
+  )
+    return persistWait(
+      taskRecordStore,
+      record,
+      options,
+      "Bound primary session accessibility is unknown",
+    );
+  if (
+    record.sessionRecovery?.status === "replacement-creating" ||
+    record.sessionRecovery?.status === "replacement-ambiguous"
+  )
+    return persistWait(
+      taskRecordStore,
+      record,
+      options,
+      "Primary replacement creation outcome is ambiguous; refusing another dispatch",
+    );
+  if (record.sessionRecovery?.contextAvailability === "unavailable")
+    return { status: "reconstruction-required", record };
+  if (
+    snapshot.primarySessionAccessible === "confirmed-absent" ||
+    record.sessionRecovery?.status === "replacement-bound"
+  )
+    return { status: "reconstruction-required", record };
+  if (
+    record.sessionRecovery !== undefined &&
+    record.sessionRecovery.status !== "reconstruction-verified"
+  )
+    return persistWait(
+      taskRecordStore,
+      record,
+      options,
+      "Primary session reconstruction is pending verification",
+    );
   return clearWaitAndResume(taskRecordStore, record);
 }

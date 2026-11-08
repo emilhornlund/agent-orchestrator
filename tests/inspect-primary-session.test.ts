@@ -41,7 +41,7 @@ describe("inspectPrimaryOpenCodeSession", () => {
         signal: new AbortController().signal,
         timeoutMilliseconds: 1_000,
       }),
-    ).resolves.toBe(true);
+    ).resolves.toBe("reachable");
     expect(run).toHaveBeenCalledWith(
       expect.objectContaining({
         cwd: "/tmp/worktrees/card",
@@ -64,7 +64,7 @@ describe("inspectPrimaryOpenCodeSession", () => {
         signal: new AbortController().signal,
         timeoutMilliseconds: 1_000,
       }),
-    ).resolves.toBe(false);
+    ).resolves.toBe("conflict");
   });
 
   it("fails closed on malformed, inaccessible, and ambiguous session listings", async () => {
@@ -96,10 +96,10 @@ describe("inspectPrimaryOpenCodeSession", () => {
         signal: new AbortController().signal,
         timeoutMilliseconds: 1_000,
       });
-    await expect(inspect()).resolves.toBe(null);
+    await expect(inspect()).resolves.toBe("conflict");
     run.mockRejectedValueOnce(new Error("command unavailable"));
-    await expect(inspect()).resolves.toBe(null);
-    await expect(inspect("invalid/session")).resolves.toBe(null);
+    await expect(inspect()).resolves.toBe("unknown");
+    await expect(inspect("invalid/session")).resolves.toBe("unknown");
   });
 
   it("keeps malformed real child output private while attaching process artifact references", async () => {

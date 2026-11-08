@@ -15,6 +15,7 @@ import {
   repositorySnapshotsEqual,
 } from "../opencode/commit-result.js";
 import { buildTaskSessionReviewRepairPrompt } from "../opencode/build-task-session-review-repair-prompt.js";
+import { inspectPrimaryOpenCodeSession } from "../opencode/inspect-primary-session.js";
 import type { CommandRunner } from "../process/command-runner.js";
 import type { TrelloCard, TrelloClient } from "../trello/trello-client.js";
 import type { ObservedTaskSessionReviewCard } from "./observe-task-session-review-cards.js";
@@ -51,6 +52,10 @@ import {
 } from "../task-session/verified-publication-decision.js";
 import { getTaskSessionSourceSnapshotIdentity } from "../task-session/source-snapshot.js";
 import { publishTaskSessionCard } from "./publish-task-session-card.js";
+import { inspectPrimaryOperationEvidence } from "../task-session/inspect-primary-operation.js";
+import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
+import { getProcessRuntime } from "../process/process-runtime.js";
+import { persistPrimaryOperationRecovery } from "../task-session/persist-primary-operation-recovery.js";
 
 export interface RunTaskSessionFeedbackCycleOptions {
   project: ProjectConfig;
@@ -71,6 +76,7 @@ export interface RunTaskSessionFeedbackCycleOptions {
     CardAttachmentPromptContext | undefined
   >;
   signal: AbortSignal;
+  retryIntervalMs?: number;
   emailNotifier?: EmailNotifier;
 }
 
@@ -629,6 +635,14 @@ export async function runTaskSessionFeedbackCycle(
         operationKey: record.operationKey,
         operationId,
         expectedPrimarySessionId: record.primarySessionId!,
+        inspectPrimarySession: (sessionId) =>
+          inspectPrimaryOpenCodeSession({
+            commands,
+            cwd: worktreePath,
+            sessionId,
+            signal,
+            timeoutMilliseconds: 30_000,
+          }),
         expectedPullRequestHeadSha: observation.headSha,
         worktreePath,
         taskRecordStore: taskStore,
@@ -715,6 +729,20 @@ export async function runTaskSessionFeedbackCycle(
         planStore,
         card,
         expectedPrimarySessionId: record.primarySessionId!,
+        inspectPrimarySession: (sessionId) =>
+          inspectPrimaryOpenCodeSession({
+            commands,
+            cwd: worktreePath,
+            sessionId,
+            signal,
+            timeoutMilliseconds: 30_000,
+          }),
+        primaryOperationEvidence: {
+          trustedRoot:
+            ProjectRunAuthority.current(project.id)?.store.storageRoot ??
+            getProcessRuntime().artifactRoot,
+          cwd: worktreePath,
+        },
         ...(attachmentContext === undefined ? {} : { attachmentContext }),
         repairRunOptions: validationRepairRunOptions(project, signal),
       });
@@ -745,6 +773,16 @@ export async function runTaskSessionFeedbackCycle(
         cardId: card.id,
         operationKey: record.operationKey,
         expectedPrimarySessionId: record.primarySessionId!,
+        buildRepairPrompt: (review, attempt) =>
+          buildTaskSessionReviewRepairPrompt({
+            projectId: project.id,
+            card,
+            approvedPlan: storedPlan.plan,
+            review,
+            attempt,
+            maxAttempts: project.opencode.remediation.maxPasses,
+            ...(attachmentContext === undefined ? {} : { attachmentContext }),
+          }),
         runReview: async (previousFindings) => {
           if (roundIndex++ === 0)
             return {
@@ -772,7 +810,12 @@ export async function runTaskSessionFeedbackCycle(
             contentIdentity: firstReview.contentIdentity,
           };
         },
-        repair: async (review, attempt) => {
+        repair: async (
+          review,
+          attempt,
+          primaryOperationId,
+          persistedPrompt,
+        ) => {
           let latest = taskStore.read(card.id);
           if (latest === null)
             throw new Error(
@@ -792,15 +835,17 @@ export async function runTaskSessionFeedbackCycle(
               ).toISOString(),
             }),
           );
-          const prompt = buildTaskSessionReviewRepairPrompt({
-            projectId: project.id,
-            card,
-            approvedPlan: storedPlan.plan,
-            review,
-            attempt,
-            maxAttempts: project.opencode.remediation.maxPasses,
-            ...(attachmentContext === undefined ? {} : { attachmentContext }),
-          });
+          const prompt =
+            persistedPrompt ??
+            buildTaskSessionReviewRepairPrompt({
+              projectId: project.id,
+              card,
+              approvedPlan: storedPlan.plan,
+              review,
+              attempt,
+              maxAttempts: project.opencode.remediation.maxPasses,
+              ...(attachmentContext === undefined ? {} : { attachmentContext }),
+            });
           const repaired = await runWithPrimaryTaskSession(
             taskStore,
             openCode,
@@ -813,6 +858,28 @@ export async function runTaskSessionFeedbackCycle(
               signal,
               cwd: worktreePath,
               prompt,
+            },
+            {
+              inspect: (sessionId) =>
+                inspectPrimaryOpenCodeSession({
+                  commands,
+                  cwd: worktreePath,
+                  sessionId,
+                  signal,
+                  timeoutMilliseconds: 30_000,
+                }),
+            },
+            {
+              role: "primary",
+              operationId: primaryOperationId,
+              activity: "feedback-review-repair",
+              inspectPending: (entry) =>
+                inspectPrimaryOperationEvidence(taskStore, card.id, entry.id, {
+                  trustedRoot:
+                    ProjectRunAuthority.current(options.project.id)?.store
+                      .storageRoot ?? getProcessRuntime().artifactRoot,
+                  cwd: worktreePath,
+                }),
             },
           );
           if (repaired.exitCode !== 0)
@@ -854,6 +921,20 @@ export async function runTaskSessionFeedbackCycle(
             planStore,
             card,
             expectedPrimarySessionId: record.primarySessionId!,
+            inspectPrimarySession: (sessionId) =>
+              inspectPrimaryOpenCodeSession({
+                commands,
+                cwd: worktreePath,
+                sessionId,
+                signal,
+                timeoutMilliseconds: 30_000,
+              }),
+            primaryOperationEvidence: {
+              trustedRoot:
+                ProjectRunAuthority.current(project.id)?.store.storageRoot ??
+                getProcessRuntime().artifactRoot,
+              cwd: worktreePath,
+            },
             ...(attachmentContext === undefined ? {} : { attachmentContext }),
             repairRunOptions: validationRepairRunOptions(project, signal),
           });
@@ -955,6 +1036,8 @@ export async function runTaskSessionFeedbackCycle(
           cwd: worktreePath,
           prompt: buildCommitPrompt(card),
         },
+        {},
+        { role: "advisory", operationId: `${operationId}:commit-message` },
       );
       if (commitResult.exitCode === 0) {
         commitMessage = readCommitResult(worktreePath).message;
@@ -1238,6 +1321,20 @@ export async function runTaskSessionFeedbackCycle(
     return "published";
   } catch (error) {
     cardLog.event("Requested-changes workflow failed");
+    const current = taskStore.read(card.id);
+    if (current !== null && options.retryIntervalMs !== undefined) {
+      const disposition = persistPrimaryOperationRecovery(
+        taskStore,
+        current,
+        error,
+        options.retryIntervalMs,
+      );
+      if (disposition === "waiting" || disposition === "published-blockage") {
+        if (options.mutationQueue.ownsActive(operationId))
+          options.mutationQueue.releaseForRecovery(operationId);
+        return "idle";
+      }
+    }
     if (options.mutationQueue.ownsActive(operationId)) {
       options.mutationQueue.fail(operationId);
     }

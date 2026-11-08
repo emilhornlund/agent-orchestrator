@@ -8,6 +8,7 @@ import {
 import { buildTaskPlanningPrompt } from "../opencode/build-task-planning-prompt.js";
 import type { TrelloAttachment, TrelloCard } from "../trello/trello-client.js";
 import { runWithPrimaryTaskSession } from "./primary-task-session.js";
+import type { PendingPrimaryInspection } from "./run-primary-operation.js";
 import { TaskExecutionStore } from "./task-execution-store.js";
 import { TaskPlanStore, type StoredTaskPlan } from "./task-plan-store.js";
 import { parseTaskPlan, type TaskPlan } from "./task-plan.js";
@@ -35,6 +36,18 @@ export interface RunTaskPlanningOptions {
     OpenCodeRunOptions,
     "prompt" | "sessionId" | "captureSessionId"
   >;
+  /** Durable advisory operation identity and trusted evidence location. */
+  primaryOperation?: {
+    operationId: string;
+    trustedRoot: string;
+    cwd: string;
+    activity?: string;
+    inspectPending?: (
+      entry: NonNullable<
+        import("./task-execution-record.js").TaskExecutionRecord["primaryOperations"]
+      >[string],
+    ) => Promise<PendingPrimaryInspection>;
+  };
 }
 
 export interface TaskPlanningOperationResult {
@@ -92,6 +105,13 @@ export async function runTaskPlanningOperation(
     projectId,
     card.id,
     { ...runOptions, prompt },
+    {},
+    {
+      role: "advisory",
+      operationId:
+        options.primaryOperation?.operationId ??
+        `${taskRecordStore.read(card.id)?.operationKey ?? card.id}:planning`,
+    },
   );
 
   if (runResult.exitCode !== 0) {

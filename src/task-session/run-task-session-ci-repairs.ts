@@ -39,6 +39,7 @@ export interface RunTaskSessionCiRepairsOptions {
     diagnostics: readonly FailedCheckDiagnostic[],
     attempt: number,
     primarySessionId: string,
+    operationId: string,
   ) => Promise<void>;
   rerunLocalGatesAndReview: () => Promise<void>;
   publishSamePullRequest: () => Promise<string>;
@@ -91,7 +92,9 @@ export async function runTaskSessionCiRepairs(
 ): Promise<TaskSessionCiRepairResult> {
   let record = ownerRecord(options);
   let headSha = options.headSha;
-  const cycleId = `${options.operationKey}:${headSha}`;
+  // An episode belongs to the durable task operation, not a mutable commit SHA.
+  // Publishing a repair changes headSha but must not reset its correction budget.
+  const cycleId = record.ciRepair?.cycleId ?? `${options.operationKey}:ci`;
   if (record.ciRepair?.cycleId !== cycleId) {
     record = updateRecord(options.store, record, {
       retryCounters: { ...record.retryCounters, ci: 0 },
@@ -100,50 +103,111 @@ export async function runTaskSessionCiRepairs(
   }
 
   for (;;) {
-    const evaluation = await options.observeChecks(headSha);
-    if (evaluation.expectedHeadSha !== headSha) {
-      throw new TaskSessionCiRepairError(
-        "Complete CI evaluation belongs to a different PR head",
+    const active = record.ciRepair?.activePrimaryOperation;
+    const completedAttempts = record.retryCounters.ci;
+    const attempt = active?.pass ?? completedAttempts + 1;
+    let diagnostics: FailedCheckDiagnostic[];
+    if (active !== undefined) {
+      if (active.diagnosticsArtifact === undefined)
+        throw new TaskSessionCiRepairError(
+          "Reserved CI repair lacks persisted diagnostics; preserving the reservation",
+        );
+      const storedDiagnostics: unknown =
+        options.store.readPrimaryResultArtifact({
+          reference: active.diagnosticsArtifact.reference as `sha256:${string}`,
+          bytes: active.diagnosticsArtifact.bytes,
+          ...(active.diagnosticsArtifact.path === undefined
+            ? {}
+            : { path: active.diagnosticsArtifact.path }),
+        });
+      if (
+        !Array.isArray(storedDiagnostics) ||
+        !storedDiagnostics.every(
+          (item) =>
+            typeof item === "object" &&
+            item !== null &&
+            "name" in item &&
+            typeof item.name === "string" &&
+            "headSha" in item &&
+            item.headSha === headSha &&
+            "logUrl" in item &&
+            (item.logUrl === null || typeof item.logUrl === "string") &&
+            "available" in item &&
+            typeof item.available === "boolean" &&
+            "diagnostic" in item &&
+            typeof item.diagnostic === "string" &&
+            (!("checkRunId" in item) || typeof item.checkRunId === "number"),
+        )
+      )
+        throw new TaskSessionCiRepairError(
+          "Persisted CI repair diagnostics are invalid; preserving the reservation",
+        );
+      diagnostics = storedDiagnostics as FailedCheckDiagnostic[];
+    } else {
+      const evaluation = await options.observeChecks(headSha);
+      if (evaluation.expectedHeadSha !== headSha)
+        throw new TaskSessionCiRepairError(
+          "Complete CI evaluation belongs to a different PR head",
+        );
+      if (evaluation.status === "passed") {
+        record = ownerRecord(options, record.pullRequest?.headSha);
+        updateRecord(options.store, record, {
+          ciRepair: { cycleId, headSha, status: "passed" },
+        });
+        return { status: "passed", attempts: record.retryCounters.ci, headSha };
+      }
+      if (evaluation.status === "waiting" || evaluation.status === "uncertain")
+        return {
+          status: "waiting",
+          attempts: record.retryCounters.ci,
+          headSha,
+          evaluation,
+        };
+      const failures = evaluation.failures;
+      if (failures.length === 0)
+        throw new TaskSessionCiRepairError(
+          "Failed CI evaluation did not include any terminal check failures",
+        );
+      if (active === undefined && completedAttempts >= MAX_CI_REPAIR_ATTEMPTS) {
+        updateRecord(options.store, record, {
+          phase: "attention-required",
+          ciRepair: { cycleId, headSha, status: "exhausted" },
+        });
+        return {
+          status: "exhausted",
+          attempts: completedAttempts,
+          headSha,
+          failures,
+        };
+      }
+      diagnostics = await options.collectDiagnostics(headSha, failures);
+    }
+    const operationId = active?.operationId ?? `${cycleId}:pass:${attempt}`;
+    if (active === undefined) {
+      const diagnosticsArtifact = options.store.writePrimaryResultArtifact(
+        `${operationId}:diagnostics`,
+        diagnostics,
       );
-    }
-    if (evaluation.status === "passed") {
-      record = ownerRecord(options, record.pullRequest?.headSha);
-      updateRecord(options.store, record, {
-        ciRepair: { cycleId, headSha, status: "passed" },
+      record = updateRecord(options.store, record, {
+        retryCounters: { ...record.retryCounters, ci: attempt },
+        ciRepair: {
+          cycleId,
+          headSha,
+          status: "active",
+          activePrimaryOperation: {
+            operationId,
+            pass: attempt,
+            diagnosticsArtifact,
+          },
+        },
       });
-      return { status: "passed", attempts: record.retryCounters.ci, headSha };
     }
-    if (evaluation.status === "waiting" || evaluation.status === "uncertain") {
-      return {
-        status: "waiting",
-        attempts: record.retryCounters.ci,
-        headSha,
-        evaluation,
-      };
-    }
-    const failures = evaluation.failures;
-    if (failures.length === 0)
-      throw new TaskSessionCiRepairError(
-        "Failed CI evaluation did not include any terminal check failures",
-      );
-    const attempt = record.retryCounters.ci;
-    if (attempt >= MAX_CI_REPAIR_ATTEMPTS) {
-      updateRecord(options.store, record, {
-        phase: "attention-required",
-        ciRepair: { cycleId, headSha, status: "exhausted" },
-      });
-      return { status: "exhausted", attempts: attempt, headSha, failures };
-    }
-    const diagnostics = await options.collectDiagnostics(headSha, failures);
-    record = updateRecord(options.store, record, {
-      retryCounters: { ...record.retryCounters, ci: attempt + 1 },
-      ciRepair: { cycleId, headSha, status: "active" },
-    });
     try {
       await options.repairPrimarySession(
         diagnostics,
-        attempt + 1,
+        attempt,
         options.expectedPrimarySessionId,
+        operationId,
       );
       await options.rerunLocalGatesAndReview();
       headSha = await options.publishSamePullRequest();
@@ -178,6 +242,19 @@ export async function runTaskSessionCiRepairs(
           pullRequest: { ...record.pullRequest!, headSha },
           ciRepair: { cycleId, headSha, status: "active" },
           reviewObservation: undefined,
+        });
+      }
+      const afterCheckpoint = options.store.read(options.cardId);
+      if (
+        afterCheckpoint?.ciRepair?.activePrimaryOperation?.operationId ===
+        operationId
+      ) {
+        record = updateRecord(options.store, afterCheckpoint, {
+          ciRepair: {
+            cycleId,
+            headSha,
+            status: "active",
+          },
         });
       }
     } catch (error) {

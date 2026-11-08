@@ -12,6 +12,10 @@ import { TaskMutationQueue } from "../src/task-session/task-mutation-queue.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
 import { Logger } from "../src/logging/logger.js";
 import type { TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
+import { NotificationOutbox } from "../src/notifications/notification-outbox.js";
+import { runPrimaryOperation } from "../src/task-session/run-primary-operation.js";
+import { PrimaryOperationExhaustedError } from "../src/task-session/primary-operation-ledger.js";
+import { persistPrimaryOperationRecovery } from "../src/task-session/persist-primary-operation-recovery.js";
 
 let root: string | undefined;
 afterEach(() => {
@@ -58,6 +62,8 @@ describe("terminal failure recovery", () => {
       url: "https://trello.example/card",
     };
     let currentList = project.trello.workingListId;
+    const postedComments = new Set<string>();
+    let failFirstCommentResponse = true;
     const trello = {
       getCards: vi.fn(async (listId: string) =>
         listId === currentList ? [{ ...card, idList: currentList }] : [],
@@ -66,27 +72,73 @@ describe("terminal failure recovery", () => {
         currentList = listId;
         return { ...card, idList: listId };
       }),
+      getCard: vi.fn(async () => ({ ...card, idList: currentList })),
+      addComment: vi.fn(async (_id: string, text: string) => {
+        postedComments.add(text);
+        if (failFirstCommentResponse) {
+          failFirstCommentResponse = false;
+          throw new Error("simulated response loss after comment acceptance");
+        }
+        return {
+          id: "comment-1",
+          type: "commentCard",
+          date: new Date().toISOString(),
+        };
+      }),
     } as unknown as TrelloClient;
     const store = new TaskExecutionStore(contextRoot, project);
     store.create({
       version: 1,
       projectId,
       cardId,
-      phase: "attention-required",
+      phase: "implementation",
       primarySessionId: "session-preserved",
       sessionCreationStatus: "bound",
       expectedBranch: `agent/${cardId}`,
       operationKey: "implementation-operation",
-      terminalFailure: {
-        kind: "implementation",
-        reason: "Implementation exited unsuccessfully",
-        outcome: "pending",
-      },
       revision: 1,
       retryCounters: { validation: 0, review: 0, ci: 0, humanFeedback: 0 },
       createdAt: "2026-10-24T09:00:00.000Z",
       updatedAt: "2026-10-24T09:00:00.000Z",
     });
+    const primaryOperationId = "implementation-operation:primary";
+    await expect(
+      runPrimaryOperation({
+        store,
+        cardId,
+        operationId: primaryOperationId,
+        activity: "implementation",
+        sessionId: "session-preserved",
+        execute: async () => ({
+          exitCode: 1,
+          output: "partial",
+          errorOutput: "failed",
+        }),
+        inspectPending: async (entry) => ({
+          status: "stopped-after-dispatch",
+          operationId: entry.id,
+          execution: entry.executions,
+          ...(entry.lastSessionId === undefined
+            ? {}
+            : { sessionId: entry.lastSessionId }),
+        }),
+      }),
+    ).rejects.toBeInstanceOf(PrimaryOperationExhaustedError);
+    const exhausted = store.read(cardId)!;
+    expect(exhausted.primaryOperations?.[primaryOperationId]?.executions).toBe(
+      3,
+    );
+    expect(
+      persistPrimaryOperationRecovery(
+        store,
+        exhausted,
+        new PrimaryOperationExhaustedError(
+          `Primary operation ${primaryOperationId} exhausted`,
+        ),
+        1000,
+      ),
+    ).toBe("prepublication-failure");
+    expect(store.read(cardId)?.terminalFailure?.outcome).toBe("pending");
     const queue = new TaskMutationQueue(contextRoot, project);
     queue.enqueue({
       projectId,
@@ -99,16 +151,36 @@ describe("terminal failure recovery", () => {
     queue.claimNext();
     queue.fail("implementation:failure");
 
-    await runTaskSessionWorkflow({
-      project,
-      trello,
-      git: {} as GitClient,
-      github: {} as GitHubClient,
-      openCode: new OpenCodeClient(vi.fn()),
-      commands: new CommandRunner(vi.fn()),
-      signal: new AbortController().signal,
-      prepareAttachmentContext: async () => undefined,
-    });
+    const outbox = new NotificationOutbox(
+      contextRoot,
+      projectId,
+      () => undefined,
+    );
+    const emailNotifier = {
+      deliveryTarget: "test-inbox@example.invalid",
+      isEventEnabled: (event: string) => event === "failed",
+      send: vi.fn(async () => undefined),
+    };
+    const runWorkflow = () =>
+      runTaskSessionWorkflow({
+        project,
+        trello,
+        git: {} as GitClient,
+        github: {} as GitHubClient,
+        openCode: new OpenCodeClient(vi.fn()),
+        commands: new CommandRunner(vi.fn()),
+        signal: new AbortController().signal,
+        prepareAttachmentContext: async () => undefined,
+        emailNotifier,
+      });
+    await expect(outbox.run(runWorkflow)).rejects.toThrow(
+      "simulated response loss after comment acceptance",
+    );
+    expect(trello.addComment).toHaveBeenCalledOnce();
+    expect(store.read(cardId)?.terminalFailure?.outcome).toBe("pending");
+    expect(queue.getActive()).not.toBeNull();
+
+    await outbox.run(runWorkflow);
 
     expect(trello.moveCard).toHaveBeenCalledWith(
       cardId,
@@ -119,6 +191,13 @@ describe("terminal failure recovery", () => {
       primarySessionId: "session-preserved",
       terminalFailure: { outcome: "confirmed" },
     });
+    expect(postedComments).toHaveLength(1);
+    expect(trello.addComment).toHaveBeenCalledTimes(2);
+    expect(outbox.records()).toHaveLength(1);
+    expect(outbox.records()[0]?.event).toBe("failed");
+    expect(outbox.records()[0]?.message.text).toContain(
+      "Primary operation execution budget is exhausted",
+    );
   });
 
   it("leaves a legacy failed mutation untouched until Trello authorizes retirement", async () => {

@@ -15,6 +15,11 @@ import { TaskPlanStore } from "./task-plan-store.js";
 import { FeedbackLedgerStore } from "./feedback-ledger-store.js";
 import { assertOwnedTaskWorktreePath } from "./run-task-session-implementation.js";
 import { runWithPrimaryTaskSession } from "./primary-task-session.js";
+import { inspectPrimaryOperationEvidence } from "./inspect-primary-operation.js";
+import { ProjectRunAuthority } from "./project-run-authority.js";
+import { getProcessRuntime } from "../process/process-runtime.js";
+import type { PrimarySessionRecoveryOptions } from "./primary-task-session.js";
+import { findPrimaryRecoveryError } from "./persist-primary-operation-recovery.js";
 
 export class TaskSessionFeedbackRemediationError extends Error {
   constructor(message: string, options?: ErrorOptions) {
@@ -30,6 +35,7 @@ export interface RunTaskSessionFeedbackRemediationOptions {
   operationKey: string;
   operationId: string;
   expectedPrimarySessionId: string;
+  inspectPrimarySession?: NonNullable<PrimarySessionRecoveryOptions["inspect"]>;
   expectedPullRequestHeadSha: string;
   worktreePath: string;
   taskRecordStore: TaskExecutionStore;
@@ -175,6 +181,26 @@ export async function runTaskSessionFeedbackRemediation(
       options.project.id,
       options.card.id,
       { ...options.runOptions, cwd: options.worktreePath, prompt },
+      options.inspectPrimarySession === undefined
+        ? {}
+        : { inspect: options.inspectPrimarySession },
+      {
+        role: "primary",
+        operationId: options.operationId,
+        activity: "feedback-remediation",
+        inspectPending: (entry) =>
+          inspectPrimaryOperationEvidence(
+            options.taskRecordStore,
+            options.card.id,
+            entry.id,
+            {
+              trustedRoot:
+                ProjectRunAuthority.current(options.project.id)?.store
+                  .storageRoot ?? getProcessRuntime().artifactRoot,
+              cwd: options.worktreePath,
+            },
+          ),
+      },
     );
     if (runResult.exitCode !== 0)
       throw new Error(
@@ -182,7 +208,9 @@ export async function runTaskSessionFeedbackRemediation(
       );
   } catch (error) {
     const current = options.taskRecordStore.read(options.card.id);
+    const primaryRecovery = findPrimaryRecoveryError(error);
     if (
+      primaryRecovery === undefined &&
       current !== null &&
       current.feedbackRemediation?.operationId === options.operationId
     ) {

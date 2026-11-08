@@ -1437,6 +1437,50 @@ export class RunStore {
     if (!run) throw new Error("Attempt must exist before artifact publication");
     return this.persistArtifact(content, mediaType);
   }
+  readArtifact(reference: string): Buffer {
+    if (!/^sha256:[a-f0-9]{64}$/.test(reference))
+      throw new Error("Invalid artifact reference");
+    const digest = reference.slice(7);
+    const expected = path.join(this.artifactDirectory, `sha256-${digest}`);
+    if (
+      path.resolve(expected) !==
+      path.join(
+        path.resolve(this.storageRoot),
+        "artifacts",
+        this.attemptId,
+        `sha256-${digest}`,
+      )
+    )
+      throw new Error("Artifact path identity mismatch");
+    assertNoSymlinkPath(this.artifactDirectory);
+    const fd = fs.openSync(
+      expected,
+      fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
+    );
+    try {
+      const stat = fs.fstatSync(fd);
+      if (!stat.isFile() || stat.size > 16 * 1024 * 1024)
+        throw new Error("Unsafe artifact file");
+      const content = Buffer.alloc(stat.size);
+      let offset = 0;
+      while (offset < content.length) {
+        const count = fs.readSync(
+          fd,
+          content,
+          offset,
+          content.length - offset,
+          offset,
+        );
+        if (count === 0) throw new Error("Artifact changed while reading");
+        offset += count;
+      }
+      if (createHash("sha256").update(content).digest("hex") !== digest)
+        throw new Error("Artifact digest mismatch");
+      return content;
+    } finally {
+      fs.closeSync(fd);
+    }
+  }
   private persistArtifact(
     content: Uint8Array,
     mediaType?: string,

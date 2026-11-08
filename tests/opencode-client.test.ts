@@ -181,15 +181,17 @@ describe("OpenCodeClient", () => {
     const client = new OpenCodeClient(runOpenCode);
     const controller = new AbortController();
 
-    await client.run({
-      cwd: "/worktree",
-      model: "test-model",
-      variant: "high",
-      timeoutMilliseconds: 60_000,
-      prompt: "Continue the task",
-      signal: controller.signal,
-      sessionId: "ses_session-123",
-    });
+    await expect(
+      client.run({
+        cwd: "/worktree",
+        model: "test-model",
+        variant: "high",
+        timeoutMilliseconds: 60_000,
+        prompt: "Continue the task",
+        signal: controller.signal,
+        sessionId: "ses_session-123",
+      }),
+    ).resolves.toMatchObject({ sessionId: "ses_session-123" });
 
     expect(runOpenCode).toHaveBeenCalledWith(
       expect.objectContaining({ sessionId: "ses_session-123" }),

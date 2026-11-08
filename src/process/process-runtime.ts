@@ -1,7 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { redactSecrets } from "../security/redact-secrets.js";
 
@@ -223,6 +223,8 @@ export function beginProcessEvidence(
   let failure: ProcessEvidenceError | undefined;
   return {
     executionId,
+    metadataPath,
+    artifactRoot: executionsRoot,
     get failure() {
       return failure;
     },
@@ -251,11 +253,37 @@ export function beginProcessEvidence(
       try {
         const finishedAt = new Date().toISOString();
         const durationMilliseconds = Date.now() - startedMilliseconds;
+        const { result, ...summary } = fields;
+        let finalStatus = status;
+        let resultArtifact: { path: string; sha256: string } | undefined;
+        if (result !== undefined) {
+          const bytes = Buffer.from(JSON.stringify(result));
+          if (bytes.byteLength > 700 * 1024) finalStatus = "evidence-failure";
+          else {
+            const resultPath = path.join(directory, "result.json");
+            const temporary = `${resultPath}.${randomUUID()}.tmp`;
+            fs.writeFileSync(temporary, bytes, { mode: 0o600, flag: "wx" });
+            fs.renameSync(temporary, resultPath);
+            resultArtifact = {
+              path: "result.json",
+              sha256: createHash("sha256").update(bytes).digest("hex"),
+            };
+          }
+        }
         writeMetadata({
           finishedAt,
           durationMilliseconds,
-          status,
-          ...fields,
+          status: finalStatus,
+          ...(status === "spawn-failure" && fields.pid === undefined
+            ? { dispatchState: "not-dispatched" }
+            : { dispatchState: "dispatched" }),
+          treeStopped:
+            status === "timeout" ||
+            status === "interrupted" ||
+            status === "nonzero" ||
+            status === "success",
+          ...summary,
+          ...(resultArtifact === undefined ? {} : { resultArtifact }),
         });
         taskContext?.recordEvent?.({
           type: "process-finished",
@@ -263,7 +291,7 @@ export function beginProcessEvidence(
           startedAt,
           finishedAt,
           durationMilliseconds,
-          status,
+          status: finalStatus,
           stdoutArtifact: stdoutPath,
           stderrArtifact: stderrPath,
           metadataArtifact: metadataPath,

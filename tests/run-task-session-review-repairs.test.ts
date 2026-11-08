@@ -134,6 +134,74 @@ function fixture() {
 }
 
 describe("runTaskSessionReviewWithRepairs", () => {
+  it("resumes a reserved last-pass repair before review and reuses exact ID and prompt", async () => {
+    const f = fixture();
+    const prompt = "persisted exact repair prompt";
+    const operationId = "operation:review:operation:pass:2";
+    const promptArtifact = f.store.writePrimaryResultArtifact(
+      `${operationId}:prompt`,
+      { prompt, review: f.makeReview("fail") },
+    );
+    const record = f.store.read("card")!;
+    f.store.compareAndSwap("card", record.revision, {
+      ...record,
+      retryCounters: { ...record.retryCounters, review: 2 },
+      reviewRepair: {
+        cycleId: "operation",
+        status: "active",
+        maxAttempts: 2,
+        activePrimaryOperation: { operationId, pass: 2, promptArtifact },
+      },
+      revision: record.revision + 1,
+      updatedAt: new Date().toISOString(),
+    });
+    const order: string[] = [];
+    const reviewRun = vi.fn(async () => {
+      order.push("review");
+      return { review: f.makeReview("pass"), contentIdentity: f.identity };
+    });
+    const repair = vi.fn(
+      async (
+        review: unknown,
+        attempt: number,
+        id: string,
+        exactPrompt?: string,
+      ) => {
+        expect(review).toEqual(expect.objectContaining({ verdict: "fail" }));
+        expect(attempt).toBe(2);
+        expect(id).toBe(operationId);
+        expect(exactPrompt).toBe(prompt);
+        order.push("repair");
+      },
+    );
+    const quality = vi.fn(async () => undefined);
+    await runTaskSessionReviewWithRepairs({
+      store: f.store,
+      projectId: "project",
+      cardId: "card",
+      operationKey: "operation",
+      expectedPrimarySessionId: "primary-session",
+      maxAttempts: 2,
+      runReview: reviewRun,
+      buildRepairPrompt: () => "new prompt must not be used",
+      repair: async (...args) => repair(...args),
+      rerunQuality: quality,
+      getCurrentContentIdentity: async () => f.identity,
+    });
+    expect(reviewRun).toHaveBeenCalledOnce();
+    expect(order).toEqual(["repair", "review"]);
+    expect(repair).toHaveBeenCalledWith(
+      expect.objectContaining({ verdict: "fail" }),
+      2,
+      operationId,
+      prompt,
+    );
+    expect(quality).toHaveBeenCalledOnce();
+    expect(
+      f.store.read("card")?.reviewRepair?.activePrimaryOperation,
+    ).toBeUndefined();
+  });
+
   it("logs bounded structured finding transitions for successful review cycles", async () => {
     const f = fixture();
     const events: string[] = [];

@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { ProjectConfig } from "../src/config/config.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
 import {
+  persistTaskSessionContextWait,
   reconcileTaskSession,
   type TaskSessionRecoverySnapshot,
 } from "../src/task-session/reconcile-task-session.js";
@@ -116,10 +117,300 @@ function fixture(phase: TaskExecutionPhase = "validation") {
       ...(now === undefined ? {} : { now }),
       readAuthoritativeSnapshot: async () => ({ ...baseSnapshot, ...snapshot }),
     });
-  return { project, store, sha, reconcile };
+  return { project, store, sha, worktreePath, reconcile };
 }
 
 describe("reconcileTaskSession", () => {
+  it("routes only confirmed absence to the durable primary reconstruction gate", async () => {
+    const f = fixture();
+    await expect(
+      f.reconcile({ primarySessionAccessible: "confirmed-absent" }),
+    ).resolves.toMatchObject({
+      status: "reconstruction-required",
+      record: { primarySessionId: "session" },
+    });
+    const unknown = fixture();
+    await expect(
+      unknown.reconcile({ primarySessionAccessible: "unknown" }),
+    ).resolves.toMatchObject({ status: "waiting" });
+    const conflict = fixture();
+    await expect(
+      conflict.reconcile({ primarySessionAccessible: "conflict" }),
+    ).resolves.toMatchObject({ status: "attention-required" });
+  });
+  it("does not authorize reconstruction when card, worktree, or PR evidence is unsafe", async () => {
+    const moved = fixture();
+    await expect(
+      moved.reconcile({
+        primarySessionAccessible: "confirmed-absent",
+        trelloListId: "operator-moved",
+      }),
+    ).resolves.toMatchObject({ status: "waiting" });
+    const wrongBranch = fixture();
+    await expect(
+      wrongBranch.reconcile({
+        primarySessionAccessible: "confirmed-absent",
+        worktreeBranch: "agent/other",
+      }),
+    ).resolves.toMatchObject({ status: "attention-required" });
+    const wrongPrHead = fixture("ci");
+    await expect(
+      wrongPrHead.reconcile({
+        primarySessionAccessible: "confirmed-absent",
+        pullRequest: {
+          number: 1,
+          url: "https://github.com/o/r/pull/1",
+          headSha: "b".repeat(40),
+          state: "OPEN",
+        },
+      }),
+    ).resolves.toMatchObject({ status: "attention-required" });
+  });
+  it("keeps a captured replacement bound but blocked until reconstruction is verified", async () => {
+    const f = fixture();
+    const current = f.store.read("card")!;
+    f.store.compareAndSwap("card", current.revision, {
+      ...current,
+      sessionRecovery: {
+        originalSessionId: "session",
+        replacementSessionIds: ["replacement"],
+        status: "replacement-bound",
+      },
+      primarySessionId: "replacement",
+      revision: current.revision + 1,
+      updatedAt: "2026-10-24T09:00:00.001Z",
+    });
+    await expect(
+      f.reconcile({ primarySessionAccessible: "reachable" }),
+    ).resolves.toMatchObject({ status: "reconstruction-required" });
+    const bound = f.store.read("card")!;
+    f.store.compareAndSwap("card", bound.revision, {
+      ...bound,
+      sessionRecovery: {
+        ...bound.sessionRecovery!,
+        status: "reconstruction-blocked",
+      },
+      revision: bound.revision + 1,
+      updatedAt: "2026-10-24T09:00:00.002Z",
+    });
+    await expect(
+      f.reconcile({ primarySessionAccessible: "reachable" }),
+    ).resolves.toMatchObject({ status: "attention-required" });
+  });
+  it("applies the primary recovery gate after publication checkpoint validation", async () => {
+    const f = fixture("publication");
+    await expect(
+      f.reconcile({
+        primarySessionAccessible: "confirmed-absent",
+        trustedCommitSha: f.sha,
+        worktreeHeadSha: f.sha,
+      }),
+    ).resolves.toMatchObject({ status: "reconstruction-required" });
+  });
+  it("keeps process-failed reconstruction policy-pending while safety violations require attention", async () => {
+    const processFailed = fixture();
+    const failed = processFailed.store.read("card")!;
+    processFailed.store.compareAndSwap("card", failed.revision, {
+      ...failed,
+      sessionRecovery: {
+        originalSessionId: "session",
+        status: "reconstruction-process-failed",
+      },
+      revision: failed.revision + 1,
+      updatedAt: "2026-10-24T09:00:00.001Z",
+    });
+    await expect(
+      processFailed.reconcile({ primarySessionAccessible: "reachable" }),
+    ).resolves.toMatchObject({ status: "waiting" });
+    const boundaryFailed = fixture();
+    const blocked = boundaryFailed.store.read("card")!;
+    boundaryFailed.store.compareAndSwap("card", blocked.revision, {
+      ...blocked,
+      sessionRecovery: {
+        originalSessionId: "session",
+        status: "reconstruction-blocked",
+      },
+      revision: blocked.revision + 1,
+      updatedAt: "2026-10-24T09:00:00.001Z",
+    });
+    await expect(
+      boundaryFailed.reconcile({ primarySessionAccessible: "reachable" }),
+    ).resolves.toMatchObject({ status: "attention-required" });
+  });
+  it("presents unavailable reconstruction evidence as a paced T1 wait and reopens the gate after recovery", async () => {
+    const f = fixture();
+    const record = f.store.read("card")!;
+    const waiting = persistTaskSessionContextWait(
+      f.store,
+      record,
+      {
+        project: f.project,
+        cardId: record.cardId,
+        expectedBranch: record.expectedBranch!,
+        operationKey: record.operationKey,
+        worktreePath: f.worktreePath,
+        taskRecordStore: f.store,
+        retryIntervalMs: 1_000,
+        now: () => Date.parse("2026-10-24T09:00:00.000Z"),
+        readAuthoritativeSnapshot: async () => {
+          throw new Error("not invoked");
+        },
+      },
+      "Current Trello attachment context is temporarily unavailable",
+    );
+    expect(waiting).toMatchObject({
+      status: "waiting",
+      record: {
+        sessionRecovery: { contextAvailability: "unavailable" },
+      },
+    });
+    await expect(
+      f.reconcile({ primarySessionAccessible: "reachable" }, () =>
+        Date.parse("2026-10-24T09:00:00.500Z"),
+      ),
+    ).resolves.toMatchObject({ status: "waiting" });
+    await expect(
+      f.reconcile({ primarySessionAccessible: "confirmed-absent" }, () =>
+        Date.parse("2026-10-24T09:00:01.000Z"),
+      ),
+    ).resolves.toMatchObject({ status: "reconstruction-required" });
+  });
+  it("keeps replacement phase and baseline orthogonal to context waits", async () => {
+    for (const status of [
+      "replacement-creating",
+      "replacement-ambiguous",
+      "replacement-bound",
+    ] as const) {
+      const f = fixture();
+      const record = f.store.read("card")!;
+      const baseline = {
+        sourceIdentity: `sha256:${"a".repeat(64)}`,
+        head: f.sha,
+        branch: "agent/card",
+        branchRef: f.sha,
+        refsIdentity: "refs-before",
+      };
+      f.store.compareAndSwap("card", record.revision, {
+        ...record,
+        sessionRecovery: {
+          originalSessionId: "session",
+          status,
+          ...(status === "replacement-bound"
+            ? { reconstructionBaseline: baseline }
+            : {}),
+        },
+        revision: record.revision + 1,
+        updatedAt: "2026-10-24T09:00:00.001Z",
+      });
+      const current = f.store.read("card")!;
+      persistTaskSessionContextWait(
+        f.store,
+        current,
+        {
+          project: f.project,
+          cardId: "card",
+          expectedBranch: "agent/card",
+          operationKey: "operation",
+          worktreePath: f.worktreePath,
+          taskRecordStore: f.store,
+          retryIntervalMs: 1_000,
+          readAuthoritativeSnapshot: async () => {
+            throw new Error("not used");
+          },
+        },
+        "Context service temporarily unavailable",
+      );
+      const waited = f.store.read("card")!;
+      expect(waited.sessionRecovery?.status).toBe(status);
+      expect(waited.sessionRecovery?.contextAvailability).toBe("unavailable");
+      if (status === "replacement-bound")
+        expect(waited.sessionRecovery?.reconstructionBaseline).toEqual(
+          baseline,
+        );
+      const reconciled = await f.reconcile(
+        { primarySessionAccessible: "reachable" },
+        () => Date.now() + 2_000,
+      );
+      expect(reconciled.status).toBe(
+        status === "replacement-bound" ? "reconstruction-required" : "waiting",
+      );
+      expect(f.store.read("card")?.sessionRecovery?.status).toBe(status);
+    }
+  });
+  it("clears context-unavailable state atomically with verified reconstruction and does not dispatch again", async () => {
+    const f = fixture();
+    const baseline = {
+      sourceIdentity: `sha256:${"a".repeat(64)}`,
+      head: f.sha,
+      branch: "agent/card",
+      branchRef: f.sha,
+      refsIdentity: "refs-before",
+    };
+    const initial = f.store.read("card")!;
+    f.store.compareAndSwap("card", initial.revision, {
+      ...initial,
+      sessionRecovery: {
+        originalSessionId: "session",
+        replacementSessionIds: ["replacement"],
+        status: "replacement-bound",
+        reconstructionBaseline: baseline,
+      },
+      primarySessionId: "replacement",
+      revision: initial.revision + 1,
+      updatedAt: "2026-10-24T09:00:00.001Z",
+    });
+    const bound = f.store.read("card")!;
+    persistTaskSessionContextWait(
+      f.store,
+      bound,
+      {
+        project: f.project,
+        cardId: "card",
+        expectedBranch: "agent/card",
+        operationKey: "operation",
+        worktreePath: f.worktreePath,
+        taskRecordStore: f.store,
+        retryIntervalMs: 1_000,
+        readAuthoritativeSnapshot: async () => {
+          throw new Error("not used");
+        },
+      },
+      "Trello context unavailable",
+    );
+    await expect(
+      f.reconcile(
+        { primarySessionAccessible: "reachable" },
+        () => Date.now() + 2_000,
+      ),
+    ).resolves.toMatchObject({ status: "reconstruction-required" });
+    const verifying = f.store.read("card")!;
+    f.store.compareAndSwap("card", verifying.revision, {
+      ...verifying,
+      recoveryWait: undefined,
+      sessionRecovery: {
+        ...verifying.sessionRecovery!,
+        status: "reconstruction-verified",
+        contextAvailability: "available",
+        contextAvailabilityReason: undefined,
+      },
+      revision: verifying.revision + 1,
+      updatedAt: new Date(
+        Math.max(Date.now(), Date.parse(verifying.updatedAt) + 1),
+      ).toISOString(),
+    });
+    await expect(
+      f.reconcile({ primarySessionAccessible: "reachable" }),
+    ).resolves.toMatchObject({ status: "resume" });
+    await expect(
+      f.reconcile({ primarySessionAccessible: "reachable" }),
+    ).resolves.toMatchObject({ status: "resume" });
+    expect(f.store.read("card")?.sessionRecovery).toMatchObject({
+      status: "reconstruction-verified",
+      contextAvailability: "available",
+      reconstructionBaseline: baseline,
+      replacementSessionIds: ["replacement"],
+    });
+  });
   it("worker gate authorizes only a schema-valid due task recovery wait", () => {
     const run = {
       lifecycle: "waiting",

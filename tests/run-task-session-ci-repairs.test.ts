@@ -80,6 +80,68 @@ function fixture() {
 }
 
 describe("runTaskSessionCiRepairs", () => {
+  it("resumes an active final-pass CI repair with its exact durable ID and pass", async () => {
+    const f = fixture();
+    const operationId = "operation:ci:pass:2";
+    const promptArtifact = f.store.writePrimaryResultArtifact(
+      `${operationId}:prompt`,
+      { prompt: "persisted CI prompt" },
+    );
+    const diagnostics = [
+      {
+        name: "Build",
+        headSha: f.sha,
+        logUrl: null,
+        available: true,
+        diagnostic: "persisted build failure",
+      },
+    ];
+    const diagnosticsArtifact = f.store.writePrimaryResultArtifact(
+      `${operationId}:diagnostics`,
+      diagnostics,
+    );
+    const record = f.store.read("card")!;
+    f.store.compareAndSwap("card", record.revision, {
+      ...record,
+      retryCounters: { ...record.retryCounters, ci: 2 },
+      ciRepair: {
+        cycleId: "operation:ci",
+        headSha: f.sha,
+        status: "active",
+        activePrimaryOperation: {
+          operationId,
+          pass: 2,
+          promptArtifact,
+          diagnosticsArtifact,
+        },
+      },
+      revision: record.revision + 1,
+      updatedAt: new Date().toISOString(),
+    });
+    const next = "b".repeat(40);
+    const observeChecks = vi.fn(async (sha: string) =>
+      f.evaluation(sha, sha === f.sha ? "failed" : "passed"),
+    );
+    const result = await runTaskSessionCiRepairs({
+      ...f.base,
+      observeChecks,
+      publishSamePullRequest: async () => next,
+    });
+    expect(result).toMatchObject({
+      status: "passed",
+      attempts: 2,
+      headSha: next,
+    });
+    expect(f.base.repairPrimarySession).toHaveBeenCalledWith(
+      diagnostics,
+      2,
+      "session",
+      operationId,
+    );
+    expect(observeChecks).toHaveBeenCalledExactlyOnceWith(next);
+    expect(f.store.read("card")?.ciRepair?.cycleId).toBe("operation:ci");
+  });
+
   it("waits on queued checks without invoking repair", async () => {
     const f = fixture();
     const result = await runTaskSessionCiRepairs({
@@ -110,7 +172,12 @@ describe("runTaskSessionCiRepairs", () => {
       attempts: 1,
       headSha: next,
     });
-    expect(f.base.repairPrimarySession).toHaveBeenCalledWith([], 1, "session");
+    expect(f.base.repairPrimarySession).toHaveBeenCalledWith(
+      [],
+      1,
+      "session",
+      expect.stringContaining(":ci:"),
+    );
     expect(f.base.rerunLocalGatesAndReview).toHaveBeenCalledOnce();
     expect(f.store.read("card")?.pullRequest?.headSha).toBe(next);
   });

@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
+import { createHash } from "node:crypto";
 import { buildChildEnvironment } from "../process/child-environment.js";
 import fs from "node:fs";
 import os from "node:os";
@@ -1064,6 +1065,18 @@ export class GitClient {
     return output.split("\0").filter((filePath) => filePath.length > 0);
   }
 
+  async getIgnoredFiles(repositoryPath: string): Promise<string[]> {
+    const output = await this.runGit(repositoryPath, [
+      "ls-files",
+      "--others",
+      "--ignored",
+      "--exclude-standard",
+      "--full-name",
+      "-z",
+    ]);
+    return output.split("\0").filter((filePath) => filePath.length > 0);
+  }
+
   async getHeadTrackedFiles(repositoryPath: string): Promise<string[]> {
     const output = await this.runGit(repositoryPath, [
       "ls-tree",
@@ -1268,6 +1281,21 @@ export class GitClient {
     ]);
     if (name.trim() !== ref) return null;
     return this.resolveCommitSha(repositoryPath, ref);
+  }
+
+  /** Stable identity for every ref visible in the shared Git directory. */
+  async getRefsIdentity(repositoryPath: string): Promise<string> {
+    const refs = await this.runGit(repositoryPath, [
+      "for-each-ref",
+      "--format=%(refname) %(objectname)",
+    ]);
+    const canonical = refs
+      .split("\n")
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+      .sort()
+      .join("\n");
+    return `sha256:${createHash("sha256").update(canonical).digest("hex")}`;
   }
 
   async createRefIfAbsent(

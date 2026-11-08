@@ -61,8 +61,8 @@ export async function inspectPrimaryOpenCodeSession(options: {
   sessionId: string;
   signal: AbortSignal;
   timeoutMilliseconds: number;
-}): Promise<boolean | null> {
-  if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/u.test(options.sessionId)) return null;
+}): Promise<"reachable" | "confirmed-absent" | "conflict" | "unknown"> {
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/u.test(options.sessionId)) return "unknown";
   try {
     const result = await options.commands.run({
       cwd: options.cwd,
@@ -74,7 +74,7 @@ export async function inspectPrimaryOpenCodeSession(options: {
       maxCaptureOutputLength: 4 * 1024 * 1024,
       suppressOutput: true,
     });
-    if (result.exitCode !== 0 || result.output === undefined) return null;
+    if (result.exitCode !== 0 || result.output === undefined) return "unknown";
     let sessions: ListedOpenCodeSession[];
     try {
       sessions = parseOpenCodeSessionList(result.output);
@@ -86,16 +86,19 @@ export async function inspectPrimaryOpenCodeSession(options: {
         result,
       );
     }
-    if (sessions.length >= 10_000) return null;
+    if (sessions.length >= 10_000) return "unknown";
     const matching = sessions.filter(({ id }) => id === options.sessionId);
-    if (matching.length > 1) return null;
-    return matching[0]?.directory === path.resolve(options.cwd);
+    if (matching.length > 1) return "conflict";
+    if (matching.length === 0) return "confirmed-absent";
+    return matching[0]!.directory === path.resolve(options.cwd)
+      ? "reachable"
+      : "conflict";
   } catch (error) {
     if (options.signal.aborted)
       // Do not retain the runner error: it may contain untrusted child output.
       // eslint-disable-next-line preserve-caught-error
       throw new Error("OpenCode session inspection aborted");
     if (error instanceof OpenCodeSessionListError) throw error;
-    return null;
+    return "unknown";
   }
 }

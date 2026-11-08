@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ProjectConfig } from "../src/config/config.js";
 import type { GitClient } from "../src/git/git-client.js";
+import { CommandRunner } from "../src/process/command-runner.js";
 import {
   OpenCodeClient,
   OpenCodeRunAbortedError,
@@ -151,11 +152,38 @@ function runImplementation(
     taskRecordStore: fixture.taskRecordStore,
     planStore: fixture.planStore,
     git: fixture.git,
+    recoveryGit: {
+      getHeadSha: async () => "a".repeat(40),
+      getDiff: async () => "diff",
+      getStatus: async () => "",
+      getIndexEntries: async () => "",
+      getUntrackedFiles: async () => [],
+      getHeadTrackedFiles: async () => [],
+    } as Pick<
+      GitClient,
+      | "getHeadSha"
+      | "getDiff"
+      | "getStatus"
+      | "getIndexEntries"
+      | "getUntrackedFiles"
+      | "getHeadTrackedFiles"
+    >,
+    commands: new CommandRunner(async () => ({
+      exitCode: 0,
+      output: JSON.stringify([
+        { id: "ses_primary-task-session", directory: worktreePath },
+      ]),
+    })),
+    recoveryContextRoot: path.join(
+      path.dirname(path.dirname(fixture.worktreePath)),
+      "external-context",
+    ),
     openCode: fixture.openCode,
     project,
     card,
     expectedBranch,
     operationKey,
+    retryIntervalMs: 1_000,
     worktreePath,
     runOptions: {
       model: "implementation-model",
@@ -299,7 +327,7 @@ describe("runTaskSessionImplementation", () => {
     expect(fixture.taskRecordStore.read(card.id)?.phase).toBe("planning");
   });
 
-  it("persists attention-required on a nonzero agent result and preserves work", async () => {
+  it("preserves partial work and waits when a nonzero result lacks authoritative process evidence", async () => {
     const fixture = createFixture();
     fixture.runOpenCode.mockResolvedValue({
       exitCode: 1,
@@ -308,19 +336,17 @@ describe("runTaskSessionImplementation", () => {
     });
 
     await expect(runImplementation(fixture)).rejects.toMatchObject({
-      name: "TaskSessionImplementationError",
-      outcome: "failed",
-      runResult: { exitCode: 1 },
+      name: "TaskSessionImplementationWaitingError",
     });
     expect(fixture.taskRecordStore.read(card.id)).toMatchObject({
-      phase: "attention-required",
-      lastEvent: { type: "attention-required" },
-      terminalFailure: {
-        kind: "implementation",
-        reason: "OpenCode implementation exited with code 1",
-        outcome: "pending",
-      },
+      phase: "implementation",
+      recoveryWait: { resumePhase: "implementation", kind: "dependency" },
     });
+    expect(
+      fixture.taskRecordStore.read(card.id)?.primaryOperations?.[
+        `${operationKey}:implementation`
+      ]?.executions,
+    ).toBe(1);
     expect(fs.readFileSync(fixture.repositorySentinel, "utf8")).toBe(
       "source-checkout-unchanged",
     );
