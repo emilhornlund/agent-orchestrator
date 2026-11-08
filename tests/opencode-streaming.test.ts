@@ -12,7 +12,10 @@ import {
   OpenCodeRunAbortedError,
   OpenCodeTimeoutError,
 } from "../src/opencode/opencode-client.js";
-import { PROCESS_CAPTURE_MAX_BYTES } from "../src/process/process-runtime.js";
+import {
+  configureProcessRuntime,
+  PROCESS_CAPTURE_MAX_BYTES,
+} from "../src/process/process-runtime.js";
 
 interface FakeChild extends EventEmitter {
   pid?: number;
@@ -35,6 +38,10 @@ describe("OpenCode streaming output", () => {
   beforeEach(() => {
     spawnMock.mockReset();
     directory = fs.mkdtempSync(path.join(os.tmpdir(), "opencode-stream-"));
+    configureProcessRuntime({
+      runtimeRoot: path.join(directory, "process-evidence"),
+      signal: new AbortController().signal,
+    });
   });
 
   afterEach(() => {
@@ -114,6 +121,83 @@ describe("OpenCode streaming output", () => {
       child.emit("close", 0);
       await expect(result).resolves.toMatchObject({ exitCode: 0 });
     }
+  });
+
+  it("uses the configured default provider to scope credentials without selecting a model", async () => {
+    const configPath = path.join(directory, "opencode.jsonc");
+    fs.writeFileSync(
+      configPath,
+      '{\n "model": "openai/default-model", // trailing comma with comment\n /* before closing brace */\n}',
+    );
+    const child = fakeChild();
+    spawnMock.mockReturnValue(child);
+    const pending = new OpenCodeClient().run({
+      cwd: directory,
+      timeoutMilliseconds: 60_000,
+      prompt: "use the configured default",
+      signal: new AbortController().signal,
+      environment: {
+        OPENCODE_CONFIG: configPath,
+        OPENAI_API_KEY: "scoped-openai-key",
+        ANTHROPIC_API_KEY: "unrelated-anthropic-key",
+        TRELLO_API_KEY: "unrelated-secret",
+      },
+    });
+    const [, args, options] = spawnMock.mock.calls[0]! as [
+      string,
+      string[],
+      { env: Record<string, string> },
+    ];
+    expect(args).not.toContain("--model");
+    expect(args).not.toContain("--variant");
+    expect(options.env.OPENAI_API_KEY).toBe("scoped-openai-key");
+    expect(options.env).not.toHaveProperty("ANTHROPIC_API_KEY");
+    expect(options.env).not.toHaveProperty("TRELLO_API_KEY");
+    child.emit("close", 0);
+    await expect(pending).resolves.toMatchObject({ exitCode: 0 });
+  });
+
+  it("fails with an actionable auth/config diagnostic when default provider scoping is ambiguous", async () => {
+    const pending = new OpenCodeClient().run({
+      cwd: directory,
+      timeoutMilliseconds: 60_000,
+      prompt: "use the configured default",
+      signal: new AbortController().signal,
+      environment: {
+        OPENAI_API_KEY: "scoped-openai-key",
+        ANTHROPIC_API_KEY: "unrelated-anthropic-key",
+      },
+    });
+    await expect(pending).rejects.toThrow(
+      "OpenCode default model provider could not be resolved safely",
+    );
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  it("does not dispatch a substitute after an explicit model is unavailable", async () => {
+    const child = fakeChild();
+    spawnMock.mockReturnValue(child);
+    const pending = new OpenCodeClient().run({
+      cwd: directory,
+      model: "openai/unavailable-model",
+      variant: "high",
+      timeoutMilliseconds: 60_000,
+      prompt: "use only selected model",
+      signal: new AbortController().signal,
+    });
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    const [, args] = spawnMock.mock.calls[0]! as [string, string[]];
+    expect(args).toContain("openai/unavailable-model");
+    expect(args).toContain("high");
+    child.stderr.emit("data", "Model not found");
+    child.emit("close", 1);
+    await expect(pending).resolves.toMatchObject({
+      exitCode: 1,
+      errorOutput: expect.stringContaining(
+        'Configured OpenCode selection unavailable: model="openai/unavailable-model", variant="high"',
+      ),
+    });
+    expect(spawnMock).toHaveBeenCalledTimes(1);
   });
 
   it("redacts registered PEM literal and encoded forms from the actual OpenCode prompt argument", async () => {

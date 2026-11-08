@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import path from "node:path";
+
 /** Minimal inherited environment contract for each child-process family. */
 export type ChildProcessFamily =
   "command" | "git" | "github" | "opencode" | "flock";
@@ -65,12 +68,152 @@ const openCodeProviderCredentials: Readonly<Record<string, readonly string[]>> =
     ],
   };
 
+export function hasOpenCodeProviderCredentials(
+  supplied: Readonly<Record<string, string | undefined>> = {},
+  parent: Readonly<NodeJS.ProcessEnv> = process.env,
+): boolean {
+  return Object.values(openCodeProviderCredentials)
+    .flat()
+    .some((key) => supplied[key] !== undefined || parent[key] !== undefined);
+}
+
 export function providerFromModel(
   model: string | undefined,
 ): string | undefined {
   if (model === undefined) return undefined;
   const separator = model.indexOf("/");
   return separator <= 0 ? undefined : model.slice(0, separator).toLowerCase();
+}
+
+function stripJsonComments(input: string): string {
+  let output = "";
+  let inString = false;
+  let escaped = false;
+  for (let index = 0; index < input.length; index += 1) {
+    const character = input[index]!;
+    const next = input[index + 1];
+    if (inString) {
+      output += character;
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === '"') inString = false;
+      continue;
+    }
+    if (character === '"') {
+      inString = true;
+      output += character;
+    } else if (character === "/" && next === "/") {
+      while (index < input.length && input[index] !== "\n") index += 1;
+      output += "\n";
+    } else if (character === "/" && next === "*") {
+      index += 2;
+      while (
+        index < input.length &&
+        !(input[index] === "*" && input[index + 1] === "/")
+      ) {
+        output += input[index] === "\n" ? "\n" : " ";
+        index += 1;
+      }
+      index += 1;
+    } else if (character === ",") {
+      let lookahead = index + 1;
+      while (lookahead < input.length) {
+        while (/\s/u.test(input[lookahead] ?? "")) lookahead += 1;
+        if (input[lookahead] === "/" && input[lookahead + 1] === "/") {
+          while (lookahead < input.length && input[lookahead] !== "\n")
+            lookahead += 1;
+          continue;
+        }
+        if (input[lookahead] === "/" && input[lookahead + 1] === "*") {
+          lookahead += 2;
+          while (
+            lookahead < input.length &&
+            !(input[lookahead] === "*" && input[lookahead + 1] === "/")
+          )
+            lookahead += 1;
+          if (lookahead < input.length) lookahead += 2;
+          continue;
+        }
+        break;
+      }
+      if (input[lookahead] !== "}" && input[lookahead] !== "]")
+        output += character;
+    } else {
+      output += character;
+    }
+  }
+  return output;
+}
+
+/** Relative OpenCode config locations resolve from the CLI worktree, not here. */
+export function openCodeDefaultConfigPathIssue(
+  environment: Readonly<NodeJS.ProcessEnv>,
+): string | undefined {
+  for (const [name, value] of [
+    ["OPENCODE_CONFIG", environment.OPENCODE_CONFIG],
+    ["OPENCODE_CONFIG_DIR", environment.OPENCODE_CONFIG_DIR],
+    ["XDG_CONFIG_HOME", environment.XDG_CONFIG_HOME],
+  ] as const) {
+    if (value !== undefined && !path.isAbsolute(value)) {
+      return `${name} must be an absolute path when OpenCode model selection is delegated; relative paths resolve differently from the orchestrator and task worktree`;
+    }
+  }
+  return undefined;
+}
+
+function modelFromConfig(configPath: string): string | undefined {
+  try {
+    const stat = fs.statSync(configPath);
+    if (!stat.isFile() || stat.size > 1_048_576) return undefined;
+    const parsed: unknown = JSON.parse(
+      stripJsonComments(fs.readFileSync(configPath, "utf8")),
+    );
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+      return undefined;
+    const model = Reflect.get(parsed, "model");
+    return typeof model === "string" && model.trim().length > 0
+      ? model
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Resolve only OpenCode's configured default provider; never select a model. */
+export function providerForOpenCodeDefault(
+  environment: Readonly<NodeJS.ProcessEnv>,
+): string | undefined {
+  const home = environment.HOME ?? environment.USERPROFILE;
+  const customFile = environment.OPENCODE_CONFIG;
+  const configDirectory = environment.OPENCODE_CONFIG_DIR;
+  const xdgDirectory = environment.XDG_CONFIG_HOME;
+  const userDirectory =
+    home === undefined ? undefined : path.join(home, ".config");
+  const roots = [
+    ...(customFile === undefined ? [] : [customFile]),
+    ...(configDirectory !== undefined
+      ? [
+          path.join(configDirectory, "opencode.json"),
+          path.join(configDirectory, "opencode.jsonc"),
+        ]
+      : xdgDirectory !== undefined
+        ? [
+            path.join(xdgDirectory, "opencode", "opencode.json"),
+            path.join(xdgDirectory, "opencode", "opencode.jsonc"),
+          ]
+        : userDirectory === undefined
+          ? []
+          : [
+              path.join(userDirectory, "opencode", "opencode.json"),
+              path.join(userDirectory, "opencode", "opencode.jsonc"),
+            ]),
+  ];
+  // Read only operator-owned configuration paths, never project/worktree files.
+  for (const file of roots) {
+    const provider = providerFromModel(modelFromConfig(file));
+    if (provider !== undefined) return provider;
+  }
+  return undefined;
 }
 
 export function buildChildEnvironment(

@@ -2,7 +2,10 @@ import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import {
   buildChildEnvironment,
+  hasOpenCodeProviderCredentials,
+  openCodeDefaultConfigPathIssue,
   providerFromModel,
+  providerForOpenCodeDefault,
 } from "../process/child-environment.js";
 
 import { logger } from "../logging/logger.js";
@@ -35,8 +38,8 @@ export interface OpenCodeRunOptions {
     artifactRoot: string;
   }) => void | Promise<void>;
   cwd: string;
-  model: string;
-  variant: string;
+  model?: string | undefined;
+  variant?: string | undefined;
   timeoutMilliseconds: number;
   prompt: string;
   signal: AbortSignal;
@@ -64,6 +67,16 @@ export class OpenCodeRunAbortedError extends Error {
   }
 }
 
+export class OpenCodeDefaultProviderResolutionError extends Error {
+  constructor(message?: string) {
+    super(
+      message ??
+        "OpenCode default model provider could not be resolved safely for environment credential scoping; configure the OpenCode default model in its supported config or authenticate that default provider through OpenCode's own auth store",
+    );
+    this.name = "OpenCodeDefaultProviderResolutionError";
+  }
+}
+
 export class OpenCodeTimeoutError extends Error {
   public readonly treeStopped: boolean;
   public readonly executionId: string | undefined;
@@ -84,6 +97,35 @@ export class OpenCodeTimeoutError extends Error {
 export type RunOpenCode = (
   options: OpenCodeRunOptions,
 ) => Promise<OpenCodeRunResult>;
+
+/** Add an exact configured selection only when the CLI reports it as invalid. */
+export function reportUnavailableOpenCodeSelection(
+  result: OpenCodeRunResult,
+  selection: Pick<OpenCodeRunOptions, "model" | "variant">,
+): OpenCodeRunResult {
+  if (result.exitCode === 0) return result;
+  const diagnostic = `${result.output}\n${result.errorOutput}`;
+  if (
+    !/\b(?:unknown|unsupported|not found|does not exist)\b.{0,80}\b(?:model|variant)\b|\b(?:model|variant)\b.{0,80}\b(?:unknown|unsupported|not found|does not exist)\b/iu.test(
+      diagnostic,
+    ) ||
+    (selection.model === undefined && selection.variant === undefined)
+  ) {
+    return result;
+  }
+  const selected = [
+    selection.model === undefined
+      ? undefined
+      : `model=${JSON.stringify(selection.model)}`,
+    selection.variant === undefined
+      ? undefined
+      : `variant=${JSON.stringify(selection.variant)}`,
+  ].filter((value) => value !== undefined);
+  return {
+    ...result,
+    errorOutput: `${result.errorOutput}${result.errorOutput.length === 0 ? "" : "\n"}Configured OpenCode selection unavailable: ${selected.join(", ")}`,
+  };
+}
 
 type OpenCodeArgumentOptions = Pick<
   OpenCodeRunOptions,
@@ -131,10 +173,8 @@ export function buildOpenCodeArguments(
   return [
     "run",
     "--auto",
-    "--model",
-    model,
-    "--variant",
-    variant,
+    ...(model === undefined ? [] : ["--model", model]),
+    ...(variant === undefined ? [] : ["--variant", variant]),
     "--dir",
     cwd,
     ...(sessionId === undefined ? [] : ["--session", sessionId]),
@@ -364,18 +404,38 @@ const defaultRunOpenCode: RunOpenCode = async ({
           sessionLogPath,
           [
             `Working directory: ${cwd}`,
-            `Model: ${model}`,
-            `Variant: ${variant}`,
+            `Model: ${model ?? "OpenCode default"}`,
+            `Variant: ${variant ?? "OpenCode default"}`,
             "",
           ].join("\n"),
         );
       }
 
       const execution = beginProcessEvidence(
-        `opencode run --model ${model} --variant ${variant}`,
+        `opencode run${model === undefined ? "" : ` --model ${model}`}${variant === undefined ? "" : ` --variant ${variant}`}`,
         cwd,
         secretValues,
       );
+
+      const environmentSource = { ...process.env, ...environment };
+      const configPathIssue = openCodeDefaultConfigPathIssue(environmentSource);
+      if (model === undefined && configPathIssue !== undefined) {
+        execution.finish("not-dispatched");
+        reject(new OpenCodeDefaultProviderResolutionError(configPathIssue));
+        return;
+      }
+      const effectiveProvider =
+        providerFromModel(model) ??
+        providerForOpenCodeDefault(environmentSource);
+      if (
+        model === undefined &&
+        effectiveProvider === undefined &&
+        hasOpenCodeProviderCredentials(environment, process.env)
+      ) {
+        execution.finish("not-dispatched");
+        reject(new OpenCodeDefaultProviderResolutionError());
+        return;
+      }
 
       try {
         if (onExecutionPrepared !== undefined)
@@ -393,8 +453,8 @@ const defaultRunOpenCode: RunOpenCode = async ({
         "opencode",
         buildOpenCodeArguments({
           cwd,
-          model,
-          variant,
+          ...(model === undefined ? {} : { model }),
+          ...(variant === undefined ? {} : { variant }),
           prompt: redactSecrets(prompt, secretValues),
           ...(sessionId === undefined ? {} : { sessionId }),
           ...(captureSessionId === undefined ? {} : { captureSessionId }),
@@ -408,7 +468,7 @@ const defaultRunOpenCode: RunOpenCode = async ({
               "opencode",
               environment,
               process.env,
-              providerFromModel(model),
+              effectiveProvider,
             ),
             OPENCODE_CONFIG_CONTENT: buildOpenCodeConfigContent(readOnly),
           },
@@ -717,12 +777,17 @@ const defaultRunOpenCode: RunOpenCode = async ({
           return;
         }
 
-        resolve({
-          exitCode: code ?? 1,
-          output,
-          errorOutput,
-          processExecutionId: execution.executionId,
-        });
+        resolve(
+          reportUnavailableOpenCodeSelection(
+            {
+              exitCode: code ?? 1,
+              output,
+              errorOutput,
+              processExecutionId: execution.executionId,
+            },
+            { model, variant },
+          ),
+        );
       });
     })().catch(reject);
   });

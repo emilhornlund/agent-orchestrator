@@ -65,12 +65,25 @@ const projectConfig = (
 
 describe("production workflow recovery of reserved review repairs", () => {
   it.each([
-    ["implementation before primary dispatch", "implementation", false, false],
-    ["implementation after result persistence", "implementation", true, false],
+    [
+      "implementation before primary dispatch",
+      "implementation",
+      false,
+      false,
+      false,
+    ],
+    [
+      "implementation after result persistence",
+      "implementation",
+      true,
+      false,
+      false,
+    ],
     [
       "validation before reservation clearance at last pass",
       "validation",
       true,
+      false,
       false,
     ],
     [
@@ -78,12 +91,15 @@ describe("production workflow recovery of reserved review repairs", () => {
       "implementation",
       true,
       true,
+      false,
     ],
+    ["recovery with OpenCode defaults", "implementation", false, false, true],
   ] as const)(
     "recovers %s before generic gates",
-    async (_name, phase, completed, twoPass) => {
+    async (_name, phase, completed, twoPass, useDefaults) => {
       root = fs.mkdtempSync(path.join(os.tmpdir(), "review-repair-workflow-"));
       const project = projectConfig(root);
+      if (useDefaults) project.opencode.remediation = { maxPasses: 1 };
       if (twoPass) project.opencode.remediation.maxPasses = 2;
       fs.mkdirSync(project.repository.path, { recursive: true });
       const worktree = path.join(project.repository.worktreeRoot, "card");
@@ -256,8 +272,12 @@ describe("production workflow recovery of reserved review repairs", () => {
       const github = {
         findPullRequestState: vi.fn(async () => null),
       } as unknown as GitHubClient;
-      const primaryDispatches: Array<{ prompt: string; sessionId?: string }> =
-        [];
+      const primaryDispatches: Array<{
+        prompt: string;
+        sessionId?: string;
+        model?: string;
+        variant?: string;
+      }> = [];
       const order: string[] = [];
       let restartingSecondPass = false;
       let secondPassDispatch:
@@ -307,6 +327,10 @@ describe("production workflow recovery of reserved review repairs", () => {
           order.push("repair");
           primaryDispatches.push({
             prompt: options.prompt,
+            ...(options.model === undefined ? {} : { model: options.model }),
+            ...(options.variant === undefined
+              ? {}
+              : { variant: options.variant }),
             ...(options.sessionId === undefined
               ? {}
               : { sessionId: options.sessionId }),
@@ -444,7 +468,13 @@ describe("production workflow recovery of reserved review repairs", () => {
       expect(primaryDispatches).toEqual(
         completed
           ? []
-          : [{ prompt: exactPrompt, sessionId: "primary-session" }],
+          : [
+              {
+                prompt: exactPrompt,
+                sessionId: "primary-session",
+                ...(useDefaults ? {} : { model: "repair", variant: "high" }),
+              },
+            ],
       );
       expect(
         runOpenCode.mock.calls.some(([options]) =>

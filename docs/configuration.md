@@ -370,13 +370,16 @@ required for projects using a GitHub App.
 
 ### `projects[].opencode`
 
-Each stage requires a non-blank `model` and `variant`:
+Each activity accepts optional non-blank `model` and `variant` selections. Omit either setting independently to let OpenCode use its own configured default; the orchestrator does not substitute another model or variant.
+When a default-provider environment credential is needed, the orchestrator scopes it using the provider in the operator-owned OpenCode config. It does not inspect task worktree configuration or forward unrelated provider credentials. If it cannot resolve that provider safely, the run fails with an actionable config/auth diagnostic; authenticate the default provider through OpenCode's auth store or configure its default model.
 
 | Stage            | Used for                                                           |
 | ---------------- | ------------------------------------------------------------------ |
 | `refinement`     | Refining a Trello task and classifying it                          |
+| `planning`       | Creating the task-session plan                                     |
 | `implementation` | Initial implementation and implementation of human review feedback |
 | `review`         | Independent review pass                                            |
+| `planReview`     | Independent verification of the task-session plan                  |
 | `remediation`    | Addressing review findings; includes the automatic pass limit      |
 | `commit`         | Final commit and post-commit pull-request-description sessions     |
 
@@ -395,6 +398,8 @@ generated after publication rebasing. A standalone deterministic renderer define
 status-marker pair. Publication wiring uses this renderer for newly created pull requests; configuring the `commit` model does not
 allow it to choose headings, links, footer text, or status markers. Existing open pull requests are reused without description
 updates.
+
+`planning` and `planReview` use the same optional `model`/`variant` shape as other stages. The remaining configured consumers are `refinement`, `implementation`, `review`, `remediation`, and `commit`. These values are scoped to their project and activity.
 
 The `remediation` stage also accepts the optional `maxPasses` setting:
 

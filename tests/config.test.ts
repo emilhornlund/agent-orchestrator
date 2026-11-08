@@ -231,6 +231,62 @@ describe("parseConfig", () => {
     expect(config.notifications).toBeUndefined();
   });
 
+  it("allows each activity selection to be omitted or configured independently", () => {
+    const defaults = parseConfig(
+      validConfig
+        .replace(/^\s+(?:model|variant): .*\n/gmu, "")
+        .replace(
+          /^([ ]{6}(?:refinement|implementation|review|remediation|commit):)\n/gmu,
+          "$1 {}\n",
+        ),
+    ).projects[0]!;
+    expect(defaults.opencode.refinement).toEqual({});
+    expect(defaults.opencode.implementation).toEqual({});
+    expect(defaults.opencode.review).toEqual({});
+    expect(defaults.opencode.remediation).toEqual({ maxPasses: 1 });
+    expect(defaults.opencode.commit).toEqual({});
+
+    const partial = parseConfig(
+      validConfig
+        .replace(
+          '      refinement:\n        model: "openai/refinement-model"\n        variant: "xhigh"',
+          '      refinement:\n        model: "openai/selected-model"',
+        )
+        .replace(
+          '      review:\n        model: "openai/review-model"\n        variant: "high"',
+          '      review:\n        variant: "selected-variant"',
+        )
+        .replace(
+          '      commit:\n        model: "openai/commit-model"\n        variant: "low"',
+          '      commit:\n        model: "openai/commit-model"\n        variant: "low"\n      planning:\n        variant: "planning-variant"\n      planReview:\n        model: "openai/plan-review"',
+        ),
+    ).projects[0]!;
+    expect(partial.opencode.refinement).toEqual({
+      model: "openai/selected-model",
+    });
+    expect(partial.opencode.review).toEqual({ variant: "selected-variant" });
+    expect(partial.opencode.planning).toEqual({ variant: "planning-variant" });
+    expect(partial.opencode.planReview).toEqual({
+      model: "openai/plan-review",
+    });
+
+    const secondProject = appendProject(
+      validConfig,
+      "project-two",
+      "two",
+    ).replace(
+      'model: "openai/refinement-model"\n        variant: "xhigh"\n      implementation:',
+      'model: "openai/project-two-model"\n        variant: "project-two-variant"\n      implementation:',
+    );
+    const isolated = parseConfig(secondProject);
+    expect(
+      isolated.projects.map((project) => project.opencode.refinement),
+    ).toEqual([
+      { model: "openai/project-two-model", variant: "project-two-variant" },
+      { model: "openai/refinement-model", variant: "xhigh" },
+    ]);
+  });
+
   it("accepts opt-in pull request maintenance", () => {
     const config = parseConfig(
       validConfig.replace(

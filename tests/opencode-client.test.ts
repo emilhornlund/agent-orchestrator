@@ -8,6 +8,7 @@ import {
   OpenCodeSessionIdCaptureError,
   OpenCodeTimeoutError,
   parseOpenCodeSessionId,
+  reportUnavailableOpenCodeSelection,
   signalProcessTree,
   type RunOpenCode,
 } from "../src/opencode/opencode-client.js";
@@ -46,6 +47,64 @@ describe("OpenCodeClient", () => {
       "/worktree",
       "Implement the task",
     ]);
+  });
+
+  it("omits absent model and variant arguments independently", () => {
+    const common = { cwd: "/worktree", prompt: "prompt" };
+    expect(buildOpenCodeArguments(common)).toEqual([
+      "run",
+      "--auto",
+      "--dir",
+      "/worktree",
+      "prompt",
+    ]);
+    expect(
+      buildOpenCodeArguments({ ...common, model: "provider/model" }),
+    ).toEqual([
+      "run",
+      "--auto",
+      "--model",
+      "provider/model",
+      "--dir",
+      "/worktree",
+      "prompt",
+    ]);
+    expect(buildOpenCodeArguments({ ...common, variant: "high" })).toEqual([
+      "run",
+      "--auto",
+      "--variant",
+      "high",
+      "--dir",
+      "/worktree",
+      "prompt",
+    ]);
+    expect(
+      buildOpenCodeArguments({
+        ...common,
+        model: "provider/model",
+        variant: "high",
+      }),
+    ).toContain("--model");
+  });
+
+  it("reports explicit unavailable selections without recasting service errors", () => {
+    const unavailable = reportUnavailableOpenCodeSelection(
+      { exitCode: 1, output: "", errorOutput: "Model not found" },
+      { model: "provider/missing", variant: "high" },
+    );
+    expect(unavailable.errorOutput).toContain(
+      'Configured OpenCode selection unavailable: model="provider/missing", variant="high"',
+    );
+    const transient = reportUnavailableOpenCodeSelection(
+      {
+        exitCode: 1,
+        output: "",
+        errorOutput: "Service temporarily unavailable",
+      },
+      { model: "provider/selected" },
+    );
+    expect(transient.errorOutput).toBe("Service temporarily unavailable");
+    expect(transient.exitCode).toBe(1);
   });
 
   it("adds only the explicit session argument when a session ID is provided", () => {

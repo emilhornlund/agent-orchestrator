@@ -4247,7 +4247,14 @@ export async function runTaskSessionWorkflow(
           projectId: project.id,
           card: activeCard,
           ...(attachmentContext === undefined ? {} : { attachmentContext }),
-          runOptions: { ...commonRunOptions, cwd: worktreePath },
+          runOptions: {
+            timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
+            signal,
+            sessionLabel: "Task-session planning",
+            sessionLogPath,
+            ...(project.opencode.planning ?? {}),
+            cwd: worktreePath,
+          },
         });
         cardLog.event("Planning completed");
       }
@@ -4265,8 +4272,7 @@ export async function runTaskSessionWorkflow(
           ...(attachmentContext === undefined ? {} : { attachmentContext }),
           runOptions: {
             cwd: worktreePath,
-            model: project.opencode.review.model,
-            variant: project.opencode.review.variant,
+            ...project.opencode.planReview,
             timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
             signal,
             readOnly: true,
@@ -4411,7 +4417,15 @@ export async function runTaskSessionWorkflow(
           openCode,
           project.id,
           activeCard.id,
-          { ...commonRunOptions, cwd: worktreePath, prompt },
+          {
+            ...project.opencode.remediation,
+            timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
+            signal,
+            sessionLabel: "Task-session review remediation",
+            sessionLogPath,
+            cwd: worktreePath,
+            prompt,
+          },
           { inspect: inspectSessionForWorktree(worktreePath) },
           {
             role: "primary",
@@ -5143,7 +5157,11 @@ export async function runTaskSessionWorkflow(
               project.id,
               activeCard.id,
               {
-                ...commonRunOptions,
+                ...project.opencode.remediation,
+                timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
+                signal,
+                sessionLabel: "Task-session review remediation",
+                sessionLogPath,
                 cwd: worktreePath,
                 prompt,
               },
