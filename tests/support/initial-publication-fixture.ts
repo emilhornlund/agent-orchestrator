@@ -15,7 +15,10 @@ import {
   type TrelloCard,
   type TrelloClient,
 } from "../../src/trello/trello-client.js";
-import { RunStore } from "../../src/task-session/run-store.js";
+import {
+  RunStore,
+  type RunStoreLease,
+} from "../../src/task-session/run-store.js";
 import { ProjectRunAuthority } from "../../src/task-session/project-run-authority.js";
 import type { RunRecord } from "../../src/task-session/run-record.js";
 import { TaskExecutionStore } from "../../src/task-session/task-execution-store.js";
@@ -30,6 +33,8 @@ interface ServiceState {
   loseMoveResponse: boolean;
   wrongMove: boolean;
   rejectMove: boolean;
+  secondReady?: boolean;
+  loseCommentResponse?: boolean;
   requests: {
     url: string;
     title: string;
@@ -102,6 +107,20 @@ export class PublicationServices {
     };
   }
   github = {
+    getCiObservations: async ({ headSha }: { headSha: string }) => ({
+      headSha,
+      checks: [],
+      expectationSources: [
+        {
+          kind: "repository-rules",
+          sourceId: "fixture",
+          complete: true,
+          checkNames: ["Build"],
+        },
+      ],
+    }),
+    findChangesRequestedPullRequest: async () => null,
+    getPullRequestConversationComments: async () => [],
     findPullRequestState: async (): Promise<PullRequestState | null> => {
       this.ledger("pr-read");
       const state = this.read();
@@ -158,9 +177,22 @@ export class PublicationServices {
       this.ledger(`trello-read:${list}`);
       const state = this.read();
       if (state.trelloOutage) throw new Error("Trello unavailable");
-      return state.list === list ? [this.card()] : [];
+      return state.list === list
+        ? [this.card()]
+        : list === "ready" && state.secondReady
+          ? [
+              {
+                ...this.card("ready"),
+                id: "second",
+                name: "Second eligible task",
+                url: "https://trello.com/c/second",
+              },
+            ]
+          : [];
     },
     moveCard: async (_card: string, list: string) => {
+      this.ledger(`move-card:${_card}`);
+      if (_card !== "card") throw new Error("Second task must remain excluded");
       this.ledger("move-request");
       const state = this.read();
       if (state.trelloOutage) throw new Error("Trello unavailable");
@@ -190,6 +222,8 @@ export class PublicationServices {
       state.comments.push({ id: `comment-${state.comments.length + 1}`, text });
       this.save(state);
       this.ledger("comment-accept");
+      if (state.loseCommentResponse)
+        throw new Error("Comment response lost after acceptance");
       return {
         id: state.comments.at(-1)!.id,
         type: "commentCard",
@@ -199,7 +233,11 @@ export class PublicationServices {
   } as unknown as TrelloClient;
 }
 
-export function reopenPublicationFixture(root: string, token = "lease") {
+export function reopenPublicationFixture(
+  root: string,
+  token = "lease",
+  heldLease?: RunStoreLease,
+) {
   const project = JSON.parse(
     fs.readFileSync(path.join(root, "project.json"), "utf8"),
   ) as ProjectConfig & { contextRoot: string };
@@ -229,7 +267,7 @@ export function reopenPublicationFixture(root: string, token = "lease") {
       )
     ).stdout.trim(),
   );
-  const lease = {
+  const lease = heldLease ?? {
     integrationId: "integration",
     instanceId: "owner",
     token,
@@ -241,11 +279,11 @@ export function reopenPublicationFixture(root: string, token = "lease") {
     lease,
   )!;
   let record = store.read()!;
-  if (record.owner.token !== token)
+  if (record.owner.token !== lease.token)
     record = store.takeOwnership(
       record.revision,
       record.owner.generation,
-      token,
+      lease.token,
     );
   const authority = new ProjectRunAuthority(
     project.id,
@@ -263,7 +301,10 @@ export function reopenPublicationFixture(root: string, token = "lease") {
   };
 }
 
-export function createPublicationFixture(root: string) {
+export function createPublicationFixture(
+  root: string,
+  heldLease?: RunStoreLease,
+) {
   const isolated = createIsolatedGitFixture(root);
   const source = path.join(root, "source"),
     remote = path.join(root, "remote.git"),
@@ -318,6 +359,10 @@ export function createPublicationFixture(root: string) {
       backlogListId: "backlog",
       doneListId: "done",
       failedListId: "failed",
+      featureLabelId: "feature",
+      refinementLabelId: "refinement",
+      improvementLabelId: "improvement",
+      bugLabelId: "bug",
     },
     opencode: { timeoutMinutes: 1 },
   } as ProjectConfig & { contextRoot: string };
@@ -327,7 +372,7 @@ export function createPublicationFixture(root: string) {
     JSON.stringify(isolated.env),
   );
   const pinned: RunRecord["pinned"] = {
-    integrationId: "integration",
+    integrationId: heldLease?.integrationId ?? "integration",
     projectId: "p",
     boardId: "board",
     lists: {
@@ -343,12 +388,13 @@ export function createPublicationFixture(root: string) {
     worktreeRoot: worktrees,
     storageRoot: state,
   };
-  const store = new RunStore(state, "attempt", pinned, {
+  const lease = heldLease ?? {
     integrationId: "integration",
     instanceId: "owner",
     token: "lease",
     assertHeld() {},
-  });
+  };
+  const store = new RunStore(state, "attempt", pinned, lease);
   store.create({
     version: 1,
     revision: 1,
@@ -362,7 +408,7 @@ export function createPublicationFixture(root: string) {
     publicationState: "none",
     operation: { id: "operation", kind: "publication", generation: 1 },
     wait: { reason: null, dependency: null, since: null, retryAt: null },
-    owner: { instanceId: "owner", token: "lease", generation: 1 },
+    owner: { instanceId: lease.instanceId, token: lease.token, generation: 1 },
     resources: [],
     pendingOperations: [],
     queue: [],
@@ -393,7 +439,7 @@ export function createPublicationFixture(root: string) {
     } satisfies ServiceState),
   );
   fs.writeFileSync(path.join(root, "service-ledger.jsonl"), "");
-  const fixture = reopenPublicationFixture(root);
+  const fixture = reopenPublicationFixture(root, lease.token, heldLease);
   fixture.authority.run(() => {
     const taskStore = new TaskExecutionStore(state, project);
     taskStore.create({

@@ -204,161 +204,175 @@ describe("notification authority through production polling and workers", () => 
     ).toBeDefined();
     expect(a.outbox().records()[0]?.dispatches).toHaveLength(0);
   }, 30_000);
-  it("finishes/refines/releases A with broken delivery storage while B progresses, then recovers the original event after later movement", async () => {
-    const [a, b] = await setup(["a", "b"]);
-    if (!a || !b) throw new Error("Missing fixture");
-    fs.writeFileSync(
-      path.join(a.pinned.storageRoot, "notifications"),
-      "delivery storage unavailable",
-    );
-    const controller = new AbortController();
-    const worker = runOrchestrator(
-      a.trello,
-      a.git,
-      a.github,
-      a.openCode,
-      a.commands,
-      { ...a.config, projects: [a.project, b.project] },
-      controller.signal,
-      a.notifier,
-      undefined,
-      new Map([
-        ["a", a.context],
-        ["b", b.context],
-      ]),
-    );
-    // One injected OpenCode/Git implementation serves both independently pinned projects.
-    try {
-      await vi.waitFor(
-        () => {
-          expect(a.authority.store.read()?.lifecycle).toBe("refined");
-          expect(b.authority.store.read()?.lifecycle).toBe("refined");
-          for (const f of [a, b])
+  it.each([false, true])(
+    "finishes/refines/releases A with broken delivery storage while B progresses, then recovers the original event after later movement (shared root: %s)",
+    async (sharedRoot) => {
+      const [a, b] = await setup(["a", "b"], sharedRoot);
+      if (!a || !b) throw new Error("Missing fixture");
+      const deliveryDirectory = path.join(
+        a.pinned.storageRoot,
+        "notifications",
+      );
+      fs.mkdirSync(deliveryDirectory, { recursive: true });
+      const brokenPath = path.join(
+        deliveryDirectory,
+        createHash("sha256").update(a.project.id).digest("hex"),
+      );
+      fs.writeFileSync(brokenPath, "delivery storage unavailable");
+      const controller = new AbortController();
+      const worker = runOrchestrator(
+        a.trello,
+        a.git,
+        a.github,
+        a.openCode,
+        a.commands,
+        { ...a.config, projects: [a.project, b.project] },
+        controller.signal,
+        a.notifier,
+        undefined,
+        new Map([
+          ["a", a.context],
+          ["b", b.context],
+        ]),
+      );
+      // One injected OpenCode/Git implementation serves both independently pinned projects.
+      try {
+        await vi.waitFor(
+          () => {
+            expect(a.authority.store.read()?.lifecycle).toBe("refined");
+            expect(b.authority.store.read()?.lifecycle).toBe("refined");
+            for (const f of [a, b])
+              expect(
+                f.authority.run(() =>
+                  new TaskMutationQueue(
+                    f.pinned.storageRoot,
+                    f.project,
+                  ).getActive(),
+                ),
+              ).toBeNull();
+          },
+          { timeout: 15_000 },
+        );
+      } finally {
+        controller.abort();
+        await worker;
+      }
+      for (const f of [a, b]) {
+        expect(
+          f.authority.run(() =>
+            new TaskMutationQueue(f.pinned.storageRoot, f.project).getActive(),
+          ),
+        ).toBeNull();
+        await f.authority.releaseVerifiedTerminal();
+        expect(
+          f.authority.store
+            .read()
+            ?.pendingOperations.every((op) => op.status === "completed"),
+        ).toBe(true);
+      }
+      expect(a.sink.filter((text) => text.includes("Project: a"))).toHaveLength(
+        0,
+      );
+      expect(a.sink.filter((text) => text.includes("Project: b"))).toHaveLength(
+        1,
+      );
+      expect(a.authority.store.read()?.compatibility).toEqual(
+        expect.objectContaining({
+          [Object.keys(a.authority.store.read()!.compatibility).find((key) =>
+            key.startsWith("notification-event-"),
+          )!]: expect.any(Object),
+        }),
+      );
+      a.card.idList = a.project.trello.readyListId;
+      a.card.desc = "Later human/replacement task";
+      a.saveCard();
+      fs.unlinkSync(brokenPath);
+      await a.outbox().drain(a.notifier, () => {});
+      expect(a.sink.filter((text) => text.includes("Project: a"))).toHaveLength(
+        1,
+      );
+      expect(a.sink.join("\n")).toContain("Refined task title: Refined task");
+    },
+    30_000,
+  );
+  it.each([false, true])(
+    "retains a paced initial-handoff wait without engineering failure, recursive attention, or releasing A; B still finishes (shared root: %s)",
+    async (sharedRoot) => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      const [a, b] = await setup(["a", "b"], sharedRoot);
+      if (!a || !b) throw new Error("Missing fixture");
+      const original = a.authority.store.mutateCompatibility.bind(
+        a.authority.store,
+      );
+      const failure = vi
+        .spyOn(a.authority.store, "mutateCompatibility")
+        .mockImplementation((options) => {
+          if (options.key.startsWith("notification-event-"))
+            throw new Error("Initial event storage unavailable");
+          return original(options);
+        });
+      await a.poll();
+      expect(a.authority.store.read()?.lifecycle).toBe("refinement");
+      expect(a.card.idList).toBe(a.project.trello.workingListId);
+      expect(
+        a.authority.store.read()?.compatibility["notification-storage-wait"],
+      ).toBeDefined();
+      expect(
+        a.authority.run(() =>
+          new TaskMutationQueue(a.pinned.storageRoot, a.project).getActive(),
+        ),
+      ).not.toBeNull();
+      await a.poll();
+      expect(a.engineer).toHaveBeenCalledTimes(1);
+      const controller = new AbortController();
+      const worker = runOrchestrator(
+        a.trello,
+        a.git,
+        a.github,
+        a.openCode,
+        a.commands,
+        { ...a.config, projects: [a.project, b.project] },
+        controller.signal,
+        a.notifier,
+        undefined,
+        new Map([
+          ["a", a.context],
+          ["b", b.context],
+        ]),
+      );
+      try {
+        await vi.waitFor(
+          () => {
+            expect(b.authority.store.read()?.lifecycle).toBe("refined");
             expect(
-              f.authority.run(() =>
+              b.authority.run(() =>
                 new TaskMutationQueue(
-                  f.pinned.storageRoot,
-                  f.project,
+                  b.pinned.storageRoot,
+                  b.project,
                 ).getActive(),
               ),
             ).toBeNull();
-        },
-        { timeout: 15_000 },
-      );
-    } finally {
-      controller.abort();
-      await worker;
-    }
-    for (const f of [a, b]) {
+          },
+          { timeout: 15_000 },
+        );
+        expect(a.authority.store.read()?.lifecycle).toBe("refinement");
+      } finally {
+        controller.abort();
+        await worker;
+      }
+      expect(a.sink.join("\n")).not.toContain("Attention Required");
+      failure.mockRestore();
+      vi.setSystemTime(Date.now() + 15_001);
+      await a.poll();
+      expect(a.authority.store.read()?.lifecycle).toBe("refined");
       expect(
-        f.authority.run(() =>
-          new TaskMutationQueue(f.pinned.storageRoot, f.project).getActive(),
+        a.engineer.mock.calls.filter(([options]) =>
+          options.cwd.startsWith(a.project.repository.worktreeRoot),
         ),
-      ).toBeNull();
-      await f.authority.releaseVerifiedTerminal();
-      expect(
-        f.authority.store
-          .read()
-          ?.pendingOperations.every((op) => op.status === "completed"),
-      ).toBe(true);
-    }
-    expect(a.sink.filter((text) => text.includes("Project: a"))).toHaveLength(
-      0,
-    );
-    expect(a.sink.filter((text) => text.includes("Project: b"))).toHaveLength(
-      1,
-    );
-    expect(a.authority.store.read()?.compatibility).toEqual(
-      expect.objectContaining({
-        [Object.keys(a.authority.store.read()!.compatibility).find((key) =>
-          key.startsWith("notification-event-"),
-        )!]: expect.any(Object),
-      }),
-    );
-    a.card.idList = a.project.trello.readyListId;
-    a.card.desc = "Later human/replacement task";
-    a.saveCard();
-    fs.unlinkSync(path.join(a.pinned.storageRoot, "notifications"));
-    await a.outbox().drain(a.notifier, () => {});
-    expect(a.sink.filter((text) => text.includes("Project: a"))).toHaveLength(
-      1,
-    );
-    expect(a.sink.join("\n")).toContain("Refined task title: Refined task");
-  }, 30_000);
-  it("retains a paced initial-handoff wait without engineering failure, recursive attention, or releasing A; B still finishes", async () => {
-    vi.useFakeTimers({ toFake: ["Date"] });
-    const [a, b] = await setup(["a", "b"]);
-    if (!a || !b) throw new Error("Missing fixture");
-    const original = a.authority.store.mutateCompatibility.bind(
-      a.authority.store,
-    );
-    const failure = vi
-      .spyOn(a.authority.store, "mutateCompatibility")
-      .mockImplementation((options) => {
-        if (options.key.startsWith("notification-event-"))
-          throw new Error("Initial event storage unavailable");
-        return original(options);
-      });
-    await a.poll();
-    expect(a.authority.store.read()?.lifecycle).toBe("refinement");
-    expect(a.card.idList).toBe(a.project.trello.workingListId);
-    expect(
-      a.authority.store.read()?.compatibility["notification-storage-wait"],
-    ).toBeDefined();
-    expect(
-      a.authority.run(() =>
-        new TaskMutationQueue(a.pinned.storageRoot, a.project).getActive(),
-      ),
-    ).not.toBeNull();
-    await a.poll();
-    expect(a.engineer).toHaveBeenCalledTimes(1);
-    const controller = new AbortController();
-    const worker = runOrchestrator(
-      a.trello,
-      a.git,
-      a.github,
-      a.openCode,
-      a.commands,
-      { ...a.config, projects: [a.project, b.project] },
-      controller.signal,
-      a.notifier,
-      undefined,
-      new Map([
-        ["a", a.context],
-        ["b", b.context],
-      ]),
-    );
-    try {
-      await vi.waitFor(
-        () => {
-          expect(b.authority.store.read()?.lifecycle).toBe("refined");
-          expect(
-            b.authority.run(() =>
-              new TaskMutationQueue(
-                b.pinned.storageRoot,
-                b.project,
-              ).getActive(),
-            ),
-          ).toBeNull();
-        },
-        { timeout: 15_000 },
-      );
-      expect(a.authority.store.read()?.lifecycle).toBe("refinement");
-    } finally {
-      controller.abort();
-      await worker;
-    }
-    expect(a.sink.join("\n")).not.toContain("Attention Required");
-    failure.mockRestore();
-    vi.setSystemTime(Date.now() + 15_001);
-    await a.poll();
-    expect(a.authority.store.read()?.lifecycle).toBe("refined");
-    expect(
-      a.engineer.mock.calls.filter(([options]) =>
-        options.cwd.startsWith(a.project.repository.worktreeRoot),
-      ),
-    ).toHaveLength(1);
-  }, 30_000);
+      ).toHaveLength(1);
+    },
+    30_000,
+  );
   it.each(["fields", "final-move"] as const)(
     "never authorizes an old event after failure at %s and manual/replacement Backlog movement",
     async (boundary) => {

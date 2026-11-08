@@ -21,6 +21,7 @@ import { reconcileWorkflowMutations } from "../src/orchestrator/reconcile-workfl
 import type { ProjectConfig } from "../src/config/config.js";
 import { finalizeRefinement } from "../src/refinement/finalize-refinement.js";
 import { GitHubCredentialProvider } from "../src/github/github-credential-provider.js";
+import { registerProcessSecrets } from "../src/process/process-runtime.js";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -1254,6 +1255,18 @@ describe("production workflow client journal", () => {
 
   it("verifies exact GitHub body/draft fields and discovers a late conversation reply", async () => {
     const f = fixture();
+    const secret = 'p4-route /+=& "known\\credential"';
+    registerProcessSecrets([secret]);
+    const forms = [
+      secret,
+      encodeURIComponent(secret),
+      encodeURIComponent(secret).replaceAll("%20", "+"),
+      Buffer.from(secret).toString("base64"),
+      Buffer.from(secret).toString("base64url"),
+      JSON.stringify(secret).slice(1, -1),
+    ];
+    const sensitiveInput = forms.join("\n");
+    const outbound: string[] = [];
     let body = "Human content";
     let draft = false;
     let pendingBody = "";
@@ -1275,6 +1288,7 @@ describe("production workflow client journal", () => {
         return String(draft);
       if (args[0] === "pr" && args[1] === "edit") {
         pendingBody = args[args.indexOf("--body") + 1]!;
+        outbound.push(pendingBody);
         return "";
       }
       if (args[0] === "pr" && args[1] === "ready") {
@@ -1283,7 +1297,8 @@ describe("production workflow client journal", () => {
       }
       if (args[0] === "api" && args.includes("POST")) {
         pendingReply = args.find((arg) => arg.startsWith("body="))!.slice(5);
-        throw new Error("reply in flight");
+        outbound.push(pendingReply);
+        throw new Error(`reply in flight ${sensitiveInput}`);
       }
       throw new Error("Unexpected GitHub command in fixture");
     });
@@ -1318,7 +1333,7 @@ describe("production workflow client journal", () => {
       f.run(() =>
         github.editPullRequestDescription({
           ...input,
-          body: "Human content\nCurrent evidence",
+          body: `Human content\nCurrent evidence\n${sensitiveInput}`,
         }),
       ),
     ).rejects.toBeInstanceOf(WorkflowMutationWaitingError);
@@ -1338,7 +1353,7 @@ describe("production workflow client journal", () => {
       f.run(() =>
         github.replyToConversationComment({
           ...input,
-          body: "Verified correction",
+          body: `Verified correction\n${sensitiveInput}`,
         }),
       ),
     ).rejects.toBeInstanceOf(WorkflowMutationWaitingError);
@@ -1360,6 +1375,21 @@ describe("production workflow client journal", () => {
       requests.filter((request) => request === "api --method"),
     ).toHaveLength(1);
     expect(requests.filter((request) => request === "pr edit")).toHaveLength(1);
+    await f.run(() =>
+      f.trello.addComment("card", `Outcome\n${sensitiveInput}`),
+    );
+    const record = f.store.read()!;
+    const surfaces = [
+      JSON.stringify(record),
+      ...record.artifacts.map((artifact) =>
+        fs.readFileSync(artifact.path, "utf8"),
+      ),
+      ...outbound,
+      ...f.comments.map((comment) => comment.text),
+    ];
+    for (const surface of surfaces)
+      for (const form of forms) expect(surface).not.toContain(form);
+    expect(outbound.every((text) => text.includes("[REDACTED]"))).toBe(true);
   });
 
   it("checks actual destination and dueComplete instead of a successful-looking response", async () => {

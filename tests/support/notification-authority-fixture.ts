@@ -1,5 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
+import { createIsolatedGitFixture } from "./isolated-git-fixture.js";
 import { vi } from "vitest";
 import type { Config, ProjectConfig } from "../../src/config/config.js";
 import {
@@ -30,6 +33,7 @@ export async function notificationAuthorityFixture(
     coordinationRoot: string;
     otherProjects: { project: ProjectConfig; lease: ProjectOwnershipLease }[];
   },
+  actualGit = false,
 ) {
   const base = path.join(root, id);
   fs.mkdirSync(base, { recursive: true });
@@ -206,7 +210,7 @@ export async function notificationAuthorityFixture(
     throw new Error(`Unexpected fixture request ${method}:${url.pathname}`);
   };
   const trello = new TrelloClient({ apiKey: "key", token: "token" });
-  const git = {
+  let git = {
     fetch: vi.fn(async () => {}),
     branchExists: vi.fn(async () => false),
     addWorktreeWithNewBranch: vi.fn(
@@ -229,18 +233,67 @@ export async function notificationAuthorityFixture(
     }),
     pruneWorktrees: vi.fn(async () => {}),
   } as unknown as GitClient;
+  if (actualGit) {
+    const isolated = createIsolatedGitFixture(base);
+    const run = isolated.git;
+    const remote = path.join(base, "remote.git");
+    run(repositoryPath, "init", "-b", "main");
+    fs.writeFileSync(
+      path.join(repositoryPath, "source.txt"),
+      "Repository evidence\n",
+    );
+    run(repositoryPath, "add", ".");
+    run(repositoryPath, "commit", "-m", "baseline");
+    run(base, "init", "--bare", remote);
+    run(repositoryPath, "remote", "add", "origin", remote);
+    run(repositoryPath, "push", "origin", "main");
+    run(repositoryPath, "fetch", "origin", "main");
+    run(
+      repositoryPath,
+      "remote",
+      "set-url",
+      "origin",
+      `https://github.com/owner/${id}.git`,
+    );
+    git = new GitClient(async (cwd, args, override) =>
+      execFileSync(
+        "git",
+        [
+          ...(["fetch", "push", "ls-remote"].includes(args[0]!)
+            ? [
+                "-c",
+                `url.${pathToFileURL(remote).href}.insteadOf=https://github.com/owner/${id}.git`,
+              ]
+            : []),
+          ...args,
+        ],
+        { cwd, env: { ...isolated.env, ...override }, encoding: "utf8" },
+      ).trim(),
+    );
+  }
   const github = new GitHubClient(vi.fn());
   const engineer = vi.fn(async ({ cwd }: { cwd: string }) => {
     const file = getRefinementResultPath(cwd);
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(
-      file,
-      JSON.stringify({
-        title: "Refined task",
-        description: "Complete intended fields",
-        type: "feature",
-      }),
-    );
+    if (actualGit) {
+      execFileSync(
+        process.execPath,
+        [
+          "-e",
+          "require('node:fs').writeFileSync(process.argv[1], JSON.stringify({ title: 'Refined task', description: 'Complete intended fields', type: 'feature' }))",
+          file,
+        ],
+        { cwd },
+      );
+    } else
+      fs.writeFileSync(
+        file,
+        JSON.stringify({
+          title: "Refined task",
+          description: "Complete intended fields",
+          type: "feature",
+        }),
+      );
     return { exitCode: 0, output: "done", errorOutput: "" };
   });
   const openCode = new OpenCodeClient(engineer);

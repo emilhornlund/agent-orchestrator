@@ -110,178 +110,183 @@ function terminalProof(
 const start = (store: RunStore) =>
   store.transition(1, 1, null, "claim", "ready", "planning", (run) => run);
 
+// One cell per allowed tuple, retaining the original forbidden-destination
+// checks for EACH allowed target (including their deliberate repetition when an
+// event/source has several allowed targets). Each cell uses real RunStore/fsync
+// storage and retains its own directory; no single test owns the entire I/O sum.
+const transitionCells = runEventTypes.flatMap((event) =>
+  runLifecycleStates.flatMap((source) => {
+    const declared = runTransitionMatrix[event]?.[source];
+    if (declared === undefined) return [];
+    const allowed = Array.isArray(declared) ? declared : [declared];
+    return allowed.map((target) => ({ event, source, target, allowed }));
+  }),
+);
+
 describe("RunStore authoritative foundation", () => {
-  it("executes every allowed event/source/destination tuple and rejects unlisted destinations", () => {
-    const base = setup();
-    let sequence = 0;
-    for (const event of runEventTypes) {
-      for (const source of runLifecycleStates) {
-        const declared = runTransitionMatrix[event]?.[source];
-        if (declared === undefined) continue;
-        const allowed = Array.isArray(declared) ? declared : [declared];
-        for (const target of allowed) {
-          const attemptId = `matrix-${sequence++}`;
-          const store = new RunStore(
-            base.identity.storageRoot,
-            attemptId,
-            base.identity,
-            base.lease,
-          );
-          const initial = {
-            ...fixture(base.identity),
-            attemptId,
-            cardId: `card-${sequence}`,
-            taskKind:
-              source === "refinement" ||
-              event === "refinement-claimed" ||
-              event === "refinement-completed"
-                ? ("refinement" as const)
-                : ("implementation" as const),
-            lifecycle: source,
-            checkpoint:
-              source === "waiting"
-                ? event === "wait-resumed"
-                  ? target
-                  : "planning"
-                : source,
-            publicationState: [
-              "merged",
-              "closed-unmerged",
-              "cancelled",
-            ].includes(event)
-              ? ("open" as const)
-              : ("none" as const),
-            wait:
-              source === "waiting"
-                ? {
-                    reason: "test-wait",
-                    dependency: "test",
-                    since: new Date(0).toISOString(),
-                    retryAt: null,
-                  }
-                : fixture(base.identity).wait,
-            operation: { id: "matrix-op", kind: "matrix-test", generation: 1 },
+  it.each(transitionCells)(
+    "executes $event: $source -> $target and rejects every unlisted destination",
+    ({ event, source, target, allowed }) => {
+      const base = setup();
+      let sequence = 0;
+      const attemptId = `matrix-${sequence++}`;
+      const store = new RunStore(
+        base.identity.storageRoot,
+        attemptId,
+        base.identity,
+        base.lease,
+      );
+      const initial = {
+        ...fixture(base.identity),
+        attemptId,
+        cardId: `card-${sequence}`,
+        taskKind:
+          source === "refinement" ||
+          event === "refinement-claimed" ||
+          event === "refinement-completed"
+            ? ("refinement" as const)
+            : ("implementation" as const),
+        lifecycle: source,
+        checkpoint:
+          source === "waiting"
+            ? event === "wait-resumed"
+              ? target
+              : "planning"
+            : source,
+        publicationState: ["merged", "closed-unmerged", "cancelled"].includes(
+          event,
+        )
+          ? ("open" as const)
+          : ("none" as const),
+        wait:
+          source === "waiting"
+            ? {
+                reason: "test-wait",
+                dependency: "test",
+                since: new Date(0).toISOString(),
+                retryAt: null,
+              }
+            : fixture(base.identity).wait,
+        operation: { id: "matrix-op", kind: "matrix-test", generation: 1 },
+        pendingOperations: [
+          {
+            id: "matrix-op",
+            kind: "matrix-test",
+            status:
+              source === "waiting" && event === "wait-resumed"
+                ? ("completed" as const)
+                : ("running" as const),
+            generation: 1,
+            expectedRevision: 1,
+            prerequisites: [],
+            intent: {},
+            ...(source === "waiting" && event === "wait-resumed"
+              ? {
+                  completionEvidence: "discovered-effect",
+                  resolutionEvidence: {
+                    disposition: "accepted" as const,
+                    source: "process" as const,
+                    observationId: "observed-op",
+                    observedAt: new Date(0).toISOString(),
+                  },
+                }
+              : {}),
+          },
+        ],
+      };
+      store.create(initial);
+      const observation = [
+        "refinement-completed",
+        "merged",
+        "closed-unmerged",
+        "failed",
+        "cancelled",
+      ].includes(event);
+      const claim = [
+        "claim",
+        "implementation-claimed",
+        "refinement-claimed",
+      ].includes(event);
+      const result = store.transition(
+        1,
+        1,
+        observation || claim ? null : { id: "matrix-op", generation: 1 },
+        event,
+        source,
+        target,
+        (run) => {
+          if (event === "wait-entered")
+            return {
+              ...run,
+              wait: {
+                reason: "test-wait",
+                dependency: "test",
+                since: new Date(0).toISOString(),
+                retryAt: null,
+              },
+            };
+          if (event === "wait-resumed" || observation || claim) return run;
+          return {
+            ...run,
             pendingOperations: [
               {
-                id: "matrix-op",
-                kind: "matrix-test",
-                status:
-                  source === "waiting" && event === "wait-resumed"
-                    ? ("completed" as const)
-                    : ("running" as const),
-                generation: 1,
-                expectedRevision: 1,
-                prerequisites: [],
-                intent: {},
-                ...(source === "waiting" && event === "wait-resumed"
-                  ? {
-                      completionEvidence: "discovered-effect",
-                      resolutionEvidence: {
-                        disposition: "accepted" as const,
-                        source: "process" as const,
-                        observationId: "observed-op",
-                        observedAt: new Date(0).toISOString(),
-                      },
-                    }
-                  : {}),
+                ...run.pendingOperations[0]!,
+                status: "completed",
+                completionEvidence: "matrix-evidence",
               },
             ],
           };
-          store.create(initial);
-          const observation = [
-            "refinement-completed",
-            "merged",
-            "closed-unmerged",
-            "failed",
-            "cancelled",
-          ].includes(event);
-          const claim = [
-            "claim",
-            "implementation-claimed",
-            "refinement-claimed",
-          ].includes(event);
-          const result = store.transition(
+        },
+        observation
+          ? event === "refinement-completed"
+            ? {
+                prOutcome: "refinement-completed" as const,
+                prObservationId: "refinement-observed",
+                prVerifiedAt: new Date(0).toISOString(),
+                trelloListId: base.identity.lists.backlog,
+                trelloObservationId: "backlog-observed",
+                trelloVerifiedAt: new Date(0).toISOString(),
+              }
+            : terminalProof(base.identity, event)
+          : event === "wait-entered" || event === "wait-resumed" || claim
+            ? undefined
+            : "matrix-evidence",
+      );
+      expect(result.lifecycle).toBe(target);
+      if (observation)
+        expect(result.pendingOperations[0]?.status).toBe("ambiguous");
+      for (const forbidden of runLifecycleStates.filter(
+        (candidate) => !allowed.includes(candidate),
+      )) {
+        const rejectedId = `reject-${sequence++}`;
+        const rejectedStore = new RunStore(
+          base.identity.storageRoot,
+          rejectedId,
+          base.identity,
+          base.lease,
+        );
+        rejectedStore.create({
+          ...initial,
+          attemptId: rejectedId,
+          cardId: `card-${sequence}`,
+        });
+        expect(() =>
+          rejectedStore.transition(
             1,
             1,
-            observation || claim ? null : { id: "matrix-op", generation: 1 },
+            observation || event === "claim"
+              ? null
+              : { id: "matrix-op", generation: 1 },
             event,
             source,
-            target,
-            (run) => {
-              if (event === "wait-entered")
-                return {
-                  ...run,
-                  wait: {
-                    reason: "test-wait",
-                    dependency: "test",
-                    since: new Date(0).toISOString(),
-                    retryAt: null,
-                  },
-                };
-              if (event === "wait-resumed" || observation || claim) return run;
-              return {
-                ...run,
-                pendingOperations: [
-                  {
-                    ...run.pendingOperations[0]!,
-                    status: "completed",
-                    completionEvidence: "matrix-evidence",
-                  },
-                ],
-              };
-            },
-            observation
-              ? event === "refinement-completed"
-                ? {
-                    prOutcome: "refinement-completed" as const,
-                    prObservationId: "refinement-observed",
-                    prVerifiedAt: new Date(0).toISOString(),
-                    trelloListId: base.identity.lists.backlog,
-                    trelloObservationId: "backlog-observed",
-                    trelloVerifiedAt: new Date(0).toISOString(),
-                  }
-                : terminalProof(base.identity, event)
-              : event === "wait-entered" || event === "wait-resumed" || claim
-                ? undefined
-                : "matrix-evidence",
-          );
-          expect(result.lifecycle).toBe(target);
-          if (observation)
-            expect(result.pendingOperations[0]?.status).toBe("ambiguous");
-          for (const forbidden of runLifecycleStates.filter(
-            (candidate) => !allowed.includes(candidate),
-          )) {
-            const rejectedId = `reject-${sequence++}`;
-            const rejectedStore = new RunStore(
-              base.identity.storageRoot,
-              rejectedId,
-              base.identity,
-              base.lease,
-            );
-            rejectedStore.create({
-              ...initial,
-              attemptId: rejectedId,
-              cardId: `card-${sequence}`,
-            });
-            expect(() =>
-              rejectedStore.transition(
-                1,
-                1,
-                observation || event === "claim"
-                  ? null
-                  : { id: "matrix-op", generation: 1 },
-                event,
-                source,
-                forbidden,
-                (run) => run,
-                "matrix-evidence",
-              ),
-            ).toThrow();
-          }
-        }
+            forbidden,
+            (run) => run,
+            "matrix-evidence",
+          ),
+        ).toThrow();
       }
-    }
-  });
+    },
+  );
   it("allows only matrix transitions and rejects stale revisions, owner and operation completions", () => {
     const { store, identity } = setup();
     store.create(fixture(identity));

@@ -1,5 +1,7 @@
 import { reopenPublicationFixture } from "../support/initial-publication-fixture.js";
 import { pollProject } from "../../src/orchestrator/poll-project.js";
+import { acquireProjectOwnership } from "../../src/coordination/project-ownership.js";
+import path from "node:path";
 
 const [root, barrier, clock, effect = "pr"] = process.argv.slice(2);
 if (!root || !barrier || !clock)
@@ -13,7 +15,26 @@ globalThis.Date = new Proxy(Date, {
     return property === "now" ? () => time : Reflect.get(target, property);
   },
 });
-const f = reopenPublicationFixture(root);
+const realLease =
+  process.argv[6] === "real-lease"
+    ? await acquireProjectOwnership(
+        path.join(root, "coordination"),
+        { trelloBoardId: "board", githubRepository: "owner/repo" },
+        "p4-evidence",
+      )
+    : undefined;
+const f = reopenPublicationFixture(
+  root,
+  realLease?.token,
+  realLease
+    ? {
+        integrationId: JSON.stringify(realLease.identity),
+        instanceId: realLease.instanceId,
+        token: realLease.token,
+        assertHeld: () => realLease.assertHeld(),
+      }
+    : undefined,
+);
 const stop = () => {
   process.send?.("barrier");
   process.kill(process.pid, "SIGSTOP");
@@ -26,12 +47,17 @@ f.store.persistMutationIntent = (...args) => {
 };
 const record = f.store.recordMutationEvent.bind(f.store);
 f.store.recordMutationEvent = (...args) => {
-  const result = record(...args);
   const event = args[4] as { type: string; outcome?: string };
   if (
     args[2] === `initial:${effect}` &&
+    barrier === "response" &&
+    event.type === "response"
+  )
+    stop();
+  const result = record(...args);
+  if (
+    args[2] === `initial:${effect}` &&
     ((barrier === "dispatch" && event.type === "dispatch") ||
-      (barrier === "response" && event.type === "response") ||
       (barrier === "completion" &&
         event.type === "observe" &&
         event.outcome === "verified"))

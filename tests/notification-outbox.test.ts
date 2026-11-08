@@ -348,18 +348,29 @@ describe("notification-only durable outbox", () => {
   });
   it("redacts stored and outbound known literal/encoded secrets and never stores raw exceptions", async () => {
     const f = fixture();
-    const secret = "outbox-canary-long-unique";
+    const secret = 'outbox /+=& "known\\credential"';
     registerProcessSecrets([secret]);
-    const encoded = Buffer.from(secret).toString("base64");
-    f.open().enqueue(`event:${secret}`, { subject: secret, text: encoded });
+    const forms = [
+      secret,
+      encodeURIComponent(secret),
+      encodeURIComponent(secret).replaceAll("%20", "+"),
+      Buffer.from(secret).toString("base64"),
+      Buffer.from(secret).toString("base64url"),
+      JSON.stringify(secret).slice(1, -1),
+    ];
+    f.open().enqueue(`event:${secret}`, {
+      subject: secret,
+      text: forms.join("\n"),
+    });
     const send = vi.fn(async () => {
       throw new Error(secret);
     });
     await f.open().drain({ send }, () => {});
     const stored = JSON.stringify(f.open().records());
-    expect(stored).not.toContain(secret);
-    expect(stored).not.toContain(encoded);
-    expect(JSON.stringify(send.mock.calls)).not.toContain(secret);
+    for (const form of forms) {
+      expect(stored).not.toContain(form);
+      expect(JSON.stringify(send.mock.calls)).not.toContain(form);
+    }
   });
   it("fences stale send responses and rejects malformed records without deleting them", async () => {
     const f = fixture();
