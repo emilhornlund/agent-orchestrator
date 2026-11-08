@@ -495,3 +495,122 @@ clean local-only commits, closed-PR accessibility and deliberate fresh retry;
 P11 full deployed local/container realistic lifecycle parity. None was implemented
 or claimed closed by this task. P4's missing integration permutations above remain
 explicit even though later phases will also repeat the shared transition scenarios.
+
+## Final whole-phase review status — BLOCKED (2026-11-08)
+
+Independent whole-phase reviewer `ses_e4721de81ffe9BXUfeZKiF51Bc` returned
+**FAIL solely for missing required realistic evidence**. The review found **no
+additional implementation or locally executable test blockers**. These are distinct
+conclusions: local code/test findings are resolved, but the required realistic
+WF-001 and NOT-001/002 evidence remains **BLOCKED**, not passed or waived. This is
+not a P4 completion declaration, and P11 consolidation cannot waive those levels
+or postpone their obligation by treating local substitutes as realistic evidence.
+
+Reviewed branch: `architecture/p4-durable-mutations`, HEAD
+`b72eed44c9d29ace8c86ad795784b4bbfac3155a`. The five P4 commits are:
+
+| Task | Commit                                     | Change                               |
+| ---- | ------------------------------------------ | ------------------------------------ |
+| T1   | `2ac86ada25d4b5310417108b5fdfdb81ef8c2788` | Durable mutation journal             |
+| T2   | `b617b276288615389d3f649f5cb6842c2f91edb3` | Initial publication reconciliation   |
+| T3   | `2351de2d91d55c0e86026e7aeabdd7e4601d56b8` | Concrete mutation routing            |
+| T4   | `4b6ced18641bae8072e717e222ba01b5b4c2bc38` | Nonblocking notification delivery    |
+| T5   | `b72eed44c9d29ace8c86ad795784b4bbfac3155a` | Crash-boundary and delivery evidence |
+
+### Findings disposition and exact validation status
+
+- Local route coverage now includes all declared finite mutation/barrier cells,
+  actual P2 takeover and post-recovery next-card exclusion. Independent provider
+  identities and the concrete Git-idempotency variant resolve the earlier local
+  identity/effect-oracle findings without authorizing uncertain replay.
+- Actual workflow-to-TLS-SMTP compositions and per-event Message-ID acceptance
+  assertions resolve the local notification-composition/count findings. The
+  finite RunStore matrix cells retain all 750 negative assertions and resolve the
+  monolithic-test timeout finding without raising timeouts or weakening storage.
+- VER-PR-005-01 and VER-PR-006-01 are supported at their declared local integration
+  levels (PR-006 remains P4 support, not closure of P5 recovery policy). No additional
+  local blocker was identified by the new review. Historical limitations and failed
+  development runs above remain preserved, with their stated superseding evidence.
+- The supervisor's exact final `yarn validate` result after the matrix correction
+  is **153 files / 1,873 tests passed**, including lint, formatting and strict
+  TypeScript, as recorded with commands and artifacts at the top of this document.
+  The prior executed `test:p4` result remains **18 files / 343 tests passed**.
+  Its current expected count is **398** (343 + 55 matrix cells); a post-correction
+  `test:p4` execution has **not** been recorded. Expected counts are not results.
+- Required realistic VER-WF-001-01/02/03 and VER-NOT-001-01 / VER-NOT-002-01
+  evidence is still missing. Local service substitutes, local bare Git providers
+  and local TLS acceptance do not establish real provider behavior, external
+  relay acceptance or controlled recipient receipt. No additional live execution
+  is claimed by this documentation update.
+
+### Required authorized intervention checklist
+
+The operator must supply and explicitly authorize the following before realistic
+execution. Record only non-secret resource identities, permission scope and approval
+references in the evidence; deliver credentials through approved secret handling,
+never documentation, test logs or source control. No such identities or permissions
+have yet been supplied; the items below are requirements, not provisioned resources.
+
+- [ ] Identify the disposable **Trello Free** workspace/board, list IDs (including
+      Ready for Agent and the tested destinations), test-card IDs and authorized
+      actor. Scope access to reading cards/actions/history and the specific tested
+      card moves/content/labels/comments. Authorize bounded fault/recovery runs on
+      those cards only; no paid-plan functionality or production boards.
+- [ ] Identify disposable GitHub owner/repository, base/test branches and test PRs,
+      plus the approved App installation or fine-grained PAT actor. Document which
+      authorization modes are to be exercised and the minimum repository-scoped
+      content/ref, PR/comment/reply writes and observation permissions each needs.
+      Authorize only the specified test effects; no merge, force-push, unrelated
+      repository access or mutation of the configured source checkout.
+- [ ] Identify the disposable OpenCode runtime/session environment, approved model
+      access, isolated worktree/storage roots and bounded execution budget. Permit
+      actual engineering sessions and controlled process stop/restart there, with
+      preserved journals/artifacts and no production task pickup.
+- [ ] Identify the controlled **external** relay endpoint/account, sender and
+      recipient inbox identities. Scope sending to those recipients and authorize
+      independent relay acceptance and recipient/MIME/Message-ID observation.
+      Explicitly permit bounded rejection, lost-acknowledgment/late-acceptance and
+      restart experiments; ordinary send access alone is not fault-control consent.
+- [ ] Approve a bounded scenario/variant schedule for WF-001 and NOT-001/002 with
+      the real resources above, independent provider/relay/inbox observers, two
+      isolated projects where required, fault timing and stop limits. Define who
+      can control delayed acceptance/readback without touching production. Where a
+      provider boundary cannot be controlled or observed, retain that variant as
+      BLOCKED rather than infer it from local tests.
+- [ ] Capture actual versions/configuration identities, commands, timestamps,
+      provider resource/action IDs, journal/queue/lease evidence, effect counts and
+      per-event Message-ID plus inbox observations in protected, redacted artifacts.
+      Preserve ambiguous outcomes for reconciliation; never blindly resend or
+      discard agent work. Obtain separate authorization for eventual disposable
+      resource cleanup after evidence retention, then request independent review.
+
+Until that authorized evidence is executed and reviewed, whole-phase status remains
+**BLOCKED** despite the absence of additional code/local-test blockers. No existing
+evidence is removed or upgraded, and no P11 or later-phase obligation is closed by
+this status record.
+
+### Subsequent supervisor validation — executed after whole-phase review
+
+After the review and the status record above, the supervisor executed this exact
+sequential command, which completed with **exit 0**:
+
+```sh
+TMPDIR="$PWD/node_modules/.cache/p4-validation-tmp" VITEST_MAX_WORKERS=1 yarn validate && TMPDIR="$PWD/node_modules/.cache/p4-validation-tmp" VITEST_MAX_WORKERS=1 yarn test:p4
+```
+
+- Full validation: **153 files / 1,873 tests passed**; Yarn reported
+  **Done in 354.80s**.
+- Focused P4 validation: **18 files / 398 tests passed**; Yarn reported
+  **Done in 208.23s**.
+
+The captured supervisor output is
+`/home/emilhornlund/.local/share/opencode/tool-output/tool_1b8e415ea001Qmmc8PBb7kpMUv`:
+lines **3134–3142** contain the full-suite result and lines **6227–6232** contain
+the focused result. These are executed results, not projected counts. The earlier
+statement that 398 was expected but not yet executed describes the status when
+that paragraph was written; this subsequent run supersedes it for current local
+validation status without removing the historical 343-test run or other evidence.
+
+This local validation does not supply the missing authorized realistic provider,
+external relay or inbox evidence. Whole-phase status remains **BLOCKED**, with no
+completion claim or waiver of P11 obligations.
