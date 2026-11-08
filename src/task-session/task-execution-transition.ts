@@ -90,7 +90,18 @@ const phaseTransitions: Record<
   "publication-completed": { from: "publication", to: "ci" },
   "ci-passed-awaiting-human": { from: "ci", to: "human-feedback" },
   "ci-passed-completed": { from: "ci", to: "done" },
-  "pull-request-merged": { from: ["ci", "human-feedback"], to: "done" },
+  "pull-request-merged": {
+    from: [
+      "planning",
+      "implementation",
+      "validation",
+      "review",
+      "publication",
+      "ci",
+      "human-feedback",
+    ],
+    to: "done",
+  },
   "external-pull-request-reconciled": {
     from: "attention-required",
     to: "done",

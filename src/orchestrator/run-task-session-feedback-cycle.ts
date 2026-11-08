@@ -559,11 +559,21 @@ export async function runTaskSessionFeedbackCycle(
     record.feedbackRemediation?.operationId === operationId
   ) {
     if (record.feedbackRemediation.status === "active") {
-      throw new Error(
-        "Feedback remediation outcome is active and ambiguous; refusing duplicate execution",
-      );
+      const primary = record.primaryOperations?.[operationId];
+      if (
+        primary === undefined ||
+        primary.activity !== "feedback-remediation"
+      ) {
+        throw new Error(
+          "Active feedback remediation has no matching durable primary operation; refusing execution",
+        );
+      }
+      // The feedback checkpoint is persisted before primary dispatch. Let the
+      // primary-operation ledger inspect/reconcile this exact operation; it
+      // alone can authorize replay after proving the previous process stopped.
+    } else {
+      return "idle";
     }
-    return "idle";
   }
   if (recoveringReview) {
     const active = options.mutationQueue.getActive();

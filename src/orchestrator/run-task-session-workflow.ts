@@ -346,9 +346,12 @@ async function completeMergedTaskSession(options: {
     }
     let terminalProjection: TaskExecutionRecord;
     if (latest.phase !== "done") {
-      if (latest.phase !== "ci" && latest.phase !== "human-feedback") {
+      if (
+        latest.phase === "attention-required" ||
+        latest.pullRequest?.url !== pullRequest.url
+      ) {
         throw new Error(
-          `Cannot complete merged task ${card.id} from phase ${latest.phase}`,
+          `Cannot complete merged task ${card.id} without its active persisted PR identity`,
         );
       }
       terminalProjection = transitionTaskExecutionRecord(
@@ -1470,7 +1473,9 @@ export async function runTaskSessionWorkflow(
   let executionRecoveryCard: TrelloCard | undefined;
   if (
     canonicalCardId &&
-    (canonicalTask?.phase === "human-feedback" || canonicalTask?.phase === "ci")
+    canonicalTask?.pullRequest !== undefined &&
+    canonicalTask.phase !== "done" &&
+    canonicalTask.phase !== "attention-required"
   ) {
     const currentCard =
       humanReviewCards.find((candidate) => candidate.id === canonicalCardId) ??
@@ -1486,6 +1491,9 @@ export async function runTaskSessionWorkflow(
       currentCard.idList !== project.trello.reviewListId
     )
       executionRecoveryCard = currentCard;
+    // Include a published canonical task even when it was moved out of Human
+    // Review or is waiting, so terminal PR observation and its owning
+    // checkpoint recovery both run before any other task can be claimed.
   }
   options.onHumanReviewCardsObserved?.(humanReviewCards.map((card) => card.id));
   await reconcileUnobservedTerminalPrEvents({
@@ -1610,7 +1618,6 @@ export async function runTaskSessionWorkflow(
         if (!isMerged) {
           if (signal.aborted) queue.fail(recoveredTerminalMutation.eventId);
           else {
-            queue.complete(recoveredTerminalMutation.eventId);
             await persistClosedRunTerminal(
               taskStore,
               trello,
@@ -1618,6 +1625,7 @@ export async function runTaskSessionWorkflow(
               card,
               record,
             );
+            queue.complete(recoveredTerminalMutation.eventId);
           }
         }
       } catch (error) {
@@ -1710,7 +1718,6 @@ export async function runTaskSessionWorkflow(
         options.onHumanReviewCardLeft?.(card.id);
         if (signal.aborted) queue.fail(terminalMutation.eventId);
         else {
-          queue.complete(terminalMutation.eventId);
           await persistClosedRunTerminal(
             taskStore,
             trello,
@@ -1718,6 +1725,7 @@ export async function runTaskSessionWorkflow(
             card,
             record,
           );
+          queue.complete(terminalMutation.eventId);
         }
       } catch (error) {
         queue.fail(terminalMutation.eventId);
@@ -1829,6 +1837,21 @@ export async function runTaskSessionWorkflow(
           project.repository.worktreeRoot,
           card.id,
         );
+        // Published PR correction operations are primary writers too. A lost
+        // task session must be reconstructed before the CI repair reserves or
+        // resumes its durable operation; otherwise the repair callback only
+        // discovers the loss after dispatch has already entered the operation.
+        const recovered = await reconcileOwnedTaskForResume(
+          card,
+          record,
+          worktreePath,
+        );
+        if (recovered === null || recovered.status !== "resume") continue;
+        record = recovered.record;
+        if (record === null || record.primarySessionId === undefined) continue;
+        const ciRecord = record;
+        const ciSessionId = ciRecord.primarySessionId;
+        if (ciSessionId === undefined) continue;
         const expectedBranch = `agent/${card.id}`;
         const operationKey = record.operationKey;
         const plan = planStore.read(card.id);
@@ -1857,7 +1880,7 @@ export async function runTaskSessionWorkflow(
             openCode,
             planStore,
             card,
-            expectedPrimarySessionId: record.primarySessionId!,
+            expectedPrimarySessionId: ciSessionId,
             inspectPrimarySession: inspectSessionForWorktree(worktreePath),
             primaryOperationEvidence: {
               trustedRoot:
@@ -1992,7 +2015,7 @@ export async function runTaskSessionWorkflow(
             projectId: project.id,
             cardId: card.id,
             operationKey,
-            expectedPrimarySessionId: record.primarySessionId!,
+            expectedPrimarySessionId: ciSessionId,
             runReview: async (previousFindings) => {
               if (roundIndex++ === 0)
                 return {
@@ -2021,7 +2044,7 @@ export async function runTaskSessionWorkflow(
                 openCode,
                 planStore,
                 card,
-                expectedPrimarySessionId: record.primarySessionId!,
+                expectedPrimarySessionId: ciSessionId,
                 inspectPrimarySession: inspectSessionForWorktree(worktreePath),
                 primaryOperationEvidence: {
                   trustedRoot:
@@ -2062,7 +2085,7 @@ export async function runTaskSessionWorkflow(
           projectId: project.id,
           cardId: card.id,
           operationKey,
-          expectedPrimarySessionId: record.primarySessionId,
+          expectedPrimarySessionId: ciSessionId,
           headSha: observation.headSha,
           observeChecks: async (headSha) => {
             const ciObservation = await github.getCiObservations({
@@ -2070,9 +2093,9 @@ export async function runTaskSessionWorkflow(
               repository: project.repository.github,
               defaultBranch: project.repository.defaultBranch,
               headSha,
-              ...(record.pullRequest == null
+              ...(ciRecord.pullRequest == null
                 ? {}
-                : { pullRequestNumber: record.pullRequest.number }),
+                : { pullRequestNumber: ciRecord.pullRequest.number }),
               project,
             });
             return evaluateCiChecks({
@@ -2533,7 +2556,11 @@ export async function runTaskSessionWorkflow(
     // Passing CI and local quality evidence never authorizes an orchestrator merge.
   }
   if (executionRecoveryBlocked) return;
-  if (executionRecoveryCard !== undefined) {
+  if (
+    executionRecoveryCard !== undefined &&
+    canonicalCardId !== undefined &&
+    !recoveryCheckedThisPoll.has(canonicalCardId)
+  ) {
     const recoveryRecord = taskStore.read(executionRecoveryCard.id);
     if (recoveryRecord === null)
       throw new Error(
@@ -2549,9 +2576,6 @@ export async function runTaskSessionWorkflow(
       recoveryPath,
     );
     if (recovery === null || recovery.status !== "resume") {
-      // The terminal observer above runs before this gate for every published
-      // phase. Waiting, blocked, or terminal-observed states retain ownership;
-      // never route them into initial implementation or a competing writer.
       logger
         .child({ projectId: project.id, cardId: executionRecoveryCard.id })
         .event(
@@ -2561,10 +2585,7 @@ export async function runTaskSessionWorkflow(
         );
       return;
     }
-    // Resume the owning CI/feedback correction on the next poll, after the
-    // verified safety snapshot; never route a published task through initial
-    // implementation.
-    return;
+    recoveryCheckedThisPoll.add(canonicalCardId);
   }
   const latestHumanReviewCards = await getCardsForDiscovery(
     trello,
@@ -2762,20 +2783,29 @@ export async function runTaskSessionWorkflow(
   for (const observation of latestObservations) {
     if (observation.state !== "OPEN") continue;
     if (hasUnresolvedLegacyMaintenance) continue;
-    const record = taskStore.read(observation.cardId);
-    if (record === null) continue;
+    const initialRecord = taskStore.read(observation.cardId);
+    if (initialRecord === null) continue;
     const resumableFeedbackReview = canResumeFailedFeedbackReview(
-      record,
+      initialRecord,
       queue.getActive(),
     );
-    if (record.phase !== "human-feedback" && !resumableFeedbackReview) continue;
+    if (initialRecord.phase !== "human-feedback" && !resumableFeedbackReview)
+      continue;
     const card = latestHumanReviewCards.find(
-      (candidate) => candidate.id === record.cardId,
+      (candidate) => candidate.id === initialRecord.cardId,
     );
     if (card === undefined)
       throw new Error(
-        `Observed task-session review card disappeared: ${record.cardId}`,
+        `Observed task-session review card disappeared: ${initialRecord.cardId}`,
       );
+    const recovery = await reconcileOwnedTaskForResume(
+      card,
+      initialRecord,
+      path.join(project.repository.worktreeRoot, card.id),
+    );
+    if (recovery === null || recovery.status !== "resume") continue;
+    const record = recovery.record;
+    if (record.primarySessionId === undefined) continue;
     if (resumableFeedbackReview) {
       // Durable one-shot authorization. An unsuccessful retry must not be
       // reattempted by every poll or by a fresh worker after restart.
@@ -3342,15 +3372,31 @@ export async function runTaskSessionWorkflow(
     }
     if (signal.aborted) return;
 
-    const matchingEvents = queue
-      .list()
-      .filter(
-        (event) =>
-          event.cardId === card.id &&
-          event.projectId === project.id &&
-          event.kind === "implementation" &&
-          event.operationKey === record.operationKey,
-      );
+    const correctionOperationId = record.feedbackRemediation?.operationId;
+    const correctionEvents =
+      correctionOperationId === undefined
+        ? []
+        : queue
+            .list()
+            .filter(
+              (event) =>
+                event.cardId === card.id &&
+                event.projectId === project.id &&
+                event.kind === "feedback" &&
+                event.eventId === correctionOperationId,
+            );
+    const matchingEvents =
+      correctionEvents.length > 0
+        ? correctionEvents
+        : queue
+            .list()
+            .filter(
+              (event) =>
+                event.cardId === card.id &&
+                event.projectId === project.id &&
+                event.kind === "implementation" &&
+                event.operationKey === record.operationKey,
+            );
     if (matchingEvents.length !== 1) {
       const latest = taskStore.read(card.id);
       if (latest !== null && latest.phase !== "attention-required")
@@ -3376,7 +3422,7 @@ export async function runTaskSessionWorkflow(
       activeEvent !== null &&
       (activeEvent.eventId !== recoveryEvent.eventId ||
         activeEvent.cardId !== card.id ||
-        activeEvent.operationKey !== record.operationKey)
+        activeEvent.operationKey !== recoveryEvent.operationKey)
     ) {
       throw new Error(
         `Task-session restart cannot resume ${card.id}; another task owns the project mutation queue`,

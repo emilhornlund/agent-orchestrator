@@ -20,6 +20,7 @@ import {
   beginPrimaryExecution,
   bindPrimaryExecutionEvidence,
   PrimaryOperationExhaustedError,
+  reconcilePendingPrimaryExecution,
 } from "../src/task-session/primary-operation-ledger.js";
 import { createHash } from "node:crypto";
 
@@ -98,6 +99,31 @@ const options = (
 });
 
 describe("runPrimaryOperation", () => {
+  it("continues an exactly authorized stopped operation without repeating inspection or resetting its execution count", async () => {
+    const f = fixture();
+    beginPrimaryExecution(f.store, "card", "op", "work", "session");
+    reconcilePendingPrimaryExecution(f.store, "card", "op", "stopped");
+    const execute = vi.fn(async () => success);
+    const inspectPending = vi.fn(async () => ({ status: "unknown" as const }));
+
+    await expect(
+      runPrimaryOperation({
+        ...options(f.store, execute, inspectPending),
+        operationId: "op",
+        activity: "work",
+      }),
+    ).resolves.toEqual(success);
+
+    expect(inspectPending).not.toHaveBeenCalled();
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(f.store.read("card")?.primaryOperations?.op).toMatchObject({
+      id: "op",
+      activity: "work",
+      executions: 2,
+      status: "completed",
+    });
+  });
+
   it("retries only proven stopped failures, persists result and replays after restart", async () => {
     const f = fixture();
     const execute = vi

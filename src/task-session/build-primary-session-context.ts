@@ -163,12 +163,18 @@ export async function buildPrimarySessionContext(input: {
         "Primary-session recovery requires the current feedback ledger",
       );
     const ledger = JSON.parse(feedbackContent) as {
-      entries?: Array<{ id?: string }>;
+      entries?: Array<{ id?: string; kind?: string }>;
     };
     const ids = new Set(
-      (ledger.entries ?? []).flatMap((entry) =>
-        typeof entry.id === "string" ? [entry.id] : [],
-      ),
+      (ledger.entries ?? []).flatMap((entry) => {
+        if (typeof entry.id !== "string") return [];
+        return [
+          entry.id,
+          ...(typeof entry.kind === "string"
+            ? [`${entry.kind}:${entry.id}`]
+            : []),
+        ];
+      }),
     );
     if (feedbackIds.some((id) => !ids.has(id)))
       throw new Error(

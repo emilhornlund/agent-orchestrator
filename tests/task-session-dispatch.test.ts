@@ -23,10 +23,17 @@ import {
   type RunCommand,
 } from "../src/process/command-runner.js";
 import { pollProject } from "../src/orchestrator/poll-project.js";
+import { runTaskSessionWorkflow } from "../src/orchestrator/run-task-session-workflow.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
+import { TaskPlanStore } from "../src/task-session/task-plan-store.js";
+import { RunStore } from "../src/task-session/run-store.js";
+import { ProjectRunAuthority } from "../src/task-session/project-run-authority.js";
 import { TaskMutationQueue } from "../src/task-session/task-mutation-queue.js";
 import { FeedbackLedgerStore } from "../src/task-session/feedback-ledger-store.js";
 import { getProcessRuntime } from "../src/process/process-runtime.js";
+import { writeTrustedCommitState } from "../src/orchestrator/trusted-commit-state.js";
+import { transitionTaskExecutionRecord } from "../src/task-session/task-execution-transition.js";
+import { getTaskSessionSourceSnapshotIdentity } from "../src/task-session/source-snapshot.js";
 import type { TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
 
 let root: string;
@@ -89,6 +96,828 @@ function createCard(): TrelloCard {
 }
 
 describe("task-session production dispatch", () => {
+  it("reconstructs a lost primary session and resumes the persisted CI repair operation through the workflow", async () => {
+    const { project, worktreeRoot, repositoryPath } = projectFixture();
+    const card: TrelloCard = {
+      ...createCard(),
+      idList: project.trello.reviewListId,
+    };
+    let cardListId = project.trello.reviewListId;
+    const headSha = "a".repeat(40);
+    const worktreePath = path.join(worktreeRoot, card.id);
+    fs.mkdirSync(worktreePath, { recursive: true });
+    fs.writeFileSync(path.join(worktreePath, "src.ts"), "existing change\n");
+    const integrationId = JSON.stringify({
+      trelloBoardId: project.trello.boardId,
+      githubRepository: project.repository.github,
+    });
+    const pinned = {
+      integrationId,
+      projectId: project.id,
+      boardId: project.trello.boardId,
+      lists: {
+        ready: project.trello.readyListId,
+        working: project.trello.workingListId,
+        review: project.trello.reviewListId,
+        failed: project.trello.failedListId,
+        done: project.trello.doneListId,
+        backlog: project.trello.backlogListId,
+      },
+      repository: project.repository.github,
+      repositoryPath,
+      worktreeRoot,
+      storageRoot: path.join(project.contextRoot, "canonical-runs"),
+    };
+    const lease = {
+      integrationId,
+      instanceId: "restart-instance",
+      token: "restart-token",
+      assertHeld: vi.fn(),
+    };
+    const runStore = new RunStore(
+      pinned.storageRoot,
+      "ci-restart-attempt",
+      pinned,
+      lease,
+    );
+    runStore.create({
+      version: 1,
+      revision: 1,
+      projectId: project.id,
+      cardId: card.id,
+      attemptId: "ci-restart-attempt",
+      taskKind: "implementation",
+      pinned,
+      lifecycle: "ci",
+      checkpoint: "ci",
+      publicationState: "open",
+      operation: { id: null, kind: null, generation: 0 },
+      wait: { reason: null, dependency: null, since: null, retryAt: null },
+      owner: {
+        instanceId: lease.instanceId,
+        token: lease.token,
+        generation: 1,
+      },
+      resources: [],
+      pendingOperations: [],
+      queue: [],
+      budgets: {},
+      sessions: { primary: "ses_lost-ci-owner" },
+      artifacts: [],
+      expectedTrelloListId: project.trello.reviewListId,
+      terminalSync: "not-applicable",
+      terminalEvidence: null,
+      legacy: {},
+      compatibility: {},
+      updatedAt: new Date().toISOString(),
+    });
+    const authority = new ProjectRunAuthority(
+      project.id,
+      runStore,
+      1,
+      undefined,
+      undefined,
+      card.id,
+    );
+    const ownedStore = new TaskExecutionStore(
+      project.contextRoot,
+      project,
+      authority,
+    );
+    const originalCiOperationId = "ci-cycle-original:pass:1";
+    const originalPrompt = "Repair the required GitHub CI failures for Build";
+    const originalPromptArtifact = runStore.writeArtifact(
+      Buffer.from(JSON.stringify({ prompt: originalPrompt })),
+      "application/json",
+    );
+    const originalDiagnosticsArtifact = runStore.writeArtifact(
+      Buffer.from(
+        JSON.stringify([
+          {
+            name: "Build",
+            headSha,
+            logUrl: null,
+            available: true,
+            diagnostic: "persisted failure details",
+          },
+        ]),
+      ),
+      "application/json",
+    );
+    await authority.run(async () =>
+      ownedStore.create({
+        version: 1,
+        projectId: project.id,
+        cardId: card.id,
+        phase: "ci",
+        primarySessionId: "ses_lost-ci-owner",
+        sessionCreationStatus: "bound",
+        expectedBranch: `agent/${card.id}`,
+        pullRequest: {
+          number: 9,
+          url: "https://github.com/owner/repo/pull/9",
+          headSha,
+        },
+        operationKey: "original-task-operation",
+        ciRepair: {
+          cycleId: "ci-cycle-original",
+          headSha,
+          status: "active",
+          activePrimaryOperation: {
+            operationId: originalCiOperationId,
+            pass: 1,
+            promptArtifact: {
+              reference: originalPromptArtifact.id,
+              path: originalPromptArtifact.path,
+              bytes: originalPromptArtifact.bytes,
+            },
+            diagnosticsArtifact: {
+              reference: originalDiagnosticsArtifact.id,
+              path: originalDiagnosticsArtifact.path,
+              bytes: originalDiagnosticsArtifact.bytes,
+            },
+          },
+        },
+        revision: 1,
+        retryCounters: { validation: 0, review: 0, ci: 0, humanFeedback: 0 },
+        createdAt: "2026-10-24T09:00:00.000Z",
+        updatedAt: "2026-10-24T09:00:00.000Z",
+      }),
+    );
+    const taskPlanStore = new TaskPlanStore(
+      project.contextRoot,
+      project,
+      authority,
+    );
+    await authority.run(async () =>
+      taskPlanStore.create(
+        {
+          version: 1,
+          projectId: project.id,
+          cardId: card.id,
+          requirements: [
+            { id: "REQ-1", text: "Task", verification: "Check task" },
+          ],
+          steps: [
+            {
+              id: "STEP-1",
+              description: "Implement task",
+              requirementIds: ["REQ-1"],
+              verification: "Run checks",
+            },
+          ],
+          assumptions: [],
+          blockers: [],
+        },
+        1,
+      ),
+    );
+    await authority.run(async () =>
+      taskPlanStore.storeVerification(card.id, 1, {
+        version: 1,
+        projectId: project.id,
+        cardId: card.id,
+        planRevision: 1,
+        verdict: "pass",
+        findings: [],
+      }),
+    );
+    await authority.run(async () =>
+      writeTrustedCommitState(project, card.id, {
+        version: 1,
+        kind: "trusted-commit",
+        projectId: project.id,
+        cardId: card.id,
+        taskBranch: `agent/${card.id}`,
+        defaultBranch: "main",
+        commitSha: headSha,
+      }),
+    );
+
+    const trello = {
+      getCards: vi.fn(async (listId: string) =>
+        listId === cardListId ? [card] : [],
+      ),
+      getCard: vi.fn(async () => card),
+      getCardAttachments: vi.fn(async () => []),
+    } as unknown as TrelloClient;
+    const git = {
+      getCurrentBranch: vi.fn(async () => `agent/${card.id}`),
+      getHeadSha: vi.fn(async () => headSha),
+      getRefSha: vi.fn(async (_cwd: string, ref: string) =>
+        ref.includes("agent/") ? headSha : "b".repeat(40),
+      ),
+      getRebaseState: vi.fn(async () => null),
+      getConflictedPaths: vi.fn(async () => []),
+      getStatus: vi.fn(async () => ""),
+      getRemoteBranchSha: vi.fn(async () => headSha),
+      getCommitCountBetween: vi.fn(async () => 1),
+      getDiff: vi.fn(async () => "existing change"),
+      getHeadTrackedFiles: vi.fn(async () => ["src.ts"]),
+      getIndexEntries: vi.fn(
+        async () =>
+          "100644 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0\tsrc.ts\0",
+      ),
+      getUntrackedFiles: vi.fn(async () => []),
+      getIgnoredFiles: vi.fn(async () => []),
+      getRefsIdentity: vi.fn(async () => "refs-v1"),
+      fetch: vi.fn(async () => undefined),
+      push: vi.fn(async () => undefined),
+      stageAll: vi.fn(async () => undefined),
+      commit: vi.fn(async () => undefined),
+    } as unknown as GitClient;
+    let feedbackMode = false;
+    const github = {
+      findPullRequestState: vi.fn(async () => ({
+        url: "https://github.com/owner/repo/pull/9",
+        state: "OPEN",
+        mergedAt: null,
+        headRefOid: headSha,
+      })),
+      getCiObservations: vi.fn(async () => ({
+        headSha,
+        checks: [
+          {
+            source: "check-run" as const,
+            id: 1,
+            name: "Build",
+            headSha,
+            status: "completed" as const,
+            conclusion: feedbackMode ? "success" : "failure",
+            url: null,
+          },
+        ],
+        expectationSources: [
+          {
+            kind: "repository-rules" as const,
+            sourceId: "rules",
+            complete: true,
+            checkNames: ["Build"],
+          },
+        ],
+      })),
+      findChangesRequestedPullRequest: vi.fn(async () =>
+        feedbackMode
+          ? {
+              url: "https://github.com/owner/repo/pull/9",
+              number: 9,
+              headSha,
+              feedback: {
+                reviews: [
+                  {
+                    id: 12,
+                    commitSha: headSha,
+                    body: null,
+                    author: "reviewer",
+                    submittedAt: "2026-10-24T11:00:00Z",
+                    inlineComments: [
+                      {
+                        id: 501,
+                        reviewId: 12,
+                        commitSha: headSha,
+                        body: "Handle the empty case.",
+                        author: "reviewer",
+                        path: "src.ts",
+                        line: 1,
+                        originalLine: 1,
+                        diffHunk: "@@ -1 +1 @@",
+                        threadId: "thread-501",
+                        source: "current-head" as const,
+                      },
+                    ],
+                  },
+                ],
+              },
+            }
+          : null,
+      ),
+      getPullRequestConversationComments: vi.fn(async () => []),
+    } as unknown as GitHubClient;
+    let listedSessionId: string | undefined;
+    let replacementSessionId = "ses_ci-replacement";
+    let validationCheckpointMode = false;
+    let abortAtValidation = false;
+    const validationRestartController = new AbortController();
+    const run = vi.fn<RunOpenCode>(async (options) => {
+      if (options.prompt.includes("Reconstruct")) {
+        listedSessionId = replacementSessionId;
+        return {
+          exitCode: 0,
+          output: JSON.stringify({
+            type: "step_start",
+            sessionID: replacementSessionId,
+          }),
+          errorOutput: "",
+        };
+      }
+      if (
+        options.prompt.startsWith(
+          "Address the following verified-as-actionable human PR feedback",
+        )
+      )
+        return {
+          exitCode: 0,
+          output: "feedback repair dispatched",
+          errorOutput: "",
+        };
+      if (
+        validationCheckpointMode &&
+        options.prompt.includes('"reviewedContentIdentity"')
+      ) {
+        return {
+          exitCode: 0,
+          output: JSON.stringify({
+            version: 1,
+            projectId: project.id,
+            cardId: card.id,
+            reviewedContentIdentity: await getTaskSessionSourceSnapshotIdentity(
+              git,
+              worktreePath,
+            ),
+            verdict: "pass",
+            requirementAssessments: [
+              {
+                requirementId: "REQ-1",
+                status: "satisfied",
+                details: "The requested task behavior is satisfied.",
+                evidence: ["src.ts"],
+              },
+            ],
+            blockingFindings: [],
+            previousFindingAssessments: [],
+          }),
+          errorOutput: "",
+        };
+      }
+      return { exitCode: 0, output: "repair dispatched", errorOutput: "" };
+    });
+    const commands = new CommandRunner(
+      vi.fn<RunCommand>(async (options) => {
+        if (
+          abortAtValidation &&
+          options.command === project.repository.validationCommand
+        ) {
+          validationRestartController.abort();
+          return { exitCode: 0, output: "validation passed", errorOutput: "" };
+        }
+        if (options.command.startsWith("opencode session list"))
+          return {
+            exitCode: 0,
+            output: JSON.stringify(
+              listedSessionId === undefined
+                ? []
+                : [{ id: listedSessionId, directory: worktreePath }],
+            ),
+            errorOutput: "",
+          };
+        return { exitCode: 0, output: "", errorOutput: "" };
+      }),
+    );
+
+    await expect(
+      authority.run(() =>
+        runTaskSessionWorkflow({
+          project,
+          trello,
+          git,
+          github,
+          openCode: new OpenCodeClient(run),
+          commands,
+          signal: new AbortController().signal,
+          prepareAttachmentContext: async () => undefined,
+        }),
+      ),
+    ).rejects.toThrow("CI repair did not complete");
+
+    const resumed = await authority.run(() => ownedStore.read(card.id));
+    expect(resumed).toMatchObject({
+      phase: "review",
+      operationKey: "original-task-operation",
+      primarySessionId: "ses_ci-replacement",
+      sessionRecovery: {
+        originalSessionId: "ses_lost-ci-owner",
+        status: "reconstruction-verified",
+      },
+      pullRequest: {
+        number: 9,
+        url: "https://github.com/owner/repo/pull/9",
+        headSha,
+      },
+      ciRepair: {
+        cycleId: "ci-cycle-original",
+        activePrimaryOperation: { operationId: "ci-cycle-original:pass:1" },
+      },
+    });
+    expect(
+      run.mock.calls.some(
+        ([options]) =>
+          options.prompt === originalPrompt &&
+          options.sessionId === "ses_ci-replacement",
+      ),
+    ).toBe(true);
+    expect(github.findPullRequestState).toHaveBeenCalled();
+    expect(fs.existsSync(repositoryPath)).toBe(true);
+
+    // Start a fresh canonical published-feedback attempt and lose its primary
+    // session before the feedback correction operation is dispatched.
+    const beforeFeedback = await authority.run(() => ownedStore.read(card.id));
+    if (beforeFeedback === null)
+      throw new Error("Expected canonical task record");
+    const feedbackRunStore = new RunStore(
+      pinned.storageRoot,
+      "feedback-restart-attempt",
+      pinned,
+      lease,
+    );
+    feedbackRunStore.create({
+      ...runStore.read()!,
+      revision: 1,
+      attemptId: "feedback-restart-attempt",
+      lifecycle: "ci",
+      checkpoint: "ci",
+      sessions: { primary: "ses_lost-feedback-owner" },
+      compatibility: {},
+      updatedAt: new Date().toISOString(),
+    });
+    const feedbackAuthority = new ProjectRunAuthority(
+      project.id,
+      feedbackRunStore,
+      1,
+      undefined,
+      undefined,
+      card.id,
+    );
+    const feedbackStore = new TaskExecutionStore(
+      project.contextRoot,
+      project,
+      feedbackAuthority,
+    );
+    const feedbackLedger = new FeedbackLedgerStore(
+      project.contextRoot,
+      project,
+      feedbackAuthority,
+    );
+    const feedbackHeadSha = headSha;
+    const feedbackOperationId = `feedback:${feedbackHeadSha}:${createHash(
+      "sha256",
+    )
+      .update("inline-comment:501:Handle the empty case.")
+      .digest("hex")
+      .slice(0, 16)}`;
+    const feedbackQueue = new TaskMutationQueue(
+      pinned.storageRoot,
+      project,
+      feedbackAuthority,
+    );
+    feedbackQueue.enqueue({
+      projectId: project.id,
+      cardId: card.id,
+      eventId: feedbackOperationId,
+      operationKey: feedbackOperationId,
+      kind: "feedback",
+      enqueuedAt: new Date().toISOString(),
+    });
+    expect(feedbackQueue.claimNext()?.eventId).toBe(feedbackOperationId);
+    feedbackQueue.fail(feedbackOperationId);
+    await feedbackAuthority.run(() =>
+      feedbackStore.create({
+        ...beforeFeedback,
+        revision: 1,
+        phase: "human-feedback",
+        primarySessionId: "ses_lost-feedback-owner",
+        sessionCreationStatus: "bound",
+        sessionRecovery: undefined,
+        ciRepair: undefined,
+        reviewRepair: undefined,
+        feedbackRemediation: {
+          operationId: feedbackOperationId,
+          status: "active",
+          headSha: feedbackHeadSha,
+          ledgerRevision: 1,
+        },
+        primaryOperations: {
+          [feedbackOperationId]: {
+            id: feedbackOperationId,
+            activity: "feedback-remediation",
+            executions: 1,
+            status: "failed",
+            retrySafe: true,
+            lastSessionId: "ses_lost-feedback-owner",
+            updatedAt: new Date().toISOString(),
+          },
+        },
+        lastEvent: {
+          id: "feedback-restart-ci-passed",
+          type: "ci-passed-awaiting-human",
+          operationKey: beforeFeedback.operationKey,
+          occurredAt: new Date().toISOString(),
+        },
+        reviewObservation: {
+          headSha: feedbackHeadSha,
+          observedAt: new Date().toISOString(),
+          ciEvaluation: {
+            status: "passed",
+            expectedCheckNames: ["Build"],
+            missingChecks: [],
+            pendingChecks: [],
+            failureCheckNames: [],
+          },
+          feedbackIds: ["501"],
+        },
+        updatedAt: new Date().toISOString(),
+      }),
+    );
+    await feedbackAuthority.run(() =>
+      feedbackLedger.create(card.id, [
+        {
+          kind: "review",
+          id: "12",
+          author: "reviewer",
+          createdAt: "2026-10-24T11:00:00.000Z",
+          updatedAt: null,
+          body: "Please handle the empty case.",
+          actionability: "actionable",
+          status: "pending",
+          verificationEvidence: [],
+        },
+        {
+          kind: "inline-comment",
+          id: "501",
+          author: "reviewer",
+          createdAt: "2026-10-24T11:00:00.000Z",
+          updatedAt: null,
+          body: "Handle the empty case.",
+          actionability: "actionable",
+          status: "pending",
+          verificationEvidence: [],
+        },
+      ]),
+    );
+    const feedbackPlanStore = new TaskPlanStore(
+      project.contextRoot,
+      project,
+      feedbackAuthority,
+    );
+    await feedbackAuthority.run(async () =>
+      feedbackPlanStore.create(
+        {
+          version: 1,
+          projectId: project.id,
+          cardId: card.id,
+          requirements: [
+            { id: "REQ-1", text: "Task", verification: "Check task" },
+          ],
+          steps: [
+            {
+              id: "STEP-1",
+              description: "Implement task",
+              requirementIds: ["REQ-1"],
+              verification: "Run checks",
+            },
+          ],
+          assumptions: [],
+          blockers: [],
+        },
+        1,
+      ),
+    );
+    await feedbackAuthority.run(async () =>
+      feedbackPlanStore.storeVerification(card.id, 1, {
+        version: 1,
+        projectId: project.id,
+        cardId: card.id,
+        planRevision: 1,
+        verdict: "pass",
+        findings: [],
+      }),
+    );
+    await feedbackAuthority.run(async () =>
+      writeTrustedCommitState(project, card.id, {
+        version: 1,
+        kind: "trusted-commit",
+        projectId: project.id,
+        cardId: card.id,
+        taskBranch: `agent/${card.id}`,
+        defaultBranch: "main",
+        commitSha: headSha,
+      }),
+    );
+    feedbackMode = true;
+    replacementSessionId = "ses_feedback-replacement";
+    listedSessionId = undefined;
+    await feedbackAuthority.run(() =>
+      runTaskSessionWorkflow({
+        project,
+        trello,
+        git,
+        github,
+        openCode: new OpenCodeClient(run),
+        commands,
+        signal: new AbortController().signal,
+        prepareAttachmentContext: async () => undefined,
+      }),
+    );
+    const afterFeedback = await feedbackAuthority.run(() =>
+      feedbackStore.read(card.id),
+    );
+    expect(
+      afterFeedback?.sessionRecovery?.contextAvailabilityReason,
+    ).toBeUndefined();
+    expect(
+      run.mock.calls.some(([options]) =>
+        options.prompt.includes("Restore continuity"),
+      ),
+    ).toBe(true);
+    expect(afterFeedback).toMatchObject({
+      phase: "human-feedback",
+      primarySessionId: "ses_feedback-replacement",
+      sessionRecovery: {
+        originalSessionId: "ses_lost-feedback-owner",
+        status: "reconstruction-verified",
+      },
+      operationKey: "original-task-operation",
+      pullRequest: {
+        number: 9,
+        url: "https://github.com/owner/repo/pull/9",
+        headSha: feedbackHeadSha,
+      },
+    });
+    expect(
+      run.mock.calls.some(
+        ([options]) =>
+          options.prompt.startsWith(
+            "Address the following verified-as-actionable human PR feedback",
+          ) &&
+          options.prompt.includes("Handle the empty case.") &&
+          options.sessionId === "ses_feedback-replacement",
+      ),
+    ).toBe(true);
+    expect(
+      afterFeedback?.primaryOperations?.[feedbackOperationId],
+    ).toMatchObject({
+      id: feedbackOperationId,
+      activity: "feedback-remediation",
+      executions: 2,
+      status: "completed",
+    });
+    expect(
+      run.mock.calls.filter(
+        ([options]) =>
+          options.prompt.startsWith(
+            "Address the following verified-as-actionable human PR feedback",
+          ) && options.sessionId === "ses_feedback-replacement",
+      ),
+    ).toHaveLength(1);
+
+    // A second process restart occurs after feedback has completed and the
+    // canonical task has moved into its validation checkpoint. The feedback
+    // queue event remains the persisted owner; this must not be mistaken for
+    // the original implementation claim or replay feedback remediation.
+    const checkpointOperationId = `feedback:${feedbackHeadSha}:checkpoint`;
+    feedbackQueue.enqueue({
+      projectId: project.id,
+      cardId: card.id,
+      eventId: checkpointOperationId,
+      operationKey: checkpointOperationId,
+      kind: "feedback",
+      enqueuedAt: new Date().toISOString(),
+    });
+    expect(feedbackQueue.claimNext()?.eventId).toBe(checkpointOperationId);
+    feedbackQueue.fail(checkpointOperationId);
+    cardListId = project.trello.workingListId;
+    card.idList = cardListId;
+    const feedbackCompletedRecord = afterFeedback;
+    if (feedbackCompletedRecord === null)
+      throw new Error("Expected feedback-completed task record");
+    await feedbackAuthority.run(() => {
+      const prepared = feedbackStore.compareAndSwap(
+        card.id,
+        feedbackCompletedRecord.revision,
+        {
+          ...feedbackCompletedRecord,
+          ciRepair: undefined,
+          reviewObservation: undefined,
+          publicationQuality: undefined,
+          reviewRepair: undefined,
+          revision: feedbackCompletedRecord.revision + 1,
+          updatedAt: new Date().toISOString(),
+        },
+      );
+      const feedbackReceived = transitionTaskExecutionRecord(prepared, {
+        type: "feedback-received",
+        eventId: `${feedbackOperationId}:feedback-received`,
+        projectId: project.id,
+        cardId: card.id,
+        operationKey: feedbackCompletedRecord.operationKey,
+        occurredAt: new Date().toISOString(),
+      });
+      const implementation = feedbackStore.compareAndSwap(
+        card.id,
+        prepared.revision,
+        {
+          ...feedbackReceived,
+          feedbackRemediation: {
+            operationId: feedbackOperationId,
+            status: "changed",
+            headSha: feedbackHeadSha,
+            ledgerRevision: 1,
+          },
+        },
+      );
+      const validation = transitionTaskExecutionRecord(implementation, {
+        type: "implementation-completed",
+        eventId: `${feedbackOperationId}:implementation-completed`,
+        projectId: project.id,
+        cardId: card.id,
+        operationKey: implementation.operationKey,
+        occurredAt: new Date().toISOString(),
+      });
+      feedbackStore.compareAndSwap(card.id, implementation.revision, {
+        ...validation,
+        primarySessionId: "ses_lost-validation-owner",
+        sessionRecovery: undefined,
+        feedbackRemediation: {
+          operationId: checkpointOperationId,
+          status: "changed",
+          headSha: feedbackHeadSha,
+          ledgerRevision: 1,
+        },
+        primaryOperations: {
+          ...validation.primaryOperations,
+          [checkpointOperationId]: {
+            id: checkpointOperationId,
+            activity: "feedback-remediation",
+            executions: 1,
+            status: "completed",
+            result: {
+              exitCode: 0,
+              output: "persisted feedback result",
+              errorOutput: "",
+            },
+            lastSessionId: "ses_lost-validation-owner",
+            updatedAt: new Date().toISOString(),
+          },
+        },
+      });
+    });
+    replacementSessionId = "ses_validation-replacement";
+    validationCheckpointMode = true;
+    listedSessionId = undefined;
+    abortAtValidation = true;
+    const validationRunStart = run.mock.calls.length;
+    await expect(
+      feedbackAuthority.run(() =>
+        runTaskSessionWorkflow({
+          project,
+          trello,
+          git,
+          github,
+          openCode: new OpenCodeClient(run),
+          commands,
+          signal: validationRestartController!.signal,
+          prepareAttachmentContext: async () => undefined,
+        }),
+      ),
+    ).rejects.toThrow("Publication configuration differs from attempt pins");
+    const afterValidationRestart = await feedbackAuthority.run(() =>
+      feedbackStore.read(card.id),
+    );
+    expect(afterValidationRestart?.primarySessionId).toBe(
+      "ses_validation-replacement",
+    );
+    expect(afterValidationRestart?.sessionRecovery).toMatchObject({
+      originalSessionId: "ses_lost-validation-owner",
+      status: "reconstruction-verified",
+    });
+    expect(afterValidationRestart?.phase).toBe("publication");
+    expect(feedbackQueue.getActive()).toMatchObject({
+      eventId: checkpointOperationId,
+      kind: "feedback",
+      cardId: card.id,
+    });
+    expect(
+      afterValidationRestart?.primaryOperations?.[checkpointOperationId],
+    ).toMatchObject({ executions: 1, status: "completed" });
+    expect(
+      run.mock.calls
+        .slice(validationRunStart)
+        .some(([options]) =>
+          options.prompt.startsWith(
+            "Address the following verified-as-actionable human PR feedback",
+          ),
+        ),
+    ).toBe(false);
+    expect(
+      run.mock.calls
+        .slice(validationRunStart)
+        .some(([options]) =>
+          options.prompt.includes(
+            "Implement the task described on the Trello card",
+          ),
+        ),
+    ).toBe(false);
+  });
+
   it("does not claim a queued Ready event before its start time and resumes it once eligible", async () => {
     const { project } = projectFixture();
     const card: TrelloCard = {

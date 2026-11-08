@@ -221,7 +221,7 @@ export async function reconcileTaskSession(
   });
   if (
     options.readTerminalPullRequest &&
-    (record.phase === "ci" || record.phase === "human-feedback") &&
+    record.phase !== "done" &&
     record.pullRequest !== undefined
   ) {
     const terminal = await options.readTerminalPullRequest(record);
@@ -269,7 +269,7 @@ export async function reconcileTaskSession(
   }
   const expectedTerminalPr = record.pullRequest;
   if (
-    (record.phase === "ci" || record.phase === "human-feedback") &&
+    record.phase !== "done" &&
     expectedTerminalPr !== undefined &&
     snapshot.pullRequest !== null &&
     snapshot.pullRequest.number === expectedTerminalPr.number &&

@@ -102,16 +102,24 @@ export async function runTaskSessionFeedbackRemediation(
       "Feedback remediation phase, primary session, or PR head does not match the task record",
     );
   }
-  if (record.feedbackRemediation?.status === "active") {
+  const priorFeedback = record.feedbackRemediation;
+  if (
+    priorFeedback?.operationId === options.operationId &&
+    (priorFeedback.status !== "active" ||
+      record.primaryOperations?.[options.operationId]?.activity !==
+        "feedback-remediation")
+  ) {
     throw new TaskSessionFeedbackRemediationError(
-      `Feedback remediation operation ${record.feedbackRemediation.operationId} has an ambiguous active outcome; refusing to start another operation`,
+      `Feedback remediation operation ${options.operationId} is not authorized for exact primary-ledger continuation`,
     );
   }
-  if (record.feedbackRemediation?.operationId === options.operationId) {
+  if (
+    priorFeedback?.status === "active" &&
+    priorFeedback.operationId !== options.operationId
+  )
     throw new TaskSessionFeedbackRemediationError(
-      `Feedback remediation operation ID was already recorded: ${options.operationId}`,
+      `Active feedback remediation operation ${priorFeedback.operationId} cannot be replaced`,
     );
-  }
   if (
     (await options.git.getCurrentBranch(options.worktreePath)) !==
     options.expectedBranch

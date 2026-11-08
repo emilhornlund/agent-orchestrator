@@ -71,13 +71,13 @@ export async function observeTaskSessionReviewCards(
       record.feedbackRemediation?.status === "changed" &&
       record.feedbackRecoveryAttemptEventId !==
         record.feedbackRemediation.operationId;
-    if (
-      record.phase !== "human-feedback" &&
-      record.phase !== "ci" &&
-      !failedFeedbackReview
-    ) {
-      continue;
-    }
+    const owningFeedbackCheckpoint =
+      record.feedbackRemediation?.status === "changed" &&
+      (record.phase === "validation" || record.phase === "review");
+    // Persisted PR identity, rather than the transient correction checkpoint,
+    // is the durable authority for observing merge/close. Feedback corrections
+    // can move through implementation, validation, review, and publication.
+    if (record.pullRequest === undefined) continue;
     if (
       record.projectId !== project.id ||
       record.cardId !== card.id ||
@@ -145,7 +145,14 @@ export async function observeTaskSessionReviewCards(
       });
       continue;
     }
-    if (options.terminalOnlyCardIds?.has(card.id)) continue;
+    if (
+      options.terminalOnlyCardIds?.has(card.id) ||
+      (record.phase !== "human-feedback" &&
+        record.phase !== "ci" &&
+        !failedFeedbackReview &&
+        !owningFeedbackCheckpoint)
+    )
+      continue;
     if (pullRequest.headRefOid !== headSha) {
       throw new Error(
         `Authoritative pull request identity or head changed for Human Review card ${card.id}`,
@@ -276,7 +283,7 @@ export async function observeTaskSessionReviewCards(
       conversationComments,
       baseRelation,
     };
-    if (failedFeedbackReview) {
+    if (failedFeedbackReview || owningFeedbackCheckpoint) {
       observed.push(openObservation);
       continue;
     }

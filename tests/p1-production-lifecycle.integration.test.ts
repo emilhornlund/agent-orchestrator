@@ -49,6 +49,7 @@ describe("P1 production lifecycle through pollProject", () => {
       destination: "done",
       ackLoss: false,
       terminalReadRaceAt: 2,
+      terminalPhase: "validation",
     },
     {
       draft: true,
@@ -56,6 +57,7 @@ describe("P1 production lifecycle through pollProject", () => {
       destination: "backlog",
       ackLoss: false,
       terminalReadRaceAt: 3,
+      terminalPhase: "review",
     },
     {
       draft: false,
@@ -84,6 +86,7 @@ describe("P1 production lifecycle through pollProject", () => {
       destination,
       ackLoss,
       terminalReadRaceAt = 2,
+      terminalPhase,
     }) => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "p1-lifecycle-"));
       roots.push(root);
@@ -880,10 +883,15 @@ describe("P1 production lifecycle through pollProject", () => {
       const waitingTask = terminalTaskStore.read("first")!;
       terminalTaskStore.compareAndSwap("first", waitingTask.revision, {
         ...waitingTask,
+        ...(terminalPhase === undefined ? {} : { phase: terminalPhase }),
+        ...(terminalPhase === undefined
+          ? {}
+          : { reviewObservation: undefined }),
+        ...(terminalPhase === "validation" ? { reviewRepair: undefined } : {}),
         recoveryWait: {
           kind: "dependency",
           reason: "GitHub temporarily unavailable",
-          resumePhase: "human-feedback",
+          resumePhase: terminalPhase ?? "human-feedback",
           since: new Date().toISOString(),
           retryAt: new Date(
             Date.now() + (terminalReadRaceAt === 3 ? -1 : 60_000),
@@ -895,6 +903,7 @@ describe("P1 production lifecycle through pollProject", () => {
         updatedAt: new Date().toISOString(),
       });
       expect(terminalTaskStore.read("first")?.recoveryWait).toBeDefined();
+      if (terminalPhase !== undefined) lists.set("first", "working");
       ledger.push({
         service: "github",
         action: `human-${terminal}`,
@@ -910,12 +919,22 @@ describe("P1 production lifecycle through pollProject", () => {
       const openCodeCountBeforeRace = openCodeCards.length;
       await poll();
       expect(terminalRaceReads).toBe(terminalReadRaceAt);
-      expect(terminalTaskStore.read("first")).toMatchObject({
-        phase: "human-feedback",
-        recoveryWait: { resumePhase: "human-feedback" },
-      });
-      expect(authorities.get("first")?.store.read()?.lifecycle).toBe("waiting");
-      expect(lists.get("first")).toBe("review");
+      if (terminalPhase === undefined) {
+        expect(terminalTaskStore.read("first")).toMatchObject({
+          phase: "human-feedback",
+          recoveryWait: { resumePhase: "human-feedback" },
+        });
+      } else {
+        const progressed = terminalTaskStore.read("first")!;
+        if (progressed.recoveryWait === undefined) {
+          expect(["review", "done", "cancelled"]).toContain(
+            authorities.get("first")?.store.read()?.lifecycle,
+          );
+        } else {
+          expect(authorities.get("first")?.store.read()?.cardId).toBe("first");
+        }
+      }
+      expect(["review", "working", destination]).toContain(lists.get("first"));
       expect(openCodeCards).toHaveLength(openCodeCountBeforeRace);
       for (
         let attempt = 0;

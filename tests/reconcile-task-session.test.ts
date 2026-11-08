@@ -138,6 +138,90 @@ describe("reconcileTaskSession", () => {
       conflict.reconcile({ primarySessionAccessible: "conflict" }),
     ).resolves.toMatchObject({ status: "attention-required" });
   });
+  it.each(["ci", "human-feedback"] as const)(
+    "reconstructs a lost published %s session after restart without changing its owning operation",
+    async (phase) => {
+      const f = fixture(phase);
+      const initial = f.store.read("card")!;
+      const operationId =
+        phase === "ci" ? "ci-repair:published-head" : "feedback:request-17";
+      f.store.compareAndSwap("card", initial.revision, {
+        ...initial,
+        primaryOperations: {
+          [operationId]: {
+            id: operationId,
+            activity: phase === "ci" ? "ci-repair" : "feedback-correction",
+            executions: 1,
+            status: "dispatched",
+            lastSessionId: "session",
+            updatedAt: initial.updatedAt,
+          },
+        },
+        revision: initial.revision + 1,
+        updatedAt: "2026-10-24T09:00:00.001Z",
+      });
+
+      // A new store instance models process restart. Persisted PR identity is
+      // authoritative even though recovery is occurring in a correction phase.
+      const restarted = new TaskExecutionStore(
+        path.join(root, "state"),
+        f.project,
+      );
+      const result = await reconcileTaskSession({
+        project: f.project,
+        cardId: "card",
+        expectedBranch: "agent/card",
+        operationKey: "operation",
+        worktreePath: f.worktreePath,
+        taskRecordStore: restarted,
+        retryIntervalMs: 1_000,
+        readAuthoritativeSnapshot: async () => ({
+          primarySessionAccessible: "confirmed-absent",
+          worktreeExists: true,
+          worktreeBranch: "agent/card",
+          worktreeHeadSha: f.sha,
+          worktreeRebaseActive: false,
+          trustedCommitSha: f.sha,
+          remoteBranchHeadSha: null,
+          trelloListId: "review",
+          pullRequest: {
+            number: 1,
+            url: "https://github.com/o/r/pull/1",
+            headSha: f.sha,
+            state: "OPEN",
+          },
+          ciEvaluation:
+            phase === "ci"
+              ? {
+                  status: "failed",
+                  expectedHeadSha: f.sha,
+                  expectedCheckNames: ["Build"],
+                  failures: [],
+                }
+              : null,
+          feedbackHeadSha: phase === "human-feedback" ? f.sha : null,
+          uncertainReplyIds: [],
+          reconciledReplyIds: [],
+        }),
+      });
+
+      expect(result.status).toBe("reconstruction-required");
+      expect(result.record.pullRequest).toMatchObject({
+        number: 1,
+        url: "https://github.com/o/r/pull/1",
+      });
+      expect(result.record.primaryOperations?.[operationId]).toMatchObject({
+        id: operationId,
+        status: "dispatched",
+        executions: 1,
+        lastSessionId: "session",
+      });
+      expect(Object.keys(result.record.primaryOperations ?? {})).toEqual([
+        operationId,
+      ]);
+    },
+  );
+
   it("does not authorize reconstruction when card, worktree, or PR evidence is unsafe", async () => {
     const moved = fixture();
     await expect(

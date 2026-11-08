@@ -84,7 +84,7 @@ export async function runPrimaryOperation(
     throw new PrimaryOperationExhaustedError(
       entry.diagnostic ?? `Primary operation ${operationId} exhausted`,
     );
-  if (entry) {
+  if (entry && !(entry.status === "failed" && entry.retrySafe === true)) {
     const inspected = await inspect(options, entry);
     if (inspected.status === "completed") {
       if (inspected.result.exitCode !== 0) {
