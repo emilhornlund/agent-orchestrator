@@ -43,14 +43,15 @@ cover the workflow; no live Trello/GitHub/OpenCode pilot or deployed-service tes
 
 ## Documentation
 
-| Topic                                                                | Reference                              |
-| -------------------------------------------------------------------- | -------------------------------------- |
-| Workflow lifecycle, Trello states, refinement, and review feedback   | [Workflow](docs/workflow.md)           |
-| `config.yaml`, environment variables, defaults, and validation       | [Configuration](docs/configuration.md) |
-| Reconciliation, restart recovery, retries, and ambiguous state       | [Recovery](docs/recovery.md)           |
-| Worktree safety, publication, notifications, logging, and operations | [Operations](docs/operations.md)       |
-| Development setup, testing, and pull requests                        | [CONTRIBUTING.md](CONTRIBUTING.md)     |
-| Private vulnerability reporting                                      | [SECURITY.md](SECURITY.md)             |
+| Topic                                                                   | Reference                                  |
+| ----------------------------------------------------------------------- | ------------------------------------------ |
+| Workflow lifecycle, Trello states, refinement, and review feedback      | [Workflow](docs/workflow.md)               |
+| `config.yaml`, environment variables, defaults, and validation          | [Configuration](docs/configuration.md)     |
+| Reconciliation, restart recovery, retries, and ambiguous state          | [Recovery](docs/recovery.md)               |
+| Worktree safety, publication, notifications, logging, and operations    | [Operations](docs/operations.md)           |
+| Development setup, testing, and pull requests                           | [CONTRIBUTING.md](CONTRIBUTING.md)         |
+| Private vulnerability reporting                                         | [SECURITY.md](SECURITY.md)                 |
+| Architecture roadmap, phase execution, readiness, and current milestone | [Phase execution](docs/phase-execution.md) |
 
 The focused pages are the canonical references for their topics. The implementation does not change when documentation is
 reorganized; current configuration names, states, commands, and safety boundaries are described there.

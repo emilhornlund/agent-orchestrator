@@ -82,7 +82,7 @@ function fixture() {
       .fn()
       .mockResolvedValueOnce("a".repeat(40))
       .mockResolvedValue("b".repeat(40)),
-    stageAll: vi.fn(),
+    stageAllExcept: vi.fn(),
     commit: vi.fn(),
     getCommitCountBetween: vi.fn().mockResolvedValue(1),
     getStatus: vi.fn().mockResolvedValue(""),
@@ -107,6 +107,35 @@ function fixture() {
 }
 
 describe("publishTaskSessionCard", () => {
+  it("blocks publication when configured setup has no validated commit disposition", async () => {
+    const { base, git } = fixture();
+    vi.mocked(publishCard).mockClear();
+    (base.project.repository as { setupCommand?: string }).setupCommand =
+      "yarn install";
+    await expect(publishTaskSessionCard(base as never)).rejects.toThrow(
+      "Setup commit disposition is unavailable",
+    );
+    expect(git.stageAllExcept).not.toHaveBeenCalled();
+    expect(git.commit).not.toHaveBeenCalled();
+    expect(publishCard).not.toHaveBeenCalled();
+  });
+
+  it("fails closed for an existing PR when historical setup scope proof is missing", async () => {
+    const { base, git } = fixture();
+    vi.mocked(publishCard).mockClear();
+    (base.project.repository as { setupCommand?: string }).setupCommand =
+      "yarn install";
+    await expect(
+      publishTaskSessionCard({
+        ...base,
+        expectedExistingPullRequestUrl: "https://github.com/o/r/pull/1",
+      } as never),
+    ).rejects.toThrow("Historical setup scope proof is unavailable");
+    expect(git.stageAllExcept).not.toHaveBeenCalled();
+    expect(git.commit).not.toHaveBeenCalled();
+    expect(publishCard).not.toHaveBeenCalled();
+  });
+
   it("writes a durable parent intent before Git commit and clears it after trust", async () => {
     const { base, git } = fixture();
     vi.mocked(git.commit).mockImplementation(async () => {
@@ -148,7 +177,7 @@ describe("publishTaskSessionCard", () => {
         initialEvidence: { ...evidence, review: null },
       } as never),
     ).resolves.toBe("b".repeat(40));
-    expect(git.stageAll).toHaveBeenCalledOnce();
+    expect(git.stageAllExcept).toHaveBeenCalledOnce();
   });
 
   it("creates one trusted commit and asks for a fresh gate before push", async () => {
@@ -161,7 +190,7 @@ describe("publishTaskSessionCard", () => {
       claimHumanReviewNotification,
     } as never);
     expect(commitSha).toBe("b".repeat(40));
-    expect(git.stageAll).toHaveBeenCalledOnce();
+    expect(git.stageAllExcept).toHaveBeenCalledOnce();
     expect(git.commit).toHaveBeenCalledOnce();
     expect(publishCard).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -199,7 +228,7 @@ describe("publishTaskSessionCard", () => {
       verifyPreparedContent: async () => withFailure,
     } as never);
     expect(committed).toBe("b".repeat(40));
-    expect(git.stageAll).toHaveBeenCalledOnce();
+    expect(git.stageAllExcept).toHaveBeenCalledOnce();
     expect(publishCard).toHaveBeenCalledWith(
       expect.objectContaining({
         reviewResult: "Failed (human review required)",
@@ -229,7 +258,7 @@ describe("publishTaskSessionCard", () => {
         },
       } as never),
     ).resolves.toBe("b".repeat(40));
-    expect(git.stageAll).toHaveBeenCalledOnce();
+    expect(git.stageAllExcept).toHaveBeenCalledOnce();
   });
 
   it("publishes a rebased exhausted review only when the new head passes current validation", async () => {
@@ -311,6 +340,6 @@ describe("publishTaskSessionCard", () => {
         }),
       } as never),
     ).rejects.toThrow("Local validation evidence is stale");
-    expect(git.stageAll).toHaveBeenCalledOnce();
+    expect(git.stageAllExcept).toHaveBeenCalledOnce();
   });
 });

@@ -3,6 +3,7 @@ import type { ImplementationReviewResult } from "./implementation-review-result.
 import type { TaskExecutionRecord } from "./task-execution-record.js";
 import { logger } from "../logging/logger.js";
 import { TaskExecutionStore } from "./task-execution-store.js";
+import { findPrimaryRecoveryError } from "./persist-primary-operation-recovery.js";
 
 type TrackedFinding = NonNullable<
   NonNullable<TaskExecutionRecord["reviewRepair"]>["findings"]
@@ -25,7 +26,13 @@ export interface RunTaskSessionReviewRepairsOptions {
   repair: (
     review: ImplementationReviewResult,
     attempt: number,
+    operationId: string,
+    persistedPrompt?: string,
   ) => Promise<void>;
+  buildRepairPrompt?: (
+    review: ImplementationReviewResult,
+    attempt: number,
+  ) => string;
   rerunQuality: () => Promise<void>;
   getCurrentContentIdentity: () => Promise<string>;
   maxAttempts: number;
@@ -145,7 +152,9 @@ function assertOwner(
     record.cardId !== options.cardId ||
     record.operationKey !== options.operationKey ||
     record.primarySessionId !== options.expectedPrimarySessionId ||
-    (record.phase !== "review" && record.phase !== "validation")
+    (record.phase !== "review" &&
+      record.phase !== "validation" &&
+      record.phase !== "implementation")
   ) {
     throw new TaskSessionReviewRepairError(
       "Review repair requires the owned review-phase task and exact primary session",
@@ -422,6 +431,55 @@ export async function runTaskSessionReviewWithRepairs(
   }
 
   for (;;) {
+    const active = record.reviewRepair?.activePrimaryOperation;
+    if (active !== undefined) {
+      if (active.promptArtifact === undefined)
+        throw new TaskSessionReviewRepairError(
+          "Reserved review repair lacks its persisted prompt; preserving the reservation",
+        );
+      const stored: unknown = options.store.readPrimaryResultArtifact({
+        reference: active.promptArtifact.reference as `sha256:${string}`,
+        bytes: active.promptArtifact.bytes,
+        ...(active.promptArtifact.path === undefined
+          ? {}
+          : { path: active.promptArtifact.path }),
+      });
+      if (
+        typeof stored !== "object" ||
+        stored === null ||
+        !("prompt" in stored) ||
+        typeof stored.prompt !== "string" ||
+        !("review" in stored) ||
+        typeof stored.review !== "object" ||
+        stored.review === null
+      )
+        throw new TaskSessionReviewRepairError(
+          "Persisted review repair evidence is invalid; preserving the reservation",
+        );
+      try {
+        await options.repair(
+          stored.review as ImplementationReviewResult,
+          active.pass,
+          active.operationId,
+          stored.prompt,
+        );
+        await options.rerunQuality();
+      } catch (error) {
+        throw new TaskSessionReviewRepairError(
+          `Reserved review repair pass ${active.pass} did not complete; reservation is preserved`,
+          { cause: error },
+        );
+      }
+      const afterQuality = options.store.read(options.cardId);
+      assertOwner(afterQuality, options);
+      record = updateRecord(options.store, afterQuality, {
+        reviewRepair: {
+          ...afterQuality.reviewRepair!,
+          activePrimaryOperation: undefined,
+        },
+      });
+      continue;
+    }
     let round: TaskSessionReviewRound;
     try {
       round = await options.runReview(record.reviewRepair?.findings ?? []);
@@ -553,18 +611,35 @@ export async function runTaskSessionReviewWithRepairs(
       return { ...trackedRound, attempts, record };
     }
 
+    const repairAttempt = attempts + 1;
+    const operationId = `${options.operationKey}:review:${cycleId}:pass:${repairAttempt}`;
+    const prompt =
+      options.buildRepairPrompt?.(ledger.review, repairAttempt) ??
+      JSON.stringify({ review: ledger.review, attempt: repairAttempt });
+    const promptArtifact = options.store.writePrimaryResultArtifact(
+      `${operationId}:prompt`,
+      { prompt, review: ledger.review },
+    );
     record = updateRecord(options.store, record, {
-      retryCounters: { ...record.retryCounters, review: attempts + 1 },
+      retryCounters: { ...record.retryCounters, review: repairAttempt },
+      // Once a primary repair is durably reserved, older remediation-failure
+      // state must not be allowed to classify or publish around it.
+      reviewRemediationFailure: undefined,
       reviewRepair: {
         cycleId,
         status: "active",
         maxAttempts: record.reviewRepair?.maxAttempts ?? options.maxAttempts,
         findings: ledger.findings,
+        activePrimaryOperation: {
+          operationId,
+          pass: repairAttempt,
+          promptArtifact,
+        },
       },
     });
     logReviewDiagnostic(options, "remediation-started", {
       reviewPass: attempts + 1,
-      remediationAttempt: attempts + 1,
+      remediationAttempt: repairAttempt,
       findingsBeforeRemediation: boundedIds(
         ledger.findings
           .filter(({ status }) => status === "unresolved")
@@ -575,9 +650,22 @@ export async function runTaskSessionReviewWithRepairs(
     let failureCategory: "remediation-execution" | "validation" =
       "remediation-execution";
     try {
-      await options.repair(ledger.review, attempts + 1);
+      await options.repair(ledger.review, repairAttempt, operationId, prompt);
       failureCategory = "validation";
       await options.rerunQuality();
+      const afterQuality = options.store.read(options.cardId);
+      assertOwner(afterQuality, options);
+      if (
+        afterQuality.reviewRepair?.activePrimaryOperation?.operationId ===
+        operationId
+      ) {
+        record = updateRecord(options.store, afterQuality, {
+          reviewRepair: {
+            ...afterQuality.reviewRepair,
+            activePrimaryOperation: undefined,
+          },
+        });
+      }
       logReviewDiagnostic(options, "remediation-completed", {
         reviewPass: attempts + 1,
         remediationAttempt: attempts + 1,
@@ -585,6 +673,12 @@ export async function runTaskSessionReviewWithRepairs(
         ...qualityDiagnostic(options.store.read(options.cardId) ?? record),
       });
     } catch (error) {
+      const primaryRecoveryError = findPrimaryRecoveryError(error);
+      if (primaryRecoveryError !== undefined)
+        throw new TaskSessionReviewRepairError(
+          "Primary review repair requires durable recovery; preserving its reservation and execution outcome",
+          { cause: primaryRecoveryError },
+        );
       // Failed remediation can leave partial source changes. Inspect rather
       // than interpreting an incomplete repair as an exhausted review verdict.
       let after: string | null = null;
@@ -607,20 +701,24 @@ export async function runTaskSessionReviewWithRepairs(
           { cause: error },
           { before, after, unchanged: false },
         );
-      updateRecord(options.store, latest, {
-        reviewRemediationFailure: {
-          cycleId,
-          attempt: attempts + 1,
-          before,
-          after,
-          unchanged,
-          diagnostic: "Review remediation did not complete",
-        },
-      });
+      if (
+        latest.reviewRepair?.activePrimaryOperation?.operationId !== operationId
+      ) {
+        updateRecord(options.store, latest, {
+          reviewRemediationFailure: {
+            cycleId,
+            attempt: repairAttempt,
+            before,
+            after,
+            unchanged,
+            diagnostic: "Review remediation did not complete",
+          },
+        });
+      }
       logReviewDiagnostic(options, "cycle-failed", {
         category: failureCategory,
         reviewPass: attempts + 1,
-        remediationAttempt: attempts + 1,
+        remediationAttempt: repairAttempt,
         blockingFindingIds: boundedIds(
           ledger.review.blockingFindings.map(({ id }) => id ?? "unknown"),
         ),

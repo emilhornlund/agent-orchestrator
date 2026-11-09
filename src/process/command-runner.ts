@@ -80,6 +80,8 @@ export interface CommandRunOptions {
   sessionLabel?: string;
   /** External runtime location; defaults outside the source checkout. */
   artifactDirectory?: string;
+  /** Called after durable execution evidence is created and before spawn. */
+  onExecutionStarted?: (executionId: string) => void;
 }
 
 export interface CommandRunResult {
@@ -125,6 +127,7 @@ const defaultRunCommand: RunCommand = async ({
   sessionLogPath,
   sessionLabel,
   artifactDirectory,
+  onExecutionStarted,
 }) =>
   new Promise((resolve, reject) => {
     const runtime = getProcessRuntime();
@@ -176,6 +179,19 @@ const defaultRunCommand: RunCommand = async ({
       effectiveSecretValues,
       artifactDirectoryOverride,
     );
+    try {
+      onExecutionStarted?.(execution.executionId);
+    } catch (error) {
+      try {
+        execution.finish("spawn-failure", {
+          error: "execution binding failed",
+        });
+      } catch {
+        // Preserve the binding failure and do not dispatch the command.
+      }
+      reject(error);
+      return;
+    }
     const child = spawn(command, {
       cwd,
       shell: true,
@@ -183,7 +199,6 @@ const defaultRunCommand: RunCommand = async ({
       detached: process.platform !== "win32",
       env: buildChildEnvironment(processFamily ?? "command", environment),
     });
-
     let settled = false;
     let timedOut = false;
     let timeout: NodeJS.Timeout | undefined;
@@ -456,6 +471,21 @@ const defaultRunCommand: RunCommand = async ({
           : {}),
       });
     });
+
+    try {
+      execution.dispatched(child.pid);
+    } catch (error) {
+      // All listeners and tree supervision are installed before the metadata
+      // update. A failed PID binding is not permission to leave the child
+      // running unobserved.
+      captureFailure =
+        error instanceof Error
+          ? error
+          : new ProcessEvidenceError(
+              "Could not persist child process identity",
+            );
+      terminate();
+    }
   });
 
 export class CommandRunner {

@@ -47,6 +47,19 @@ describe("process evidence failure containment", () => {
     expect(() => evidence.finish("success")).not.toThrow();
   });
 
+  it("durably proves spawn failure was never dispatched when no child PID exists", () => {
+    const evidence = beginProcessEvidence("opencode run", root);
+    evidence.finish("spawn-failure");
+    const metadata = JSON.parse(
+      fs.readFileSync(evidence.metadataPath, "utf8"),
+    ) as { status: string; dispatchState: string; pid?: number };
+    expect(metadata).toMatchObject({
+      status: "spawn-failure",
+      dispatchState: "not-dispatched",
+    });
+    expect(metadata.pid).toBeUndefined();
+  });
+
   it("throws explicit typed failure when terminal metadata cannot be written", () => {
     const evidence = beginProcessEvidence("cmd", root);
     vi.spyOn(fs, "writeFileSync").mockImplementation(() => {

@@ -469,6 +469,10 @@ export class TrelloClient {
     );
   }
 
+  getCard(cardId: string): Promise<TrelloCard> {
+    return this.get(`/cards/${cardId}`, trelloCardSchema, {}, "card lookup");
+  }
+
   getCardAttachments(
     cardId: string,
     signal?: AbortSignal,

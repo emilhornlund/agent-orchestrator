@@ -5,9 +5,14 @@
 This page is the canonical operator reference for execution isolation, publication boundaries, timing, notifications,
 shutdown, logging, retention, and multi-project operation.
 
+Architecture work is incremental. [phase-status.md](phase-status.md) records delivery
+milestones and remaining qualification; the [execution packets](phase-execution.md)
+assign future behavior changes. Legacy block/quality/maintenance descriptions below
+are not authority to retain policies contradicted by the agreed requirements.
+
 ## Reconciliation block storage
 
-When a retryable GitHub or Trello reconciliation reaches the existing three-attempt limit, the project worker writes its
+For legacy reconciliation records, when a retryable GitHub or Trello reconciliation reaches the existing three-attempt limit, the project worker writes its
 blocked state to `<contextRoot>/<project-id>/reconciliation-block.json`. This runtime record is below the configured context
 root, separate from the configured source checkout and every task worktree, and is written atomically. It stores the project
 ID, retry key and exhausted attempt, operation, optional card and reconciliation-list IDs, failure category and reason, the
@@ -21,6 +26,18 @@ A cardless project block has no card-based check: the external issue must be res
 operator recovery action. Restored notification identity prevents a restart from sending another `Attention Required` alert for
 the same unresolved failure. Polling, recovery-check, and notification-delivery failures never remove or overwrite unresolved
 block state.
+
+Current owned task checkpoints additionally support paced dependency waits with a
+persisted `retryAt`: bounded immediate read failures preserve the verified checkpoint
+and recheck it later instead of requiring a manual Ready move solely for an outage.
+Do not confuse this with a deliberate fresh retry or a legacy block lacking evidence.
+Primary execution accounting separately records actual dispatches, verified genuine
+failures and dependency outages. The user-approved
+[D6-RECOVERY](p6-decisions.md#d6-recovery--counted-unit-and-limit) counts three verified
+genuine failures per primary operation and separately accounts outages/reconstruction;
+do not infer another global task deadline or
+reuse service-request counts as correction-pass budgets. Orphan execution without
+reliable stopped proof remains fenced (CO-C2), not automatically retried.
 
 Before repository bootstrap and project reconciliation at startup, the service removes stale atomic-write temporary files for
 each configured project. The recognized scope is limited to these writer-generated names:
@@ -144,8 +161,11 @@ These attachments are part of the Trello task context. Inspect them when relevan
 ```
 
 Uploaded attachments are represented by the absolute path to the downloaded file. External-link attachments are represented
-by their URL and are never dereferenced or assigned a local path. Commit prompts do not include this section. No attachment
-contents, excerpts, or other full attachment data are placed in any prompt.
+by their URL and are never dereferenced or assigned a local path. Ordinary commit
+prompts do not include this section, which contains metadata/locations only.
+Confirmed-loss primary-session reconstruction separately permits bounded sanitized
+supported text content in its external context bundle; it does not download external
+URL attachments or establish support for every document/image format.
 
 The path is resolved in the filesystem namespace of the running process. In a local deployment, create or grant write
 permission to the configured root for the service user. In Docker, configure the same absolute path inside the container and

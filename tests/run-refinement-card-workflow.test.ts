@@ -87,6 +87,10 @@ function fixture() {
         ? "?? .agent-orchestrator/refinement-result.json"
         : "",
     ),
+    getHeadSha: vi.fn(async () => "a".repeat(40)),
+    getHeadTrackedFiles: vi.fn(async () => []),
+    getUntrackedFiles: vi.fn(async () => []),
+    getIgnoredFiles: vi.fn(async () => []),
     getCurrentBranch: vi.fn(async () => `agent/${card.id}`),
     getRebaseState: vi.fn(async () => null),
     getConflictedPaths: vi.fn(async () => []),
@@ -129,6 +133,7 @@ function run(
   return runRefinementCardWorkflow({
     trello: f.trello,
     git: f.git,
+    commands: { run: vi.fn(async () => ({ exitCode: 0 })) } as never,
     openCode: f.openCode,
     project: f.project,
     card: f.card,
@@ -192,9 +197,9 @@ describe("runRefinementCardWorkflow", () => {
   it("preserves the isolated worktree when shutdown interrupts terminal cleanup", async () => {
     const f = fixture();
     const controller = new AbortController();
-    vi.mocked(f.git.getCurrentBranch).mockImplementationOnce(async () => {
+    vi.mocked(f.git.getRebaseState).mockImplementation(async () => {
       controller.abort();
-      return `agent/${f.card.id}`;
+      return null;
     });
 
     await run(f, controller.signal);

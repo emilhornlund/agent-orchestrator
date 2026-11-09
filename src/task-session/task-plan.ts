@@ -101,6 +101,30 @@ const taskPlanSchema = z
 
 export type TaskPlan = z.infer<typeof taskPlanSchema>;
 
+const clarificationResultSchema = z.strictObject({
+  version: z.literal(1),
+  outcome: z.literal("clarification-required"),
+  projectId: stableId,
+  cardId: stableId,
+  evidenceExamined: z.array(z.string().trim().min(1).max(2_000)).min(1).max(20),
+  reason: z.string().trim().min(1).max(1_000),
+  questions: z.array(z.string().trim().min(1).max(300)).min(1).max(5),
+});
+
+export type TaskClarificationResult = z.infer<typeof clarificationResultSchema>;
+export type TaskPlanningResult = TaskPlan | TaskClarificationResult;
+
+export function parseTaskPlanningResult(value: unknown): TaskPlanningResult {
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    "outcome" in value &&
+    value.outcome === "clarification-required"
+  )
+    return clarificationResultSchema.parse(value);
+  return parseTaskPlan(value);
+}
+
 export function parseTaskPlan(value: unknown): TaskPlan {
   return taskPlanSchema.parse(value);
 }

@@ -6,6 +6,7 @@ import { buildRefinementPrompt } from "../opencode/build-refinement-prompt.js";
 import type { OpenCodeClient } from "../opencode/opencode-client.js";
 import type { TrelloCard } from "../trello/trello-client.js";
 import { WorkflowError } from "../orchestrator/workflow-error.js";
+import { captureSetupEffects } from "../process/run-setup.js";
 
 import {
   clearRefinementResult,
@@ -47,6 +48,7 @@ export async function runRefinement(
   worktreePath: string,
   signal: AbortSignal,
   attachmentContext?: CardAttachmentPromptContext,
+  repositoryBaseline?: Buffer,
 ): Promise<RefinementResult> {
   clearRefinementResult(worktreePath);
 
@@ -80,8 +82,41 @@ export async function runRefinement(
   }
 
   const status = await git.getStatus(worktreePath);
+  let repositoryChanged = hasForbiddenRepositoryChanges(status);
+  if (repositoryBaseline !== undefined) {
+    const before = JSON.parse(repositoryBaseline.toString("utf8")) as {
+      files: {
+        path: string;
+        kind: string;
+        sha256?: string;
+        bytes?: number;
+        target?: string;
+      }[];
+      head: string;
+      branch: string;
+      status: string;
+    };
+    const after = JSON.parse(
+      (await captureSetupEffects(git, worktreePath, signal)).toString("utf8"),
+    ) as typeof before;
+    const relevantFiles = (files: typeof before.files) =>
+      files.filter((file) => file.path !== refinementResultRelativePath);
+    repositoryChanged =
+      before.head !== after.head ||
+      before.branch !== after.branch ||
+      before.status
+        .split("\n")
+        .filter((line) => line.slice(3) !== refinementResultRelativePath)
+        .join("\n") !==
+        after.status
+          .split("\n")
+          .filter((line) => line.slice(3) !== refinementResultRelativePath)
+          .join("\n") ||
+      JSON.stringify(relevantFiles(before.files)) !==
+        JSON.stringify(relevantFiles(after.files));
+  }
 
-  if (hasForbiddenRepositoryChanges(status)) {
+  if (repositoryChanged) {
     throw new WorkflowError(
       "OpenCode",
       `OpenCode refinement modified repository files:\n${status}`,

@@ -209,6 +209,71 @@ function runRepairs(
 }
 
 describe("runTaskSessionValidationWithRepairs", () => {
+  it("resumes a reserved final validation repair before commands or exhaustion using its exact prompt and ID", async () => {
+    const fixture = createFixture();
+    const operationId = `${operationKey}:validation:${operationKey}:pass:2`;
+    const prompt = "persisted validation repair prompt";
+    const promptArtifact = fixture.executionStore.writePrimaryResultArtifact(
+      `${operationId}:prompt`,
+      { prompt },
+    );
+    const record = fixture.executionStore.read(card.id)!;
+    fixture.executionStore.compareAndSwap(card.id, record.revision, {
+      ...record,
+      retryCounters: { ...record.retryCounters, validation: 2 },
+      validationRepair: {
+        cycleId: operationKey,
+        status: "active",
+        activePrimaryOperation: {
+          operationId,
+          pass: 2,
+          validationResult: {
+            command: "yarn validate",
+            startedAt: "2026-10-24T09:00:00.000Z",
+            completedAt: "2026-10-24T09:00:01.000Z",
+            exitCode: 1,
+            status: "failed",
+            timedOut: false,
+            aborted: false,
+            diagnostic: "previous validation failure",
+            contentIdentity: `sha256:${"a".repeat(64)}`,
+          },
+          promptContext: `sha256:${"b".repeat(64)}`,
+          promptArtifact,
+        },
+      },
+      revision: record.revision + 1,
+      updatedAt: new Date().toISOString(),
+    });
+    fixture.runCommand.mockResolvedValue({
+      exitCode: 0,
+      output: "validation passed after resume",
+      errorOutput: "",
+    });
+    fixture.runOpenCode.mockImplementation(async (runOptions) => {
+      expect(runOptions.prompt).toBe(prompt);
+      expect(fixture.runCommand).not.toHaveBeenCalled();
+      expect(
+        fixture.executionStore.read(card.id)?.retryCounters.validation,
+      ).toBe(2);
+      return { exitCode: 0, output: "resumed repair", errorOutput: "" };
+    });
+
+    const result = await runRepairs(fixture);
+    expect(fixture.runCommand).toHaveBeenCalledOnce();
+    expect(fixture.runOpenCode).toHaveBeenCalledOnce();
+    expect(result.attempts).toBe(2);
+    expect(
+      result.record.validationRepair?.activePrimaryOperation,
+    ).toBeUndefined();
+    expect(
+      fixture.executionStore.read(card.id)?.primaryOperations?.[operationId],
+    ).toMatchObject({
+      executions: 1,
+      status: "completed",
+    });
+  });
+
   it("repairs a failed validation in the same session and reruns it to pass", async () => {
     const fixture = createFixture();
     fixture.runCommand

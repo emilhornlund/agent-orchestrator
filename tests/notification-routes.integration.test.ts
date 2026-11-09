@@ -75,7 +75,7 @@ describe("legacy/unowned route triggers cannot substitute for authoritative muta
         [
           "--import",
           "tsx",
-          "tests/fixtures/p4-notification-route-crash.ts",
+          "tests/fixtures/notification-route-crash.ts",
           directory,
           route,
         ],

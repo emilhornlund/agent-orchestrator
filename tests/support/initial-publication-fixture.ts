@@ -304,6 +304,7 @@ export function reopenPublicationFixture(
 export function createPublicationFixture(
   root: string,
   heldLease?: RunStoreLease,
+  projectId = "p",
 ) {
   const isolated = createIsolatedGitFixture(root);
   const source = path.join(root, "source"),
@@ -340,7 +341,7 @@ export function createPublicationFixture(
     "meaningful task implementation\n",
   );
   const project = {
-    id: "p",
+    id: projectId,
     contextRoot: state,
     autoMerge: false,
     repository: {
@@ -373,7 +374,7 @@ export function createPublicationFixture(
   );
   const pinned: RunRecord["pinned"] = {
     integrationId: heldLease?.integrationId ?? "integration",
-    projectId: "p",
+    projectId,
     boardId: "board",
     lists: {
       ready: "ready",
@@ -398,7 +399,7 @@ export function createPublicationFixture(
   store.create({
     version: 1,
     revision: 1,
-    projectId: "p",
+    projectId,
     cardId: "card",
     attemptId: "attempt",
     taskKind: "implementation",
@@ -444,7 +445,7 @@ export function createPublicationFixture(
     const taskStore = new TaskExecutionStore(state, project);
     taskStore.create({
       version: 1,
-      projectId: "p",
+      projectId,
       cardId: "card",
       phase: "publication",
       primarySessionId: "primary",
@@ -459,7 +460,7 @@ export function createPublicationFixture(
     });
     const queue = new TaskMutationQueue(state, project);
     queue.enqueue({
-      projectId: "p",
+      projectId,
       cardId: "card",
       operationKey: "operation",
       eventId: "implementation:card",

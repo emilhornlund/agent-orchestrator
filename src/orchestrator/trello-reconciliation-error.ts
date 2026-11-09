@@ -7,7 +7,9 @@ import {
 import { annotateFailure, annotateCardFailure } from "./failure-diagnostic.js";
 import { WorkflowError } from "./workflow-error.js";
 
-export const MAX_TRELLO_RECONCILIATION_ATTEMPTS = 3;
+import { OPERATION_RECOVERY_MAX_EXECUTIONS } from "../task-session/operation-recovery-policy.js";
+export const MAX_TRELLO_RECONCILIATION_ATTEMPTS =
+  OPERATION_RECOVERY_MAX_EXECUTIONS;
 
 export interface TrelloReconciliationErrorOptions {
   reconciliationListId?: string;

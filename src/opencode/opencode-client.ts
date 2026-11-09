@@ -2,7 +2,10 @@ import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import {
   buildChildEnvironment,
+  hasOpenCodeProviderCredentials,
+  openCodeDefaultConfigPathIssue,
   providerFromModel,
+  providerForOpenCodeDefault,
 } from "../process/child-environment.js";
 
 import { logger } from "../logging/logger.js";
@@ -29,9 +32,14 @@ import {
 const shutdownGraceMilliseconds = 5_000;
 
 export interface OpenCodeRunOptions {
+  onExecutionPrepared?: (evidence: {
+    executionId: string;
+    metadataPath: string;
+    artifactRoot: string;
+  }) => void | Promise<void>;
   cwd: string;
-  model: string;
-  variant: string;
+  model?: string | undefined;
+  variant?: string | undefined;
   timeoutMilliseconds: number;
   prompt: string;
   signal: AbortSignal;
@@ -50,6 +58,7 @@ export interface OpenCodeRunResult {
   errorOutput: string;
   processExecutionId?: string;
   sessionId?: string;
+  failureClassification?: "dependency-outage";
 }
 
 export class OpenCodeRunAbortedError extends Error {
@@ -59,18 +68,65 @@ export class OpenCodeRunAbortedError extends Error {
   }
 }
 
+export class OpenCodeDefaultProviderResolutionError extends Error {
+  constructor(message?: string) {
+    super(
+      message ??
+        "OpenCode default model provider could not be resolved safely for environment credential scoping; configure the OpenCode default model in its supported config or authenticate that default provider through OpenCode's own auth store",
+    );
+    this.name = "OpenCodeDefaultProviderResolutionError";
+  }
+}
+
 export class OpenCodeTimeoutError extends Error {
-  constructor(timeoutMilliseconds: number, executionId?: string) {
+  public readonly treeStopped: boolean;
+  public readonly executionId: string | undefined;
+  constructor(
+    timeoutMilliseconds: number,
+    executionId?: string,
+    treeStopped = false,
+  ) {
     super(
       `OpenCode exceeded safety timeout of ${timeoutMilliseconds}ms${executionId === undefined ? "" : `; diagnostics: process-executions/${executionId}/stderr.txt`}`,
     );
     this.name = "OpenCodeTimeoutError";
+    this.executionId = executionId;
+    this.treeStopped = treeStopped;
   }
 }
 
 export type RunOpenCode = (
   options: OpenCodeRunOptions,
 ) => Promise<OpenCodeRunResult>;
+
+/** Add an exact configured selection only when the CLI reports it as invalid. */
+export function reportUnavailableOpenCodeSelection(
+  result: OpenCodeRunResult,
+  selection: Pick<OpenCodeRunOptions, "model" | "variant">,
+): OpenCodeRunResult {
+  if (result.exitCode === 0) return result;
+  const diagnostic = `${result.output}\n${result.errorOutput}`;
+  if (
+    !/\b(?:unknown|unsupported|not found|does not exist)\b.{0,80}\b(?:model|variant)\b|\b(?:model|variant)\b.{0,80}\b(?:unknown|unsupported|not found|does not exist)\b/iu.test(
+      diagnostic,
+    ) ||
+    (selection.model === undefined && selection.variant === undefined)
+  ) {
+    return result;
+  }
+  const selected = [
+    selection.model === undefined
+      ? undefined
+      : `model=${JSON.stringify(selection.model)}`,
+    selection.variant === undefined
+      ? undefined
+      : `variant=${JSON.stringify(selection.variant)}`,
+  ].filter((value) => value !== undefined);
+  return {
+    ...result,
+    errorOutput: `${result.errorOutput}${result.errorOutput.length === 0 ? "" : "\n"}Configured OpenCode selection unavailable: ${selected.join(", ")}`,
+  };
+}
 
 type OpenCodeArgumentOptions = Pick<
   OpenCodeRunOptions,
@@ -118,10 +174,8 @@ export function buildOpenCodeArguments(
   return [
     "run",
     "--auto",
-    "--model",
-    model,
-    "--variant",
-    variant,
+    ...(model === undefined ? [] : ["--model", model]),
+    ...(variant === undefined ? [] : ["--variant", variant]),
     "--dir",
     cwd,
     ...(sessionId === undefined ? [] : ["--session", sessionId]),
@@ -305,6 +359,61 @@ export function extractOpenCodeTextOutput(output: string): string {
   return textParts.join("");
 }
 
+function hasStructuredProviderOutage(output: string): boolean {
+  for (const line of output.split(/\r?\n/u).slice(0, 128)) {
+    if (line.length > 16_384) continue;
+    try {
+      const event: unknown = JSON.parse(line);
+      if (
+        typeof event !== "object" ||
+        event === null ||
+        Array.isArray(event) ||
+        !("type" in event) ||
+        event.type !== "error" ||
+        ("version" in event &&
+          event.version !== undefined &&
+          event.version !== 1) ||
+        !("error" in event) ||
+        typeof event.error !== "object" ||
+        event.error === null ||
+        Array.isArray(event.error)
+      )
+        continue;
+      const error = event.error as Record<string, unknown>;
+      if (typeof error.data !== "object" || error.data === null) continue;
+      const data = error.data as Record<string, unknown>;
+      if (
+        error.name === "APIError" &&
+        [429, 502, 503, 504].includes(data.statusCode as number)
+      )
+        return true;
+      const cause = data.cause;
+      const causeCode =
+        cause !== null && typeof cause === "object" && "code" in cause
+          ? cause.code
+          : undefined;
+      if (
+        error.name === "FetchError" &&
+        [data.code, causeCode].some((code) =>
+          [
+            "ECONNREFUSED",
+            "ECONNRESET",
+            "EHOSTUNREACH",
+            "ENETUNREACH",
+            "EAI_AGAIN",
+            "ENOTFOUND",
+            "ETIMEDOUT",
+          ].includes(code as string),
+        )
+      )
+        return true;
+    } catch {
+      // Non-structured output is not sufficient evidence of provider availability.
+    }
+  }
+  return false;
+}
+
 export function signalProcessTree(
   childPid: number | undefined,
   signal: NodeJS.Signals,
@@ -327,344 +436,430 @@ const defaultRunOpenCode: RunOpenCode = async ({
   sessionLogPath,
   sessionLabel,
   secretValues,
+  onExecutionPrepared,
 }) =>
   new Promise((resolve, reject) => {
-    const lifecycleSignal = getProcessRuntime().signal;
-    const effectiveSignal =
-      lifecycleSignal === undefined || lifecycleSignal === signal
-        ? signal
-        : AbortSignal.any([signal, lifecycleSignal]);
-    if (effectiveSignal.aborted) {
-      reject(new OpenCodeRunAbortedError());
-      return;
-    }
-
-    if (sessionLogPath) {
-      appendSessionSection(sessionLogPath, sessionLabel ?? "OpenCode session");
-
-      appendSessionLog(
-        sessionLogPath,
-        [
-          `Working directory: ${cwd}`,
-          `Model: ${model}`,
-          `Variant: ${variant}`,
-          "",
-        ].join("\n"),
-      );
-    }
-
-    const execution = beginProcessEvidence(
-      `opencode run --model ${model} --variant ${variant}`,
-      cwd,
-      secretValues,
-    );
-
-    const child = spawn(
-      "opencode",
-      buildOpenCodeArguments({
-        cwd,
-        model,
-        variant,
-        prompt: redactSecrets(prompt, secretValues),
-        ...(sessionId === undefined ? {} : { sessionId }),
-        ...(captureSessionId === undefined ? {} : { captureSessionId }),
-      }),
-      {
-        cwd,
-        stdio: ["inherit", "pipe", "pipe"],
-        detached: process.platform !== "win32",
-        env: {
-          ...buildChildEnvironment(
-            "opencode",
-            environment,
-            process.env,
-            providerFromModel(model),
-          ),
-          OPENCODE_CONFIG_CONTENT: buildOpenCodeConfigContent(readOnly),
-        },
-      },
-    );
-
-    let output = "";
-    let errorOutput = "";
-    const stdoutRedactor = createSecretRedactor(secretValues);
-    const stderrRedactor = createSecretRedactor(secretValues);
-    const stdoutDecoder = new StringDecoder("utf8");
-    const stderrDecoder = new StringDecoder("utf8");
-    let settled = false;
-    let timedOut = false;
-    let recorderFailure: Error | undefined;
-    let captureFailure: Error | undefined;
-    let redactorsFlushed = false;
-
-    let forceKillTimeout: NodeJS.Timeout | undefined;
-
-    function recordSession(text: string): void {
-      if (!sessionLogPath || text.length === 0) return;
-      try {
-        appendSessionLog(sessionLogPath, text);
-      } catch (error) {
-        recorderFailure ??=
-          error instanceof Error ? error : new Error(String(error));
-      }
-    }
-
-    const safetyTimeout = setTimeout(() => {
-      if (settled) {
-        return;
-      }
-
-      timedOut = true;
-
-      if (sessionLogPath) {
-        recordSession(
-          `\nOpenCode exceeded safety timeout of ${timeoutMilliseconds}ms; terminating\n`,
-        );
-      }
-
-      terminate();
-    }, timeoutMilliseconds);
-
-    safetyTimeout.unref();
-
-    function terminate(): void {
-      signalProcessTree(child.pid, "SIGTERM", (signal) => child.kill(signal));
-
-      forceKillTimeout = setTimeout(() => {
-        if (settled) {
-          return;
-        }
-
-        if (sessionLogPath)
-          recordSession(
-            "\nOpenCode did not exit after SIGTERM; sending SIGKILL\n",
-          );
-        signalProcessTree(child.pid, "SIGKILL", (signal) => child.kill(signal));
-      }, shutdownGraceMilliseconds);
-
-      forceKillTimeout.unref();
-    }
-
-    function handleAbort(): void {
-      terminate();
-    }
-
-    function flushOutput(): void {
-      if (redactorsFlushed) return;
-      redactorsFlushed = true;
-      const stdoutDecoded = stdoutRedactor.push(stdoutDecoder.end());
-      const stderrDecoded = stderrRedactor.push(stderrDecoder.end());
-      const stdout = stdoutDecoded + stdoutRedactor.flush();
-      const stderr = stderrDecoded + stderrRedactor.flush();
-      if (captureFailure === undefined) {
-        try {
-          output = appendBoundedOutput(output, stdout, "stdout");
-          errorOutput = appendBoundedOutput(errorOutput, stderr, "stderr");
-        } catch {
-          captureFailure = new ProcessOutputLimitError(
-            "stdout",
-            undefined,
-            execution.executionId,
-          );
-          terminate();
-        }
-      }
-      execution.append("stdout", stdout);
-      execution.append("stderr", stderr);
-      recorderFailure ??= execution.failure;
-      recordSession(stdout);
-      recordSession(stderr);
-      if (recorderFailure !== undefined) terminate();
-    }
-
-    effectiveSignal.addEventListener("abort", handleAbort, { once: true });
-
-    child.stdout.on("data", (chunk: Buffer | string) => {
-      const text = stdoutRedactor.push(
-        typeof chunk === "string" ? chunk : stdoutDecoder.write(chunk),
-      );
-
-      if (captureFailure === undefined) {
-        try {
-          output = appendBoundedOutput(output, text, "stdout");
-        } catch {
-          captureFailure = new ProcessOutputLimitError(
-            "stdout",
-            undefined,
-            execution.executionId,
-          );
-          terminate();
-        }
-      }
-      execution.append("stdout", text);
-      if (execution.failure !== undefined) {
-        recorderFailure ??= execution.failure;
-        terminate();
-        return;
-      }
-
-      recordSession(text);
-      if (recorderFailure !== undefined) terminate();
-    });
-
-    child.stderr.on("data", (chunk: Buffer | string) => {
-      const text = stderrRedactor.push(
-        typeof chunk === "string" ? chunk : stderrDecoder.write(chunk),
-      );
-
-      if (captureFailure === undefined) {
-        try {
-          errorOutput = appendBoundedOutput(errorOutput, text, "stderr");
-        } catch {
-          captureFailure = new ProcessOutputLimitError(
-            "stderr",
-            undefined,
-            execution.executionId,
-          );
-          terminate();
-        }
-      }
-      execution.append("stderr", text);
-      if (execution.failure !== undefined) {
-        recorderFailure ??= execution.failure;
-        terminate();
-        return;
-      }
-
-      recordSession(text);
-      if (recorderFailure !== undefined) terminate();
-    });
-
-    child.once("error", (error) => {
-      if (settled) {
-        return;
-      }
-
-      flushOutput();
-
-      logger.error(
-        `Failed to start OpenCode; diagnostics: process-executions/${execution.executionId}/stderr.txt`,
-      );
-
-      settled = true;
-      try {
-        execution.finish("spawn-failure", {
-          pid: child.pid,
-          error: redactSecrets(error.message, secretValues),
-        });
-      } catch (finishError) {
-        clearTimeout(safetyTimeout);
-        if (forceKillTimeout !== undefined) clearTimeout(forceKillTimeout);
-        effectiveSignal.removeEventListener("abort", handleAbort);
-        reject(finishError);
-        return;
-      }
-      clearTimeout(safetyTimeout);
-      if (forceKillTimeout !== undefined) {
-        clearTimeout(forceKillTimeout);
-      }
-      effectiveSignal.removeEventListener("abort", handleAbort);
-
-      reject(
-        new ProcessExecutionError(
-          "OpenCode",
-          execution.executionId,
-          "spawn-failure",
-        ),
-      );
-    });
-
-    child.once("close", async (code, signalName) => {
-      if (settled) {
-        return;
-      }
-
-      try {
-        await drainProcessGroup(child.pid, (signal) => child.kill(signal));
-      } catch (error) {
-        if (settled) return;
-        flushOutput();
-        settled = true;
-        clearTimeout(safetyTimeout);
-        if (forceKillTimeout !== undefined) clearTimeout(forceKillTimeout);
-        effectiveSignal.removeEventListener("abort", handleAbort);
-        try {
-          execution.finish("process-group-ambiguous", { pid: child.pid });
-        } catch (finishError) {
-          recorderFailure ??=
-            finishError instanceof Error
-              ? finishError
-              : new ProcessEvidenceError(
-                  "OpenCode evidence finalization failed",
-                );
-        }
-        reject(error);
-        return;
-      }
-      if (settled) return;
-
-      flushOutput();
-
-      settled = true;
-      clearTimeout(safetyTimeout);
-      if (forceKillTimeout !== undefined) {
-        clearTimeout(forceKillTimeout);
-      }
-      effectiveSignal.removeEventListener("abort", handleAbort);
-      try {
-        execution.finish(
-          recorderFailure !== undefined ||
-            captureFailure !== undefined ||
-            execution.failure !== undefined
-            ? "evidence-failure"
-            : timedOut
-              ? "timeout"
-              : effectiveSignal.aborted
-                ? "interrupted"
-                : code === 0
-                  ? "success"
-                  : "nonzero",
-          {
-            pid: child.pid,
-            exitCode: code ?? 1,
-            ...(signalName === null ? {} : { signal: signalName }),
-          },
-        );
-      } catch (error) {
-        recorderFailure ??=
-          error instanceof Error
-            ? error
-            : new ProcessEvidenceError("OpenCode evidence finalization failed");
-      }
-      recorderFailure ??= execution.failure;
-      if (recorderFailure !== undefined) {
-        reject(recorderFailure);
-        return;
-      }
-      if (captureFailure !== undefined) {
-        reject(captureFailure);
-        return;
-      }
-
-      if (timedOut) {
-        reject(
-          new OpenCodeTimeoutError(timeoutMilliseconds, execution.executionId),
-        );
-        return;
-      }
-
+    void (async () => {
+      const lifecycleSignal = getProcessRuntime().signal;
+      const effectiveSignal =
+        lifecycleSignal === undefined || lifecycleSignal === signal
+          ? signal
+          : AbortSignal.any([signal, lifecycleSignal]);
       if (effectiveSignal.aborted) {
         reject(new OpenCodeRunAbortedError());
         return;
       }
 
-      resolve({
-        exitCode: code ?? 1,
-        output,
-        errorOutput,
-        processExecutionId: execution.executionId,
+      if (sessionLogPath) {
+        appendSessionSection(
+          sessionLogPath,
+          sessionLabel ?? "OpenCode session",
+        );
+
+        appendSessionLog(
+          sessionLogPath,
+          [
+            `Working directory: ${cwd}`,
+            `Model: ${model ?? "OpenCode default"}`,
+            `Variant: ${variant ?? "OpenCode default"}`,
+            "",
+          ].join("\n"),
+        );
+      }
+
+      const execution = beginProcessEvidence(
+        `opencode run${model === undefined ? "" : ` --model ${model}`}${variant === undefined ? "" : ` --variant ${variant}`}`,
+        cwd,
+        secretValues,
+      );
+
+      const environmentSource = { ...process.env, ...environment };
+      const configPathIssue = openCodeDefaultConfigPathIssue(environmentSource);
+      if (model === undefined && configPathIssue !== undefined) {
+        execution.finish("not-dispatched");
+        reject(new OpenCodeDefaultProviderResolutionError(configPathIssue));
+        return;
+      }
+      const effectiveProvider =
+        providerFromModel(model) ??
+        providerForOpenCodeDefault(environmentSource);
+      if (
+        model === undefined &&
+        effectiveProvider === undefined &&
+        hasOpenCodeProviderCredentials(environment, process.env)
+      ) {
+        execution.finish("not-dispatched");
+        reject(new OpenCodeDefaultProviderResolutionError());
+        return;
+      }
+
+      try {
+        if (onExecutionPrepared !== undefined)
+          await onExecutionPrepared({
+            executionId: execution.executionId,
+            metadataPath: execution.metadataPath,
+            artifactRoot: execution.artifactRoot,
+          });
+      } catch (error) {
+        execution.finish("not-dispatched");
+        throw error;
+      }
+
+      const child = spawn(
+        "opencode",
+        buildOpenCodeArguments({
+          cwd,
+          ...(model === undefined ? {} : { model }),
+          ...(variant === undefined ? {} : { variant }),
+          prompt: redactSecrets(prompt, secretValues),
+          ...(sessionId === undefined ? {} : { sessionId }),
+          ...(captureSessionId === undefined ? {} : { captureSessionId }),
+        }),
+        {
+          cwd,
+          stdio: ["inherit", "pipe", "pipe"],
+          detached: process.platform !== "win32",
+          env: {
+            ...buildChildEnvironment(
+              "opencode",
+              environment,
+              process.env,
+              effectiveProvider,
+            ),
+            OPENCODE_CONFIG_CONTENT: buildOpenCodeConfigContent(readOnly),
+          },
+        },
+      );
+
+      let output = "";
+      let errorOutput = "";
+      const stdoutRedactor = createSecretRedactor(secretValues);
+      const stderrRedactor = createSecretRedactor(secretValues);
+      const stdoutDecoder = new StringDecoder("utf8");
+      const stderrDecoder = new StringDecoder("utf8");
+      let settled = false;
+      let timedOut = false;
+      let recorderFailure: Error | undefined;
+      let captureFailure: Error | undefined;
+      let redactorsFlushed = false;
+
+      let forceKillTimeout: NodeJS.Timeout | undefined;
+
+      function recordSession(text: string): void {
+        if (!sessionLogPath || text.length === 0) return;
+        try {
+          appendSessionLog(sessionLogPath, text);
+        } catch (error) {
+          recorderFailure ??=
+            error instanceof Error ? error : new Error(String(error));
+        }
+      }
+
+      const safetyTimeout = setTimeout(() => {
+        if (settled) {
+          return;
+        }
+
+        timedOut = true;
+
+        if (sessionLogPath) {
+          recordSession(
+            `\nOpenCode exceeded safety timeout of ${timeoutMilliseconds}ms; terminating\n`,
+          );
+        }
+
+        terminate();
+      }, timeoutMilliseconds);
+
+      safetyTimeout.unref();
+
+      function terminate(): void {
+        signalProcessTree(child.pid, "SIGTERM", (signal) => child.kill(signal));
+
+        forceKillTimeout = setTimeout(() => {
+          if (settled) {
+            return;
+          }
+
+          if (sessionLogPath)
+            recordSession(
+              "\nOpenCode did not exit after SIGTERM; sending SIGKILL\n",
+            );
+          signalProcessTree(child.pid, "SIGKILL", (signal) =>
+            child.kill(signal),
+          );
+        }, shutdownGraceMilliseconds);
+
+        forceKillTimeout.unref();
+      }
+
+      function handleAbort(): void {
+        terminate();
+      }
+
+      function flushOutput(): void {
+        if (redactorsFlushed) return;
+        redactorsFlushed = true;
+        const stdoutDecoded = stdoutRedactor.push(stdoutDecoder.end());
+        const stderrDecoded = stderrRedactor.push(stderrDecoder.end());
+        const stdout = stdoutDecoded + stdoutRedactor.flush();
+        const stderr = stderrDecoded + stderrRedactor.flush();
+        if (captureFailure === undefined) {
+          try {
+            output = appendBoundedOutput(output, stdout, "stdout");
+            errorOutput = appendBoundedOutput(errorOutput, stderr, "stderr");
+          } catch {
+            captureFailure = new ProcessOutputLimitError(
+              "stdout",
+              undefined,
+              execution.executionId,
+            );
+            terminate();
+          }
+        }
+        execution.append("stdout", stdout);
+        execution.append("stderr", stderr);
+        recorderFailure ??= execution.failure;
+        recordSession(stdout);
+        recordSession(stderr);
+        if (recorderFailure !== undefined) terminate();
+      }
+
+      effectiveSignal.addEventListener("abort", handleAbort, { once: true });
+
+      child.stdout.on("data", (chunk: Buffer | string) => {
+        const text = stdoutRedactor.push(
+          typeof chunk === "string" ? chunk : stdoutDecoder.write(chunk),
+        );
+
+        if (captureFailure === undefined) {
+          try {
+            output = appendBoundedOutput(output, text, "stdout");
+          } catch {
+            captureFailure = new ProcessOutputLimitError(
+              "stdout",
+              undefined,
+              execution.executionId,
+            );
+            terminate();
+          }
+        }
+        execution.append("stdout", text);
+        if (execution.failure !== undefined) {
+          recorderFailure ??= execution.failure;
+          terminate();
+          return;
+        }
+
+        recordSession(text);
+        if (recorderFailure !== undefined) terminate();
       });
-    });
+
+      child.stderr.on("data", (chunk: Buffer | string) => {
+        const text = stderrRedactor.push(
+          typeof chunk === "string" ? chunk : stderrDecoder.write(chunk),
+        );
+
+        if (captureFailure === undefined) {
+          try {
+            errorOutput = appendBoundedOutput(errorOutput, text, "stderr");
+          } catch {
+            captureFailure = new ProcessOutputLimitError(
+              "stderr",
+              undefined,
+              execution.executionId,
+            );
+            terminate();
+          }
+        }
+        execution.append("stderr", text);
+        if (execution.failure !== undefined) {
+          recorderFailure ??= execution.failure;
+          terminate();
+          return;
+        }
+
+        recordSession(text);
+        if (recorderFailure !== undefined) terminate();
+      });
+
+      child.once("error", (error) => {
+        if (settled) {
+          return;
+        }
+
+        flushOutput();
+
+        logger.error(
+          `Failed to start OpenCode; diagnostics: process-executions/${execution.executionId}/stderr.txt`,
+        );
+
+        settled = true;
+        try {
+          execution.finish("spawn-failure", {
+            pid: child.pid,
+            error: redactSecrets(error.message, secretValues),
+          });
+        } catch (finishError) {
+          clearTimeout(safetyTimeout);
+          if (forceKillTimeout !== undefined) clearTimeout(forceKillTimeout);
+          effectiveSignal.removeEventListener("abort", handleAbort);
+          reject(finishError);
+          return;
+        }
+        clearTimeout(safetyTimeout);
+        if (forceKillTimeout !== undefined) {
+          clearTimeout(forceKillTimeout);
+        }
+        effectiveSignal.removeEventListener("abort", handleAbort);
+
+        reject(
+          new ProcessExecutionError(
+            "OpenCode",
+            execution.executionId,
+            "spawn-failure",
+          ),
+        );
+      });
+
+      child.once("close", async (code, signalName) => {
+        if (settled) {
+          return;
+        }
+
+        try {
+          await drainProcessGroup(child.pid, (signal) => child.kill(signal));
+        } catch (error) {
+          if (settled) return;
+          flushOutput();
+          settled = true;
+          clearTimeout(safetyTimeout);
+          if (forceKillTimeout !== undefined) clearTimeout(forceKillTimeout);
+          effectiveSignal.removeEventListener("abort", handleAbort);
+          try {
+            execution.finish("process-group-ambiguous", { pid: child.pid });
+          } catch (finishError) {
+            recorderFailure ??=
+              finishError instanceof Error
+                ? finishError
+                : new ProcessEvidenceError(
+                    "OpenCode evidence finalization failed",
+                  );
+          }
+          reject(error);
+          return;
+        }
+        if (settled) return;
+
+        flushOutput();
+
+        const failureClassification =
+          code !== 0 && hasStructuredProviderOutage(output)
+            ? ("dependency-outage" as const)
+            : undefined;
+
+        settled = true;
+        clearTimeout(safetyTimeout);
+        if (forceKillTimeout !== undefined) {
+          clearTimeout(forceKillTimeout);
+        }
+        effectiveSignal.removeEventListener("abort", handleAbort);
+        let capturedSessionId: string | undefined;
+        if (captureSessionId === true) {
+          try {
+            capturedSessionId = parseOpenCodeSessionId(output);
+          } catch (error) {
+            reject(error);
+            return;
+          }
+        }
+        try {
+          execution.finish(
+            recorderFailure !== undefined ||
+              captureFailure !== undefined ||
+              execution.failure !== undefined
+              ? "evidence-failure"
+              : timedOut
+                ? "timeout"
+                : effectiveSignal.aborted
+                  ? "interrupted"
+                  : code === 0
+                    ? "success"
+                    : "nonzero",
+            {
+              pid: child.pid,
+              exitCode: code ?? 1,
+              result: {
+                exitCode: code ?? 1,
+                output,
+                errorOutput,
+                processExecutionId: execution.executionId,
+                ...(failureClassification === undefined
+                  ? {}
+                  : { failureClassification }),
+                ...((capturedSessionId ?? sessionId) === undefined
+                  ? {}
+                  : { sessionId: capturedSessionId ?? sessionId }),
+              },
+              ...((capturedSessionId ?? sessionId) === undefined
+                ? {}
+                : { sessionId: capturedSessionId ?? sessionId }),
+              ...(failureClassification === undefined
+                ? {}
+                : { failureClassification }),
+              ...(signalName === null ? {} : { signal: signalName }),
+            },
+          );
+        } catch (error) {
+          recorderFailure ??=
+            error instanceof Error
+              ? error
+              : new ProcessEvidenceError(
+                  "OpenCode evidence finalization failed",
+                );
+        }
+        recorderFailure ??= execution.failure;
+        if (recorderFailure !== undefined) {
+          reject(recorderFailure);
+          return;
+        }
+        if (captureFailure !== undefined) {
+          reject(captureFailure);
+          return;
+        }
+
+        if (timedOut) {
+          reject(
+            new OpenCodeTimeoutError(
+              timeoutMilliseconds,
+              execution.executionId,
+              true,
+            ),
+          );
+          return;
+        }
+
+        if (effectiveSignal.aborted) {
+          reject(new OpenCodeRunAbortedError());
+          return;
+        }
+
+        resolve(
+          reportUnavailableOpenCodeSelection(
+            {
+              exitCode: code ?? 1,
+              output,
+              errorOutput,
+              processExecutionId: execution.executionId,
+              ...(failureClassification !== undefined
+                ? { failureClassification }
+                : {}),
+            },
+            { model, variant },
+          ),
+        );
+      });
+    })().catch(reject);
   });
 
 export class OpenCodeClient {
@@ -704,7 +899,9 @@ export class OpenCodeClient {
     });
 
     if (options.captureSessionId !== true) {
-      return result;
+      return options.sessionId === undefined
+        ? result
+        : { ...result, sessionId: options.sessionId };
     }
 
     try {

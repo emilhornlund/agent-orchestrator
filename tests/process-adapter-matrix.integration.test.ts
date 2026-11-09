@@ -114,7 +114,8 @@ describe("production child adapter outcome matrix", () => {
     }
     process.env.PATH = binaries;
     const abort = new AbortController();
-    const timeoutMilliseconds = scenario === "abort" ? 30_000 : 100;
+    const timeoutMilliseconds =
+      scenario === "abort" ? 30_000 : scenario === "timeout" ? 100 : 5_000;
     configureProcessRuntime({
       runtimeRoot,
       signal: abort.signal,
@@ -697,7 +698,7 @@ describe("production child adapter outcome matrix", () => {
       configureProcessRuntime({
         runtimeRoot,
         signal: new AbortController().signal,
-        operationTimeoutMilliseconds: 50,
+        operationTimeoutMilliseconds: fault === "hung" ? 50 : 5_000,
       });
       await expect(
         acquireProjectOwnership(

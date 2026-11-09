@@ -15,6 +15,11 @@ import { TaskPlanStore } from "./task-plan-store.js";
 import { FeedbackLedgerStore } from "./feedback-ledger-store.js";
 import { assertOwnedTaskWorktreePath } from "./run-task-session-implementation.js";
 import { runWithPrimaryTaskSession } from "./primary-task-session.js";
+import { inspectPrimaryOperationEvidence } from "./inspect-primary-operation.js";
+import { ProjectRunAuthority } from "./project-run-authority.js";
+import { getProcessRuntime } from "../process/process-runtime.js";
+import type { PrimarySessionRecoveryOptions } from "./primary-task-session.js";
+import { findPrimaryRecoveryError } from "./persist-primary-operation-recovery.js";
 
 export class TaskSessionFeedbackRemediationError extends Error {
   constructor(message: string, options?: ErrorOptions) {
@@ -30,6 +35,7 @@ export interface RunTaskSessionFeedbackRemediationOptions {
   operationKey: string;
   operationId: string;
   expectedPrimarySessionId: string;
+  inspectPrimarySession?: NonNullable<PrimarySessionRecoveryOptions["inspect"]>;
   expectedPullRequestHeadSha: string;
   worktreePath: string;
   taskRecordStore: TaskExecutionStore;
@@ -96,16 +102,24 @@ export async function runTaskSessionFeedbackRemediation(
       "Feedback remediation phase, primary session, or PR head does not match the task record",
     );
   }
-  if (record.feedbackRemediation?.status === "active") {
+  const priorFeedback = record.feedbackRemediation;
+  if (
+    priorFeedback?.operationId === options.operationId &&
+    (priorFeedback.status !== "active" ||
+      record.primaryOperations?.[options.operationId]?.activity !==
+        "feedback-remediation")
+  ) {
     throw new TaskSessionFeedbackRemediationError(
-      `Feedback remediation operation ${record.feedbackRemediation.operationId} has an ambiguous active outcome; refusing to start another operation`,
+      `Feedback remediation operation ${options.operationId} is not authorized for exact primary-ledger continuation`,
     );
   }
-  if (record.feedbackRemediation?.operationId === options.operationId) {
+  if (
+    priorFeedback?.status === "active" &&
+    priorFeedback.operationId !== options.operationId
+  )
     throw new TaskSessionFeedbackRemediationError(
-      `Feedback remediation operation ID was already recorded: ${options.operationId}`,
+      `Active feedback remediation operation ${priorFeedback.operationId} cannot be replaced`,
     );
-  }
   if (
     (await options.git.getCurrentBranch(options.worktreePath)) !==
     options.expectedBranch
@@ -175,6 +189,26 @@ export async function runTaskSessionFeedbackRemediation(
       options.project.id,
       options.card.id,
       { ...options.runOptions, cwd: options.worktreePath, prompt },
+      options.inspectPrimarySession === undefined
+        ? {}
+        : { inspect: options.inspectPrimarySession },
+      {
+        role: "primary",
+        operationId: options.operationId,
+        activity: "feedback-remediation",
+        inspectPending: (entry) =>
+          inspectPrimaryOperationEvidence(
+            options.taskRecordStore,
+            options.card.id,
+            entry.id,
+            {
+              trustedRoot:
+                ProjectRunAuthority.current(options.project.id)?.store
+                  .storageRoot ?? getProcessRuntime().artifactRoot,
+              cwd: options.worktreePath,
+            },
+          ),
+      },
     );
     if (runResult.exitCode !== 0)
       throw new Error(
@@ -182,7 +216,9 @@ export async function runTaskSessionFeedbackRemediation(
       );
   } catch (error) {
     const current = options.taskRecordStore.read(options.card.id);
+    const primaryRecovery = findPrimaryRecoveryError(error);
     if (
+      primaryRecovery === undefined &&
       current !== null &&
       current.feedbackRemediation?.operationId === options.operationId
     ) {

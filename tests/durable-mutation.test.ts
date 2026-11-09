@@ -173,7 +173,7 @@ describe("durable workflow mutation foundation (REQ-WF-001)", () => {
         [
           "--import",
           "tsx",
-          "tests/fixtures/p4-mutation-crash.ts",
+          "tests/fixtures/mutation-crash.ts",
           f.root,
           barrier,
           JSON.stringify(f.intent()),
@@ -453,7 +453,7 @@ describe("durable workflow mutation foundation (REQ-WF-001)", () => {
         [
           "--import",
           "tsx",
-          "tests/fixtures/p4-mutation-crash.ts",
+          "tests/fixtures/mutation-crash.ts",
           f.root,
           barrier,
           JSON.stringify(f.intent("github-pr-create")),

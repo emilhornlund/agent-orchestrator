@@ -6,7 +6,10 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { GitClient } from "../src/git/git-client.js";
-import { getTaskSessionSourceSnapshotIdentity } from "../src/task-session/source-snapshot.js";
+import {
+  getTaskSessionReadOnlyIdentity,
+  getTaskSessionSourceSnapshotIdentity,
+} from "../src/task-session/source-snapshot.js";
 import { decideHumanReviewPublication } from "../src/task-session/verified-publication-decision.js";
 import type { ImplementationReviewResult } from "../src/task-session/implementation-review-result.js";
 import type { TaskSessionValidationResult } from "../src/task-session/run-task-session-validation.js";
@@ -49,6 +52,68 @@ function createRepository(): {
 }
 
 describe("getTaskSessionSourceSnapshotIdentity", () => {
+  it("read-only identity detects index-only and ignored-boundary changes", async () => {
+    const { repositoryPath, runGit } = createRepository();
+    const git = new GitClient();
+    const file = path.join(repositoryPath, "tracked.txt");
+    const original = await getTaskSessionReadOnlyIdentity(git, repositoryPath);
+    const sourceIdentity = await getTaskSessionSourceSnapshotIdentity(
+      git,
+      repositoryPath,
+    );
+    fs.writeFileSync(file, "staged contents\n");
+    runGit("add", "tracked.txt");
+    fs.writeFileSync(file, "base content\n");
+    expect(
+      await getTaskSessionSourceSnapshotIdentity(git, repositoryPath),
+    ).toBe(sourceIdentity);
+    expect(await getTaskSessionReadOnlyIdentity(git, repositoryPath)).not.toBe(
+      original,
+    );
+
+    runGit("reset", "--quiet", "HEAD");
+    fs.writeFileSync(path.join(repositoryPath, ".gitignore"), "private.txt\n");
+    runGit("add", ".gitignore");
+    runGit("commit", "-m", "ignore private evidence");
+    const ignored = path.join(repositoryPath, "private.txt");
+    fs.writeFileSync(ignored, "first ignored contents");
+    const ignoredIdentity = await getTaskSessionReadOnlyIdentity(
+      git,
+      repositoryPath,
+    );
+    fs.writeFileSync(ignored, "changed ignored contents");
+    expect(await getTaskSessionReadOnlyIdentity(git, repositoryPath)).not.toBe(
+      ignoredIdentity,
+    );
+  });
+  it("fingerprints legitimate final symlinks", async () => {
+    const { repositoryPath, runGit } = createRepository();
+    const git = new GitClient();
+    fs.symlinkSync(
+      "target-does-not-exist",
+      path.join(repositoryPath, "tracked-link"),
+    );
+    runGit("add", "tracked-link");
+    runGit("commit", "-m", "track symlink");
+    await expect(
+      getTaskSessionSourceSnapshotIdentity(git, repositoryPath),
+    ).resolves.toMatch(/^sha256:/u);
+  });
+
+  it("supports ordinary source fingerprints for files larger than recovery-specific inventory bounds", async () => {
+    const { repositoryPath } = createRepository();
+    const git = new GitClient();
+    const largePath = path.join(repositoryPath, "large-sparse.bin");
+    const descriptor = fs.openSync(largePath, "w");
+    try {
+      fs.ftruncateSync(descriptor, 129 * 1024 * 1024);
+    } finally {
+      fs.closeSync(descriptor);
+    }
+    await expect(
+      getTaskSessionSourceSnapshotIdentity(git, repositoryPath),
+    ).resolves.toMatch(/^sha256:/u);
+  });
   it("is deterministic for unchanged source and changes for a tracked edit or deletion", async () => {
     const { repositoryPath } = createRepository();
     const git = new GitClient();

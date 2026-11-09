@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { buildChildEnvironment } from "../src/process/child-environment.js";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import {
+  buildChildEnvironment,
+  openCodeDefaultConfigPathIssue,
+  providerForOpenCodeDefault,
+} from "../src/process/child-environment.js";
 
 describe("child process environment manifests", () => {
   const parent = {
@@ -109,5 +116,53 @@ describe("child process environment manifests", () => {
     expect(anthropic).not.toHaveProperty("OPENAI_API_KEY");
     expect(unknown).not.toHaveProperty("OPENAI_API_KEY");
     expect(unknown).not.toHaveProperty("ANTHROPIC_API_KEY");
+  });
+
+  it("uses XDG config instead of stale HOME config and handles JSONC comments around trailing commas", () => {
+    const root = os.tmpdir();
+    const fixture = fs.mkdtempSync(path.join(root, "opencode-config-scope-"));
+    try {
+      const xdg = path.join(fixture, "xdg");
+      const home = path.join(fixture, "home");
+      const xdgConfig = path.join(xdg, "opencode", "opencode.jsonc");
+      const homeConfig = path.join(
+        home,
+        ".config",
+        "opencode",
+        "opencode.json",
+      );
+      fs.mkdirSync(path.dirname(xdgConfig), { recursive: true });
+      fs.mkdirSync(path.dirname(homeConfig), { recursive: true });
+      fs.writeFileSync(
+        xdgConfig,
+        '{\n "model": "anthropic/selected", // comment after comma\n /* close */\n}',
+      );
+      fs.writeFileSync(homeConfig, '{"model":"openai/stale"}');
+      expect(
+        providerForOpenCodeDefault({ HOME: home, XDG_CONFIG_HOME: xdg }),
+      ).toBe("anthropic");
+      fs.writeFileSync(xdgConfig, '{ "other": [1, /* before close */], }');
+      expect(
+        providerForOpenCodeDefault({ HOME: home, XDG_CONFIG_HOME: xdg }),
+      ).toBeUndefined();
+      expect(providerForOpenCodeDefault({ HOME: home })).toBe("openai");
+    } finally {
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects relative operator config roots instead of resolving against differing working directories", () => {
+    expect(
+      openCodeDefaultConfigPathIssue({ OPENCODE_CONFIG: "config.json" }),
+    ).toContain("OPENCODE_CONFIG must be an absolute path");
+    expect(
+      openCodeDefaultConfigPathIssue({ OPENCODE_CONFIG_DIR: "config-dir" }),
+    ).toContain("OPENCODE_CONFIG_DIR must be an absolute path");
+    expect(
+      openCodeDefaultConfigPathIssue({ XDG_CONFIG_HOME: "xdg" }),
+    ).toContain("XDG_CONFIG_HOME must be an absolute path");
+    expect(
+      openCodeDefaultConfigPathIssue({ OPENCODE_CONFIG: "/etc/opencode.json" }),
+    ).toBeUndefined();
   });
 });

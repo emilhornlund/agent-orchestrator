@@ -1,7 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { redactSecrets } from "../security/redact-secrets.js";
 
@@ -32,6 +32,79 @@ const taskArtifactContext = new AsyncLocalStorage<{
   attemptId: string;
   recordEvent?: (event: ProcessArtifactEvent) => void;
 }>();
+
+function processStartIdentity(pid: number | undefined): string | undefined {
+  if (pid === undefined || process.platform !== "linux") return undefined;
+  try {
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+    const closeParen = stat.lastIndexOf(")");
+    const fields = stat.slice(closeParen + 2).split(" ");
+    const startTicks = fields[19];
+    return startTicks && /^\d+$/u.test(startTicks) ? startTicks : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** `null` is uncertainty (including unsupported platforms), never proof of absence. */
+export function isSameProcessInstance(
+  pid: number,
+  expectedStartIdentity: unknown,
+): boolean | null {
+  if (typeof expectedStartIdentity !== "string") return null;
+  const actual = processStartIdentity(pid);
+  if (actual === undefined) return null;
+  return actual === expectedStartIdentity;
+}
+
+export interface ProcessExecutionEvidence {
+  executionId: string;
+  command: string;
+  cwd: string;
+  status: string;
+  treeStopped?: boolean;
+  dispatchState?: string;
+  exitCode?: number;
+}
+
+export function isVerifiedStoppedExecution(
+  value: unknown,
+  expected: { executionId: string; command: string; cwd: string },
+): value is ProcessExecutionEvidence {
+  if (typeof value !== "object" || value === null) return false;
+  const evidence = value as Record<string, unknown>;
+  if (
+    evidence.executionId !== expected.executionId ||
+    evidence.command !== expected.command ||
+    typeof evidence.cwd !== "string" ||
+    path.resolve(evidence.cwd) !== path.resolve(expected.cwd) ||
+    typeof evidence.status !== "string"
+  )
+    return false;
+  return (
+    (evidence.treeStopped === true &&
+      ["nonzero", "timeout", "interrupted"].includes(evidence.status)) ||
+    (evidence.status === "spawn-failure" &&
+      evidence.dispatchState === "not-dispatched")
+  );
+}
+
+export function isVerifiedSuccessfulExecution(
+  value: unknown,
+  expected: { executionId: string; command: string; cwd: string },
+): value is ProcessExecutionEvidence {
+  if (typeof value !== "object" || value === null) return false;
+  const evidence = value as Record<string, unknown>;
+  return (
+    evidence.executionId === expected.executionId &&
+    evidence.command === expected.command &&
+    typeof evidence.cwd === "string" &&
+    path.resolve(evidence.cwd) === path.resolve(expected.cwd) &&
+    evidence.status === "success" &&
+    evidence.exitCode === 0 &&
+    evidence.treeStopped === true
+  );
+}
 
 export function withTaskProcessArtifacts<T>(
   context: {
@@ -207,7 +280,7 @@ export function beginProcessEvidence(
     fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
     fs.writeFileSync(stdoutPath, "", { mode: 0o600 });
     fs.writeFileSync(stderrPath, "", { mode: 0o600 });
-    writeMetadata({ status: "running" });
+    writeMetadata({ status: "running", dispatchState: "dispatch-pending" });
   } catch (error) {
     try {
       fs.rmSync(directory, { recursive: true, force: true });
@@ -223,6 +296,19 @@ export function beginProcessEvidence(
   let failure: ProcessEvidenceError | undefined;
   return {
     executionId,
+    metadataPath,
+    artifactRoot: executionsRoot,
+    dispatched(pid: number | undefined) {
+      const startIdentity = processStartIdentity(pid);
+      writeMetadata({
+        status: "running",
+        dispatchState: "dispatched",
+        pid,
+        ...(startIdentity === undefined
+          ? {}
+          : { pidStartIdentity: startIdentity }),
+      });
+    },
     get failure() {
       return failure;
     },
@@ -251,11 +337,37 @@ export function beginProcessEvidence(
       try {
         const finishedAt = new Date().toISOString();
         const durationMilliseconds = Date.now() - startedMilliseconds;
+        const { result, ...summary } = fields;
+        let finalStatus = status;
+        let resultArtifact: { path: string; sha256: string } | undefined;
+        if (result !== undefined) {
+          const bytes = Buffer.from(JSON.stringify(result));
+          if (bytes.byteLength > 700 * 1024) finalStatus = "evidence-failure";
+          else {
+            const resultPath = path.join(directory, "result.json");
+            const temporary = `${resultPath}.${randomUUID()}.tmp`;
+            fs.writeFileSync(temporary, bytes, { mode: 0o600, flag: "wx" });
+            fs.renameSync(temporary, resultPath);
+            resultArtifact = {
+              path: "result.json",
+              sha256: createHash("sha256").update(bytes).digest("hex"),
+            };
+          }
+        }
         writeMetadata({
           finishedAt,
           durationMilliseconds,
-          status,
-          ...fields,
+          status: finalStatus,
+          ...(status === "spawn-failure" && fields.pid === undefined
+            ? { dispatchState: "not-dispatched" }
+            : { dispatchState: "dispatched" }),
+          treeStopped:
+            status === "timeout" ||
+            status === "interrupted" ||
+            status === "nonzero" ||
+            status === "success",
+          ...summary,
+          ...(resultArtifact === undefined ? {} : { resultArtifact }),
         });
         taskContext?.recordEvent?.({
           type: "process-finished",
@@ -263,7 +375,7 @@ export function beginProcessEvidence(
           startedAt,
           finishedAt,
           durationMilliseconds,
-          status,
+          status: finalStatus,
           stdoutArtifact: stdoutPath,
           stderrArtifact: stderrPath,
           metadataArtifact: metadataPath,

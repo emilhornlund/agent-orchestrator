@@ -11,6 +11,7 @@ import { TaskExecutionStore } from "../src/task-session/task-execution-store.js"
 import { TaskPlanStore } from "../src/task-session/task-plan-store.js";
 import { PrMaintenanceStore } from "../src/task-session/pr-maintenance-store.js";
 import { runTaskSessionCiRepairs } from "../src/task-session/run-task-session-ci-repairs.js";
+import { writeTrustedCommitState } from "../src/orchestrator/trusted-commit-state.js";
 
 vi.mock("../src/orchestrator/observe-task-session-review-cards.js", () => ({
   observeTaskSessionReviewCards: vi.fn(),
@@ -76,8 +77,12 @@ async function pollReview(
   };
   openCodeRun: ReturnType<typeof vi.fn>;
   project: ProjectConfig & { contextRoot: string };
+  taskRecord: ReturnType<TaskExecutionStore["read"]>;
 }> {
   root = fs.mkdtempSync(path.join(os.tmpdir(), "pr-maintenance-dispatch-"));
+  const worktreePath = path.join(root, "worktrees", "card");
+  fs.mkdirSync(path.join(root, "repository"), { recursive: true });
+  fs.mkdirSync(worktreePath, { recursive: true });
   const project = {
     id: "project",
     autoMerge: false,
@@ -134,11 +139,36 @@ async function pollReview(
       url: "https://github.com/owner/repo/pull/42",
       headSha: sha,
     },
+    ...(taskPhase === "human-feedback"
+      ? {
+          reviewObservation: {
+            headSha: sha,
+            observedAt: "2026-10-24T09:00:00.000Z",
+            ciEvaluation: {
+              status: "passed",
+              expectedCheckNames: [],
+              missingChecks: [],
+              pendingChecks: [],
+              failureCheckNames: [],
+            },
+            feedbackIds: [],
+          },
+        }
+      : {}),
     operationKey: "operation",
     revision: 1,
     retryCounters: { validation: 0, review: 0, ci: 0, humanFeedback: 0 },
     createdAt: "2026-10-24T09:00:00.000Z",
     updatedAt: "2026-10-24T09:00:00.000Z",
+  });
+  writeTrustedCommitState(project, card.id, {
+    version: 1,
+    kind: "trusted-commit",
+    projectId: project.id,
+    cardId: card.id,
+    taskBranch: "agent/card",
+    defaultBranch: "main",
+    commitSha: sha,
   });
   if (legacyCardId !== undefined) {
     new PrMaintenanceStore(project.contextRoot, project).create({
@@ -210,21 +240,58 @@ async function pollReview(
     addWorktreeWithNewBranch: vi.fn(),
     fetch: vi.fn(),
     push: vi.fn(),
-    getCurrentBranch: vi.fn(),
+    getCurrentBranch: vi.fn(async () => "agent/card"),
+    getHeadSha: vi.fn(async () => sha),
+    getRebaseState: vi.fn(async () => null),
+    getConflictedPaths: vi.fn(async () => []),
+    getRemoteBranchSha: vi.fn(async () => sha),
+    getCommitCountBetween: vi.fn(async () => 1),
+    getStatus: vi.fn(async () => ""),
+    isAncestor: vi.fn(async () => false),
   };
   const openCode = { run: vi.fn() };
   await runTaskSessionWorkflow({
     project,
     trello: trello as never,
     git: git as never,
-    github: {} as never,
+    github: {
+      findPullRequestState: vi.fn(async () => ({
+        url: "https://github.com/owner/repo/pull/42",
+        state: "OPEN" as const,
+        isDraft: false,
+        reviewDecision: null,
+        mergedAt: null,
+        headRefOid: sha,
+        baseRefName: "main",
+        headRefName: "agent/card",
+        headRepository: { name: "repo" },
+        headRepositoryOwner: { login: "owner" },
+      })),
+      getCiObservations: vi.fn(async () => ({
+        headSha: sha,
+        checks: [],
+        expectationSources: [],
+      })),
+    } as never,
     openCode: openCode as never,
-    commands: {} as never,
+    commands: {
+      run: vi.fn(async ({ cwd }: { cwd: string }) => ({
+        exitCode: 0,
+        output: JSON.stringify([{ id: "session", directory: cwd }]),
+      })),
+    } as never,
     signal: new AbortController().signal,
     prepareAttachmentContext: async () => undefined,
     ...(emailNotifier === undefined ? {} : { emailNotifier }),
   });
-  return { git, project, openCodeRun: openCode.run };
+  return {
+    git,
+    project,
+    openCodeRun: openCode.run,
+    taskRecord: new TaskExecutionStore(project.contextRoot, project).read(
+      "card",
+    ),
+  };
 }
 
 describe("opt-in maintenance in the production Human Review polling path", () => {
@@ -242,7 +309,10 @@ describe("opt-in maintenance in the production Human Review polling path", () =>
   );
 
   it("does not let routine maintenance deferral suppress actionable feedback", async () => {
-    await pollReview("behind", { enabled: true }, true, ["review-1"]);
+    const result = await pollReview("behind", { enabled: true }, true, [
+      "review-1",
+    ]);
+    expect(result.taskRecord).toMatchObject({ phase: "human-feedback" });
     expect(maintainOutdatedPr).toHaveBeenCalledOnce();
     expect(runTaskSessionFeedbackCycle).toHaveBeenCalledOnce();
     expect(

@@ -8,6 +8,7 @@ type SnapshotGitClient = Pick<
   GitClient,
   "getHeadTrackedFiles" | "getIndexEntries" | "getUntrackedFiles"
 >;
+type ReadOnlyGitClient = SnapshotGitClient & Pick<GitClient, "getIgnoredFiles">;
 
 function updateField(
   hash: ReturnType<typeof createHash>,
@@ -64,24 +65,77 @@ function resolveWorktreeFile(worktreePath: string, filePath: string): string {
     );
   }
 
+  let current = resolvedWorktree;
+  const components = relative.split(path.sep);
+  for (const [index, component] of components.entries()) {
+    current = path.join(current, component);
+    const stats = fs.lstatSync(current, { throwIfNoEntry: false });
+    if (stats?.isSymbolicLink() && index < components.length - 1)
+      throw new Error(`Symlink traversal in task source path: ${filePath}`);
+    if (
+      index < components.length - 1 &&
+      stats !== undefined &&
+      !stats.isDirectory()
+    )
+      throw new Error(
+        `Non-directory component in task source path: ${filePath}`,
+      );
+  }
+
   return resolvedFile;
+}
+
+async function getIgnoredIdentity(
+  worktreePath: string,
+  files: string[],
+): Promise<string> {
+  if (files.length > 10_000)
+    throw new Error("Ignored source inventory exceeds the recovery limit");
+  const hash = createHash("sha256");
+  let totalBytes = 0;
+  for (const filePath of [...files].sort()) {
+    const absolute = resolveWorktreeFile(worktreePath, filePath);
+    const stat = fs.lstatSync(absolute, { throwIfNoEntry: false });
+    hash.update(filePath);
+    if (stat === undefined) {
+      hash.update("missing");
+      continue;
+    }
+    if (stat.isSymbolicLink()) {
+      hash.update("symlink");
+      hash.update(fs.readlinkSync(absolute));
+      continue;
+    }
+    if (!stat.isFile())
+      throw new Error(`Unsupported ignored source file type: ${filePath}`);
+    if (
+      stat.size > 16 * 1024 * 1024 ||
+      totalBytes + stat.size > 128 * 1024 * 1024
+    )
+      throw new Error(
+        "Ignored source content exceeds the recovery fingerprint limit",
+      );
+    totalBytes += stat.size;
+    hash.update(fs.readFileSync(absolute));
+  }
+  return `sha256:${hash.digest("hex")}`;
 }
 
 function addWorktreeFile(
   hash: ReturnType<typeof createHash>,
   worktreePath: string,
   filePath: string,
-): void {
+): number {
   const resolvedFile = resolveWorktreeFile(worktreePath, filePath);
   const stats = fs.lstatSync(resolvedFile, { throwIfNoEntry: false });
 
-  if (stats === undefined) return;
+  if (stats === undefined) return 0;
   updateField(hash, "path", filePath);
 
   if (stats.isSymbolicLink()) {
     updateField(hash, "state", "symlink");
     updateField(hash, "target", fs.readlinkSync(resolvedFile));
-    return;
+    return 0;
   }
 
   if (!stats.isFile()) {
@@ -92,7 +146,40 @@ function addWorktreeFile(
 
   updateField(hash, "state", "file");
   updateField(hash, "executable", (stats.mode & 0o111) === 0 ? "no" : "yes");
-  updateField(hash, "content", fs.readFileSync(resolvedFile));
+  hash.update("content", "utf8");
+  const length = Buffer.allocUnsafe(8);
+  length.writeBigUInt64BE(BigInt(stats.size));
+  hash.update(length);
+  const descriptor = fs.openSync(resolvedFile, "r");
+  const buffer = Buffer.allocUnsafe(64 * 1024);
+  try {
+    let bytesRead: number;
+    do {
+      bytesRead = fs.readSync(descriptor, buffer, 0, buffer.length, null);
+      if (bytesRead > 0) hash.update(buffer.subarray(0, bytesRead));
+    } while (bytesRead > 0);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+  return stats.size;
+}
+
+/** Includes staging and ignored-file state, unlike the staging-insensitive quality identity. */
+export async function getTaskSessionReadOnlyIdentity(
+  git: ReadOnlyGitClient,
+  worktreePath: string,
+): Promise<string> {
+  const [sourceIdentity, index, ignoredFiles] = await Promise.all([
+    getTaskSessionSourceSnapshotIdentity(git, worktreePath),
+    git.getIndexEntries(worktreePath),
+    git.getIgnoredFiles(worktreePath),
+  ]);
+  const ignoredIdentity = await getIgnoredIdentity(worktreePath, ignoredFiles);
+  return `sha256:${createHash("sha256")
+    .update(sourceIdentity)
+    .update(index)
+    .update(ignoredIdentity)
+    .digest("hex")}`;
 }
 
 export async function getTaskSessionSourceSnapshotIdentity(

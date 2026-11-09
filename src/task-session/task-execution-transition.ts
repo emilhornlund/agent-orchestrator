@@ -86,11 +86,25 @@ const phaseTransitions: Record<
   "review-passed": { from: "review", to: "publication" },
   "review-exhausted": { from: "review", to: "publication" },
   "review-unavailable": { from: "review", to: "publication" },
-  "review-failed": { from: "review", to: "implementation" },
+  "review-failed": {
+    from: ["review", "implementation", "validation"],
+    to: "implementation",
+  },
   "publication-completed": { from: "publication", to: "ci" },
   "ci-passed-awaiting-human": { from: "ci", to: "human-feedback" },
   "ci-passed-completed": { from: "ci", to: "done" },
-  "pull-request-merged": { from: ["ci", "human-feedback"], to: "done" },
+  "pull-request-merged": {
+    from: [
+      "planning",
+      "implementation",
+      "validation",
+      "review",
+      "publication",
+      "ci",
+      "human-feedback",
+    ],
+    to: "done",
+  },
   "external-pull-request-reconciled": {
     from: "attention-required",
     to: "done",
@@ -183,6 +197,15 @@ export function transitionTaskExecutionRecord(
   const nextRecord = parseTaskExecutionRecord({
     ...record,
     phase: destinationPhase,
+    ...(destinationPhase !== "human-feedback" &&
+    record.feedbackRemediation?.status === "active"
+      ? { feedbackRemediation: undefined }
+      : {}),
+    ...(destinationPhase === "human-feedback" ||
+    destinationPhase === "ci" ||
+    destinationPhase === "attention-required"
+      ? {}
+      : { reviewObservation: undefined }),
     lastEvent: {
       id: event.eventId,
       type: event.type,

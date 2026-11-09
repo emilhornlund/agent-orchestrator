@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
+import { createHash } from "node:crypto";
 import { buildChildEnvironment } from "../process/child-environment.js";
 import fs from "node:fs";
 import os from "node:os";
@@ -76,6 +77,7 @@ export type RunGit = (
   cwd: string,
   args: string[],
   environment?: GitEnvironment,
+  signalOverride?: AbortSignal | null,
 ) => Promise<string>;
 
 export function getGitIdentityEnvironment(
@@ -89,8 +91,15 @@ export function getGitIdentityEnvironment(
   };
 }
 
-const defaultRunGit: RunGit = async (cwd, args, environment) => {
+const defaultRunGit: RunGit = async (
+  cwd,
+  args,
+  environment,
+  signalOverride,
+) => {
   const runtime = getProcessRuntime();
+  const signal =
+    signalOverride === null ? undefined : (signalOverride ?? runtime.signal);
   const operationTimeoutMilliseconds =
     (getGitHubOperationProject()?.opencode.timeoutMinutes ??
       runtime.operationTimeoutMilliseconds / 60_000) * 60_000;
@@ -175,8 +184,8 @@ const defaultRunGit: RunGit = async (cwd, args, environment) => {
         5_000,
       );
     };
-    runtime.signal?.addEventListener("abort", abort, { once: true });
-    if (runtime.signal?.aborted) abort();
+    signal?.addEventListener("abort", abort, { once: true });
+    if (signal?.aborted) abort();
     child.stdout.on("data", (chunk: Buffer | string) =>
       append(
         "stdout",
@@ -199,7 +208,7 @@ const defaultRunGit: RunGit = async (cwd, args, environment) => {
       flush();
       clearTimeout(timeout);
       if (killTimer) clearTimeout(killTimer);
-      runtime.signal?.removeEventListener("abort", abort);
+      signal?.removeEventListener("abort", abort);
       try {
         execution.finish("spawn-failure", {
           pid: child.pid,
@@ -227,7 +236,7 @@ const defaultRunGit: RunGit = async (cwd, args, environment) => {
         flush();
         clearTimeout(timeout);
         if (killTimer) clearTimeout(killTimer);
-        runtime.signal?.removeEventListener("abort", abort);
+        signal?.removeEventListener("abort", abort);
         try {
           execution.finish("process-group-ambiguous", { pid: child.pid });
         } catch (finishError) {
@@ -246,8 +255,8 @@ const defaultRunGit: RunGit = async (cwd, args, environment) => {
       settled = true;
       clearTimeout(timeout);
       if (killTimer) clearTimeout(killTimer);
-      runtime.signal?.removeEventListener("abort", abort);
-      const interrupted = runtime.signal?.aborted === true;
+      signal?.removeEventListener("abort", abort);
+      const interrupted = signal?.aborted === true;
       try {
         execution.finish(
           recorderFailure !== undefined || execution.failure !== undefined
@@ -598,7 +607,7 @@ export class GitClient {
     runGit: RunGit = defaultRunGit,
     private readonly credentials: GitHubCredentialProvider = new GitHubCredentialProvider(),
   ) {
-    this.runGit = async (cwd, args, environment) => {
+    this.runGit = async (cwd, args, environment, signalOverride) => {
       const project = getGitHubOperationProject();
       const projectId = project?.id ?? ProjectRunAuthority.currentProjectId();
       const dispatch = () => {
@@ -624,6 +633,10 @@ export class GitClient {
           (command === "remote" && args[commandIndex + 1] === "add")
         )
           assertJournaledTransport();
+        if (signalOverride !== undefined)
+          return environment === undefined
+            ? runGit(cwd, args, undefined, signalOverride)
+            : runGit(cwd, args, environment, signalOverride);
         return environment === undefined
           ? runGit(cwd, args)
           : runGit(cwd, args, environment);
@@ -1037,12 +1050,16 @@ export class GitClient {
     return output.length > 0;
   }
 
-  async getStatus(repositoryPath: string): Promise<string> {
-    return this.runGit(repositoryPath, [
-      "status",
-      "--porcelain=v1",
-      "--untracked-files=all",
-    ]);
+  async getStatus(
+    repositoryPath: string,
+    signalOverride?: AbortSignal | null,
+  ): Promise<string> {
+    return this.runGit(
+      repositoryPath,
+      ["status", "--porcelain=v1", "--untracked-files=all"],
+      undefined,
+      signalOverride,
+    );
   }
 
   async getDiff(repositoryPath: string, staged = false): Promise<string> {
@@ -1052,27 +1069,74 @@ export class GitClient {
     );
   }
 
-  async getUntrackedFiles(repositoryPath: string): Promise<string[]> {
-    const output = await this.runGit(repositoryPath, [
-      "ls-files",
-      "--others",
-      "--exclude-standard",
-      "--full-name",
-      "-z",
-    ]);
+  async getUntrackedFiles(
+    repositoryPath: string,
+    signalOverride?: AbortSignal | null,
+  ): Promise<string[]> {
+    const output = await this.runGit(
+      repositoryPath,
+      ["ls-files", "--others", "--exclude-standard", "--full-name", "-z"],
+      undefined,
+      signalOverride,
+    );
 
     return output.split("\0").filter((filePath) => filePath.length > 0);
   }
 
-  async getHeadTrackedFiles(repositoryPath: string): Promise<string[]> {
-    const output = await this.runGit(repositoryPath, [
-      "ls-tree",
-      "--full-tree",
-      "-r",
-      "--name-only",
-      "-z",
-      "HEAD",
+  async getUnstagedChangedPaths(repositoryPath: string): Promise<string[]> {
+    const [diff, untracked] = await Promise.all([
+      this.runGit(repositoryPath, ["diff", "--name-only", "-z"]),
+      this.getUntrackedFiles(repositoryPath),
     ]);
+    return [...new Set([...diff.split("\0"), ...untracked].filter(Boolean))];
+  }
+
+  async getCommittableChangedPaths(
+    repositoryPath: string,
+    signalOverride?: AbortSignal | null,
+  ): Promise<string[]> {
+    const [tracked, untracked] = await Promise.all([
+      this.runGit(
+        repositoryPath,
+        ["diff", "--no-renames", "HEAD", "--name-only", "-z"],
+        undefined,
+        signalOverride,
+      ),
+      this.getUntrackedFiles(repositoryPath, signalOverride),
+    ]);
+    return [...new Set([...tracked.split("\0"), ...untracked].filter(Boolean))];
+  }
+
+  async getIgnoredFiles(
+    repositoryPath: string,
+    signalOverride?: AbortSignal | null,
+  ): Promise<string[]> {
+    const output = await this.runGit(
+      repositoryPath,
+      [
+        "ls-files",
+        "--others",
+        "--ignored",
+        "--exclude-standard",
+        "--full-name",
+        "-z",
+      ],
+      undefined,
+      signalOverride,
+    );
+    return output.split("\0").filter((filePath) => filePath.length > 0);
+  }
+
+  async getHeadTrackedFiles(
+    repositoryPath: string,
+    signalOverride?: AbortSignal | null,
+  ): Promise<string[]> {
+    const output = await this.runGit(
+      repositoryPath,
+      ["ls-tree", "--full-tree", "-r", "--name-only", "-z", "HEAD"],
+      undefined,
+      signalOverride,
+    );
 
     return output.split("\0").filter((filePath) => filePath.length > 0);
   }
@@ -1085,8 +1149,16 @@ export class GitClient {
     return (await this.getStatus(repositoryPath)).length > 0;
   }
 
-  async getHeadSha(repositoryPath: string): Promise<string> {
-    return this.runGit(repositoryPath, ["rev-parse", "HEAD"]);
+  async getHeadSha(
+    repositoryPath: string,
+    signalOverride?: AbortSignal | null,
+  ): Promise<string> {
+    return this.runGit(
+      repositoryPath,
+      ["rev-parse", "HEAD"],
+      undefined,
+      signalOverride,
+    );
   }
 
   async getCommitParentSha(repositoryPath: string): Promise<string> {
@@ -1270,6 +1342,21 @@ export class GitClient {
     return this.resolveCommitSha(repositoryPath, ref);
   }
 
+  /** Stable identity for every ref visible in the shared Git directory. */
+  async getRefsIdentity(repositoryPath: string): Promise<string> {
+    const refs = await this.runGit(repositoryPath, [
+      "for-each-ref",
+      "--format=%(refname) %(objectname)",
+    ]);
+    const canonical = refs
+      .split("\n")
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+      .sort()
+      .join("\n");
+    return `sha256:${createHash("sha256").update(canonical).digest("hex")}`;
+  }
+
   async createRefIfAbsent(
     repositoryPath: string,
     ref: string,
@@ -1304,6 +1391,42 @@ export class GitClient {
   async stageAll(repositoryPath: string): Promise<void> {
     rejectJournaledDispatch();
     await this.runGit(repositoryPath, ["add", "-A"]);
+  }
+
+  /** Stage the complete task worktree except reviewed unrelated paths. */
+  async stageAllExcept(
+    repositoryPath: string,
+    excludedPaths: string[],
+  ): Promise<void> {
+    rejectJournaledDispatch();
+    const uniquePaths = [...new Set(excludedPaths)];
+    for (const filePath of uniquePaths) {
+      if (
+        filePath.length === 0 ||
+        filePath.startsWith("/") ||
+        filePath.split(/[\\/]/u).includes("..") ||
+        filePath.includes("\0")
+      )
+        throw new Error(`Unsafe path excluded from task commit: ${filePath}`);
+    }
+    await this.runGit(repositoryPath, ["add", "-A"]);
+    if (uniquePaths.length > 0)
+      await this.runGit(repositoryPath, [
+        "restore",
+        "--staged",
+        "--",
+        ...uniquePaths.map((filePath) => `:(literal)${filePath}`),
+      ]);
+    const staged = await this.runGit(repositoryPath, [
+      "diff",
+      "--cached",
+      "--name-only",
+      "-z",
+      "HEAD",
+    ]);
+    const stagedPaths = staged.split("\0").filter(Boolean);
+    if (uniquePaths.some((excluded) => stagedPaths.includes(excluded)))
+      throw new Error("Excluded setup changes remain in the Git index");
   }
 
   async getIndexTreeSha(repositoryPath: string): Promise<string> {
@@ -1431,8 +1554,16 @@ export class GitClient {
     return count;
   }
 
-  async getCurrentBranch(repositoryPath: string): Promise<string> {
-    return this.runGit(repositoryPath, ["branch", "--show-current"]);
+  async getCurrentBranch(
+    repositoryPath: string,
+    signalOverride?: AbortSignal | null,
+  ): Promise<string> {
+    return this.runGit(
+      repositoryPath,
+      ["branch", "--show-current"],
+      undefined,
+      signalOverride,
+    );
   }
 
   async getChangedFiles(

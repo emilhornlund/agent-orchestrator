@@ -161,20 +161,22 @@ const repositorySchema = z.strictObject({
 });
 
 const openCodeStageSchema = z.strictObject({
-  model: nonBlankString,
-  variant: nonBlankString,
+  model: nonBlankString.optional(),
+  variant: nonBlankString.optional(),
 });
 
 const remediationSchema = z.strictObject({
-  model: nonBlankString,
-  variant: nonBlankString,
+  model: nonBlankString.optional(),
+  variant: nonBlankString.optional(),
   maxPasses: z.number().int().nonnegative().default(1),
 });
 
 const openCodeSchema = z.strictObject({
   refinement: openCodeStageSchema,
+  planning: openCodeStageSchema.optional(),
   implementation: openCodeStageSchema,
   review: openCodeStageSchema,
+  planReview: openCodeStageSchema.optional(),
   remediation: remediationSchema,
   commit: openCodeStageSchema,
   timeoutMinutes: z.number().positive().default(360),

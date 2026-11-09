@@ -328,6 +328,41 @@ export class ProjectRunAuthority {
     return completed;
   }
 
+  async failRefinement(evidence: {
+    observationId: string;
+    observedAt: string;
+    trelloObservationId: string;
+    trelloVerifiedAt: string;
+  }): Promise<RunRecord> {
+    const current = this.store.read();
+    if (
+      !current ||
+      current.taskKind !== "refinement" ||
+      current.lifecycle !== "refinement" ||
+      current.publicationState !== "none"
+    )
+      throw new RunStoreConflictError(
+        "Only an unpublished active refinement attempt can fail terminally",
+      );
+    return this.store.transition(
+      current.revision,
+      this.ownerGeneration,
+      null,
+      "failed",
+      "refinement",
+      "failed",
+      (snapshot) => snapshot,
+      {
+        prOutcome: "no-pr-failure",
+        prObservationId: evidence.observationId,
+        prVerifiedAt: evidence.observedAt,
+        trelloListId: current.pinned.lists.failed,
+        trelloObservationId: evidence.trelloObservationId,
+        trelloVerifiedAt: evidence.trelloVerifiedAt,
+      },
+    );
+  }
+
   async releaseVerifiedTerminal(): Promise<void> {
     const current = this.store.assertCurrentLease(this.ownerGeneration);
     if (
@@ -628,7 +663,8 @@ export class ProjectRunAuthority {
           );
         if (
           options.terminal?.event === "failed" &&
-          (validated.terminalFailure?.kind !== "implementation" ||
+          ((validated.terminalFailure?.kind !== "implementation" &&
+            validated.terminalFailure?.kind !== "clarification") ||
             validated.terminalFailure.outcome !== "confirmed" ||
             validated.pullRequest !== undefined ||
             validated.externalRecovery !== undefined)
@@ -651,18 +687,29 @@ export class ProjectRunAuthority {
       validate: options.validate,
       deriveRunState: (current, rawProjection) => {
         const projection = options.validate(rawProjection);
-        const target = lifecycleForPhase(projection.phase);
+        if (
+          projection.recoveryWait &&
+          projection.phase === "attention-required"
+        )
+          throw new RunStoreConflictError(
+            "Attention-required task state cannot retain a recoverable wait authorization",
+          );
+        const target = projection.recoveryWait
+          ? "waiting"
+          : lifecycleForPhase(projection.phase);
         let lifecycleTransition:
           { event: RunEventType; to: RunRecord["lifecycle"] } | undefined;
         if (target !== undefined && target !== current.lifecycle) {
           if (current.lifecycle === "waiting" && target !== "waiting") {
             lifecycleTransition = { event: "wait-resumed", to: target };
           } else {
-            const mapped = projection.lastEvent
-              ? eventForTaskTransition[
-                  projection.lastEvent.type as TaskExecutionEvent["type"]
-                ]
-              : undefined;
+            const mapped = projection.recoveryWait
+              ? { event: "wait-entered" as const, to: "waiting" as const }
+              : projection.lastEvent
+                ? eventForTaskTransition[
+                    projection.lastEvent.type as TaskExecutionEvent["type"]
+                  ]
+                : undefined;
             if (mapped === undefined || mapped.to !== target)
               throw new RunStoreConflictError(
                 `Task phase ${projection.phase} has no authorized RunRecord transition from ${current.lifecycle}`,
@@ -739,16 +786,28 @@ export class ProjectRunAuthority {
                 : projection.phase === "done"
                   ? current.pinned.lists.done
                   : current.pinned.lists.working,
-            ...(projection.phase === "attention-required"
+            ...(projection.recoveryWait
               ? {
                   wait: {
-                    reason: "task-attention-required",
-                    dependency: "operator",
-                    since: projection.updatedAt,
-                    retryAt: null,
+                    reason: projection.recoveryWait.reason,
+                    dependency:
+                      projection.recoveryWait.notificationId
+                        .split("/")
+                        .at(-1) ?? "task-session",
+                    since: projection.recoveryWait.since,
+                    retryAt: projection.recoveryWait.retryAt,
                   },
                 }
-              : {}),
+              : projection.phase === "attention-required"
+                ? {
+                    wait: {
+                      reason: "task-attention-required",
+                      dependency: "operator",
+                      since: projection.updatedAt,
+                      retryAt: null,
+                    },
+                  }
+                : {}),
             ...(projection.pullRequest === undefined
               ? {}
               : {

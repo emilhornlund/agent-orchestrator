@@ -21,6 +21,16 @@ import { mutationProvenNotDelivered } from "../task-session/durable-mutation.js"
 import { ProcessExecutionError } from "../process/process-runtime.js";
 import { TrelloRequestError } from "../trello/trello-client.js";
 import { TaskExecutionStore } from "../task-session/task-execution-store.js";
+import {
+  captureSetupEffects,
+  assertSetupInventoryIdentity,
+} from "../process/run-setup.js";
+import {
+  getSetupTrackedDelta,
+  resolveSetupCommitScope,
+  setupFileIdentity,
+  type SetupInventory,
+} from "../process/setup-commit-scope.js";
 import { TaskMutationQueue } from "../task-session/task-mutation-queue.js";
 import { transitionTaskExecutionRecord } from "../task-session/task-execution-transition.js";
 import {
@@ -79,8 +89,173 @@ const checkpointSchema = z.strictObject({
     .strictObject({ fetch: nonBlank, push: nonBlank })
     .optional(),
   commitCleanup: z.literal("verbatim").optional(),
+  setupDisposition: z
+    .strictObject({
+      version: z.literal(1),
+      artifactReference: z.string().regex(/^sha256:[a-f0-9]{64}$/u),
+      contextDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/u),
+      exclude: z.array(
+        z.strictObject({
+          path: z.string().min(1),
+          identity: z.string().min(1),
+        }),
+      ),
+    })
+    .optional(),
 });
 type Checkpoint = z.infer<typeof checkpointSchema>;
+
+async function validateSetupDisposition(
+  checkpoint: Checkpoint,
+  run: NonNullable<ReturnType<ProjectRunAuthority["store"]["read"]>>,
+  project: ProjectConfig,
+  git: GitClient,
+  cwd: string,
+): Promise<void> {
+  const disposition = checkpoint.setupDisposition;
+  const store = new TaskExecutionStore(run.pinned.storageRoot, project);
+  const task = store.read(checkpoint.cardId);
+  const setupWasConfigured =
+    project.repository.setupCommand !== undefined ||
+    (task?.setup?.command !== undefined && task.setup.command !== null);
+  if (setupWasConfigured && !disposition)
+    throw new PublicationSafetyError(
+      "Historical setup has no durable scope proof; preserving publication checkpoint",
+    );
+  if (!disposition) return;
+  if (
+    task?.setup?.status !== "passed" ||
+    task.setup.before === undefined ||
+    task.setup.after === undefined ||
+    task.setup.relevance !== disposition.artifactReference
+  )
+    throw new PublicationSafetyError(
+      "Setup scope proof is missing or unbound to the task record",
+    );
+  const rawArtifact = store.readPrimaryResultArtifact(
+    disposition.artifactReference,
+  );
+  if (typeof rawArtifact !== "object" || rawArtifact === null)
+    throw new PublicationSafetyError("Setup scope artifact is malformed");
+  const artifact = rawArtifact as Record<string, unknown>;
+  if (
+    artifact.version !== 1 ||
+    artifact.before !== task.setup.before ||
+    artifact.after !== task.setup.after ||
+    !Array.isArray(task.setup.history) ||
+    task.setup.history.length === 0 ||
+    task.setup.history.length !== task.setup.attempts ||
+    task.setup.history[0]?.before !== task.setup.before ||
+    task.setup.history.at(-1)?.before !==
+      (task.setup.attemptBefore ?? task.setup.before) ||
+    task.setup.history.at(-1)?.after !== task.setup.after ||
+    task.setup.history.at(-1)?.outcome !== "passed" ||
+    typeof artifact.verdict !== "object" ||
+    artifact.verdict === null ||
+    typeof artifact.current !== "object" ||
+    artifact.current === null
+  )
+    throw new PublicationSafetyError(
+      "Setup scope artifact does not match its durable setup evidence",
+    );
+  const before = store.readPrimaryResultArtifact(task.setup.before);
+  const attemptBefore = store.readPrimaryResultArtifact(
+    task.setup.attemptBefore ?? task.setup.before,
+  );
+  const after = store.readPrimaryResultArtifact(task.setup.after);
+  assertSetupInventoryIdentity(before, cwd, checkpoint.branch);
+  assertSetupInventoryIdentity(attemptBefore, cwd, checkpoint.branch);
+  assertSetupInventoryIdentity(after, cwd, checkpoint.branch);
+  assertSetupInventoryIdentity(artifact.current, cwd, checkpoint.branch);
+  const resolved = resolveSetupCommitScope(
+    before as SetupInventory,
+    after as SetupInventory,
+    artifact.current as SetupInventory,
+    artifact.verdict,
+  );
+  if (
+    JSON.stringify(resolved) !== JSON.stringify(artifact.scope) ||
+    resolved.contextDigest !== disposition.contextDigest ||
+    JSON.stringify(resolved.exclude) !== JSON.stringify(disposition.exclude)
+  )
+    throw new PublicationSafetyError(
+      "Setup scope proof context differs from durable relevance evidence",
+    );
+  const live = JSON.parse(
+    (await captureSetupEffects(git, cwd)).toString("utf8"),
+  ) as unknown;
+  assertSetupInventoryIdentity(live, cwd, checkpoint.branch);
+  const candidatePaths = getSetupTrackedDelta(
+    before as SetupInventory,
+    after as SetupInventory,
+    artifact.current as SetupInventory,
+  ).candidates.map((candidate) => candidate.path);
+  const recordedByPath = new Map(
+    (artifact.current as SetupInventory).files.map((file) => [file.path, file]),
+  );
+  const liveByPath = new Map(
+    (live as SetupInventory).files.map((file) => [file.path, file]),
+  );
+  for (const filePath of candidatePaths) {
+    const expected = recordedByPath.get(filePath);
+    const actual = liveByPath.get(filePath);
+    if (
+      (expected === undefined && actual !== undefined) ||
+      (expected !== undefined &&
+        (!actual || setupFileIdentity(actual) !== setupFileIdentity(expected)))
+    )
+      throw new PublicationSafetyError(
+        `Setup relevance evidence is stale for ${filePath}; refusing to stage or commit`,
+      );
+  }
+  void git;
+}
+
+async function assertSetupPreservation(
+  git: GitClient,
+  cwd: string,
+  checkpoint: Checkpoint,
+): Promise<void> {
+  const excluded = checkpoint.setupDisposition?.exclude ?? [];
+  await assertSetupExcludedIdentities(git, cwd, checkpoint);
+  const changed = (await git.getUnstagedChangedPaths(cwd)).sort();
+  const expected = excluded.map((entry) => entry.path).sort();
+  if (
+    JSON.stringify(changed) !== JSON.stringify(expected) ||
+    (await git.getIndexTreeSha(cwd)) !== (await git.getCommitTreeSha(cwd))
+  )
+    throw new PublicationSafetyError(
+      "Publication worktree contains staged or unexpected changes outside reviewed setup scope",
+    );
+}
+
+async function assertSetupExcludedIdentities(
+  git: GitClient,
+  cwd: string,
+  checkpoint: Checkpoint,
+): Promise<void> {
+  const excluded = checkpoint.setupDisposition?.exclude ?? [];
+  if (excluded.length === 0) return;
+  const inventory = JSON.parse(
+    (await captureSetupEffects(git, cwd)).toString("utf8"),
+  ) as unknown;
+  assertSetupInventoryIdentity(inventory, cwd, checkpoint.branch);
+  const currentByPath = new Map(
+    inventory.files.map((file) => [file.path, file]),
+  );
+  for (const entry of excluded) {
+    const current = currentByPath.get(entry.path);
+    if (
+      (entry.identity === "absent" && current !== undefined) ||
+      (entry.identity !== "absent" &&
+        (!current || setupFileIdentity(current) !== entry.identity))
+    )
+      throw new PublicationSafetyError(
+        `Preserved setup content changed after commit scope review: ${entry.path}`,
+      );
+  }
+}
+
 const key = "initial-publication-v1";
 export const PUBLICATION_RECHECK_MS = 15_000;
 export class PublicationWaitingError extends Error {
@@ -144,6 +319,13 @@ export function beginInitialPublication(
   )
     throw new Error("Initial publication ownership/checkpoint mismatch");
   if (authority.read(key, checkpointSchema.parse)) return;
+  if (
+    project.repository.setupCommand !== undefined &&
+    options.setupDisposition === undefined
+  )
+    throw new Error(
+      "Configured setup has no persisted commit-scope disposition; publication blocked",
+    );
   if ("commitSha" in options)
     throw new Error(
       "Legacy initial publication has no durable dispatch provenance; preserve the trusted commit and reconcile explicitly",
@@ -178,6 +360,9 @@ export function beginInitialPublication(
       sanitizeControlledText(options.commitMessage),
     ),
     commitCleanup: "verbatim",
+    ...(options.setupDisposition === undefined
+      ? {}
+      : { setupDisposition: options.setupDisposition }),
     executionId: run.operation.id,
     executionGeneration: run.operation.generation,
     retryAt: null,
@@ -296,6 +481,7 @@ export async function resumeInitialPublication(options: {
     throw new Error("Publication checkpoint has no matching queue owner");
   if (!publicationQueue.claimForRecovery(publicationEvent.eventId)) return true;
   const cwd = path.join(run.pinned.worktreeRoot, checkpoint.cardId);
+  await validateSetupDisposition(checkpoint, run, options.project, git, cwd);
   const now = () => new Date().toISOString();
   const next = () =>
     new Date(Date.now() + PUBLICATION_RECHECK_MS).toISOString();
@@ -567,6 +753,8 @@ export async function resumeInitialPublication(options: {
         tree: string;
         message: string;
         cleanup: "verbatim";
+        setupScopeReference?: string | undefined;
+        setupContextDigest?: string | undefined;
         identity?: GitIdentity | undefined;
       };
       if (commitEntry?.mutation) {
@@ -581,6 +769,14 @@ export async function resumeInitialPublication(options: {
             tree: gitSha,
             message: nonBlank,
             cleanup: z.literal("verbatim"),
+            setupScopeReference: z
+              .string()
+              .regex(/^sha256:[a-f0-9]{64}$/u)
+              .optional(),
+            setupContextDigest: z
+              .string()
+              .regex(/^sha256:[a-f0-9]{64}$/u)
+              .optional(),
             identity: z
               .strictObject({
                 name: nonBlank,
@@ -591,17 +787,38 @@ export async function resumeInitialPublication(options: {
           })
           .parse(JSON.parse(fs.readFileSync(reference.path, "utf8")));
       } else {
-        await git.stageAll(cwd);
+        await git.stageAllExcept(
+          cwd,
+          checkpoint.setupDisposition?.exclude.map((item) => item.path) ?? [],
+        );
+        await validateSetupDisposition(checkpoint, run, project, git, cwd);
+        await assertSetupExcludedIdentities(git, cwd, checkpoint);
         payload = {
           parent: gitSha.parse(await git.getHeadSha(cwd)),
           tree: gitSha.parse(await git.getIndexTreeSha(cwd)),
           message: checkpoint.message!,
           cleanup: "verbatim",
+          ...(checkpoint.setupDisposition === undefined
+            ? {}
+            : {
+                setupScopeReference:
+                  checkpoint.setupDisposition.artifactReference,
+                setupContextDigest: checkpoint.setupDisposition.contextDigest,
+              }),
           identity: project.repository.gitIdentity,
         };
         if (payload.tree === (await git.getCommitTreeSha(cwd)))
           throw new PublicationSafetyError("No meaningful changes to commit");
       }
+      if (
+        payload.setupScopeReference !==
+          checkpoint.setupDisposition?.artifactReference ||
+        payload.setupContextDigest !==
+          checkpoint.setupDisposition?.contextDigest
+      )
+        throw new PublicationSafetyError(
+          "Commit intent is not bound to the validated setup scope proof",
+        );
       if (
         !payload.identity &&
         (!commitEntry?.mutation?.dispatches.length ||
@@ -618,10 +835,16 @@ export async function resumeInitialPublication(options: {
         async () => {
           const head = await git.getHeadSha(cwd);
           if (head === payload.parent) {
+            await validateSetupDisposition(checkpoint!, run, project, git, cwd);
+            await assertSetupExcludedIdentities(git, cwd, checkpoint!);
             if (
               (await git.getIndexTreeSha(cwd)) !== payload.tree ||
-              (await git.getDiff(cwd)).length ||
-              (await git.getUntrackedFiles(cwd)).length
+              (await git.getUnstagedChangedPaths(cwd)).some(
+                (filePath) =>
+                  !(checkpoint!.setupDisposition?.exclude ?? []).some(
+                    (item) => item.path === filePath,
+                  ),
+              )
             )
               throw new PublicationSafetyError(
                 "Commit source/index differs from the original publication intent",
@@ -635,7 +858,12 @@ export async function resumeInitialPublication(options: {
             (await git.getCommitParentShas(cwd)).join(" ") !== payload.parent ||
             (await git.getCommitTreeSha(cwd)) !== payload.tree ||
             (await git.getVerbatimCommitMessage(cwd)) !== payload.message ||
-            (await git.getStatus(cwd)).trim()
+            (await git.getUnstagedChangedPaths(cwd)).some(
+              (filePath) =>
+                !(checkpoint!.setupDisposition?.exclude ?? []).some(
+                  (item) => item.path === filePath,
+                ),
+            )
           )
             throw new PublicationSafetyError(
               "Commit discovery conflicts with original intent",
@@ -668,10 +896,8 @@ export async function resumeInitialPublication(options: {
       save(authority, checkpoint);
     }
     const sha = checkpoint.commitSha;
-    if (
-      (await git.getHeadSha(cwd)) !== sha ||
-      (await git.getStatus(cwd)).trim()
-    )
+    await assertSetupPreservation(git, cwd, checkpoint);
+    if ((await git.getHeadSha(cwd)) !== sha)
       throw new PublicationSafetyError("Publication commit changed");
     writeTrustedCommitState(project, checkpoint.cardId, {
       version: 1,
@@ -724,10 +950,8 @@ export async function resumeInitialPublication(options: {
       };
       save(authority, checkpoint);
     }
-    if (
-      (await git.getHeadSha(cwd)) !== sha ||
-      (await git.getStatus(cwd)).trim()
-    )
+    await assertSetupPreservation(git, cwd, checkpoint);
+    if ((await git.getHeadSha(cwd)) !== sha)
       throw new PublicationSafetyError(
         "Publication content changed during presentation preparation",
       );

@@ -646,7 +646,7 @@ describe("task-session terminal PR reconciliation", () => {
         projectId: project.id,
         cardId: card.id,
         phase: "ci",
-        primarySessionId: "session",
+        primarySessionId: "session-unavailable-to-opencode",
         sessionCreationStatus: "bound",
         expectedBranch: `agent/${card.id}`,
         pullRequest: {
@@ -657,18 +657,28 @@ describe("task-session terminal PR reconciliation", () => {
         operationKey: "operation",
         revision: 1,
         retryCounters: { validation: 0, review: 0, ci: 0, humanFeedback: 0 },
+        recoveryWait: {
+          kind: "dependency",
+          reason: "GitHub temporarily unavailable",
+          resumePhase: "ci",
+          since: "2026-10-24T09:00:00.000Z",
+          retryAt: "2099-10-24T09:00:00.000Z",
+          attempts: 1,
+          notificationId: "project/task-card/operation/dependency",
+        },
         createdAt: "2026-10-24T09:00:00.000Z",
         updatedAt: "2026-10-24T09:00:00.000Z",
       });
 
       const onCardLeft = vi.fn();
+      const primaryRun = vi.fn();
       const poll = () =>
         runTaskSessionWorkflow({
           project,
           trello,
           git,
           github,
-          openCode: new OpenCodeClient(vi.fn()),
+          openCode: new OpenCodeClient(primaryRun),
           commands: new CommandRunner(vi.fn()),
           signal: new AbortController().signal,
           prepareAttachmentContext: async () => undefined,
@@ -706,6 +716,7 @@ describe("task-session terminal PR reconciliation", () => {
         ...(destination === "done" ? [{ dueComplete: true }] : []),
       );
       expect(github.getCiObservations).not.toHaveBeenCalled();
+      expect(primaryRun).not.toHaveBeenCalled();
       expect(onCardLeft).toHaveBeenCalledTimes(1);
       if (state === "MERGED") {
         expect(github.isAncestorCommit).toHaveBeenCalled();

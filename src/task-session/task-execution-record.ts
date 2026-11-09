@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { implementationReviewResultSchema } from "./implementation-review-result.js";
+import { OPERATION_RECOVERY_MAX_EXECUTIONS } from "./operation-recovery-policy.js";
 
 const taskExecutionPhases = [
   "planning",
@@ -77,14 +78,109 @@ const pullRequestSchema = z.strictObject({
 
 const sessionCreationStatus = z.enum(["creating", "bound", "ambiguous"]);
 
+const sessionRecoveryStateSchema = z.strictObject({
+  originalSessionId: nonBlankIdentifier,
+  status: z.enum([
+    "inspection-pending",
+    "confirmed-absent",
+    "replacement-creating",
+    "replacement-ambiguous",
+    "replacement-bound",
+    "reconstruction-verified",
+    "reconstruction-blocked",
+    "reconstruction-process-failed",
+  ]),
+  contextReference: z
+    .string()
+    .regex(/^sha256:[0-9a-f]{64}$/u)
+    .optional(),
+  contextPath: z.string().min(1).optional(),
+  replacementSessionIds: z.array(nonBlankIdentifier).optional(),
+  contextLineage: z
+    .array(
+      z.strictObject({
+        reference: z.string().regex(/^sha256:[0-9a-f]{64}$/u),
+        path: z.string().min(1),
+        capturedAt: z.string().datetime(),
+      }),
+    )
+    .optional(),
+  reconstructionBaseline: z
+    .strictObject({
+      sourceIdentity: z.string().regex(/^sha256:[0-9a-f]{64}$/u),
+      head: gitSha,
+      branch: nonBlankIdentifier,
+      branchRef: gitSha.nullable(),
+      refsIdentity: z.string().min(1),
+    })
+    .optional(),
+  blockReason: z.string().min(1).max(1_000).optional(),
+  contextAvailability: z.enum(["available", "unavailable"]).optional(),
+  contextAvailabilityReason: z.string().min(1).max(1_000).optional(),
+});
+
 const taskSetupState = z.strictObject({
   command: z.string().min(1).nullable(),
-  status: z.enum(["not-required", "pending", "active", "passed"]),
+  status: z.enum([
+    "not-required",
+    "pending",
+    "active",
+    "passed",
+    "failed",
+    "ambiguous",
+  ]),
+  worktreePath: z.string().min(1).optional(),
+  before: z
+    .string()
+    .regex(/^sha256:[0-9a-f]{64}$/u)
+    .optional(),
+  attemptBefore: z
+    .string()
+    .regex(/^sha256:[0-9a-f]{64}$/u)
+    .optional(),
+  after: z
+    .string()
+    .regex(/^sha256:[0-9a-f]{64}$/u)
+    .optional(),
+  relevance: z
+    .string()
+    .regex(/^sha256:[0-9a-f]{64}$/u)
+    .optional(),
+  executionId: nonBlankIdentifier.optional(),
+  exitCode: z.number().int().nullable().optional(),
+  diagnostic: z.string().max(2_000).optional(),
+  attempts: z
+    .number()
+    .int()
+    .nonnegative()
+    .max(OPERATION_RECOVERY_MAX_EXECUTIONS)
+    .optional(),
+  history: z
+    .array(
+      z.strictObject({
+        command: z.string().min(1),
+        worktreePath: z.string().min(1),
+        before: z.string().regex(/^sha256:[0-9a-f]{64}$/u),
+        after: z
+          .string()
+          .regex(/^sha256:[0-9a-f]{64}$/u)
+          .optional(),
+        executionId: nonBlankIdentifier.optional(),
+        exitCode: z.number().int().nullable().optional(),
+        outcome: z.enum(["passed", "failed", "ambiguous"]),
+      }),
+    )
+    .max(OPERATION_RECOVERY_MAX_EXECUTIONS)
+    .optional(),
 });
 
 const terminalFailureState = z.strictObject({
-  kind: z.literal("implementation"),
+  kind: z.enum(["implementation", "clarification"]),
   reason: z.string().min(1).max(4_000),
+  clarificationArtifact: z
+    .string()
+    .regex(/^sha256:[0-9a-f]{64}$/u)
+    .optional(),
   outcome: z.enum(["confirmed", "pending"]),
 });
 
@@ -104,6 +200,128 @@ const retryCountersSchema = z.strictObject({
   humanFeedback: z.number().int().nonnegative(),
 });
 
+export const primaryOperationSchema = z.strictObject({
+  id: nonBlankIdentifier,
+  activity: nonBlankIdentifier,
+  role: z.enum(["primary", "reconstruction"]).optional(),
+  executions: z.number().int().nonnegative().safe(),
+  failureExecutions: z.number().int().nonnegative().safe().optional(),
+  dependencyOutages: z.number().int().nonnegative().safe().optional(),
+  accountedExecution: z.number().int().positive().safe().optional(),
+  lastExecutionClassification: z
+    .enum(["failure", "dependency-outage"])
+    .optional(),
+  status: z.enum([
+    "intent",
+    "dispatched",
+    "completed",
+    "ambiguous",
+    "failed",
+    "exhausted",
+  ]),
+  lastSessionId: nonBlankIdentifier.optional(),
+  processExecutionId: nonBlankIdentifier.optional(),
+  processMetadataPath: nonBlankIdentifier.optional(),
+  processArtifactRoot: nonBlankIdentifier.optional(),
+  updatedAt: z.string().datetime(),
+  result: z
+    .strictObject({
+      exitCode: z.number().int(),
+      output: z.string(),
+      errorOutput: z.string(),
+      processExecutionId: nonBlankIdentifier.optional(),
+      sessionId: nonBlankIdentifier.optional(),
+      failureClassification: z.literal("dependency-outage").optional(),
+    })
+    .optional(),
+  resultArtifact: z
+    .strictObject({
+      reference: z.string().regex(/^sha256:[0-9a-f]{64}$/u),
+      path: z.string().min(1).max(2_048).optional(),
+      bytes: z
+        .number()
+        .int()
+        .nonnegative()
+        .max(64 * 1024 * 1024),
+    })
+    .optional(),
+  retrySafe: z.boolean().optional(),
+  diagnostic: z.string().max(2_000).optional(),
+});
+const primaryOperationsSchema = z
+  .record(nonBlankIdentifier, primaryOperationSchema)
+  .superRefine((operations, ctx) => {
+    for (const [key, operation] of Object.entries(operations)) {
+      if (key !== operation.id)
+        ctx.addIssue({
+          code: "custom",
+          path: [key, "id"],
+          message: "Operation key must match entry ID",
+        });
+      if (
+        (operation.status === "dispatched" ||
+          operation.status === "completed" ||
+          operation.status === "ambiguous") &&
+        operation.executions === 0
+      )
+        ctx.addIssue({
+          code: "custom",
+          path: [key, "executions"],
+          message: "Dispatched or completed operation requires an execution",
+        });
+      if (
+        operation.status === "completed" &&
+        operation.result === undefined &&
+        operation.resultArtifact === undefined
+      )
+        ctx.addIssue({
+          code: "custom",
+          path: [key, "result"],
+          message: "Completed operation requires replay result",
+        });
+      if (
+        operation.status === "exhausted" &&
+        ((operation.result === undefined &&
+          operation.resultArtifact === undefined &&
+          operation.retrySafe !== true) ||
+          operation.diagnostic === undefined)
+      )
+        ctx.addIssue({
+          code: "custom",
+          path: [key, "diagnostic"],
+          message: "Exhausted operation requires outcome evidence",
+        });
+      if (
+        operation.status === "exhausted" &&
+        (operation.failureExecutions ?? operation.executions) <
+          OPERATION_RECOVERY_MAX_EXECUTIONS
+      )
+        ctx.addIssue({
+          code: "custom",
+          path: [key, "status"],
+          message: "Exhausted operation must consume the full execution budget",
+        });
+    }
+  });
+
+const recoveryWaitSchema = z.strictObject({
+  kind: z.enum(["dependency", "manual-move"]),
+  reason: nonBlankIdentifier,
+  resumePhase: z.enum([
+    "planning",
+    "implementation",
+    "validation",
+    "review",
+    "publication",
+    "ci",
+    "human-feedback",
+  ]),
+  since: z.string().datetime(),
+  retryAt: z.string().datetime(),
+  attempts: z.number().int().nonnegative().safe(),
+  notificationId: nonBlankIdentifier,
+});
+
 const taskSessionContentIdentity = z.string().regex(/^sha256:[0-9a-f]{64}$/u);
 
 const validationEvidenceSchema = z.strictObject({
@@ -118,6 +336,46 @@ const validationEvidenceSchema = z.strictObject({
 const validationRepairSchema = z.strictObject({
   cycleId: nonBlankIdentifier,
   status: z.enum(["active", "passed", "exhausted"]),
+  activePrimaryOperation: z
+    .strictObject({
+      operationId: nonBlankIdentifier,
+      pass: z.number().int().positive().safe(),
+      validationResult: z.union([
+        z.strictObject({
+          command: z.string().min(1).max(2_000),
+          startedAt: z.string().datetime(),
+          completedAt: z.string().datetime(),
+          exitCode: z.number().int().nullable(),
+          status: z.enum(["passed", "failed", "timed-out", "aborted"]),
+          timedOut: z.boolean(),
+          aborted: z.boolean(),
+          diagnostic: z.string().max(8_000),
+          contentIdentity: taskSessionContentIdentity,
+        }),
+        z.strictObject({
+          reference: z.string().regex(/^sha256:[0-9a-f]{64}$/u),
+          path: z.string().min(1).max(2_048).optional(),
+          bytes: z
+            .number()
+            .int()
+            .nonnegative()
+            .max(64 * 1024 * 1024),
+        }),
+      ]),
+      promptContext: z.string().regex(/^sha256:[0-9a-f]{64}$/u),
+      promptArtifact: z
+        .strictObject({
+          reference: z.string().regex(/^sha256:[0-9a-f]{64}$/u),
+          path: z.string().min(1).max(2_048).optional(),
+          bytes: z
+            .number()
+            .int()
+            .nonnegative()
+            .max(1024 * 1024),
+        })
+        .optional(),
+    })
+    .optional(),
   evidence: validationEvidenceSchema.optional(),
   coverageEvidence: validationEvidenceSchema.optional(),
 });
@@ -125,6 +383,23 @@ const validationRepairSchema = z.strictObject({
 const reviewRepairSchema = z.strictObject({
   cycleId: nonBlankIdentifier,
   status: z.enum(["active", "passed", "exhausted"]),
+  activePrimaryOperation: z
+    .strictObject({
+      operationId: nonBlankIdentifier,
+      pass: z.number().int().positive().safe(),
+      promptArtifact: z
+        .strictObject({
+          reference: z.string().regex(/^sha256:[0-9a-f]{64}$/u),
+          path: z.string().min(1).max(2_048).optional(),
+          bytes: z
+            .number()
+            .int()
+            .nonnegative()
+            .max(1024 * 1024),
+        })
+        .optional(),
+    })
+    .optional(),
   maxAttempts: z.number().int().nonnegative().safe().optional(),
   finalReview: implementationReviewResultSchema.optional(),
   findings: z
@@ -176,6 +451,34 @@ const ciRepairSchema = z.strictObject({
   cycleId: nonBlankIdentifier,
   headSha: gitSha,
   status: z.enum(["active", "passed", "exhausted"]),
+  activePrimaryOperation: z
+    .strictObject({
+      operationId: nonBlankIdentifier,
+      pass: z.number().int().positive().safe(),
+      promptArtifact: z
+        .strictObject({
+          reference: z.string().regex(/^sha256:[0-9a-f]{64}$/u),
+          path: z.string().min(1).max(2_048).optional(),
+          bytes: z
+            .number()
+            .int()
+            .nonnegative()
+            .max(1024 * 1024),
+        })
+        .optional(),
+      diagnosticsArtifact: z
+        .strictObject({
+          reference: z.string().regex(/^sha256:[0-9a-f]{64}$/u),
+          path: z.string().min(1).max(2_048).optional(),
+          bytes: z
+            .number()
+            .int()
+            .nonnegative()
+            .max(4 * 1024 * 1024),
+        })
+        .optional(),
+    })
+    .optional(),
 });
 
 const feedbackRemediationSchema = z.strictObject({
@@ -212,8 +515,10 @@ const taskExecutionRecordSchema = z
     projectId: ownerId,
     cardId: ownerId,
     phase: z.enum(taskExecutionPhases),
+    recoveryWait: recoveryWaitSchema.optional(),
     primarySessionId: nonBlankIdentifier.optional(),
     sessionCreationStatus: sessionCreationStatus.optional(),
+    sessionRecovery: sessionRecoveryStateSchema.optional(),
     setup: taskSetupState.optional(),
     terminalFailure: terminalFailureState.optional(),
     externalRecovery: externalRecoveryState.optional(),
@@ -256,6 +561,7 @@ const taskExecutionRecordSchema = z
     humanReviewNotificationCommitShas: z.array(gitSha).optional(),
     revision: z.number().int().positive().safe(),
     retryCounters: retryCountersSchema,
+    primaryOperations: primaryOperationsSchema.optional(),
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
   })

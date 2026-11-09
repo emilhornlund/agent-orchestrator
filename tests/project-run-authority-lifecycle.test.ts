@@ -11,6 +11,8 @@ import {
 import { verifyAndPinProjects } from "../src/coordination/project-registry.js";
 import { ProjectRunAuthority } from "../src/task-session/project-run-authority.js";
 import { RunRegistry } from "../src/task-session/run-store.js";
+import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
+import { persistEssentialDependencyWait } from "../src/orchestrator/run-orchestrator.js";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -174,6 +176,55 @@ describe("ProjectRunAuthority preparing lifecycle", () => {
       );
       expect(resumed.read("resume-projection", (value) => value)).toEqual({
         resumed: true,
+      });
+      const taskStore = new TaskExecutionStore(runtimeRoot, project, resumed);
+      const now = new Date().toISOString();
+      const task = taskStore.create({
+        version: 1,
+        projectId: project.id,
+        cardId: "card-implementation",
+        phase: "planning",
+        operationKey: "operation-recovery",
+        revision: 1,
+        retryCounters: { validation: 0, review: 0, ci: 0, humanFeedback: 0 },
+        createdAt: now,
+        updatedAt: now,
+      });
+      const notificationId = persistEssentialDependencyWait(
+        resumed,
+        task.cardId,
+        1_000,
+        "github:read",
+      );
+      expect(notificationId).toBe(
+        "project-one/card-implementation/operation-recovery/dependency",
+      );
+      expect(resumed.store.read()).toMatchObject({
+        lifecycle: "waiting",
+        checkpoint: "planning",
+        wait: {
+          reason: "Essential dependency unavailable: github:read",
+          dependency: "dependency",
+        },
+      });
+      const secondId = persistEssentialDependencyWait(
+        resumed,
+        task.cardId,
+        1_000,
+        "github:another-read",
+      );
+      expect(secondId).toBe(notificationId);
+      expect(taskStore.read(task.cardId)?.recoveryWait?.attempts).toBe(2);
+      const latestWait = taskStore.read(task.cardId)!;
+      taskStore.compareAndSwap(task.cardId, latestWait.revision, {
+        ...latestWait,
+        recoveryWait: undefined,
+        revision: latestWait.revision + 1,
+        updatedAt: new Date(Date.now() + 2).toISOString(),
+      });
+      expect(resumed.store.read()).toMatchObject({
+        lifecycle: "planning",
+        wait: { reason: null },
       });
     } finally {
       await lease.release();

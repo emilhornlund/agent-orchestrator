@@ -406,7 +406,7 @@ describe("notification-only durable outbox", () => {
         [
           "--import",
           "tsx",
-          "tests/fixtures/p4-notification-crash.ts",
+          "tests/fixtures/notification-crash.ts",
           f.root,
           barrier,
         ],

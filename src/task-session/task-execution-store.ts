@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 
 import type { ProjectConfig } from "../config/config.js";
 import {
@@ -8,6 +9,47 @@ import {
   type TaskExecutionRecord,
 } from "./task-execution-record.js";
 import { ProjectRunAuthority } from "./project-run-authority.js";
+import {
+  PROCESS_CAPTURE_MAX_BYTES,
+  getProcessRuntime,
+} from "../process/process-runtime.js";
+import { redactSecrets } from "../security/redact-secrets.js";
+
+export interface PrimaryResultArtifactReference {
+  reference: `sha256:${string}`;
+  path?: string;
+  bytes: number;
+}
+
+function validatePrimaryResultId(id: string): void {
+  assertSafePathComponent(id, "primary result ID");
+  if (Buffer.byteLength(id, "utf8") > 1024)
+    throw new Error("Primary result ID exceeds 1024 bytes");
+}
+
+function fsyncDirectory(directory: string): void {
+  const fd = fs.openSync(directory, "r");
+  try {
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function redactStructured(value: unknown, secrets: readonly string[]): unknown {
+  if (typeof value === "string") return redactSecrets(value, secrets);
+  if (Array.isArray(value))
+    return value.map((item) => redactStructured(item, secrets));
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [
+        redactSecrets(key, secrets),
+        redactStructured(item, secrets),
+      ]),
+    );
+  }
+  return value;
+}
 
 export const MAX_TASK_EXECUTION_RECORD_BYTES = 1024 * 1024;
 
@@ -110,7 +152,7 @@ function assertDirectoryPath(directoryPath: string, create: boolean): boolean {
       }
 
       try {
-        fs.mkdirSync(currentPath);
+        fs.mkdirSync(currentPath, { mode: 0o700 });
       } catch (error) {
         if (
           typeof error !== "object" ||
@@ -123,6 +165,12 @@ function assertDirectoryPath(directoryPath: string, create: boolean): boolean {
       }
 
       stats = fs.lstatSync(currentPath);
+      const parentDescriptor = fs.openSync(path.dirname(currentPath), "r");
+      try {
+        fs.fsyncSync(parentDescriptor);
+      } finally {
+        fs.closeSync(parentDescriptor);
+      }
     }
 
     if (stats.isSymbolicLink() || !stats.isDirectory()) {
@@ -192,6 +240,7 @@ function serializeRecord(record: TaskExecutionRecord): string {
 export class TaskExecutionStore {
   private readonly directoryPath: string;
   private readonly authority: ProjectRunAuthority | undefined;
+  private readonly primaryResultDirectory: string;
 
   constructor(
     rootDirectory: string,
@@ -200,6 +249,10 @@ export class TaskExecutionStore {
   ) {
     const root = assertStorageRoot(rootDirectory, project);
     this.directoryPath = path.join(root, "task-executions", project.id);
+    this.primaryResultDirectory = path.join(
+      this.directoryPath,
+      "primary-results",
+    );
     this.authority = authority ?? ProjectRunAuthority.current(project.id);
   }
 
@@ -411,6 +464,196 @@ export class TaskExecutionStore {
 
   private get projectId(): string {
     return path.basename(this.directoryPath);
+  }
+
+  writePrimaryResultArtifact(
+    id: string,
+    result: unknown,
+  ): PrimaryResultArtifactReference {
+    validatePrimaryResultId(id);
+    const bytes = Buffer.from(
+      JSON.stringify(
+        redactStructured(result, getProcessRuntime().secretValues),
+      ),
+      "utf8",
+    );
+    if (bytes.byteLength > PROCESS_CAPTURE_MAX_BYTES)
+      throw new Error(
+        `Primary result exceeds ${PROCESS_CAPTURE_MAX_BYTES}-byte limit`,
+      );
+    const digest = createHash("sha256").update(bytes).digest("hex");
+    if (this.authority) {
+      const artifact = this.authority.store.writeArtifact(
+        bytes,
+        "application/json",
+      );
+      return {
+        reference: artifact.id as `sha256:${string}`,
+        path: artifact.path,
+        bytes: artifact.bytes,
+      };
+    }
+    assertDirectoryPath(this.primaryResultDirectory, true);
+    const directoryStat = fs.lstatSync(this.primaryResultDirectory);
+    if (
+      directoryStat.isSymbolicLink() ||
+      !directoryStat.isDirectory() ||
+      (directoryStat.mode & 0o077) !== 0
+    )
+      throw new Error("Unsafe primary result artifact directory");
+    const target = path.join(this.primaryResultDirectory, `sha256-${digest}`);
+    if (!fs.existsSync(target)) {
+      const temp = path.join(
+        this.primaryResultDirectory,
+        `.${randomUUID()}.tmp`,
+      );
+      const fd = fs.openSync(temp, "wx", 0o600);
+      try {
+        fs.writeFileSync(fd, bytes);
+        fs.fsyncSync(fd);
+      } finally {
+        fs.closeSync(fd);
+      }
+      try {
+        fs.linkSync(temp, target);
+      } catch (error) {
+        if (!(
+          typeof error === "object" &&
+          error !== null &&
+          "code" in error &&
+          error.code === "EEXIST"
+        ))
+          throw error;
+      } finally {
+        fs.unlinkSync(temp);
+      }
+      fsyncDirectory(this.primaryResultDirectory);
+    }
+    this.validateFallbackArtifact(target, digest, bytes.byteLength);
+    return {
+      reference: `sha256:${digest}`,
+      path: `primary-results/sha256-${digest}`,
+      bytes: bytes.byteLength,
+    };
+  }
+
+  readPrimaryResultArtifact(
+    ref: PrimaryResultArtifactReference | string,
+  ): unknown {
+    const reference = typeof ref === "string" ? ref : ref.reference;
+    if (!/^sha256:[a-f0-9]{64}$/.test(reference))
+      throw new Error("Invalid primary result artifact reference");
+    const digest = reference.slice(7);
+    let filePath: string;
+    if (this.authority)
+      return redactStructured(
+        JSON.parse(
+          this.authority.store.readArtifact(reference).toString("utf8"),
+        ) as unknown,
+        getProcessRuntime().secretValues,
+      );
+    else {
+      filePath = path.join(this.primaryResultDirectory, `sha256-${digest}`);
+      if (!assertDirectoryPath(this.primaryResultDirectory, false))
+        throw new Error("Primary result artifact is missing");
+    }
+    const fd = fs.openSync(
+      filePath,
+      fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
+    );
+    try {
+      const size = fs.fstatSync(fd).size;
+      if (size > PROCESS_CAPTURE_MAX_BYTES)
+        throw new Error("Unsafe primary result artifact");
+      const bytes = Buffer.alloc(size);
+      let offset = 0;
+      while (offset < size) {
+        const count = fs.readSync(fd, bytes, offset, size - offset, offset);
+        if (!count) throw new Error("Artifact changed while reading");
+        offset += count;
+      }
+      if (createHash("sha256").update(bytes).digest("hex") !== digest)
+        throw new Error("Primary result artifact digest mismatch");
+      return redactStructured(
+        JSON.parse(bytes.toString("utf8")) as unknown,
+        getProcessRuntime().secretValues,
+      );
+    } finally {
+      fs.closeSync(fd);
+    }
+  }
+
+  readProcessExecution(cardId: string, executionId: string): unknown | null {
+    assertSafePathComponent(executionId, "process execution ID");
+    if (this.authority === undefined) return null;
+    const run = this.authority.store.read();
+    if (
+      !run ||
+      run.cardId !== cardId ||
+      run.pinned.projectId !== this.projectId
+    )
+      return null;
+    const directory = path.join(
+      run.pinned.storageRoot,
+      "artifacts",
+      encodeURIComponent(run.pinned.projectId),
+      encodeURIComponent(run.cardId),
+      encodeURIComponent(run.attemptId),
+      executionId,
+    );
+    const metadataPath = path.join(directory, "execution.json");
+    let parent = path.parse(metadataPath).root;
+    for (const component of path
+      .relative(parent, path.dirname(metadataPath))
+      .split(path.sep)
+      .filter(Boolean)) {
+      parent = path.join(parent, component);
+      const parentStat = fs.lstatSync(parent, { throwIfNoEntry: false });
+      if (parentStat === undefined) return null;
+      if (parentStat.isSymbolicLink() || !parentStat.isDirectory())
+        throw new Error("Unsafe process execution artifact path");
+    }
+    const stat = fs.lstatSync(metadataPath, { throwIfNoEntry: false });
+    if (stat === undefined) return null;
+    if (stat.isSymbolicLink() || !stat.isFile() || stat.size > 64 * 1024)
+      throw new Error("Unsafe process execution metadata");
+    return JSON.parse(fs.readFileSync(metadataPath, "utf8")) as unknown;
+  }
+
+  processExecutionDirectory(cardId: string): string | undefined {
+    if (this.authority === undefined) return undefined;
+    const run = this.authority.store.read();
+    if (
+      !run ||
+      run.cardId !== cardId ||
+      run.pinned.projectId !== this.projectId
+    )
+      return undefined;
+    return path.join(
+      run.pinned.storageRoot,
+      "artifacts",
+      encodeURIComponent(run.pinned.projectId),
+      encodeURIComponent(run.cardId),
+      encodeURIComponent(run.attemptId),
+    );
+  }
+
+  private validateFallbackArtifact(
+    filePath: string,
+    digest: string,
+    expectedBytes: number,
+  ): void {
+    const stats = fs.lstatSync(filePath);
+    if (
+      !stats.isFile() ||
+      stats.isSymbolicLink() ||
+      stats.size !== expectedBytes ||
+      (stats.mode & 0o077) !== 0
+    )
+      throw new Error("Unsafe existing primary result artifact");
+    const current = fs.readFileSync(filePath);
+    if (createHash("sha256").update(current).digest("hex") !== digest)
+      throw new Error("Existing primary result artifact is corrupt");
   }
 
   private withLock<T>(filePath: string, operation: () => T): T {

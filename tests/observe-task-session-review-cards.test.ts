@@ -149,6 +149,76 @@ function fixture() {
 }
 
 describe("observeTaskSessionReviewCards", () => {
+  it.each(["MERGED", "CLOSED"] as const)(
+    "observes a published %s outcome during a non-review correction checkpoint",
+    async (state) => {
+      const f = fixture();
+      const current = f.store.read("card-one")!;
+      f.store.compareAndSwap("card-one", current.revision, {
+        ...current,
+        phase: "validation",
+        revision: current.revision + 1,
+        updatedAt: "2026-10-24T09:00:01.000Z",
+      });
+      vi.mocked(f.github.findPullRequestState).mockResolvedValue({
+        url: current.pullRequest!.url,
+        state,
+        mergedAt: state === "MERGED" ? "2026-10-24T09:01:00.000Z" : null,
+        headRefOid: current.pullRequest!.headSha!,
+        baseRefName: "main",
+        headRefName: "agent/card-one",
+        headRepository: { name: "repo" },
+        headRepositoryOwner: { login: "owner" },
+      });
+
+      const observed = await observeTaskSessionReviewCards({
+        project: f.project,
+        cards: [f.cards[0]!],
+        taskRecordStore: f.store,
+        github: f.github,
+      });
+
+      expect(observed).toMatchObject([
+        { state, cardId: "card-one", pullRequestUrl: current.pullRequest!.url },
+      ]);
+      expect(f.github.getCiObservations).not.toHaveBeenCalled();
+      expect(f.github.findChangesRequestedPullRequest).not.toHaveBeenCalled();
+    },
+  );
+
+  it("observes an OPEN PR for a persisted feedback-owned correction checkpoint", async () => {
+    const f = fixture();
+    const current = f.store.read("card-one")!;
+    f.store.compareAndSwap("card-one", current.revision, {
+      ...current,
+      phase: "validation",
+      feedbackRemediation: {
+        operationId: "feedback:owning-correction-event",
+        status: "changed",
+        headSha: current.pullRequest!.headSha!,
+        ledgerRevision: 1,
+      },
+      revision: current.revision + 1,
+      updatedAt: "2026-10-24T09:00:01.000Z",
+    });
+
+    const observed = await observeTaskSessionReviewCards({
+      project: f.project,
+      cards: [f.cards[0]!],
+      taskRecordStore: f.store,
+      github: f.github,
+    });
+
+    expect(observed).toMatchObject([
+      {
+        state: "OPEN",
+        cardId: "card-one",
+        pullRequestUrl: current.pullRequest!.url,
+      },
+    ]);
+    expect(f.github.getCiObservations).toHaveBeenCalled();
+  });
+
   it("observes only eligible exhausted feedback-review checkpoints", async () => {
     const f = fixture();
     const first = f.store.read("card-one")!;

@@ -16,8 +16,12 @@ import {
 import { runTaskSessionCoverage } from "./run-task-session-coverage.js";
 import type { TaskPlanStore } from "./task-plan-store.js";
 import { runWithPrimaryTaskSession } from "./primary-task-session.js";
+import { inspectPrimaryOperationEvidence } from "./inspect-primary-operation.js";
+import type { PrimarySessionRecoveryOptions } from "./primary-task-session.js";
+import type { PendingPrimaryInspection } from "./run-primary-operation.js";
 import type { TaskExecutionRecord } from "./task-execution-record.js";
 import { assertOwnedTaskWorktreePath } from "./run-task-session-implementation.js";
+import { createHash } from "node:crypto";
 
 export const MAX_VALIDATION_REPAIR_ATTEMPTS = 2;
 
@@ -68,6 +72,14 @@ export interface RunTaskSessionValidationRepairsOptions {
     OpenCodeRunOptions,
     "cwd" | "prompt" | "sessionId" | "captureSessionId"
   >;
+  primaryOperationEvidence?: { trustedRoot: string; cwd?: string };
+  inspectPrimaryOperation?: (
+    operationId: string,
+    entry: NonNullable<
+      NonNullable<TaskExecutionRecord["primaryOperations"]>[string]
+    >,
+  ) => Promise<PendingPrimaryInspection>;
+  inspectPrimarySession?: NonNullable<PrimarySessionRecoveryOptions["inspect"]>;
 }
 
 export interface TaskSessionValidationRepairResult {
@@ -289,6 +301,90 @@ export async function runTaskSessionValidationWithRepairs(
   }
 
   while (true) {
+    const reservedOperation =
+      currentRecord.validationRepair?.activePrimaryOperation;
+    if (reservedOperation !== undefined) {
+      if (reservedOperation.promptArtifact === undefined)
+        throw new TaskSessionValidationRepairError(
+          "Reserved validation repair lacks its persisted prompt; preserving the reservation",
+          reservedOperation.pass,
+        );
+      const promptArtifact: unknown =
+        validation.taskRecordStore.readPrimaryResultArtifact({
+          reference: reservedOperation.promptArtifact
+            .reference as `sha256:${string}`,
+          bytes: reservedOperation.promptArtifact.bytes,
+          ...(reservedOperation.promptArtifact.path === undefined
+            ? {}
+            : { path: reservedOperation.promptArtifact.path }),
+        });
+      if (
+        typeof promptArtifact !== "object" ||
+        promptArtifact === null ||
+        !("prompt" in promptArtifact) ||
+        typeof promptArtifact.prompt !== "string"
+      )
+        throw new TaskSessionValidationRepairError(
+          "Persisted validation repair prompt artifact is invalid",
+          reservedOperation.pass,
+        );
+      const repairRecord = loadOwnedTaskExecutionRecord(
+        validation.taskRecordStore,
+        { projectId: project.id, cardId, expectedBranch, operationKey },
+      );
+      await assertValidationPrerequisites(options, repairRecord);
+      try {
+        await runWithPrimaryTaskSession(
+          validation.taskRecordStore,
+          openCode,
+          project.id,
+          cardId,
+          {
+            ...options.repairRunOptions,
+            cwd: worktreePath,
+            prompt: promptArtifact.prompt,
+          },
+          options.inspectPrimarySession === undefined
+            ? {}
+            : { inspect: options.inspectPrimarySession },
+          {
+            role: "primary",
+            operationId: reservedOperation.operationId,
+            activity: `validation-repair-pass-${reservedOperation.pass}`,
+            inspectPending: (entry) => {
+              if (options.inspectPrimaryOperation !== undefined)
+                return options.inspectPrimaryOperation(
+                  reservedOperation.operationId,
+                  entry,
+                );
+              if (options.primaryOperationEvidence === undefined)
+                return Promise.resolve({ status: "unknown" });
+              return inspectPrimaryOperationEvidence(
+                validation.taskRecordStore,
+                cardId,
+                reservedOperation.operationId,
+                {
+                  trustedRoot: options.primaryOperationEvidence.trustedRoot,
+                  cwd: options.primaryOperationEvidence.cwd ?? worktreePath,
+                },
+              );
+            },
+          },
+        );
+      } catch (error) {
+        throw new TaskSessionValidationRepairError(
+          `Reserved validation repair pass ${reservedOperation.pass} did not complete; reservation is preserved`,
+          reservedOperation.pass,
+          { cause: error },
+        );
+      }
+      currentRecord = validation.taskRecordStore.read(cardId) ?? currentRecord;
+      await assertValidationPrerequisites(options, currentRecord);
+      currentRecord = updateRecord(validation.taskRecordStore, currentRecord, {
+        validationRepair: { cycleId, status: "active" },
+      });
+      continue;
+    }
     const validationResult = await runTaskSessionValidation(validation);
     const coverageResult = await runTaskSessionCoverage(validation);
     const allQualityGatesPassed =
@@ -378,14 +474,6 @@ export async function runTaskSessionValidationWithRepairs(
       };
     }
 
-    currentRecord = updateRecord(validation.taskRecordStore, currentRecord, {
-      retryCounters: {
-        ...currentRecord.retryCounters,
-        validation: attempts + 1,
-      },
-      validationRepair: { cycleId, status: "active" },
-    });
-
     const prompt = buildTaskSessionValidationRepairPrompt({
       projectId: project.id,
       card,
@@ -398,6 +486,37 @@ export async function runTaskSessionValidationWithRepairs(
         ? {}
         : { attachmentContext: options.attachmentContext }),
     });
+
+    const repairAttempt = attempts + 1;
+    const repairOperationId = `${operationKey}:validation:${cycleId}:pass:${repairAttempt}`;
+    {
+      const diagnosticResult = {
+        ...validationResult,
+        diagnostic: validationResult.diagnostic.slice(0, 8_000),
+      };
+      const promptArtifact =
+        validation.taskRecordStore.writePrimaryResultArtifact(
+          `${repairOperationId}:prompt`,
+          { prompt },
+        );
+      currentRecord = updateRecord(validation.taskRecordStore, currentRecord, {
+        retryCounters: {
+          ...currentRecord.retryCounters,
+          validation: repairAttempt,
+        },
+        validationRepair: {
+          cycleId,
+          status: "active",
+          activePrimaryOperation: {
+            operationId: repairOperationId,
+            pass: repairAttempt,
+            validationResult: diagnosticResult,
+            promptContext: `sha256:${createHash("sha256").update(prompt).digest("hex")}`,
+            promptArtifact,
+          },
+        },
+      });
+    }
 
     const repairRecord = loadOwnedTaskExecutionRecord(
       validation.taskRecordStore,
@@ -421,6 +540,31 @@ export async function runTaskSessionValidationWithRepairs(
           cwd: worktreePath,
           prompt,
         },
+        options.inspectPrimarySession === undefined
+          ? {}
+          : { inspect: options.inspectPrimarySession },
+        {
+          role: "primary",
+          operationId: repairOperationId,
+          activity: `validation-repair-pass-${repairAttempt}`,
+          inspectPending: (entry) => {
+            if (options.inspectPrimaryOperation !== undefined) {
+              return options.inspectPrimaryOperation(repairOperationId, entry);
+            }
+            if (options.primaryOperationEvidence === undefined) {
+              return Promise.resolve({ status: "unknown" });
+            }
+            return inspectPrimaryOperationEvidence(
+              validation.taskRecordStore,
+              cardId,
+              repairOperationId,
+              {
+                trustedRoot: options.primaryOperationEvidence.trustedRoot,
+                cwd: options.primaryOperationEvidence.cwd ?? worktreePath,
+              },
+            );
+          },
+        },
       );
     } catch (error) {
       throw new TaskSessionValidationRepairError(
@@ -432,5 +576,13 @@ export async function runTaskSessionValidationWithRepairs(
 
     currentRecord = validation.taskRecordStore.read(cardId) ?? currentRecord;
     await assertValidationPrerequisites(options, currentRecord);
+    if (
+      currentRecord.validationRepair?.activePrimaryOperation?.operationId ===
+      repairOperationId
+    ) {
+      currentRecord = updateRecord(validation.taskRecordStore, currentRecord, {
+        validationRepair: { cycleId, status: "active" },
+      });
+    }
   }
 }
