@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import {
   buildChildEnvironment,
@@ -118,8 +119,7 @@ describe("child process environment manifests", () => {
   });
 
   it("uses XDG config instead of stale HOME config and handles JSONC comments around trailing commas", () => {
-    const root = process.env.TMPDIR;
-    if (root === undefined) throw new Error("TMPDIR must be set");
+    const root = os.tmpdir();
     const fixture = fs.mkdtempSync(path.join(root, "opencode-config-scope-"));
     try {
       const xdg = path.join(fixture, "xdg");

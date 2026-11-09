@@ -114,6 +114,12 @@ Tests should cover:
 
 Do not rely on live Trello, GitHub, or OpenCode services in unit tests.
 
+Run ordinary `yarn test`; do not require caller-supplied temporary-directory variables
+or add milestone-specific test commands/scripts. Vitest owns a private run directory
+and removes it on teardown. Release owned child processes in fixture cleanup and do
+not retain test repositories/artifact trees by default. Rewrite planning documents
+are temporary; product regression tests must be named and maintained by behavior.
+
 ## Git
 
 Do not commit, push, create pull requests, merge, force-push, or rewrite history unless the task explicitly authorizes it.

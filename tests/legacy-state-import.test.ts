@@ -1065,51 +1065,55 @@ describe("legacy state import", () => {
       ];
       for (const stage of stages) {
         const barrier = path.join(root, `barrier-${stage}`);
-        const child = spawn(
-          path.join(process.cwd(), "node_modules/.bin/tsx"),
-          [script],
-          {
-            cwd: process.cwd(),
-            env: {
-              ...process.env,
-              MIGRATION_ROOT: root,
-              KILL_STAGE: stage,
-              BARRIER_FILE: barrier,
-            },
-            stdio: "ignore",
-            detached: true,
-          },
-        );
-        for (
-          let attempt = 0;
-          attempt < 1_000 && !fs.existsSync(barrier);
-          attempt += 1
-        ) {
-          if (child.exitCode !== null) break;
-          await new Promise((resolve) => setTimeout(resolve, 10));
-        }
-        expect(
-          fs.existsSync(barrier),
-          `${stage}: child failed to reach durable barrier; exit=${String(child.exitCode)}`,
-        ).toBe(true);
-        process.kill(-child.pid!, "SIGKILL");
-        const [, signal] = await once(child, "exit");
-        expect(signal).toBe("SIGKILL");
-      }
-      const retry = spawn(
-        path.join(process.cwd(), "node_modules/.bin/tsx"),
-        [script],
-        {
+        const child = spawn(process.execPath, ["--import", "tsx", script], {
           cwd: process.cwd(),
           env: {
             ...process.env,
             MIGRATION_ROOT: root,
-            KILL_STAGE: "",
-            BARRIER_FILE: path.join(root, "unused"),
+            KILL_STAGE: stage,
+            BARRIER_FILE: barrier,
           },
           stdio: "ignore",
+          detached: true,
+        });
+        const exited = once(child, "exit");
+        try {
+          for (
+            let attempt = 0;
+            attempt < 1_000 && !fs.existsSync(barrier);
+            attempt += 1
+          ) {
+            if (child.exitCode !== null) break;
+            await new Promise((resolve) => setTimeout(resolve, 10));
+          }
+          expect(
+            fs.existsSync(barrier),
+            `${stage}: child failed to reach durable barrier; exit=${String(child.exitCode)}`,
+          ).toBe(true);
+        } finally {
+          if (
+            child.exitCode === null &&
+            child.signalCode === null &&
+            child.pid
+          ) {
+            process.kill(-child.pid, "SIGKILL");
+          }
+          await exited;
+        }
+        expect(child.signalCode).toBe("SIGKILL");
+      }
+      const retry = spawn(process.execPath, ["--import", "tsx", script], {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          MIGRATION_ROOT: root,
+          KILL_STAGE: "",
+          BARRIER_FILE: path.join(root, "unused"),
         },
-      );
+        stdio: "ignore",
+        timeout: 10_000,
+        killSignal: "SIGKILL",
+      });
       const [code, signal] = await once(retry, "exit");
       expect(signal).toBeNull();
       expect(code).toBe(0);

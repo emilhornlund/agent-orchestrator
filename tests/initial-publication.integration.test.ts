@@ -825,7 +825,7 @@ async function killPublicationAt(
     [
       "--import",
       "tsx",
-      "tests/fixtures/p4-publication-crash.ts",
+      "tests/fixtures/publication-crash.ts",
       f.root,
       barrier,
       String(Date.now()),
@@ -1395,7 +1395,7 @@ describe("initial publication production checkpoint with independent simulated s
         [
           "--import",
           "tsx",
-          "tests/fixtures/p4-publication-crash.ts",
+          "tests/fixtures/publication-crash.ts",
           f.root,
           effect === "projection" ? "projection" : "acceptance",
           String(Date.now()),
@@ -2092,7 +2092,7 @@ describe("initial publication production checkpoint with independent simulated s
         [
           "--import",
           "tsx",
-          "tests/fixtures/p4-publication-crash.ts",
+          "tests/fixtures/publication-crash.ts",
           f.root,
           barrier,
           String(Date.now()),

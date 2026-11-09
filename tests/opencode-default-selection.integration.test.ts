@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OpenCodeClient } from "../src/opencode/opencode-client.js";
@@ -16,8 +17,7 @@ afterEach(() => {
 
 describe("OpenCode default selection executable boundary", () => {
   it("uses OpenCode defaults, scopes default-provider credentials, and never substitutes an unavailable explicit selection", async () => {
-    const tempRoot = process.env.TMPDIR;
-    if (tempRoot === undefined) throw new Error("TMPDIR must be set");
+    const tempRoot = os.tmpdir();
     temporaryRoot = fs.mkdtempSync(path.join(tempRoot, "opencode-default-"));
     const bin = path.join(temporaryRoot, "bin");
     const worktree = path.join(temporaryRoot, "worktree");

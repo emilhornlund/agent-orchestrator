@@ -139,7 +139,7 @@ describe("P3 coordinated shutdown integration", () => {
             dispatchCount++;
             await authority.run(async () => {
               fs.writeFileSync(path.join(root, phase + ".dispatch"), "entered");
-              const childDrain = commands.run({ command: JSON.stringify(process.execPath) + " " + JSON.stringify(${JSON.stringify(path.resolve("tests/fixtures/p3-shutdown-owned-child.mjs"))}) + " " + JSON.stringify(path.join(root, "child.pid")), cwd: source });
+              const childDrain = commands.run({ command: JSON.stringify(process.execPath) + " " + JSON.stringify(${JSON.stringify(path.resolve("tests/fixtures/shutdown-owned-child.mjs"))}) + " " + JSON.stringify(path.join(root, "child.pid")), cwd: source });
               await runOrchestrator(_t, _g, _gh, _o, commands, _config, signal, undefined, undefined, contexts);
               await childDrain.catch((error) => { if (!signal.aborted) throw error; });
             });

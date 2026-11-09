@@ -129,18 +129,17 @@ Timeout/permission failure is not passing evidence and must not be called a prod
 defect without diagnosis. Fix faulty fixture timing/oracles without weakening product
 assertions; retain the failed result and the reason for the correction.
 
-Set an explicit host `TMPDIR` for process fixtures, normally
-`$PWD/node_modules/.phase-tmp`, and create it only after verifying that the intended
-`node_modules` parent exists. Existing retained P5 runs used `.p5-tmp`; those paths
-remain historical evidence. Container fixtures use a writable private `/tmp` via
-`TMPDIR=/tmp`. Record the effective paths in runner evidence. Preflight process
-startup allowances separately from deliberately short timeout fault cases.
+Run ordinary `yarn test` without manual temporary-directory setup. Vitest owns and
+cleans its per-run system-temporary directory, including process artifacts. Do not
+add rewrite-specific test commands, live probe scripts or permanent fixture archives.
+Earlier `.p5-tmp` paths and removed rewrite harnesses are historical records only;
+they are not prerequisites for current checks. Preflight process startup allowances
+separately from deliberately short timeout fault cases.
 
-Store sanitized execution artifacts under ignored `node_modules/.phase-evidence/`
-and retain a tracked summary in the manifest. Evidence in dependency directories is
-local scratch: before deleting/reinstalling dependencies, copy required logs to the
-operator-approved external evidence archive and update references. Do not delete the
-only retained proof. Record:
+Retain a concise tracked result summary and, when needed, sanitized command output.
+Do not preserve disposable fixture trees, process artifact directories or downloaded
+dependency trees for phase acceptance. Rewrite evidence must not become a permanent
+application subsystem. Record:
 
 - Base commit, tracked diff hash and hashes of any untracked candidate files; the
   later commit SHA if committing is authorized. Include global agent revisions.

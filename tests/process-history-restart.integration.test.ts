@@ -9,7 +9,7 @@ import type { RunRecord } from "../src/task-session/run-record.js";
 
 const millisecondsPerDay = 24 * 60 * 60 * 1_000;
 
-describe("production run history and retention survive process restart", () => {
+describe("run history and retention survive process restart", () => {
   it("reconstructs transitions independently and retains active Human Review evidence", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "p3-history-restart-"));
     try {

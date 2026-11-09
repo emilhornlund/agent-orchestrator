@@ -1,5 +1,11 @@
 # P5 integration evidence map — final whole-phase review FAIL/BLOCKED
 
+> Rewrite-only scripts, retained fixture trees, container test machinery and redundant
+> milestone crash matrices were subsequently removed at the user's request. Paths and
+> counts below are historical records, not dependencies for running today's suite.
+> Permanent behavior regressions run through ordinary `yarn test` and clean their
+> private run directory automatically; see [Testing](../CONTRIBUTING.md#testing).
+
 > **Historical evidence, current milestone elsewhere:** the user subsequently closed
 > P5 and requested PR #218. [phase-status.md](phase-status.md) records that delivery
 > decision and the [readiness register](phase-readiness.md) owns the carryovers.

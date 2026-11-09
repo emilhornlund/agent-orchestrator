@@ -55,7 +55,7 @@ afterEach(async () => {
   roots = [];
 });
 
-describe("P1 production lifecycle through pollProject", () => {
+describe("task lifecycle through pollProject", () => {
   it.each([
     {
       draft: false,

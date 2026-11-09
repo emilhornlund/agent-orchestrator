@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
@@ -12,8 +13,7 @@ afterEach(() => {
 });
 
 function fixture(mode: "outage" | "outage-once" | "crash", published = false) {
-  const temp = process.env.TMPDIR;
-  if (!temp) throw new Error("TMPDIR must be set");
+  const temp = os.tmpdir();
   const root = fs.mkdtempSync(path.join(temp, "primary-outage-cli-"));
   roots.push(root);
   const cwd = path.join(root, "worktrees", "card");

@@ -94,7 +94,8 @@ Existing regression entry points: `yarn vitest run tests/initial-publication.int
 tests/publish-task-session-card.test.ts tests/run-task-session-implementation.test.ts
 tests/run-task-session-review-repairs.test.ts tests/run-task-session-validation-repairs.test.ts
 tests/task-session-dispatch.test.ts`. Add named P6 cases to the manifest and a runnable
-aggregate during P6-R0; existing tests may encode policy being deliberately replaced.
+case selection during P6-R0 using ordinary `yarn test`; do not add milestone-specific
+scripts or commands. Existing tests may encode policy being deliberately replaced.
 Run `yarn validate` through the designated runner for the final candidate.
 
 Observe real local commits/refs, process exits, session routing, service effects,

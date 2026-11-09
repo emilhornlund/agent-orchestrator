@@ -8,13 +8,13 @@ import { RunRegistry, RunStore } from "../src/task-session/run-store.js";
 import type { ProjectConfig } from "../src/config/config.js";
 
 const fixture = JSON.parse(
-  fs.readFileSync("tests/fixtures/p2-prior-writer-v1.json", "utf8"),
+  fs.readFileSync("tests/fixtures/legacy-task-record-v1.json", "utf8"),
 ) as {
   provenance: { writerCommit: string; artifactVersion: number; schema: string };
   record: Record<string, unknown> & { projectId: string; cardId: string };
 };
 
-describe("P2 upgrade from the committed legacy writer", () => {
+describe("legacy task-state compatibility", () => {
   it("imports exact v1 TaskExecutionStore output and keeps source bytes and references", () => {
     expect(fixture.provenance).toMatchObject({
       writerCommit: "05319ead1682b47135c67194b1743bee7068fbfd",
