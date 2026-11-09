@@ -58,6 +58,7 @@ export interface OpenCodeRunResult {
   errorOutput: string;
   processExecutionId?: string;
   sessionId?: string;
+  failureClassification?: "dependency-outage";
 }
 
 export class OpenCodeRunAbortedError extends Error {
@@ -356,6 +357,61 @@ export function extractOpenCodeTextOutput(output: string): string {
   }
 
   return textParts.join("");
+}
+
+function hasStructuredProviderOutage(output: string): boolean {
+  for (const line of output.split(/\r?\n/u).slice(0, 128)) {
+    if (line.length > 16_384) continue;
+    try {
+      const event: unknown = JSON.parse(line);
+      if (
+        typeof event !== "object" ||
+        event === null ||
+        Array.isArray(event) ||
+        !("type" in event) ||
+        event.type !== "error" ||
+        ("version" in event &&
+          event.version !== undefined &&
+          event.version !== 1) ||
+        !("error" in event) ||
+        typeof event.error !== "object" ||
+        event.error === null ||
+        Array.isArray(event.error)
+      )
+        continue;
+      const error = event.error as Record<string, unknown>;
+      if (typeof error.data !== "object" || error.data === null) continue;
+      const data = error.data as Record<string, unknown>;
+      if (
+        error.name === "APIError" &&
+        [429, 502, 503, 504].includes(data.statusCode as number)
+      )
+        return true;
+      const cause = data.cause;
+      const causeCode =
+        cause !== null && typeof cause === "object" && "code" in cause
+          ? cause.code
+          : undefined;
+      if (
+        error.name === "FetchError" &&
+        [data.code, causeCode].some((code) =>
+          [
+            "ECONNREFUSED",
+            "ECONNRESET",
+            "EHOSTUNREACH",
+            "ENETUNREACH",
+            "EAI_AGAIN",
+            "ENOTFOUND",
+            "ETIMEDOUT",
+          ].includes(code as string),
+        )
+      )
+        return true;
+    } catch {
+      // Non-structured output is not sufficient evidence of provider availability.
+    }
+  }
+  return false;
 }
 
 export function signalProcessTree(
@@ -784,6 +840,9 @@ const defaultRunOpenCode: RunOpenCode = async ({
               output,
               errorOutput,
               processExecutionId: execution.executionId,
+              ...(code !== 0 && hasStructuredProviderOutage(output)
+                ? { failureClassification: "dependency-outage" as const }
+                : {}),
             },
             { model, variant },
           ),

@@ -126,7 +126,10 @@ export function beginPrimaryExecution(
       `Primary operation ${operationId} lacks proof that its prior process stopped`,
     );
   const executions = (prior?.executions ?? 0) + 1;
-  if (executions > OPERATION_RECOVERY_MAX_EXECUTIONS) {
+  if (
+    (prior?.failureExecutions ?? prior?.executions ?? 0) >=
+    OPERATION_RECOVERY_MAX_EXECUTIONS
+  ) {
     throw new PrimaryOperationExhaustedError(
       `Primary operation ${operationId} exhausted its execution budget`,
     );
@@ -135,9 +138,13 @@ export function beginPrimaryExecution(
     id: operationId,
     activity,
     executions,
+    failureExecutions: prior?.failureExecutions ?? prior?.executions ?? 0,
+    dependencyOutages: prior?.dependencyOutages ?? 0,
+    ...((sessionId ?? prior?.lastSessionId) === undefined
+      ? {}
+      : { lastSessionId: sessionId ?? prior?.lastSessionId }),
     status: "dispatched",
     updatedAt: nextTimestamp(record.updatedAt),
-    ...(sessionId === undefined ? {} : { lastSessionId: sessionId }),
   };
   return store.compareAndSwap(cardId, record.revision, {
     ...record,
@@ -154,6 +161,11 @@ export function completePrimaryExecution(
   outcome: "completed" | "failed" | "ambiguous" | "exhausted",
   result?: OpenCodeRunResult,
   diagnostic?: string,
+  classification:
+    "failure" | "dependency-outage" = result?.failureClassification ===
+  "dependency-outage"
+    ? "dependency-outage"
+    : "failure",
 ): TaskExecutionRecord {
   const record = store.read(cardId);
   const operation = record?.primaryOperations?.[operationId];
@@ -176,16 +188,22 @@ export function completePrimaryExecution(
     throw new PrimaryOperationBlockedError(
       "Completed primary operation requires exit code zero",
     );
-  const terminalOutcome =
-    outcome === "failed" &&
-    operation.executions >= OPERATION_RECOVERY_MAX_EXECUTIONS
-      ? "exhausted"
-      : outcome;
+  const failureExecutions =
+    operation.failureExecutions ?? operation.executions - 1;
+  const dependencyOutages =
+    (operation.dependencyOutages ?? 0) +
+    (outcome === "failed" && classification === "dependency-outage" ? 1 : 0);
+  const terminalOutcome = outcome;
   const operations = {
     ...record.primaryOperations,
     [operationId]: {
       ...operation,
       status: terminalOutcome,
+      failureExecutions,
+      dependencyOutages,
+      ...(outcome === "failed"
+        ? { lastExecutionClassification: classification }
+        : {}),
       ...(resultArtifact === undefined ? {} : { resultArtifact }),
       ...(terminalOutcome !== "exhausted" && diagnostic === undefined
         ? {}
@@ -220,6 +238,14 @@ export function reconcilePendingPrimaryExecution(
     );
   const operation = record?.primaryOperations?.[operationId];
   if (
+    record &&
+    operation &&
+    result === "stopped" &&
+    operation.status === "exhausted" &&
+    operation.accountedExecution === operation.executions
+  )
+    return record;
+  if (
     !record ||
     !operation ||
     !["dispatched", "ambiguous", "intent", "failed"].includes(operation.status)
@@ -227,13 +253,23 @@ export function reconcilePendingPrimaryExecution(
     throw new PrimaryOperationBlockedError(
       `No pending primary operation ${operationId}`,
     );
+  if (
+    result === "stopped" &&
+    operation.status === "failed" &&
+    operation.retrySafe === true &&
+    (operation.lastExecutionClassification === "dependency-outage" ||
+      operation.accountedExecution === operation.executions ||
+      operation.failureExecutions === undefined)
+  )
+    return record;
   const status =
     result === "unknown"
       ? "ambiguous"
       : result === "completed"
         ? "completed"
         : result === "stopped" &&
-            operation.executions >= OPERATION_RECOVERY_MAX_EXECUTIONS
+            (operation.failureExecutions ?? operation.executions) >=
+              OPERATION_RECOVERY_MAX_EXECUTIONS
           ? "exhausted"
           : result === "stopped"
             ? "failed"
@@ -242,12 +278,35 @@ export function reconcilePendingPrimaryExecution(
     result === "not-dispatched"
       ? Math.max(0, operation.executions - 1)
       : operation.executions;
+  const legacyFailureBaseline =
+    operation.status === "failed" && operation.retrySafe === true
+      ? operation.executions
+      : Math.max(0, operation.executions - 1);
+  const priorFailureExecutions =
+    operation.failureExecutions ?? legacyFailureBaseline;
+  const verifiedFailure =
+    result === "stopped" &&
+    operation.status !== "intent" &&
+    operation.executions > 0 &&
+    operation.lastExecutionClassification !== "dependency-outage" &&
+    operation.accountedExecution !== operation.executions &&
+    !(
+      operation.failureExecutions === undefined &&
+      operation.status === "failed" &&
+      operation.retrySafe === true
+    );
+  const failureExecutions = priorFailureExecutions + (verifiedFailure ? 1 : 0);
+  const exhausted =
+    result === "stopped" &&
+    failureExecutions >= OPERATION_RECOVERY_MAX_EXECUTIONS;
   const operations: NonNullable<TaskExecutionRecord["primaryOperations"]> = {
     ...record.primaryOperations,
     [operationId]: {
       ...operation,
-      status,
+      status: exhausted ? "exhausted" : status,
       executions,
+      failureExecutions,
+      ...(verifiedFailure ? { accountedExecution: operation.executions } : {}),
       ...(result === "stopped" || result === "not-dispatched"
         ? { retrySafe: true }
         : {}),
@@ -261,11 +320,9 @@ export function reconcilePendingPrimaryExecution(
             ),
           }
         : {}),
-      ...(result === "stopped" &&
-      operation.executions >= OPERATION_RECOVERY_MAX_EXECUTIONS
+      ...(exhausted
         ? {
-            diagnostic:
-              "Execution budget exhausted after authoritative stopped-process proof",
+            diagnostic: `Execution budget exhausted after ${failureExecutions} verified failures`,
           }
         : {}),
       updatedAt: nextTimestamp(record.updatedAt),
@@ -310,6 +367,9 @@ export function getCompletedPrimaryExecutionResult(
       ? {}
       : { processExecutionId: result.processExecutionId }),
     ...(result.sessionId === undefined ? {} : { sessionId: result.sessionId }),
+    ...(result.failureClassification === undefined
+      ? {}
+      : { failureClassification: result.failureClassification }),
   };
 }
 
@@ -334,6 +394,9 @@ function sanitizeResult(
       ? {}
       : { processExecutionId: result.processExecutionId }),
     ...(result.sessionId === undefined ? {} : { sessionId: result.sessionId }),
+    ...(result.failureClassification === undefined
+      ? {}
+      : { failureClassification: result.failureClassification }),
   };
   return safe;
 }

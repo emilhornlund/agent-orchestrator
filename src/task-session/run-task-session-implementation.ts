@@ -472,6 +472,11 @@ export async function runTaskSessionImplementation(
           { cause: error },
         );
       }
+      const exhaustedOperation = current?.primaryOperations?.[operationKey];
+      const failureCount =
+        exhaustedOperation?.failureExecutions ??
+        exhaustedOperation?.executions ??
+        3;
       try {
         persistAttentionRequired(
           taskRecordStore,
@@ -479,7 +484,7 @@ export async function runTaskSessionImplementation(
           card.id,
           operationKey,
           `${operationKey}:implementation-exhausted`,
-          `Primary implementation execution budget exhausted after ${3} executions: ${error.message}`,
+          `Primary implementation execution budget exhausted after ${failureCount} genuine failures: ${error.message}`,
         );
       } catch (stateError) {
         throw new TaskSessionImplementationError(

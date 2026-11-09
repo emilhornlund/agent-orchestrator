@@ -170,7 +170,13 @@ describe("durable primary operation ledger", () => {
     expect(() =>
       parseTaskExecutionRecord({
         ...record,
-        primaryOperations: { other: { ...entry, id: "other", executions: 4 } },
+        primaryOperations: {
+          other: {
+            ...entry,
+            id: "other",
+            executions: Number.MAX_SAFE_INTEGER + 1,
+          },
+        },
       }),
     ).toThrow();
     expect(() =>
@@ -236,14 +242,77 @@ describe("durable primary operation ledger", () => {
         output: "",
         errorOutput: "stopped",
       });
-      if (n < 3)
-        reconcilePendingPrimaryExecution(store, "card", "work", "stopped");
+      reconcilePendingPrimaryExecution(store, "card", "work", "stopped");
     }
     expect(store.read("card")?.primaryOperations?.work).toMatchObject({
       status: "exhausted",
       executions: 3,
-      diagnostic: "Execution budget exhausted",
+      diagnostic: "Execution budget exhausted after 3 verified failures",
       resultArtifact: { reference: expect.stringMatching(/^sha256:/u) },
     });
+    const revision = store.read("card")!.revision;
+    reconcilePendingPrimaryExecution(store, "card", "work", "stopped");
+    expect(store.read("card")?.primaryOperations?.work?.failureExecutions).toBe(
+      3,
+    );
+    expect(store.read("card")!.revision).toBe(revision);
+  });
+
+  it.each([
+    { status: "failed" as const, executions: 2, retrySafe: true, expected: 2 },
+    { status: "failed" as const, executions: 2, retrySafe: false, expected: 2 },
+    {
+      status: "dispatched" as const,
+      executions: 2,
+      retrySafe: undefined,
+      expected: 2,
+    },
+    {
+      status: "ambiguous" as const,
+      executions: 3,
+      retrySafe: undefined,
+      expected: 3,
+    },
+  ])("derives legacy $status accounting without double-charging", (legacy) => {
+    const { store } = fixture();
+    const record = store.read("card")!;
+    store.compareAndSwap("card", record.revision, {
+      ...record,
+      primaryOperations: {
+        op: {
+          id: "op",
+          activity: "work",
+          executions: legacy.executions,
+          status: legacy.status,
+          ...(legacy.retrySafe === undefined
+            ? {}
+            : { retrySafe: legacy.retrySafe }),
+          updatedAt: record.updatedAt,
+        },
+      },
+      revision: record.revision + 1,
+    });
+    const saved = store.read("card")!;
+    const reconciled = reconcilePendingPrimaryExecution(
+      store,
+      "card",
+      "op",
+      "stopped",
+    );
+    expect(
+      reconciled.primaryOperations?.op?.failureExecutions ??
+        reconciled.primaryOperations?.op?.executions,
+    ).toBe(legacy.expected);
+    const revision = reconciled.revision;
+    if (legacy.status === "failed" && legacy.retrySafe === true) {
+      expect(
+        reconcilePendingPrimaryExecution(store, "card", "op", "stopped")
+          .revision,
+      ).toBe(revision);
+    }
+    expect(saved.primaryOperations?.op?.failureExecutions).toBeUndefined();
+    expect(reconciled.primaryOperations?.op?.status).toBe(
+      legacy.expected >= 3 ? "exhausted" : "failed",
+    );
   });
 });

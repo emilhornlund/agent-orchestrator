@@ -203,12 +203,13 @@ const retryCountersSchema = z.strictObject({
 export const primaryOperationSchema = z.strictObject({
   id: nonBlankIdentifier,
   activity: nonBlankIdentifier,
-  executions: z
-    .number()
-    .int()
-    .nonnegative()
-    .max(OPERATION_RECOVERY_MAX_EXECUTIONS)
-    .safe(),
+  executions: z.number().int().nonnegative().safe(),
+  failureExecutions: z.number().int().nonnegative().safe().optional(),
+  dependencyOutages: z.number().int().nonnegative().safe().optional(),
+  accountedExecution: z.number().int().positive().safe().optional(),
+  lastExecutionClassification: z
+    .enum(["failure", "dependency-outage"])
+    .optional(),
   status: z.enum([
     "intent",
     "dispatched",
@@ -229,6 +230,7 @@ export const primaryOperationSchema = z.strictObject({
       errorOutput: z.string(),
       processExecutionId: nonBlankIdentifier.optional(),
       sessionId: nonBlankIdentifier.optional(),
+      failureClassification: z.literal("dependency-outage").optional(),
     })
     .optional(),
   resultArtifact: z
@@ -290,7 +292,8 @@ const primaryOperationsSchema = z
         });
       if (
         operation.status === "exhausted" &&
-        operation.executions !== OPERATION_RECOVERY_MAX_EXECUTIONS
+        (operation.failureExecutions ?? operation.executions) <
+          OPERATION_RECOVERY_MAX_EXECUTIONS
       )
         ctx.addIssue({
           code: "custom",

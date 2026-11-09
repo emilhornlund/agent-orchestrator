@@ -19,6 +19,7 @@ import {
 import {
   beginPrimaryExecution,
   bindPrimaryExecutionEvidence,
+  completePrimaryExecution,
   PrimaryOperationExhaustedError,
   reconcilePendingPrimaryExecution,
 } from "../src/task-session/primary-operation-ledger.js";
@@ -183,6 +184,270 @@ describe("runPrimaryOperation", () => {
       runPrimaryOperation(options(again, vi.fn(), vi.fn())),
     ).rejects.toBeInstanceOf(PrimaryOperationExhaustedError);
     expect(execute).toHaveBeenCalledTimes(3);
+  });
+  it("paces recognized provider outages across restarts without consuming the crash budget", async () => {
+    const f = fixture();
+    const unavailable: OpenCodeRunResult = {
+      exitCode: 1,
+      output: "",
+      errorOutput: "provider unavailable",
+      sessionId: "session",
+      failureClassification: "dependency-outage",
+    };
+    let store = f.store;
+    for (let window = 0; window < 5; window += 1) {
+      await expect(
+        runPrimaryOperation({
+          ...options(
+            store,
+            async () => unavailable,
+            async (entry) => stopped(entry),
+          ),
+          sessionId: "session",
+        }),
+      ).rejects.toBeInstanceOf(PrimaryOperationWaitingError);
+      const operation = store.read("card")?.primaryOperations?.op;
+      expect(operation).toMatchObject({
+        status: "failed",
+        executions: window + 1,
+        failureExecutions: 0,
+        dependencyOutages: window + 1,
+        retrySafe: true,
+        lastSessionId: "session",
+      });
+      store = new TaskExecutionStore(path.join(f.root, "state"), f.project);
+    }
+    await expect(
+      runPrimaryOperation({
+        ...options(
+          store,
+          async () => success,
+          async () => ({ status: "unknown" }),
+        ),
+        sessionId: "session",
+      }),
+    ).resolves.toMatchObject(success);
+    expect(store.read("card")?.primaryOperations?.op).toMatchObject({
+      status: "completed",
+      executions: 6,
+      failureExecutions: 0,
+      dependencyOutages: 5,
+      lastSessionId: "session",
+    });
+  });
+  it("does not mistake ordinary quality failures for dependency outages", async () => {
+    const f = fixture();
+    const negative: OpenCodeRunResult = {
+      exitCode: 1,
+      output: "The requested change cannot be made safely",
+      errorOutput: "quality concern",
+    };
+    await expect(
+      runPrimaryOperation(
+        options(
+          f.store,
+          async () => negative,
+          async (entry) => stopped(entry),
+        ),
+      ),
+    ).rejects.toBeInstanceOf(PrimaryOperationExhaustedError);
+    expect(f.store.read("card")?.primaryOperations?.op).toMatchObject({
+      status: "exhausted",
+      executions: 3,
+      failureExecutions: 3,
+      dependencyOutages: 0,
+    });
+  });
+  it("does not classify ordinary agent output containing transport words or status JSON", async () => {
+    const f = fixture();
+    const negative: OpenCodeRunResult = {
+      exitCode: 1,
+      output: 'The test emitted {"status":503}; debug says ECONNRESET',
+      errorOutput: "quality failure",
+    };
+    await expect(
+      runPrimaryOperation(
+        options(
+          f.store,
+          async () => negative,
+          async (entry) => stopped(entry),
+        ),
+      ),
+    ).rejects.toBeInstanceOf(PrimaryOperationExhaustedError);
+    expect(f.store.read("card")?.primaryOperations?.op).toMatchObject({
+      failureExecutions: 3,
+      dependencyOutages: 0,
+    });
+  });
+  it("charges each stopped crash once after outage windows, including after restart", async () => {
+    const f = fixture();
+    const outage: OpenCodeRunResult = {
+      exitCode: 1,
+      output: "",
+      errorOutput: "provider unavailable",
+      failureClassification: "dependency-outage",
+    };
+    await expect(
+      runPrimaryOperation(
+        options(
+          f.store,
+          async () => outage,
+          async (entry) => stopped(entry),
+        ),
+      ),
+    ).rejects.toBeInstanceOf(PrimaryOperationWaitingError);
+    let store = new TaskExecutionStore(path.join(f.root, "state"), f.project);
+    const crash = { ...failure, errorOutput: "agent crashed" };
+    beginPrimaryExecution(store, "card", "op", "work", "session");
+    completePrimaryExecution(store, "card", "op", "failed", crash);
+    reconcilePendingPrimaryExecution(store, "card", "op", "stopped");
+    expect(store.read("card")?.primaryOperations?.op?.failureExecutions).toBe(
+      1,
+    );
+    store = new TaskExecutionStore(path.join(f.root, "state"), f.project);
+    // Replaying stopped reconciliation after restart is idempotent.
+    reconcilePendingPrimaryExecution(store, "card", "op", "stopped");
+    expect(store.read("card")?.primaryOperations?.op?.failureExecutions).toBe(
+      1,
+    );
+    await expect(
+      runPrimaryOperation(
+        options(
+          store,
+          async () => crash,
+          async (current) => stopped(current),
+        ),
+      ),
+    ).rejects.toBeInstanceOf(PrimaryOperationExhaustedError);
+    const entry = store.read("card")?.primaryOperations?.op;
+    expect(entry).toMatchObject({
+      status: "exhausted",
+      executions: 4,
+      failureExecutions: 3,
+      dependencyOutages: 1,
+    });
+  });
+  it("carries cumulative accounting but clears per-execution proof when reserving a retry", () => {
+    const f = fixture();
+    beginPrimaryExecution(f.store, "card", "op", "work", "session");
+    bindPrimaryExecutionEvidence(f.store, "card", "op", 1, {
+      executionId: "exec-1",
+      metadataPath: "/trusted/exec-1/metadata.json",
+      artifactRoot: "/trusted/exec-1",
+    });
+    completePrimaryExecution(f.store, "card", "op", "failed", failure);
+    reconcilePendingPrimaryExecution(f.store, "card", "op", "stopped");
+    expect(f.store.read("card")?.primaryOperations?.op).toMatchObject({
+      retrySafe: true,
+      resultArtifact: expect.any(Object),
+      processExecutionId: "exec-1",
+    });
+
+    beginPrimaryExecution(f.store, "card", "op", "work", "session");
+    expect(f.store.read("card")?.primaryOperations?.op).toMatchObject({
+      status: "dispatched",
+      executions: 2,
+      failureExecutions: 1,
+      dependencyOutages: 0,
+      lastSessionId: "session",
+    });
+    expect(f.store.read("card")?.primaryOperations?.op).not.toHaveProperty(
+      "retrySafe",
+    );
+    expect(f.store.read("card")?.primaryOperations?.op).not.toHaveProperty(
+      "resultArtifact",
+    );
+    expect(f.store.read("card")?.primaryOperations?.op).not.toHaveProperty(
+      "processExecutionId",
+    );
+    expect(f.store.read("card")?.primaryOperations?.op).not.toHaveProperty(
+      "processMetadataPath",
+    );
+    expect(f.store.read("card")?.primaryOperations?.op).not.toHaveProperty(
+      "processArtifactRoot",
+    );
+    expect(f.store.read("card")?.primaryOperations?.op).not.toHaveProperty(
+      "accountedExecution",
+    );
+    expect(f.store.read("card")?.primaryOperations?.op).not.toHaveProperty(
+      "lastExecutionClassification",
+    );
+  });
+  it("does not reuse outage stop authorization after the next execution becomes uncertain", async () => {
+    const f = fixture();
+    const outage: OpenCodeRunResult = {
+      exitCode: 1,
+      output: "",
+      errorOutput: "temporary provider failure",
+      failureClassification: "dependency-outage",
+    };
+    await expect(
+      runPrimaryOperation(
+        options(
+          f.store,
+          async () => outage,
+          async (entry) => stopped(entry),
+        ),
+      ),
+    ).rejects.toBeInstanceOf(PrimaryOperationWaitingError);
+    await expect(
+      runPrimaryOperation(
+        options(
+          f.store,
+          async () => failure,
+          async () => ({ status: "unknown" }),
+        ),
+      ),
+    ).rejects.toBeInstanceOf(PrimaryOperationWaitingError);
+    const restarted = new TaskExecutionStore(
+      path.join(f.root, "state"),
+      f.project,
+    );
+    const forbiddenDispatch = vi.fn(async () => success);
+    await expect(
+      runPrimaryOperation(
+        options(restarted, forbiddenDispatch, async () => ({
+          status: "unknown",
+        })),
+      ),
+    ).rejects.toBeInstanceOf(PrimaryOperationWaitingError);
+    expect(forbiddenDispatch).not.toHaveBeenCalled();
+    const continued = await runPrimaryOperation(
+      options(
+        restarted,
+        async () => success,
+        async (entry) => stopped(entry),
+      ),
+    );
+    expect(continued.exitCode).toBe(0);
+    expect(restarted.read("card")?.primaryOperations?.op).toMatchObject({
+      executions: 3,
+      failureExecutions: 1,
+      dependencyOutages: 1,
+      status: "completed",
+    });
+  });
+  it("charges interrupted dispatched and ambiguous reservations once after restart", () => {
+    const f = fixture();
+    for (let execution = 1; execution <= 3; execution += 1) {
+      beginPrimaryExecution(f.store, "card", "op", "work", "session");
+      if (execution % 2 === 0)
+        reconcilePendingPrimaryExecution(f.store, "card", "op", "unknown");
+      const restarted = new TaskExecutionStore(
+        path.join(f.root, "state"),
+        f.project,
+      );
+      reconcilePendingPrimaryExecution(restarted, "card", "op", "stopped");
+      expect(restarted.read("card")?.primaryOperations?.op).toMatchObject({
+        executions: execution,
+        failureExecutions: execution,
+        accountedExecution: execution,
+        status: execution === 3 ? "exhausted" : "failed",
+      });
+      const revision = restarted.read("card")!.revision;
+      reconcilePendingPrimaryExecution(restarted, "card", "op", "stopped");
+      expect(restarted.read("card")!.revision).toBe(revision);
+    }
   });
   it("does not retry cancellation; accepts typed stopped timeout proof", async () => {
     const f = fixture();

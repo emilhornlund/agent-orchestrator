@@ -79,7 +79,8 @@ export function persistPrimaryOperationRecovery(
   if (
     exhausted &&
     (operation?.status !== "exhausted" ||
-      operation.executions !== OPERATION_RECOVERY_MAX_EXECUTIONS)
+      (operation.failureExecutions ?? operation.executions) <
+        OPERATION_RECOVERY_MAX_EXECUTIONS)
   )
     return "unhandled";
 

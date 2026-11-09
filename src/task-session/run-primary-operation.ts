@@ -219,12 +219,11 @@ export async function runPrimaryOperation(
       "failed",
       result,
       result.errorOutput || `exit ${result.exitCode}`,
+      result.failureClassification === "dependency-outage"
+        ? "dependency-outage"
+        : "failure",
     );
     const saved = record.primaryOperations![operationId]!;
-    if (saved.status === "exhausted")
-      throw new PrimaryOperationExhaustedError(
-        saved.diagnostic ?? "Primary operation exhausted",
-      );
     const proof = await inspect(options, saved);
     if (
       proof.status !== "stopped-after-dispatch" ||
@@ -233,7 +232,21 @@ export async function runPrimaryOperation(
       (proof.sessionId !== undefined && proof.sessionId !== saved.lastSessionId)
     )
       throw new PrimaryOperationWaitingError(operationId);
-    reconcilePendingPrimaryExecution(store, cardId, operationId, "stopped");
+    const reconciled = reconcilePendingPrimaryExecution(
+      store,
+      cardId,
+      operationId,
+      "stopped",
+    );
+    const finalEntry = reconciled.primaryOperations?.[operationId];
+    if (finalEntry?.status === "exhausted")
+      throw new PrimaryOperationExhaustedError(
+        finalEntry.diagnostic ?? "Primary operation execution budget exhausted",
+      );
+    if (result.failureClassification === "dependency-outage")
+      throw new PrimaryOperationWaitingError(operationId, {
+        cause: new Error("OpenCode provider temporarily unavailable"),
+      });
   }
 }
 

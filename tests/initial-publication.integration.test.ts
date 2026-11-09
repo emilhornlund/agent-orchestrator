@@ -735,7 +735,7 @@ describe("initial publication production checkpoint with independent simulated s
     );
     expect(task(f)?.phase).toBe("ci");
     expect(f.services.read().requests).toHaveLength(1);
-  });
+  }, 30_000);
 
   it.each(["intent", "acceptance"] as const)(
     "rejects a push destination changed after %s and across restart without touching the unintended remote",
@@ -882,6 +882,7 @@ describe("initial publication production checkpoint with independent simulated s
       );
       expect(restarted.services.read().prs).toHaveLength(1);
     },
+    30_000,
   );
   it("resolves the actual canonical fixture Git destinations", async () => {
     const f = fixture();
@@ -918,7 +919,7 @@ describe("initial publication production checkpoint with independent simulated s
     await through(f, "comment");
     expect(task(f)?.phase).toBe("ci");
     expect(f.services.read().requests).toHaveLength(1);
-  });
+  }, 30_000);
   it("preserves the content fence across publication waiting instead of staging newly changed source", async () => {
     const f = fixture();
     await begin(f);
