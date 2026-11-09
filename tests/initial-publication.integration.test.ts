@@ -43,10 +43,10 @@ afterEach(() => {
   for (const root of roots.splice(0))
     fs.rmSync(root, { recursive: true, force: true });
 });
-function fixture() {
+function fixture(projectId = "p") {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "initial-publication-"));
   roots.push(root);
-  const f = createPublicationFixture(root);
+  const f = createPublicationFixture(root, undefined, projectId);
   vi.useFakeTimers({ toFake: ["Date"] });
   return { ...f, root };
 }
@@ -1275,6 +1275,42 @@ describe("initial publication production checkpoint with independent simulated s
     expect(
       messages.filter((text) => text.includes("Event: Human Review")),
     ).toHaveLength(1);
+    const outbox = new NotificationOutbox(
+      f.store.storageRoot,
+      f.project.id,
+      () => f.authority.assertHeld(),
+    );
+    const attentionRecords = outbox
+      .records()
+      .filter((record) => record.event === "attentionRequired");
+    expect(attentionRecords).toHaveLength(1);
+    const attentionIdentity = attentionRecords[0]!.id;
+    expect(attentionRecords[0]!.dispatches).toHaveLength(1);
+    expect(attentionRecords[0]!.dispatches[0]?.outcome).toBe("confirmed");
+    // A fresh outbox reader represents worker restart. Repeated due-window drains
+    // must retain the same event identity and must not redeliver a confirmed event.
+    const restartedOutbox = new NotificationOutbox(
+      f.store.storageRoot,
+      f.project.id,
+      () => f.authority.assertHeld(),
+    );
+    const redeliveries: string[] = [];
+    for (let window = 0; window < 2; window++)
+      await restartedOutbox.drain(
+        {
+          send: async (message) => {
+            redeliveries.push(message.text);
+          },
+        },
+        () => {},
+      );
+    expect(redeliveries).toEqual([]);
+    expect(
+      restartedOutbox
+        .records()
+        .filter((record) => record.event === "attentionRequired")
+        .map((record) => record.id),
+    ).toEqual([attentionIdentity]);
     expect(task(f)?.phase).toBe("ci");
     expect(f.services.read().requests).toHaveLength(1);
     expect(
@@ -1463,6 +1499,151 @@ describe("initial publication production checkpoint with independent simulated s
       expect(task(restarted)?.phase).toBe("ci");
       expect(restarted.services.read().requests).toHaveLength(1);
       expect(restarted.services.read().prs).toHaveLength(1);
+    },
+  );
+
+  it.each([
+    "github-accepted-response-lost",
+    "trello-move-accepted-response-lost",
+  ] as const)(
+    "holds the canonical publication checkpoint through a restarted $fault outage and honors retryAt",
+    async (fault) => {
+      const f = fixture();
+      await begin(f);
+      if (fault === "github-accepted-response-lost") {
+        f.services.change({ loseCreationResponse: true });
+        await through(f, "push");
+        expect(f.services.read().requests).toHaveLength(1);
+        f.services.change({ githubOutage: true });
+      } else {
+        f.services.change({ loseMoveResponse: true });
+        const move = f.services.trello.moveCard.bind(f.services.trello);
+        f.services.trello.moveCard = async (...args) => {
+          try {
+            return await move(...args);
+          } finally {
+            // The move is independently accepted before its response is lost;
+            // subsequent authoritative reads are unavailable until restoration.
+            f.services.change({ trelloOutage: true });
+          }
+        };
+        await through(f, "pr");
+        expect(f.services.read().list).toBe("review");
+        expect(
+          f.services.entries().filter((entry) => entry.type === "move-accept"),
+        ).toHaveLength(1);
+      }
+
+      await poll(f, false);
+      const firstWait = f.store.read()!.compatibility[
+        "initial-publication-v1"
+      ] as { retryAt: string | null; attentionNotified: boolean };
+      expect(firstWait.retryAt).not.toBeNull();
+      expect(firstWait.attentionNotified).toBe(false);
+      // Project B uses an independent durable authority/context and service
+      // ledger. Its normal publication completes while A remains in its
+      // dependency wait; A's occupied queue cannot claim its next Ready card.
+      const b = fixture("project-b");
+      await begin(b);
+      await through(b, "comment");
+      expect(b.store.read()!.lifecycle).toBe("ci");
+      expect(b.services.read().requests).toHaveLength(1);
+      expect(b.services.read().prs).toHaveLength(1);
+      expect(task(b)?.phase).toBe("ci");
+      expect(
+        b.authority.run(() =>
+          new TaskMutationQueue(b.project.contextRoot, b.project).getActive(),
+        ),
+      ).toBeNull();
+      expect(f.store.read()!.lifecycle).toBe("publication");
+      expect(
+        f.authority.run(() =>
+          new TaskMutationQueue(f.project.contextRoot, f.project).getActive(),
+        )?.cardId,
+      ).toBe("card");
+      expect(f.services.read().requests).toHaveLength(1);
+      const retryAt = Date.parse(firstWait.retryAt!);
+      vi.setSystemTime(retryAt - 1);
+      await poll(f, false);
+
+      // Exercise two further persisted due windows while the dependency stays
+      // unavailable. The fixture's production interval, not a new policy, is
+      // advanced explicitly by the controlled clock.
+      for (let window = 0; window < 2; window++) {
+        const duePollTime = Date.parse(firstWait.retryAt!);
+        vi.setSystemTime(duePollTime);
+        const beforeDuePoll = f.services.entries();
+        await poll(f, false);
+        const afterDuePoll = f.services.entries();
+        const dueWindowEvents = afterDuePoll.slice(beforeDuePoll.length);
+        expect(dueWindowEvents.length).toBeGreaterThan(0);
+        expect(
+          dueWindowEvents.some((entry) =>
+            fault === "github-accepted-response-lost"
+              ? entry.type === "pr-read"
+              : entry.type.startsWith("trello-read:"),
+          ),
+        ).toBe(true);
+        const nextWait = f.store.read()!.compatibility[
+          "initial-publication-v1"
+        ] as { retryAt: string | null };
+        expect(nextWait.retryAt).not.toBeNull();
+        expect(nextWait.retryAt).toBe(
+          new Date(duePollTime + PUBLICATION_RECHECK_MS).toISOString(),
+        );
+        vi.setSystemTime(Date.parse(nextWait.retryAt!) - 1);
+        const beforeNotDue = f.services.entries();
+        await poll(f, false);
+        expect(f.services.entries()).toEqual(beforeNotDue);
+        firstWait.retryAt = nextWait.retryAt;
+      }
+      const ledgerAtWait = f.services.entries();
+
+      // Restart with canonical attempt ownership; no fresh claim or mutation is
+      // permitted while the persisted deadline is still in the future.
+      const restarted = reopenPublicationFixture(f.root, "outage-restart");
+      await poll(restarted, false);
+      expect(restarted.services.entries()).toEqual(ledgerAtWait);
+      expect(restarted.store.read()!.lifecycle).toBe("publication");
+      expect(
+        restarted.authority.run(() =>
+          new TaskMutationQueue(
+            restarted.project.contextRoot,
+            restarted.project,
+          ).getActive(),
+        ),
+      ).not.toBeNull();
+
+      vi.setSystemTime(Date.parse(firstWait.retryAt!));
+      if (fault === "github-accepted-response-lost")
+        restarted.services.change({ githubOutage: false });
+      else restarted.services.change({ trelloOutage: false });
+      await through(restarted, "comment");
+      expect(restarted.store.read()!.lifecycle).toBe("ci");
+      expect(restarted.services.read().prs).toHaveLength(1);
+      expect(restarted.services.read().requests).toHaveLength(1);
+      expect(restarted.services.read().comments).toHaveLength(1);
+      expect(
+        restarted.services
+          .entries()
+          .filter((entry) => entry.type === "move-accept"),
+      ).toHaveLength(1);
+      expect(
+        restarted.authority.run(() =>
+          new TaskMutationQueue(
+            restarted.project.contextRoot,
+            restarted.project,
+          ).getActive(),
+        ),
+      ).toBeNull();
+      expect(
+        f.isolated.git(
+          restarted.worktreePath,
+          "rev-list",
+          "--count",
+          "main..HEAD",
+        ),
+      ).toBe("1");
     },
   );
 

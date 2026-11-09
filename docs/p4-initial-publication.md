@@ -151,6 +151,13 @@ Coverage includes:
 - REQ-PR-006 AC1–4 / VER-PR-006-01: prolonged pre-creation and post-acceptance
   outages, preserved work, paced reads, automatic recovery without an absorbing
   attention state, and one attention notification in the production worker test.
+  In the accepted-create/lost-response and accepted-move/lost-response retryAt
+  parameter cases, a separately rooted `project-b` authority completes normal
+  publication while A remains in publication wait; A's active queue owner remains
+  occupied. The worker attention case also reopens the durable outbox reader and
+  drains twice, asserting the same single attention event identity and no repeat
+  send after confirmed delivery. These are controlled simulated-service cases,
+  not a complete multi-project outage matrix or transport-uncertainty proof.
 - SIGKILL at PR intent, dispatch, acceptance, response and durable verification;
   SIGKILL after actual Git commit/push and Trello move/comment acceptance; and
   after the atomic publication projection before local queue/checkpoint closure.
@@ -182,8 +189,10 @@ Client parser regressions are in `tests/github-client.test.ts` and
 Focused commands and full `yarn validate` are reported with the implementation
 handoff. No live Trello/GitHub/OpenCode service, email transport or container was
 used for this task. Full fault permutations, realistic compatibility and complete
-two-project lifecycle evidence remain T5/later phase evidence obligations; these
-tests are not substitutes for those levels.
+two-project composed lifecycle evidence remain T5/later phase evidence obligations;
+the B assertion is a focused independent publication slice and does not claim
+simultaneous production-worker scheduling of both projects. These tests are not
+substitutes for those levels.
 
 ## Subsequent task guidance
 
