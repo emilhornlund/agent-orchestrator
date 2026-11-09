@@ -200,10 +200,36 @@ const retryCountersSchema = z.strictObject({
   humanFeedback: z.number().int().nonnegative(),
 });
 
+const advisoryOutcomeSchema = z
+  .strictObject({
+    status: z.enum(["unavailable", "invalid", "completed"]),
+    diagnostic: z.string().min(1).max(2_000),
+    planRevision: z.number().int().positive().safe().optional(),
+    taskRecordRevision: z.number().int().positive().safe().optional(),
+    operationKey: nonBlankIdentifier.optional(),
+  })
+  .superRefine((outcome, ctx) => {
+    const associationFields = [
+      outcome.planRevision,
+      outcome.taskRecordRevision,
+      outcome.operationKey,
+    ];
+    if (
+      associationFields.some((value) => value !== undefined) &&
+      associationFields.some((value) => value === undefined)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          "Plan-review advice association must include plan, task revision, and operation identity",
+      });
+    }
+  });
+
 export const primaryOperationSchema = z.strictObject({
   id: nonBlankIdentifier,
   activity: nonBlankIdentifier,
-  role: z.enum(["primary", "reconstruction"]).optional(),
+  role: z.enum(["primary", "reconstruction", "advisory"]).optional(),
   executions: z.number().int().nonnegative().safe(),
   failureExecutions: z.number().int().nonnegative().safe().optional(),
   dependencyOutages: z.number().int().nonnegative().safe().optional(),
@@ -538,6 +564,8 @@ const taskExecutionRecordSchema = z
     primarySessionId: nonBlankIdentifier.optional(),
     sessionCreationStatus: sessionCreationStatus.optional(),
     sessionRecovery: sessionRecoveryStateSchema.optional(),
+    planningAdvice: advisoryOutcomeSchema.optional(),
+    planReviewAdvice: advisoryOutcomeSchema.optional(),
     setup: taskSetupState.optional(),
     terminalFailure: terminalFailureState.optional(),
     externalRecovery: externalRecoveryState.optional(),

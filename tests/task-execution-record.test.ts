@@ -36,6 +36,27 @@ describe("parseTaskExecutionRecord", () => {
     expect(parseTaskExecutionRecord(decoded)).toEqual(record);
   });
 
+  it("preserves advisory planning outcomes while accepting older records without them", () => {
+    const oldRecord = parseTaskExecutionRecord(
+      JSON.parse(JSON.stringify(record)),
+    );
+    expect(oldRecord.planningAdvice).toBeUndefined();
+    const withAdvice = parseTaskExecutionRecord({
+      ...record,
+      planningAdvice: {
+        status: "unavailable",
+        diagnostic: "Planning process exited unsuccessfully",
+      },
+      planReviewAdvice: {
+        status: "invalid",
+        diagnostic: "Reviewer returned malformed output",
+      },
+    });
+    expect(
+      parseTaskExecutionRecord(JSON.parse(JSON.stringify(withAdvice))),
+    ).toEqual(withAdvice);
+  });
+
   it.each([
     ["empty project ID", { projectId: "" }],
     ["padded card ID", { cardId: " card-one" }],

@@ -11,6 +11,10 @@ import type { TrelloCard } from "../trello/trello-client.js";
 import { resolveCardAttachmentPath } from "../context/card-context-storage.js";
 import type { PrimarySessionContextBundle } from "./primary-task-session.js";
 import type { TaskExecutionRecord } from "./task-execution-record.js";
+import {
+  parsePlanVerificationResult,
+  type PlanVerificationResult,
+} from "./plan-verification.js";
 import { getTaskSessionSourceSnapshotIdentity } from "./source-snapshot.js";
 import { getProcessRuntime } from "../process/process-runtime.js";
 import { redactSecrets } from "../security/redact-secrets.js";
@@ -106,9 +110,25 @@ export async function buildPrimarySessionContext(input: {
   worktreePath: string;
   record: TaskExecutionRecord;
   plan: unknown | null;
+  planRevision?: number;
+  planReviewAdvice?: PlanVerificationResult;
   attachments?: CardAttachmentPromptContext;
   feedbackContent?: string;
 }): Promise<PrimarySessionContextBundle> {
+  const planReviewAdvice =
+    input.planReviewAdvice === undefined
+      ? undefined
+      : parsePlanVerificationResult(input.planReviewAdvice);
+  if (
+    planReviewAdvice !== undefined &&
+    (input.plan === null ||
+      input.planRevision !== planReviewAdvice.planRevision ||
+      input.projectId !== planReviewAdvice.projectId ||
+      input.card.id !== planReviewAdvice.cardId)
+  )
+    throw new Error(
+      "Primary-session plan-review advice does not match the task and plan revision",
+    );
   const [head, sourceIdentity, status, staged, unstaged, index, untracked] =
     await Promise.all([
       input.git.getHeadSha(input.worktreePath),
@@ -293,6 +313,14 @@ export async function buildPrimarySessionContext(input: {
       input.plan === null
         ? { status: "absent" }
         : { status: "available", content: stringifySanitized(input.plan) },
+    ...(planReviewAdvice === undefined
+      ? {}
+      : {
+          planReviewAdvice: {
+            status: "available" as const,
+            content: stringifySanitized(planReviewAdvice),
+          },
+        }),
     attachmentManifest: attachmentContext,
     currentDiff: stringifySanitized({
       status: status.trim().length === 0 ? "clean" : "changed",

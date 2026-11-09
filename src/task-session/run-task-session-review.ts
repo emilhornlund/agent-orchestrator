@@ -207,13 +207,12 @@ export async function runTaskSessionReview(
   const storedPlan = planStore.read(card.id);
 
   if (
-    storedPlan === null ||
-    storedPlan.plan.projectId !== project.id ||
-    storedPlan.plan.cardId !== card.id ||
-    storedPlan.verification?.verdict !== "pass"
+    storedPlan !== null &&
+    (storedPlan.plan.projectId !== project.id ||
+      storedPlan.plan.cardId !== card.id)
   ) {
     throw new TaskSessionReviewError(
-      `Implementation review requires a passing verified plan for ${project.id}/${card.id}`,
+      `Implementation review plan identity does not match ${project.id}/${card.id}`,
     );
   }
 
@@ -290,7 +289,7 @@ export async function runTaskSessionReview(
   const prompt = buildTaskSessionReviewPrompt({
     projectId: project.id,
     card,
-    approvedPlan: storedPlan.plan,
+    ...(storedPlan === null ? {} : { approvedPlan: storedPlan.plan }),
     contentIdentity,
     diff,
     validation,
@@ -363,7 +362,7 @@ export async function runTaskSessionReview(
         {
           projectId: project.id,
           cardId: card.id,
-          requirementIds: storedPlan.plan.requirements.map(
+          requirementIds: (storedPlan?.plan.requirements ?? []).map(
             (requirement) => requirement.id,
           ),
           contentIdentity,

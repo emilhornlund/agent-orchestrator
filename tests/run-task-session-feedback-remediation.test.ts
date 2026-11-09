@@ -20,7 +20,7 @@ afterEach(() => {
   if (root !== undefined) fs.rmSync(root, { recursive: true, force: true });
 });
 
-function fixture() {
+function fixture(options: { includePlan?: boolean } = {}) {
   root = fs.mkdtempSync(path.join(os.tmpdir(), "feedback-remediation-"));
   const worktreeRoot = path.join(root, "worktrees");
   const worktreePath = path.join(worktreeRoot, "card");
@@ -94,15 +94,17 @@ function fixture() {
     assumptions: [],
     blockers: [],
   };
-  planStore.create(plan, 1);
-  planStore.storeVerification(card.id, 1, {
-    version: 1,
-    projectId: project.id,
-    cardId: card.id,
-    planRevision: 1,
-    verdict: "pass",
-    findings: [],
-  } satisfies PlanVerificationResult);
+  if (options.includePlan !== false) {
+    planStore.create(plan, 1);
+    planStore.storeVerification(card.id, 1, {
+      version: 1,
+      projectId: project.id,
+      cardId: card.id,
+      planRevision: 1,
+      verdict: "pass",
+      findings: [],
+    } satisfies PlanVerificationResult);
+  }
   const entry = {
     kind: "inline-comment" as const,
     id: "comment-1",
@@ -149,6 +151,31 @@ function fixture() {
 }
 
 describe("runTaskSessionFeedbackRemediation", () => {
+  it("remediates actionable feedback without inventing a missing task plan", async () => {
+    const f = fixture({ includePlan: false });
+    const runOpenCode = vi.fn<RunOpenCode>().mockResolvedValue({
+      exitCode: 0,
+      output: "Applied the requested feedback correction",
+      errorOutput: "",
+    });
+
+    await runTaskSessionFeedbackRemediation({
+      ...f.base,
+      openCode: new OpenCodeClient(runOpenCode),
+    });
+
+    expect(runOpenCode).toHaveBeenCalledOnce();
+    expect(runOpenCode.mock.calls[0]?.[0].prompt).toContain(
+      "No usable plan was available",
+    );
+    expect(runOpenCode.mock.calls[0]?.[0].prompt).toContain(
+      "Original task description:",
+    );
+    expect(runOpenCode.mock.calls[0]?.[0].prompt).toContain(
+      "Handle the empty case.",
+    );
+  });
+
   it("resumes the exact primary session with all pending items and preserves no-op status", async () => {
     const f = fixture();
     const runOpenCode = vi.fn<RunOpenCode>().mockResolvedValue({

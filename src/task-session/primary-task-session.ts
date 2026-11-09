@@ -46,7 +46,16 @@ export type PrimaryExecutionIdentity =
         >,
       ) => Promise<PendingPrimaryInspection>;
     }
-  | { role: "advisory"; operationId: string }
+  | {
+      role: "advisory";
+      operationId: string;
+      activity?: string;
+      inspectPending?: (
+        entry: NonNullable<
+          NonNullable<TaskExecutionRecord["primaryOperations"]>[string]
+        >,
+      ) => Promise<PendingPrimaryInspection>;
+    }
   | {
       role: "reconstruction";
       operationId: string;
@@ -358,8 +367,40 @@ export async function runWithPrimaryTaskSession(
           prompt: `${runOptions.prompt}\n\nReconstructed task context (sha256 ${persisted.reference}):\n${persisted.contents}`,
         };
       }
-      const execute = () => openCode.run({ ...runOptions, sessionId });
-      if (execution.role === "advisory") return execute();
+      if (execution.role === "advisory")
+        return runPrimaryOperation({
+          store,
+          cardId,
+          operationId: execution.operationId,
+          activity: execution.activity ?? "advisory",
+          role: "advisory",
+          sessionId,
+          execute: () =>
+            openCode.run({
+              ...runOptions,
+              sessionId,
+              onExecutionPrepared: async (evidence) => {
+                const current =
+                  store.read(cardId)?.primaryOperations?.[
+                    execution.operationId
+                  ];
+                if (!current)
+                  throw new PrimaryTaskSessionError(
+                    "Reserved advisory operation disappeared before process evidence binding",
+                  );
+                bindPrimaryExecutionEvidence(
+                  store,
+                  cardId,
+                  execution.operationId,
+                  current.executions,
+                  evidence,
+                );
+                await runOptions.onExecutionPrepared?.(evidence);
+              },
+            }),
+          inspectPending:
+            execution.inspectPending ?? (async () => ({ status: "unknown" })),
+        });
       if (execution.role === "reconstruction") {
         if (!execution.readOnlyAcknowledged || !runOptions.readOnly)
           throw new PrimaryTaskSessionError(
@@ -560,6 +601,7 @@ export interface PrimarySessionContextBundle {
   repositoryHead: string;
   card: { title: string; description: string; current: true };
   plan: { status: "available" | "absent"; content?: string };
+  planReviewAdvice?: { status: "available"; content: string };
   attachmentManifest: { status: "available" | "absent"; content?: string };
   currentDiff: string;
   history: string;

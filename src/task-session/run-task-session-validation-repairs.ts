@@ -212,16 +212,13 @@ export async function runTaskSessionValidationWithRepairs(
   const plan = planStore.read(cardId);
 
   if (
-    plan === null ||
-    plan.plan.projectId !== project.id ||
-    plan.plan.cardId !== cardId ||
-    plan.verification?.verdict !== "pass"
-  ) {
+    plan !== null &&
+    (plan.plan.projectId !== project.id || plan.plan.cardId !== cardId)
+  )
     throw new TaskSessionValidationRepairError(
-      "Validation repair requires the persisted plan to have passed independent verification",
+      "Validation repair plan identity does not match the owned task",
       record.retryCounters.validation,
     );
-  }
 
   const cycleId = operationKey;
   let currentRecord = record;
@@ -516,7 +513,7 @@ export async function runTaskSessionValidationWithRepairs(
     const prompt = buildTaskSessionValidationRepairPrompt({
       projectId: project.id,
       card,
-      approvedPlan: plan.plan,
+      ...(plan === null ? {} : { approvedPlan: plan.plan }),
       validation: validationResult,
       coverage: coverageResult,
       attempt: attempts + 1,

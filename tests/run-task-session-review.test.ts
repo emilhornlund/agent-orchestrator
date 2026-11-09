@@ -154,7 +154,7 @@ function createFixture(options: { coverageCommand?: string } = {}) {
     planStore,
     git,
     executionIdentity,
-    createStoredPlan: async () => {
+    createStoredPlan: async (includePlan = true) => {
       const contentIdentity = await getTaskSessionSourceSnapshotIdentity(
         git,
         worktreePath,
@@ -186,15 +186,17 @@ function createFixture(options: { coverageCommand?: string } = {}) {
               }),
         },
       });
-      planStore.create(plan, 1);
-      planStore.storeVerification(card.id, 1, {
-        version: 1,
-        projectId,
-        cardId: card.id,
-        planRevision: 1,
-        verdict: "pass",
-        findings: [],
-      } satisfies PlanVerificationResult);
+      if (includePlan) {
+        planStore.create(plan, 1);
+        planStore.storeVerification(card.id, 1, {
+          version: 1,
+          projectId,
+          cardId: card.id,
+          planRevision: 1,
+          verdict: "pass",
+          findings: [],
+        } satisfies PlanVerificationResult);
+      }
       return contentIdentity;
     },
   };
@@ -365,7 +367,7 @@ describe("runTaskSessionReview", () => {
     expect(run?.sessionId).toBeUndefined();
     expect(run?.captureSessionId).toBeUndefined();
     expect(run?.prompt).toContain(card.desc);
-    expect(run?.prompt).toContain("Approved plan and acceptance criteria:");
+    expect(run?.prompt).toContain("Advisory plan and acceptance criteria:");
     expect(run?.prompt).toContain("staged changes");
     expect(run?.prompt).toContain("unstaged changes");
     expect(run?.prompt).toContain("new-test.ts");
@@ -405,6 +407,33 @@ describe("runTaskSessionReview", () => {
       true,
     );
     expect(fixture.git.getDiff).toHaveBeenCalledWith(fixture.worktreePath);
+  });
+
+  it("reviews against the original task when planning advice was unavailable", async () => {
+    const fixture = createFixture();
+    const contentIdentity = await fixture.createStoredPlan(false);
+    const runOpenCode = vi.fn<RunOpenCode>().mockResolvedValue({
+      exitCode: 0,
+      output: JSON.stringify({
+        ...passingReview(contentIdentity),
+        requirementAssessments: [],
+      }),
+      errorOutput: "",
+    });
+
+    const result = await runTaskSessionReview(
+      reviewOptions(
+        fixture,
+        new OpenCodeClient(runOpenCode),
+        successfulQualityEvidence(contentIdentity).validation,
+      ),
+    );
+
+    expect(result.review.verdict).toBe("pass");
+    expect(runOpenCode.mock.calls[0]?.[0].prompt).toContain(
+      "No usable plan is available",
+    );
+    expect(runOpenCode.mock.calls[0]?.[0].prompt).toContain(card.desc);
   });
 
   it("limits blocking findings to material defects and excludes out-of-scope preferences", async () => {

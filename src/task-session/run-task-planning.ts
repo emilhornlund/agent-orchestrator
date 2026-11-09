@@ -21,6 +21,7 @@ export class TaskPlanningOperationError extends Error {
   constructor(
     message: string,
     public readonly runResult?: OpenCodeRunResult,
+    public readonly advisoryFailure = false,
     options?: ErrorOptions,
   ) {
     super(message, options);
@@ -82,6 +83,7 @@ function parsePlanArtifact(
     throw new TaskPlanningOperationError(
       "OpenCode planning response was not a JSON plan artifact",
       undefined,
+      true,
       { cause: error },
     );
   }
@@ -127,6 +129,10 @@ export async function runTaskPlanningOperation(
       operationId:
         options.primaryOperation?.operationId ??
         `${taskRecordStore.read(card.id)?.operationKey ?? card.id}:planning`,
+      activity: options.primaryOperation?.activity ?? "planning",
+      ...(options.primaryOperation?.inspectPending === undefined
+        ? {}
+        : { inspectPending: options.primaryOperation.inspectPending }),
     },
   );
 
@@ -134,6 +140,7 @@ export async function runTaskPlanningOperation(
     throw new TaskPlanningOperationError(
       `OpenCode planning exited with code ${runResult.exitCode}`,
       runResult,
+      true,
     );
   }
 
@@ -146,6 +153,7 @@ export async function runTaskPlanningOperation(
         throw new TaskPlanningOperationError(
           `OpenCode clarification identity does not match ${projectId}/${card.id}`,
           runResult,
+          true,
         );
       throw new TaskClarificationRequiredError(result);
     }
@@ -155,6 +163,7 @@ export async function runTaskPlanningOperation(
     throw new TaskPlanningOperationError(
       "Could not parse and validate the OpenCode task plan",
       runResult,
+      true,
       { cause: error },
     );
   }
@@ -163,6 +172,7 @@ export async function runTaskPlanningOperation(
     throw new TaskPlanningOperationError(
       `OpenCode task plan identity does not match ${projectId}/${card.id}`,
       runResult,
+      true,
     );
   }
 
@@ -182,7 +192,11 @@ export async function runTaskPlanningOperation(
     );
   }
 
-  const storedPlan = planStore.create(plan, taskRecord.revision);
+  const storedPlan = planStore.create(
+    plan,
+    taskRecord.revision,
+    taskRecord.operationKey,
+  );
 
   return { plan, storedPlan, runResult };
 }

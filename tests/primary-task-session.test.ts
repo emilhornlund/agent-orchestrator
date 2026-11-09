@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProjectConfig } from "../src/config/config.js";
 import {
   OpenCodeClient,
+  OpenCodeTimeoutError,
   type OpenCodeRunOptions,
   type RunOpenCode,
 } from "../src/opencode/opencode-client.js";
@@ -141,6 +142,109 @@ function recoveryBaseline() {
 }
 
 describe("runWithPrimaryTaskSession", () => {
+  it("recovers a bound advisory timeout only after process evidence confirms it stopped", async () => {
+    const { store } = createFixture();
+    store.create(
+      createRecord("project-one", "card-one", {
+        primarySessionId: "ses_planning",
+        sessionCreationStatus: "bound",
+      }),
+    );
+    const run = vi
+      .fn<RunOpenCode>()
+      .mockRejectedValueOnce(
+        new OpenCodeTimeoutError(100, "exec-timeout", true),
+      )
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        output: "planning advice",
+        errorOutput: "",
+        sessionId: "ses_planning",
+      });
+    const inspectPending = vi.fn(async (entry) => ({
+      status: "stopped-after-dispatch" as const,
+      operationId: entry.id,
+      execution: entry.executions,
+      sessionId: entry.lastSessionId,
+    }));
+
+    const result = await runWithPrimaryTaskSession(
+      store,
+      new OpenCodeClient(run),
+      "project-one",
+      "card-one",
+      createRunOptions(),
+      {},
+      {
+        role: "advisory",
+        operationId: "initial-planning:planning",
+        activity: "planning",
+        inspectPending,
+      },
+    );
+
+    expect(result.output).toBe("planning advice");
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(inspectPending).toHaveBeenCalledOnce();
+    expect(store.read("card-one")?.primaryOperations).toMatchObject({
+      "initial-planning:planning": {
+        role: "advisory",
+        activity: "planning",
+        executions: 2,
+        status: "completed",
+      },
+    });
+  });
+
+  it("preserves ambiguous advisory timeout state and never retries on restart without stop proof", async () => {
+    const { store, project, root } = createFixture();
+    store.create(
+      createRecord("project-one", "card-one", {
+        primarySessionId: "ses_planning",
+        sessionCreationStatus: "bound",
+      }),
+    );
+    const run = vi
+      .fn<RunOpenCode>()
+      .mockRejectedValue(new OpenCodeTimeoutError(100, "exec-unknown", false));
+    const inspectPending = vi.fn(async () => ({ status: "unknown" as const }));
+    const execution = {
+      role: "advisory" as const,
+      operationId: "initial-planning:planning",
+      activity: "planning",
+      inspectPending,
+    };
+
+    await expect(
+      runWithPrimaryTaskSession(
+        store,
+        new OpenCodeClient(run),
+        "project-one",
+        "card-one",
+        createRunOptions(),
+        {},
+        execution,
+      ),
+    ).rejects.toThrow("waiting for authoritative reconciliation");
+    const restartedStore = new TaskExecutionStore(root, project);
+    await expect(
+      runWithPrimaryTaskSession(
+        restartedStore,
+        new OpenCodeClient(run),
+        "project-one",
+        "card-one",
+        createRunOptions(),
+        {},
+        execution,
+      ),
+    ).rejects.toThrow("waiting for authoritative reconciliation");
+
+    expect(run).toHaveBeenCalledOnce();
+    expect(restartedStore.read("card-one")?.primaryOperations).toMatchObject({
+      "initial-planning:planning": { status: "ambiguous", executions: 1 },
+    });
+  });
+
   it("waits on a classified original-session outage before reconstruction acknowledgement", async () => {
     const { store, project } = createFixture();
     const ackId = "attempt-one:reconstruction-ack:ses_replacement";

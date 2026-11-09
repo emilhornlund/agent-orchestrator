@@ -65,7 +65,7 @@ export const implementationReviewResultSchema = z
     projectId: stableId,
     cardId: stableId,
     verdict: z.enum(["pass", "fail"]),
-    requirementAssessments: z.array(requirementAssessmentSchema).min(1),
+    requirementAssessments: z.array(requirementAssessmentSchema),
     blockingFindings: z.array(blockingFindingSchema),
     previousFindingAssessments: z
       .array(previousFindingAssessmentSchema)
@@ -254,10 +254,10 @@ export function parseImplementationReviewResult(
 
   if (
     expectedIds.size !== expected.requirementIds.length ||
-    expectedIds.size === 0
+    (expectedIds.size === 0 && result.requirementAssessments.length > 0)
   ) {
     throw new Error(
-      "Expected implementation review requirements must be unique and nonempty",
+      "Implementation review assessments must match the available task requirements",
     );
   }
 

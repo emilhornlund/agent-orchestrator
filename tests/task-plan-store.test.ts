@@ -103,6 +103,26 @@ describe("TaskPlanStore", () => {
     expect(store.read("missing-card")).toBeNull();
   });
 
+  it("associates current plans with the owning task operation across record revisions", () => {
+    const { plan, store } = createFixture();
+    store.create(plan, 7, "task-operation-one");
+
+    expect(store.read(plan.cardId, 12, "task-operation-one")).toMatchObject({
+      taskRecordRevision: 7,
+      taskOperationKey: "task-operation-one",
+    });
+    expect(() => store.read(plan.cardId, 12, "task-operation-two")).toThrow(
+      "belongs to operation",
+    );
+
+    expect(
+      store.compareAndSwap(plan.cardId, 1, revisedPlan(plan), 13),
+    ).toMatchObject({
+      planRevision: 2,
+      taskOperationKey: "task-operation-one",
+    });
+  });
+
   it("updates plan revisions with compare-and-swap and rejects stale writes", () => {
     const { plan, store } = createFixture();
     store.create(plan, 7);

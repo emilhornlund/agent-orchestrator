@@ -10,6 +10,7 @@ import {
   OpenCodeRunAbortedError,
   type RunOpenCode,
 } from "../src/opencode/opencode-client.js";
+import { buildTaskSessionReviewRepairPrompt } from "../src/opencode/build-task-session-review-repair-prompt.js";
 import { runTaskSessionWorkflow } from "../src/orchestrator/run-task-session-workflow.js";
 import {
   CommandRunner,
@@ -71,6 +72,7 @@ describe("production workflow recovery of reserved review repairs", () => {
       false,
       false,
       false,
+      true,
     ],
     [
       "implementation after result persistence",
@@ -78,6 +80,7 @@ describe("production workflow recovery of reserved review repairs", () => {
       true,
       false,
       false,
+      true,
     ],
     [
       "validation before reservation clearance at last pass",
@@ -85,6 +88,7 @@ describe("production workflow recovery of reserved review repairs", () => {
       true,
       false,
       false,
+      true,
     ],
     [
       "later pass with its original durable prompt",
@@ -92,11 +96,27 @@ describe("production workflow recovery of reserved review repairs", () => {
       true,
       true,
       false,
+      true,
     ],
-    ["recovery with OpenCode defaults", "implementation", false, false, true],
+    [
+      "recovery with OpenCode defaults",
+      "implementation",
+      false,
+      false,
+      true,
+      true,
+    ],
+    [
+      "repair of unavailable-planning task without a persisted prompt",
+      "implementation",
+      false,
+      false,
+      false,
+      false,
+    ],
   ] as const)(
     "recovers %s before generic gates",
-    async (_name, phase, completed, twoPass, useDefaults) => {
+    async (_name, phase, completed, twoPass, useDefaults, includePlan) => {
       root = fs.mkdtempSync(path.join(os.tmpdir(), "review-repair-workflow-"));
       const project = projectConfig(root);
       if (useDefaults) project.opencode.remediation = { maxPasses: 1 };
@@ -115,7 +135,6 @@ describe("production workflow recovery of reserved review repairs", () => {
       };
       const operationKey = "task-operation";
       const operationId = `${operationKey}:review:${operationKey}:pass:1`;
-      const exactPrompt = "persisted review repair prompt, do not rebuild";
       const store = new TaskExecutionStore(project.contextRoot!, project);
       const identity = `sha256:${"a".repeat(64)}`;
       const failedReview = {
@@ -140,6 +159,15 @@ describe("production workflow recovery of reserved review repairs", () => {
         ],
         reviewedContentIdentity: identity,
       };
+      const exactPrompt = includePlan
+        ? "persisted review repair prompt, do not rebuild"
+        : buildTaskSessionReviewRepairPrompt({
+            projectId: project.id,
+            card,
+            review: failedReview,
+            attempt: 1,
+            maxAttempts: 1,
+          });
       const artifact = store.writePrimaryResultArtifact(
         `${operationId}:prompt`,
         {
@@ -157,6 +185,14 @@ describe("production workflow recovery of reserved review repairs", () => {
         sessionCreationStatus: "bound",
         expectedBranch: "agent/card",
         operationKey,
+        ...(includePlan
+          ? {}
+          : {
+              planningAdvice: {
+                status: "unavailable" as const,
+                diagnostic: "Planning advice was unavailable.",
+              },
+            }),
         ...(phase === "validation"
           ? {
               validationRepair: {
@@ -207,35 +243,37 @@ describe("production workflow recovery of reserved review repairs", () => {
         updatedAt,
       });
       const planStore = new TaskPlanStore(project.contextRoot!, project);
-      planStore.create(
-        {
+      if (includePlan) {
+        planStore.create(
+          {
+            version: 1,
+            projectId: project.id,
+            cardId: card.id,
+            requirements: [
+              { id: "REQ-1", text: "Feature", verification: "Test" },
+            ],
+            steps: [
+              {
+                id: "STEP-1",
+                description: "Implement feature",
+                requirementIds: ["REQ-1"],
+                verification: "Run tests",
+              },
+            ],
+            assumptions: [],
+            blockers: [],
+          },
+          1,
+        );
+        planStore.storeVerification(card.id, 1, {
           version: 1,
           projectId: project.id,
           cardId: card.id,
-          requirements: [
-            { id: "REQ-1", text: "Feature", verification: "Test" },
-          ],
-          steps: [
-            {
-              id: "STEP-1",
-              description: "Implement feature",
-              requirementIds: ["REQ-1"],
-              verification: "Run tests",
-            },
-          ],
-          assumptions: [],
-          blockers: [],
-        },
-        1,
-      );
-      planStore.storeVerification(card.id, 1, {
-        version: 1,
-        projectId: project.id,
-        cardId: card.id,
-        planRevision: 1,
-        verdict: "pass",
-        findings: [],
-      });
+          planRevision: 1,
+          verdict: "pass",
+          findings: [],
+        });
+      }
       const queue = new TaskMutationQueue(project.contextRoot!, project);
       queue.enqueue({
         projectId: project.id,
@@ -323,7 +361,13 @@ describe("production workflow recovery of reserved review repairs", () => {
           }
           throw new Error("stop after repair recovery, before publication");
         }
-        if (options.prompt === exactPrompt) {
+        if (
+          includePlan
+            ? options.prompt === exactPrompt
+            : options.prompt.startsWith(
+                "Address the independent implementation review findings",
+              ) && options.prompt.includes("No usable plan was available.")
+        ) {
           order.push("repair");
           primaryDispatches.push({
             prompt: options.prompt,
@@ -381,10 +425,17 @@ describe("production workflow recovery of reserved review repairs", () => {
         retryIntervalMs: 1_000,
       });
       if (twoPass) await initialWorkflow;
-      else
-        await expect(initialWorkflow).rejects.toThrow(
-          "Independent implementation review execution failed",
+      else {
+        const initialError = await initialWorkflow.catch(
+          (error: unknown) => error,
         );
+        expect(initialError).toBeInstanceOf(Error);
+        expect(initialError).toMatchObject({
+          message: expect.stringContaining(
+            "Independent implementation review execution failed",
+          ),
+        });
+      }
 
       if (twoPass) {
         const interrupted = store.read(card.id)!;
@@ -403,7 +454,7 @@ describe("production workflow recovery of reserved review repairs", () => {
             : { path: pending!.promptArtifact!.path }),
         }) as { prompt: string };
         expect(savedPrompt.prompt).toBe(secondPassDispatch?.prompt);
-        expect(savedPrompt.prompt).toContain("Approved plan:");
+        expect(savedPrompt.prompt).toContain("Advisory plan and task scope:");
         expect(savedPrompt.prompt).toContain(
           "Latest independent review result and blocking findings:",
         );
@@ -465,17 +516,27 @@ describe("production workflow recovery of reserved review repairs", () => {
         return;
       }
 
-      expect(primaryDispatches).toEqual(
-        completed
-          ? []
-          : [
-              {
-                prompt: exactPrompt,
-                sessionId: "primary-session",
-                ...(useDefaults ? {} : { model: "repair", variant: "high" }),
-              },
-            ],
-      );
+      expect(
+        primaryDispatches,
+        `expected optional-plan repair dispatch; task advice=${JSON.stringify(store.read(card.id)?.planningAdvice)}`,
+      ).toHaveLength(completed ? 0 : 1);
+      if (!completed) {
+        expect(primaryDispatches[0]).toMatchObject({
+          sessionId: "primary-session",
+          ...(useDefaults ? {} : { model: "repair", variant: "high" }),
+        });
+        if (includePlan) expect(primaryDispatches[0]?.prompt).toBe(exactPrompt);
+        else {
+          expect(primaryDispatches[0]?.prompt).toContain(
+            "No usable plan was available.",
+          );
+          expect(primaryDispatches[0]?.prompt).toContain(card.desc);
+        }
+      }
+      if (!includePlan) {
+        expect(exactPrompt).toContain("No usable plan was available.");
+        expect(exactPrompt).toContain("original task scope");
+      }
       expect(
         runOpenCode.mock.calls.some(([options]) =>
           options.prompt.includes("Implement the approved task plan"),

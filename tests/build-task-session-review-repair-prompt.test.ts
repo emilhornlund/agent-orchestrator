@@ -84,7 +84,7 @@ describe("buildTaskSessionReviewRepairPrompt", () => {
       "inspect the relevant implementation and existing tests",
     );
     expect(prompt).toContain("Address every blocking finding");
-    expect(prompt).toContain("only material unsatisfied approved requirements");
+    expect(prompt).toContain("material unsatisfied requested behavior");
     expect(prompt).toContain("Serious demonstrable defects may be addressed");
     expect(prompt).toContain(
       "Do not make changes solely for unrelated refactoring",
@@ -94,14 +94,30 @@ describe("buildTaskSessionReviewRepairPrompt", () => {
     expect(prompt).toContain("underlying defect");
     expect(prompt).toContain("smallest complete correction");
     expect(prompt).toContain("add or update regression tests when appropriate");
-    expect(prompt).toContain("original approved requirements remain satisfied");
-    expect(prompt).toContain("within the approved task scope");
+    expect(prompt).toContain("original task remains satisfied");
+    expect(prompt).toContain("within the task scope");
     expect(prompt).toContain("Do not make superficial changes");
     expect(prompt).toContain("silence a test");
     expect(prompt).toContain("existing repository/worktree context");
     expect(prompt).toContain("Do not start another AI session");
     expect(prompt).toContain("orchestrator-owned validation");
     expect(prompt).toContain("Do not run Git commands or invoke GitHub tools");
+  });
+
+  it("builds bounded repair guidance from the original task without a plan", () => {
+    const prompt = buildTaskSessionReviewRepairPrompt({
+      projectId: "project-1",
+      card,
+      review,
+      attempt: 1,
+      maxAttempts: 1,
+    });
+
+    expect(prompt).toContain("No usable plan was available");
+    expect(prompt).toContain(card.desc);
+    expect(prompt).toContain("original task scope");
+    expect(prompt).toContain("Latest independent review result");
+    expect(prompt).not.toContain("Approved plan:");
   });
 
   it("rejects plan and review artifacts from another task", () => {

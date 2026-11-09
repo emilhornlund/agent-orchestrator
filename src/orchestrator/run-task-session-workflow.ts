@@ -46,6 +46,11 @@ import {
   type PersistedSetupDisposition,
 } from "../process/setup-commit-scope.js";
 import { OPERATION_RECOVERY_MAX_EXECUTIONS } from "../task-session/operation-recovery-policy.js";
+import { PrimaryOperationExhaustedError } from "../task-session/primary-operation-ledger.js";
+import {
+  PrimaryOperationWaitingError,
+  type PrimaryOperationEntry,
+} from "../task-session/run-primary-operation.js";
 import { type TrelloCard, type TrelloClient } from "../trello/trello-client.js";
 import { NotificationPreparationError } from "../notifications/notification-outbox.js";
 import { hasVerifiedWorkflowMove } from "./reconcile-workflow-mutations.js";
@@ -55,9 +60,13 @@ import { buildTaskSessionCiRepairPrompt } from "../opencode/build-task-session-c
 import { inspectPrimaryOpenCodeSession } from "../opencode/inspect-primary-session.js";
 import {
   runTaskPlanningOperation,
+  TaskPlanningOperationError,
   TaskClarificationRequiredError,
 } from "../task-session/run-task-planning.js";
-import { runPlanVerification } from "../task-session/run-plan-verification.js";
+import {
+  runPlanVerification,
+  PlanVerificationOperationError,
+} from "../task-session/run-plan-verification.js";
 import {
   runTaskSessionImplementation,
   TaskSessionImplementationWaitingError,
@@ -312,6 +321,18 @@ function updateRecord(
     revision: record.revision + 1,
     updatedAt: timestamp(record),
   });
+}
+
+export function isPlanningOutageSafeToSkip(
+  operation: PrimaryOperationEntry | undefined,
+): boolean {
+  return (
+    operation?.status === "failed" &&
+    operation.retrySafe === true &&
+    operation.accountedExecution === operation.executions &&
+    operation.lastExecutionClassification === "dependency-outage" &&
+    (operation.dependencyOutages ?? 0) >= OPERATION_RECOVERY_MAX_EXECUTIONS
+  );
 }
 
 function event(
@@ -1127,7 +1148,11 @@ export async function runTaskSessionWorkflow(
     sourceRecord: TaskExecutionRecord,
     sourceWorktree: string,
   ): Promise<TaskExecutionRecord | null> => {
-    const storedPlan = planStore.read(sourceCard.id);
+    const storedPlan = planStore.read(
+      sourceCard.id,
+      undefined,
+      sourceRecord.operationKey,
+    );
     const expectedBranch = sourceRecord.expectedBranch;
     const persistRecoveryBlock = (
       reason: string,
@@ -1285,6 +1310,10 @@ export async function runTaskSessionWorkflow(
       worktreePath: sourceWorktree,
       record: sourceRecord,
       plan: storedPlan?.plan ?? null,
+      ...(storedPlan === null ? {} : { planRevision: storedPlan.planRevision }),
+      ...(storedPlan?.verification === undefined
+        ? {}
+        : { planReviewAdvice: storedPlan.verification }),
       ...(feedbackLedgerStore.read(sourceCard.id) === null
         ? {}
         : {
@@ -2106,9 +2135,6 @@ export async function runTaskSessionWorkflow(
         const expectedBranch = `agent/${card.id}`;
         const operationKey = record.operationKey;
         const plan = planStore.read(card.id);
-        if (plan === null || plan.verification?.verdict !== "pass") {
-          throw new Error("CI repair requires the independently verified plan");
-        }
         const validationOptions = {
           project,
           cardId: card.id,
@@ -2199,7 +2225,7 @@ export async function runTaskSessionWorkflow(
               buildTaskSessionReviewRepairPrompt({
                 projectId: project.id,
                 card,
-                approvedPlan: plan.plan,
+                ...(plan === null ? {} : { approvedPlan: plan.plan }),
                 review,
                 attempt,
                 maxAttempts: project.opencode.remediation.maxPasses,
@@ -2284,7 +2310,7 @@ export async function runTaskSessionWorkflow(
               buildTaskSessionReviewRepairPrompt({
                 projectId: project.id,
                 card,
-                approvedPlan: plan.plan,
+                ...(plan === null ? {} : { approvedPlan: plan.plan }),
                 review,
                 attempt,
                 maxAttempts: project.opencode.remediation.maxPasses,
@@ -2445,7 +2471,7 @@ export async function runTaskSessionWorkflow(
               prompt = buildTaskSessionCiRepairPrompt({
                 projectId: project.id,
                 card: currentCard,
-                approvedPlan: plan.plan,
+                ...(plan === null ? {} : { approvedPlan: plan.plan }),
                 headSha: failedHeadSha,
                 attempt,
                 maxAttempts: 2,
@@ -4413,7 +4439,10 @@ export async function runTaskSessionWorkflow(
     if (taskRecord === null)
       throw new Error("Task record disappeared before task-session execution");
     if (taskRecord.phase === "planning") {
-      if (planStore.read(activeCard.id) === null) {
+      if (
+        planStore.read(activeCard.id) === null &&
+        taskRecord.planningAdvice === undefined
+      ) {
         cardLog.event("Planning started");
         try {
           await runTaskPlanningOperation({
@@ -4423,6 +4452,26 @@ export async function runTaskSessionWorkflow(
             projectId: project.id,
             card: activeCard,
             ...(attachmentContext === undefined ? {} : { attachmentContext }),
+            primaryOperation: {
+              operationId: `${operationKey}:planning`,
+              activity: "planning",
+              trustedRoot:
+                ProjectRunAuthority.current(project.id)?.store.storageRoot ??
+                getProcessRuntime().artifactRoot,
+              cwd: worktreePath,
+              inspectPending: (entry) =>
+                inspectPrimaryOperationEvidence(
+                  taskStore,
+                  activeCard.id,
+                  entry.id,
+                  {
+                    trustedRoot:
+                      ProjectRunAuthority.current(project.id)?.store
+                        .storageRoot ?? getProcessRuntime().artifactRoot,
+                    cwd: worktreePath,
+                  },
+                ),
+            },
             runOptions: {
               timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
               signal,
@@ -4433,129 +4482,230 @@ export async function runTaskSessionWorkflow(
             },
           });
         } catch (error) {
-          if (!(error instanceof TaskClarificationRequiredError)) throw error;
-          if (mutation === null || !queue.ownsActive(mutation.eventId))
-            throw new Error(
-              "Clarification result has no current task ownership",
+          const failedPlanningOperation =
+            error instanceof PrimaryOperationWaitingError
+              ? taskStore.read(activeCard.id)?.primaryOperations?.[
+                  error.operationId
+                ]
+              : undefined;
+          const exhaustedPlanningOutage =
+            error instanceof PrimaryOperationWaitingError &&
+            isPlanningOutageSafeToSkip(failedPlanningOperation);
+          if (
+            (error instanceof TaskPlanningOperationError &&
+              error.advisoryFailure) ||
+            error instanceof PrimaryOperationExhaustedError ||
+            exhaustedPlanningOutage
+          ) {
+            const current = taskStore.read(activeCard.id);
+            if (
+              current === null ||
+              current.operationKey !== operationKey ||
+              current.phase !== "planning"
+            )
+              throw error;
+            taskRecord = updateRecord(taskStore, current, {
+              planningAdvice: {
+                status:
+                  !(error instanceof TaskPlanningOperationError) ||
+                  error.runResult === undefined ||
+                  error.runResult.exitCode !== 0
+                    ? "unavailable"
+                    : "invalid",
+                diagnostic: error.message.slice(0, 2_000),
+              },
+            });
+            cardLog.event(
+              "Planning advice unavailable; continuing with task context",
+            );
+          } else if (!(error instanceof TaskClarificationRequiredError))
+            throw error;
+          if (error instanceof TaskClarificationRequiredError) {
+            if (mutation === null || !queue.ownsActive(mutation.eventId))
+              throw new Error(
+                "Clarification result has no current task ownership",
+                {
+                  cause: error,
+                },
+              );
+            const current = taskStore.read(activeCard.id);
+            if (
+              current === null ||
+              current.operationKey !== operationKey ||
+              current.phase !== "planning" ||
+              current.pullRequest !== undefined ||
+              current.externalRecovery !== undefined
+            )
+              throw new Error(
+                "Clarification outcome does not match an unpublished owned planning task",
+                { cause: error },
+              );
+            const observedPullRequest = await github.findPullRequestState({
+              cwd: project.repository.path,
+              repository: project.repository.github,
+              headBranch: worktree.branch,
+              baseBranch: project.repository.defaultBranch,
+              project,
+            });
+            if (observedPullRequest !== null) {
+              queue.releaseForRecovery(mutation.eventId);
+              return;
+            }
+            const currentCard = await trello.getCard(activeCard.id);
+            if (
+              currentCard.id !== activeCard.id ||
+              currentCard.idList !== project.trello.workingListId
+            ) {
+              queue.releaseForRecovery(mutation.eventId);
+              return;
+            }
+            const clarification = error.clarification;
+            const reason = `${clarification.reason}\n\nQuestions:\n${clarification.questions.map((question) => `- ${question}`).join("\n")}`;
+            const artifact = taskStore.writePrimaryResultArtifact(
+              `${activeCard.id}-clarification`,
               {
-                cause: error,
+                version: 1,
+                decision: clarification,
+                task: {
+                  projectId: project.id,
+                  cardId: activeCard.id,
+                  operationKey,
+                  title: currentCard.name,
+                  description: currentCard.desc,
+                  listId: currentCard.idList,
+                  labels: currentCard.idLabels,
+                },
+                attachmentContext:
+                  attachmentContext === undefined
+                    ? null
+                    : {
+                        projectId: attachmentContext.projectId,
+                        cardId: attachmentContext.cardId,
+                        manifest: attachmentContext.manifest,
+                      },
               },
             );
+            const terminal = transitionTaskExecutionRecord(current, {
+              type: "attention-required",
+              eventId: `${operationKey}:clarification-required`,
+              projectId: project.id,
+              cardId: activeCard.id,
+              operationKey,
+              occurredAt: timestamp(current),
+            });
+            taskStore.compareAndSwap(activeCard.id, current.revision, {
+              ...terminal,
+              terminalFailure: {
+                kind: "clarification",
+                reason: reason.slice(0, 4_000),
+                clarificationArtifact: artifact.reference,
+                outcome: "pending",
+              },
+            });
+            cardLog.event("Essential task clarification durably recorded");
+            // The existing terminal-failure reconciler performs the verified
+            // Failed move and journaled comment on this or the next poll.
+            if (mutation && queue.ownsActive(mutation.eventId))
+              queue.releaseForRecovery(mutation.eventId);
+            return;
+          }
+        }
+        if (planStore.read(activeCard.id) !== null)
+          cardLog.event("Planning completed");
+      }
+      const savedPlan = planStore.read(activeCard.id, undefined, operationKey);
+      if (
+        savedPlan !== null &&
+        savedPlan.verification === undefined &&
+        taskStore.read(activeCard.id)?.planReviewAdvice === undefined
+      ) {
+        cardLog.event("Independent plan verification started");
+        try {
+          const verification = await runPlanVerification({
+            taskRecordStore: taskStore,
+            planStore,
+            openCode,
+            projectId: project.id,
+            card: activeCard,
+            ...(attachmentContext === undefined ? {} : { attachmentContext }),
+            runOptions: {
+              cwd: worktreePath,
+              ...project.opencode.planReview,
+              timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
+              signal,
+              readOnly: true,
+            },
+          });
+          const current = taskStore.read(activeCard.id);
+          if (
+            current !== null &&
+            current.operationKey === operationKey &&
+            current.phase === "planning"
+          ) {
+            updateRecord(taskStore, current, {
+              planReviewAdvice: {
+                status: "completed",
+                diagnostic: `Plan review returned ${verification.verification.verdict}`,
+                planRevision: savedPlan.planRevision,
+                taskRecordRevision: savedPlan.taskRecordRevision,
+                operationKey,
+              },
+            });
+          }
+          cardLog.event("Independent plan feedback recorded; continuing");
+        } catch (error) {
+          if (
+            !(error instanceof PlanVerificationOperationError) ||
+            !error.advisoryFailure
+          )
+            throw error;
           const current = taskStore.read(activeCard.id);
           if (
             current === null ||
             current.operationKey !== operationKey ||
-            current.phase !== "planning" ||
-            current.pullRequest !== undefined ||
-            current.externalRecovery !== undefined
+            current.phase !== "planning"
           )
-            throw new Error(
-              "Clarification outcome does not match an unpublished owned planning task",
-              { cause: error },
-            );
-          const observedPullRequest = await github.findPullRequestState({
-            cwd: project.repository.path,
-            repository: project.repository.github,
-            headBranch: worktree.branch,
-            baseBranch: project.repository.defaultBranch,
-            project,
-          });
-          if (observedPullRequest !== null) {
-            queue.releaseForRecovery(mutation.eventId);
-            return;
-          }
-          const currentCard = await trello.getCard(activeCard.id);
-          if (
-            currentCard.id !== activeCard.id ||
-            currentCard.idList !== project.trello.workingListId
-          ) {
-            queue.releaseForRecovery(mutation.eventId);
-            return;
-          }
-          const clarification = error.clarification;
-          const reason = `${clarification.reason}\n\nQuestions:\n${clarification.questions.map((question) => `- ${question}`).join("\n")}`;
-          const artifact = taskStore.writePrimaryResultArtifact(
-            `${activeCard.id}-clarification`,
-            {
-              version: 1,
-              decision: clarification,
-              task: {
-                projectId: project.id,
-                cardId: activeCard.id,
-                operationKey,
-                title: currentCard.name,
-                description: currentCard.desc,
-                listId: currentCard.idList,
-                labels: currentCard.idLabels,
-              },
-              attachmentContext:
-                attachmentContext === undefined
-                  ? null
-                  : {
-                      projectId: attachmentContext.projectId,
-                      cardId: attachmentContext.cardId,
-                      manifest: attachmentContext.manifest,
-                    },
-            },
-          );
-          const terminal = transitionTaskExecutionRecord(current, {
-            type: "attention-required",
-            eventId: `${operationKey}:clarification-required`,
-            projectId: project.id,
-            cardId: activeCard.id,
-            operationKey,
-            occurredAt: timestamp(current),
-          });
-          taskStore.compareAndSwap(activeCard.id, current.revision, {
-            ...terminal,
-            terminalFailure: {
-              kind: "clarification",
-              reason: reason.slice(0, 4_000),
-              clarificationArtifact: artifact.reference,
-              outcome: "pending",
+            throw error;
+          updateRecord(taskStore, current, {
+            planReviewAdvice: {
+              status:
+                error.runResult === undefined || error.runResult.exitCode !== 0
+                  ? "unavailable"
+                  : "invalid",
+              diagnostic: error.message.slice(0, 2_000),
+              planRevision: savedPlan.planRevision,
+              taskRecordRevision: savedPlan.taskRecordRevision,
+              operationKey,
             },
           });
-          cardLog.event("Essential task clarification durably recorded");
-          // The existing terminal-failure reconciler performs the verified
-          // Failed move and journaled comment on this or the next poll.
-          if (mutation && queue.ownsActive(mutation.eventId))
-            queue.releaseForRecovery(mutation.eventId);
-          return;
+          cardLog.event("Independent plan review unavailable; continuing");
         }
-        cardLog.event("Planning completed");
       }
-      const savedPlan = planStore.read(activeCard.id);
-      if (savedPlan === null)
-        throw new Error("Task planning completed without a persisted plan");
-      if (savedPlan.verification?.verdict !== "pass") {
-        cardLog.event("Independent plan verification started");
-        const verification = await runPlanVerification({
-          taskRecordStore: taskStore,
-          planStore,
-          openCode,
-          projectId: project.id,
-          card: activeCard,
-          ...(attachmentContext === undefined ? {} : { attachmentContext }),
-          runOptions: {
-            cwd: worktreePath,
-            ...project.opencode.planReview,
-            timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
-            signal,
-            readOnly: true,
+      if (
+        savedPlan?.verification !== undefined &&
+        taskStore.read(activeCard.id)?.planReviewAdvice === undefined
+      ) {
+        const current = taskStore.read(activeCard.id);
+        if (
+          current === null ||
+          current.operationKey !== operationKey ||
+          current.phase !== "planning" ||
+          (savedPlan.taskOperationKey === undefined &&
+            savedPlan.taskRecordRevision !== current.revision)
+        )
+          throw new Error(
+            "Persisted plan review cannot be associated safely with the current task operation",
+          );
+        updateRecord(taskStore, current, {
+          planReviewAdvice: {
+            status: "completed",
+            diagnostic: `Persisted plan review returned ${savedPlan.verification.verdict}`,
+            planRevision: savedPlan.planRevision,
+            taskRecordRevision: savedPlan.taskRecordRevision,
+            operationKey,
           },
         });
-        if (verification.verification.verdict !== "pass") {
-          cardLog.event("Independent plan verification failed");
-          throw new Error("Independent plan verification did not pass");
-        }
-        cardLog.event("Independent plan verification passed");
       }
-    } else {
-      const savedPlan = planStore.read(activeCard.id);
-      if (savedPlan?.verification?.verdict !== "pass")
-        throw new Error(
-          "Persisted task phase has no independently verified plan",
-        );
     }
     taskRecord = taskStore.read(activeCard.id);
     if (taskRecord === null)
@@ -4663,16 +4813,12 @@ export async function runTaskSessionWorkflow(
           );
         }
         const plan = planStore.read(activeCard.id);
-        if (plan === null)
-          throw new Error(
-            "Approved plan disappeared during review repair recovery",
-          );
         const prompt =
           persistedPrompt ??
           buildTaskSessionReviewRepairPrompt({
             projectId: project.id,
             card: activeCard,
-            approvedPlan: plan.plan,
+            ...(plan === null ? {} : { approvedPlan: plan.plan }),
             review,
             attempt,
             maxAttempts: project.opencode.remediation.maxPasses,
@@ -4747,13 +4893,13 @@ export async function runTaskSessionWorkflow(
           runReview: runReservedReview,
           repair: runReservedRepair,
           buildRepairPrompt: (review, attempt) => {
-            const approvedPlan = planStore.read(activeCard.id);
-            if (approvedPlan === null)
-              throw new Error("Approved plan disappeared during review repair");
+            const advisoryPlan = planStore.read(activeCard.id);
             return buildTaskSessionReviewRepairPrompt({
               projectId: project.id,
               card: activeCard,
-              approvedPlan: approvedPlan.plan,
+              ...(advisoryPlan === null
+                ? {}
+                : { approvedPlan: advisoryPlan.plan }),
               review,
               attempt,
               maxAttempts: project.opencode.remediation.maxPasses,
@@ -5380,13 +5526,13 @@ export async function runTaskSessionWorkflow(
           expectedPrimarySessionId: expectedSession,
           runReview,
           buildRepairPrompt: (review, attempt) => {
-            const approvedPlan = planStore.read(activeCard.id);
-            if (approvedPlan === null)
-              throw new Error("Approved plan disappeared during review repair");
+            const advisoryPlan = planStore.read(activeCard.id);
             return buildTaskSessionReviewRepairPrompt({
               projectId: project.id,
               card: activeCard,
-              approvedPlan: approvedPlan.plan,
+              ...(advisoryPlan === null
+                ? {}
+                : { approvedPlan: advisoryPlan.plan }),
               review,
               attempt,
               maxAttempts: project.opencode.remediation.maxPasses,
@@ -5406,16 +5552,12 @@ export async function runTaskSessionWorkflow(
             );
             taskStore.compareAndSwap(activeCard.id, current.revision, failed);
             const plan = planStore.read(activeCard.id);
-            if (plan === null)
-              throw new Error(
-                "Approved plan disappeared during review remediation",
-              );
             const prompt =
               persistedPrompt ??
               buildTaskSessionReviewRepairPrompt({
                 projectId: project.id,
                 card: activeCard,
-                approvedPlan: plan.plan,
+                ...(plan === null ? {} : { approvedPlan: plan.plan }),
                 review,
                 attempt,
                 maxAttempts: project.opencode.remediation.maxPasses,

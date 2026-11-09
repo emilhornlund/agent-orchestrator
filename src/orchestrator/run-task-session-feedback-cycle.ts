@@ -261,10 +261,6 @@ export async function runTaskSessionFeedbackCycle(
       "Feedback review checkpoint is not eligible for exhausted-review recovery",
     );
   const storedPlan = planStore.read(card.id);
-  if (storedPlan === null || storedPlan.verification?.verdict !== "pass")
-    throw new Error(
-      "Feedback remediation requires an independently verified plan",
-    );
   const ledgerBeforeSync = ledgerStore.read(card.id);
   const checksReady = observation.ciEvaluation.status === "passed";
   if (
@@ -781,7 +777,7 @@ export async function runTaskSessionFeedbackCycle(
           buildTaskSessionReviewRepairPrompt({
             projectId: project.id,
             card,
-            approvedPlan: storedPlan.plan,
+            ...(storedPlan === null ? {} : { approvedPlan: storedPlan.plan }),
             review,
             attempt,
             maxAttempts: project.opencode.remediation.maxPasses,
@@ -844,7 +840,7 @@ export async function runTaskSessionFeedbackCycle(
             buildTaskSessionReviewRepairPrompt({
               projectId: project.id,
               card,
-              approvedPlan: storedPlan.plan,
+              ...(storedPlan === null ? {} : { approvedPlan: storedPlan.plan }),
               review,
               attempt,
               maxAttempts: project.opencode.remediation.maxPasses,
@@ -1007,7 +1003,7 @@ export async function runTaskSessionFeedbackCycle(
       expectedBranch: record.expectedBranch!,
       expectedHeadSha: observation.headSha,
       worktreePath,
-      approvedPlan: storedPlan.plan,
+      ...(storedPlan === null ? {} : { approvedPlan: storedPlan.plan }),
       actionableFeedback,
       qualityEvidence,
       git,
@@ -1106,7 +1102,9 @@ export async function runTaskSessionFeedbackCycle(
       claimHumanReviewNotification: (commitSha) =>
         taskStore.claimHumanReviewNotification(card.id, commitSha),
       verifiedDescriptionFacts: () => [
-        `Approved implementation plan: ${JSON.stringify(storedPlan.plan)}`,
+        storedPlan === null
+          ? "No usable implementation plan was available; the original task remains the scope."
+          : `Advisory implementation plan: ${JSON.stringify(storedPlan.plan)}`,
         `Verified validation result: ${JSON.stringify(preparedEvidence.validation)}`,
         ...(preparedEvidence.coverage === null
           ? []
@@ -1220,7 +1218,7 @@ export async function runTaskSessionFeedbackCycle(
             expectedBranch: record.expectedBranch!,
             expectedHeadSha: preparedHeadSha,
             worktreePath,
-            approvedPlan: storedPlan.plan,
+            ...(storedPlan === null ? {} : { approvedPlan: storedPlan.plan }),
             actionableFeedback,
             qualityEvidence: latestQuality,
             git,

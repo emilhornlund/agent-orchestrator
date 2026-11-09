@@ -65,7 +65,9 @@ const plan: TaskPlan = {
   blockers: [],
 };
 
-function createFixture(options: { includePlan?: boolean } = {}) {
+function createFixture(
+  options: { includePlan?: boolean; legacyPlan?: boolean } = {},
+) {
   temporaryRoot = fs.mkdtempSync(
     path.join(os.tmpdir(), "agent-orchestrator-implementation-runner-"),
   );
@@ -111,7 +113,11 @@ function createFixture(options: { includePlan?: boolean } = {}) {
   });
 
   if (options.includePlan !== false) {
-    planStore.create(plan, 1);
+    planStore.create(
+      plan,
+      1,
+      options.legacyPlan === true ? undefined : operationKey,
+    );
     planStore.storeVerification(card.id, 1, {
       version: 1,
       projectId,
@@ -230,7 +236,7 @@ describe("runTaskSessionImplementation", () => {
       fixture.runOpenCode.mock.calls[0]?.[0].captureSessionId,
     ).toBeUndefined();
     expect(fixture.runOpenCode.mock.calls[0]?.[0].prompt).toContain(
-      "Approved plan:",
+      "Task plan (advisory; may be absent):",
     );
     expect(fixture.runOpenCode.mock.calls[0]?.[0].prompt).toContain(card.desc);
     expect(fixture.runOpenCode.mock.calls[0]?.[0].prompt).toContain(
@@ -247,18 +253,20 @@ describe("runTaskSessionImplementation", () => {
     );
   });
 
-  it("refuses missing or unverified plans before invoking the agent", async () => {
+  it("continues from the original task when planning advice is missing or rejected", async () => {
     const missingPlanFixture = createFixture({ includePlan: false });
 
-    await expect(runImplementation(missingPlanFixture)).rejects.toThrow(
-      "requires a persisted plan",
+    await runImplementation(missingPlanFixture);
+    expect(missingPlanFixture.runOpenCode).toHaveBeenCalledOnce();
+    expect(missingPlanFixture.runOpenCode.mock.calls[0]?.[0].prompt).toContain(
+      "No usable plan was available.",
     );
-    expect(missingPlanFixture.runOpenCode).not.toHaveBeenCalled();
     expect(missingPlanFixture.taskRecordStore.read(card.id)?.phase).toBe(
-      "planning",
+      "validation",
     );
 
     const unverifiedFixture = createFixture();
+    const reviewFinding = "The plan omitted the required export format choice.";
     unverifiedFixture.planStore.storeVerification(card.id, 1, {
       version: 1,
       projectId,
@@ -269,22 +277,93 @@ describe("runTaskSessionImplementation", () => {
         {
           kind: "missing-requirement",
           requirementId: "REQ-1",
-          detail: "The requirement needs clarification.",
+          detail: reviewFinding,
         },
       ],
     });
 
-    await expect(runImplementation(unverifiedFixture)).rejects.toThrow(
-      "requires passing independent plan verification",
+    await runImplementation(unverifiedFixture);
+    expect(unverifiedFixture.runOpenCode).toHaveBeenCalledOnce();
+    expect(unverifiedFixture.runOpenCode.mock.calls[0]?.[0].prompt).toContain(
+      "Independent plan-review recommendations (advisory only; no approval is required):",
     );
-    expect(unverifiedFixture.runOpenCode).not.toHaveBeenCalled();
+    expect(unverifiedFixture.runOpenCode.mock.calls[0]?.[0].prompt).toContain(
+      reviewFinding,
+    );
+    expect(unverifiedFixture.runOpenCode.mock.calls[0]?.[0].prompt).toContain(
+      "They are not approval requirements",
+    );
     expect(unverifiedFixture.taskRecordStore.read(card.id)?.phase).toBe(
-      "planning",
+      "validation",
     );
   });
 
-  it("refuses a plan associated with an earlier task-record revision", async () => {
+  it("continues after a durably recorded plan-review failure without invalidating its plan", async () => {
     const fixture = createFixture();
+    const record = fixture.taskRecordStore.read(card.id);
+    if (record === null) throw new Error("Expected task execution record");
+    fixture.taskRecordStore.compareAndSwap(card.id, record.revision, {
+      ...record,
+      planReviewAdvice: {
+        status: "completed",
+        diagnostic: "Plan review returned fail",
+        planRevision: 1,
+        taskRecordRevision: 1,
+        operationKey,
+      },
+      revision: record.revision + 1,
+      updatedAt: "2026-10-24T09:01:00.000Z",
+    });
+
+    await runImplementation(fixture);
+
+    expect(fixture.runOpenCode).toHaveBeenCalledOnce();
+    expect(fixture.taskRecordStore.read(card.id)?.phase).toBe("validation");
+  });
+
+  it("resumes the same planned task after an intervening recovery wait", async () => {
+    const fixture = createFixture({ legacyPlan: true });
+    const record = fixture.taskRecordStore.read(card.id);
+    if (record === null) throw new Error("Expected task execution record");
+    fixture.taskRecordStore.compareAndSwap(card.id, record.revision, {
+      ...record,
+      planReviewAdvice: {
+        status: "completed",
+        diagnostic: "Plan review returned fail",
+        planRevision: 1,
+        taskRecordRevision: 1,
+        operationKey,
+      },
+      recoveryWait: {
+        kind: "dependency",
+        reason: "temporary-context-outage",
+        resumePhase: "planning",
+        since: "2026-10-24T09:01:00.000Z",
+        retryAt: "2026-10-24T09:02:00.000Z",
+        attempts: 1,
+        notificationId: "planning-context-wait",
+      },
+      revision: record.revision + 1,
+      updatedAt: "2026-10-24T09:01:00.000Z",
+    });
+    const savedReview = fixture.planStore.read(card.id)?.verification;
+
+    await runImplementation(fixture);
+
+    expect(fixture.taskRecordStore.read(card.id)?.phase).toBe("validation");
+    expect(
+      fixture.taskRecordStore.read(card.id)?.planReviewAdvice,
+    ).toMatchObject({
+      planRevision: 1,
+      taskRecordRevision: 1,
+      operationKey,
+    });
+    expect(fixture.planStore.read(card.id)?.verification).toEqual(savedReview);
+    expect(fixture.runOpenCode).toHaveBeenCalledOnce();
+  });
+
+  it("refuses a plan associated with an earlier task-record revision", async () => {
+    const fixture = createFixture({ legacyPlan: true });
     const current = fixture.taskRecordStore.read(card.id);
 
     if (current === null) {

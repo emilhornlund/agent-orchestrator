@@ -17,6 +17,7 @@ const storedTaskPlanEnvelopeSchema = z.strictObject({
   version: z.literal(1),
   planRevision: z.number().int().positive().safe(),
   taskRecordRevision: z.number().int().positive().safe(),
+  taskOperationKey: z.string().min(1).optional(),
   plan: z.unknown(),
   verification: z.unknown().optional(),
 });
@@ -25,6 +26,7 @@ export interface StoredTaskPlan {
   version: 1;
   planRevision: number;
   taskRecordRevision: number;
+  taskOperationKey?: string;
   plan: TaskPlan;
   verification?: PlanVerificationResult;
 }
@@ -166,6 +168,9 @@ export function parseStoredTaskPlan(value: unknown): StoredTaskPlan {
     version: envelope.version,
     planRevision: envelope.planRevision,
     taskRecordRevision: envelope.taskRecordRevision,
+    ...(envelope.taskOperationKey === undefined
+      ? {}
+      : { taskOperationKey: envelope.taskOperationKey }),
     plan,
     ...(verification === undefined ? {} : { verification }),
   };
@@ -247,6 +252,7 @@ export class TaskPlanStore {
   read(
     cardId: string,
     expectedTaskRecordRevision?: number,
+    expectedTaskOperationKey?: string,
   ): StoredTaskPlan | null {
     if (this.authority !== undefined) {
       const stored = this.authority.read(
@@ -263,7 +269,18 @@ export class TaskPlanStore {
         );
       if (
         stored &&
+        expectedTaskOperationKey !== undefined &&
+        stored.taskOperationKey !== undefined &&
+        stored.taskOperationKey !== expectedTaskOperationKey
+      )
+        throw new TaskPlanConflictError(
+          "Projected task plan belongs to a different task operation",
+        );
+      if (
+        stored &&
         expectedTaskRecordRevision !== undefined &&
+        (expectedTaskOperationKey === undefined ||
+          stored.taskOperationKey === undefined) &&
         stored.taskRecordRevision !== expectedTaskRecordRevision
       )
         throw new TaskPlanConflictError(
@@ -281,7 +298,20 @@ export class TaskPlanStore {
 
     if (
       stored !== null &&
+      expectedTaskOperationKey !== undefined &&
+      stored.taskOperationKey !== undefined &&
+      stored.taskOperationKey !== expectedTaskOperationKey
+    ) {
+      throw new TaskPlanConflictError(
+        `Task plan belongs to operation ${stored.taskOperationKey}, not ${expectedTaskOperationKey}`,
+      );
+    }
+
+    if (
+      stored !== null &&
       expectedTaskRecordRevision !== undefined &&
+      (expectedTaskOperationKey === undefined ||
+        stored.taskOperationKey === undefined) &&
       stored.taskRecordRevision !== expectedTaskRecordRevision
     ) {
       throw new TaskPlanConflictError(
@@ -292,7 +322,11 @@ export class TaskPlanStore {
     return stored;
   }
 
-  create(planInput: TaskPlan, taskRecordRevision: number): StoredTaskPlan {
+  create(
+    planInput: TaskPlan,
+    taskRecordRevision: number,
+    taskOperationKey?: string,
+  ): StoredTaskPlan {
     const plan = parseTaskPlan(planInput);
     this.assertPlanOwner(plan);
     this.assertTaskRecordRevision(taskRecordRevision);
@@ -301,6 +335,7 @@ export class TaskPlanStore {
       version: 1,
       planRevision: 1,
       taskRecordRevision,
+      ...(taskOperationKey === undefined ? {} : { taskOperationKey }),
       plan,
     };
     if (this.authority !== undefined)
@@ -384,6 +419,9 @@ export class TaskPlanStore {
             version: 1,
             planRevision: expectedPlanRevision + 1,
             taskRecordRevision,
+            ...(current.taskOperationKey === undefined
+              ? {}
+              : { taskOperationKey: current.taskOperationKey }),
             plan,
           };
           return { value: updated, result: updated };
@@ -410,6 +448,9 @@ export class TaskPlanStore {
         version: 1,
         planRevision: expectedPlanRevision + 1,
         taskRecordRevision,
+        ...(current.taskOperationKey === undefined
+          ? {}
+          : { taskOperationKey: current.taskOperationKey }),
         plan,
       };
       const temporaryPath = this.writeTemporaryPlan(filePath, updated);

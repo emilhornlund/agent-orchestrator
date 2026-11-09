@@ -26,7 +26,7 @@ export interface RunTaskSessionFeedbackVerificationOptions {
   expectedBranch: string;
   expectedHeadSha: string;
   worktreePath: string;
-  approvedPlan: TaskPlan;
+  approvedPlan?: TaskPlan;
   actionableFeedback: readonly FeedbackLedgerEntry[];
   qualityEvidence: VerifiedPublicationDecisionInput;
   git: Pick<
@@ -56,8 +56,9 @@ export async function runTaskSessionFeedbackVerification(
   options: RunTaskSessionFeedbackVerificationOptions,
 ): Promise<FeedbackVerificationResult> {
   if (
-    options.approvedPlan.projectId !== options.project.id ||
-    options.approvedPlan.cardId !== options.card.id
+    options.approvedPlan !== undefined &&
+    (options.approvedPlan.projectId !== options.project.id ||
+      options.approvedPlan.cardId !== options.card.id)
   ) {
     throw new TaskSessionFeedbackVerificationError(
       "Feedback verification plan does not match task ownership",
@@ -102,7 +103,9 @@ export async function runTaskSessionFeedbackVerification(
   const prompt = buildTaskSessionFeedbackVerificationPrompt({
     projectId: options.project.id,
     card: options.card,
-    approvedPlan: options.approvedPlan,
+    ...(options.approvedPlan === undefined
+      ? {}
+      : { approvedPlan: options.approvedPlan }),
     currentHeadSha: headSha,
     contentIdentity: identity,
     currentDiff: [

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { GitClient } from "../src/git/git-client.js";
 import { buildPrimarySessionContext } from "../src/task-session/build-primary-session-context.js";
 import type { TaskExecutionRecord } from "../src/task-session/task-execution-record.js";
+import type { PlanVerificationResult } from "../src/task-session/plan-verification.js";
 import type { TrelloCard } from "../src/trello/trello-client.js";
 import { registerProcessSecrets } from "../src/process/process-runtime.js";
 
@@ -66,6 +67,52 @@ function git(
 }
 
 describe("buildPrimarySessionContext", () => {
+  it("carries identity-matched plan-review recommendations into reconstructed context", async () => {
+    const worktreePath = path.join(root, "review-advice");
+    fs.mkdirSync(worktreePath);
+    const advice: PlanVerificationResult = {
+      version: 1,
+      projectId: "project-one",
+      cardId: card.id,
+      planRevision: 4,
+      verdict: "fail",
+      findings: [
+        {
+          kind: "missing-requirement",
+          requirementId: "REQ-1",
+          detail: "The plan omits the requested export format.",
+        },
+      ],
+    };
+
+    const bundle = await buildPrimarySessionContext({
+      git: git(worktreePath),
+      projectId: "project-one",
+      card,
+      attemptId: "attempt-review-advice",
+      worktreePath,
+      record,
+      plan: { projectId: "project-one", cardId: card.id },
+      planRevision: 4,
+      planReviewAdvice: advice,
+    });
+
+    expect(JSON.parse(bundle.planReviewAdvice!.content)).toEqual(advice);
+    await expect(
+      buildPrimarySessionContext({
+        git: git(worktreePath),
+        projectId: "project-one",
+        card,
+        attemptId: "attempt-review-advice",
+        worktreePath,
+        record,
+        plan: { projectId: "project-one", cardId: card.id },
+        planRevision: 3,
+        planReviewAdvice: advice,
+      }),
+    ).rejects.toThrow("does not match the task and plan revision");
+  });
+
   it("represents clean, staged-only, and untracked-only source states without empty-diff rejection", async () => {
     const cleanPath = path.join(root, "clean");
     fs.mkdirSync(cleanPath);

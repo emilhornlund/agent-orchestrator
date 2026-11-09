@@ -130,13 +130,12 @@ export async function runTaskSessionFeedbackRemediation(
   }
   const plan = options.planStore.read(options.card.id);
   if (
-    plan === null ||
-    plan.plan.projectId !== options.project.id ||
-    plan.plan.cardId !== options.card.id ||
-    plan.verification?.verdict !== "pass"
+    plan !== null &&
+    (plan.plan.projectId !== options.project.id ||
+      plan.plan.cardId !== options.card.id)
   ) {
     throw new TaskSessionFeedbackRemediationError(
-      "Feedback remediation requires an approved, independently verified plan",
+      "Feedback remediation task plan identity does not match task ownership",
     );
   }
   const ledger = options.feedbackLedgerStore.read(options.card.id);
@@ -173,7 +172,7 @@ export async function runTaskSessionFeedbackRemediation(
   const prompt = buildTaskSessionFeedbackRemediationPrompt({
     projectId: options.project.id,
     card: options.card,
-    approvedPlan: plan.plan,
+    ...(plan === null ? {} : { approvedPlan: plan.plan }),
     currentHeadSha: options.expectedPullRequestHeadSha,
     operationId: options.operationId,
     actionableFeedback: pending,

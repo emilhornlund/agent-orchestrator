@@ -101,6 +101,65 @@ const options = (
 });
 
 describe("runPrimaryOperation", () => {
+  it("does not mark outage advice safe to skip until the final dispatch has authoritative stop proof", async () => {
+    const f = fixture();
+    const outage: OpenCodeRunResult = {
+      exitCode: 1,
+      output: "provider unavailable",
+      errorOutput: "provider unavailable",
+      failureClassification: "dependency-outage",
+    };
+    let inspection: "stopped" | "unknown" = "stopped";
+    const inspectPending = vi.fn(async (entry: PrimaryOperationEntry) =>
+      inspection === "unknown"
+        ? { status: "unknown" as const }
+        : {
+            status: "stopped-after-dispatch" as const,
+            operationId: entry.id,
+            execution: entry.executions,
+            ...(entry.lastSessionId === undefined
+              ? {}
+              : { sessionId: entry.lastSessionId }),
+            failureClassification: "dependency-outage" as const,
+          },
+    );
+    const execute = vi.fn(async () => outage);
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await expect(
+        runPrimaryOperation(options(f.store, execute, inspectPending)),
+      ).rejects.toBeInstanceOf(PrimaryOperationWaitingError);
+    }
+    expect(f.store.read("card")?.primaryOperations?.op).toMatchObject({
+      status: "failed",
+      dependencyOutages: 2,
+      retrySafe: true,
+    });
+
+    inspection = "unknown";
+    await expect(
+      runPrimaryOperation(options(f.store, execute, inspectPending)),
+    ).rejects.toBeInstanceOf(PrimaryOperationWaitingError);
+    const uncertain = f.store.read("card")?.primaryOperations?.op;
+    expect(uncertain).toMatchObject({
+      status: "failed",
+      dependencyOutages: 3,
+    });
+    expect(uncertain?.retrySafe).toBeUndefined();
+
+    inspection = "stopped";
+    await expect(
+      runPrimaryOperation(options(f.store, execute, inspectPending)),
+    ).rejects.toBeInstanceOf(PrimaryOperationWaitingError);
+    expect(f.store.read("card")?.primaryOperations?.op).toMatchObject({
+      status: "failed",
+      dependencyOutages: 3,
+      retrySafe: true,
+      accountedExecution: 3,
+    });
+    expect(execute).toHaveBeenCalledTimes(3);
+  });
+
   it("continues meaningful bounded operations despite a persisted task age of several days", async () => {
     const f = fixture();
     const createdAt = "2020-01-01T00:00:00.000Z";

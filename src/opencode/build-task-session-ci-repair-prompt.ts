@@ -10,7 +10,7 @@ import {
 export function buildTaskSessionCiRepairPrompt(input: {
   projectId: string;
   card: TrelloCard;
-  approvedPlan: TaskPlan;
+  approvedPlan?: TaskPlan;
   headSha: string;
   attempt: number;
   maxAttempts: number;
@@ -18,8 +18,9 @@ export function buildTaskSessionCiRepairPrompt(input: {
   attachmentContext?: CardAttachmentPromptContext;
 }): string {
   if (
-    input.approvedPlan.projectId !== input.projectId ||
-    input.approvedPlan.cardId !== input.card.id
+    input.approvedPlan !== undefined &&
+    (input.approvedPlan.projectId !== input.projectId ||
+      input.approvedPlan.cardId !== input.card.id)
   ) {
     throw new Error("CI repair plan does not match task identity");
   }
@@ -38,12 +39,14 @@ export function buildTaskSessionCiRepairPrompt(input: {
     ...buildCardAttachmentPromptLines(input.attachmentContext),
     `Current PR head: ${input.headSha}`,
     `Bounded CI repair attempt ${input.attempt} of ${input.maxAttempts}.`,
-    "Approved plan:",
-    JSON.stringify(input.approvedPlan, null, 2),
+    "Advisory task plan:",
+    input.approvedPlan === undefined
+      ? "No usable plan was available. Preserve the original task scope using the task and repository evidence."
+      : JSON.stringify(input.approvedPlan, null, 2),
     "Failed check diagnostics (the orchestrator verified these refer to this exact head):",
     JSON.stringify(input.diagnostics, null, 2),
     ...taskSessionRepositoryGuidance,
-    "Fix only the failures while preserving the approved task scope. Leave changes in the worktree for orchestrator-owned validation, coverage, and independent review.",
+    "Fix only the failures while preserving the original task scope. Treat any plan as advisory. Leave changes in the worktree for orchestrator-owned validation, coverage, and independent review.",
     "Do not run Git commands or invoke GitHub tools. Do not commit, change branches, push, or create another pull request; the orchestrator owns publication and reuses the existing PR.",
   ].join("\n");
 }
