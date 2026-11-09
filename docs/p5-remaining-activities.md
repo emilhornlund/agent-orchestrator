@@ -1,18 +1,16 @@
-# P5 remaining activities — R1–R5 scoped PASS; R6 validation PASS, review pending
+# P5 activity record — source tasks committed; T5 evidence partial; P5 open
 
-**Status: R1–R5 implemented, committed, and independently passed at scoped
-offline review; R6 integrated validation now passes and consolidated independent
-review remains pending. T2 and P5 are
-NOT COMPLETE and this is NOT deployment approval.** The WIP checkpoint was
-preserved as `c0f3a8c`; current R1–R5 commits are `8a877cc`, `82022b7`,
-`2ca333c`, `2e14672`, and `bda892f`. The previously recorded 1,936-test
-validation predates these revisions and is historical, not current acceptance.
-Keep all existing source, tests, scripts, and evidence artifacts. Do not discard
-work or remove historical artifacts. R6 integrates review and full validation;
-neither a scoped PASS nor `yarn validate` alone implies product acceptance.
+**Status: T2 R1–R6 and T3a–c/T4a–b are committed and scoped reviewed; T2's
+consolidated offline gate passed. T5 adds a passing focused suite and a partial /
+blocked evidence map. P5 remains OPEN and this is NOT deployment approval.**
+The WIP checkpoint is preserved as `c0f3a8c`. See
+[`p5-verification.md`](p5-verification.md) for exact commit identifiers and
+current execution/evidence status. Keep existing source, tests, scripts, upgrade
+artifacts and historical evidence; do not discard work. A scoped PASS, test
+aggregate, or `yarn validate` alone does not imply product acceptance.
 
 This is the ordered work list. Resolve each activity in order, one at a time.
-R1–R5 are complete at their scoped activity gate; R6 review remains pending. Requirements
+R1–R6 and T3/T4 are complete at their scoped source activity gates. Requirements
 and scenario IDs below refer to
 [`requirements.md`](requirements.md), [`specification.md`](specification.md),
 and [`verification.md`](verification.md); the architectural phase scope is
@@ -40,7 +38,7 @@ scope. Do not combine activities.
 > evidence/limits, and unresolved issues. Full `yarn validate` is required once
 > after the ordered T2 fixes/review, not repeatedly after every focused activity.
 
-## Ordered T2 recovery activities (R1–R5 scoped PASS; R6 pending)
+## Ordered T2 recovery activities (R1–R6 offline activity gate passed)
 
 ### R1 — Recover published sessions from durable PR identity and owning checkpoint
 
@@ -249,9 +247,9 @@ evidence, change product defaults, or assert full lifecycle/production behavior.
 
 ### R6 — One consolidated T2 independent review and full validation
 
-**Status:** remediation and full validation PASS; consolidated independent
-review remains pending. R1–R5 have individually passed their scoped offline
-checks and independent scoped reviews. This task does not claim phase completion.
+**Status:** consolidated offline review/validation PASS; source work and scoped
+reviews recorded. Provider/full-lifecycle scenario evidence remains partial or
+unverified. This task does not claim phase completion.
 
 **Requirements/scenarios:** all P5 T2 mappings listed in `rewrite-plan.md` P5,
 including REQ-WF-002, REQ-WF-003, REQ-PR-003, REQ-REC-001 through
@@ -299,17 +297,19 @@ remains exercised. Maintenance fixtures also provide authoritative PR/CI,
 trusted-commit, worktree, and session state. Typecheck, lint, and format checks
 passed; the final focused suites passed **63/63** across five files. The
 post-finding `TMPDIR="$PWD/node_modules/.p5-tmp" yarn validate` passed with
-**1,966 tests across 161 files**. This does not replace integrated independent review, mapped
-scenario evidence, or phase/product acceptance.
+**1,966 tests across 161 files**. The current T5 full validation passed with
+**2,015 tests across 163 files**; neither result replaces mapped scenario
+evidence or phase/product acceptance.
 
-**Stop boundary:** Do not begin T3/T4/T5 or claim T2/P5 complete. Completion
-decisions remain with the phase planner/supervisor.
+**Stop boundary:** Do not claim P5 complete. Completion decisions remain with
+the phase planner/supervisor.
 
-## Later P5 activities (not started; do not begin before R1–R6)
+## T3–T5 activity records (source work committed; evidence gaps remain)
 
 ### T3 — Setup and recovery/attribution ordering across both workflows
 
-**Status:** pending; not started. Follow P5 scope in `rewrite-plan.md` by
+**Status:** committed in `aed8c4f`, `978aa41`, and `bea3370`; scoped source
+review PASS. Follow P5 scope in `rewrite-plan.md` by
 section heading, and requirements REQ-ENV-002, REQ-IMP-002, REQ-IMP-004,
 REQ-REF-002 plus VER-ENV-002-01, VER-IMP-002-01, VER-IMP-004-01,
 VER-IMP-004-02 and mapped refinement scenarios where the
@@ -337,7 +337,8 @@ later P9 scope.
 
 ### T4 — Optional per-activity model/variant defaults and clarification
 
-**Status:** pending; not started. Follow P5 scope and REQ-ENV-003,
+**Status:** committed in `d596832` and `bf30ec0`; scoped source review PASS.
+Follow P5 scope and REQ-ENV-003,
 REQ-CTX-002; VER-ENV-003-01, VER-CTX-002-01. Honor the existing A5 constraint: no new primary retry
 configuration.
 
@@ -364,7 +365,11 @@ later P6 quality/publication policy.
 
 ### T5 — P5 integration scenarios and evidence map
 
-**Status:** pending; not started. Use all P5 mappings in `rewrite-plan.md` and
+**Status:** implemented as evidence-only activity. `docs/p5-verification.md`
+maps every listed P5 scenario and PR00601 closure owner, records actual test
+paths/cases, required levels, observed outcomes and missing variants. The
+focused offline suite passed; many scenarios are explicitly partial, blocked or
+unverified. This does not complete P5. Use all P5 mappings in `rewrite-plan.md` and
 scenario definitions in `verification.md`; include REQ-WF-002, REQ-WF-003,
 REQ-PR-003, REQ-REC-001 through REQ-REC-006, REQ-IMP-002, REQ-IMP-004,
 REQ-ENV-002, REQ-ENV-003, REQ-CTX-001, REQ-CTX-002, REQ-CTX-004 and
@@ -386,16 +391,19 @@ and terminal precedence at application boundaries; include realistic levels
 where specified. Record all gaps without upgrading isolated mock/CLI evidence
 to provider or deployment evidence. No production mutations.
 
-**Focused checks:** mapped scenario tests/harnesses only, once per integrated
-activity; every live/external check requires explicit authorization and safe
-disposable resources.
+**Focused checks / result:** `TMPDIR="$PWD/node_modules/.p5-tmp" yarn test:p5`
+passed 522 tests across 35 files. Existing `yarn test:p3:container` was also run
+with Podman; after making its container TMPDIR explicit, it passed 610 tests
+across 36 files. The full validation was run after these edits; see
+`p5-progress.md` for the exact result. Live/external checks require explicit
+authorization and safe disposable resources and were not run.
 
 **Stop boundary:** Evidence mapping does not waive a scenario, change its
 acceptance criteria, or claim whole-P5 completion.
 
 ### P5-CLOSE — Whole-P5 verification, review, and clean-worktree closure
 
-**Status:** pending; only after R1–R6 and T3–T5. This is P5 closeout, not P6
+**Status:** pending. This is P5 closeout, not P6
 work and not authority to deploy; it is phase evidence for the planner's
 completion decision.
 

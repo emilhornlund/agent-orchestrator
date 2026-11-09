@@ -1,21 +1,21 @@
-# P5 progress — R1–R5 scoped PASS; R6 implementation and validation PASS, review pending
+# P5 progress — source activities committed; T2 offline PASS; T5 evidence partial
 
-The WIP checkpoint was preserved in `c0f3a8c`. R1–R5 have since been implemented,
-committed, and passed their scoped offline checks and independent scoped reviews
-(PASS). R6 remediation and the required full validation now pass; consolidated
-independent review remains pending as recorded below. This
-is not product acceptance, deployment authorization, or a claim that T2 or P5 is
-complete. Existing source, tests, scripts, and runtime artifacts are retained;
-historical invalid probes remain evidence of their original outcomes, not current
-acceptance.
+The WIP checkpoint is preserved in `c0f3a8c`. R1–R5, R6, T3a–c and T4a–b are
+committed; source activities have scoped independent reviews, and the consolidated
+T2 offline validation is PASS. T5 records a focused integration suite and a
+scenario-by-scenario partial/blocked evidence map in
+[`p5-verification.md`](p5-verification.md). It does not claim product acceptance,
+deployment authorization, or P5 completion. Existing source, tests, scripts,
+upgrade artifacts and historical probes are retained; invalid historical probes
+are not current acceptance evidence.
 
-The ordered remaining work, acceptance boundaries, and reusable implementer
-instruction are in [`p5-remaining-activities.md`](p5-remaining-activities.md).
-The current branch includes R1–R5: `8a877cc` (R1), `82022b7` (R2), `2ca333c`
-(R3), `2e14672` (R4), and `bda892f` (R5). Each has an independent scoped PASS;
-R6 implementation and validation pass, with integrated independent review still
-outstanding. Do not start T3, T4, T5, or later P5 work
-until the ordered R6 review/validation is resolved. T2 and P5 remain incomplete.
+The ordered work and acceptance boundaries remain in
+[`p5-remaining-activities.md`](p5-remaining-activities.md). T1 is `8c93889`
+(with WIP checkpoint `c0f3a8c`). T2 R1–R5 are `8a877cc`, `82022b7`, `2ca333c`,
+`2e14672`, `bda892f`; R6 is `f5ea817`. T3a–c are `aed8c4f`, `978aa41`,
+`bea3370`; T4a–b are `d596832`, `bf30ec0`. The source scoped review status and
+T5 integrated evidence limitations are detailed in `p5-verification.md`. P5
+remains open; do not claim completion.
 
 The earlier **1,936 tests across 159 files** validation predates R1–R5 and is
 historical only. The initial R6 full validation failed with **12 failed and
@@ -45,8 +45,9 @@ plan, and it does not claim P5 completion or approval.
   reconstruction-secret sanitation; R4 append-only mutation evidence; and R5
   neutral offline harness verification. The exact integrated test mapping and
   remaining evidence levels are in [`p5-t2-verification.md`](p5-t2-verification.md).
-  R6 implementation and validation pass; integrated independent review remains
-  pending. No T2 completion claim is made.
+  R6 consolidated offline review/validation is PASS; this does not close mapped
+  provider or full-lifecycle scenarios. T2 implementation is recorded complete
+  at its offline activity gate only, not as P5 acceptance.
 - Focused validation on 2026-11-08: `TMPDIR="$PWD/node_modules/.p5-tmp"
 yarn lint:fix` passed; focused primary-session/recovery/artifact/failure suites
   passed 206/206 across 19 files. An earlier dispatch invocation failed at
@@ -75,18 +76,13 @@ replacement-ambiguous, or replacement-bound state. The baseline lifetime ends
 only at reconstruction verification or an explicit safety blockage.
 Context failures use the existing configured recovery interval when available;
 they do not change replacement phase or baseline. The primary/advisory/
-reconstruction role inventory and route wiring are in the candidate; offline
-fault tests and the isolated provider fixtures do not replace independent
-review or every mapped outage/container/upgrade scenario.
-
-The role inventory and route wiring are present in the candidate but have
-unresolved review findings. Offline tests and isolated provider fixtures do not
-replace independent review or every mapped outage/container/upgrade scenario.
-The decision does not establish implementation completion. Persist-before-
+reconstruction role inventory and route wiring have passed scoped source review
+and the consolidated offline T2 gate. Offline tests and isolated provider
+fixtures do not replace every mapped outage/container/upgrade scenario. Persist-before-
 dispatch accounting, operation replay across a real process-finish/ledger-CAS
 gap, active repair resumption, and finalization comment/outbox reconciliation
-now have focused regression coverage and isolated executable evidence. Phase
-completion still requires the full mapped scenario matrix and independent review.
+have focused regression coverage and isolated executable evidence. Phase
+completion still requires the mapped scenario evidence and later whole-P5 review.
 Ambiguous operations may not be retried until authoritative inspection
 establishes safety. Inspection, context reconstruction and waiting are not
 operation executions.
@@ -112,11 +108,22 @@ The historical live fixtures use OpenCode CLI 1.18.35 with explicit
 pre/post ledger and artifact details. Every Yarn command used
 `TMPDIR="$PWD/node_modules/.p5-tmp"`.
 
-## Later tasks
+## Current T5 evidence status
 
-- **T3:** not started.
-- **T4:** not started.
-- **T5:** not started.
+- `TMPDIR="$PWD/node_modules/.p5-tmp" yarn test:p5` passed **522 tests across
+  35 files**.
+- `TMPDIR="$PWD/node_modules/.p5-tmp" yarn test:p3:container` passed the
+  existing Podman suite (**610 tests across 36 files**), including the P3
+  shutdown fixture. The first invocation's missing container `TMPDIR` failure
+  and fix/rerun are recorded in the evidence map.
+- The first full-validation invocation stopped at Prettier for the new evidence
+  docs; those docs were formatted. The final
+  `TMPDIR="$PWD/node_modules/.p5-tmp" yarn validate` passed ESLint, Prettier,
+  typecheck, and **2,015 tests across 163 files**.
+- T5 does **not** finish mapped scenario acceptance: realistic external
+  scenarios are blocked/unexecuted, deterministic integration coverage is
+  partial for many rows, and A2/A5 decisions remain unresolved. No P5 completion,
+  deployment or live-service claim is made.
 
 No full-phase approval, deployment, or live Trello/GitHub evidence is claimed
 here. Real isolated OpenCode probes are only the limited historical evidence

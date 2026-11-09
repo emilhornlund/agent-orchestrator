@@ -1,7 +1,7 @@
-# P5 T2 evidence map — R1–R5 scoped offline PASS; R6 validation PASS, review pending
+# P5 T2 evidence map — consolidated offline gate PASS; external lifecycle evidence open
 
 > **R1–R5 passed scoped offline checks and independent scoped review; R6
-> full validation now passes; consolidated integrated review remains pending. T2/P5 are NOT COMPLETE and
+> consolidated offline review and validation passed. T2's offline activity gate is PASS; P5 is NOT COMPLETE and
 > this is NOT deployment approval.** This record preserves earlier candidate
 > probe outcomes and maps current offline tests separately. Scoped PASS is not
 > integrated acceptance. See
@@ -161,7 +161,7 @@ artificially; the existing terminal precedence case remains. Five focused suites
 passed **63/63**; typecheck, lint, and format checks passed. The post-finding
 `TMPDIR="$PWD/node_modules/.p5-tmp" yarn validate` passed with **1,966 tests
 across 161 files**. This is validation evidence only; integrated independent
-review and mapped scenario evidence remain pending. No live service was used.
+mapped provider/lifecycle scenario evidence remains partial or unverified. No live service was used.
 
 ### Scenario mapping / evidence gaps
 
