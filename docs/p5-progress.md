@@ -1,20 +1,29 @@
-# P5 progress — whole-phase review FAIL; checkpoint remains open
+# P5 progress — final whole-phase review FAIL/BLOCKED; handoff only
 
-**Checkpoint tree:** `962aca0` (clean at checkpoint start). **P5 is NOT
-complete.** R1–R6, T3a–c, and T4a–b are committed and passed their scoped
-implementation/review gates; scoped PASS is not whole-phase acceptance. The
-original whole-phase review at `45c6210` found blocking findings and failed.
-Follow-up changes fixed C1 (`8159ade`), C3 (`843151f`), and C4 (`fe3df7e`),
-but C2 (`ba68c1b`) added safety tests only: reliable containment of an escaped
-descendant's liveness remains unresolved and is a real blocker, not a pass. The
-updated whole-phase review is pending. V1 (`36bfafe`), V2 (`89a2b08` and
-`172b182`), V3 (`3139ebe`), and V4 (`962aca0`) are bounded/partial verification
-changes, not evidence that every local criterion is accepted. See the current
-checkpoint section in
-[`p5-verification.md`](p5-verification.md); historical records and invalid probe
-IDs remain preserved.
+**Documentation handoff tree:** `b2e73a8` (this edit changes documentation
+only). **P5 is NOT complete.** The final whole-phase review at `9f9988a` is
+**FAIL/BLOCKED**: it found no new code findings after C5 (`147e7f4`) and C6
+(`9f9988a`) were accepted, but C2 remains the decisive implementation blocker.
+C2 does not establish reliable containment/liveness evidence for an escaped
+descendant. The corrected test oracle is recorded at `b2e73a8`. Scoped review
+PASSes and test results are not full-phase approval. The explicit next action is
+to decide a safe C2 proof mechanism and prepare an authorized evidence matrix
+using realistic isolated resources; do not retry an ambiguous operation without
+authoritative proof. See the current handoff in
+[`p5-verification.md`](p5-verification.md); historical records remain preserved.
 
-At this checkpoint, `test:p5` includes the outage CLI, production lifecycle,
+Latest aggregates are `yarn test:p5`: **579 tests across 39 files passed** after
+the zombie-test oracle correction (the preceding aggregate was 578 passed, one
+failed on that incorrect oracle). Final `yarn validate` passed **2,066 tests
+across 165 files**, exit 0, in 129.55s; retained output is
+`/home/emilhornlund/.local/share/opencode/tool-output/tool_1bf029955001ZNdTrQWRSSafAZ`
+and was inspected by the reviewer. The initial supervisor validation was cut
+off at its 120s deadline and is not a pass; the 240s run passed with 2,064 tests
+before the final two tests. Earlier Podman 20/4 result was corrected V4
+verification before C5/C6, not a current whole-phase/container result. No new
+source-container result is claimed.
+
+Earlier checkpoint record (historical): `test:p5` included the outage CLI, production lifecycle,
 and review-repair recovery suites. `TMPDIR="$PWD/node_modules/.p5-tmp" yarn
 test:p5` passed **562 tests across 39 files**; `yarn validate` passed ESLint,
 Prettier, typecheck, and **2,048 tests across 165 files** on rerun. The first
@@ -181,7 +190,8 @@ pre/post ledger and artifact details. Every Yarn command used
   checking original state bytes. Unsupported/corrupt originals stay preserved.
 - The exact AC mapping, missing variants and evidence-level limits are in
   `p5-verification.md`. Full `TMPDIR="$PWD/node_modules/.p5-tmp" yarn validate`
-  passed once: lint, format, typecheck and **2,048 tests across 165 files**.
+  passed once at that checkpoint: lint, format, typecheck and **2,048 tests
+  across 165 files**.
   Evidence recording edits after validation change documentation only. P5
   remains open.
 

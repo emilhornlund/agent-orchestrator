@@ -1,4 +1,4 @@
-# P5 integration evidence map — whole-phase review failed; re-review pending
+# P5 integration evidence map — final whole-phase review FAIL/BLOCKED
 
 This is an evidence map for the P5 scenarios listed in `rewrite-plan.md` and
 defined by `verification.md`; those documents and the requirements/specification
@@ -8,42 +8,37 @@ realistic evidence or satisfy unexecuted variants. P5 is **not complete**, and
 this is not deployment, product acceptance, or authorization to contact external
 services.
 
-## Current checkpoint (HEAD `962aca0`)
+## Final handoff (reviewed source HEAD `9f9988a`; oracle correction `b2e73a8`)
 
-R1–R6, T3a–c and T4a–b are committed and passed scoped implementation/review
-gates only. Original whole-P5 review at `45c6210` was **FAIL** and remains in the
-record; later scoped PASS results do not override it. C1 `8159ade` fixed
-cumulative setup attribution, C3 `843151f` fixed outage accounting plus fresh
-parents/pacing, and C4 `fe3df7e` fixed acknowledgement retry. C2 `ba68c1b` added
-safety tests only and did not establish reliable containment/liveness of an
-escaped descendant; this remains a blocking defect and is not a pass. The
-follow-up whole-phase review is pending.
+Final whole-phase review is **FAIL/BLOCKED**. C5 (`147e7f4`) and C6
+(`9f9988a`) were accepted; the review found no new code findings after those
+fixes. C2 remains the decisive implementation blocker: containment/liveness of
+an escaped descendant is not reliably proved. Safety tests do not establish
+that proof, and ambiguous operations must not be automatically retried. Scoped
+reviews passed, but there is no full-phase approval and P5 is NOT complete.
 
-Verification updates are limited: V1 `36bfafe`, V2 `89a2b08` and `172b182`,
-V3 `3139ebe`, V4 `962aca0`. In particular V4's corrected supervisor-container
-run passed **4/4 tests (20 total)**; local V4 run passed **4 tests (23 total)**
-plus typecheck. These are bounded verification, not universal acceptance of
-local criteria. The current `test:p5` command includes
-`tests/primary-outage-cli.integration.test.ts`,
-`tests/p1-production-lifecycle.integration.test.ts`, and
-`tests/review-repair-workflow-recovery.test.ts`.
+Latest `test:p5` aggregate passed **579 tests across 39 files** after correcting
+the zombie-test oracle; the immediately preceding run had 578 passes and one
+oracle failure. Final `yarn validate` passed **2,066 tests across 165 files**,
+exit 0 in 129.55s. Retained output:
+`/home/emilhornlund/.local/share/opencode/tool-output/tool_1bf029955001ZNdTrQWRSSafAZ`
+(reviewer inspected). The initial supervisor full validation was cut off by its
+120s deadline and is not a pass; the subsequent 240s run passed 2,064 tests
+before the final two tests. No source retest is needed for this documentation-
+only handoff. The corrected V4 Podman result (20 tests / 4 files) predates C5/C6
+and is bounded verification only; it is not a current whole-phase or
+source-container result.
 
-Current checkpoint validation: `TMPDIR="$PWD/node_modules/.p5-tmp" yarn
-test:p5` **PASS, 39 files / 562 tests**. Initial
-`TMPDIR="$PWD/node_modules/.p5-tmp" yarn validate` stopped at Prettier on this
-evidence doc; after formatting only the scoped P5 docs, rerun **PASS** (ESLint,
-Prettier, typecheck, 165 files / 2,048 tests). Full raw outputs are retained at
-`node_modules/.p5-tmp/p5-checkpoint-test-p5.log` and
-`node_modules/.p5-tmp/p5-checkpoint-validate.log`. This aggregate pass does not
-mean every local criterion has been accepted.
-
-Open evidence/decisions include realistic OpenCode recovery/default-provider
-credential and model selection, realistic Trello and attachment download/agent
-use, manual-move observation, A2/A5 policy decisions, and full production
-startup → `ProcessRuntime` → process inspection/recovery composition. No live
-service evidence is claimed. The original whole-phase FAIL is not overridden;
-new whole-phase review is pending. Historical records and invalid probe IDs
-below are retained, not current acceptance evidence.
+Concrete remaining gaps: decide the C2 proof mechanism and construct an
+explicitly authorized evidence matrix using realistic isolated resources;
+complete realistic OpenCode, Trello, attachment download/agent-use and
+manual-move evidence; obtain A2/A5 policy decisions; and exercise the incomplete
+production startup → `ProcessRuntime` → process-inspection/recovery composition
+and listed scenario variants. No live-service authorization is implied. The next
+action is the C2 proof-mechanism decision plus authorized evidence-matrix
+planning—not general hand-editing of internal state, pushing, deploying, or
+claiming completion. Historical checkpoint records below remain historical and
+must not override this final status.
 
 ## Revision and environment
 
@@ -115,9 +110,9 @@ tests/legacy-state-import.test.ts tests/p4-upgrade-artifact.integration.test.ts`
   recording edits after the run change documentation only; focused execution
   and container results above are the candidate's scoped checks.
 
-The prior validation counts and results describe earlier candidates; the
-current checkpoint results are recorded at the start of this document. Do not
-reuse historical counts as current results.
+The prior validation counts and results describe earlier candidates; the final
+handoff results are recorded at the start of this document. Do not reuse
+historical counts as current results.
 
 ## Scenario map
 
