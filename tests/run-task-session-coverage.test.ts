@@ -129,9 +129,14 @@ describe("runTaskSessionCoverage", () => {
   it("skips coverage when no command is configured", async () => {
     const fixture = createFixture();
 
-    await expect(runCoverage(fixture)).resolves.toBeNull();
+    await expect(runCoverage(fixture)).resolves.toMatchObject({
+      status: "skipped",
+      exitCode: null,
+      command: "",
+      diagnostic: "Not configured; skipped",
+    });
     expect(fixture.runCommand).not.toHaveBeenCalled();
-    expect(fixture.getCurrentBranch).not.toHaveBeenCalled();
+    expect(fixture.getCurrentBranch).toHaveBeenCalledWith(fixture.worktreePath);
   });
 
   it("runs the configured command and binds its result to a source snapshot", async () => {

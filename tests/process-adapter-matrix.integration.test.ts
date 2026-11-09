@@ -10,7 +10,10 @@ import {
 } from "../src/coordination/project-ownership.js";
 import { GitHubClient } from "../src/github/github-client.js";
 import { OpenCodeClient } from "../src/opencode/opencode-client.js";
-import { CommandRunner } from "../src/process/command-runner.js";
+import {
+  CommandRunInterruptedError,
+  CommandRunner,
+} from "../src/process/command-runner.js";
 import {
   configureProcessRuntime,
   withTaskProcessArtifacts,
@@ -222,8 +225,9 @@ describe("production child adapter outcome matrix", () => {
         expect(result).toBeDefined();
       } else if (scenario === "nonzero" || scenario === "crash") {
         if (family === "command" && scenario === "crash") {
-          const result = (await request) as { exitCode: number };
-          expect(result.exitCode).toBeGreaterThan(0);
+          await expect(request).rejects.toBeInstanceOf(
+            CommandRunInterruptedError,
+          );
         } else if (family === "command" || family === "opencode") {
           await expect(request).resolves.toMatchObject({
             exitCode: scenario === "crash" ? 1 : 9,
@@ -245,15 +249,17 @@ describe("production child adapter outcome matrix", () => {
       const expectedStatus =
         scenario === "partial"
           ? "success"
-          : scenario === "nonzero" || scenario === "crash"
-            ? "nonzero"
-            : scenario === "spawn-failure"
-              ? family === "command"
-                ? "nonzero"
-                : "spawn-failure"
-              : scenario === "timeout"
-                ? "timeout"
-                : "interrupted";
+          : scenario === "crash" && family === "command"
+            ? "interrupted"
+            : scenario === "nonzero" || scenario === "crash"
+              ? "nonzero"
+              : scenario === "spawn-failure"
+                ? family === "command"
+                  ? "nonzero"
+                  : "spawn-failure"
+                : scenario === "timeout"
+                  ? "timeout"
+                  : "interrupted";
       expect(evidence.metadata.status).toBe(expectedStatus);
       const markers = fixtureMarkers(family, scenario);
       if (scenario === "spawn-failure") {
@@ -280,6 +286,10 @@ describe("production child adapter outcome matrix", () => {
         expect(evidence.stderr).not.toContain(markers.stdout);
       }
       if (scenario === "nonzero") expect(evidence.metadata.exitCode).toBe(9);
+      if (scenario === "crash" && family === "command") {
+        expect(evidence.metadata.exitCode).toBeUndefined();
+        expect(evidence.metadata.signal).toBe("SIGTERM");
+      }
       if (scenario === "crash" && family !== "command")
         expect(evidence.metadata.signal).toBe("SIGTERM");
       const start = timeline.find((event) => event.type === "process-started");

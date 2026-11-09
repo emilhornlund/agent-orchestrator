@@ -1886,6 +1886,10 @@ describe("task-session production dispatch", () => {
       phase: "ci",
       retryCounters: { ci: 1 },
       pullRequest: { headSha: "d".repeat(40) },
+      publicationQuality: {
+        validation: { status: "passed", exitCode: 0 },
+        coverageEvidence: { status: "skipped", exitCode: null, command: "" },
+      },
     });
     expect(
       new TaskMutationQueue(project.contextRoot, project)

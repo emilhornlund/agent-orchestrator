@@ -3,7 +3,7 @@ import type { TaskSessionValidationResult } from "./run-task-session-validation.
 
 export interface VerifiedPublicationDecisionInput {
   currentContentIdentity: string;
-  validationCommand: string;
+  validationCommand?: string;
   validation: TaskSessionValidationResult | null;
   coverageCommand?: string;
   coverage: TaskSessionValidationResult | null;
@@ -27,14 +27,15 @@ export function decideVerifiedPublication(
     reasons.push("Current source content identity is missing");
   }
 
-  if (input.validationCommand.trim().length === 0) {
-    reasons.push("Configured validation command is missing");
-  }
-
-  if (input.validation === null) {
+  if (input.validationCommand !== undefined && input.validation === null) {
     reasons.push("Successful local validation evidence is missing");
-  } else {
-    if (
+  } else if (input.validation !== null) {
+    if (input.validationCommand === undefined) {
+      if (input.validation.status !== "skipped")
+        reasons.push(
+          "Unconfigured validation evidence conflicts with configuration",
+        );
+    } else if (
       input.validation.status !== "passed" ||
       input.validation.exitCode !== 0 ||
       input.validation.timedOut ||
@@ -42,7 +43,10 @@ export function decideVerifiedPublication(
     ) {
       reasons.push("Local validation did not pass");
     }
-    if (input.validation.command !== input.validationCommand) {
+    if (
+      input.validationCommand !== undefined &&
+      input.validation.command !== input.validationCommand
+    ) {
       reasons.push("Local validation command does not match configuration");
     }
     if (input.validation.contentIdentity !== identity) {
@@ -51,11 +55,10 @@ export function decideVerifiedPublication(
   }
 
   if (input.coverageCommand === undefined) {
-    if (input.coverage !== null) {
+    if (input.coverage !== null && input.coverage.status !== "skipped")
       reasons.push(
-        "Coverage evidence was supplied without a configured command",
+        "Unconfigured coverage evidence conflicts with configuration",
       );
-    }
   } else if (input.coverage === null) {
     reasons.push("Configured coverage evidence is missing");
   } else {

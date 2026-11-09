@@ -68,6 +68,7 @@ const checkpointSchema = z.strictObject({
   cardDescription: z.string(),
   body: nonBlank,
   draft: z.boolean(),
+  qualityNeedsDraft: z.boolean().optional(),
   reviewResult: z.string(),
   remediationResult: z.string(),
   message: nonBlank.optional(),
@@ -355,7 +356,11 @@ export function beginInitialPublication(
     remediationResult: sanitizeControlledText(options.remediationResult),
     draft:
       options.exhaustedReview !== undefined ||
-      options.reviewResult !== "Passed",
+      options.reviewResult !== "Passed" ||
+      options.qualityNeedsDraft === true,
+    ...(options.qualityNeedsDraft === undefined
+      ? {}
+      : { qualityNeedsDraft: options.qualityNeedsDraft }),
     message: prepareVerbatimCommitMessage(
       sanitizeControlledText(options.commitMessage),
     ),

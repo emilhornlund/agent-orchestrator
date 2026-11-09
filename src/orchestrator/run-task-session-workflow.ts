@@ -64,6 +64,7 @@ import {
 } from "../task-session/run-task-session-implementation.js";
 import {
   runTaskSessionValidation,
+  restorePersistedTaskSessionQualityEvidence,
   type TaskSessionValidationResult,
 } from "../task-session/run-task-session-validation.js";
 import { runTaskSessionCoverage } from "../task-session/run-task-session-coverage.js";
@@ -651,34 +652,72 @@ function persistQualityEvidence(
   record: TaskExecutionRecord,
   cycleId: string,
   validation: TaskSessionValidationResult,
-  coverage: TaskSessionValidationResult | null,
+  coverage: TaskSessionValidationResult,
 ): TaskExecutionRecord {
   return updateRecord(store, record, {
     validationRepair: {
       cycleId,
-      status: "passed",
+      status:
+        validation.status === "skipped" && coverage?.status === "skipped"
+          ? "skipped"
+          : "passed",
       evidence: {
         command: validation.command,
         startedAt: validation.startedAt,
         completedAt: validation.completedAt,
-        exitCode: 0,
+        exitCode: validation.exitCode,
+        status: validation.status,
         diagnostic: validation.diagnostic,
         contentIdentity: validation.contentIdentity,
       },
-      ...(coverage === null
-        ? {}
-        : {
-            coverageEvidence: {
-              command: coverage.command,
-              startedAt: coverage.startedAt,
-              completedAt: coverage.completedAt,
-              exitCode: 0 as const,
-              diagnostic: coverage.diagnostic,
-              contentIdentity: coverage.contentIdentity,
-            },
-          }),
+      coverageEvidence: {
+        command: coverage.command,
+        startedAt: coverage.startedAt,
+        completedAt: coverage.completedAt,
+        exitCode: coverage.exitCode,
+        status: coverage.status,
+        diagnostic: coverage.diagnostic,
+        contentIdentity: coverage.contentIdentity,
+      },
     },
   });
+}
+
+type PersistedQualityEvidence = NonNullable<
+  TaskExecutionRecord["publicationQuality"]
+>["validation"];
+
+function isLegacySuccessfulQualityEvidence(
+  evidence: PersistedQualityEvidence,
+): boolean {
+  return (
+    evidence.status === undefined &&
+    evidence.exitCode === 0 &&
+    evidence.command.trim().length > 0
+  );
+}
+
+function toPersistedQualityEvidence(
+  result: TaskSessionValidationResult,
+): PersistedQualityEvidence {
+  return {
+    command: result.command,
+    startedAt: result.startedAt,
+    completedAt: result.completedAt,
+    exitCode: result.exitCode,
+    status: result.status,
+    diagnostic: result.diagnostic,
+    contentIdentity: result.contentIdentity,
+  };
+}
+
+function qualityEvidenceWasSuccessful(
+  evidence: PersistedQualityEvidence,
+): boolean {
+  return (
+    (evidence.status === "passed" && evidence.exitCode === 0) ||
+    isLegacySuccessfulQualityEvidence(evidence)
+  );
 }
 
 async function readTaskSessionRecoverySnapshot(options: {
@@ -1022,13 +1061,7 @@ export async function runTaskSessionWorkflow(
     })
   )
     return;
-  const validationCommand = project.repository.validationCommand;
-  if (
-    validationCommand === undefined ||
-    validationCommand.trim().length === 0
-  ) {
-    throw new Error("Unified workflow requires repository.validationCommand");
-  }
+  const validationCommand = project.repository.validationCommand ?? "";
   const root = project.contextRoot;
   if (root === undefined)
     throw new Error(
@@ -2655,26 +2688,8 @@ export async function runTaskSessionWorkflow(
                 updateRecord(taskStore, evidenceRecord, {
                   publicationQuality: {
                     contentIdentity: identity,
-                    validation: {
-                      command: validationNow.command,
-                      startedAt: validationNow.startedAt,
-                      completedAt: validationNow.completedAt,
-                      exitCode: 0,
-                      diagnostic: validationNow.diagnostic,
-                      contentIdentity: validationNow.contentIdentity,
-                    },
-                    ...(coverageNow === null
-                      ? {}
-                      : {
-                          coverageEvidence: {
-                            command: coverageNow.command,
-                            startedAt: coverageNow.startedAt,
-                            completedAt: coverageNow.completedAt,
-                            exitCode: 0,
-                            diagnostic: coverageNow.diagnostic,
-                            contentIdentity: coverageNow.contentIdentity,
-                          },
-                        }),
+                    validation: toPersistedQualityEvidence(validationNow),
+                    coverageEvidence: toPersistedQualityEvidence(coverageNow),
                     review: reviewNow.review,
                   },
                 });
@@ -4898,11 +4913,21 @@ export async function runTaskSessionWorkflow(
         ? checkpoint.coverageEvidence
         : phaseRecord.validationRepair?.coverageEvidence;
       if (
-        phaseRecord.validationRepair?.status !== "passed" ||
+        (phaseRecord.validationRepair?.status !== "passed" &&
+          phaseRecord.validationRepair?.status !== "skipped") ||
         validationEvidence === undefined ||
-        validationEvidence.command !== validationCommand ||
-        (project.repository.coverageCommand !== undefined &&
-          coverageEvidence?.command !== project.repository.coverageCommand)
+        (project.repository.validationCommand === undefined
+          ? validationEvidence.status !== "skipped" &&
+            !isLegacySuccessfulQualityEvidence(validationEvidence)
+          : validationEvidence.command !== validationCommand ||
+            !qualityEvidenceWasSuccessful(validationEvidence)) ||
+        (project.repository.coverageCommand === undefined
+          ? coverageEvidence !== undefined &&
+            coverageEvidence.status !== "skipped" &&
+            !isLegacySuccessfulQualityEvidence(coverageEvidence)
+          : coverageEvidence === undefined ||
+            coverageEvidence.command !== project.repository.coverageCommand ||
+            !qualityEvidenceWasSuccessful(coverageEvidence))
       ) {
         throw new Error(
           "Persisted review/publication phase has incomplete local quality evidence",
@@ -4930,8 +4955,13 @@ export async function runTaskSessionWorkflow(
           await runTaskSessionValidation(validationOptions);
         const freshCoverage = await runTaskSessionCoverage(validationOptions);
         if (
-          freshValidation.status !== "passed" ||
-          (freshCoverage !== null && freshCoverage.status !== "passed")
+          (project.repository.validationCommand === undefined
+            ? freshValidation.status !== "skipped"
+            : freshValidation.status !== "passed" ||
+              freshValidation.exitCode !== 0) ||
+          (project.repository.coverageCommand === undefined
+            ? freshCoverage.status !== "skipped"
+            : freshCoverage.status !== "passed" || freshCoverage.exitCode !== 0)
         )
           throw new Error(
             "Legacy publication checkpoint failed fresh validation",
@@ -4946,22 +4976,20 @@ export async function runTaskSessionWorkflow(
               command: freshValidation.command,
               startedAt: freshValidation.startedAt,
               completedAt: freshValidation.completedAt,
-              exitCode: 0,
+              exitCode: freshValidation.exitCode,
+              status: freshValidation.status,
               diagnostic: freshValidation.diagnostic,
               contentIdentity: freshValidation.contentIdentity,
             },
-            ...(freshCoverage === null
-              ? {}
-              : {
-                  coverageEvidence: {
-                    command: freshCoverage.command,
-                    startedAt: freshCoverage.startedAt,
-                    completedAt: freshCoverage.completedAt,
-                    exitCode: 0,
-                    diagnostic: freshCoverage.diagnostic,
-                    contentIdentity: freshCoverage.contentIdentity,
-                  },
-                }),
+            coverageEvidence: {
+              command: freshCoverage.command,
+              startedAt: freshCoverage.startedAt,
+              completedAt: freshCoverage.completedAt,
+              exitCode: freshCoverage.exitCode,
+              status: freshCoverage.status,
+              diagnostic: freshCoverage.diagnostic,
+              contentIdentity: freshCoverage.contentIdentity,
+            },
             review: checkpoint.review,
           },
         });
@@ -4976,19 +5004,12 @@ export async function runTaskSessionWorkflow(
           throw new Error(
             "Persisted local quality evidence is stale after task-session restart",
           );
-        const restoreEvidence = (
-          evidence: NonNullable<typeof validationEvidence>,
-        ): TaskSessionValidationResult => ({
-          ...evidence,
-          status: "passed",
-          timedOut: false,
-          aborted: false,
-        });
-        const validation = restoreEvidence(validationEvidence);
+        const validation =
+          restorePersistedTaskSessionQualityEvidence(validationEvidence);
         const coverage =
           coverageEvidence === undefined
-            ? null
-            : restoreEvidence(coverageEvidence);
+            ? await runTaskSessionCoverage(validationOptions)
+            : restorePersistedTaskSessionQualityEvidence(coverageEvidence);
         quality = {
           validation,
           coverage,
@@ -5790,8 +5811,10 @@ export async function runTaskSessionWorkflow(
       const freshValidation = await runTaskSessionValidation(validationOptions);
       const freshCoverage = await runTaskSessionCoverage(validationOptions);
       const preparedQualityPassed =
-        freshValidation.status === "passed" &&
-        (freshCoverage === null || freshCoverage.status === "passed");
+        (freshValidation.status === "passed" ||
+          freshValidation.status === "skipped") &&
+        (freshCoverage.status === "passed" ||
+          freshCoverage.status === "skipped");
       // A failed fresh check is a merge blocker, not a reason to discard
       // a safely owned implementation after exhausted AI review.
       if (!preparedQualityPassed && exhaustedReview === undefined)
@@ -5860,26 +5883,8 @@ export async function runTaskSessionWorkflow(
         updateRecord(taskStore, preparedRecord, {
           publicationQuality: {
             contentIdentity: freshIdentity,
-            validation: {
-              command: freshValidation.command,
-              startedAt: freshValidation.startedAt,
-              completedAt: freshValidation.completedAt,
-              exitCode: 0,
-              diagnostic: freshValidation.diagnostic,
-              contentIdentity: freshValidation.contentIdentity,
-            },
-            ...(freshCoverage === null
-              ? {}
-              : {
-                  coverageEvidence: {
-                    command: freshCoverage.command,
-                    startedAt: freshCoverage.startedAt,
-                    completedAt: freshCoverage.completedAt,
-                    exitCode: 0,
-                    diagnostic: freshCoverage.diagnostic,
-                    contentIdentity: freshCoverage.contentIdentity,
-                  },
-                }),
+            validation: toPersistedQualityEvidence(freshValidation),
+            coverageEvidence: toPersistedQualityEvidence(freshCoverage),
             review: freshReview.review,
           },
         });
@@ -5902,6 +5907,9 @@ export async function runTaskSessionWorkflow(
           exhaustedReview === undefined
             ? "Passed"
             : "Failed (human review required; automatic repairs exhausted)",
+        qualityNeedsDraft:
+          preparedEvidence.validation?.status !== "passed" ||
+          preparedEvidence.coverage?.status !== "passed",
         remediationResult: `${finalReview.attempts} review repair(s)`,
         ...(exhaustedReview === undefined ? {} : { exhaustedReview }),
         ...(emailNotifier === undefined ? {} : { emailNotifier }),
@@ -5966,6 +5974,9 @@ export async function runTaskSessionWorkflow(
           finalReview.review.verdict === "pass"
             ? "Passed"
             : "Failed (human review required; automatic repairs exhausted)",
+        qualityNeedsDraft:
+          preparedEvidence.validation?.status !== "passed" ||
+          preparedEvidence.coverage?.status !== "passed",
         remediationResult: `${finalReview.attempts} review repair(s)`,
         ...(exhaustedReview === undefined ? {} : { exhaustedReview }),
         ...(emailNotifier === undefined ? {} : { emailNotifier }),

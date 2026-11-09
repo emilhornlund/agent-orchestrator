@@ -100,32 +100,26 @@ function persistQualityEvidence(
   record: TaskExecutionRecord,
   cycleId: string,
   validation: TaskSessionValidationResult,
-  coverage: TaskSessionValidationResult | null,
+  coverage: TaskSessionValidationResult,
 ): TaskExecutionRecord {
+  const storedEvidence = (result: TaskSessionValidationResult) => ({
+    command: result.command,
+    startedAt: result.startedAt,
+    completedAt: result.completedAt,
+    exitCode: result.exitCode,
+    status: result.status,
+    diagnostic: result.diagnostic,
+    contentIdentity: result.contentIdentity,
+  });
   return updateRecord(store, record, {
     validationRepair: {
       cycleId,
-      status: "passed",
-      evidence: {
-        command: validation.command,
-        startedAt: validation.startedAt,
-        completedAt: validation.completedAt,
-        exitCode: 0,
-        diagnostic: validation.diagnostic,
-        contentIdentity: validation.contentIdentity,
-      },
-      ...(coverage === null
-        ? {}
-        : {
-            coverageEvidence: {
-              command: coverage.command,
-              startedAt: coverage.startedAt,
-              completedAt: coverage.completedAt,
-              exitCode: 0 as const,
-              diagnostic: coverage.diagnostic,
-              contentIdentity: coverage.contentIdentity,
-            },
-          }),
+      status:
+        validation.status === "skipped" && coverage?.status === "skipped"
+          ? "skipped"
+          : "passed",
+      evidence: storedEvidence(validation),
+      coverageEvidence: storedEvidence(coverage),
     },
   });
 }
@@ -613,7 +607,7 @@ export async function runTaskSessionFeedbackCycle(
         : await options.prepareAttachmentContext();
     let quality: {
       validation: TaskSessionValidationResult;
-      coverage: TaskSessionValidationResult | null;
+      coverage: TaskSessionValidationResult;
     };
     let finalReview: { review: ImplementationReviewResult };
     if (recoveringReview) {
@@ -961,7 +955,9 @@ export async function runTaskSessionFeedbackCycle(
     );
     const qualityEvidence: VerifiedPublicationDecisionInput = {
       currentContentIdentity: currentIdentity,
-      validationCommand: project.repository.validationCommand!,
+      ...(project.repository.validationCommand === undefined
+        ? {}
+        : { validationCommand: project.repository.validationCommand }),
       validation: quality.validation,
       ...(project.repository.coverageCommand === undefined
         ? {}
@@ -1148,8 +1144,10 @@ export async function runTaskSessionFeedbackCycle(
           timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
         });
         if (
-          validation.status !== "passed" ||
-          (coverage !== null && coverage.status !== "passed")
+          (project.repository.validationCommand !== undefined &&
+            validation.status !== "passed") ||
+          (project.repository.coverageCommand !== undefined &&
+            coverage.status !== "passed")
         ) {
           throw new Error("Prepared feedback publication quality gates failed");
         }
@@ -1202,7 +1200,9 @@ export async function runTaskSessionFeedbackCycle(
         );
         const latestQuality: VerifiedPublicationDecisionInput = {
           currentContentIdentity: latestIdentity,
-          validationCommand: project.repository.validationCommand!,
+          ...(project.repository.validationCommand === undefined
+            ? {}
+            : { validationCommand: project.repository.validationCommand }),
           validation,
           ...(project.repository.coverageCommand === undefined
             ? {}
@@ -1241,22 +1241,20 @@ export async function runTaskSessionFeedbackCycle(
               command: validation.command,
               startedAt: validation.startedAt,
               completedAt: validation.completedAt,
-              exitCode: 0,
+              exitCode: validation.exitCode,
+              status: validation.status,
               diagnostic: validation.diagnostic,
               contentIdentity: validation.contentIdentity,
             },
-            ...(coverage === null
-              ? {}
-              : {
-                  coverageEvidence: {
-                    command: coverage.command,
-                    startedAt: coverage.startedAt,
-                    completedAt: coverage.completedAt,
-                    exitCode: 0,
-                    diagnostic: coverage.diagnostic,
-                    contentIdentity: coverage.contentIdentity,
-                  },
-                }),
+            coverageEvidence: {
+              command: coverage.command,
+              startedAt: coverage.startedAt,
+              completedAt: coverage.completedAt,
+              exitCode: coverage.exitCode,
+              status: coverage.status,
+              diagnostic: coverage.diagnostic,
+              contentIdentity: coverage.contentIdentity,
+            },
             review: review.review,
           },
         });

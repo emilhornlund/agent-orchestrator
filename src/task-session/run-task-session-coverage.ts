@@ -4,15 +4,14 @@ import type {
 } from "./run-task-session-validation.js";
 import { runTaskSessionValidation } from "./run-task-session-validation.js";
 
-/** Returns null when coverage is not configured; configured coverage is authoritative. */
+/** Returns explicit skipped evidence when coverage is not configured. */
 export async function runTaskSessionCoverage(
   options: RunTaskSessionValidationOptions,
-): Promise<TaskSessionValidationResult | null> {
+): Promise<TaskSessionValidationResult> {
   const command = options.project.repository.coverageCommand;
 
-  if (command === undefined) {
-    return null;
-  }
+  if (command === undefined)
+    return runTaskSessionValidation({ ...options, skipWhenUnconfigured: true });
 
   if (command.trim().length === 0) {
     throw new Error("Task-session coverage command must not be blank");

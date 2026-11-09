@@ -217,12 +217,17 @@ export async function runTaskSessionReview(
     );
   }
 
+  const validationSkipped =
+    validation.status === "skipped" &&
+    project.repository.validationCommand === undefined;
   if (
-    validation.status !== "passed" ||
-    validation.exitCode !== 0 ||
-    validation.command !== project.repository.validationCommand ||
-    record.validationRepair?.status !== "passed" ||
-    record.validationRepair.evidence?.contentIdentity !==
+    (!validationSkipped &&
+      (validation.status !== "passed" ||
+        validation.exitCode !== 0 ||
+        validation.command !== project.repository.validationCommand)) ||
+    (record.validationRepair?.status !== "passed" &&
+      record.validationRepair?.status !== "skipped") ||
+    record.validationRepair?.evidence?.contentIdentity !==
       validation.contentIdentity
   ) {
     throw new TaskSessionReviewError(
@@ -231,15 +236,17 @@ export async function runTaskSessionReview(
   }
 
   const coverageCommand = project.repository.coverageCommand;
-
   if (coverageCommand === undefined) {
-    if (coverage !== null) {
+    if (coverage !== null && coverage.status !== "skipped") {
       throw new TaskSessionReviewError(
         "Coverage evidence was supplied without a configured coverage command",
       );
     }
 
-    if (record.validationRepair.coverageEvidence !== undefined) {
+    if (
+      record.validationRepair?.coverageEvidence !== undefined &&
+      record.validationRepair.coverageEvidence.status !== "skipped"
+    ) {
       throw new TaskSessionReviewError(
         "Persisted coverage evidence conflicts with current coverage configuration",
       );
@@ -249,7 +256,7 @@ export async function runTaskSessionReview(
     coverage.status !== "passed" ||
     coverage.exitCode !== 0 ||
     coverage.command !== coverageCommand ||
-    record.validationRepair.coverageEvidence?.contentIdentity !==
+    record.validationRepair?.coverageEvidence?.contentIdentity !==
       coverage.contentIdentity
   ) {
     throw new TaskSessionReviewError(

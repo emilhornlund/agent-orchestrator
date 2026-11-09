@@ -236,15 +236,6 @@ export async function runTaskSessionImplementation(
   } = options;
   const projectId = project.id;
 
-  if (
-    project.repository.validationCommand === undefined ||
-    project.repository.validationCommand.trim().length === 0
-  ) {
-    throw new Error(
-      "Task-session implementation requires a nonempty repository.validationCommand",
-    );
-  }
-
   assertOwnedTaskWorktreePath(project, worktreePath);
 
   const record = loadOwnedTaskExecutionRecord(taskRecordStore, {

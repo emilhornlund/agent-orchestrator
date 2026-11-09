@@ -325,33 +325,52 @@ const recoveryWaitSchema = z.strictObject({
 const taskSessionContentIdentity = z.string().regex(/^sha256:[0-9a-f]{64}$/u);
 
 const validationEvidenceSchema = z.strictObject({
-  command: nonBlankIdentifier,
+  command: z.string().max(2_000),
   startedAt: z.string().datetime(),
   completedAt: z.string().datetime(),
-  exitCode: z.literal(0),
+  exitCode: z.number().int().nullable(),
+  status: z
+    .enum(["passed", "failed", "timed-out", "aborted", "uncertain", "skipped"])
+    .optional(),
   diagnostic: z.string().max(2_000),
   contentIdentity: taskSessionContentIdentity,
 });
 
 const validationRepairSchema = z.strictObject({
   cycleId: nonBlankIdentifier,
-  status: z.enum(["active", "passed", "exhausted"]),
+  status: z.enum(["active", "passed", "exhausted", "skipped"]),
   activePrimaryOperation: z
     .strictObject({
       operationId: nonBlankIdentifier,
       pass: z.number().int().positive().safe(),
       validationResult: z.union([
-        z.strictObject({
-          command: z.string().min(1).max(2_000),
-          startedAt: z.string().datetime(),
-          completedAt: z.string().datetime(),
-          exitCode: z.number().int().nullable(),
-          status: z.enum(["passed", "failed", "timed-out", "aborted"]),
-          timedOut: z.boolean(),
-          aborted: z.boolean(),
-          diagnostic: z.string().max(8_000),
-          contentIdentity: taskSessionContentIdentity,
-        }),
+        z
+          .strictObject({
+            command: z.string().max(2_000),
+            startedAt: z.string().datetime(),
+            completedAt: z.string().datetime(),
+            exitCode: z.number().int().nullable(),
+            status: z.enum([
+              "passed",
+              "failed",
+              "timed-out",
+              "aborted",
+              "uncertain",
+              "skipped",
+            ]),
+            timedOut: z.boolean(),
+            aborted: z.boolean(),
+            diagnostic: z.string().max(8_000),
+            contentIdentity: taskSessionContentIdentity,
+          })
+          .superRefine((result, ctx) => {
+            if (result.command.length === 0 && result.status !== "skipped")
+              ctx.addIssue({
+                code: "custom",
+                path: ["command"],
+                message: "Only skipped quality evidence may have no command",
+              });
+          }),
         z.strictObject({
           reference: z.string().regex(/^sha256:[0-9a-f]{64}$/u),
           path: z.string().min(1).max(2_048).optional(),
@@ -691,6 +710,7 @@ const taskExecutionRecordSchema = z
 
       if (
         record.validationRepair.status !== "passed" &&
+        record.validationRepair.status !== "skipped" &&
         record.validationRepair.evidence !== undefined
       ) {
         ctx.addIssue({
@@ -702,6 +722,7 @@ const taskExecutionRecordSchema = z
 
       if (
         record.validationRepair.status !== "passed" &&
+        record.validationRepair.status !== "skipped" &&
         record.validationRepair.coverageEvidence !== undefined
       ) {
         ctx.addIssue({

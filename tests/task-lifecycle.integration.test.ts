@@ -64,6 +64,7 @@ describe("task lifecycle through pollProject", () => {
       ackLoss: false,
       terminalReadRaceAt: 2,
       correctionFailure: true,
+      quality: "validation",
     },
     {
       draft: true,
@@ -72,6 +73,7 @@ describe("task lifecycle through pollProject", () => {
       ackLoss: false,
       terminalReadRaceAt: 3,
       correctionFailure: true,
+      quality: "validation",
     },
     {
       draft: false,
@@ -79,25 +81,55 @@ describe("task lifecycle through pollProject", () => {
       destination: "done",
       ackLoss: false,
       terminalReadRaceAt: 3,
+      quality: "validation",
     },
-    { draft: false, terminal: "merged", destination: "done", ackLoss: true },
+    {
+      draft: false,
+      terminal: "merged",
+      destination: "done",
+      ackLoss: true,
+      quality: "validation",
+    },
+    {
+      draft: false,
+      terminal: "merged",
+      destination: "done",
+      ackLoss: false,
+      quality: "none",
+    },
+    {
+      draft: false,
+      terminal: "merged",
+      destination: "done",
+      ackLoss: false,
+      quality: "coverage",
+    },
+    {
+      draft: false,
+      terminal: "merged",
+      destination: "done",
+      ackLoss: false,
+      quality: "both",
+    },
   ] as const)(
     ({
       draft,
       terminal,
       ackLoss,
       correctionFailure = false,
+      quality,
     }: {
       draft: boolean;
       terminal: string;
       ackLoss: boolean;
       correctionFailure?: boolean;
+      quality: "validation" | "none" | "coverage" | "both";
     }) =>
       ackLoss
         ? "reconciles an accepted PR whose create acknowledgement was lost without claiming the next card"
         : correctionFailure
           ? `blocks exhausted published-PR correction until human ${terminal}`
-          : `publishes a ${draft ? "draft" : "normal"} PR and waits for human ${terminal} before releasing the next card (${JSON.stringify({ draft, terminal, ackLoss, correctionFailure })})`,
+          : `publishes a ${draft ? "draft" : "normal"} PR (${quality}) and waits for human ${terminal} before releasing the next card (${JSON.stringify({ draft, terminal, ackLoss, correctionFailure, quality })})`,
     async ({
       draft,
       terminal,
@@ -105,6 +137,7 @@ describe("task lifecycle through pollProject", () => {
       ackLoss,
       terminalReadRaceAt = 2,
       correctionFailure = false,
+      quality,
     }) => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "p1-lifecycle-"));
       roots.push(root);
@@ -113,6 +146,8 @@ describe("task lifecycle through pollProject", () => {
       const remote = path.join(root, "remote.git");
       const worktrees = path.join(root, "worktrees");
       const contextRoot = path.join(root, "context");
+      const validationMarker = path.join(root, "validation-runs.log");
+      const coverageMarker = path.join(root, "coverage-runs.log");
       fs.mkdirSync(home);
       fs.mkdirSync(worktrees);
       const env = {
@@ -200,7 +235,16 @@ describe("task lifecycle through pollProject", () => {
           github: "owner/repo",
           defaultBranch: "main",
           worktreeRoot: worktrees,
-          validationCommand: "node validate.js",
+          ...(quality === "none" || quality === "coverage"
+            ? {}
+            : {
+                validationCommand: `${process.execPath} -e 'require("fs").appendFileSync(${JSON.stringify(validationMarker)}, "validation\\n"); if (process.env.FAIL_VALIDATION === "1") process.exit(1);'`,
+              }),
+          ...(quality === "coverage" || quality === "both"
+            ? {
+                coverageCommand: `${process.execPath} -e 'require("fs").appendFileSync(${JSON.stringify(coverageMarker)}, "coverage\\n")'`,
+              }
+            : {}),
           gitIdentity: { name: "Agent", email: "agent@example.test" },
         },
         opencode: {
@@ -257,7 +301,7 @@ describe("task lifecycle through pollProject", () => {
       };
       fs.writeFileSync(
         path.join(source, "validate.js"),
-        "if (process.env.FAIL_VALIDATION === '1') process.exit(1);\n",
+        `require('fs').appendFileSync(${JSON.stringify(validationMarker)}, 'validation\\n'); if (process.env.FAIL_VALIDATION === '1') process.exit(1);\n`,
       );
       await gitRun(source, "add", "validate.js");
       await gitRun(source, "commit", "-m", "add validation script");
@@ -380,6 +424,8 @@ describe("task lifecycle through pollProject", () => {
       const prs = new Map<string, PullRequestFixture>();
       const requests: string[] = [];
       const accepted: string[] = [];
+      const publicationQualityAtCreate: unknown[] = [];
+      const authorities = new Map<string, ProjectRunAuthority>();
       let loseCreateAcknowledgement = false;
       let feedbackReads = 0;
       let correctionFeedback = false;
@@ -443,6 +489,14 @@ describe("task lifecycle through pollProject", () => {
           title: string;
           body: string;
         }) => {
+          if (input.headBranch === "agent/first")
+            publicationQualityAtCreate.push(
+              new TaskExecutionStore(
+                contextRoot,
+                project,
+                authorities.get("first"),
+              ).read("first")?.publicationQuality,
+            );
           requests.push(input.headBranch);
           ledger.push({
             service: "github",
@@ -727,9 +781,15 @@ describe("task lifecycle through pollProject", () => {
               JSON.stringify({ message: "feat: implement requested change" }),
             );
           }
-          return { exitCode: 0, output: "completed", errorOutput: "" };
+          return {
+            exitCode: 0,
+            output: "All configured validation and coverage passed.",
+            errorOutput: "",
+          };
         },
       );
+      const observedCommands: string[] = [];
+      const commandOutcomes: string[] = [];
       const commands = new CommandRunner(async (options: CommandRunOptions) => {
         if (options.command.startsWith("opencode session list"))
           return {
@@ -737,17 +797,19 @@ describe("task lifecycle through pollProject", () => {
             output: JSON.stringify([{ id: sessionId, directory: options.cwd }]),
             errorOutput: "",
           };
+        observedCommands.push(options.command);
         try {
           const result = await execFile("/bin/sh", ["-c", options.command], {
             cwd: options.cwd,
             env: {
               ...env,
-              ...(draft && options.command.includes("node validate.js")
+              ...(draft && options.command.includes("validation-runs.log")
                 ? { FAIL_VALIDATION: "1" }
                 : {}),
             },
             timeout: options.timeoutMilliseconds ?? 20_000,
           });
+          commandOutcomes.push(`${options.command}: exit 0`);
           return {
             exitCode: 0,
             output: result.stdout,
@@ -759,6 +821,7 @@ describe("task lifecycle through pollProject", () => {
             stdout?: string;
             stderr?: string;
           };
+          commandOutcomes.push(`${options.command}: ${failure.message}`);
           return {
             exitCode: typeof failure.code === "number" ? failure.code : 1,
             output: failure.stdout ?? "",
@@ -767,7 +830,6 @@ describe("task lifecycle through pollProject", () => {
         }
       });
       const signal = new AbortController().signal;
-      const authorities = new Map<string, ProjectRunAuthority>();
       let activeAuthority: ProjectRunAuthority | undefined;
       vi.useFakeTimers({ toFake: ["Date"] });
       const poll = async () => {
@@ -912,7 +974,47 @@ describe("task lifecycle through pollProject", () => {
       expect(record?.phase).toBe("human-feedback");
       const firstPr = prs.get("agent/first");
       expect(firstPr).toBeDefined();
-      expect(firstPr?.isDraft).toBe(draft || ackLoss);
+      expect(firstPr?.isDraft).toBe(draft || ackLoss || quality !== "both");
+      expect(firstPr?.body).not.toContain(
+        "All configured validation and coverage passed.",
+      );
+      if (quality === "none")
+        expect(firstPr?.body).toContain("Not configured; skipped");
+      expect(
+        fs.existsSync(validationMarker),
+        JSON.stringify({
+          quality,
+          validationMarker,
+          observedCommands,
+          commandOutcomes,
+        }),
+      ).toBe(quality === "validation" || quality === "both");
+      expect(
+        fs.existsSync(coverageMarker),
+        JSON.stringify({
+          quality,
+          coverageMarker,
+          observedCommands,
+          commandOutcomes,
+        }),
+      ).toBe(quality === "coverage" || quality === "both");
+      if (!draft) {
+        expect(publicationQualityAtCreate).toHaveLength(1);
+        const persistedQuality = publicationQualityAtCreate[0] as {
+          validation: { status?: string; exitCode: number | null };
+          coverageEvidence?: { status?: string; exitCode: number | null };
+        };
+        expect(persistedQuality.validation).toMatchObject(
+          quality === "none" || quality === "coverage"
+            ? { status: "skipped", exitCode: null }
+            : { status: "passed", exitCode: 0 },
+        );
+        expect(persistedQuality.coverageEvidence).toMatchObject(
+          quality === "coverage" || quality === "both"
+            ? { status: "passed", exitCode: 0 }
+            : { status: "skipped", exitCode: null },
+        );
+      }
       expect(requests).toEqual(["agent/first"]);
       expect(accepted).toEqual([firstPr?.url]);
       expect(lists.get("first")).toBe("review");
@@ -1543,7 +1645,7 @@ describe("task lifecycle through pollProject", () => {
       ).toEqual(initialHashes);
       expect(accepted).toEqual([firstPr?.url]);
       expect(firstPr?.number).toBe(41);
-      expect(firstPr?.isDraft).toBe(draft || ackLoss);
+      expect(firstPr?.isDraft).toBe(draft || ackLoss || quality !== "both");
       expect(
         ledger.filter(
           ({ action }) =>

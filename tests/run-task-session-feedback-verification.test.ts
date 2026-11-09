@@ -11,6 +11,7 @@ import {
 } from "../src/task-session/run-task-session-feedback-verification.js";
 import { getTaskSessionSourceSnapshotIdentity } from "../src/task-session/source-snapshot.js";
 import type { TaskPlan } from "../src/task-session/task-plan.js";
+import type { TaskSessionValidationResult } from "../src/task-session/run-task-session-validation.js";
 import type { FeedbackLedgerEntry } from "../src/task-session/feedback-ledger.js";
 import type { GitClient } from "../src/git/git-client.js";
 import type { TrelloCard } from "../src/trello/trello-client.js";
@@ -121,6 +122,20 @@ function fixture() {
   };
 }
 
+function skippedQuality(identity: string): TaskSessionValidationResult {
+  return {
+    command: "",
+    startedAt: "2026-10-24T09:00:00.000Z",
+    completedAt: "2026-10-24T09:00:00.000Z",
+    exitCode: null,
+    status: "skipped",
+    timedOut: false,
+    aborted: false,
+    diagnostic: "Not configured; skipped",
+    contentIdentity: identity,
+  };
+}
+
 describe("runTaskSessionFeedbackVerification", () => {
   it("uses a separate read-only session and returns one disposition per feedback ID", async () => {
     const f = fixture();
@@ -169,7 +184,7 @@ describe("runTaskSessionFeedbackVerification", () => {
           diagnostic: "ok",
           contentIdentity: identity,
         },
-        coverage: null,
+        coverage: skippedQuality(identity),
         review: { ...f.reviewResult, reviewedContentIdentity: identity },
       },
       git: f.git,
@@ -208,7 +223,7 @@ describe("runTaskSessionFeedbackVerification", () => {
           currentContentIdentity: identity,
           validationCommand: "yarn validate",
           validation: null,
-          coverage: null,
+          coverage: skippedQuality(identity),
           review: null,
         },
         git: f.git,
@@ -269,7 +284,7 @@ describe("runTaskSessionFeedbackVerification", () => {
           diagnostic: "ok",
           contentIdentity: identity,
         },
-        coverage: null,
+        coverage: skippedQuality(identity),
         review: {
           ...f.reviewResult,
           verdict: "fail",
@@ -326,7 +341,7 @@ describe("runTaskSessionFeedbackVerification", () => {
             diagnostic: "ok",
             contentIdentity: identity,
           },
-          coverage: null,
+          coverage: skippedQuality(identity),
           review: { ...f.reviewResult, reviewedContentIdentity: identity },
         },
         git: f.git,
@@ -380,7 +395,7 @@ describe("runTaskSessionFeedbackVerification", () => {
             diagnostic: "ok",
             contentIdentity: identity,
           },
-          coverage: null,
+          coverage: skippedQuality(identity),
           review: { ...f.reviewResult, reviewedContentIdentity: identity },
         },
         git: f.git,
@@ -441,7 +456,7 @@ describe("runTaskSessionFeedbackVerification", () => {
           diagnostic: "ok",
           contentIdentity: identity,
         },
-        coverage: null,
+        coverage: skippedQuality(identity),
         review: { ...f.reviewResult, reviewedContentIdentity: identity },
       },
       git: f.git,

@@ -105,6 +105,13 @@ export class CommandRunAbortedError extends Error {
   }
 }
 
+export class CommandRunInterruptedError extends Error {
+  constructor(public readonly signalName: NodeJS.Signals) {
+    super(`Command process was interrupted by ${signalName}`);
+    this.name = "CommandRunInterruptedError";
+  }
+}
+
 export class CommandTimeoutError extends Error {
   constructor(timeoutMilliseconds: number) {
     super(`Command exceeded safety timeout of ${timeoutMilliseconds}ms`);
@@ -414,15 +421,22 @@ const defaultRunCommand: RunCommand = async ({
       if (settled) return;
 
       flushOutput();
+      const interruptedBySignal =
+        signalName !== null &&
+        signalName !== undefined &&
+        !timedOut &&
+        effectiveSignal?.aborted !== true;
       settle(
         timedOut
           ? "timeout"
           : effectiveSignal?.aborted
             ? "interrupted"
-            : code === 0
-              ? "success"
-              : "nonzero",
-        code ?? 1,
+            : interruptedBySignal
+              ? "interrupted"
+              : code === 0
+                ? "success"
+                : "nonzero",
+        code ?? undefined,
         signalName ?? undefined,
       );
 
@@ -439,6 +453,11 @@ const defaultRunCommand: RunCommand = async ({
 
       if (effectiveSignal?.aborted) {
         reject(new CommandRunAbortedError());
+        return;
+      }
+
+      if (interruptedBySignal) {
+        reject(new CommandRunInterruptedError(signalName));
         return;
       }
 

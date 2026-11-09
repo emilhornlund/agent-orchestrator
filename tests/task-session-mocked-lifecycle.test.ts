@@ -89,7 +89,17 @@ function projectFixture() {
       diagnostic: "ok",
       contentIdentity: qualityIdentity,
     },
-    coverage: null,
+    coverage: {
+      command: "",
+      startedAt: "2026-10-24T09:00:00.000Z",
+      completedAt: "2026-10-24T09:00:00.000Z",
+      exitCode: null,
+      status: "skipped" as const,
+      timedOut: false,
+      aborted: false,
+      diagnostic: "Not configured; skipped",
+      contentIdentity: qualityIdentity,
+    },
     review: {
       version: 1 as const,
       projectId: "project",

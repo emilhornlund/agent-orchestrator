@@ -363,14 +363,6 @@ const configSchema = z
       });
     }
     for (const [projectIndex, project] of config.projects.entries()) {
-      if (project.repository.validationCommand === undefined) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["projects", projectIndex, "repository", "validationCommand"],
-          message: "Required; the orchestrator must run repository validation",
-        });
-      }
-
       if (
         pathsOverlap(project.repository.path, project.repository.worktreeRoot)
       ) {

@@ -84,7 +84,7 @@ export interface RunTaskSessionValidationRepairsOptions {
 
 export interface TaskSessionValidationRepairResult {
   validation: TaskSessionValidationResult;
-  coverage: TaskSessionValidationResult | null;
+  coverage: TaskSessionValidationResult;
   attempts: number;
   record: TaskExecutionRecord;
 }
@@ -115,11 +115,16 @@ function validationResultFromEvidence(
     throw new Error("Passing validation repair state has no evidence");
   }
 
+  const status =
+    evidence.status ??
+    (evidence.exitCode === 0 && evidence.command.trim().length > 0
+      ? "passed"
+      : "uncertain");
   return {
     ...evidence,
-    status: "passed",
-    timedOut: false,
-    aborted: false,
+    status,
+    timedOut: status === "timed-out",
+    aborted: status === "aborted",
   };
 }
 
@@ -176,16 +181,6 @@ export async function runTaskSessionValidationWithRepairs(
     options;
   const { project, cardId, expectedBranch, operationKey, worktreePath } =
     validation;
-
-  if (
-    project.repository.validationCommand === undefined ||
-    project.repository.validationCommand.trim().length === 0
-  ) {
-    throw new TaskSessionValidationRepairError(
-      "Validation repair requires a nonempty repository.validationCommand",
-      0,
-    );
-  }
 
   if (
     !Number.isSafeInteger(validation.timeoutMilliseconds) ||
@@ -292,7 +287,7 @@ export async function runTaskSessionValidationWithRepairs(
         validation: evidence,
         coverage:
           coverageEvidence === undefined
-            ? null
+            ? await runTaskSessionCoverage(validation)
             : validationResultFromEvidence(coverageEvidence),
         attempts: currentRecord.retryCounters.validation,
         record: currentRecord,
@@ -387,9 +382,55 @@ export async function runTaskSessionValidationWithRepairs(
     }
     const validationResult = await runTaskSessionValidation(validation);
     const coverageResult = await runTaskSessionCoverage(validation);
+    if (
+      validationResult.status === "skipped" &&
+      coverageResult.status === "skipped"
+    ) {
+      const latestRecord = validation.taskRecordStore.read(cardId);
+      if (
+        latestRecord === null ||
+        latestRecord.revision !== currentRecord.revision
+      )
+        throw new TaskSessionValidationRepairError(
+          "Task ownership changed before skipped quality evidence could be persisted",
+          currentRecord.retryCounters.validation,
+        );
+      currentRecord = updateRecord(validation.taskRecordStore, currentRecord, {
+        validationRepair: {
+          cycleId,
+          status: "skipped",
+          evidence: {
+            command: "",
+            startedAt: validationResult.startedAt,
+            completedAt: validationResult.completedAt,
+            exitCode: null,
+            status: "skipped",
+            diagnostic: validationResult.diagnostic,
+            contentIdentity: validationResult.contentIdentity,
+          },
+          coverageEvidence: {
+            command: "",
+            startedAt: coverageResult.startedAt,
+            completedAt: coverageResult.completedAt,
+            exitCode: null,
+            status: "skipped",
+            diagnostic: coverageResult.diagnostic,
+            contentIdentity: coverageResult.contentIdentity,
+          },
+        },
+      });
+      return {
+        validation: validationResult,
+        coverage: coverageResult,
+        attempts: currentRecord.retryCounters.validation,
+        record: currentRecord,
+      };
+    }
     const allQualityGatesPassed =
-      validationResult.status === "passed" &&
-      (coverageResult === null || coverageResult.status === "passed");
+      (validationResult.status === "passed" ||
+        validationResult.status === "skipped") &&
+      (coverageResult.status === "passed" ||
+        coverageResult.status === "skipped");
 
     if (allQualityGatesPassed) {
       const currentIdentity = await getTaskSessionSourceSnapshotIdentity(
@@ -433,22 +474,20 @@ export async function runTaskSessionValidationWithRepairs(
             command: validationResult.command,
             startedAt: validationResult.startedAt,
             completedAt: validationResult.completedAt,
-            exitCode: 0,
+            exitCode: validationResult.exitCode,
+            status: validationResult.status,
             diagnostic: validationResult.diagnostic,
             contentIdentity: validationResult.contentIdentity,
           },
-          ...(coverageResult === null
-            ? {}
-            : {
-                coverageEvidence: {
-                  command: coverageResult.command,
-                  startedAt: coverageResult.startedAt,
-                  completedAt: coverageResult.completedAt,
-                  exitCode: 0,
-                  diagnostic: coverageResult.diagnostic,
-                  contentIdentity: coverageResult.contentIdentity,
-                },
-              }),
+          coverageEvidence: {
+            command: coverageResult.command,
+            startedAt: coverageResult.startedAt,
+            completedAt: coverageResult.completedAt,
+            exitCode: coverageResult.exitCode,
+            status: coverageResult.status,
+            diagnostic: coverageResult.diagnostic,
+            contentIdentity: coverageResult.contentIdentity,
+          },
         },
       });
 

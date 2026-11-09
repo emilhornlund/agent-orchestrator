@@ -71,6 +71,8 @@ export interface PublishCardOptions {
   expectedExistingPullRequestUrl?: string;
   verifiedDescriptionFacts?: () => readonly string[];
   setupDisposition?: PersistedSetupDisposition;
+  /** Non-passing or skipped local checks require draft publication. */
+  qualityNeedsDraft?: boolean;
 }
 
 /** Presentation is finalized before the durable payload is hashed. Recovery
@@ -115,6 +117,10 @@ export async function prepareInitialPublicationBody(
       options.card,
       options.project.repository.gitIdentity.name,
     );
+  if (verifiedFacts.length > 0)
+    body += `\n\n## Orchestrator-observed workflow evidence\n${verifiedFacts
+      .map((fact) => `- ${fact.replace(/[\r\n]+/gu, " ")}`)
+      .join("\n")}`;
   body += `\n\nReview: ${options.reviewResult}\nRemediation: ${options.remediationResult}`;
   if (options.exhaustedReview) {
     body += `\n\n## Automated review — human action required\nThis PR has **not** passed automated review.\n${options.exhaustedReview.blockingFindings
@@ -480,6 +486,7 @@ export async function publishCard({
   rebaseAlreadyCompleted = false,
   beforePushVerification,
   expectedExistingPullRequestUrl,
+  qualityNeedsDraft = false,
 }: PublishCardOptions): Promise<void> {
   if (
     expectedExistingPullRequestUrl === undefined &&
@@ -838,7 +845,10 @@ export async function publishCard({
         headBranch: branch,
         title: card.name,
         body,
-        draft: exhaustedReview !== undefined || reviewResult !== "Passed",
+        draft:
+          exhaustedReview !== undefined ||
+          reviewResult !== "Passed" ||
+          qualityNeedsDraft,
         project,
       });
 

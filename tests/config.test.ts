@@ -309,12 +309,12 @@ describe("parseConfig", () => {
     }
   });
 
-  it("requires an orchestrator-owned validation command for every project", () => {
-    expect(() =>
-      parseConfig(
-        validConfig.replace('      validationCommand: "yarn validate"\n', ""),
-      ),
-    ).toThrow("projects.0.repository.validationCommand");
+  it("accepts projects without validation or coverage commands", () => {
+    const config = parseConfig(
+      validConfig.replace('      validationCommand: "yarn validate"\n', ""),
+    );
+    expect(config.projects[0]?.repository.validationCommand).toBeUndefined();
+    expect(config.projects[0]?.repository.coverageCommand).toBeUndefined();
   });
 
   it("rejects the retired manual requiredChecks contract", () => {
@@ -777,15 +777,15 @@ workflow:`,
     expect(() => parseConfig(raw)).toThrow();
   });
 
-  it("requires validation for every project", () => {
+  it("accepts independently optional validation and coverage commands", () => {
     const raw = validConfig.replace(
       '      validationCommand: "yarn validate"\n',
       "",
     );
 
-    expect(() => parseConfig(raw)).toThrow(
-      "projects.0.repository.validationCommand",
-    );
+    expect(
+      parseConfig(raw).projects[0]?.repository.validationCommand,
+    ).toBeUndefined();
   });
 
   it("accepts multiple projects", () => {

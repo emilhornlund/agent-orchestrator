@@ -195,7 +195,7 @@ function runImplementation(
 }
 
 describe("runTaskSessionImplementation", () => {
-  it("rejects a missing validation command before invoking implementation", async () => {
+  it("allows implementation when no optional quality command is configured", async () => {
     const fixture = createFixture();
     const projectWithoutValidation = {
       ...fixture.project,
@@ -205,16 +205,14 @@ describe("runTaskSessionImplementation", () => {
       },
     } as ProjectConfig;
 
-    await expect(
-      runImplementation(
-        fixture,
-        fixture.worktreePath,
-        projectWithoutValidation,
-      ),
-    ).rejects.toThrow("nonempty repository.validationCommand");
-    expect(fixture.getCurrentBranch).not.toHaveBeenCalled();
-    expect(fixture.runOpenCode).not.toHaveBeenCalled();
-    expect(fixture.taskRecordStore.read(card.id)?.phase).toBe("planning");
+    const result = await runImplementation(
+      fixture,
+      fixture.worktreePath,
+      projectWithoutValidation,
+    );
+    expect(fixture.getCurrentBranch).toHaveBeenCalledWith(fixture.worktreePath);
+    expect(fixture.runOpenCode).toHaveBeenCalledOnce();
+    expect(result.record.phase).toBe("validation");
   });
 
   it("runs the verified plan in the owned worktree through the bound primary session", async () => {
