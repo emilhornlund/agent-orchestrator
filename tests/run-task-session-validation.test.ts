@@ -355,7 +355,7 @@ describe("runTaskSessionValidation", () => {
     const script = `
       import { TaskExecutionStore } from ${JSON.stringify(path.resolve("src/task-session/task-execution-store.ts"))};
       import { restorePersistedTaskSessionQualityEvidence } from ${JSON.stringify(path.resolve("src/task-session/run-task-session-validation.ts"))};
-      const input = JSON.parse(process.env.P6_CHECKPOINT_INPUT);
+      const input = JSON.parse(process.env.QUALITY_CHECKPOINT_INPUT);
       const record = new TaskExecutionStore(input.storageRoot, input.project).read("card-one");
       if (!record?.publicationQuality) throw new Error("Persisted publication quality was missing");
       process.stdout.write(JSON.stringify(restorePersistedTaskSessionQualityEvidence(record.publicationQuality.validation)));
@@ -368,7 +368,7 @@ describe("runTaskSessionValidation", () => {
         env: {
           PATH: process.env.PATH ?? "/usr/bin:/bin",
           HOME: process.env.HOME ?? "",
-          P6_CHECKPOINT_INPUT: JSON.stringify({
+          QUALITY_CHECKPOINT_INPUT: JSON.stringify({
             storageRoot: path.join(temporaryRoot!, "runtime-state"),
             project: fixture.project,
           }),

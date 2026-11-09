@@ -496,8 +496,7 @@ export async function publishCard({
     throw new Error(
       "Lease-scoped initial publication requires durable attempt authority",
     );
-  // Production initial publication cannot opt out of the journal. Existing-PR
-  // correction/body/draft routes are the subsequent P4-T3 integration.
+  // Production publication under attempt authority cannot opt out of the journal.
   if (ProjectRunAuthority.current(project.id)) {
     const resumed = await resumeInitialPublication({
       project,
@@ -540,7 +539,7 @@ export async function publishCard({
 
     const defaultBranchRef = `origin/${project.repository.defaultBranch}`;
 
-    // Existing PR identity is still checked, but P1 does not rewrite a branch
+    // Existing PR identity is still checked, but this route does not rewrite a branch
     // in any case. A remote-branch absence is never used as proof of
     // unpublished history.
     if (expectedExistingPullRequestUrl !== undefined) {
@@ -593,7 +592,7 @@ export async function publishCard({
       }
 
       cardLog.event(
-        `Published-branch rewriting is disabled by the P1 safety guardrail; attempting ordinary fast-forward-safe publication without rebasing ${branch}`,
+        `Published-branch rewriting is disabled to protect published history; attempting ordinary fast-forward-safe publication without rebasing ${branch}`,
       );
     }
 

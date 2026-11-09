@@ -845,7 +845,7 @@ export class GitClient {
     void baseRef;
     void identity;
     throw new Error(
-      "Git rebase is disabled by the P1 safety guardrail; preserve the worktree for additive maintenance in P8",
+      "Git rebase is disabled to protect published history; preserve the worktree for operator reconciliation",
     );
   }
 

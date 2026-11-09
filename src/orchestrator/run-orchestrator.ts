@@ -460,7 +460,7 @@ async function hasPreparedConflictRecovery(
   void _project;
   void _blocked;
   void _signal;
-  // P1 deliberately offers no automatic recovery path: neither apparent local
+  // There is no automatic recovery path: neither apparent local
   // completion nor remote-branch absence proves a rebase was unpublished.
   // Preserve blockage and artifacts for explicit operator reconciliation.
   return false;

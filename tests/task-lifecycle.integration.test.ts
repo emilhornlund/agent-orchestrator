@@ -139,7 +139,7 @@ describe("task lifecycle through pollProject", () => {
       correctionFailure = false,
       quality,
     }) => {
-      const root = fs.mkdtempSync(path.join(os.tmpdir(), "p1-lifecycle-"));
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "task-lifecycle-"));
       roots.push(root);
       const home = path.join(root, "home");
       const source = path.join(root, "source");
@@ -214,7 +214,7 @@ describe("task lifecycle through pollProject", () => {
       );
 
       const project: ProjectConfig & { contextRoot: string } = {
-        id: "p1",
+        id: "lifecycle-project",
         autoMerge: false,
         contextRoot,
         trello: {
@@ -258,13 +258,13 @@ describe("task lifecycle through pollProject", () => {
       };
       const coordinationRoot = path.join(root, "coordination");
       fs.mkdirSync(coordinationRoot);
-      provisionCoordinationNamespace(coordinationRoot, "p1-test");
+      provisionCoordinationNamespace(coordinationRoot, "lifecycle-test");
       const orchestrationConfig = {
         projects: [project],
         workflow: {
           contextRoot,
           coordinationRoot,
-          coordinationNamespaceId: "p1-test",
+          coordinationNamespaceId: "lifecycle-test",
           pollIntervalSeconds: 1,
           logRetentionDays: 30,
           contextRetentionDays: 30,
@@ -276,7 +276,7 @@ describe("task lifecycle through pollProject", () => {
           trelloBoardId: project.trello.boardId,
           githubRepository: project.repository.github,
         },
-        "p1-test",
+        "lifecycle-test",
       );
       leases.push(lease);
       const hostPin = (
@@ -961,8 +961,8 @@ describe("task lifecycle through pollProject", () => {
               service === "github" && action === "accept:create-pr",
           ),
         ).toBe(true);
-        // P4 replaces the P1 characterization blockage: the retained dispatch
-        // and correlation marker now authorize readback, never another create.
+        // Retained dispatch evidence and the correlation marker authorize only
+        // readback after restart, never another create.
       }
       for (
         let attempt = 0;
@@ -1124,7 +1124,7 @@ describe("task lifecycle through pollProject", () => {
             since: new Date().toISOString(),
             retryAt: new Date(Date.now() + 60_000).toISOString(),
             attempts: 1,
-            notificationId: "p1/first/human-feedback/dependency",
+            notificationId: "lifecycle-project/first/human-feedback/dependency",
           },
           revision: checkpoint.revision + 1,
           updatedAt: new Date().toISOString(),
@@ -1418,7 +1418,7 @@ describe("task lifecycle through pollProject", () => {
             Date.now() + (terminalReadRaceAt === 3 ? -1 : 60_000),
           ).toISOString(),
           attempts: 1,
-          notificationId: "p1/first/terminal-test/dependency",
+          notificationId: "lifecycle-project/first/terminal-test/dependency",
         },
         revision: waitingTask.revision + 1,
         updatedAt: new Date().toISOString(),

@@ -81,7 +81,7 @@ function staleQueue(f: ReturnType<typeof fixture>): TaskMutationQueue {
   return new TaskMutationQueue(f.state, f.project);
 }
 
-describe("P1 interrupted prepared PR maintenance refusal", () => {
+describe("interrupted prepared PR maintenance refusal", () => {
   it("preserves the exact persisted crash state instead of requeueing a rewrite", () => {
     const f = fixture();
     const restartedQueue = staleQueue(f);

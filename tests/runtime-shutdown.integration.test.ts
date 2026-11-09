@@ -54,9 +54,9 @@ async function waitForFile(filePath: string): Promise<void> {
   throw new Error(`Timed out waiting for ${filePath}`);
 }
 
-describe("P3 coordinated shutdown integration", () => {
+describe("coordinated shutdown integration", () => {
   it("drains an owned command before startup releases its lease and preserves its pinned attempt", async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "p3-shutdown-"));
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "runtime-shutdown-"));
     try {
       const script = `
         import fs from "node:fs";
@@ -72,14 +72,14 @@ describe("P3 coordinated shutdown integration", () => {
         fs.writeFileSync(path.join(root, phase + ".boot"), JSON.stringify({ argv: process.argv }));
         const source = path.join(root, "actual-worktree");
         const coordinationRoot = path.join(root, "coordination");
-        if (phase === "first") provisionCoordinationNamespace(coordinationRoot, "p3-shutdown");
+        if (phase === "first") provisionCoordinationNamespace(coordinationRoot, "shutdown-test");
         const project = {
           id: "shutdown-project", autoMerge: false,
           repository: { path: source, github: "owner/shutdown", defaultBranch: "main", worktreeRoot: path.join(root, "worktrees"), gitIdentity: { name: "Fixture", email: "fixture@example.test" } },
           trello: { boardId: "board", backlogListId: "backlog", readyListId: "ready", workingListId: "working", reviewListId: "review", failedListId: "failed", doneListId: "done", refinementLabelId: "refinement", featureLabelId: "feature", improvementLabelId: "improvement", bugLabelId: "bug" },
           opencode: { refinement: { model: "r", variant: "v" }, implementation: { model: "i", variant: "v" }, review: { model: "r", variant: "v" }, remediation: { model: "r", variant: "v", maxPasses: 1 }, commit: { model: "c", variant: "v" }, timeoutMinutes: 1 }
         };
-        const config = { projects: [project], workflow: { pollIntervalSeconds: 1, logRetentionDays: 30, contextRetentionDays: 30, contextRoot: path.join(root, "context"), coordinationRoot, coordinationNamespaceId: "p3-shutdown" } };
+        const config = { projects: [project], workflow: { pollIntervalSeconds: 1, logRetentionDays: 30, contextRetentionDays: 30, contextRoot: path.join(root, "context"), coordinationRoot, coordinationNamespaceId: "shutdown-test" } };
         const lifecycle = new RuntimeLifecycle({ logger: { event() {}, error() {} } });
         const removeHandlers = installProcessHandlers(lifecycle);
         let claimCount = 0;
@@ -110,7 +110,7 @@ describe("P3 coordinated shutdown integration", () => {
           // The first-run wrapper creates the persisted attempt under startup's
           // real project lease, starts CommandRunner under that authority, then
           // invokes the production worker with runStartup's actual contexts.
-          // This test covers shutdown preservation only, not P5 task resumption.
+          // This test covers shutdown preservation only, not task resumption.
           validateToolchain: async () => {}, validateGitHubCli: async () => {},
           validateProjectGitHub: async () => {}, validateProjectTrello: async () => {},
           runOrchestrator: async (_t, _g, _gh, _o, commands, _config, signal, _email, _deferred, contexts) => {
@@ -132,7 +132,7 @@ describe("P3 coordinated shutdown integration", () => {
             }
             const context = contexts.get(project.id);
             if (!context?.projectLease || !context.pinned) throw new Error("startup did not provide leased project context");
-            const authority = await ProjectRunAuthority.createPreparingAttempt({ projectId: project.id, cardId: "first-card", taskKind: "implementation", pinned: context.pinned, projectLease: context.projectLease, coordinationRoot, attemptId: "p3-shutdown-attempt", sessions: { primary: "fixture-session" } });
+            const authority = await ProjectRunAuthority.createPreparingAttempt({ projectId: project.id, cardId: "first-card", taskKind: "implementation", pinned: context.pinned, projectLease: context.projectLease, coordinationRoot, attemptId: "shutdown-attempt", sessions: { primary: "fixture-session" } });
             retainedAuthority = authority;
             contexts.set(project.id, { ...context, authority });
             fs.writeFileSync(path.join(root, phase + ".authority"), "created");
@@ -193,7 +193,7 @@ describe("P3 coordinated shutdown integration", () => {
         "worktree",
         "add",
         "-b",
-        "agent/p3-shutdown",
+        "agent/shutdown-test",
         source,
         "main",
       ]);
@@ -240,7 +240,7 @@ describe("P3 coordinated shutdown integration", () => {
         acquireProjectOwnership(
           path.join(root, "coordination"),
           { trelloBoardId: "board", githubRepository: "owner/shutdown" },
-          "p3-shutdown",
+          "shutdown-test",
         ),
       ).rejects.toThrow(/already held/u);
       first.signal("SIGTERM");
@@ -270,7 +270,7 @@ describe("P3 coordinated shutdown integration", () => {
       const releasedLease = await acquireProjectOwnership(
         path.join(root, "coordination"),
         { trelloBoardId: "board", githubRepository: "owner/shutdown" },
-        "p3-shutdown",
+        "shutdown-test",
       );
       await releasedLease.release();
       await launch("restart").done;
@@ -291,7 +291,7 @@ describe("P3 coordinated shutdown integration", () => {
         secondClaimBlocked: boolean;
       };
       expect(restarted).toMatchObject({
-        attemptId: "p3-shutdown-attempt",
+        attemptId: "shutdown-attempt",
         pinned: { repositoryPath: source, boardId: "board" },
         sessions: { primary: "fixture-session" },
         secondClaimBlocked: true,
@@ -304,7 +304,7 @@ describe("P3 coordinated shutdown integration", () => {
       ).toContain("M tracked.txt");
       expect(
         fs.readdirSync(path.join(restarted.pinned.storageRoot, "attempts")),
-      ).toEqual(["p3-shutdown-attempt.json"]);
+      ).toEqual(["shutdown-attempt.json"]);
       expect(
         JSON.parse(fs.readFileSync(path.join(root, "restart.done"), "utf8")),
       ).toMatchObject({ dispatchCount: 0, claimCount: 0, lateClaimCount: 0 });

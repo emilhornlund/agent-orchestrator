@@ -32,7 +32,7 @@ unknown worktree or discard changes as a first response.
 
 ## Restart and task ownership
 
-New initial publications use the [P4 initial-publication checkpoint](p4-initial-publication.md).
+New initial publications use a durable initial-publication checkpoint.
 Commit, push, PR creation and initial Trello synchronization retain their original
 mutation intents and verified identities across restart. These checkpoints use
 automatic paced rechecks when GitHub or Trello is unavailable; they do not enter
@@ -58,8 +58,8 @@ Recognized structured provider outages retain the checkpoint for paced rechecks,
 including across the process-result/ledger-completion gap; ordinary test text naming
 a transport error is not outage proof. Unknown running evidence after supervisor
 loss remains explicitly ambiguous until authoritative termination can be established.
-The known escaped-descendant limitation is a carryover, not proof that the process
-stopped or permission for a competing writer. See [current carryovers](phase-status.md).
+The known escaped-descendant limitation is not proof that the process stopped or
+permission for a competing writer.
 
 A queued `Ready for Agent` claim resumes only when its persisted event identity and expected owned worktree/branch match the
 card. An owned `Working` implementation resumes from its recorded phase only after validating task identity, setup state,
@@ -106,17 +106,17 @@ or unknown paths. A cleanup failure preserves the terminal event so the operatio
 
 ## Temporarily deferred published-PR maintenance
 
-**PR maintenance and every rebase/continue path are temporarily disabled by P1.** The orchestrator does not resume prepared rebases,
+**PR maintenance and every rebase/continue path are disabled in this release.** The orchestrator does not resume prepared rebases,
 including apparently unpublished conflicts, force-with-lease pushes, or retry uncertain maintenance publication. Preserve the maintenance record, worktree, backup refs,
 rewritten local objects, dirty/unshipped changes, and remote history. If remote acceptance is ambiguous, do not retry or retire
-the operation as successful; require operator reconciliation until additive maintenance is available in P8. All automatic rebasing
+the operation as successful; require operator reconciliation. All automatic rebasing
 and conflict continuation, including pre-publication rebase, are temporarily disabled. Ordinary publication remains supported when
 it requires no history rewrite.
 
-P1 temporarily disables all automatic rebase and continuation paths, including
+This release disables all automatic rebase and continuation paths, including
 pre-publication synchronization. Ordinary initial publication that needs no
 sync remains supported. A required history rewrite or conflict recovery is
-deferred safely; P8 owns additive maintenance. Do not manually retry uncertain
+deferred safely. Do not manually retry uncertain
 pushes or reset, abort, clean, or discard the worktree.
 
 A legacy `attention-required` record without a persisted `terminalFailure`

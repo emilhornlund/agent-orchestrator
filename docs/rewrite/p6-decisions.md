@@ -1,4 +1,4 @@
-# Approved P6 readiness decisions
+# Approved product decisions
 
 ## Approval and scope
 
@@ -9,8 +9,10 @@ This resolves these policy/authorization questions; it is not evidence that thei
 engineering checks passed or permission to start unrelated phases, merge PRs,
 deploy, purchase services, or modify production resources.
 
-The [readiness register](phase-readiness.md) tracks remaining execution work.
-Other A2/A5 choices explicitly assigned to P7–P9 remain with those phases.
+This record retains approved product policy and optional live-test authorization,
+not readiness/evidence work. Follow the [delivery workflow](phase-execution.md).
+Ask about a later product choice only when the specification actually leaves it
+unresolved; do not turn historical A2/A5 labels into automatic approval gates.
 
 ## D6-RECOVERY — counted unit and limit
 
@@ -32,8 +34,8 @@ deadline are introduced. The pre-/post-publication failure distinction remains:
 verified genuine unrecoverability may fail an unpublished task; an open PR keeps
 ownership and an explicit operational blockage.
 
-The historical “three total actual executions” wording is superseded by this
-approved counted-unit definition. It remains historical evidence, not a second policy.
+Count verified genuine failures, not outage-related dispatches; there is no competing
+three-total-executions policy.
 
 ## D6-RUBRIC — representative P6 acceptance judgments
 
@@ -46,9 +48,9 @@ approved counted-unit definition. It remains historical evidence, not a second p
 | Failed configured checks, skipped/uncertain results, or known material unresolved issues       | Publish available safe meaningful work as draft with accurate disclosure; quality alone cannot veto publication.                                                                       |
 | AI disapproval of a stylistic choice without an established material unresolved issue          | That verdict alone neither blocks publication nor forces draft status. The agent supplies the substantive disposition; the orchestrator records/enforces evidence and reporting rules. |
 
-These are representative approved oracles, not a claim that every semantic edge has
-an exhaustive deterministic classification. Create concrete executable fixtures
-from them and retain independent assessment at the required realistic level.
+These are representative approved outcomes, not an exhaustive deterministic
+classification. Use them for relevant regression cases; no separate realistic
+assessment or evidence record is needed to implement the behavior.
 Source/scope/credential safety, no artificial output, and truthful reporting remain
 mandatory. Existing A3 advisory/readiness policy is not reopened.
 
@@ -56,7 +58,7 @@ mandatory. Existing A3 advisory/readiness policy is not reopened.
 
 Target upgrade compatibility from:
 
-1. The currently deployed release, identified during engineering preflight.
+1. The currently deployed release, identified when its migration path is changed.
 2. P5 state represented by [PR #218](https://github.com/emilhornlund/agent-orchestrator/pull/218),
    whose published source head is `f8ac2eaa3991a3c2b6b8b4b98945e06076140050` at
    the approval-record inspection.
@@ -64,12 +66,12 @@ Target upgrade compatibility from:
 Every intermediate experimental/WIP commit is not a required compatibility target.
 Unknown or unsupported state must still be preserved and reported safely, not
 deleted, silently reinterpreted, or treated as an absent task. Actual writer artifacts,
-schema/layout versions and interrupted-migration cases remain engineering deliverables.
+schema/layout versions and interrupted-migration cases matter when changing migrations.
 The deployed version has not been established merely by inspecting this checkout.
 
 ## D6-LIVE — authorized isolated P6 verification
 
-Authorized: preparing and executing a **bounded, recorded P6 test plan** using
+Optional authorization, not required implementation work: bounded isolated tests using
 existing accounts/models and disposable resources:
 
 - Trello Free test boards/cards/attachments.
@@ -85,12 +87,8 @@ may be used for the approved isolated plan without printing or storing credentia
 the record. Missing resource access is a capability/provisioning result, not withdrawal
 of this approval.
 
-Before live mutations/model calls, record an initial finite manifest: resource ownership
-and names, allowed operations, maximum calls/effects, selected existing model/account,
-timeouts, observer assertions, cleanup of proved-owned test artifacts and evidence
-destinations. No unbounded probe/retry loop. A materially expanded or paid plan needs
-new authorization. Authorization does not itself pass the required live scenarios.
-
-Initial readiness inspection may check local tool versions, account/credential
-availability without exposing values, and temporary local/container capabilities.
-No production workflow data is needed merely to check test authorization.
+No live-test provisioning, manifest or qualification is needed for ordinary
+implementation or review. If live testing is explicitly requested, establish the
+owned disposable resources and bounded effects in the request, preserve credentials
+and clean up only owned test resources. No unbounded probing. Expanded or paid scope
+needs new authorization. Do not infer that a live scenario passed from permission.

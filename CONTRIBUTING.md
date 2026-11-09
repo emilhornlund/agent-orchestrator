@@ -62,20 +62,13 @@ yarn build
 Use `yarn lint:fix` for automatic lint fixes and `yarn format` to format the
 repository when needed.
 
-For architecture work, use the [phase execution protocol](docs/phase-execution.md)
-and selected packet rather than delegating the roadmap wholesale. The supervisor or
-designated runner owns full validation and retains exact-tree output; a read-only
-reviewer inspects that output without needing a second test run. Record readiness,
-finite owned variants and later composition owners before implementation. Commit,
-push and PR creation still require explicit task authorization for an agent.
-
 ## Testing
 
 Tests use the repository's Vitest-based test suite. Run them with `yarn test`
 or as part of `yarn validate`. Unit tests must remain deterministic and must
 not require live Trello, GitHub, or OpenCode services.
 
-`yarn test` works without setting `TMPDIR` or running a rewrite-specific command.
+`yarn test` works without setting `TMPDIR` or running a separate setup command.
 Vitest creates one private system-temporary directory for the run, directs filesystem
 fixtures and child-process artifacts beneath it, and removes it at teardown even
 when assertions fail. Individual fixtures should still use `try/finally` or cleanup
@@ -83,9 +76,7 @@ hooks to release subprocesses and remove their files promptly. Never retain fixt
 repositories, downloaded dependency trees, or process logs by default. Capture console
 output when diagnosing a failure rather than preserving entire fixture trees.
 
-Name tests for product behavior, not rewrite milestones. Rewrite-only live probes,
-source-archive verification scripts and container matrices are not part of the
-permanent test architecture. Integration tests may use real disposable Git repositories
+Name tests for product behavior. Integration tests may use real disposable Git repositories
 when Git behavior is the assertion; ordinary decision/parser tests should stay in memory.
 
 ### Trello attachments and card context

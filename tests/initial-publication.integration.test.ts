@@ -1556,7 +1556,7 @@ describe("initial publication production checkpoint with independent simulated s
 
   it("sanitizes checkpoint, journal payloads, commit message, PR and Trello comment before hashing or dispatch", async () => {
     const f = fixture();
-    const canary = "p4-publication-canary-93bb";
+    const canary = "publication-canary-93bb";
     registerProcessSecrets([canary]);
     const encoded = Buffer.from(canary).toString("base64");
     const sourceIdentity = await getTaskSessionSourceSnapshotIdentity(

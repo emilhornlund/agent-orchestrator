@@ -5,11 +5,6 @@
 This page is the canonical operator reference for execution isolation, publication boundaries, timing, notifications,
 shutdown, logging, retention, and multi-project operation.
 
-Architecture work is incremental. [phase-status.md](phase-status.md) records delivery
-milestones and remaining qualification; the [execution packets](phase-execution.md)
-assign future behavior changes. Legacy block/quality/maintenance descriptions below
-are not authority to retain policies contradicted by the agreed requirements.
-
 ## Reconciliation block storage
 
 For legacy reconciliation records, when a retryable GitHub or Trello reconciliation reaches the existing three-attempt limit, the project worker writes its
@@ -32,12 +27,11 @@ persisted `retryAt`: bounded immediate read failures preserve the verified check
 and recheck it later instead of requiring a manual Ready move solely for an outage.
 Do not confuse this with a deliberate fresh retry or a legacy block lacking evidence.
 Primary execution accounting separately records actual dispatches, verified genuine
-failures and dependency outages. The user-approved
-[D6-RECOVERY](p6-decisions.md#d6-recovery--counted-unit-and-limit) counts three verified
+failures and dependency outages. The recovery policy counts three verified
 genuine failures per primary operation and separately accounts outages/reconstruction;
 do not infer another global task deadline or
 reuse service-request counts as correction-pass budgets. Orphan execution without
-reliable stopped proof remains fenced (CO-C2), not automatically retried.
+reliable stopped proof remains fenced, not automatically retried.
 
 Before repository bootstrap and project reconciliation at startup, the service removes stale atomic-write temporary files for
 each configured project. The recognized scope is limited to these writer-generated names:
@@ -281,7 +275,7 @@ access and retry through the normal workflow; the service does not persist token
 strictly later than the current time plus the five-minute refresh window; expired, nearly expired, and exact-boundary
 responses therefore fail through the safe App exchange error path without being returned or cached.
 
-Immediately before publication, the task worktree fetches `origin/<defaultBranch>`. P1 disables all automatic rebasing and
+Immediately before publication, the task worktree fetches `origin/<defaultBranch>`. This release disables all automatic rebasing and
 prepared-conflict continuation. Ordinary initial publication is still available when the task branch can be published without
 rewriting history; otherwise the workflow preserves state and defers publication.
 
@@ -327,15 +321,15 @@ project's next task until a human merges or closes it. `autoMerge: true` is reje
 Prepared-publication conflicts and legacy prepared handoffs are not automatically handled. The worker does not inspect them to infer
 that rewriting is safe, and does not run a conflict agent, continue/abort/reset, clean, remove, recreate, or publish the worktree.
 The record, branch, refs, objects, intent, dirty/unshipped work, and handoff are preserved. PR state observation and verified
-terminal reconciliation continue read-only; affected task writers and claims remain blocked pending explicit reconciliation or
-the additive P8 implementation. See [Recovery](recovery.md).
+terminal reconciliation continue read-only; affected task writers and claims remain blocked pending explicit reconciliation.
+See [Recovery](recovery.md).
 
 ### Published branch rewriting is disabled
 
-P1 removes the `pushWithLease` capability and disables all automatic rebases, including pre-publication and conflict continuation.
+The service exposes no `pushWithLease` capability and disables all automatic rebases, including pre-publication and conflict continuation.
 No force-push or rebase-based publication is promised. Published history, remote refs, maintenance intents, conflict handoffs,
-worktrees, local-only commits, and dirty changes are retained when safe continuation is unavailable. The intended additive target
-merge and ordinary push replacement is deferred to P8; operators must not manually retry an uncertain operation or reset/discard
+worktrees, local-only commits, and dirty changes are retained when safe continuation is unavailable. Automatic additive target
+merging is not supported by this release; operators must not manually retry an uncertain operation or reset/discard
 its worktree. Ordinary initial publication requiring no synchronization remains supported.
 
 ## Elapsed workflow time
@@ -493,7 +487,10 @@ own project; it does not silently advance another project's workflow.
 ## Unified task-session operation
 
 Every configured project runs the same durable task-session workflow; there is no per-project mode switch or required-check-name
-list. Configure the required `repository.validationCommand`; `coverageCommand` remains optional and becomes a gate when set. CI
+list. `repository.validationCommand` and `coverageCommand` are independently optional.
+The orchestrator runs configured commands and records unconfigured commands as skipped,
+never passed. Some legacy routes still require configured checks to pass; see
+[Configuration](configuration.md#projectsrepository) for current quality-policy limitations. CI
 expectations are discovered from branch-protection information and repository-owned pull-request workflows. See
 [Configuration](configuration.md#ci-expectation-discovery) for how unknown and dynamic CI contracts fail closed.
 
@@ -543,7 +540,7 @@ gates and review are rerun after each correction. `autoMerge: true` is rejected 
 preserve compatibility, and current-head CI/local evidence never authorizes a merge. Exhaustion or ambiguous state is preserved for operator attention rather than retried
 indefinitely. Replies are published only for independently verified items after the correcting commit and a complete passing CI
 result. The process does not approve reviews or resolve reviewer threads. See [Workflow](workflow.md#unified-task-lifecycle) and
-[Recovery](recovery.md#task-session-recovery) for lifecycle and recovery details.
+[Recovery](recovery.md#restart-and-task-ownership) for lifecycle and recovery details.
 
 The unified implementation has been verified locally with mocked Trello, GitHub, and OpenCode boundaries. This does not establish
 that a particular GitHub check, permission, Trello board, or OpenCode runtime is available. No real-world pilot, deployed-service

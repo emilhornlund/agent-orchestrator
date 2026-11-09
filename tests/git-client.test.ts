@@ -31,7 +31,7 @@ describe("GitClient", () => {
 
     await expect(
       git.rebase("/worktree", "origin/main", identity),
-    ).rejects.toThrow("disabled by the P1 safety guardrail");
+    ).rejects.toThrow("disabled to protect published history");
     expect(runGit).not.toHaveBeenCalled();
   });
 
@@ -45,7 +45,7 @@ describe("GitClient", () => {
         email: "agent-orchestrator@example.com",
         signingKey: "/home/agent/.ssh/signing-key.pub",
       }),
-    ).rejects.toThrow("disabled by the P1 safety guardrail");
+    ).rejects.toThrow("disabled to protect published history");
     expect(runGit).not.toHaveBeenCalled();
   });
 

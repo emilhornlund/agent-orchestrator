@@ -65,7 +65,7 @@ exception is a structurally valid, content-bound failed implementation review af
 review with an explicit warning, but is never automatically merged. Other exhausted or ambiguous
 operations preserve their durable records and require operator attention. No manual check-name configuration is required. Local
 mock tests cover the lifecycle; no live Trello/GitHub/OpenCode pilot has been performed. See
-[Configuration](configuration.md#ci-expectation-discovery) and [Recovery](recovery.md#task-session-recovery).
+[Configuration](configuration.md#ci-expectation-discovery) and [Recovery](recovery.md#restart-and-task-ownership).
 
 Automatic CI expectations come from available branch-protection policies and static repository-owned pull-request workflow
 contracts. Conditional jobs, dynamic matrices, unsupported workflow constructs, inaccessible policies, empty contracts, and
@@ -146,18 +146,25 @@ CI repair, and feedback remediation; an owned worktree and a persisted primary s
 runs optional `setupCommand`, reconciles current Trello attachment context, creates a structured plan, and requires independent
 plan verification before code changes begin.
 
-The primary session implements the approved plan. The orchestrator—not the agent—runs the required `validationCommand` and any
-configured `coverageCommand`, binding each result to the exact source content. An independent reviewer uses a separate session to
-assess every approved requirement. Validation, coverage, and review repairs are bounded; after the last correction the relevant
-checks run again. A passing final review permits normal publication; neither review nor CI evidence
-authorizes automatic merging. If the independent implementation review remains failed after the configured
-remediation limit, successful current validation and coverage still permit publication to Human
-Review only. The failed findings are preserved and disclosed on the PR; this outcome is not a
-workflow error and sends no Attention Required notification. Failed local validation, missing
-evidence, stale snapshots, and ambiguous publication remain blocked.
+The primary session implements the approved plan. The orchestrator—not the agent—runs any
+configured `validationCommand` and `coverageCommand`, binding each result to the exact
+source content. These commands are independently optional: an absent command is recorded
+as skipped, never passed. An independent reviewer uses a separate session to assess the
+plan's requirements. Validation, coverage, and review repairs are bounded; after the last
+correction the relevant configured checks run again.
+
+A passing final review with current passing validation and coverage permits normal
+initial publication; skipped checks are disclosed on a draft PR. If implementation
+review still fails after the configured remediation limit, passing or skipped command
+outcomes can still permit draft publication to Human Review. Failed findings remain
+disclosed; this review-exhaustion outcome is not a workflow error and sends no Attention
+Required notification. Neither review nor CI evidence authorizes automatic merging.
+Some legacy routes still block on failed configured checks, missing required evidence,
+stale snapshots, or ambiguous publication. Those quality-gate limitations differ from
+the intended advisory policy in the [requirements](requirements.md).
 
 The orchestrator then creates one trusted commit with the configured Git identity and publishes or reuses the same task PR through
-fetch and ordinary fast-forward-safe push. P1 temporarily disables automatic rebasing and prepared-conflict continuation,
+fetch and ordinary fast-forward-safe push. This release disables automatic rebasing and prepared-conflict continuation,
 including unpublished publication rebases. If publication would require rewriting history, the worktree and PR state are preserved
 for safe recovery. The optional post-commit PR-description session is presentation-only: if structured
 output or rendering fails, a deterministic Trello-link/attribution body is used without weakening publication gates. Failures
@@ -182,20 +189,20 @@ inferred from or persisted to Trello card data.
 
 ## Publication
 
-New initial publications use the [durable publication journal](p4-initial-publication.md):
+New initial publications use a durable publication journal:
 intent precedes commit/push/PR dispatch, independently verified actual PR identity
 is persisted before Trello effects, and the Human Review destination is read back.
 Polling resumes the same checkpoint after service recovery without recreating the
 PR or initial commit. A negative lookup does not authorize resending an ambiguous
 creation. Existing uncertain legacy publications without dispatch provenance stay
 preserved and blocked rather than being treated as fresh creation attempts.
-Remaining existing-PR mutations and refinement/terminal mutation foundations use
-the [P4-T3 routing inventory](p4-mutation-routing.md). Under production attempt
+Existing-PR mutations and refinement/terminal operations use the same durable
+mutation mechanisms. Under production attempt
 authority, pending workflow comments, field updates, Git effects and cleanup
 dispatches retain ownership until independently reconciled; negative reads do not
 authorize resending. The legacy best-effort descriptions elsewhere on this page
 do not override that journal/release gate. Email delivery remains separate,
-nonblocking work for P4-T4; complete lifecycle/race closure remains P7/P9/P10.
+nonblocking work and cannot undo successful publication.
 
 Before publication, the task worktree fetches `origin/<defaultBranch>` but does not rebase. A missing task branch or fast-forward
 update is published with an ordinary push. A branch requiring a rewrite or conflict continuation is refused and preserved. The
@@ -270,12 +277,12 @@ CI repair operation containing all failed checks; a published new head invalidat
 merging is prohibited. An unknown expected-check set, missing check, stale head,
 or incomplete GitHub response never counts as green.
 
-P1 disables rebase and conflict continuation across initial publication, published maintenance, and prepared-conflict recovery.
+This release disables rebase and conflict continuation across initial publication, published maintenance, and prepared-conflict recovery.
 Existing handoffs and maintenance records remain diagnostic artifacts; their presence or apparent local completion does not
 authorize continuation. The task branch, PR, local commits, remote refs/objects, dirty or unshipped work, intent, and handoff are
 preserved. The worker may continue read-only PR observation and verified terminal reconciliation, but it does not run branch
-writers or start a new task for an affected card. Operator guidance is in [Recovery](recovery.md); additive maintenance and
-conflict resolution remain deferred to P8. There is no automatic retry, rebase, force-push, reset, abort, or silent success.
+writers or start a new task for an affected card. Operator guidance is in [Recovery](recovery.md).
+There is no automatic retry, rebase, force-push, reset, abort, or silent success.
 
 Trello and GitHub operations used by discovery, reconciliation, transition-history checks, card moves, content and label
 updates, comments, and attachment context are retryable when the service returns HTTP 500, 502, 503, or 504, a rate limit, a

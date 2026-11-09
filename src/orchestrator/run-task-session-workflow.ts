@@ -1552,7 +1552,7 @@ export async function runTaskSessionWorkflow(
     logger
       .child({ projectId: project.id })
       .warn(
-        `Published PR maintenance is deferred pending P8 additive replacement; preserving unresolved legacy operation(s): ${details}. Terminal PR reads/reconciliation continue; all project branch writers and new claims remain blocked until these effects are reconciled.`,
+        `Published PR maintenance is unavailable; preserving unresolved legacy operation(s): ${details}. Terminal PR reads/reconciliation continue; all project branch writers and new claims remain blocked until these effects are reconciled.`,
       );
   }
   // Retire only provable stale Ready claims before terminal PR processing can
@@ -3002,7 +3002,7 @@ export async function runTaskSessionWorkflow(
           logger
             .child({ projectId: project.id, cardId: observation.cardId })
             .warn(
-              `Routine PR maintenance deferred pending P8 additive replacement; preserving published history, local worktree, and PR ${observation.pullRequestUrl}`,
+              `Routine PR maintenance is unavailable; preserving published history, local worktree, and PR ${observation.pullRequestUrl}`,
             );
           reportedDeferredMaintenance.add(diagnosticKey);
         }

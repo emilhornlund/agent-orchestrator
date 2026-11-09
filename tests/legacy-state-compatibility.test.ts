@@ -21,7 +21,7 @@ describe("legacy task-state compatibility", () => {
       artifactVersion: 1,
       schema: "TaskExecutionRecord v1",
     });
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "p2-upgrade-"));
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "state-upgrade-"));
     try {
       const runtimeRoot = path.join(root, "runtime");
       const storageRoot = path.join(root, "state");
@@ -140,7 +140,7 @@ describe("legacy task-state compatibility", () => {
 
   it("preserves unsupported source versions and refuses migration before publishing authority", () => {
     const root = fs.mkdtempSync(
-      path.join(os.tmpdir(), "p2-upgrade-unsupported-"),
+      path.join(os.tmpdir(), "state-upgrade-unsupported-"),
     );
     try {
       const runtimeRoot = path.join(root, "runtime");

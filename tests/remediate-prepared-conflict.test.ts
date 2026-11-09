@@ -7,7 +7,7 @@ import type { TrelloCard } from "../src/trello/trello-client.js";
 import { remediatePreparedConflict } from "../src/orchestrator/remediate-prepared-conflict.js";
 import type { PreparedConflictHandoff } from "../src/orchestrator/prepared-conflict-state.js";
 
-describe("prepared conflict P1 recovery refusal", () => {
+describe("prepared conflict recovery refusal", () => {
   it.each([
     "active rebase",
     "completed local rebase",
@@ -58,7 +58,7 @@ describe("prepared conflict P1 recovery refusal", () => {
           handoff,
           signal: new AbortController().signal,
         }),
-      ).rejects.toThrow("disabled by the P1 safety guardrail");
+      ).rejects.toThrow("disabled to protect published history");
       expect(git.getRemoteBranchSha).not.toHaveBeenCalled();
       expect(git.rebase).not.toHaveBeenCalled();
       expect(github.findPullRequest).not.toHaveBeenCalled();

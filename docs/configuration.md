@@ -251,12 +251,12 @@ maintenance:
 `enabled` defaults to `false`. Published-PR maintenance is temporarily deferred in this release, even when enabled. The legacy
 setting is retained for compatibility but does not enable a published rebase or push. Existing prepared maintenance and any
 associated worktree, backup refs, rewritten objects, pending push intent, and remote history must be preserved for operator
-reconciliation and the future additive replacement in P8. Do not manually retry a legacy push or reset/discard its worktree.
-There is currently no orchestrator force-push or rebase promise: P1 disables published and pre-publication rebase, including
+reconciliation. Do not manually retry a legacy push or reset/discard its worktree.
+There is currently no orchestrator force-push or rebase support: this release disables published and pre-publication rebase, including
 prepared-conflict continuation. An ordinary no-sync-needed initial publication remains available; a non-fast-forward publication
 is safely deferred with its worktree and evidence preserved.
 
-The future P8 replacement is intended to use additive target-branch merge and ordinary fast-forward-safe push. That behavior is
+Additive target-branch merge and ordinary fast-forward-safe push for maintenance are
 not implemented or promised by this release. Existing unresolved prepared, failed, or push-intended operations block project
 writers until safely reconciled; they are not automatically retried, cancelled, or reported successful. Maintenance does not
 enable auto-merge or remove the `Human Review` step.
@@ -295,17 +295,17 @@ The configured list and label names do not matter to the service. The IDs are wh
 
 ### `projects[].repository`
 
-| Key                 | Meaning and validation                                                                                   |
-| ------------------- | -------------------------------------------------------------------------------------------------------- |
-| `path`              | Absolute path to the normal local checkout; repository paths must be unique across projects              |
-| `github`            | GitHub repository in `owner/repository` format; repositories must be unique across projects              |
-| `defaultBranch`     | Non-blank base branch for task branches and pull requests                                                |
-| `worktreeRoot`      | Absolute directory for isolated task worktrees; roots must be unique across projects                     |
-| `setupCommand`      | Optional non-blank command executed by the orchestrator in the card worktree before agent work           |
-| `validationCommand` | Required non-blank command run by the orchestrator in the owned worktree and bound to the source content |
-| `coverageCommand`   | Optional command; when configured, its repository-owned exit status is a required local quality gate     |
-| `gitIdentity`       | Required identity used by the commit session                                                             |
-| `githubApp`         | Optional GitHub App identity used for all authenticated GitHub operations for this project               |
+| Key                 | Meaning and validation                                                                                         |
+| ------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `path`              | Absolute path to the normal local checkout; repository paths must be unique across projects                    |
+| `github`            | GitHub repository in `owner/repository` format; repositories must be unique across projects                    |
+| `defaultBranch`     | Non-blank base branch for task branches and pull requests                                                      |
+| `worktreeRoot`      | Absolute directory for isolated task worktrees; roots must be unique across projects                           |
+| `setupCommand`      | Optional non-blank command executed by the orchestrator in the card worktree before agent work                 |
+| `validationCommand` | Optional non-blank command run by the orchestrator in the owned worktree and bound to the source content       |
+| `coverageCommand`   | Independently optional non-blank command; the orchestrator records its observed exit status and source content |
+| `gitIdentity`       | Required identity used by the commit session                                                                   |
+| `githubApp`         | Optional GitHub App identity used for all authenticated GitHub operations for this project                     |
 
 `path`, `worktreeRoot`, and an optional `gitIdentity.signingKey` must be absolute paths. Parsed absolute paths are resolved
 before use. A project's normalized `path` and `worktreeRoot` must be disjoint: neither may equal, contain, or be contained
@@ -328,11 +328,10 @@ commit; unrelated output is preserved and excluded, including during existing-PR
 corrections. Failed setup cannot start the affected agent.
 
 The orchestrator executes configured quality commands and binds results to exact
-content. Some pre-P6/P7/P8 routes still contain legacy passing-check/plan gates; these
-are implementation transition limits, not the agreed advisory requirement. P6 makes
-initial command optionality, reporting and publication policy consistent, with P7/P8
-owning correction composition. Do not treat legacy operational wording as a reason to
-retain a quality-only publication veto. See the [P6 packet](p6-execution.md).
+content. Validation and coverage are independently optional; an absent command is
+reported as skipped, not passed. Some legacy routes still require passing checks
+or plan approval. Those are current implementation limitations, not the intended
+advisory policy defined by the [requirements](requirements.md).
 
 #### GitHub authentication modes
 

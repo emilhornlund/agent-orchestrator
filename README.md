@@ -35,7 +35,7 @@ Pull request descriptions may be generated automatically from the final implemen
 
 Every project uses the restart-safe task-session workflow. One primary OpenCode session is retained across implementation,
 bounded local/CI repairs, and human-feedback rounds; independent review sessions verify the plan and implementation. The
-orchestrator runs configured validation, optional coverage, and discovers current-head checks from available GitHub repository
+orchestrator runs configured validation and coverage commands, records absent commands as skipped, and discovers current-head checks from available GitHub repository
 rules and static repository workflow contracts. An unknown or incomplete expected-check set waits or fails closed; visible green
 checks alone are never treated as proof that all expected checks have started. See the [configuration](docs/configuration.md),
 [workflow](docs/workflow.md), and [recovery](docs/recovery.md) references for operation and safe recovery. Local mocked tests
@@ -43,15 +43,14 @@ cover the workflow; no live Trello/GitHub/OpenCode pilot or deployed-service tes
 
 ## Documentation
 
-| Topic                                                                   | Reference                                  |
-| ----------------------------------------------------------------------- | ------------------------------------------ |
-| Workflow lifecycle, Trello states, refinement, and review feedback      | [Workflow](docs/workflow.md)               |
-| `config.yaml`, environment variables, defaults, and validation          | [Configuration](docs/configuration.md)     |
-| Reconciliation, restart recovery, retries, and ambiguous state          | [Recovery](docs/recovery.md)               |
-| Worktree safety, publication, notifications, logging, and operations    | [Operations](docs/operations.md)           |
-| Development setup, testing, and pull requests                           | [CONTRIBUTING.md](CONTRIBUTING.md)         |
-| Private vulnerability reporting                                         | [SECURITY.md](SECURITY.md)                 |
-| Architecture roadmap, phase execution, readiness, and current milestone | [Phase execution](docs/phase-execution.md) |
+| Topic                                                                | Reference                              |
+| -------------------------------------------------------------------- | -------------------------------------- |
+| Workflow lifecycle, Trello states, refinement, and review feedback   | [Workflow](docs/workflow.md)           |
+| `config.yaml`, environment variables, defaults, and validation       | [Configuration](docs/configuration.md) |
+| Reconciliation, restart recovery, retries, and ambiguous state       | [Recovery](docs/recovery.md)           |
+| Worktree safety, publication, notifications, logging, and operations | [Operations](docs/operations.md)       |
+| Development setup, testing, and pull requests                        | [CONTRIBUTING.md](CONTRIBUTING.md)     |
+| Private vulnerability reporting                                      | [SECURITY.md](SECURITY.md)             |
 
 The focused pages are the canonical references for their topics. The implementation does not change when documentation is
 reorganized; current configuration names, states, commands, and safety boundaries are described there.

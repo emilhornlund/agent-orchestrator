@@ -146,7 +146,7 @@ function fixture() {
   };
 }
 
-describe("P1 legacy PR-maintenance preservation", () => {
+describe("legacy PR-maintenance preservation", () => {
   it("preserves failed review state and its queue ownership across restart", () => {
     const f = fixture();
     expect(f.queue.claimNext()).toBeNull();

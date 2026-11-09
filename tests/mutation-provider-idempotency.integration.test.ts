@@ -14,7 +14,7 @@ import {
 
 describe("VER-WF-001-03 concrete provider-idempotent Git object/ref variant", () => {
   it("discovers a late same-object ref after a negative read; provider replay changes neither identity nor effect count", async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "p4-provider-ref-"));
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "provider-ref-"));
     const f = createPublicationFixture(root);
     const ledger: { type: string; sha?: string }[] = [];
     const save = () =>

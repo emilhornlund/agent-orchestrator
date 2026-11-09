@@ -75,10 +75,6 @@ Changes that weaken these invariants require explicit justification.
 
 ## Validation
 
-For architecture phases, also follow [the phase execution protocol](docs/phase-execution.md)
-and the selected phase's execution packet. Establish readiness and variant ownership
-before delegating implementation; the roadmap alone is not a task specification.
-
 Before finishing a change, run:
 
 ```bash
@@ -87,12 +83,10 @@ yarn validate
 
 The repository is not considered valid unless this command succeeds.
 
-The supervisor owns required full validation and may use an explicitly designated
-runner. Record the tested commit plus working-diff identity, command, exit status,
-and retained output. A read-only reviewer may accept this evidence without personally
-rerunning tests. Focused checks belong to the implementer. Reuse successful full
-validation for the same tree; rerun after changes, failures, or a concrete unresolved
-concern. A permission-denied attempt is not a product failure or passing evidence.
+Run focused checks during development and full validation on the final integrated
+change. Report the command and result briefly. Reuse a successful full run for the
+same tree; rerun after changes, failures, or a concrete unresolved concern.
+Never claim an unexecuted check passed.
 
 For automatically fixable linting or formatting issues:
 
@@ -115,10 +109,10 @@ Tests should cover:
 Do not rely on live Trello, GitHub, or OpenCode services in unit tests.
 
 Run ordinary `yarn test`; do not require caller-supplied temporary-directory variables
-or add milestone-specific test commands/scripts. Vitest owns a private run directory
+or add task-specific test commands/scripts. Vitest owns a private run directory
 and removes it on teardown. Release owned child processes in fixture cleanup and do
-not retain test repositories/artifact trees by default. Rewrite planning documents
-are temporary; product regression tests must be named and maintained by behavior.
+not retain test repositories/artifact trees by default. Name and maintain regression
+tests by product behavior.
 
 ## Git
 

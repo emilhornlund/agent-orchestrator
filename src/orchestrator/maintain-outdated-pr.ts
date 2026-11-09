@@ -49,7 +49,7 @@ export interface MaintainOutdatedPrOptions {
   }) => Promise<void>;
 }
 
-/** P1 guardrail: published-PR maintenance is deferred until additive P8 support. */
+/** Preserve published-PR state while automatic additive maintenance is unavailable. */
 export async function maintainOutdatedPr(
   _options: MaintainOutdatedPrOptions,
 ): Promise<"deferred"> {
@@ -57,7 +57,7 @@ export async function maintainOutdatedPr(
   return "deferred";
 }
 
-/** Legacy prepared operations are never automatically requeued under P1. */
+/** Legacy prepared operations are never automatically requeued. */
 export function requeueInterruptedPreparedPrMaintenance(_options: {
   project: ProjectConfig;
   maintenanceStore: PrMaintenanceStore;

@@ -38,12 +38,12 @@ export type PublishedPrRebasePreparationResult =
       backupRef: string;
     };
 
-/** P1 disables legacy published-rebase preparation until additive P8 maintenance. */
+/** Refuse legacy rebase preparation when published-history safety is unproven. */
 export async function preparePublishedPrRebase(
   _options: PreparePublishedPrRebaseOptions,
 ): Promise<PublishedPrRebasePreparationResult> {
   void _options;
   throw new PrMaintenanceConflictError(
-    "Published PR rebase preparation is disabled by the P1 safety guardrail; preserve existing maintenance state for additive P8 recovery",
+    "Published PR rebase preparation is disabled to protect published history; preserve existing maintenance state for operator reconciliation",
   );
 }
