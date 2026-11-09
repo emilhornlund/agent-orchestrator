@@ -1,8 +1,13 @@
-# P5 activity record — source tasks committed; T5 evidence partial; P5 open
+# P5 activity record — scoped activities complete; whole-phase close blocked
 
-**Status: T2 R1–R6 and T3a–c/T4a–b are committed and scoped reviewed; T2's
-consolidated offline gate passed. T5 adds a passing focused suite and a partial /
-blocked evidence map. P5 remains OPEN and this is NOT deployment approval.**
+**Checkpoint at `962aca0`: P5 remains OPEN and is NOT deployment approval.**
+R1–R6 and T3a–c/T4a–b are committed/scoped reviewed. The original whole-phase
+review (`45c6210`) failed on C1–C4. C1, C3, C4 have fixes in `8159ade`,
+`843151f`, `fe3df7e`; C2 (`ba68c1b`) remains a safety blocker because reliable
+escaped-descendant liveness containment is not established. A new whole-phase
+review is pending. Current verification deltas V1–V4 are partial/bounded; they
+do not mean all criteria are accepted. See `p5-verification.md` for exact
+evidence and the required remaining work.
 The WIP checkpoint is preserved as `c0f3a8c`. See
 [`p5-verification.md`](p5-verification.md) for exact commit identifiers and
 current execution/evidence status. Keep existing source, tests, scripts, upgrade
@@ -403,9 +408,10 @@ acceptance criteria, or claim whole-P5 completion.
 
 ### P5-CLOSE — Whole-P5 verification, review, and clean-worktree closure
 
-**Status:** pending. This is P5 closeout, not P6
-work and not authority to deploy; it is phase evidence for the planner's
-completion decision.
+**Status:** BLOCKED/PENDING. The original whole-phase review failed; follow-up
+whole-phase review has not yet run. C2's escaped-descendant containment/liveness
+defect is unresolved. This is P5 closeout, not P6 work and not authority to
+deploy; it is phase evidence for the planner's completion decision.
 
 **Requirements/scenarios:** all mapped P5 requirements/scenarios in the plan
 and verification catalog, with each evidence level explicit.

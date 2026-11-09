@@ -9,6 +9,13 @@
 > backlog. No live/provider, container/deployment, or full-lifecycle evidence is
 > inferred from an offline test.
 
+Current phase status is governed by the checkpoint at HEAD `962aca0` in
+[`p5-verification.md`](p5-verification.md): the original whole-P5 review
+`45c6210` failed, C2's escaped-descendant liveness containment remains blocking,
+and follow-up whole-phase review is pending. This T2 scoped offline PASS and
+the preserved historical probe records do not override that result. Retain the
+historical/invalid probe IDs below; they are not promoted as current evidence.
+
 This opt-in harness makes real model requests. It does not use Trello/GitHub,
 does not read application configuration, and does not delete OpenCode sessions.
 The fixture repository/worktree and runtime evidence are retained for manual

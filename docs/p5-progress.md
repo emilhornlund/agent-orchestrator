@@ -1,4 +1,31 @@
-# P5 progress — source activities committed; T2 offline PASS; T5 evidence partial
+# P5 progress — whole-phase review FAIL; checkpoint remains open
+
+**Checkpoint tree:** `962aca0` (clean at checkpoint start). **P5 is NOT
+complete.** R1–R6, T3a–c, and T4a–b are committed and passed their scoped
+implementation/review gates; scoped PASS is not whole-phase acceptance. The
+original whole-phase review at `45c6210` found blocking findings and failed.
+Follow-up changes fixed C1 (`8159ade`), C3 (`843151f`), and C4 (`fe3df7e`),
+but C2 (`ba68c1b`) added safety tests only: reliable containment of an escaped
+descendant's liveness remains unresolved and is a real blocker, not a pass. The
+updated whole-phase review is pending. V1 (`36bfafe`), V2 (`89a2b08` and
+`172b182`), V3 (`3139ebe`), and V4 (`962aca0`) are bounded/partial verification
+changes, not evidence that every local criterion is accepted. See the current
+checkpoint section in
+[`p5-verification.md`](p5-verification.md); historical records and invalid probe
+IDs remain preserved.
+
+At this checkpoint, `test:p5` includes the outage CLI, production lifecycle,
+and review-repair recovery suites. `TMPDIR="$PWD/node_modules/.p5-tmp" yarn
+test:p5` passed **562 tests across 39 files**; `yarn validate` passed ESLint,
+Prettier, typecheck, and **2,048 tests across 165 files** on rerun. The first
+validate attempt stopped at Prettier for this evidence document; only the four
+scoped P5 docs were formatted, then validation passed. Raw command output is
+retained at `node_modules/.p5-tmp/p5-checkpoint-test-p5.log` and
+`node_modules/.p5-tmp/p5-checkpoint-validate.log`. Do not infer all local
+criteria accepted from a suite pass. Realistic OpenCode/Trello/attachment/default
+and manual-move evidence, policy decisions A2/A5, and a composed production
+startup/process-runtime inspection lifecycle remain open or partial. No live
+service, commit, or deploy is authorized by this checkpoint.
 
 The WIP checkpoint is preserved in `c0f3a8c`. R1–R5, R6, T3a–c and T4a–b are
 committed; source activities have scoped independent reviews, and the consolidated
@@ -108,7 +135,7 @@ The historical live fixtures use OpenCode CLI 1.18.35 with explicit
 pre/post ledger and artifact details. Every Yarn command used
 `TMPDIR="$PWD/node_modules/.p5-tmp"`.
 
-## Current T5 evidence status
+## Earlier T5 evidence status (historical candidate)
 
 - `TMPDIR="$PWD/node_modules/.p5-tmp" yarn test:p5` passed **522 tests across
   35 files**.
