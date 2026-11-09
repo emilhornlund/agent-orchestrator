@@ -296,23 +296,28 @@ describe("task-session production dispatch", () => {
         }),
       );
 
+      let publishedHeadSha = headSha;
       const trello = {
         getCards: vi.fn(async (listId: string) =>
           listId === cardListId ? [card] : [],
         ),
         getCard: vi.fn(async () => card),
+        moveCard: vi.fn(async (_cardId: string, listId: string) => ({
+          ...card,
+          idList: listId,
+        })),
         getCardAttachments: vi.fn(async () => []),
       } as unknown as TrelloClient;
       const git = {
         getCurrentBranch: vi.fn(async () => `agent/${card.id}`),
-        getHeadSha: vi.fn(async () => headSha),
+        getHeadSha: vi.fn(async () => publishedHeadSha),
         getRefSha: vi.fn(async (_cwd: string, ref: string) =>
-          ref.includes("agent/") ? headSha : "b".repeat(40),
+          ref.includes("agent/") ? publishedHeadSha : "b".repeat(40),
         ),
         getRebaseState: vi.fn(async () => null),
         getConflictedPaths: vi.fn(async () => []),
         getStatus: vi.fn(async () => ""),
-        getRemoteBranchSha: vi.fn(async () => headSha),
+        getRemoteBranchSha: vi.fn(async () => publishedHeadSha),
         getCommitCountBetween: vi.fn(async () => 1),
         getDiff: vi.fn(async () => "existing change"),
         getHeadTrackedFiles: vi.fn(async () => ["src.ts"]),
@@ -326,24 +331,30 @@ describe("task-session production dispatch", () => {
         fetch: vi.fn(async () => undefined),
         push: vi.fn(async () => undefined),
         stageAllExcept: vi.fn(async () => undefined),
-        commit: vi.fn(async () => undefined),
+        commit: vi.fn(async () => {
+          publishedHeadSha = "c".repeat(40);
+        }),
       } as unknown as GitClient;
       let feedbackMode = false;
       const github = {
+        findPullRequest: vi.fn(async () => ({
+          number: 9,
+          url: "https://github.com/owner/repo/pull/9",
+        })),
         findPullRequestState: vi.fn(async () => ({
           url: "https://github.com/owner/repo/pull/9",
           state: "OPEN",
           mergedAt: null,
-          headRefOid: headSha,
+          headRefOid: publishedHeadSha,
         })),
         getCiObservations: vi.fn(async () => ({
-          headSha,
+          headSha: publishedHeadSha,
           checks: [
             {
               source: "check-run" as const,
               id: 1,
               name: "Build",
-              headSha,
+              headSha: publishedHeadSha,
               status: "completed" as const,
               conclusion: feedbackMode ? "success" : "failure",
               url: null,
@@ -363,12 +374,12 @@ describe("task-session production dispatch", () => {
             ? {
                 url: "https://github.com/owner/repo/pull/9",
                 number: 9,
-                headSha,
+                headSha: publishedHeadSha,
                 feedback: {
                   reviews: [
                     {
                       id: 12,
-                      commitSha: headSha,
+                      commitSha: publishedHeadSha,
                       body: null,
                       author: "reviewer",
                       submittedAt: "2026-10-24T11:00:00Z",
@@ -376,7 +387,7 @@ describe("task-session production dispatch", () => {
                         {
                           id: 501,
                           reviewId: 12,
-                          commitSha: headSha,
+                          commitSha: publishedHeadSha,
                           body: "Handle the empty case.",
                           author: "reviewer",
                           path: "src.ts",
@@ -416,12 +427,91 @@ describe("task-session production dispatch", () => {
           options.prompt.startsWith(
             "Address the following verified-as-actionable human PR feedback",
           )
-        )
+        ) {
+          fs.writeFileSync(
+            path.join(worktreePath, "src.ts"),
+            "export const corrected = true;\n",
+          );
           return {
             exitCode: 0,
             output: "feedback repair dispatched",
             errorOutput: "",
           };
+        }
+        if (
+          options.readOnly &&
+          feedbackMode &&
+          options.prompt.includes(
+            "Independently verify each actionable human PR feedback item",
+          )
+        ) {
+          return {
+            exitCode: 0,
+            output: JSON.stringify({
+              version: 1,
+              projectId: project.id,
+              cardId: card.id,
+              headSha: feedbackHeadSha,
+              contentIdentity: await getTaskSessionSourceSnapshotIdentity(
+                git,
+                worktreePath,
+              ),
+              dispositions: [
+                {
+                  feedbackId: "inline-comment:501",
+                  status: "verified-fixed",
+                  evidence: ["src.ts"],
+                },
+              ],
+            }),
+            errorOutput: "",
+          };
+        }
+        if (options.readOnly && feedbackMode) {
+          return {
+            exitCode: 0,
+            output: JSON.stringify({
+              version: 1,
+              projectId: project.id,
+              cardId: card.id,
+              verdict: "pass",
+              requirementAssessments: [
+                {
+                  requirementId: "REQ-1",
+                  status: "satisfied",
+                  details: "The requested behavior is implemented.",
+                  evidence: ["src.ts"],
+                },
+              ],
+              blockingFindings: [],
+              reviewedContentIdentity:
+                await getTaskSessionSourceSnapshotIdentity(git, worktreePath),
+            }),
+            errorOutput: "",
+          };
+        }
+        if (options.prompt.includes("Generate the commit message")) {
+          const resultPath = getCommitResultPath(options.cwd);
+          fs.mkdirSync(path.dirname(resultPath), { recursive: true });
+          fs.writeFileSync(
+            resultPath,
+            JSON.stringify({
+              message: [
+                "fix(feedback): address requested feedback",
+                "",
+                "- Handle the empty case.",
+                "- Preserve the existing task scope.",
+                "",
+                "The requested feedback correction is included.",
+              ].join("\n"),
+            }),
+          );
+          return {
+            exitCode: 0,
+            output: "commit message generated",
+            errorOutput: "",
+          };
+        }
         if (
           validationCheckpointMode &&
           options.prompt.includes('"reviewedContentIdentity"')
@@ -563,7 +653,7 @@ describe("task-session production dispatch", () => {
         project,
         feedbackAuthority,
       );
-      const feedbackHeadSha = headSha;
+      let feedbackHeadSha = headSha;
       const feedbackOperationId = `feedback:${feedbackHeadSha}:${createHash(
         "sha256",
       )
@@ -723,6 +813,7 @@ describe("task-session production dispatch", () => {
           prepareAttachmentContext: async () => undefined,
         }),
       );
+      feedbackHeadSha = publishedHeadSha;
       const afterFeedback = await feedbackAuthority.run(() =>
         feedbackStore.read(card.id),
       );
@@ -735,7 +826,7 @@ describe("task-session production dispatch", () => {
         ),
       ).toBe(true);
       expect(afterFeedback).toMatchObject({
-        phase: "human-feedback",
+        phase: "ci",
         primarySessionId: "ses_feedback-replacement",
         sessionRecovery: {
           originalSessionId: "ses_lost-feedback-owner",
@@ -746,6 +837,11 @@ describe("task-session production dispatch", () => {
           number: 9,
           url: "https://github.com/owner/repo/pull/9",
           headSha: feedbackHeadSha,
+        },
+        feedbackRemediation: {
+          operationId: feedbackOperationId,
+          status: "changed",
+          headSha,
         },
       });
       expect(
@@ -791,9 +887,30 @@ describe("task-session production dispatch", () => {
       });
       expect(feedbackQueue.claimNext()?.eventId).toBe(checkpointOperationId);
       feedbackQueue.fail(checkpointOperationId);
-      const feedbackCompletedRecord = afterFeedback;
-      if (feedbackCompletedRecord === null)
+      if (afterFeedback === null)
         throw new Error("Expected feedback-completed task record");
+      const feedbackCompletedRecord = await feedbackAuthority.run(() => {
+        const awaitingHuman = transitionTaskExecutionRecord(afterFeedback, {
+          type: "ci-passed-awaiting-human",
+          eventId: `${feedbackOperationId}:ci-passed-awaiting-human`,
+          projectId: project.id,
+          cardId: card.id,
+          operationKey: afterFeedback.operationKey,
+          occurredAt: new Date(
+            Math.max(Date.now(), Date.parse(afterFeedback.updatedAt) + 1),
+          ).toISOString(),
+        });
+        return feedbackStore.compareAndSwap(
+          card.id,
+          afterFeedback.revision,
+          awaitingHuman,
+        );
+      });
+      expect(feedbackCompletedRecord.feedbackRemediation).toMatchObject({
+        operationId: feedbackOperationId,
+        status: "changed",
+        headSha,
+      });
       await feedbackAuthority.run(() => {
         const prepared = feedbackStore.compareAndSwap(
           card.id,
@@ -816,18 +933,15 @@ describe("task-session production dispatch", () => {
           operationKey: feedbackCompletedRecord.operationKey,
           occurredAt: new Date().toISOString(),
         });
+        expect(feedbackReceived.feedbackRemediation).toMatchObject({
+          operationId: feedbackOperationId,
+          status: "changed",
+          headSha,
+        });
         const implementation = feedbackStore.compareAndSwap(
           card.id,
           prepared.revision,
-          {
-            ...feedbackReceived,
-            feedbackRemediation: {
-              operationId: feedbackOperationId,
-              status: "changed",
-              headSha: feedbackHeadSha,
-              ledgerRevision: 1,
-            },
-          },
+          feedbackReceived,
         );
         const validation = transitionTaskExecutionRecord(implementation, {
           type: "implementation-completed",
@@ -836,6 +950,11 @@ describe("task-session production dispatch", () => {
           cardId: card.id,
           operationKey: implementation.operationKey,
           occurredAt: new Date().toISOString(),
+        });
+        expect(validation.feedbackRemediation).toMatchObject({
+          operationId: feedbackOperationId,
+          status: "changed",
+          headSha,
         });
         feedbackStore.compareAndSwap(card.id, implementation.revision, {
           ...validation,

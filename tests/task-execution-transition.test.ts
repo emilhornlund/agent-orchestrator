@@ -67,6 +67,51 @@ function createEvent(
 }
 
 describe("transitionTaskExecutionRecord", () => {
+  it("preserves changed feedback-remediation ownership across correction phases", () => {
+    const changedFeedback = {
+      operationId: "feedback:requested-change",
+      status: "changed" as const,
+      headSha: "a".repeat(40),
+      ledgerRevision: 2,
+    };
+    let record: TaskExecutionRecord = {
+      ...createRecord("human-feedback"),
+      feedbackRemediation: changedFeedback,
+    };
+
+    for (const type of [
+      "feedback-received",
+      "implementation-completed",
+      "validation-passed",
+      "review-passed",
+      "publication-completed",
+    ] as const) {
+      record = transitionTaskExecutionRecord(record, createEvent(type));
+      expect(record.feedbackRemediation).toEqual(changedFeedback);
+    }
+    expect(record.phase).toBe("ci");
+  });
+
+  it("clears only active feedback remediation when leaving human feedback", () => {
+    const record = {
+      ...createRecord("human-feedback"),
+      feedbackRemediation: {
+        operationId: "feedback:active",
+        status: "active" as const,
+        headSha: "a".repeat(40),
+        ledgerRevision: 1,
+      },
+    };
+
+    const nextRecord = transitionTaskExecutionRecord(
+      record,
+      createEvent("feedback-received"),
+    );
+
+    expect(nextRecord.phase).toBe("implementation");
+    expect(nextRecord.feedbackRemediation).toBeUndefined();
+  });
+
   it("hands off unchanged interrupted review repair without inventing a verdict", () => {
     let record = createRecord("implementation");
     for (const type of [
