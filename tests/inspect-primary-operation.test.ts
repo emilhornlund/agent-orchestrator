@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { spawn, spawnSync } from "node:child_process";
 import type { ProjectConfig } from "../src/config/config.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
 import {
@@ -77,6 +78,7 @@ function fixture(status = "nonzero") {
   return {
     root,
     store,
+    project,
     cwd,
     artifactRoot,
     metadataPath,
@@ -122,6 +124,68 @@ describe("inspectPrimaryOperationEvidence", () => {
       await inspectPrimaryOperationEvidence(f.store, "card", "op", f.identity),
     ).toEqual({ status: "unknown" });
   });
+  it.skipIf(process.platform !== "linux")(
+    "keeps live-owner, live-process-group, and unverifiable-namespace cases unknown",
+    async () => {
+      const f = fixture("running");
+      const processStart = (pid: number) => {
+        const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+        return stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19];
+      };
+      const liveGroupLeader = spawn(
+        process.execPath,
+        ["-e", "setInterval(() => {}, 30000)"],
+        { detached: true, stdio: "ignore" },
+      );
+      try {
+        const leaderPid = liveGroupLeader.pid;
+        if (leaderPid === undefined) throw new Error("missing process pid");
+        const base = {
+          executionId: "exec",
+          cwd: f.cwd,
+          status: "running",
+          dispatchState: "dispatched",
+          supervisorPid: process.pid,
+          supervisorStartIdentity: processStart(process.pid),
+          pid: leaderPid,
+          pidStartIdentity: processStart(leaderPid),
+          processGroupId: leaderPid,
+          hostBootId: fs
+            .readFileSync("/proc/sys/kernel/random/boot_id", "utf8")
+            .trim(),
+          pidNamespace: fs.readlinkSync("/proc/self/ns/pid"),
+        };
+        fs.writeFileSync(f.metadataPath, JSON.stringify(base));
+        expect(
+          await inspectPrimaryOperationEvidence(
+            f.store,
+            "card",
+            "op",
+            f.identity,
+          ),
+        ).toEqual({ status: "unknown" });
+        fs.writeFileSync(
+          f.metadataPath,
+          JSON.stringify({ ...base, pidNamespace: "pid:[unverifiable]" }),
+        );
+        expect(
+          await inspectPrimaryOperationEvidence(
+            f.store,
+            "card",
+            "op",
+            f.identity,
+          ),
+        ).toEqual({ status: "unknown" });
+      } finally {
+        if (liveGroupLeader.pid !== undefined) {
+          liveGroupLeader.kill("SIGKILL");
+          await new Promise<void>((resolve) =>
+            liveGroupLeader.once("close", () => resolve()),
+          );
+        }
+      }
+    },
+  );
   it("rejects unsafe metadata symlink paths", async () => {
     const f = fixture();
     fs.unlinkSync(f.metadataPath);
@@ -176,4 +240,130 @@ describe("inspectPrimaryOperationEvidence", () => {
       await inspectPrimaryOperationEvidence(f.store, "card", "op", f.identity),
     ).toEqual({ status: "unknown" });
   });
+  it.skipIf(process.platform !== "linux")(
+    "keeps orphaned running metadata ambiguous when a setsid descendant escapes the process group",
+    async () => {
+      const f = fixture("running");
+      const sentinel = path.join(f.root, "escaped-descendant.txt");
+      const supervisorScript = `
+      import { spawn } from "node:child_process";
+      import { beginProcessEvidence } from ${JSON.stringify(new URL("../src/process/process-runtime.ts", import.meta.url).href)};
+      import { bindPrimaryExecutionEvidence } from ${JSON.stringify(new URL("../src/task-session/primary-operation-ledger.ts", import.meta.url).href)};
+      import { TaskExecutionStore } from ${JSON.stringify(new URL("../src/task-session/task-execution-store.ts", import.meta.url).href)};
+      const f = JSON.parse(process.env.FIXTURE);
+      const store = new TaskExecutionStore(f.state, f.project);
+      const evidence = beginProcessEvidence("scripted primary", f.cwd, [], f.artifactRoot);
+      bindPrimaryExecutionEvidence(store, "card", "op", 1, { executionId: evidence.executionId, metadataPath: evidence.metadataPath, artifactRoot: evidence.artifactRoot });
+      const escapedScript = ${JSON.stringify(`const fs=require('node:fs');const end=Date.now()+1800;const write=()=>{fs.appendFileSync(${JSON.stringify(sentinel)},'x');if(Date.now()<end)setTimeout(write,15)};write();`)};
+      const primaryCode = "const {spawn}=require('node:child_process');spawn(process.execPath,['-e'," + JSON.stringify(escapedScript) + "],{detached:true,stdio:'ignore'}).unref();setTimeout(()=>{},900);";
+      const child = spawn(process.execPath, ["-e", primaryCode], { detached: true, stdio: "ignore" });
+      evidence.dispatched(child.pid);
+      process.stdout.write(JSON.stringify({ pid: process.pid, group: child.pid }));
+      setInterval(() => {}, 1000);
+    `;
+      const supervisor = spawn(
+        process.execPath,
+        ["--import", "tsx", "--input-type=module", "-e", supervisorScript],
+        {
+          stdio: ["ignore", "pipe", "pipe"],
+          env: {
+            ...process.env,
+            FIXTURE: JSON.stringify({
+              state: path.join(f.root, "state"),
+              project: f.project,
+              cwd: f.cwd,
+              artifactRoot: f.artifactRoot,
+            }),
+          },
+        },
+      );
+      let stdout = "";
+      let stderr = "";
+      supervisor.stdout.setEncoding("utf8").on("data", (part: string) => {
+        stdout += part;
+      });
+      supervisor.stderr.setEncoding("utf8").on("data", (part: string) => {
+        stderr += part;
+      });
+      await new Promise<void>((resolve, reject) => {
+        const deadline = setTimeout(
+          () =>
+            reject(
+              new Error(`supervisor did not bind process evidence: ${stderr}`),
+            ),
+          10_000,
+        );
+        supervisor.stdout.on("data", () => {
+          if (stdout.includes("}")) {
+            clearTimeout(deadline);
+            resolve();
+          }
+        });
+        supervisor.once("error", reject);
+      });
+      const spawned = JSON.parse(stdout) as { pid: number; group: number };
+      supervisor.kill("SIGKILL");
+      await new Promise<void>((resolve) =>
+        supervisor.once("close", () => resolve()),
+      );
+      const attemptFile = path.join(f.root, "retry-count");
+      const childScript = `
+      import fs from "node:fs";
+      import { TaskExecutionStore } from ${JSON.stringify(new URL("../src/task-session/task-execution-store.ts", import.meta.url).href)};
+      import { runPrimaryOperation } from ${JSON.stringify(new URL("../src/task-session/run-primary-operation.ts", import.meta.url).href)};
+      import { inspectPrimaryOperationEvidence } from ${JSON.stringify(new URL("../src/task-session/inspect-primary-operation.ts", import.meta.url).href)};
+      const f = JSON.parse(process.env.FIXTURE); const store = new TaskExecutionStore(f.state, f.project);
+      let dispatched = false;
+      try { await runPrimaryOperation({ store, cardId: "card", operationId: "op", activity: "work", sessionId: "session", execute: async () => { dispatched = true; fs.appendFileSync(f.attemptFile, "x"); return { exitCode: 0, output: "retried", errorOutput: "", sessionId: "session" }; }, inspectPending: () => inspectPrimaryOperationEvidence(store, "card", "op", { trustedRoot: f.trustedRoot, cwd: f.cwd }) }); } catch {}
+      process.stdout.write(JSON.stringify({ dispatched, entry: store.read("card").primaryOperations.op }));
+    `;
+      const inspectFresh = () =>
+        spawnSync(
+          process.execPath,
+          ["--import", "tsx", "--input-type=module", "-e", childScript],
+          {
+            encoding: "utf8",
+            timeout: 20_000,
+            env: {
+              ...process.env,
+              FIXTURE: JSON.stringify({
+                state: path.join(f.root, "state"),
+                project: f.project,
+                cwd: f.cwd,
+                trustedRoot: path.join(f.root, "artifacts"),
+                attemptFile,
+              }),
+            },
+          },
+        );
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      const whileAlive = inspectFresh();
+      expect(whileAlive.status, whileAlive.stderr).toBe(0);
+      expect(JSON.parse(whileAlive.stdout)).toMatchObject({
+        dispatched: false,
+        entry: { executions: 1, status: "ambiguous" },
+      });
+      const firstSize = fs.statSync(sentinel).size;
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect(fs.statSync(sentinel).size).toBeGreaterThan(firstSize);
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      const escapedGroupStopped = inspectFresh();
+      expect(escapedGroupStopped.status, escapedGroupStopped.stderr).toBe(0);
+      expect(JSON.parse(escapedGroupStopped.stdout)).toMatchObject({
+        dispatched: false,
+        entry: { executions: 1, status: "ambiguous" },
+      });
+      expect(fs.statSync(sentinel).size).toBeGreaterThan(firstSize);
+      await new Promise((resolve) => setTimeout(resolve, 900));
+      const afterEscapeStopped = inspectFresh();
+      expect(afterEscapeStopped.status, afterEscapeStopped.stderr).toBe(0);
+      expect(JSON.parse(afterEscapeStopped.stdout)).toMatchObject({
+        dispatched: false,
+        entry: { executions: 1, status: "ambiguous" },
+      });
+      expect(fs.existsSync(attemptFile)).toBe(false);
+      expect(spawned.group).toBeGreaterThan(0);
+    },
+    30_000,
+  );
 });
