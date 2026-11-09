@@ -20,7 +20,10 @@ import {
   PUBLICATION_RECHECK_MS,
   PublicationWaitingError,
 } from "../src/orchestrator/initial-publication.js";
-import { publishTaskSessionCard } from "../src/orchestrator/publish-task-session-card.js";
+import {
+  publishTaskSessionCard,
+  resolveExistingPrSetupDisposition,
+} from "../src/orchestrator/publish-task-session-card.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
 import { getTaskSessionSourceSnapshotIdentity } from "../src/task-session/source-snapshot.js";
 import { TaskMutationQueue } from "../src/task-session/task-mutation-queue.js";
@@ -29,6 +32,7 @@ import {
   resolveSetupCommitScope,
   setupFileIdentity,
   type PersistedSetupDisposition,
+  type SetupInventory,
 } from "../src/process/setup-commit-scope.js";
 import { captureSetupEffects } from "../src/process/run-setup.js";
 import type { VerifiedPublicationDecisionInput } from "../src/task-session/verified-publication-decision.js";
@@ -83,6 +87,7 @@ async function begin(
 async function createSetupDisposition(
   f: ReturnType<typeof fixture>,
   unrelatedPath: string,
+  includeRelevantSetupChange = true,
 ): Promise<PersistedSetupDisposition> {
   const taskStore = f.authority.run(
     () => new TaskExecutionStore(f.project.contextRoot, f.project),
@@ -91,7 +96,11 @@ async function createSetupDisposition(
   const before = JSON.parse(
     (await captureSetupEffects(f.git, f.worktreePath)).toString("utf8"),
   ) as Parameters<typeof getSetupTrackedDelta>[0];
-  fs.writeFileSync(path.join(f.worktreePath, "yarn.lock"), "task dependency\n");
+  if (includeRelevantSetupChange)
+    fs.writeFileSync(
+      path.join(f.worktreePath, "yarn.lock"),
+      "task dependency\n",
+    );
   fs.writeFileSync(path.join(f.worktreePath, unrelatedPath), "preserve me\n");
   f.isolated.git(f.worktreePath, "add", unrelatedPath);
   const failedAttemptAfter = JSON.parse(
@@ -182,6 +191,47 @@ async function createSetupDisposition(
     exclude: scope.exclude,
   };
 }
+
+async function publicationEvidence(
+  f: ReturnType<typeof fixture>,
+): Promise<VerifiedPublicationDecisionInput> {
+  const identity = await getTaskSessionSourceSnapshotIdentity(
+    f.git,
+    f.worktreePath,
+  );
+  return {
+    currentContentIdentity: identity,
+    validationCommand: "true",
+    validation: {
+      command: "true",
+      startedAt: new Date().toISOString(),
+      completedAt: new Date().toISOString(),
+      exitCode: 0,
+      status: "passed",
+      timedOut: false,
+      aborted: false,
+      diagnostic: "fixture quality evidence",
+      contentIdentity: identity,
+    },
+    coverage: null,
+    review: {
+      version: 1,
+      projectId: f.project.id,
+      cardId: "card",
+      verdict: "pass",
+      reviewedContentIdentity: identity,
+      requirementAssessments: [
+        {
+          requirementId: "REQ-1",
+          status: "satisfied",
+          details: "fixture",
+          evidence: ["source.txt"],
+        },
+      ],
+      blockingFindings: [],
+    },
+  };
+}
 async function poll(
   f: ReturnType<typeof reopenPublicationFixture>,
   tick = true,
@@ -258,6 +308,362 @@ describe("setup-aware initial publication commit scope", () => {
     ).toBe("task dependency");
     expect(f.services.read().requests.length).toBeGreaterThan(0);
   });
+
+  it.each([
+    ["empty setup delta", false],
+    ["previously included setup path edited", true],
+  ] as const)(
+    "publishes additive feedback and CI corrections on the same PR with %s while preserving excluded staged output",
+    async (_scenario, includeRelevantSetupChange) => {
+      const f = fixture();
+      f.project.repository.setupCommand = "true";
+      const disposition = await createSetupDisposition(
+        f,
+        "unrelated.setup",
+        includeRelevantSetupChange,
+      );
+      const initialEvidence = await publicationEvidence(f);
+      await expect(
+        f.authority.run(() =>
+          publishTaskSessionCard({
+            project: f.project,
+            card: f.services.card(),
+            git: f.git,
+            trello: f.services.trello,
+            github: f.services.github,
+            worktreePath: f.worktreePath,
+            branch: "agent/card",
+            commitMessage: "feat: setup enabled task",
+            reviewResult: "Passed",
+            remediationResult: "Not required",
+            initialEvidence,
+            verifyPreparedContent: async () => initialEvidence,
+            setupDisposition: disposition,
+          }),
+        ),
+      ).rejects.toBeInstanceOf(PublicationWaitingError);
+      await through(f, "pr");
+      await through(f, "comment");
+
+      const originalExcludedBytes = fs.readFileSync(
+        path.join(f.worktreePath, "unrelated.setup"),
+      );
+      expect(f.isolated.git(f.worktreePath, "status", "--porcelain")).toContain(
+        "?? unrelated.setup",
+      );
+      const originalPrUrl = f.services.read().prs[0]!.url;
+      const resolvedDisposition = await f.authority.run(() =>
+        resolveExistingPrSetupDisposition({
+          project: f.project,
+          card: f.services.card(),
+          git: f.git,
+          trello: f.services.trello,
+          github: f.services.github,
+          worktreePath: f.worktreePath,
+          branch: "agent/card",
+          expectedExistingPullRequestUrl: originalPrUrl,
+          commitMessage: "fix: correction",
+          reviewResult: "Passed",
+          remediationResult: "Validated correction",
+          initialEvidence: {} as VerifiedPublicationDecisionInput,
+          verifyPreparedContent: async () =>
+            ({}) as VerifiedPublicationDecisionInput,
+        }),
+      );
+      expect(resolvedDisposition).toEqual(disposition);
+      if (resolvedDisposition === undefined)
+        throw new Error(
+          "Expected durable setup scope for existing-PR correction",
+        );
+      // Production registers Git mutation intents before dispatch. Keep this
+      // focused test on real Git while executing the shared publisher inside the
+      // task authority with the normal journaled mutations replaced locally.
+      const correctionGit = new Proxy(f.git, {
+        get(target, property) {
+          if (property === "commit")
+            return async (
+              cwd: string,
+              messagePath: string,
+              gitIdentity: { name: string; email: string },
+            ) => {
+              f.isolated.git(
+                cwd,
+                "-c",
+                `user.name=${gitIdentity.name}`,
+                "-c",
+                `user.email=${gitIdentity.email}`,
+                "commit",
+                "--cleanup=verbatim",
+                "--file",
+                messagePath,
+              );
+            };
+          if (property === "push")
+            return async (cwd: string) => {
+              f.isolated.git(
+                cwd,
+                "push",
+                path.join(f.root, "remote.git"),
+                "HEAD:refs/heads/agent/card",
+              );
+            };
+          const value = Reflect.get(target, property, target) as unknown;
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+      const correctionHeads: string[] = [];
+      for (const correction of ["feedback", "ci"] as const) {
+        // Exercise a correction where unrelated setup output is already staged.
+        f.isolated.git(f.worktreePath, "add", "unrelated.setup");
+        fs.writeFileSync(
+          path.join(f.worktreePath, "source.txt"),
+          `meaningful ${correction} correction\n`,
+        );
+        if (includeRelevantSetupChange)
+          fs.writeFileSync(
+            path.join(f.worktreePath, "yarn.lock"),
+            `correction dependency ${correction}\n`,
+          );
+        const evidence = await publicationEvidence(f);
+        const head = await f.authority.run(() =>
+          publishTaskSessionCard({
+            project: f.project,
+            card: f.services.card(),
+            git: correctionGit,
+            trello: f.services.trello,
+            github: {
+              ...f.services.github,
+              findPullRequest: async () => ({ url: originalPrUrl }),
+            } as never,
+            worktreePath: f.worktreePath,
+            branch: "agent/card",
+            expectedExistingPullRequestUrl: originalPrUrl,
+            commitMessage: `fix: ${correction} correction`,
+            reviewResult: "Passed",
+            remediationResult: `Validated ${correction} correction`,
+            initialEvidence: evidence,
+            verifyPreparedContent: async () => evidence,
+          }),
+        );
+        correctionHeads.push(head);
+        expect(
+          fs.readFileSync(path.join(f.worktreePath, "unrelated.setup")),
+        ).toEqual(originalExcludedBytes);
+      }
+
+      expect(correctionHeads).toHaveLength(2);
+      expect(f.services.read().prs).toHaveLength(1);
+      expect(f.services.read().prs[0]?.url).toBe(originalPrUrl);
+      const remote = path.join(f.root, "remote.git");
+      expect(
+        f.isolated.git(remote, "show", "refs/heads/agent/card:source.txt"),
+      ).toBe("meaningful ci correction");
+      if (includeRelevantSetupChange)
+        expect(
+          f.isolated.git(remote, "show", "refs/heads/agent/card:yarn.lock"),
+        ).toBe("correction dependency ci");
+      expect(() =>
+        f.isolated.git(remote, "show", "refs/heads/agent/card:unrelated.setup"),
+      ).toThrow();
+      expect(
+        fs.readFileSync(path.join(f.worktreePath, "unrelated.setup")),
+      ).toEqual(originalExcludedBytes);
+      expect(f.isolated.git(f.worktreePath, "status", "--porcelain")).toContain(
+        "?? unrelated.setup",
+      );
+      expect(
+        f.isolated.git(f.worktreePath, "rev-list", "--count", "main..HEAD"),
+      ).toBe("3");
+    },
+    30_000,
+  );
+
+  it.each([
+    [
+      "wrong worktree",
+      (current: SetupInventory) => ({
+        ...current,
+        worktree: "/wrong/worktree",
+      }),
+    ],
+    [
+      "wrong branch",
+      (current: SetupInventory) => ({ ...current, branch: "agent/other" }),
+    ],
+    [
+      "malformed inventory",
+      (current: SetupInventory) => ({ ...current, files: "invalid" }),
+    ],
+  ] as const)(
+    "blocks an existing-PR correction with a self-addressed historical inventory having %s before commit or push",
+    async (_problem, corruptCurrent) => {
+      const f = fixture();
+      f.project.repository.setupCommand = "true";
+      const disposition = await createSetupDisposition(
+        f,
+        "unrelated.setup",
+        false,
+      );
+      const initialEvidence = await publicationEvidence(f);
+      await expect(
+        f.authority.run(() =>
+          publishTaskSessionCard({
+            project: f.project,
+            card: f.services.card(),
+            git: f.git,
+            trello: f.services.trello,
+            github: f.services.github,
+            worktreePath: f.worktreePath,
+            branch: "agent/card",
+            commitMessage: "feat: setup enabled task",
+            reviewResult: "Passed",
+            remediationResult: "Not required",
+            initialEvidence,
+            verifyPreparedContent: async () => initialEvidence,
+            setupDisposition: disposition,
+          }),
+        ),
+      ).rejects.toBeInstanceOf(PublicationWaitingError);
+      await through(f, "pr");
+      await through(f, "comment");
+
+      const currentRecord = task(f)!;
+      const taskStore = f.authority.run(
+        () => new TaskExecutionStore(f.project.contextRoot, f.project),
+      );
+      const oldArtifact = taskStore.readPrimaryResultArtifact(
+        currentRecord.setup!.relevance!,
+      ) as { current: SetupInventory; [key: string]: unknown };
+      const newArtifact = taskStore.writePrimaryResultArtifact(
+        `altered-current-inventory-${_problem}`,
+        { ...oldArtifact, current: corruptCurrent(oldArtifact.current) },
+      );
+      f.authority.run(() =>
+        taskStore.compareAndSwap(f.services.card().id, currentRecord.revision, {
+          ...currentRecord,
+          revision: currentRecord.revision + 1,
+          updatedAt: new Date().toISOString(),
+          setup: {
+            ...currentRecord.setup!,
+            relevance: newArtifact.reference,
+          },
+        }),
+      );
+
+      const commit = vi.spyOn(f.git, "commit");
+      const push = vi.spyOn(f.git, "push");
+      const remote = path.join(f.root, "remote.git");
+      const remoteHead = f.isolated.git(
+        remote,
+        "rev-parse",
+        "refs/heads/agent/card",
+      );
+      const evidence = await publicationEvidence(f);
+      await expect(
+        f.authority.run(() =>
+          publishTaskSessionCard({
+            project: f.project,
+            card: f.services.card(),
+            git: f.git,
+            trello: f.services.trello,
+            github: f.services.github,
+            worktreePath: f.worktreePath,
+            branch: "agent/card",
+            expectedExistingPullRequestUrl: f.services.read().prs[0]!.url,
+            commitMessage: "fix: correction",
+            reviewResult: "Passed",
+            remediationResult: "Validated correction",
+            initialEvidence: evidence,
+            verifyPreparedContent: async () => evidence,
+          }),
+        ),
+      ).rejects.toThrow(
+        "Setup inventory worktree identity or inventory is invalid",
+      );
+      expect(commit).not.toHaveBeenCalled();
+      expect(push).not.toHaveBeenCalled();
+      expect(f.isolated.git(remote, "rev-parse", "refs/heads/agent/card")).toBe(
+        remoteHead,
+      );
+    },
+    30_000,
+  );
+
+  it("blocks stale excluded setup bytes before correction commit or push", async () => {
+    const f = fixture();
+    f.project.repository.setupCommand = "true";
+    const disposition = await createSetupDisposition(
+      f,
+      "unrelated.setup",
+      false,
+    );
+    const initialEvidence = await publicationEvidence(f);
+    await expect(
+      f.authority.run(() =>
+        publishTaskSessionCard({
+          project: f.project,
+          card: f.services.card(),
+          git: f.git,
+          trello: f.services.trello,
+          github: f.services.github,
+          worktreePath: f.worktreePath,
+          branch: "agent/card",
+          commitMessage: "feat: setup enabled task",
+          reviewResult: "Passed",
+          remediationResult: "Not required",
+          initialEvidence,
+          verifyPreparedContent: async () => initialEvidence,
+          setupDisposition: disposition,
+        }),
+      ),
+    ).rejects.toBeInstanceOf(PublicationWaitingError);
+    await through(f, "pr");
+    await through(f, "comment");
+
+    const commit = vi.spyOn(f.git, "commit");
+    const push = vi.spyOn(f.git, "push");
+    const remoteHead = f.isolated.git(
+      path.join(f.root, "remote.git"),
+      "rev-parse",
+      "refs/heads/agent/card",
+    );
+    fs.writeFileSync(path.join(f.worktreePath, "source.txt"), "correction\n");
+    fs.writeFileSync(
+      path.join(f.worktreePath, "unrelated.setup"),
+      "changed outside review\n",
+    );
+    const evidence = await publicationEvidence(f);
+    await expect(
+      f.authority.run(() =>
+        publishTaskSessionCard({
+          project: f.project,
+          card: f.services.card(),
+          git: f.git,
+          trello: f.services.trello,
+          github: f.services.github,
+          worktreePath: f.worktreePath,
+          branch: "agent/card",
+          expectedExistingPullRequestUrl: f.services.read().prs[0]!.url,
+          commitMessage: "fix: correction",
+          reviewResult: "Passed",
+          remediationResult: "Validated correction",
+          initialEvidence: evidence,
+          verifyPreparedContent: async () => evidence,
+        }),
+      ),
+    ).rejects.toThrow(
+      "Excluded setup output changed since initial publication",
+    );
+    expect(commit).not.toHaveBeenCalled();
+    expect(push).not.toHaveBeenCalled();
+    expect(
+      f.isolated.git(
+        path.join(f.root, "remote.git"),
+        "rev-parse",
+        "refs/heads/agent/card",
+      ),
+    ).toBe(remoteHead);
+  }, 30_000);
 
   it("blocks publication when the immutable original setup baseline is missing", async () => {
     const f = fixture();

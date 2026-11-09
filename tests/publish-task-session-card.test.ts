@@ -120,6 +120,22 @@ describe("publishTaskSessionCard", () => {
     expect(publishCard).not.toHaveBeenCalled();
   });
 
+  it("fails closed for an existing PR when historical setup scope proof is missing", async () => {
+    const { base, git } = fixture();
+    vi.mocked(publishCard).mockClear();
+    (base.project.repository as { setupCommand?: string }).setupCommand =
+      "yarn install";
+    await expect(
+      publishTaskSessionCard({
+        ...base,
+        expectedExistingPullRequestUrl: "https://github.com/o/r/pull/1",
+      } as never),
+    ).rejects.toThrow("Historical setup scope proof is unavailable");
+    expect(git.stageAllExcept).not.toHaveBeenCalled();
+    expect(git.commit).not.toHaveBeenCalled();
+    expect(publishCard).not.toHaveBeenCalled();
+  });
+
   it("writes a durable parent intent before Git commit and clears it after trust", async () => {
     const { base, git } = fixture();
     vi.mocked(git.commit).mockImplementation(async () => {
