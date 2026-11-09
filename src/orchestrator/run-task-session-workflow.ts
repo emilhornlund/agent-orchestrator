@@ -376,6 +376,7 @@ async function completeMergedTaskSession(options: {
     recordedHeadSha: record.pullRequest.headSha!,
     mergedHeadSha: headSha,
   });
+  releaseFailedPublishedFeedbackMutation(queue, record, card.id);
   const terminalEvent = queue.enqueue({
     projectId: project.id,
     cardId: card.id,
@@ -448,7 +449,8 @@ async function completeMergedTaskSession(options: {
         ? {}
         : { emailNotifier: options.emailNotifier }),
       signal,
-      ...(options.preserveLegacyMaintenanceArtifacts
+      ...(options.preserveLegacyMaintenanceArtifacts ||
+      hasExhaustedPublishedFeedbackCorrection(record)
         ? { preserveWorktree: true }
         : {}),
     });
@@ -491,7 +493,6 @@ async function completeMergedTaskSession(options: {
         updatedAt: timestamp(latest),
       };
     }
-    queue.complete(terminalEventId);
     const evidence = await readRunTerminalEvidence({
       trello,
       project,
@@ -508,11 +509,50 @@ async function completeMergedTaskSession(options: {
         { event: "merged", evidence },
       );
     else taskStore.compareAndSwap(card.id, latest.revision, terminalProjection);
+    queue.complete(terminalEventId);
     return "completed";
   } catch (error) {
     if (queue.ownsActive(terminalEventId)) queue.fail(terminalEventId);
     throw error;
   }
+}
+
+/** A verified human PR outcome supersedes only that task's stopped feedback owner. */
+function releaseFailedPublishedFeedbackMutation(
+  queue: TaskMutationQueue,
+  record: TaskExecutionRecord,
+  cardId: string,
+): void {
+  const active = queue.getActive();
+  if (
+    active === null ||
+    (active.status !== "failed" &&
+      !(active.status === "active" && active.ownerToken === undefined)) ||
+    active.kind !== "feedback" ||
+    active.cardId !== cardId ||
+    record.feedbackRemediation?.operationId !== active.eventId
+  )
+    return;
+  const claimed = queue.claimForRecovery(active.eventId);
+  if (claimed === null) return;
+  queue.complete(claimed.eventId);
+}
+
+function hasExhaustedPublishedFeedbackCorrection(
+  record: TaskExecutionRecord,
+): boolean {
+  const operationId = record.feedbackRemediation?.operationId;
+  const operation =
+    operationId === undefined
+      ? undefined
+      : record.primaryOperations?.[operationId];
+  return (
+    record.pullRequest !== undefined &&
+    operation?.activity === "feedback-remediation" &&
+    operation.status === "exhausted" &&
+    (operation.failureExecutions ?? operation.executions) >=
+      OPERATION_RECOVERY_MAX_EXECUTIONS
+  );
 }
 
 async function readRunTerminalEvidence(options: {
@@ -1753,6 +1793,7 @@ export async function runTaskSessionWorkflow(
     } else if (authoritative.headRefOid !== record.pullRequest.headSha) {
       throw new Error(`Persisted closed PR head changed for ${cardId}`);
     }
+    releaseFailedPublishedFeedbackMutation(queue, record, cardId);
     const recoveredTerminalMutation = queue.claimForRecovery(
       pendingTerminalMutation.eventId,
     );
@@ -1783,7 +1824,8 @@ export async function runTaskSessionWorkflow(
             card,
             pullRequest: authoritative,
             preserveWorktree:
-              shouldPreserveTerminalMaintenanceArtifacts(cardId),
+              shouldPreserveTerminalMaintenanceArtifacts(cardId) ||
+              hasExhaustedPublishedFeedbackCorrection(record),
             signal,
           });
         }
@@ -1854,6 +1896,7 @@ export async function runTaskSessionWorkflow(
         kind: "terminal-pr",
         enqueuedAt: record.updatedAt,
       });
+      releaseFailedPublishedFeedbackMutation(queue, record, observation.cardId);
       if (observation.state === "MERGED") {
         const outcome = await completeMergedTaskSession({
           github,
@@ -1885,7 +1928,9 @@ export async function runTaskSessionWorkflow(
           project,
           card,
           pullRequest: observation.pullRequest,
-          preserveWorktree: shouldPreserveTerminalMaintenanceArtifacts(card.id),
+          preserveWorktree:
+            shouldPreserveTerminalMaintenanceArtifacts(card.id) ||
+            hasExhaustedPublishedFeedbackCorrection(record),
           signal,
         });
         options.onHumanReviewCardLeft?.(card.id);
@@ -3461,6 +3506,7 @@ export async function runTaskSessionWorkflow(
           record = taskStore.compareAndSwap(card.id, record.revision, {
             ...record,
             phase: "publication",
+            reviewObservation: undefined,
             revision: record.revision + 1,
             updatedAt: timestamp(record),
           });

@@ -197,6 +197,14 @@ export function transitionTaskExecutionRecord(
   const nextRecord = parseTaskExecutionRecord({
     ...record,
     phase: destinationPhase,
+    ...(destinationPhase === "human-feedback"
+      ? {}
+      : { feedbackRemediation: undefined }),
+    ...(destinationPhase === "human-feedback" ||
+    destinationPhase === "ci" ||
+    destinationPhase === "attention-required"
+      ? {}
+      : { reviewObservation: undefined }),
     lastEvent: {
       id: event.eventId,
       type: event.type,

@@ -27,15 +27,25 @@ import {
   CommandRunner,
   type CommandRunOptions,
 } from "../src/process/command-runner.js";
+import { configureProcessRuntime } from "../src/process/process-runtime.js";
 import { pollProject } from "../src/orchestrator/poll-project.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
+import { TaskMutationQueue } from "../src/task-session/task-mutation-queue.js";
 import type { TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
 
 const execFile = promisify(nodeExecFile);
 let roots: string[] = [];
+let originalProcessPath: string | undefined;
+let originalPrimaryMode: string | undefined;
 const leases: ProjectOwnershipLease[] = [];
 afterEach(async () => {
   vi.useRealTimers();
+  if (originalProcessPath === undefined) delete process.env.PATH;
+  else process.env.PATH = originalProcessPath;
+  originalProcessPath = undefined;
+  if (originalPrimaryMode === undefined) delete process.env.PRIMARY_MODE;
+  else process.env.PRIMARY_MODE = originalPrimaryMode;
+  originalPrimaryMode = undefined;
   await Promise.all(leases.splice(0).map((lease) => lease.release()));
   for (const root of roots) fs.rmSync(root, { recursive: true, force: true });
   roots = [];
@@ -49,7 +59,7 @@ describe("P1 production lifecycle through pollProject", () => {
       destination: "done",
       ackLoss: false,
       terminalReadRaceAt: 2,
-      terminalPhase: "validation",
+      correctionFailure: true,
     },
     {
       draft: true,
@@ -57,7 +67,7 @@ describe("P1 production lifecycle through pollProject", () => {
       destination: "backlog",
       ackLoss: false,
       terminalReadRaceAt: 3,
-      terminalPhase: "review",
+      correctionFailure: true,
     },
     {
       draft: false,
@@ -72,21 +82,25 @@ describe("P1 production lifecycle through pollProject", () => {
       draft,
       terminal,
       ackLoss,
+      correctionFailure = false,
     }: {
       draft: boolean;
       terminal: string;
       ackLoss: boolean;
+      correctionFailure?: boolean;
     }) =>
       ackLoss
         ? "reconciles an accepted PR whose create acknowledgement was lost without claiming the next card"
-        : `publishes a ${draft ? "draft" : "normal"} PR and waits for human ${terminal} before releasing the next card`,
+        : correctionFailure
+          ? `blocks exhausted published-PR correction until human ${terminal}`
+          : `publishes a ${draft ? "draft" : "normal"} PR and waits for human ${terminal} before releasing the next card (${JSON.stringify({ draft, terminal, ackLoss, correctionFailure })})`,
     async ({
       draft,
       terminal,
       destination,
       ackLoss,
       terminalReadRaceAt = 2,
-      terminalPhase,
+      correctionFailure = false,
     }) => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "p1-lifecycle-"));
       roots.push(root);
@@ -274,9 +288,21 @@ describe("P1 production lifecycle through pollProject", () => {
         detail?: string | undefined;
       }> = [];
       let trapNextClaim = false;
+      let blockTerminalDestinationRead = false;
       const trello = {
-        getCards: async (listId: string) =>
-          cards
+        getCards: async (listId: string) => {
+          if (blockTerminalDestinationRead && listId === destination) {
+            ledger.push({
+              service: "trello",
+              action: `read-cards:${listId}:unavailable`,
+              actor: "orchestrator",
+              id: "first",
+            });
+            throw new Error(
+              "simulated terminal Trello destination read outage",
+            );
+          }
+          return cards
             .filter((card) => lists.get(card.id) === listId)
             .map((card) => {
               ledger.push({
@@ -286,7 +312,8 @@ describe("P1 production lifecycle through pollProject", () => {
                 id: card.id,
               });
               return { ...card, idList: listId };
-            }),
+            });
+        },
         getCard: async (id: string) => {
           const card = cards.find((candidate) => candidate.id === id);
           if (!card) throw new Error(`unexpected card ${id}`);
@@ -351,6 +378,7 @@ describe("P1 production lifecycle through pollProject", () => {
       const accepted: string[] = [];
       let loseCreateAcknowledgement = false;
       let feedbackReads = 0;
+      let correctionFeedback = false;
       let terminalRaceTarget: "MERGED" | "CLOSED" | null = null;
       let terminalRaceReads = 0;
       let terminalRaceReadAt = 2;
@@ -482,7 +510,29 @@ describe("P1 production lifecycle through pollProject", () => {
             },
           ],
         }),
-        findChangesRequestedPullRequest: async () => null,
+        findChangesRequestedPullRequest: async (input: {
+          headBranch: string;
+        }) => {
+          if (!correctionFeedback) return null;
+          const pr = prs.get(input.headBranch);
+          if (!pr) return null;
+          return {
+            url: pr.url,
+            headSha: pr.headRefOid,
+            feedback: {
+              reviews: [
+                {
+                  id: 202,
+                  commitSha: pr.headRefOid,
+                  body: "Please handle the empty result.",
+                  author: "reviewer",
+                  submittedAt: "2026-11-01T09:00:00.000Z",
+                  inlineComments: [],
+                },
+              ],
+            },
+          };
+        },
         getPullRequestConversationComments: async () => {
           feedbackReads += 1;
           return [];
@@ -499,10 +549,50 @@ describe("P1 production lifecycle through pollProject", () => {
       } as unknown as GitHubClient;
       const sessionId = "ses_p1_primary";
       const openCodeCards: string[] = [];
+      const realRunner = new OpenCodeClient();
+      const originalPath = process.env.PATH;
+      if (correctionFailure) {
+        originalProcessPath = originalPath;
+        const runnerDirectory = path.join(root, "scripted-bin");
+        fs.mkdirSync(runnerDirectory);
+        fs.copyFileSync(
+          path.join(
+            process.cwd(),
+            "tests/fixtures/scripted-opencode-primary-outage.mjs",
+          ),
+          path.join(runnerDirectory, "opencode"),
+        );
+        const runnerFile = path.join(runnerDirectory, "opencode");
+        fs.writeFileSync(
+          runnerFile,
+          fs
+            .readFileSync(runnerFile, "utf8")
+            .replace(
+              'fs.readFileSync(path.join(cwd, "primary-mode"), "utf8")',
+              'process.env.PRIMARY_MODE ?? "crash"',
+            ),
+        );
+        fs.chmodSync(path.join(runnerDirectory, "opencode"), 0o755);
+        process.env.PATH = `${runnerDirectory}${path.delimiter}${originalPath ?? "/usr/bin:/bin"}`;
+        originalPrimaryMode = process.env.PRIMARY_MODE;
+        process.env.PRIMARY_MODE = "crash";
+        configureProcessRuntime({
+          runtimeRoot: path.join(contextRoot, "process-evidence"),
+          signal: new AbortController().signal,
+        });
+      }
       const openCode = new OpenCodeClient(
         async (options: OpenCodeRunOptions) => {
           const cardId = path.basename(options.cwd);
           openCodeCards.push(cardId);
+          if (
+            correctionFailure &&
+            options.prompt.startsWith(
+              "Address the following verified-as-actionable human PR feedback",
+            )
+          ) {
+            return realRunner.run(options);
+          }
           if (options.captureSessionId)
             return {
               exitCode: 0,
@@ -545,6 +635,30 @@ describe("P1 production lifecycle through pollProject", () => {
             const identity = options.prompt.match(
               /(?:Reviewed source content identity|Reviewed source identity): (sha256:[0-9a-f]{64})/u,
             )?.[1];
+            if (
+              options.prompt.includes(
+                "Independently verify each actionable human PR feedback item",
+              )
+            )
+              return {
+                exitCode: 0,
+                output: JSON.stringify({
+                  version: 1,
+                  projectId: project.id,
+                  cardId,
+                  headSha: prs.get("agent/first")!.headRefOid,
+                  contentIdentity: identity,
+                  dispositions: [
+                    {
+                      feedbackId: "review:202",
+                      status: "unresolved",
+                      reason:
+                        "The empty-result behavior still needs a correction.",
+                    },
+                  ],
+                }),
+                errorOutput: "",
+              };
             if (options.prompt.includes("verify the persisted task plan"))
               return {
                 exitCode: 0,
@@ -706,6 +820,7 @@ describe("P1 production lifecycle through pollProject", () => {
               undefined,
               undefined,
               authority,
+              1_000,
             ),
           ),
         );
@@ -793,86 +908,191 @@ describe("P1 production lifecycle through pollProject", () => {
       expect(record?.phase).toBe("human-feedback");
       const firstPr = prs.get("agent/first");
       expect(firstPr).toBeDefined();
-      expect(firstPr?.isDraft).toBe(draft);
+      expect(firstPr?.isDraft).toBe(draft || ackLoss);
       expect(requests).toEqual(["agent/first"]);
       expect(accepted).toEqual([firstPr?.url]);
       expect(lists.get("first")).toBe("review");
-      const recoveryStore = new TaskExecutionStore(
-        contextRoot,
-        project,
-        activeAuthority!,
-      );
-      const checkpoint = recoveryStore.read("first")!;
-      recoveryStore.compareAndSwap("first", checkpoint.revision, {
-        ...checkpoint,
-        recoveryWait: {
-          kind: "dependency",
-          reason: "Human Review dependency temporarily unavailable",
-          resumePhase: "human-feedback",
-          since: new Date().toISOString(),
-          retryAt: new Date(Date.now() + 60_000).toISOString(),
-          attempts: 1,
-          notificationId: "p1/first/human-feedback/dependency",
-        },
-        revision: checkpoint.revision + 1,
-        updatedAt: new Date().toISOString(),
-      });
-      const feedbackReadsBeforeWait = feedbackReads;
-      lists.set("first", "backlog");
-      await poll();
-      expect(recoveryStore.read("first")).toMatchObject({
-        phase: "human-feedback",
-        recoveryWait: { resumePhase: "human-feedback" },
-      });
-      expect(feedbackReads).toBe(feedbackReadsBeforeWait);
-      expect(lists.get("next")).toBe("ready");
-      lists.set("first", "review");
-      const returned = recoveryStore.read("first")!;
-      recoveryStore.compareAndSwap("first", returned.revision, {
-        ...returned,
-        recoveryWait: {
-          ...returned.recoveryWait!,
-          retryAt: new Date(Date.now() - 1).toISOString(),
-        },
-        revision: returned.revision + 1,
-        updatedAt: new Date().toISOString(),
-      });
-      await poll();
-      expect(recoveryStore.read("first")?.recoveryWait).toBeUndefined();
-      expect(recoveryStore.read("first")?.phase).toBe("human-feedback");
-      await poll();
-      expect(lists.get("next")).toBe("ready");
-      expect(
-        ledger.some(
-          (event) => event.id === "next" && event.action === "move:working",
-        ),
-      ).toBe(false);
-      expect(store.read("next")).toBeNull();
-      expect(fs.existsSync(path.join(worktrees, "next"))).toBe(false);
-      expect(
-        [...prs.values()].filter(
-          ({ headBranch }) => headBranch === "agent/next",
-        ),
-      ).toHaveLength(0);
-      firstPr!.reviewDecision = "APPROVED";
-      await poll();
-      expect(lists.get("next")).toBe("ready");
-      expect(store.read("next")).toBeNull();
-      const sha = (await git.getRemoteBranchSha(
-        source,
-        "origin",
-        "agent/first",
-        project,
-      ))!;
-      expect(sha).toMatch(/^[0-9a-f]{40}$/u);
-      expect(await gitRun(source, "show", `${sha}:app.js`)).toBe(
-        "module.exports = 'implemented';",
-      );
-      expect(
-        Number(
-          await gitRun(source, "rev-list", "--count", `${initialHead}..${sha}`),
-        ),
-      ).toBe(1);
+      if (correctionFailure) {
+        const worktree = path.join(worktrees, "first");
+        const unshippedPath = path.join(worktree, "reviewer-followup.ts");
+        correctionFeedback = true;
+        for (
+          let attempt = 0;
+          attempt < 8 && store.read("first")?.primaryOperations === undefined;
+          attempt += 1
+        )
+          await poll();
+        for (
+          let attempt = 0;
+          attempt < 8 &&
+          (store.read("first")?.primaryOperations?.[
+            Object.keys(store.read("first")?.primaryOperations ?? {}).at(-1) ??
+              ""
+          ]?.failureExecutions ?? 0) < 3;
+          attempt += 1
+        )
+          await poll();
+        const exhaustedRecord = store.read("first")!;
+        fs.writeFileSync(unshippedPath, "local reviewer follow-up\n");
+        const correctionOperation = Object.values(
+          exhaustedRecord.primaryOperations ?? {},
+        ).find((entry) => entry.activity === "feedback-remediation");
+        expect(correctionOperation).toMatchObject({
+          status: "exhausted",
+          executions: 3,
+          failureExecutions: 3,
+          accountedExecution: 3,
+        });
+        const callsFile = path.join(worktree, "primary-cli-calls.jsonl");
+        expect(
+          fs.readFileSync(callsFile, "utf8").trim().split("\n"),
+        ).toHaveLength(3);
+        const metadata = JSON.parse(
+          fs.readFileSync(correctionOperation!.processMetadataPath!, "utf8"),
+        ) as Record<string, unknown>;
+        expect(metadata).toMatchObject({
+          status: "nonzero",
+          treeStopped: true,
+          signal: "SIGKILL",
+        });
+        expect(exhaustedRecord).toMatchObject({
+          phase: "human-feedback",
+          primarySessionId: sessionId,
+          pullRequest: { number: 41, url: firstPr!.url },
+          recoveryWait: { kind: "dependency", resumePhase: "human-feedback" },
+        });
+        expect(fs.readFileSync(unshippedPath, "utf8")).toBe(
+          "local reviewer follow-up\n",
+        );
+        expect(lists.get("first")).toBe("review");
+        expect(lists.get("next")).toBe("ready");
+        expect(requests).toEqual(["agent/first"]);
+        expect(prs.size).toBe(1);
+        expect(authorities.get("first")?.store.read()).toMatchObject({
+          cardId: "first",
+          lifecycle: "waiting",
+          terminalSync: "not-applicable",
+        });
+        expect(openCodeCards).not.toContain("next");
+        const correctionExecutions = openCodeCards.filter(
+          (cardId) => cardId === "first",
+        ).length;
+        const reopenedTaskStore = new TaskExecutionStore(
+          contextRoot,
+          project,
+          activeAuthority!,
+        );
+        expect(
+          reopenedTaskStore.read("first")?.primaryOperations?.[
+            correctionOperation!.id
+          ],
+        ).toMatchObject({ status: "exhausted", failureExecutions: 3 });
+        await poll();
+        await poll();
+        expect(
+          fs.readFileSync(callsFile, "utf8").trim().split("\n"),
+        ).toHaveLength(3);
+        expect(
+          openCodeCards.filter((cardId) => cardId === "first"),
+        ).toHaveLength(correctionExecutions);
+        expect(store.read("next")).toBeNull();
+        expect(lists.get("next")).toBe("ready");
+        expect(requests).toEqual(["agent/first"]);
+        expect(fs.readFileSync(unshippedPath, "utf8")).toBe(
+          "local reviewer follow-up\n",
+        );
+      }
+      if (!correctionFailure) {
+        const recoveryStore = new TaskExecutionStore(
+          contextRoot,
+          project,
+          activeAuthority!,
+        );
+        const checkpoint = recoveryStore.read("first")!;
+        recoveryStore.compareAndSwap("first", checkpoint.revision, {
+          ...checkpoint,
+          recoveryWait: {
+            kind: "dependency",
+            reason: "Human Review dependency temporarily unavailable",
+            resumePhase: "human-feedback",
+            since: new Date().toISOString(),
+            retryAt: new Date(Date.now() + 60_000).toISOString(),
+            attempts: 1,
+            notificationId: "p1/first/human-feedback/dependency",
+          },
+          revision: checkpoint.revision + 1,
+          updatedAt: new Date().toISOString(),
+        });
+        const feedbackReadsBeforeWait = feedbackReads;
+        lists.set("first", "backlog");
+        await poll();
+        expect(recoveryStore.read("first")).toMatchObject({
+          phase: "human-feedback",
+          recoveryWait: { resumePhase: "human-feedback" },
+        });
+        expect(feedbackReads).toBe(feedbackReadsBeforeWait);
+        expect(lists.get("next")).toBe("ready");
+        lists.set("first", "review");
+        const returned = recoveryStore.read("first")!;
+        recoveryStore.compareAndSwap("first", returned.revision, {
+          ...returned,
+          recoveryWait: {
+            ...returned.recoveryWait!,
+            retryAt: new Date(Date.now() - 1).toISOString(),
+          },
+          revision: returned.revision + 1,
+          updatedAt: new Date().toISOString(),
+        });
+        await poll();
+        expect(recoveryStore.read("first")?.recoveryWait).toBeUndefined();
+        expect(recoveryStore.read("first")?.phase).toBe("human-feedback");
+        await poll();
+        expect(lists.get("next")).toBe("ready");
+        expect(
+          ledger.some(
+            (event) => event.id === "next" && event.action === "move:working",
+          ),
+        ).toBe(false);
+        expect(store.read("next")).toBeNull();
+        expect(fs.existsSync(path.join(worktrees, "next"))).toBe(false);
+        expect(
+          [...prs.values()].filter(
+            ({ headBranch }) => headBranch === "agent/next",
+          ),
+        ).toHaveLength(0);
+        firstPr!.reviewDecision = "APPROVED";
+        await poll();
+        expect(lists.get("next")).toBe("ready");
+        expect(store.read("next")).toBeNull();
+        const publishedHeadSha = (await git.getRemoteBranchSha(
+          source,
+          "origin",
+          "agent/first",
+          project,
+        ))!;
+        expect(publishedHeadSha).toMatch(/^[0-9a-f]{40}$/u);
+        expect(await gitRun(source, "show", `${publishedHeadSha}:app.js`)).toBe(
+          "module.exports = 'implemented';",
+        );
+        expect(
+          Number(
+            await gitRun(
+              source,
+              "rev-list",
+              "--count",
+              `${initialHead}..${publishedHeadSha}`,
+            ),
+          ),
+        ).toBe(1);
+      }
+      const sha = correctionFailure
+        ? firstPr!.headRefOid
+        : (await git.getRemoteBranchSha(
+            source,
+            "origin",
+            "agent/first",
+            project,
+          ))!;
       // Exercise terminal handling against the canonical authority-backed task
       // projection, including a durable recovery wait (not a standalone store).
       const terminalTaskStore = new TaskExecutionStore(
@@ -883,15 +1103,10 @@ describe("P1 production lifecycle through pollProject", () => {
       const waitingTask = terminalTaskStore.read("first")!;
       terminalTaskStore.compareAndSwap("first", waitingTask.revision, {
         ...waitingTask,
-        ...(terminalPhase === undefined ? {} : { phase: terminalPhase }),
-        ...(terminalPhase === undefined
-          ? {}
-          : { reviewObservation: undefined }),
-        ...(terminalPhase === "validation" ? { reviewRepair: undefined } : {}),
         recoveryWait: {
           kind: "dependency",
           reason: "GitHub temporarily unavailable",
-          resumePhase: terminalPhase ?? "human-feedback",
+          resumePhase: "human-feedback",
           since: new Date().toISOString(),
           retryAt: new Date(
             Date.now() + (terminalReadRaceAt === 3 ? -1 : 60_000),
@@ -903,7 +1118,6 @@ describe("P1 production lifecycle through pollProject", () => {
         updatedAt: new Date().toISOString(),
       });
       expect(terminalTaskStore.read("first")?.recoveryWait).toBeDefined();
-      if (terminalPhase !== undefined) lists.set("first", "working");
       ledger.push({
         service: "github",
         action: `human-${terminal}`,
@@ -917,23 +1131,83 @@ describe("P1 production lifecycle through pollProject", () => {
       terminalRaceTarget = terminal === "merged" ? "MERGED" : "CLOSED";
       terminalRaceReadAt = terminalReadRaceAt;
       const openCodeCountBeforeRace = openCodeCards.length;
-      await poll();
+      if (correctionFailure) {
+        blockTerminalDestinationRead = true;
+        let terminalReadFailure: unknown;
+        for (
+          let attempt = 0;
+          attempt < 8 && terminalReadFailure === undefined;
+          attempt += 1
+        ) {
+          try {
+            await poll();
+          } catch (error) {
+            terminalReadFailure = error;
+          }
+        }
+        expect(terminalReadFailure).toBeInstanceOf(Error);
+        expect(String(terminalReadFailure)).toContain(
+          "simulated terminal Trello destination read outage",
+        );
+        expect(terminalRaceReads).toBe(terminalReadRaceAt);
+        expect(lists.get("first")).toBe(destination);
+        expect(authorities.get("first")?.store.read()).toMatchObject({
+          cardId: "first",
+          lifecycle: "waiting",
+          terminalSync: "not-applicable",
+        });
+        expect(lists.get("next")).toBe("ready");
+        expect(store.read("next")).toBeNull();
+        expect(openCodeCards).toHaveLength(openCodeCountBeforeRace);
+        const reopenedTaskStore = new TaskExecutionStore(
+          contextRoot,
+          project,
+          activeAuthority!,
+        );
+        const exhaustedOperationId =
+          terminalTaskStore.read("first")!.feedbackRemediation!.operationId;
+        expect(
+          reopenedTaskStore.read("first")?.primaryOperations?.[
+            exhaustedOperationId
+          ],
+        ).toMatchObject({ status: "exhausted", failureExecutions: 3 });
+        expect(
+          new TaskMutationQueue(contextRoot, project, activeAuthority!)
+            .list()
+            .find((entry) => entry.eventId === exhaustedOperationId),
+        ).toMatchObject({ kind: "feedback", status: "completed" });
+        await expect(poll()).rejects.toThrow(
+          "simulated terminal Trello destination read outage",
+        );
+        expect(authorities.get("first")?.store.read()).toMatchObject({
+          lifecycle: "waiting",
+          terminalSync: "not-applicable",
+        });
+        expect(openCodeCards).toHaveLength(openCodeCountBeforeRace);
+        expect(requests).toEqual(["agent/first"]);
+        expect(prs.size).toBe(1);
+        expect(
+          fs.readFileSync(
+            path.join(worktrees, "first", "reviewer-followup.ts"),
+            "utf8",
+          ),
+        ).toBe("local reviewer follow-up\n");
+        blockTerminalDestinationRead = false;
+        for (
+          let attempt = 0;
+          attempt < 8 && activeAuthority !== undefined;
+          attempt += 1
+        )
+          await poll();
+      } else {
+        await poll();
+      }
       expect(terminalRaceReads).toBe(terminalReadRaceAt);
-      if (terminalPhase === undefined) {
+      if (!correctionFailure)
         expect(terminalTaskStore.read("first")).toMatchObject({
           phase: "human-feedback",
           recoveryWait: { resumePhase: "human-feedback" },
         });
-      } else {
-        const progressed = terminalTaskStore.read("first")!;
-        if (progressed.recoveryWait === undefined) {
-          expect(["review", "done", "cancelled"]).toContain(
-            authorities.get("first")?.store.read()?.lifecycle,
-          );
-        } else {
-          expect(authorities.get("first")?.store.read()?.cardId).toBe("first");
-        }
-      }
       expect(["review", "working", destination]).toContain(lists.get("first"));
       expect(openCodeCards).toHaveLength(openCodeCountBeforeRace);
       for (
@@ -949,6 +1223,18 @@ describe("P1 production lifecycle through pollProject", () => {
         lifecycle: terminal === "merged" ? "done" : "cancelled",
         terminalSync: "verified",
       });
+      if (correctionFailure) {
+        expect(openCodeCards).toHaveLength(openCodeCountBeforeRace);
+        expect(requests).toEqual(["agent/first"]);
+        expect(prs.size).toBe(1);
+        expect(fs.existsSync(path.join(worktrees, "first"))).toBe(true);
+        expect(
+          fs.readFileSync(
+            path.join(worktrees, "first", "reviewer-followup.ts"),
+            "utf8",
+          ),
+        ).toBe("local reviewer follow-up\n");
+      }
       expect(terminalTaskStore.read("first")?.recoveryWait).toBeUndefined();
       if (terminal === "merged")
         expect(terminalTaskStore.read("first")?.phase).toBe("done");
@@ -1053,7 +1339,7 @@ describe("P1 production lifecycle through pollProject", () => {
       ).toEqual(initialHashes);
       expect(accepted).toEqual([firstPr?.url]);
       expect(firstPr?.number).toBe(41);
-      expect(firstPr?.isDraft).toBe(draft);
+      expect(firstPr?.isDraft).toBe(draft || ackLoss);
       expect(
         ledger.filter(
           ({ action }) =>
@@ -1070,6 +1356,6 @@ describe("P1 production lifecycle through pollProject", () => {
         ),
       ).toBe(true);
     },
-    20_000,
+    60_000,
   );
 });
