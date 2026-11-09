@@ -1,5 +1,11 @@
 # P5 integration evidence map — final whole-phase review FAIL/BLOCKED
 
+> **Historical evidence, current milestone elsewhere:** the user subsequently closed
+> P5 and requested PR #218. [phase-status.md](phase-status.md) records that delivery
+> decision and the [readiness register](phase-readiness.md) owns the carryovers.
+> This map preserves the review/evidence outcomes; it does not reopen the milestone
+> or promote missing observations to passed.
+
 This is an evidence map for the P5 scenarios listed in `rewrite-plan.md` and
 defined by `verification.md`; those documents and the requirements/specification
 remain authoritative. A passing test demonstrates only the named observations

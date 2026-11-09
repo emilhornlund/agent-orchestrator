@@ -178,8 +178,10 @@ remediation prompts include a compact attachment section with each name, each no
 listed as absolute paths resolved in the configured runtime namespace, for example
 `/opt/.agent-context/<project-id>/<card-id>/attachments/<localFilename>`. External-link entries are listed as their
 external URLs and never have a local path. Cards without attachments have no attachment section. The section contains
-metadata and locations only: file contents, excerpts, and other full attachment data are never included. Commit prompts
-remain unchanged.
+metadata and locations only; ordinary commit prompts remain unchanged. Confirmed-loss
+primary-session reconstruction is a separate context path and may inline bounded,
+sanitized supported text content in its external recovery bundle. This exception does
+not establish universal attachment-format support or permit raw secret persistence.
 
 The path shown to OpenCode is in the filesystem namespace of the running service and OpenCode process. In a containerized
 deployment, the configured `contextRoot` must be mounted at the same absolute container path; a host path that is not
@@ -318,10 +320,19 @@ checked during configuration loading, before repository bootstrap or project pro
 | `signingKey` | Optional absolute path to the SSH signing key; it must be available where the service runs when configured |
 
 `setupCommand` and `validationCommand` are separate workflow contracts and may be configured together. `setupCommand` runs
-through the command runner in the task worktree before agent work, and a failure remains a `Setup` workflow failure. The
-orchestrator runs `validationCommand` in the owned worktree, captures its result against exact source content, and requires it to
-pass before review or publication. Repairs are finite. A configured `coverageCommand` is run and enforced as a required gate in
-the same manner; thresholds remain repository-owned.
+through the command runner in the task worktree before implementation or refinement.
+Setup dispatch/result and independent before/after effects are persisted; verified
+completion may be skipped on recovery, while unknown execution cannot be blindly
+repeated. Relevant setup changes require content-bound agent disposition before task
+commit; unrelated output is preserved and excluded, including during existing-PR
+corrections. Failed setup cannot start the affected agent.
+
+The orchestrator executes configured quality commands and binds results to exact
+content. Some pre-P6/P7/P8 routes still contain legacy passing-check/plan gates; these
+are implementation transition limits, not the agreed advisory requirement. P6 makes
+initial command optionality, reporting and publication policy consistent, with P7/P8
+owning correction composition. Do not treat legacy operational wording as a reason to
+retain a quality-only publication veto. See the [P6 packet](p6-execution.md).
 
 #### GitHub authentication modes
 
@@ -372,6 +383,13 @@ required for projects using a GitHub App.
 
 Each activity accepts optional non-blank `model` and `variant` selections. Omit either setting independently to let OpenCode use its own configured default; the orchestrator does not substitute another model or variant.
 When a default-provider environment credential is needed, the orchestrator scopes it using the provider in the operator-owned OpenCode config. It does not inspect task worktree configuration or forward unrelated provider credentials. If it cannot resolve that provider safely, the run fails with an actionable config/auth diagnostic; authenticate the default provider through OpenCode's auth store or configure its default model.
+
+When model selection is omitted, explicit `OPENCODE_CONFIG`, `OPENCODE_CONFIG_DIR`
+and `XDG_CONFIG_HOME` locations must be absolute: the service and task process have
+different working directories. The selected config/XDG root does not fall back to a
+displaced home config to select credentials. This resolves credential scope only;
+the omitted model/variant flags still leave actual selection to OpenCode. Realistic
+effective-default evidence is tracked separately from scripted argument/env tests.
 
 | Stage            | Used for                                                           |
 | ---------------- | ------------------------------------------------------------------ |

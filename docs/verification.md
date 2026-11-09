@@ -6,6 +6,30 @@ This plan defines verification scenarios for [requirements.md](requirements.md) 
 
 The requirements document governs intended behavior. The specification supplies the existing requirement IDs and acceptance criteria. This plan neither changes those sources nor adds product requirements. Source tensions and unresolved test oracles are recorded under [Ambiguities and decisions needed](#ambiguities-and-decisions-needed).
 
+### Use by an implementation phase
+
+Use the [execution protocol](phase-execution.md), [readiness register](phase-readiness.md),
+and selected P6–P11 packet before source work. The canonical scenarios below describe
+eventual complete behavior. Referencing a scenario does not assign every later-workflow
+variant to the current phase. Packets assign each applicable criterion/variant to an
+implementation owner and a final composition owner. Preserve the full scenario and
+its evidence levels; later-owned variants remain unexecuted, not passed.
+
+At readiness, expand each owned scenario row into a finite manifest of the variants
+actually required by its Steps and inherited fault boundaries. Record applicability
+and reasons for excluded dimensions; do not silently delete explicitly required
+variants or generate an unspecified Cartesian product. A new required combination
+discovered later needs a documented scope/dependency disposition, not an implicit
+change of the current task's acceptance criteria. Concrete safety regressions remain
+blocking even if the original manifest missed them.
+
+Execution evidence may be supplied by the designated runner and independently
+inspected by a read-only reviewer. Bind it to the exact tree/diff, command, environment,
+exit status, assertions, and evidence level. Personal reviewer execution is not a
+second mandatory evidence level. Unit, integration, simulated lifecycle, and realistic
+results must still be distinguished. An unavailable runner is a validation/resource
+status, not by itself an implementation defect.
+
 ## Execution protocol and shared fixtures
 
 ### Levels and environments
@@ -19,7 +43,10 @@ Every scenario declares its level. Scenarios marked realistic require the stated
 
 ### Common fixture F
 
-Unless overridden, each scenario starts from a fresh, isolated fixture F:
+Unless overridden, each complete scenario starts from a fresh, isolated fixture F.
+A task-level slice may use a smaller fixture only when its packet explicitly names
+the observations it can establish and the owner of the remaining composition. Such
+a slice is not a pass for the complete scenario:
 
 1. Two independently configured projects, A and B, each with its own board, all required lifecycle lists, disposable repository, GitHub repository, runtime directory outside all repositories, and log directory. Each board contains uniquely tagged cards and at least two eligible cards in known order. Exercise `Feature`, `Improvement`, `Bug`, and `Refinement` where specified. No previous ownership exists.
 2. A real Git source checkout, bare remote, and default branch with identifiable source, tests, configuration, and documentation. Record source checkout HEAD, refs, status, tracked/untracked file hashes, and remote refs. Include unrelated dirty files and an unrelated worktree in safety scenarios. Agent execution uses a separate owned worktree and branch. Shared Git metadata may legitimately contain the new task branch/worktree; source-checkout protection means its checked-out branch, HEAD, index, files, and preexisting unrelated refs/work are not changed by task execution.
@@ -190,7 +217,7 @@ In each requirement section, **AC1**, **AC2**, and so on refer to its acceptance
 - **Coverage:** AC1, AC2, AC3, AC4.
 - **Preconditions:** F; optional email enabled; completed meaningful work; quality variants all passing, failing tests/validation, negative review, and exhausted corrections.
 - **Steps:** Execute each variant through publication. Delay verification of PR creation; then allow readback and the Trello transition. Inspect delivered email.
-- **Expected results:** Passing required checks/review produce a normal PR; unresolved significant problems produce a draft with clear disclosure and no readiness claim. Both reach verified `Human Review` only after verified PR publication. Notification links the actual PR and identifies draft status/outstanding issues when relevant.
+- **Expected results:** Demonstrably passing configured checks and no known material unresolved issues permit a normal PR; unresolved significant problems produce a draft with clear disclosure and no readiness claim. AI reviewer approval is not required. Both reach verified `Human Review` only after verified PR publication. Notification links the actual PR and identifies draft status/outstanding issues when relevant.
 - **Evidence:** Remote commit/diff, PR metadata/body, ordered read/write ledger, card list and captured email.
 - **Verification level:** Integration; realistic publication/email counterpart in VER-TST-001-02.
 
@@ -1356,6 +1383,13 @@ Each row covers the named requirement; the scenario Coverage fields above provid
 
 These notes distinguish resolved findings from edge cases requiring representative fixtures or external-service capabilities. Execute unambiguous assertions even when an edge case remains unresolved.
 
+The [readiness register](phase-readiness.md) assigns the unresolved portions below
+to concrete owners and due-before tasks. An open edge oracle does not block unrelated
+deterministic work. It does prevent claiming that edge's acceptance. Resolve a
+current-phase prerequisite before its dependent task, rather than deferring all
+A2/A5 decisions to P11. Record decisions and representative fixtures here by reference;
+do not infer a product default from a test timeout or a fixture limit.
+
 | Reference             | Affected requirements                                                          | Source tension or undefined oracle                                                                                                                                                                                                                                                                                                                                                  | Verification treatment                                                                                                                                                                                                                                                                                                                       |
 | --------------------- | ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | A1 (resolved)         | REQ-MNT-002, REQ-GIT-002                                                       | Published PR branches merge target changes without rewriting published commits; only unpublished work may be rebased.                                                                                                                                                                                                                                                               | Verify retained commit ancestry and PR identity, merge conflicts, safe push and refusal, and no force-push.                                                                                                                                                                                                                                  |
@@ -1364,6 +1398,23 @@ These notes distinguish resolved findings from edge cases requiring representati
 | A4 (resolved)         | REQ-REF-001, REQ-REF-004, REQ-ENV-002                                          | Setup effects are distinct from read-only refinement; card original values and intended update are saved before writing, with reconciliation before terminal state if writes are uncertain.                                                                                                                                                                                         | Verify setup attribution, rejected and accepted-but-unacknowledged Trello writes, restored/complete field readback, and pending ownership until reconciliation.                                                                                                                                                                              |
 | A5                    | REQ-WF-002–003, REQ-CI-001, REQ-REC-004, REQ-REC-006, REQ-CTX-004, REQ-SCH-004 | The source requires bounded operations, controlled delays, stall detection, expected-check observation, and safe resumption after manual moves, without fully specifying all defaults, progress indicators, expected-check discovery rules, alert thresholds, or precise manual-move recovery rules. Only stated defaults such as 15-second polling and 30-day retention are fixed. | Bind runs to recorded configured bounds and independently visible progress/check fixtures. Assert no busy loop, false pass, unsafe resume, or silent abandonment. Numeric edge behavior without a defined policy and precise pause/resume boundaries remain blocked pending agreement; do not invent new settings or task-wide deadlines.    |
 | A6 (policy clarified) | REQ-NOT-002, REQ-WF-001                                                        | Retry confirmed non-delivery and deduplicate confirmed events; preserve ambiguous possible-delivery state unless provider evidence can reconcile it.                                                                                                                                                                                                                                | Verify no blind resend after possible acceptance, observable pending uncertainty, and no claim of exactly-once receipt without transport support.                                                                                                                                                                                            |
+
+### Approved P6 portions of A2/A5 and execution authority
+
+The user approved [D6-RECOVERY, D6-RUBRIC, D6-UPGRADE and D6-LIVE](p6-decisions.md).
+For P6, A2 now has the representative inferable/essential-clarification,
+meaningful/no-output and material/style issue rubric. A5 primary recovery accounting
+is three verified genuine failures per semantic operation, with truthful dispatch
+history and separate outage/reconstruction/improvement accounting. The earlier
+three-total-executions wording is historical, not a competing interpretation.
+
+Use these approved oracles to build concrete fixtures; approval does not establish
+model performance or pass unexecuted realistic observations. A2's later attachment/
+template/feedback details and A5's later CI, progress/stall and manual-move edge
+policies remain with their named phases. Do not ask the user to approve the P6
+portions again. Upgrade cohort and live-test permission are approved; actual artifact
+inventory, resource access, finite run manifests and executable evidence are still
+engineering work under the readiness register.
 
 REQ-SCH-001 AC3 includes successful refinement returning to `Backlog`, covered by VER-SCH-001-01 and VER-REF-005-01.
 

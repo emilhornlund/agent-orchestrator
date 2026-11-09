@@ -1,4 +1,10 @@
-# P5 progress — final whole-phase review FAIL/BLOCKED; handoff only
+# P5 historical progress and verification handoff
+
+> **Milestone update:** the user subsequently closed P5 and requested publication
+> in PR #218. [phase-status.md](phase-status.md) is the current planning ledger.
+> The FAIL/BLOCKED review and missing evidence below are preserved historical facts,
+> not an instruction to reopen P5. Carryovers have explicit receiving owners in
+> [phase-readiness.md](phase-readiness.md); closing the milestone did not pass them.
 
 **Documentation handoff tree:** `b2e73a8` (this edit changes documentation
 only). **P5 is NOT complete.** The final whole-phase review at `9f9988a` is
@@ -97,13 +103,20 @@ incomplete`) during CI publication. It did not reproduce in an isolated
   files**. This predates R1–R5 and is not the R6 validation. No live Trello or
   GitHub services were contacted for that candidate.
 
-## A5 decision recorded (policy decision only; implementation unverified)
+## Historical A5 decision record
 
 The policy owner approved **three total primary-operation executions including
 the initial execution** (at most two recovery executions). Reuse the shared
 default extracted from existing service retry limits; do not add a separate
 configuration key. Service-request retry accounting remains semantically
 separate from primary-operation execution accounting.
+
+Later C3 accounting separates actual dispatches, verified genuine failures and
+dependency outages. The user subsequently approved the precise
+[D6-RECOVERY](p6-decisions.md#d6-recovery--counted-unit-and-limit) contract: three
+verified genuine failures with separate outage/reconstruction accounting. The earlier
+wording is preserved history, not a competing policy. Code/fixture mapping remains
+engineering work; no new crash setting or task-wide deadline is introduced.
 
 The replacement-bound repository fingerprint is persisted before dispatch and
 must remain unchanged through reconstruction verification. Context availability

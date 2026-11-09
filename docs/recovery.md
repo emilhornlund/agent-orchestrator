@@ -45,8 +45,21 @@ explicit reconciliation, not automatically upgraded into permission to create a 
 After restart, `pollProject` calls the unified task-session coordinator. It checks queue ownership and persisted task phase before
 resuming any work. The primary session is verified with
 `opencode session list --format json --pure --max-count 10000` from the owned worktree; its ID and directory must match the
-recorded binding. Implementation, CI correction, and feedback remediation resume the exact stored session ID. The service never
-substitutes a new session or uses implicit `--continue`.
+recorded binding. Implementation, CI correction, and feedback remediation first reuse
+the exact stored session ID; the service does not use implicit `--continue`.
+A replacement is permitted only after confirmed original-session loss and verified
+reconstructable task/repository/plan/attachment/change/history/feedback context.
+Original and replacement references, hashed sanitized context and the read-only
+baseline remain durable. Ambiguous creation or unverifiable original availability is
+not permission to create another session. Bound reconstruction acknowledgement uses
+bounded recovery and preserves the primary work's identity/accounting separately.
+
+Recognized structured provider outages retain the checkpoint for paced rechecks,
+including across the process-result/ledger-completion gap; ordinary test text naming
+a transport error is not outage proof. Unknown running evidence after supervisor
+loss remains explicitly ambiguous until authoritative termination can be established.
+The known escaped-descendant limitation is a carryover, not proof that the process
+stopped or permission for a competing writer. See [current carryovers](phase-status.md).
 
 A queued `Ready for Agent` claim resumes only when its persisted event identity and expected owned worktree/branch match the
 card. An owned `Working` implementation resumes from its recorded phase only after validating task identity, setup state,

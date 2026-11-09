@@ -98,6 +98,14 @@ Refinement additionally records original fields, intended complete result, verif
 
 ## Implementation phases
 
+Implementation is governed by the [execution protocol](phase-execution.md), the
+[current milestone ledger](phase-status.md), the [readiness register](phase-readiness.md),
+and the selected phase packet below. Readiness tasks may begin immediately;
+dependent implementation begins only after its prerequisites are demonstrated.
+The user closed the P5 delivery milestone and requested PR #218. Its historical
+verification findings remain evidence and explicit carryovers, not an automatic
+instruction to reopen P5 or claim full product qualification.
+
 ### Phase dependencies and review rules
 
 | Phase | Deliverable                                                | Depends on |
@@ -114,7 +122,16 @@ Refinement additionally records original fields, intended complete result, verif
 | P10   | Terminal artifacts, cleanup and clean deliberate retries   | P7, P8, P9 |
 | P11   | Complete lifecycle evidence and release closure            | P10        |
 
-P9 can be developed after P6 independently of P7/P8; production handoff still uses one writer. Every phase inherits the verification protocol, fault boundaries, evidence levels and outcome labels in `verification.md`. Run `yarn validate` for implementation changes, plus the phase's mapped scenarios at their stated levels. Document missing realistic levels as partial/blocked, not passed. P11 consolidates evidence; it is not the first time end-to-end checks run.
+P9 can be developed after P6 independently of P7/P8; production handoff still uses one writer. Every phase inherits the verification protocol, fault boundaries, evidence levels and outcome labels in `verification.md`. Its packet assigns criterion/variant ownership before implementation: an earlier contribution does not require implementing a later-owned workflow, and it does not pass that later variant. Run `yarn validate` through the designated runner, plus owned scenarios at their stated levels. Arrange required realistic evidence at readiness; missing resources or decisions are surfaced before dependent work. Do not silently move required live evidence to P11. P11 composes and qualifies the full release; it is not the first end-to-end check. Follow the protocol for task, phase-owned, and release qualification outcomes.
+
+| Phase | Execution packet                  | Entry focus                                                                                        |
+| ----- | --------------------------------- | -------------------------------------------------------------------------------------------------- |
+| P6    | [P6 execution](p6-execution.md)   | Initial publication policy, source-checkout boundary, budget semantics, P5 carryovers              |
+| P7    | [P7 execution](p7-execution.md)   | Observer/writer authority, capacity lifecycle, feedback classification and expected-list migration |
+| P8    | [P8 execution](p8-execution.md)   | Expected CI, episode identity, additive maintenance with preserved work                            |
+| P9    | [P9 execution](p9-execution.md)   | Free-plan history capability, approved fixtures, external read-only output and compensation        |
+| P10   | [P10 execution](p10-execution.md) | Terminal obligations, resource provenance, supported upgrades and fresh-attempt handoff            |
+| P11   | [P11 execution](p11-execution.md) | Finite release matrix, authorized live/local/container environments, legacy retirement             |
 
 ### P1 — Establish invariant guardrails and an observable regression harness
 
@@ -168,6 +185,8 @@ Run configured setup before both refinement and implementation, persist independ
 
 ### P6 — Make initial implementation and publication consistently advisory
 
+**Execution boundary:** [P6 packet](p6-execution.md). Initial-description and clarification-failure contributions are owned here; feedback/CI/maintenance refresh and clean clarified requeue remain with P7/P8/P10. Prove the selected source-checkout protection capability before depending on it.
+
 **Scope:** Replace mandatory approved plans and quality gates in schemas, prompts and initial execution with one evidence/reporting policy. Attempt planning and independent review before implementation; allow the agent to adapt/disregard advice and proceed after bounded advisory failure. Validation/coverage are independently optional; missing commands are skipped. Keep separate configurable validation/review improvement maxima, persist counters and stop on early finish or no-change.
 
 Retain source/content checks and commit-intent recovery. Produce one initial descriptive generated commit from meaningful task-relevant changes, including only appropriately attributed setup changes. A no-meaningful-output or essential-clarification outcome is explained and verified as failure, never an artificial PR. Keep original checkout protection enforceable through scoped OpenCode permissions and execution boundaries, with actual negative tests rather than cwd/prompt assertions alone.
@@ -179,6 +198,8 @@ Create normal/draft PRs using observed results and material-issue dispositions, 
 **Verification:** REQ-PR-001–004/007, REQ-IMP-001/003/005, REQ-VAL-001–005 and REQ-CTX-002–003. VER-PR-001-01 through VER-PR-004-01 (all defined variants), VER-PR-007-01, VER-IMP-001-01, VER-IMP-003-01, VER-IMP-005-01, VER-VAL-001-01 through VER-VAL-005-01, VER-CTX-002-01 and VER-CTX-003-01. Run the adverse-quality complete simulated path and begin realistic publication evidence. Addresses F1–F2, F4, F9–F12.
 
 ### P7 — Coordinate active-PR observation and human feedback
+
+**Execution boundary:** [P7 packet](p7-execution.md). Own observation, queue/capacity behavior, feedback correction, and terminal fencing; P8 owns maintenance execution and P10 owns final artifact cleanup/fresh retry. Queue ordering may use production queue descriptors before maintenance execution exists.
 
 **Scope:** Split observation from mutation execution while retaining one project writer. Persist new feedback/CI/terminal observations during AI execution. Implement queue priorities and prerequisites, a durable FCFS global AI slot queue with an optional cap, and current Trello eligibility/order at claims. Use one optional polling interval defaulting to 15 seconds and controlled backoff. Human Review releases AI capacity but retains the active task.
 
@@ -192,6 +213,8 @@ Move `Human Review` to verified `Working` during remediation, reuse the primary 
 
 ### P8 — Bound CI episodes and restore additive PR maintenance
 
+**Execution boundary:** [P8 packet](p8-execution.md). Resolve expected-check and episode-trigger oracles before dependent tasks. Carry setup exclusions and unshipped changes through additive maintenance; do not assume a fully clean worktree when preserved work is expected.
+
 **Scope:** Retain conservative expected-check/current-revision evidence, adding durable observation deadlines and uncertain-result disclosure. Implement separate configurable CI correction maxima and initiating-event episode identities independent of SHA. Repeated polls, generated fixes and routine target merges cannot renew exhausted budgets. No-op/early finish ends the episode; newly verified human requests or independent materially new failures can start another.
 
 Replace published rebase/force-with-lease with target-branch merge and ordinary fast-forward-safe push to the same PR. Preserve published commit objects, unrelated remote changes, conflicts and unshipped work. Use the agent for conflict resolution with bounded execution and advisory follow-up. Detect maintenance automatically, including approved-open PRs, and remove legacy opt-in policy that suppresses required behavior. Preserve PR activity/description updates and terminal checks at safe mutation boundaries.
@@ -201,6 +224,8 @@ Replace published rebase/force-with-lease with target-branch merge and ordinary 
 **Verification:** REQ-CI-001–002, REQ-MNT-001–004 and REQ-GIT-001–002. VER-CI-001-01, VER-CI-002-01, VER-MNT-001-01 through VER-MNT-004-01, VER-GIT-001-01, VER-GIT-002-01 and shared VER-PR-008-02. Verify actual remote commit ancestry as well as recorded policy. Addresses F1–F4 and F10.
 
 ### P9 — Make refinement recoverable and demonstrably read-only
+
+**Execution boundary:** [P9 packet](p9-execution.md). Demonstrate the needed Trello Free history capabilities and read-only boundary first; migrate P5 result-file/baseline handling explicitly. Successful verified refinement release is owned here; historical cleanup/fresh retry is owned by P10.
 
 **Scope:** Move refinement onto durable attempts, P5 setup/context and P4 mutation reconciliation. Keep strict full-result validation and distinct templates, adding bounded correction of invalid results. Store result artifacts outside the worktree and enforce read-only agent access. Compare repository content/HEAD/refs and ignored/untracked effects against the post-setup baseline; a clean `git status` alone is insufficient evidence.
 
@@ -212,6 +237,8 @@ Persist original/intended card fields before writes; compare current fields, tra
 
 ### P10 — Finish terminal reconciliation, artifact safety and deliberate retry
 
+**Execution boundary:** [P10 packet](p10-execution.md). Freeze the supported upgrade cohort and terminal/resource handoff matrix before implementation. Reuse earlier terminal-fencing evidence; add final synchronization, preservation, cleanup, archival, and retry composition.
+
 **Scope:** Compose terminal precedence with verified Done/closed-Backlog/Failed/refinement-Backlog outcomes, explanatory outcome comments and appropriate non-blocking notifications. Verify all required workflow effects before releasing the active-task claim; retain unresolved in-flight mutations. Distinguish workflow reconciliation from cleanup safely deferred with preserved artifacts.
 
 Strengthen cleanup provenance with common Git directory, attempt manifest, expected refs and proof that local work is preserved. Check clean local-only commits as well as dirty files. Treat already-absent owned resources and GitHub-deleted remote branches idempotently. For unmerged closure verify implementation accessibility through the closed PR before local removal. Preserve unsafe/unshipped artifacts and diagnostics instead of deleting to unblock progress.
@@ -220,13 +247,15 @@ Archive reconciled old attempt identities and create fresh attempt-specific bran
 
 **Completion / acceptance:** Merge produces verified Done; unmerged closure verified Backlog; genuine pre-PR failure verified Failed with explanation and preserved work. Next-task selection is impossible before required reconciliation. Cleanup replay tolerates prior success, refuses unsafe deletion and preserves unshipped work after terminal races. Explicit failed/closed requeue succeeds cleanly without internal-file edits or old-code inheritance. Logs remain subject to P3 retention rather than task-completion deletion.
 
-**Verification:** REQ-TR-001–003, REQ-GIT-003–006, REQ-SCH-001 and terminal portions of REQ-PR-008/REQ-REF-005. VER-TR-001-01 through VER-TR-003-01, VER-GIT-003-01 through VER-GIT-006-01, VER-SCH-001-01, VER-PR-008-02 and VER-REF-005-01. Repeat VER-NOT-001-01/02 for all final event routes. Addresses F3–F7, F11–F12.
+**Verification:** REQ-TR-001–003, REQ-GIT-003–006, REQ-SCH-001 and terminal portions of REQ-PR-008/REQ-REF-005. VER-TR-001-01 through VER-TR-003-01, VER-GIT-003-01 through VER-GIT-006-01, VER-SCH-001-01, VER-PR-008-02 and VER-REF-005-01. Repeat VER-NOT-001-01 and VER-NOT-002-01 for all final event routes. Addresses F3–F7, F11–F12.
 
 ### P11 — Establish complete lifecycle evidence and close the release transition
 
+**Execution boundary:** [P11 packet](p11-execution.md). Freeze and resource the finite release qualification matrix before execution. Earlier-phase decision prerequisites must already be resolved; only explicitly registered residual decisions may remain for P11.
+
 **Scope:** Complete simulated application-boundary lifecycle/fault matrices and realistic disposable Trello Free/GitHub/OpenCode/email runs locally and in Docker-compatible deployment. Use actual prior/current application artifacts for upgrade tests. On this host, record Podman when used for the container run. Add only deployment artifacts required for supported parity, not permanent live-test infrastructure.
 
-Consolidate per-criterion/variant evidence and resolve remaining A2/A5 decisions. Retire legacy workflow dispatch, redundant mutable state and compatibility paths only after supported active records have migrated or drained. Update future operator/configuration/recovery guidance to describe supported transitions rather than manual file repair. Preserve historical fixtures and evidence for supported upgrade versions.
+Consolidate per-criterion/variant evidence and resolve only the A2/A5 decisions explicitly assigned to release qualification in the readiness register; do not postpone earlier implementation prerequisites to this phase. Retire legacy workflow dispatch, redundant mutable state and compatibility paths only after supported active records have migrated or drained. Update future operator/configuration/recovery guidance to describe supported transitions rather than manual file repair. Preserve historical fixtures and evidence for supported upgrade versions.
 
 **Completion / acceptance:** Every requirement/criterion has an assessable demonstrated outcome at required levels; missing realistic evidence cannot be substituted by unit success. The supported upgrade/local/container matrix passes, including ownership and volume identity, process interruption, secret channels and complete human outcomes. No legacy route can reactivate contradictory behavior. Final completion is subject to the criteria below.
 
@@ -284,94 +313,94 @@ Rollback means stopping claims/mutations, preserving current evidence and select
 
 ### Requirement and acceptance-criterion coverage
 
-The following 82 rows assign a **closure owner** to every requirement. Supporting phases are named where the behavior necessarily composes. Each row includes **all acceptance criteria** of that requirement, in specification order; its verification column includes every scenario in the verification document's requirement-to-scenario index. Those scenarios' `Coverage` fields supply the exact local AC mapping, including shared scenarios. No criterion is waived by assigning one phase, and a phase cannot claim closure from only a subset of mapped variants/levels.
+The following 82 rows identify a **domain integration owner** and supporting phases, not permission to require later-phase behavior at an earlier delivery gate. The linked scenarios retain all acceptance criteria and evidence levels; their `Coverage` fields supply the exact AC mapping. P6–P11 packets partition the applicable workflow variants, and P11 verifies final cross-domain qualification. A contribution pass never closes an entire requirement whose later variants or required levels are unexecuted. No criterion is waived by this delivery partition. Historical P1–P5 evidence remains historical and does not retroactively become full acceptance.
 
 This is planned coverage. The audit baseline is 2 Implemented, 51 Partial, 3 Missing, 25 Contradictory and 1 Unverified. Even the two Implemented requirements require regression evidence through migration. Execution records must retain per-AC status, evidence and missing levels, following VER-TST-003-01; this table does not upgrade any implementation status.
 
-| Requirement | Closure phase (support) | Verification scenarios                      |
-| ----------- | ----------------------- | ------------------------------------------- |
-| REQ-WF-001  | P4 (P7, P9, P10)        | VER-WF-001-01, VER-WF-001-02, VER-WF-001-03 |
-| REQ-WF-002  | P5 (P2, P10)            | VER-WF-002-01, VER-WF-002-02                |
-| REQ-WF-003  | P5 (P7)                 | VER-WF-003-01                               |
-| REQ-PR-001  | P6 (P7, P8)             | VER-PR-001-01                               |
-| REQ-PR-002  | P6 (P8)                 | VER-PR-002-01                               |
-| REQ-PR-003  | P5 (P6, P7)             | VER-PR-003-01, VER-PR-003-02, VER-PR-003-03 |
-| REQ-PR-004  | P6 (P4)                 | VER-PR-004-01                               |
-| REQ-PR-005  | P4 (P6)                 | VER-PR-005-01                               |
-| REQ-PR-006  | P5 (P4, P6)             | VER-PR-006-01                               |
-| REQ-PR-007  | P7 (P6, P8)             | VER-PR-007-01                               |
-| REQ-PR-008  | P10 (P1, P7)            | VER-PR-008-01, VER-PR-008-02                |
-| REQ-TR-001  | P10 (P4, P7)            | VER-TR-001-01                               |
-| REQ-TR-002  | P10 (P4, P7)            | VER-TR-002-01                               |
-| REQ-TR-003  | P10 (P4, P5, P6)        | VER-TR-003-01                               |
-| REQ-TR-004  | P7 (P2)                 | VER-TR-004-01                               |
-| REQ-REF-001 | P9 (P3, P5)             | VER-REF-001-01                              |
-| REQ-REF-002 | P9                      | VER-REF-002-01                              |
-| REQ-REF-003 | P9                      | VER-REF-003-01                              |
-| REQ-REF-004 | P9 (P4)                 | VER-REF-004-01, VER-REF-004-02              |
-| REQ-REF-005 | P9 (P4, P10)            | VER-REF-005-01                              |
-| REQ-IMP-001 | P6 (P2, P3)             | VER-IMP-001-01                              |
-| REQ-IMP-002 | P5 (P6)                 | VER-IMP-002-01                              |
-| REQ-IMP-003 | P6 (P5)                 | VER-IMP-003-01                              |
-| REQ-IMP-004 | P5 (P7, P8)             | VER-IMP-004-01, VER-IMP-004-02              |
-| REQ-IMP-005 | P6 (P10)                | VER-IMP-005-01                              |
-| REQ-VAL-001 | P6                      | VER-VAL-001-01                              |
-| REQ-VAL-002 | P6 (P7, P8)             | VER-VAL-002-01                              |
-| REQ-VAL-003 | P6 (P2)                 | VER-VAL-003-01                              |
-| REQ-VAL-004 | P6 (P5, P7, P8)         | VER-VAL-004-01                              |
-| REQ-VAL-005 | P6 (P7, P8)             | VER-VAL-005-01                              |
-| REQ-HR-001  | P7                      | VER-HR-001-01                               |
-| REQ-HR-002  | P7 (P6)                 | VER-HR-002-01                               |
-| REQ-HR-003  | P7                      | VER-HR-003-01                               |
-| REQ-HR-004  | P7 (P4, P6)             | VER-HR-004-01                               |
-| REQ-HR-005  | P7 (P6)                 | VER-HR-005-01                               |
-| REQ-HR-006  | P7 (P8, P10)            | VER-HR-006-01, VER-PR-008-02                |
-| REQ-CI-001  | P8                      | VER-CI-001-01                               |
-| REQ-CI-002  | P8 (P6, P7)             | VER-CI-002-01                               |
-| REQ-MNT-001 | P8 (P7)                 | VER-MNT-001-01                              |
-| REQ-MNT-002 | P8 (P1)                 | VER-MNT-002-01                              |
-| REQ-MNT-003 | P8 (P6)                 | VER-MNT-003-01                              |
-| REQ-MNT-004 | P8 (P7)                 | VER-MNT-004-01                              |
-| REQ-REC-001 | P5 (P2, P4, P11)        | VER-REC-001-01                              |
-| REQ-REC-002 | P5 (P7)                 | VER-REC-002-01, VER-PR-003-03               |
-| REQ-REC-003 | P5 (P4)                 | VER-REC-003-01                              |
-| REQ-REC-004 | P5 (P2, P10)            | VER-REC-004-01                              |
-| REQ-REC-005 | P11 (P2, P3, P5)        | VER-REC-005-01, VER-REC-005-02              |
-| REQ-REC-006 | P5 (P3)                 | VER-REC-006-01, VER-REC-006-02              |
-| REQ-GIT-001 | P8 (P1, P6, P10)        | VER-GIT-001-01                              |
-| REQ-GIT-002 | P8 (P6)                 | VER-GIT-002-01                              |
-| REQ-GIT-003 | P10 (P2)                | VER-GIT-003-01                              |
-| REQ-GIT-004 | P10                     | VER-GIT-004-01                              |
-| REQ-GIT-005 | P10                     | VER-GIT-005-01                              |
-| REQ-GIT-006 | P10 (P2)                | VER-GIT-006-01                              |
-| REQ-CFG-001 | P2                      | VER-CFG-001-01                              |
-| REQ-CFG-002 | P11 (P2, P5)            | VER-CFG-002-01                              |
-| REQ-CFG-003 | P2 (P11)                | VER-CFG-003-01                              |
-| REQ-CFG-004 | P2 (P5)                 | VER-CFG-004-01                              |
-| REQ-CFG-005 | P2 (P3, P11)            | VER-CFG-005-01, VER-CFG-004-01              |
-| REQ-CFG-006 | P2                      | VER-CFG-006-01                              |
-| REQ-SCH-001 | P10 (P2, P7, P9)        | VER-SCH-001-01, VER-PR-003-03               |
-| REQ-SCH-002 | P7                      | VER-SCH-002-01                              |
-| REQ-SCH-003 | P7                      | VER-SCH-003-01                              |
-| REQ-SCH-004 | P7                      | VER-SCH-004-01                              |
-| REQ-LOG-001 | P3 (P4–P10)             | VER-LOG-001-01                              |
-| REQ-LOG-002 | P3 (P4–P10)             | VER-LOG-002-01                              |
-| REQ-LOG-003 | P3 (P10)                | VER-LOG-003-01                              |
-| REQ-NOT-001 | P10 (P4, P6, P9)        | VER-NOT-001-01                              |
-| REQ-NOT-002 | P4 (P10)                | VER-NOT-002-01                              |
-| REQ-SEC-001 | P3 (P11)                | VER-SEC-001-01                              |
-| REQ-SEC-002 | P3 (P4–P11)             | VER-SEC-002-01                              |
-| REQ-SEC-003 | P11 (P3)                | VER-SEC-003-01                              |
-| REQ-ENV-001 | P11 (P2, P3)            | VER-ENV-001-01                              |
-| REQ-ENV-002 | P9 (P5, P6)             | VER-ENV-002-01                              |
-| REQ-ENV-003 | P5                      | VER-ENV-003-01                              |
-| REQ-CTX-001 | P9 (P5, P7, P8)         | VER-CTX-001-01                              |
-| REQ-CTX-002 | P10 (P5, P6)            | VER-CTX-002-01                              |
-| REQ-CTX-003 | P9 (P3, P6–P8)          | VER-CTX-003-01                              |
-| REQ-CTX-004 | P5 (P7)                 | VER-CTX-004-01                              |
-| REQ-TST-001 | P11 (P1–P10)            | VER-TST-001-01, VER-TST-001-02              |
-| REQ-TST-002 | P11 (P1–P10)            | VER-TST-002-01                              |
-| REQ-TST-003 | P11 (P1–P10)            | VER-TST-003-01                              |
+| Requirement | Domain integration owner (support) | Verification scenarios                      |
+| ----------- | ---------------------------------- | ------------------------------------------- |
+| REQ-WF-001  | P4 (P7, P9, P10)                   | VER-WF-001-01, VER-WF-001-02, VER-WF-001-03 |
+| REQ-WF-002  | P5 (P2, P10)                       | VER-WF-002-01, VER-WF-002-02                |
+| REQ-WF-003  | P7 (P5)                            | VER-WF-003-01                               |
+| REQ-PR-001  | P6 (P7, P8)                        | VER-PR-001-01                               |
+| REQ-PR-002  | P6 (P8)                            | VER-PR-002-01                               |
+| REQ-PR-003  | P7 (P5, P6)                        | VER-PR-003-01, VER-PR-003-02, VER-PR-003-03 |
+| REQ-PR-004  | P6 (P4)                            | VER-PR-004-01                               |
+| REQ-PR-005  | P4 (P6)                            | VER-PR-005-01                               |
+| REQ-PR-006  | P5 (P4, P6)                        | VER-PR-006-01                               |
+| REQ-PR-007  | P8 (P6, P7)                        | VER-PR-007-01                               |
+| REQ-PR-008  | P10 (P1, P7)                       | VER-PR-008-01, VER-PR-008-02                |
+| REQ-TR-001  | P10 (P4, P7)                       | VER-TR-001-01                               |
+| REQ-TR-002  | P10 (P4, P7)                       | VER-TR-002-01                               |
+| REQ-TR-003  | P10 (P4, P5, P6)                   | VER-TR-003-01                               |
+| REQ-TR-004  | P7 (P2)                            | VER-TR-004-01                               |
+| REQ-REF-001 | P9 (P3, P5)                        | VER-REF-001-01                              |
+| REQ-REF-002 | P9                                 | VER-REF-002-01                              |
+| REQ-REF-003 | P9                                 | VER-REF-003-01                              |
+| REQ-REF-004 | P9 (P4)                            | VER-REF-004-01, VER-REF-004-02              |
+| REQ-REF-005 | P9 (P4, P10)                       | VER-REF-005-01                              |
+| REQ-IMP-001 | P6 (P2, P3)                        | VER-IMP-001-01                              |
+| REQ-IMP-002 | P5 (P6)                            | VER-IMP-002-01                              |
+| REQ-IMP-003 | P6 (P5)                            | VER-IMP-003-01                              |
+| REQ-IMP-004 | P8 (P5, P7)                        | VER-IMP-004-01, VER-IMP-004-02              |
+| REQ-IMP-005 | P6 (P10)                           | VER-IMP-005-01                              |
+| REQ-VAL-001 | P6                                 | VER-VAL-001-01                              |
+| REQ-VAL-002 | P6 (P7, P8)                        | VER-VAL-002-01                              |
+| REQ-VAL-003 | P6 (P2)                            | VER-VAL-003-01                              |
+| REQ-VAL-004 | P6 (P5, P7, P8)                    | VER-VAL-004-01                              |
+| REQ-VAL-005 | P6 (P7, P8)                        | VER-VAL-005-01                              |
+| REQ-HR-001  | P7                                 | VER-HR-001-01                               |
+| REQ-HR-002  | P7 (P6)                            | VER-HR-002-01                               |
+| REQ-HR-003  | P7                                 | VER-HR-003-01                               |
+| REQ-HR-004  | P7 (P4, P6)                        | VER-HR-004-01                               |
+| REQ-HR-005  | P7 (P6)                            | VER-HR-005-01                               |
+| REQ-HR-006  | P7 (P8, P10)                       | VER-HR-006-01, VER-PR-008-02                |
+| REQ-CI-001  | P8                                 | VER-CI-001-01                               |
+| REQ-CI-002  | P8 (P6, P7)                        | VER-CI-002-01                               |
+| REQ-MNT-001 | P8 (P7)                            | VER-MNT-001-01                              |
+| REQ-MNT-002 | P8 (P1)                            | VER-MNT-002-01                              |
+| REQ-MNT-003 | P8 (P6)                            | VER-MNT-003-01                              |
+| REQ-MNT-004 | P8 (P7)                            | VER-MNT-004-01                              |
+| REQ-REC-001 | P5 (P2, P4, P11)                   | VER-REC-001-01                              |
+| REQ-REC-002 | P7 (P5)                            | VER-REC-002-01, VER-PR-003-03               |
+| REQ-REC-003 | P5 (P4)                            | VER-REC-003-01                              |
+| REQ-REC-004 | P5 (P2, P10)                       | VER-REC-004-01                              |
+| REQ-REC-005 | P11 (P2, P3, P5)                   | VER-REC-005-01, VER-REC-005-02              |
+| REQ-REC-006 | P5 (P3)                            | VER-REC-006-01, VER-REC-006-02              |
+| REQ-GIT-001 | P8 (P1, P6, P10)                   | VER-GIT-001-01                              |
+| REQ-GIT-002 | P8 (P6)                            | VER-GIT-002-01                              |
+| REQ-GIT-003 | P10 (P2)                           | VER-GIT-003-01                              |
+| REQ-GIT-004 | P10                                | VER-GIT-004-01                              |
+| REQ-GIT-005 | P10                                | VER-GIT-005-01                              |
+| REQ-GIT-006 | P10 (P2)                           | VER-GIT-006-01                              |
+| REQ-CFG-001 | P2                                 | VER-CFG-001-01                              |
+| REQ-CFG-002 | P11 (P2, P5)                       | VER-CFG-002-01                              |
+| REQ-CFG-003 | P2 (P11)                           | VER-CFG-003-01                              |
+| REQ-CFG-004 | P2 (P5)                            | VER-CFG-004-01                              |
+| REQ-CFG-005 | P2 (P3, P11)                       | VER-CFG-005-01, VER-CFG-004-01              |
+| REQ-CFG-006 | P2                                 | VER-CFG-006-01                              |
+| REQ-SCH-001 | P10 (P2, P7, P9)                   | VER-SCH-001-01, VER-PR-003-03               |
+| REQ-SCH-002 | P7                                 | VER-SCH-002-01                              |
+| REQ-SCH-003 | P7                                 | VER-SCH-003-01                              |
+| REQ-SCH-004 | P7                                 | VER-SCH-004-01                              |
+| REQ-LOG-001 | P3 (P4–P10)                        | VER-LOG-001-01                              |
+| REQ-LOG-002 | P3 (P4–P10)                        | VER-LOG-002-01                              |
+| REQ-LOG-003 | P3 (P10)                           | VER-LOG-003-01                              |
+| REQ-NOT-001 | P10 (P4, P6, P9)                   | VER-NOT-001-01                              |
+| REQ-NOT-002 | P4 (P10)                           | VER-NOT-002-01                              |
+| REQ-SEC-001 | P3 (P11)                           | VER-SEC-001-01                              |
+| REQ-SEC-002 | P3 (P4–P11)                        | VER-SEC-002-01                              |
+| REQ-SEC-003 | P11 (P3)                           | VER-SEC-003-01                              |
+| REQ-ENV-001 | P11 (P2, P3)                       | VER-ENV-001-01                              |
+| REQ-ENV-002 | P9 (P5, P6)                        | VER-ENV-002-01                              |
+| REQ-ENV-003 | P5                                 | VER-ENV-003-01                              |
+| REQ-CTX-001 | P9 (P5, P7, P8)                    | VER-CTX-001-01                              |
+| REQ-CTX-002 | P10 (P5, P6)                       | VER-CTX-002-01                              |
+| REQ-CTX-003 | P9 (P3, P6–P8)                     | VER-CTX-003-01                              |
+| REQ-CTX-004 | P5 (P7)                            | VER-CTX-004-01                              |
+| REQ-TST-001 | P11 (P1–P10)                       | VER-TST-001-01, VER-TST-001-02              |
+| REQ-TST-002 | P11 (P1–P10)                       | VER-TST-002-01                              |
+| REQ-TST-003 | P11 (P1–P10)                       | VER-TST-003-01                              |
 
 ### Significant audit-finding coverage
 
@@ -399,12 +428,18 @@ Cross-cutting audit observations are covered by P2/P4 state authority and recove
 
 These decisions constrain specific phase details, not the established invariants. Do not silently turn a fixture value or a current code path into a new requirement.
 
-| Decision                                                                                                                                               | Needed before                                      | Proposed treatment pending agreement                                                                                                                                                                                                                           |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A2: Attachment support/limits, final refinement template details and semantic rubrics for meaningful, actionable, necessary, unclear and in-scope work | P5/P6/P9 semantic acceptance and P11 full evidence | Reuse existing safe mechanisms/templates; propose representative approved fixtures and human assessment. No universal diff threshold or orchestrator-owned engineering judgment.                                                                               |
-| A5: Remaining operation/progress/recheck bounds, expected-CI discovery, alert thresholds and exact manual-move pause/resume boundaries                 | Relevant P5/P7/P8 policy closure                   | Use existing bounded configuration where applicable; document proposed deterministic rules for agreement. Only 15-second polling and 30-day retention are fixed defaults here. No new task deadline or speculative settings.                                   |
-| Host coordination deployment convention and supported upgrade window                                                                                   | P2 production handoff                              | Recommend one documented shared host-visible namespace and explicit readable/writable version matrix. Prove actual local/container exclusion; agree how incompatible mounts/configurations are rejected without claiming discovery of arbitrary hidden owners. |
-| First rollout cohort and realistic-service execution authorization                                                                                     | Each production rollout / P11 realistic runs       | Use disposable resources, scoped test credentials and recorded environments; agree supported prior versions and project handoff inventory. A permanent testing environment is optional.                                                                        |
+The actionable owner, due-before task, current status, and required decision or
+capability evidence are in [phase-readiness.md](phase-readiness.md). A technical
+unknown first receives a bounded feasibility task; it is not an external blocker
+until an actual missing permission, resource, supported capability, or product
+decision has been demonstrated. Unrelated ready work continues.
+
+| Decision                                                                        | Needed before                                        | Approved treatment / remaining work                                                                                                                                                                                                                                                                                  |
+| ------------------------------------------------------------------------------- | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A2: Attachment support/limits, final refinement templates and semantic rubrics  | P6/P7/P9 owned semantic gates; P11 qualification     | [D6-RUBRIC](p6-decisions.md#d6-rubric--representative-p6-acceptance-judgments) approved for P6. Build concrete fixtures and required assessment. Later feedback/template/attachment choices remain with their registered owners; no universal diff threshold or orchestrator semantic heuristic.                     |
+| A5: Primary accounting and remaining progress/recheck/CI/manual-move boundaries | Before each dependent task in P6/P7/P8               | [D6-RECOVERY](p6-decisions.md#d6-recovery--counted-unit-and-limit) approves three verified genuine failures per primary operation, separately recording outages and reconstruction. Polling/retention defaults remain as specified. Later edge policies remain explicit; no new crash setting or task-wide deadline. |
+| Host coordination convention and supported upgrades                             | Before affected handoff/migration                    | Shared host-visible namespace and local/container exclusion remain required. [D6-UPGRADE](p6-decisions.md#d6-upgrade--supported-cohort) approves deployed-release plus P5 PR #218 compatibility, not every experimental commit. Inventory actual versions/artifacts and preserve unsupported originals.              |
+| Realistic-service testing and production rollout                                | Before the applicable owned live gate / each rollout | [D6-LIVE](p6-decisions.md#d6-live--authorized-isolated-p6-verification) authorizes bounded isolated P6 tests using existing accounts/models and disposable Free resources. Resource provisioning/evidence remain pending. Production rollout, purchases and expanded plans are not authorized.                       |
 
 A1 (published merge history), A3 (evidence-based readiness), A4 (setup/refinement separation and recovery) and A6 (ambiguous delivery) already have clarified policies in the verification baseline and are implemented as obligations here, not reopened choices. Human merge control, advisory publication, preservation and no force-push are settled requirements.
 

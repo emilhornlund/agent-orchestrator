@@ -11,11 +11,15 @@ Git argument; signing configuration is not exported through the indexed
 ambient injection variables are not inherited by Git children. This keeps
 signing scoped to Git (not other child-process families) without accepting
 arbitrary indexed configuration injection.
-OpenCode receives credentials only for the provider prefix selected by the
-project's configured `provider/model` value. The allowlist is explicit for
+OpenCode receives credentials only for the selected provider prefix. For an explicit
+project `provider/model`, use that prefix; with an omitted model, the later P5 path
+resolves the default-provider credential scope from trusted operator configuration
+without adding a model flag or inspecting task-worktree configuration. An unresolved
+default with ambient provider credentials fails actionably rather than forwarding
+all providers. The allowlist is explicit for
 OpenAI, Anthropic, Google/Gemini/Vertex, Mistral, Groq, xAI, OpenRouter,
-DeepSeek, Azure OpenAI, Cohere, and Bedrock. Unknown or absent provider prefixes
-do not receive ambient provider variables; OpenCode retains its normal HOME/XDG
+DeepSeek, Azure OpenAI, Cohere, and Bedrock. Unknown provider prefixes
+do not receive unrelated ambient provider variables; OpenCode retains its normal HOME/XDG
 configuration access and its own default behavior, without an orchestrator
 model fallback.
 Setup/quality commands and `flock` receive no Trello, SMTP, GitHub, or AI

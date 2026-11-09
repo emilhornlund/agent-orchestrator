@@ -1,4 +1,9 @@
-# P5 activity record — final whole-phase review FAIL/BLOCKED; handoff only
+# P5 historical activity and carryover record
+
+> **Archived task boundary:** P5 was subsequently closed by the user and published
+> as PR #218. Do not execute the ordered historical backlog below as a new P5 task
+> loop. Use [phase-status.md](phase-status.md) and the receiving phase's packet for
+> current scope. Historical findings and unexecuted levels remain unpassed.
 
 **Final reviewed source tree:** `9f9988a`; documentation handoff starts from
 `b2e73a8`. P5 remains OPEN and is NOT deployment approval. The final

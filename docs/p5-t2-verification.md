@@ -1,5 +1,9 @@
 # P5 T2 evidence map — consolidated offline gate PASS; external lifecycle evidence open
 
+> This is a historical evidence record. P5 was subsequently closed by the user and
+> published in PR #218; current milestone and carryover ownership are recorded in
+> [phase-status.md](phase-status.md), not the historical pending/open language below.
+
 > **R1–R5 passed scoped offline checks and independent scoped review; R6
 > consolidated offline review and validation passed. T2's offline activity gate is PASS; P5 is NOT COMPLETE and
 > this is NOT deployment approval.** This record preserves earlier candidate

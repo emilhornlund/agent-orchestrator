@@ -75,6 +75,10 @@ Changes that weaken these invariants require explicit justification.
 
 ## Validation
 
+For architecture phases, also follow [the phase execution protocol](docs/phase-execution.md)
+and the selected phase's execution packet. Establish readiness and variant ownership
+before delegating implementation; the roadmap alone is not a task specification.
+
 Before finishing a change, run:
 
 ```bash
@@ -82,6 +86,13 @@ yarn validate
 ```
 
 The repository is not considered valid unless this command succeeds.
+
+The supervisor owns required full validation and may use an explicitly designated
+runner. Record the tested commit plus working-diff identity, command, exit status,
+and retained output. A read-only reviewer may accept this evidence without personally
+rerunning tests. Focused checks belong to the implementer. Reuse successful full
+validation for the same tree; rerun after changes, failures, or a concrete unresolved
+concern. A permission-denied attempt is not a product failure or passing evidence.
 
 For automatically fixable linting or formatting issues:
 
