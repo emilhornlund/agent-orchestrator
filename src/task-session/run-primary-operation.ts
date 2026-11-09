@@ -44,6 +44,7 @@ export interface RunPrimaryOperationOptions {
   cardId: string;
   operationId: string;
   activity: string;
+  role?: "primary" | "reconstruction";
   sessionId?: string;
   execute: () => Promise<OpenCodeRunResult>;
   inspectPending: (entry: OperationEntry) => Promise<PendingPrimaryInspection>;
@@ -136,6 +137,7 @@ export async function runPrimaryOperation(
         operationId,
         activity,
         options.sessionId,
+        options.role,
       );
     } catch (error) {
       if (error instanceof PrimaryOperationExhaustedError) {

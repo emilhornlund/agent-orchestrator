@@ -203,6 +203,7 @@ const retryCountersSchema = z.strictObject({
 export const primaryOperationSchema = z.strictObject({
   id: nonBlankIdentifier,
   activity: nonBlankIdentifier,
+  role: z.enum(["primary", "reconstruction"]).optional(),
   executions: z.number().int().nonnegative().safe(),
   failureExecutions: z.number().int().nonnegative().safe().optional(),
   dependencyOutages: z.number().int().nonnegative().safe().optional(),

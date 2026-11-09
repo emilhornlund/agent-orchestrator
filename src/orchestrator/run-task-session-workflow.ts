@@ -1226,64 +1226,108 @@ export async function runTaskSessionWorkflow(
       ),
     );
     if (context === null) return null;
-    const result = await runWithPrimaryTaskSession(
-      taskStore,
-      openCode,
-      project.id,
-      sourceCard.id,
-      {
-        cwd: sourceWorktree,
-        model: project.opencode.implementation.model,
-        variant: project.opencode.implementation.variant,
-        timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
-        signal,
-        sessionLabel: "Primary task session reconstruction",
-        readOnly: true,
-        sessionLogPath: getSessionLogPath(project.id, sourceCard.id),
-        prompt:
-          "Restore continuity for this same task from the supplied durable context. Inspect but do not modify the preserved changes. Return a concise reconstruction acknowledgement; do not commit or publish.",
-      },
-      {
-        inspect: (sessionId) =>
-          inspectPrimaryOpenCodeSession({
-            commands,
-            cwd: sourceWorktree,
-            sessionId,
-            signal,
-            timeoutMilliseconds: 30_000,
-          }),
-        context,
-        contextDirectory: path.join(
-          root,
-          "primary-session-context",
-          project.id,
-          sourceCard.id,
-        ),
-        forbiddenPaths: [
-          project.repository.path,
-          project.repository.worktreeRoot,
-        ],
-        persistArtifact: (content) => {
-          const authority = ProjectRunAuthority.current(project.id);
-          if (authority === undefined)
-            throw new Error(
-              "Cannot persist reconstruction context without canonical run authority",
-            );
-          const artifact = authority.store.writeArtifact(
-            content,
-            "application/json",
-          );
-          return { reference: artifact.id, path: artifact.path };
+    let result: Awaited<ReturnType<typeof runWithPrimaryTaskSession>>;
+    try {
+      result = await runWithPrimaryTaskSession(
+        taskStore,
+        openCode,
+        project.id,
+        sourceCard.id,
+        {
+          cwd: sourceWorktree,
+          model: project.opencode.implementation.model,
+          variant: project.opencode.implementation.variant,
+          timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
+          signal,
+          sessionLabel: "Primary task session reconstruction",
+          readOnly: true,
+          sessionLogPath: getSessionLogPath(project.id, sourceCard.id),
+          prompt:
+            "Restore continuity for this same task from the supplied durable context. Inspect but do not modify the preserved changes. Return a concise reconstruction acknowledgement; do not commit or publish.",
         },
-        attemptId: authority.store.attemptId,
-        baseline,
-      },
-      {
-        role: "reconstruction",
-        operationId: `${sourceRecord.operationKey}:reconstruction:${(sourceRecord.sessionRecovery?.contextLineage?.length ?? 0) + 1}`,
-        readOnlyAcknowledged: true,
-      },
-    );
+        {
+          inspect: (sessionId) =>
+            inspectPrimaryOpenCodeSession({
+              commands,
+              cwd: sourceWorktree,
+              sessionId,
+              signal,
+              timeoutMilliseconds: 30_000,
+            }),
+          context,
+          contextDirectory: path.join(
+            root,
+            "primary-session-context",
+            project.id,
+            sourceCard.id,
+          ),
+          forbiddenPaths: [
+            project.repository.path,
+            project.repository.worktreeRoot,
+          ],
+          persistArtifact: (content) => {
+            const authority = ProjectRunAuthority.current(project.id);
+            if (authority === undefined)
+              throw new Error(
+                "Cannot persist reconstruction context without canonical run authority",
+              );
+            const artifact = authority.store.writeArtifact(
+              content,
+              "application/json",
+            );
+            return { reference: artifact.id, path: artifact.path };
+          },
+          attemptId: authority.store.attemptId,
+          baseline,
+        },
+        {
+          role: "reconstruction",
+          operationId: `${sourceRecord.operationKey}:reconstruction-ack:${sourceRecord.primarySessionId ?? sourceRecord.sessionRecovery?.originalSessionId ?? "session"}`,
+          readOnlyAcknowledged: true,
+          inspectPending: (entry) =>
+            inspectPrimaryOperationEvidence(
+              taskStore,
+              sourceCard.id,
+              entry.id,
+              {
+                trustedRoot:
+                  ProjectRunAuthority.current(project.id)?.store.storageRoot ??
+                  getProcessRuntime().artifactRoot,
+                cwd: sourceWorktree,
+              },
+            ),
+          inspectOwningPrimary: (entry) =>
+            inspectPrimaryOperationEvidence(
+              taskStore,
+              sourceCard.id,
+              entry.id,
+              {
+                trustedRoot:
+                  ProjectRunAuthority.current(project.id)?.store.storageRoot ??
+                  getProcessRuntime().artifactRoot,
+                cwd: sourceWorktree,
+              },
+            ),
+        },
+      );
+    } catch (error) {
+      if (options.retryIntervalMs === undefined) throw error;
+      const current = taskStore.read(sourceCard.id);
+      if (current === null) throw error;
+      const disposition = persistPrimaryOperationRecovery(
+        taskStore,
+        current,
+        error,
+        options.retryIntervalMs,
+      );
+      if (
+        disposition === "waiting" ||
+        disposition === "published-blockage" ||
+        disposition === "prepublication-failure"
+      )
+        return null;
+      throw error;
+    }
     const bound = taskStore.read(sourceCard.id);
     if (
       bound?.primarySessionId === undefined ||

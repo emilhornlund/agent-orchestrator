@@ -697,7 +697,7 @@ describe("production child adapter outcome matrix", () => {
       configureProcessRuntime({
         runtimeRoot,
         signal: new AbortController().signal,
-        operationTimeoutMilliseconds: 50,
+        operationTimeoutMilliseconds: fault === "hung" ? 50 : 5_000,
       });
       await expect(
         acquireProjectOwnership(

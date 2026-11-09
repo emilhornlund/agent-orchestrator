@@ -88,6 +88,77 @@ describe("persistPrimaryOperationRecovery", () => {
     expect(saved.revision).toBe(3);
   });
 
+  it("routes three genuine reconstruction-ack failures through existing pre-PR terminal recovery", () => {
+    const { store, record } = fixture();
+    const exhausted = store.compareAndSwap("c", record.revision, {
+      ...record,
+      primaryOperations: {
+        "attempt-key:reconstruction-ack:replacement": {
+          id: "attempt-key:reconstruction-ack:replacement",
+          activity: "reconstruction-acknowledgement",
+          executions: 3,
+          failureExecutions: 3,
+          status: "exhausted",
+          retrySafe: true,
+          diagnostic: "read-only acknowledgement failed after verified stops",
+          updatedAt: record.updatedAt,
+        },
+      },
+      revision: record.revision + 1,
+    });
+    expect(
+      persistPrimaryOperationRecovery(
+        store,
+        exhausted,
+        new PrimaryOperationExhaustedError(
+          "Primary operation attempt-key:reconstruction-ack:replacement exhausted",
+        ),
+        1_000,
+      ),
+    ).toBe("prepublication-failure");
+    expect(store.read("c")).toMatchObject({
+      phase: "attention-required",
+      terminalFailure: { kind: "implementation", outcome: "pending" },
+    });
+  });
+
+  it("keeps an open PR and ownership blocked after three genuine acknowledgement failures", () => {
+    const { store, record } = fixture("ci", true);
+    const operationId = "attempt-key:reconstruction-ack:replacement";
+    const exhausted = store.compareAndSwap("c", record.revision, {
+      ...record,
+      primaryOperations: {
+        [operationId]: {
+          id: operationId,
+          activity: "reconstruction-acknowledgement",
+          executions: 3,
+          failureExecutions: 3,
+          status: "exhausted",
+          retrySafe: true,
+          diagnostic: "read-only acknowledgement failed after verified stops",
+          updatedAt: record.updatedAt,
+        },
+      },
+      revision: record.revision + 1,
+    });
+    expect(
+      persistPrimaryOperationRecovery(
+        store,
+        exhausted,
+        new PrimaryOperationExhaustedError(
+          `Primary operation ${operationId} exhausted`,
+        ),
+        1_000,
+      ),
+    ).toBe("published-blockage");
+    expect(store.read("c")).toMatchObject({
+      phase: "ci",
+      pullRequest: record.pullRequest,
+      recoveryWait: { kind: "dependency" },
+    });
+    expect(store.read("c")?.terminalFailure).toBeUndefined();
+  });
+
   it("retains published PR on waiting recovery", () => {
     const { store, record } = fixture("ci", true);
     expect(
@@ -105,6 +176,42 @@ describe("persistPrimaryOperationRecovery", () => {
       "attempt-key/primary/ci-op",
     );
     expect(Date.parse(saved.recoveryWait!.retryAt)).toBeGreaterThan(Date.now());
+  });
+
+  it("paces a reconstruction acknowledgement outage without terminalizing", () => {
+    const { store, record } = fixture();
+    const operationId = "attempt-key:reconstruction-ack:replacement";
+    const withOutage = store.compareAndSwap("c", record.revision, {
+      ...record,
+      primaryOperations: {
+        [operationId]: {
+          id: operationId,
+          activity: "reconstruction-acknowledgement",
+          executions: 1,
+          dependencyOutages: 1,
+          failureExecutions: 0,
+          status: "failed",
+          retrySafe: true,
+          lastExecutionClassification: "dependency-outage",
+          updatedAt: record.updatedAt,
+        },
+      },
+      revision: record.revision + 1,
+    });
+    expect(
+      persistPrimaryOperationRecovery(
+        store,
+        withOutage,
+        new PrimaryOperationWaitingError(operationId),
+        1_000,
+      ),
+    ).toBe("waiting");
+    const waiting = store.read("c")!;
+    expect(waiting.terminalFailure).toBeUndefined();
+    expect(waiting.phase).toBe("implementation");
+    expect(Date.parse(waiting.recoveryWait!.retryAt)).toBeGreaterThan(
+      Date.now(),
+    );
   });
 
   it("keeps the existing PR and ownership blocked after verified post-publication exhaustion", () => {

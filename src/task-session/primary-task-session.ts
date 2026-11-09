@@ -15,6 +15,7 @@ import {
   runPrimaryOperation,
 } from "./run-primary-operation.js";
 import type { PendingPrimaryInspection } from "./run-primary-operation.js";
+import { reconcilePendingPrimaryExecution } from "./primary-operation-ledger.js";
 import { bindPrimaryExecutionEvidence } from "./primary-operation-ledger.js";
 import { sanitizePrimarySessionContextBundle } from "./build-primary-session-context.js";
 
@@ -46,7 +47,21 @@ export type PrimaryExecutionIdentity =
       ) => Promise<PendingPrimaryInspection>;
     }
   | { role: "advisory"; operationId: string }
-  | { role: "reconstruction"; operationId: string; readOnlyAcknowledged: true };
+  | {
+      role: "reconstruction";
+      operationId: string;
+      readOnlyAcknowledged: true;
+      inspectPending?: (
+        entry: NonNullable<
+          NonNullable<TaskExecutionRecord["primaryOperations"]>[string]
+        >,
+      ) => Promise<PendingPrimaryInspection>;
+      inspectOwningPrimary?: (
+        entry: NonNullable<
+          NonNullable<TaskExecutionRecord["primaryOperations"]>[string]
+        >,
+      ) => Promise<PendingPrimaryInspection>;
+    };
 
 function nextTimestamp(previousTimestamp: string): string {
   const previousMilliseconds = Date.parse(previousTimestamp);
@@ -110,8 +125,7 @@ export async function runWithPrimaryTaskSession(
   if (
     record.sessionRecovery?.status === "replacement-ambiguous" ||
     record.sessionRecovery?.status === "replacement-creating" ||
-    record.sessionRecovery?.status === "reconstruction-blocked" ||
-    record.sessionRecovery?.status === "reconstruction-process-failed"
+    record.sessionRecovery?.status === "reconstruction-blocked"
   )
     throw new PrimaryTaskSessionError(
       `Primary session replacement is ambiguous for ${projectId}/${cardId}; refusing duplicate creation`,
@@ -277,7 +291,10 @@ export async function runWithPrimaryTaskSession(
       );
     }
     if (dispatchAvailability === "reachable") {
-      if (record.sessionRecovery?.status === "replacement-bound") {
+      if (
+        record.sessionRecovery?.status === "replacement-bound" ||
+        record.sessionRecovery?.status === "reconstruction-process-failed"
+      ) {
         const baseline = recovery.baseline;
         const persistedBaseline = record.sessionRecovery.reconstructionBaseline;
         if (baseline === undefined || persistedBaseline === undefined)
@@ -348,7 +365,100 @@ export async function runWithPrimaryTaskSession(
           throw new PrimaryTaskSessionError(
             "Reconstruction requires an explicit read-only acknowledgement",
           );
-        return execute();
+        for (;;) {
+          const current = store.read(cardId);
+          const unresolved = Object.values(
+            current?.primaryOperations ?? {},
+          ).find(
+            (operation) =>
+              operation !== undefined &&
+              ["intent", "dispatched", "ambiguous"].includes(operation.status),
+          );
+          if (
+            unresolved === undefined ||
+            unresolved.id === execution.operationId
+          )
+            break;
+          if (execution.inspectOwningPrimary === undefined)
+            throw new PrimaryOperationWaitingError(unresolved.id);
+          let inspection: PendingPrimaryInspection;
+          try {
+            inspection = await execution.inspectOwningPrimary(unresolved);
+          } catch (error) {
+            throw new PrimaryOperationWaitingError(unresolved.id, {
+              cause: error,
+            });
+          }
+          if (
+            inspection.status === "unknown" ||
+            inspection.status === "running"
+          )
+            throw new PrimaryOperationWaitingError(unresolved.id);
+          if (inspection.status === "never-dispatched") {
+            reconcilePendingPrimaryExecution(
+              store,
+              cardId,
+              unresolved.id,
+              "not-dispatched",
+            );
+          } else if (inspection.status === "stopped-after-dispatch") {
+            if (
+              inspection.operationId !== unresolved.id ||
+              inspection.execution !== unresolved.executions ||
+              inspection.sessionId !== unresolved.lastSessionId
+            )
+              throw new PrimaryOperationWaitingError(unresolved.id);
+            reconcilePendingPrimaryExecution(
+              store,
+              cardId,
+              unresolved.id,
+              "stopped",
+            );
+          } else {
+            if (inspection.result.exitCode !== 0)
+              throw new PrimaryOperationWaitingError(unresolved.id);
+            reconcilePendingPrimaryExecution(
+              store,
+              cardId,
+              unresolved.id,
+              "completed",
+              inspection.result,
+            );
+          }
+        }
+        return runPrimaryOperation({
+          store,
+          cardId,
+          operationId: execution.operationId,
+          activity: "reconstruction-acknowledgement",
+          role: "reconstruction",
+          sessionId,
+          execute: () =>
+            openCode.run({
+              ...runOptions,
+              sessionId,
+              onExecutionPrepared: async (evidence) => {
+                const current =
+                  store.read(cardId)?.primaryOperations?.[
+                    execution.operationId
+                  ];
+                if (!current)
+                  throw new PrimaryTaskSessionError(
+                    "Reserved reconstruction acknowledgement disappeared before process evidence binding",
+                  );
+                bindPrimaryExecutionEvidence(
+                  store,
+                  cardId,
+                  execution.operationId,
+                  current.executions,
+                  evidence,
+                );
+                await runOptions.onExecutionPrepared?.(evidence);
+              },
+            }),
+          inspectPending:
+            execution.inspectPending ?? (async () => ({ status: "unknown" })),
+        });
       }
       return runPrimaryOperation({
         store,

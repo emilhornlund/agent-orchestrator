@@ -86,6 +86,7 @@ export function beginPrimaryExecution(
   operationId: string,
   activity: string,
   sessionId?: string,
+  role: "primary" | "reconstruction" = "primary",
 ): TaskExecutionRecord {
   validateLedgerIdentifiers(operationId, activity);
   const record = store.read(cardId);
@@ -137,6 +138,7 @@ export function beginPrimaryExecution(
   operations[operationId] = {
     id: operationId,
     activity,
+    role,
     executions,
     failureExecutions: prior?.failureExecutions ?? prior?.executions ?? 0,
     dependencyOutages: prior?.dependencyOutages ?? 0,

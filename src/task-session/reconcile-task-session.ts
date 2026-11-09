@@ -859,12 +859,7 @@ export async function reconcileTaskSession(
       "Primary session reconstruction failed its read-only verification; manual recovery is required",
     );
   if (record.sessionRecovery?.status === "reconstruction-process-failed")
-    return persistWait(
-      taskRecordStore,
-      record,
-      options,
-      "Primary reconstruction process failed after binding; awaiting approved retry policy",
-    );
+    return { status: "reconstruction-required", record };
   if (
     snapshot.primarySessionAccessible === "conflict" ||
     snapshot.primarySessionAccessible === false

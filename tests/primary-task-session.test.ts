@@ -27,6 +27,7 @@ import { RunStore } from "../src/task-session/run-store.js";
 import { ProjectRunAuthority } from "../src/task-session/project-run-authority.js";
 import { getTaskSessionSourceSnapshotIdentity } from "../src/task-session/source-snapshot.js";
 import type { TaskExecutionRecord } from "../src/task-session/task-execution-record.js";
+import { inspectPrimaryOperationEvidence } from "../src/task-session/inspect-primary-operation.js";
 
 const advisoryFixtureExecution = {
   role: "advisory",
@@ -270,6 +271,231 @@ describe("runWithPrimaryTaskSession", () => {
     ).rejects.toThrow("overlaps a repository or worktree");
     expect(run).toHaveBeenCalledOnce();
   });
+
+  it.each([
+    { owningStatus: "dispatched", metadataStatus: "not-dispatched" },
+    { owningStatus: "dispatched", metadataStatus: "spawn-failure" },
+    { owningStatus: "ambiguous", metadataStatus: "not-dispatched" },
+    { owningStatus: "ambiguous", metadataStatus: "spawn-failure" },
+  ] as const)(
+    "reconciles $owningStatus using persisted $metadataStatus proof before acknowledgement recovery",
+    async ({ owningStatus, metadataStatus }) => {
+      const { store, project, root: storeRoot } = createFixture();
+      const trustedRoot = path.join(storeRoot, "artifacts");
+      const artifactRoot = path.join(
+        trustedRoot,
+        "card-one",
+        "process-executions",
+      );
+      const metadataPath = path.join(
+        artifactRoot,
+        "original-primary-execution",
+        "execution.json",
+      );
+      fs.mkdirSync(path.dirname(metadataPath), { recursive: true });
+      const bundle = {
+        version: 1 as const,
+        projectId: "project-one",
+        cardId: "card-one",
+        attemptId: "attempt-one",
+        repositoryPath: project.repository.path,
+        repositoryHead: "a".repeat(40),
+        card: {
+          title: "Task",
+          description: "Current task",
+          current: true as const,
+        },
+        plan: { status: "absent" as const },
+        attachmentManifest: { status: "absent" as const },
+        currentDiff: "preserved partial changes",
+        history: "prior work",
+        feedback: { status: "absent" as const, references: [] },
+      };
+      store.create(
+        createRecord("project-one", "card-one", {
+          phase: "implementation",
+          expectedBranch: "agent/card-one",
+          primarySessionId: "ses_replacement",
+          sessionCreationStatus: "bound",
+          primaryOperations: {
+            "implementation-op": {
+              id: "implementation-op",
+              activity: "implementation",
+              role: "primary",
+              executions: 1,
+              status: owningStatus,
+              lastSessionId: "ses_lost",
+              processExecutionId: "original-primary-execution",
+              processMetadataPath: metadataPath,
+              processArtifactRoot: artifactRoot,
+              updatedAt: "2026-10-24T09:00:00.000Z",
+            },
+            "attempt-one:reconstruction-ack:ses_replacement": {
+              id: "attempt-one:reconstruction-ack:ses_replacement",
+              activity: "reconstruction-acknowledgement",
+              role: "reconstruction",
+              executions: 1,
+              failureExecutions: 1,
+              status: "failed",
+              retrySafe: true,
+              lastSessionId: "ses_replacement",
+              updatedAt: "2026-10-24T09:00:00.000Z",
+            },
+          },
+          sessionRecovery: {
+            originalSessionId: "ses_lost",
+            status: "reconstruction-process-failed",
+            reconstructionBaseline: recoveryBaseline(),
+          },
+        }),
+      );
+      fs.writeFileSync(
+        metadataPath,
+        JSON.stringify({
+          executionId: "original-primary-execution",
+          cwd: project.repository.path,
+          status: metadataStatus,
+          ...(metadataStatus === "spawn-failure"
+            ? { dispatchState: "not-dispatched" }
+            : {}),
+        }),
+      );
+      const run = vi
+        .fn<RunOpenCode>()
+        .mockResolvedValueOnce({
+          exitCode: 0,
+          output: "acknowledged",
+          errorOutput: "",
+          sessionId: "ses_replacement",
+        })
+        .mockResolvedValueOnce({
+          exitCode: 0,
+          output: "implementation resumed",
+          errorOutput: "",
+          sessionId: "ses_replacement",
+        });
+      const common = {
+        ...createRunOptions("Restore continuity for this same task."),
+        cwd: project.repository.path,
+        readOnly: true,
+      };
+      const recovery = {
+        inspect: async () => "reachable" as const,
+        context: bundle,
+        contextDirectory: path.join(temporaryRoot!, "recovery-context"),
+        forbiddenPaths: [
+          project.repository.path,
+          project.repository.worktreeRoot,
+        ],
+        attemptId: "attempt-one",
+        baseline: recoveryBaseline(),
+      };
+      const operationId = "attempt-one:reconstruction-ack:ses_replacement";
+      await expect(
+        runWithPrimaryTaskSession(
+          store,
+          new OpenCodeClient(run),
+          "project-one",
+          "card-one",
+          common,
+          recovery,
+          {
+            role: "reconstruction",
+            operationId,
+            readOnlyAcknowledged: true,
+            inspectOwningPrimary: async () => ({ status: "unknown" }),
+            inspectPending: async () => ({ status: "unknown" }),
+          },
+        ),
+      ).rejects.toThrow("waiting for authoritative reconciliation");
+      expect(run).not.toHaveBeenCalled();
+
+      const restartedStore = new TaskExecutionStore(storeRoot, project);
+      const result = await runWithPrimaryTaskSession(
+        restartedStore,
+        new OpenCodeClient(run),
+        "project-one",
+        "card-one",
+        common,
+        recovery,
+        {
+          role: "reconstruction",
+          operationId,
+          readOnlyAcknowledged: true,
+          inspectOwningPrimary: (entry) =>
+            inspectPrimaryOperationEvidence(
+              restartedStore,
+              "card-one",
+              entry.id,
+              { trustedRoot, cwd: project.repository.path },
+            ),
+          inspectPending: async (entry) => ({
+            status: "stopped-after-dispatch",
+            operationId,
+            execution: entry.executions,
+            sessionId: "ses_replacement",
+          }),
+        },
+      );
+      expect(result.exitCode).toBe(0);
+      expect(run).toHaveBeenCalledOnce();
+      expect(run.mock.calls.map(([options]) => options.sessionId)).toEqual([
+        "ses_replacement",
+      ]);
+      expect(restartedStore.read("card-one")).toMatchObject({
+        primarySessionId: "ses_replacement",
+        primaryOperations: {
+          "implementation-op": {
+            executions: 0,
+            failureExecutions: 0,
+            status: "failed",
+            retrySafe: true,
+          },
+          [operationId]: {
+            activity: "reconstruction-acknowledgement",
+            role: "reconstruction",
+            executions: 2,
+            status: "completed",
+          },
+        },
+      });
+
+      const acknowledged = restartedStore.read("card-one")!;
+      restartedStore.compareAndSwap("card-one", acknowledged.revision, {
+        ...acknowledged,
+        sessionRecovery: {
+          ...acknowledged.sessionRecovery!,
+          status: "reconstruction-verified",
+          reconstructionBaseline: undefined,
+        },
+        revision: acknowledged.revision + 1,
+        updatedAt: "2026-10-24T09:00:00.001Z",
+      });
+      const resumed = await runWithPrimaryTaskSession(
+        restartedStore,
+        new OpenCodeClient(run),
+        "project-one",
+        "card-one",
+        createRunOptions("Resume the persisted implementation operation."),
+        recovery,
+        {
+          role: "primary",
+          operationId: "implementation-op",
+          activity: "implementation",
+          inspectPending: async () => ({ status: "unknown" }),
+        },
+      );
+      expect(resumed.exitCode).toBe(0);
+      expect(run.mock.calls[1]?.[0]).toMatchObject({
+        sessionId: "ses_replacement",
+        prompt: "Resume the persisted implementation operation.",
+      });
+      expect(restartedStore.read("card-one")?.primaryOperations).toMatchObject({
+        "implementation-op": { executions: 1, role: "primary" },
+        [operationId]: { executions: 2, role: "reconstruction" },
+      });
+    },
+  );
   it("captures and persists the actual created session before returning", async () => {
     const { store } = createFixture();
     store.create(createRecord());

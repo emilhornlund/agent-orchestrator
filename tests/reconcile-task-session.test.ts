@@ -981,7 +981,7 @@ describe("reconcileTaskSession", () => {
       }),
     ).resolves.toMatchObject({ status: "reconstruction-required" });
   });
-  it("keeps process-failed reconstruction policy-pending while safety violations require attention", async () => {
+  it("reopens failed reconstruction acknowledgements while safety violations require attention", async () => {
     const processFailed = fixture();
     const failed = processFailed.store.read("card")!;
     processFailed.store.compareAndSwap("card", failed.revision, {
@@ -995,7 +995,7 @@ describe("reconcileTaskSession", () => {
     });
     await expect(
       processFailed.reconcile({ primarySessionAccessible: "reachable" }),
-    ).resolves.toMatchObject({ status: "waiting" });
+    ).resolves.toMatchObject({ status: "reconstruction-required" });
     const boundaryFailed = fixture();
     const blocked = boundaryFailed.store.read("card")!;
     boundaryFailed.store.compareAndSwap("card", blocked.revision, {
