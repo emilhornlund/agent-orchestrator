@@ -1580,6 +1580,31 @@ describe("reconcileTaskSession", () => {
     expect(restored.record.recoveryWait).toBeUndefined();
   });
 
+  it.each([
+    { destination: "done", unsafe: { worktreeBranch: "agent/other-card" } },
+    { destination: "backlog", unsafe: { worktreeHeadSha: "c".repeat(40) } },
+  ])(
+    "treats a manual move to $destination as a pause and blocks unsafe return",
+    async ({ destination, unsafe }) => {
+      const f = fixture("ci");
+      const moved = await f.reconcile({ trelloListId: destination });
+      expect(moved.status).toBe("waiting");
+      expect(moved.record.phase).toBe("ci");
+      expect(moved.record.recoveryWait?.kind).toBe("manual-move");
+
+      const unsafeReturn = await f.reconcile(
+        {
+          trelloListId: "review",
+          ...unsafe,
+        },
+        () => Date.now() + 5_000,
+      );
+      expect(unsafeReturn.status).toBe("attention-required");
+      expect(unsafeReturn.record.phase).toBe("attention-required");
+      expect(unsafeReturn.record.recoveryWait).toBeUndefined();
+    },
+  );
+
   it("fails closed on malformed durable records and untrusted local commits", async () => {
     const malformed = fixture();
     fs.writeFileSync(

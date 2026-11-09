@@ -100,6 +100,39 @@ const options = (
 });
 
 describe("runPrimaryOperation", () => {
+  it("continues meaningful bounded operations despite a persisted task age of several days", async () => {
+    const f = fixture();
+    const createdAt = "2020-01-01T00:00:00.000Z";
+    const current = f.store.read("card");
+    if (current === null) throw new Error("Expected task record");
+    f.store.compareAndSwap("card", current.revision, {
+      ...current,
+      createdAt,
+      revision: current.revision + 1,
+    });
+    const inspectPending = vi.fn(async () => ({
+      status: "never-dispatched" as const,
+    }));
+    const first = vi.fn(async () => success);
+    const second = vi.fn(async () => success);
+
+    await runPrimaryOperation(options(f.store, first, inspectPending));
+    const next = f.store.read("card");
+    if (next === null) throw new Error("Expected persisted task record");
+    const nextOptions = {
+      ...options(f.store, second, inspectPending),
+      operationId: "op:continued",
+    };
+    await runPrimaryOperation(nextOptions);
+
+    expect(first).toHaveBeenCalledOnce();
+    expect(second).toHaveBeenCalledOnce();
+    expect(f.store.read("card")?.createdAt).toBe(createdAt);
+    expect(
+      f.store.read("card")?.primaryOperations?.["op:continued"]?.status,
+    ).toBe("completed");
+  });
+
   it("continues an exactly authorized stopped operation without repeating inspection or resetting its execution count", async () => {
     const f = fixture();
     beginPrimaryExecution(f.store, "card", "op", "work", "session");

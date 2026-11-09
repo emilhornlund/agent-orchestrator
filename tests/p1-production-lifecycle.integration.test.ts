@@ -29,9 +29,13 @@ import {
 } from "../src/process/command-runner.js";
 import { configureProcessRuntime } from "../src/process/process-runtime.js";
 import { pollProject } from "../src/orchestrator/poll-project.js";
+import { beginInitialPublication } from "../src/orchestrator/initial-publication.js";
+import { getTaskSessionSourceSnapshotIdentity } from "../src/task-session/source-snapshot.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
+import { TaskPlanStore } from "../src/task-session/task-plan-store.js";
 import { TaskMutationQueue } from "../src/task-session/task-mutation-queue.js";
 import type { TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
+import { createPublicationFixture } from "./support/initial-publication-fixture.js";
 
 const execFile = promisify(nodeExecFile);
 let roots: string[] = [];
@@ -1032,20 +1036,220 @@ describe("P1 production lifecycle through pollProject", () => {
         });
         expect(feedbackReads).toBe(feedbackReadsBeforeWait);
         expect(lists.get("next")).toBe("ready");
-        lists.set("first", "review");
-        const returned = recoveryStore.read("first")!;
-        recoveryStore.compareAndSwap("first", returned.revision, {
-          ...returned,
+
+        // Let the persisted dependency interval expire so canonical polling
+        // observes the actual externally moved card rather than short-circuiting
+        // on the existing wait. This is still an OPEN PR and must not become a
+        // terminal success merely because Trello says Backlog.
+        const dependencyWait = recoveryStore.read("first")!;
+        recoveryStore.compareAndSwap("first", dependencyWait.revision, {
+          ...dependencyWait,
           recoveryWait: {
-            ...returned.recoveryWait!,
+            ...dependencyWait.recoveryWait!,
             retryAt: new Date(Date.now() - 1).toISOString(),
           },
-          revision: returned.revision + 1,
+          revision: dependencyWait.revision + 1,
+          updatedAt: new Date().toISOString(),
+        });
+        const checkpointSession = recoveryStore.read("first")?.primarySessionId;
+        const retainedWorktreeBytes = fs.readFileSync(
+          path.join(worktrees, "first", "app.js"),
+        );
+        await poll();
+        expect(recoveryStore.read("first")).toMatchObject({
+          phase: "human-feedback",
+          recoveryWait: { kind: "manual-move", resumePhase: "human-feedback" },
+        });
+        expect(authorities.get("first")?.store.read()).toMatchObject({
+          lifecycle: "waiting",
+          terminalSync: "not-applicable",
+        });
+        expect(recoveryStore.read("first")?.primarySessionId).toBe(
+          checkpointSession,
+        );
+        expect(
+          fs.readFileSync(path.join(worktrees, "first", "app.js")),
+        ).toEqual(retainedWorktreeBytes);
+        expect(feedbackReads).toBe(feedbackReadsBeforeWait);
+        expect(lists.get("next")).toBe("ready");
+        expect(store.read("next")).toBeNull();
+        const reopenedPausedStore = new TaskExecutionStore(
+          contextRoot,
+          project,
+          activeAuthority!,
+        );
+        expect(reopenedPausedStore.read("first")?.recoveryWait?.kind).toBe(
+          "manual-move",
+        );
+
+        // Run a normal production publication for a distinct project while A
+        // remains paused. This is independent fixture state and sequential
+        // polling, not a simultaneous-worker or live-provider claim.
+        vi.useFakeTimers({ toFake: ["Date"] });
+        const projectBRoot = path.join(root, "project-b");
+        fs.mkdirSync(projectBRoot);
+        const projectB = createPublicationFixture(
+          projectBRoot,
+          undefined,
+          "project-b",
+        );
+        const projectBPlans = new TaskPlanStore(
+          projectB.project.contextRoot,
+          projectB.project,
+          projectB.authority,
+        );
+        await projectB.authority.run(async () => {
+          await projectBPlans.create(
+            {
+              version: 1,
+              projectId: "project-b",
+              cardId: "card",
+              requirements: [
+                { id: "REQ-1", text: "Publish", verification: "Check CI" },
+              ],
+              steps: [
+                {
+                  id: "STEP-1",
+                  description: "Publish project B",
+                  requirementIds: ["REQ-1"],
+                  verification: "Build passes",
+                },
+              ],
+              assumptions: [],
+              blockers: [],
+            },
+            1,
+          );
+          await projectBPlans.storeVerification("card", 1, {
+            version: 1,
+            projectId: "project-b",
+            cardId: "card",
+            planRevision: 1,
+            verdict: "pass",
+            findings: [],
+          });
+        });
+        projectB.services.github.getCiObservations = async ({ headSha }) => ({
+          headSha,
+          checks: [
+            {
+              source: "check-run",
+              id: 1,
+              name: "Build",
+              headSha,
+              status: "completed",
+              conclusion: "success",
+              url: null,
+            },
+          ],
+          expectationSources: [
+            {
+              kind: "repository-rules",
+              sourceId: "fixture",
+              complete: true,
+              checkNames: ["Build"],
+            },
+          ],
+        });
+        const projectBCard = projectB.services.card();
+        const projectBIdentity = await getTaskSessionSourceSnapshotIdentity(
+          projectB.git,
+          projectB.worktreePath,
+        );
+        projectB.authority.run(() =>
+          beginInitialPublication(
+            {
+              project: projectB.project,
+              card: projectBCard,
+              git: projectB.git,
+              trello: projectB.services.trello,
+              github: projectB.services.github,
+              worktreePath: projectB.worktreePath,
+              branch: "agent/card",
+              commitMessage: "feat: publish project B",
+              reviewResult: "Passed",
+              remediationResult: "Not required",
+            },
+            "Trello: https://trello.com/c/card",
+            projectBIdentity,
+          ),
+        );
+        for (let attempt = 0; attempt < 12; attempt += 1) {
+          vi.setSystemTime(Date.now() + 60_000);
+          await projectB.authority.run(() =>
+            withGitHubOperationProject(projectB.project, () =>
+              pollProject(
+                projectB.services.trello,
+                projectB.git,
+                projectB.services.github,
+                {
+                  run: () => {
+                    throw new Error("Project B publication must not invoke AI");
+                  },
+                } as never,
+                {} as never,
+                projectB.project,
+                new AbortController().signal,
+                undefined,
+                undefined,
+                undefined,
+                projectB.authority,
+              ),
+            ),
+          );
+          if (projectB.store.read()?.lifecycle === "human-review") break;
+        }
+        expect(projectB.store.read()).toMatchObject({
+          projectId: "project-b",
+          cardId: "card",
+          lifecycle: "human-review",
+          publicationState: "open",
+        });
+        expect(projectB.services.read().list).toBe("review");
+        expect(projectB.store.read()?.queue).toEqual([]);
+        expect(reopenedPausedStore.read("first")).toMatchObject({
+          phase: "human-feedback",
+          recoveryWait: { kind: "manual-move" },
+        });
+        expect(
+          fs.readFileSync(path.join(worktrees, "first", "app.js")),
+        ).toEqual(retainedWorktreeBytes);
+
+        // A terminal-looking Done placement has the same pause semantics:
+        // Trello list placement alone cannot assert a merged PR.
+        lists.set("first", "done");
+        const backlogWait = recoveryStore.read("first")!;
+        recoveryStore.compareAndSwap("first", backlogWait.revision, {
+          ...backlogWait,
+          recoveryWait: {
+            ...backlogWait.recoveryWait!,
+            retryAt: new Date(Date.now() - 1).toISOString(),
+          },
+          revision: backlogWait.revision + 1,
           updatedAt: new Date().toISOString(),
         });
         await poll();
-        expect(recoveryStore.read("first")?.recoveryWait).toBeUndefined();
-        expect(recoveryStore.read("first")?.phase).toBe("human-feedback");
+        expect(recoveryStore.read("first")).toMatchObject({
+          phase: "human-feedback",
+          recoveryWait: { kind: "manual-move", resumePhase: "human-feedback" },
+        });
+        expect(authorities.get("first")?.store.read()).toMatchObject({
+          lifecycle: "waiting",
+          terminalSync: "not-applicable",
+        });
+        expect(lists.get("next")).toBe("ready");
+        expect(store.read("next")).toBeNull();
+
+        // Reopen the durable attempt while paused, restore the expected list,
+        // then require production polling to revalidate Git/session/PR state
+        // before it clears the wait and resumes the same checkpoint.
+        lists.set("first", "review");
+        await poll();
+        expect(reopenedPausedStore.read("first")?.recoveryWait).toBeUndefined();
+        expect(reopenedPausedStore.read("first")?.phase).toBe("human-feedback");
+        expect(reopenedPausedStore.read("first")?.primarySessionId).toBe(
+          checkpointSession,
+        );
         await poll();
         expect(lists.get("next")).toBe("ready");
         expect(
