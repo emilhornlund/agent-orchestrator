@@ -25,6 +25,31 @@ import {
   setupFileIdentity,
 } from "../src/process/setup-commit-scope.js";
 
+interface LinuxProcessIdentity {
+  state: string;
+  startTime: string;
+}
+
+function readLinuxProcessIdentity(
+  pid: number,
+): LinuxProcessIdentity | undefined {
+  let stat: string;
+  try {
+    stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+
+  const closeParen = stat.lastIndexOf(")");
+  if (closeParen < 0) throw new Error(`Malformed /proc/${pid}/stat`);
+  const fields = stat.slice(closeParen + 2).split(" ");
+  const state = fields[0];
+  const startTime = fields[19];
+  if (!state || !startTime) throw new Error(`Malformed /proc/${pid}/stat`);
+  return { state, startTime };
+}
+
 describe("runRepositorySetup", () => {
   it("finishes the bounded setup inventory after runtime cancellation but stops baseline reads", async () => {
     const root = fs.mkdtempSync(
@@ -485,6 +510,7 @@ describe("runRepositorySetup", () => {
     const pidFile = path.join(root, "descendant.pid");
     const originalWriteFileSync = fs.writeFileSync;
     let failedDispatchWrite = false;
+    let descendantIdentity: LinuxProcessIdentity | undefined;
     const writeSpy = vi
       .spyOn(fs, "writeFileSync")
       .mockImplementation((file, data, options) => {
@@ -497,6 +523,11 @@ describe("runRepositorySetup", () => {
           const deadline = Date.now() + 2_000;
           while (!fs.existsSync(pidFile) && Date.now() < deadline)
             Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+          if (fs.existsSync(pidFile)) {
+            descendantIdentity = readLinuxProcessIdentity(
+              Number(fs.readFileSync(pidFile, "utf8")),
+            );
+          }
           failedDispatchWrite = true;
           throw new Error("injected dispatch metadata failure");
         }
@@ -518,17 +549,26 @@ describe("runRepositorySetup", () => {
       expect(failedDispatchWrite).toBe(true);
       const pid = Number(fs.readFileSync(pidFile, "utf8"));
       expect(Number.isSafeInteger(pid)).toBe(true);
-      let alive = true;
-      try {
-        process.kill(pid, 0);
-      } catch (error) {
-        alive = !(
-          error instanceof Error &&
-          "code" in error &&
-          error.code === "ESRCH"
-        );
+      expect(descendantIdentity).toBeDefined();
+      const originalStartTime = descendantIdentity!.startTime;
+      const deadline = Date.now() + 2_000;
+      let originalProcessState = readLinuxProcessIdentity(pid);
+      while (
+        originalProcessState?.startTime === originalStartTime &&
+        originalProcessState.state !== "Z" &&
+        originalProcessState.state !== "X" &&
+        Date.now() < deadline
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        originalProcessState = readLinuxProcessIdentity(pid);
       }
-      expect(alive).toBe(false);
+      // kill(pid, 0) also succeeds for an orphaned zombie. Match the captured
+      // kernel start time so a reused PID cannot masquerade as this child.
+      expect(
+        originalProcessState?.startTime !== originalStartTime ||
+          originalProcessState.state === "Z" ||
+          originalProcessState.state === "X",
+      ).toBe(true);
       const metadata = JSON.parse(
         fs.readFileSync(
           path.join(artifacts, executionId!, "execution.json"),
