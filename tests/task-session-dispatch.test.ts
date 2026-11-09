@@ -1676,6 +1676,7 @@ describe("task-session production dispatch", () => {
                 cwd: fs.realpathSync(run.cwd),
                 status: "interrupted",
                 treeStopped: true,
+                exitCode: 1,
                 sessionId: run.sessionId,
               }),
             );

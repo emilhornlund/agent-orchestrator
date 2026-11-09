@@ -753,6 +753,11 @@ const defaultRunOpenCode: RunOpenCode = async ({
 
         flushOutput();
 
+        const failureClassification =
+          code !== 0 && hasStructuredProviderOutage(output)
+            ? ("dependency-outage" as const)
+            : undefined;
+
         settled = true;
         clearTimeout(safetyTimeout);
         if (forceKillTimeout !== undefined) {
@@ -789,6 +794,9 @@ const defaultRunOpenCode: RunOpenCode = async ({
                 output,
                 errorOutput,
                 processExecutionId: execution.executionId,
+                ...(failureClassification === undefined
+                  ? {}
+                  : { failureClassification }),
                 ...((capturedSessionId ?? sessionId) === undefined
                   ? {}
                   : { sessionId: capturedSessionId ?? sessionId }),
@@ -796,6 +804,9 @@ const defaultRunOpenCode: RunOpenCode = async ({
               ...((capturedSessionId ?? sessionId) === undefined
                 ? {}
                 : { sessionId: capturedSessionId ?? sessionId }),
+              ...(failureClassification === undefined
+                ? {}
+                : { failureClassification }),
               ...(signalName === null ? {} : { signal: signalName }),
             },
           );
@@ -840,8 +851,8 @@ const defaultRunOpenCode: RunOpenCode = async ({
               output,
               errorOutput,
               processExecutionId: execution.executionId,
-              ...(code !== 0 && hasStructuredProviderOutage(output)
-                ? { failureClassification: "dependency-outage" as const }
+              ...(failureClassification !== undefined
+                ? { failureClassification }
                 : {}),
             },
             { model, variant },

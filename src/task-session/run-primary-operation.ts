@@ -22,6 +22,7 @@ export type PendingPrimaryInspection =
       operationId: string;
       execution: number;
       sessionId?: string;
+      failureClassification?: "dependency-outage";
     }
   | { status: "running" }
   | { status: "completed"; result: OpenCodeRunResult }
@@ -121,8 +122,19 @@ export async function runPrimaryOperation(
           inspected.sessionId !== entry.lastSessionId)
       )
         throw new PrimaryOperationWaitingError(operationId);
-      reconcilePendingPrimaryExecution(store, cardId, operationId, "stopped");
+      reconcilePendingPrimaryExecution(
+        store,
+        cardId,
+        operationId,
+        "stopped",
+        undefined,
+        inspected.failureClassification,
+      );
       const stoppedEntry = store.read(cardId)?.primaryOperations?.[operationId];
+      if (inspected.failureClassification === "dependency-outage")
+        throw new PrimaryOperationWaitingError(operationId, {
+          cause: new Error("OpenCode provider temporarily unavailable"),
+        });
       if (stoppedEntry?.status === "exhausted")
         throw new PrimaryOperationExhaustedError(
           stoppedEntry.diagnostic ?? "Execution budget exhausted",
@@ -202,12 +214,18 @@ export async function runPrimaryOperation(
         cardId,
         operationId,
         "stopped",
+        undefined,
+        proof.failureClassification,
       );
       if (resolved.primaryOperations?.[operationId]?.status === "exhausted")
         throw new PrimaryOperationExhaustedError(
           resolved.primaryOperations[operationId]!.diagnostic ??
             "Execution budget exhausted",
         );
+      if (proof.failureClassification === "dependency-outage")
+        throw new PrimaryOperationWaitingError(operationId, {
+          cause: new Error("OpenCode provider temporarily unavailable"),
+        });
       continue;
     }
     if (result.exitCode === 0) {
@@ -239,6 +257,8 @@ export async function runPrimaryOperation(
       cardId,
       operationId,
       "stopped",
+      undefined,
+      proof.failureClassification,
     );
     const finalEntry = reconciled.primaryOperations?.[operationId];
     if (finalEntry?.status === "exhausted")

@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ProjectConfig } from "../src/config/config.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
@@ -11,7 +11,7 @@ afterEach(() => {
     fs.rmSync(root, { recursive: true, force: true });
 });
 
-function fixture(mode: "outage" | "crash", published = false) {
+function fixture(mode: "outage" | "outage-once" | "crash", published = false) {
   const temp = process.env.TMPDIR;
   if (!temp) throw new Error("TMPDIR must be set");
   const root = fs.mkdtempSync(path.join(temp, "primary-outage-cli-"));
@@ -103,6 +103,158 @@ function launchParent(root: string, env: NodeJS.ProcessEnv, now?: number) {
 }
 
 describe("scripted OpenCode primary outage recovery", () => {
+  it("preserves a finalized adapter outage across an actual parent SIGKILL gap", async () => {
+    const f = fixture("outage-once");
+    const inputPath = path.join(f.root, "parent-input.json");
+    fs.writeFileSync(
+      inputPath,
+      JSON.stringify({
+        root: f.root,
+        cwd: f.cwd,
+        project: f.project,
+        phase: "crash",
+      }),
+    );
+    const parent = spawn(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        path.join(
+          process.cwd(),
+          "tests/fixtures/primary-outage-crash-gap-parent.ts",
+        ),
+      ],
+      {
+        cwd: process.cwd(),
+        stdio: ["ignore", "pipe", "pipe"],
+        env: {
+          ...f.parentEnvironment,
+          PRIMARY_PARENT_INPUT: inputPath,
+          PRIMARY_OUTAGE_WINDOWS: "1",
+        },
+      },
+    );
+    let stdout = "";
+    let stderr = "";
+    parent.stdout.setEncoding("utf8").on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    parent.stderr.setEncoding("utf8").on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    const ready = await new Promise<boolean>((resolve, reject) => {
+      const timeout = setTimeout(
+        () =>
+          reject(new Error(`adapter did not persist outage result: ${stderr}`)),
+        15_000,
+      );
+      parent.once("error", (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      });
+      parent.stdout.on("data", () => {
+        if (stdout.includes("RESULT_PERSISTED")) {
+          clearTimeout(timeout);
+          resolve(true);
+        }
+      });
+    }).catch(async (error: unknown) => {
+      parent.kill("SIGKILL");
+      await new Promise<void>((resolve) => {
+        if (parent.exitCode !== null || parent.signalCode !== null) resolve();
+        else parent.once("close", () => resolve());
+      });
+      throw error;
+    });
+    expect(ready).toBe(true);
+    parent.kill("SIGKILL");
+    await new Promise<void>((resolve) => {
+      if (parent.exitCode !== null || parent.signalCode !== null) resolve();
+      else parent.once("close", () => resolve());
+    });
+
+    const operation = readRecord(f.root, f.project).primaryOperations?.primary;
+    expect(operation).toMatchObject({
+      executions: 3,
+      failureExecutions: 2,
+      dependencyOutages: 0,
+      status: "dispatched",
+    });
+    const processMetadata = JSON.parse(
+      fs.readFileSync(operation!.processMetadataPath!, "utf8"),
+    ) as Record<string, unknown>;
+    expect(processMetadata.failureClassification).toBe("dependency-outage");
+    const processResult = JSON.parse(
+      fs.readFileSync(
+        path.join(path.dirname(operation!.processMetadataPath!), "result.json"),
+        "utf8",
+      ),
+    ) as Record<string, unknown>;
+    expect(processResult.failureClassification).toBe("dependency-outage");
+
+    const runFresh = (phase: "recover" | "resume") => {
+      fs.writeFileSync(
+        inputPath,
+        JSON.stringify({ root: f.root, cwd: f.cwd, project: f.project, phase }),
+      );
+      const result = spawnSync(
+        process.execPath,
+        [
+          "--import",
+          "tsx",
+          path.join(
+            process.cwd(),
+            "tests/fixtures/primary-outage-crash-gap-parent.ts",
+          ),
+        ],
+        {
+          cwd: process.cwd(),
+          encoding: "utf8",
+          timeout: 20_000,
+          env: {
+            ...f.parentEnvironment,
+            PRIMARY_PARENT_INPUT: inputPath,
+            PRIMARY_OUTAGE_WINDOWS: "1",
+          },
+        },
+      );
+      if (result.status !== 0)
+        throw new Error(`Fresh parent failed: ${result.stderr}`);
+      return JSON.parse(result.stdout.trim().split("\n").at(-1)!) as {
+        status: string;
+        entry: Record<string, unknown>;
+      };
+    };
+    const recovered = runFresh("recover");
+    expect(recovered.status).toBe("waiting");
+    expect(recovered.entry).toMatchObject({
+      id: "primary",
+      executions: 3,
+      failureExecutions: 2,
+      dependencyOutages: 1,
+      accountedExecution: 3,
+      lastExecutionClassification: "dependency-outage",
+      status: "failed",
+    });
+    const reopened = readRecord(f.root, f.project).primaryOperations?.primary;
+    expect(reopened?.dependencyOutages).toBe(1);
+    expect(reopened?.failureExecutions).toBe(2);
+    const resumed = runFresh("resume");
+    expect(resumed.status, JSON.stringify(resumed)).toBe("completed");
+    expect(resumed.entry).toMatchObject({
+      executions: 4,
+      failureExecutions: 2,
+      dependencyOutages: 1,
+    });
+    expect(
+      fs
+        .readFileSync(path.join(f.cwd, "primary-cli-calls.jsonl"), "utf8")
+        .trim()
+        .split("\n"),
+    ).toHaveLength(2);
+  }, 30_000);
+
   it("uses persisted retryAt gates across fresh parents, then continues the bound session and operation", () => {
     const f = fixture("outage");
     let outcome = launchParent(f.root, f.parentEnvironment);

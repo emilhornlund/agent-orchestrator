@@ -413,7 +413,13 @@ export async function runWithPrimaryTaskSession(
               cardId,
               unresolved.id,
               "stopped",
+              undefined,
+              inspection.failureClassification,
             );
+            if (inspection.failureClassification === "dependency-outage")
+              throw new PrimaryOperationWaitingError(unresolved.id, {
+                cause: new Error("OpenCode provider temporarily unavailable"),
+              });
           } else {
             if (inspection.result.exitCode !== 0)
               throw new PrimaryOperationWaitingError(unresolved.id);

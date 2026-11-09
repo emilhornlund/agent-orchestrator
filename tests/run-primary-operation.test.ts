@@ -84,6 +84,7 @@ const options = (
         operationId: string;
         execution: number;
         sessionId?: string;
+        failureClassification?: "dependency-outage";
       }
     | { status: "running" }
     | { status: "unknown" }
@@ -508,6 +509,34 @@ describe("runPrimaryOperation", () => {
       ),
     ).resolves.toMatchObject(success);
     expect(execute).toHaveBeenCalledTimes(2);
+  });
+  it("waits on classified outage proof after a thrown stopped timeout without charging failure", async () => {
+    const f = fixture();
+    for (let n = 0; n < 2; n += 1) {
+      beginPrimaryExecution(f.store, "card", "op", "work", "session");
+      completePrimaryExecution(f.store, "card", "op", "failed", failure);
+      reconcilePendingPrimaryExecution(f.store, "card", "op", "stopped");
+    }
+    const execute = vi
+      .fn()
+      .mockRejectedValue(new OpenCodeTimeoutError(100, "exec", true));
+    await expect(
+      runPrimaryOperation(
+        options(f.store, execute, async (entry) => ({
+          ...stopped(entry),
+          failureClassification: "dependency-outage",
+        })),
+      ),
+    ).rejects.toBeInstanceOf(PrimaryOperationWaitingError);
+    expect(execute).toHaveBeenCalledOnce();
+    expect(f.store.read("card")?.primaryOperations?.op).toMatchObject({
+      executions: 3,
+      failureExecutions: 2,
+      dependencyOutages: 1,
+      accountedExecution: 3,
+      lastExecutionClassification: "dependency-outage",
+      status: "failed",
+    });
   });
   it("stores large results outside the bounded task record and replays them", async () => {
     const f = fixture();

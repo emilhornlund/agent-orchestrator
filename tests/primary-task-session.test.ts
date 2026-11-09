@@ -141,6 +141,121 @@ function recoveryBaseline() {
 }
 
 describe("runWithPrimaryTaskSession", () => {
+  it("waits on a classified original-session outage before reconstruction acknowledgement", async () => {
+    const { store, project } = createFixture();
+    const ackId = "attempt-one:reconstruction-ack:ses_replacement";
+    store.create(
+      createRecord("project-one", "card-one", {
+        phase: "implementation",
+        expectedBranch: "agent/card-one",
+        primarySessionId: "ses_replacement",
+        sessionCreationStatus: "bound",
+        primaryOperations: {
+          "implementation-op": {
+            id: "implementation-op",
+            activity: "implementation",
+            role: "primary",
+            executions: 3,
+            failureExecutions: 2,
+            dependencyOutages: 0,
+            status: "dispatched",
+            lastSessionId: "ses_lost",
+            updatedAt: "2026-10-24T09:00:00.000Z",
+          },
+          [ackId]: {
+            id: ackId,
+            activity: "reconstruction-acknowledgement",
+            role: "reconstruction",
+            executions: 1,
+            failureExecutions: 1,
+            status: "failed",
+            retrySafe: true,
+            lastSessionId: "ses_replacement",
+            updatedAt: "2026-10-24T09:00:00.000Z",
+          },
+        },
+        sessionRecovery: {
+          originalSessionId: "ses_lost",
+          status: "reconstruction-process-failed",
+          reconstructionBaseline: recoveryBaseline(),
+        },
+      }),
+    );
+    const run = vi.fn<RunOpenCode>().mockResolvedValue({
+      exitCode: 0,
+      output: "ack",
+      errorOutput: "",
+      sessionId: "ses_replacement",
+    });
+    const bundle = {
+      version: 1 as const,
+      projectId: "project-one",
+      cardId: "card-one",
+      attemptId: "attempt-one",
+      repositoryPath: project.repository.path,
+      repositoryHead: "a".repeat(40),
+      card: {
+        title: "Task",
+        description: "Current task",
+        current: true as const,
+      },
+      plan: { status: "absent" as const },
+      attachmentManifest: { status: "absent" as const },
+      currentDiff: "preserved partial changes",
+      history: "prior work",
+      feedback: { status: "absent" as const, references: [] },
+    };
+    await expect(
+      runWithPrimaryTaskSession(
+        store,
+        new OpenCodeClient(run),
+        "project-one",
+        "card-one",
+        {
+          ...createRunOptions("Restore continuity."),
+          cwd: project.repository.path,
+          readOnly: true,
+        },
+        {
+          inspect: async () => "reachable",
+          context: bundle,
+          contextDirectory: path.join(temporaryRoot!, "context"),
+          forbiddenPaths: [
+            project.repository.path,
+            project.repository.worktreeRoot,
+          ],
+          attemptId: "attempt-one",
+          baseline: recoveryBaseline(),
+        },
+        {
+          role: "reconstruction",
+          operationId: ackId,
+          readOnlyAcknowledged: true,
+          inspectOwningPrimary: async (entry) => ({
+            status: "stopped-after-dispatch",
+            operationId: entry.id,
+            execution: entry.executions,
+            sessionId: "ses_lost",
+            failureClassification: "dependency-outage",
+          }),
+          inspectPending: async () => ({ status: "unknown" }),
+        },
+      ),
+    ).rejects.toThrow("waiting for authoritative reconciliation");
+    expect(run).not.toHaveBeenCalled();
+    expect(store.read("card-one")?.primaryOperations).toMatchObject({
+      "implementation-op": {
+        status: "failed",
+        executions: 3,
+        failureExecutions: 2,
+        dependencyOutages: 1,
+        accountedExecution: 3,
+        lastExecutionClassification: "dependency-outage",
+      },
+      [ackId]: { executions: 1, status: "failed" },
+    });
+  });
+
   it("rejects repository mutations during read-only reconstruction verification", () => {
     const before = {
       sourceIdentity: "sha256:before",

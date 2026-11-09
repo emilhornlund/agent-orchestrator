@@ -112,16 +112,76 @@ export async function inspectPrimaryOperationEvidence(
     if (
       ["nonzero", "timeout", "interrupted"].includes(String(metadata.status)) &&
       metadata.treeStopped === true &&
+      Number.isSafeInteger(metadata.exitCode) &&
+      (metadata.exitCode as number) !== 0 &&
       ["failed", "dispatched", "ambiguous"].includes(entry.status)
-    )
+    ) {
+      let failureClassification: "dependency-outage" | undefined;
+      const metadataHasClassification =
+        metadata.failureClassification !== undefined;
+      let payload: Record<string, unknown> | undefined;
+      if (metadata.resultArtifact !== undefined) {
+        if (
+          typeof metadata.resultArtifact !== "object" ||
+          metadata.resultArtifact === null
+        )
+          return unknown;
+        const ref = metadata.resultArtifact as Record<string, unknown>;
+        if (
+          ref.path !== "result.json" ||
+          typeof ref.sha256 !== "string" ||
+          !/^[a-f0-9]{64}$/u.test(ref.sha256)
+        )
+          return unknown;
+        const resultFile = path.join(path.dirname(file), "result.json");
+        assertNoSymlinks(trusted, resultFile);
+        const resultStat = fs.lstatSync(resultFile);
+        if (!resultStat.isFile() || resultStat.size > 700 * 1024)
+          return unknown;
+        const bytes = fs.readFileSync(resultFile);
+        if (createHash("sha256").update(bytes).digest("hex") !== ref.sha256)
+          return unknown;
+        const value: unknown = JSON.parse(bytes.toString("utf8"));
+        if (!value || typeof value !== "object" || Array.isArray(value))
+          return unknown;
+        payload = value as Record<string, unknown>;
+        if (
+          !Number.isSafeInteger(payload.exitCode) ||
+          payload.exitCode !== metadata.exitCode ||
+          (payload.exitCode as number) === 0 ||
+          payload.processExecutionId !== entry.processExecutionId ||
+          payload.sessionId !== metadata.sessionId ||
+          typeof payload.output !== "string" ||
+          typeof payload.errorOutput !== "string"
+        )
+          return unknown;
+      }
+      const payloadHasClassification =
+        payload?.failureClassification !== undefined;
+      if (metadataHasClassification || payloadHasClassification) {
+        if (
+          metadata.failureClassification !== "dependency-outage" ||
+          payload?.failureClassification !== "dependency-outage" ||
+          entry.lastSessionId === undefined ||
+          typeof metadata.sessionId !== "string" ||
+          metadata.sessionId !== entry.lastSessionId ||
+          payload?.sessionId !== entry.lastSessionId
+        )
+          return unknown;
+        failureClassification = "dependency-outage";
+      }
       return {
         status: "stopped-after-dispatch",
         operationId: operationID,
         execution: entry.executions,
+        ...(failureClassification === undefined
+          ? {}
+          : { failureClassification }),
         ...(entry.lastSessionId === undefined
           ? {}
           : { sessionId: entry.lastSessionId }),
       };
+    }
     return unknown;
   } catch {
     return unknown;

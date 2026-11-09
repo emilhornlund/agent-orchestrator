@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -87,6 +88,125 @@ function fixture(status = "nonzero") {
   };
 }
 describe("inspectPrimaryOperationEvidence", () => {
+  it("recovers only hash- and execution-bound outage classification evidence", async () => {
+    const f = fixture();
+    const result = {
+      exitCode: 1,
+      output: '{"type":"error"}',
+      errorOutput: "",
+      processExecutionId: "exec",
+      sessionId: "session",
+      failureClassification: "dependency-outage",
+    };
+    const bytes = Buffer.from(JSON.stringify(result));
+    fs.writeFileSync(
+      path.join(path.dirname(f.metadataPath), "result.json"),
+      bytes,
+    );
+    fs.writeFileSync(
+      f.metadataPath,
+      JSON.stringify({
+        executionId: "exec",
+        cwd: f.cwd,
+        sessionId: "session",
+        status: "nonzero",
+        treeStopped: true,
+        exitCode: 1,
+        failureClassification: "dependency-outage",
+        resultArtifact: {
+          path: "result.json",
+          sha256: createHash("sha256").update(bytes).digest("hex"),
+        },
+      }),
+    );
+    expect(
+      await inspectPrimaryOperationEvidence(f.store, "card", "op", f.identity),
+    ).toMatchObject({
+      status: "stopped-after-dispatch",
+      failureClassification: "dependency-outage",
+    });
+    fs.writeFileSync(
+      path.join(path.dirname(f.metadataPath), "result.json"),
+      "{}",
+    );
+    expect(
+      await inspectPrimaryOperationEvidence(f.store, "card", "op", f.identity),
+    ).toEqual({ status: "unknown" });
+  });
+  it.each([
+    [
+      "metadata session differs from ledger",
+      { metadataSessionId: "other" },
+      { sessionId: "other" },
+    ],
+    ["payload session differs from ledger", {}, { sessionId: "other" }],
+    ["payload exit code is not an integer", {}, { exitCode: "1" }],
+    ["metadata exit code is not an integer", { exitCode: null }, {}],
+    ["payload and metadata exit codes differ", { exitCode: 2 }, {}],
+    [
+      "classification omitted from metadata",
+      { omitMetadataClassification: true },
+      {},
+    ],
+    [
+      "classification omitted from payload",
+      {},
+      { omitPayloadClassification: true },
+    ],
+  ])(
+    "rejects correctly hashed semantically mismatched outage evidence: %s",
+    async (_label, metadataOverrides, payloadOverrides) => {
+      const f = fixture();
+      const metaOptions = metadataOverrides as Record<string, unknown>;
+      const resultOptions = payloadOverrides as Record<string, unknown>;
+      const result: Record<string, unknown> = {
+        exitCode: 1,
+        output: "provider unavailable",
+        errorOutput: "",
+        processExecutionId: "exec",
+        sessionId: resultOptions.sessionId ?? "session",
+        failureClassification: "dependency-outage",
+        ...(resultOptions.exitCode === undefined
+          ? {}
+          : { exitCode: resultOptions.exitCode }),
+      };
+      if (resultOptions.omitPayloadClassification === true)
+        delete result.failureClassification;
+      const bytes = Buffer.from(JSON.stringify(result));
+      fs.writeFileSync(
+        path.join(path.dirname(f.metadataPath), "result.json"),
+        bytes,
+      );
+      const metadata: Record<string, unknown> = {
+        executionId: "exec",
+        cwd: f.cwd,
+        sessionId: "session",
+        status: "nonzero",
+        treeStopped: true,
+        exitCode: 1,
+        failureClassification: "dependency-outage",
+        resultArtifact: {
+          path: "result.json",
+          sha256: createHash("sha256").update(bytes).digest("hex"),
+        },
+      };
+      if (metaOptions.metadataSessionId !== undefined)
+        metadata.sessionId = metaOptions.metadataSessionId;
+      if (metaOptions.exitCode !== undefined)
+        metadata.exitCode = metaOptions.exitCode;
+      if (metaOptions.omitMetadataClassification === true)
+        delete metadata.failureClassification;
+      fs.writeFileSync(f.metadataPath, JSON.stringify(metadata));
+      expect(
+        await inspectPrimaryOperationEvidence(
+          f.store,
+          "card",
+          "op",
+          f.identity,
+        ),
+      ).toEqual({ status: "unknown" });
+    },
+  );
   it("recognizes bound finalized stopped evidence", async () => {
     const f = fixture();
     expect(

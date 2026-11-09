@@ -204,7 +204,12 @@ export function completePrimaryExecution(
       failureExecutions,
       dependencyOutages,
       ...(outcome === "failed"
-        ? { lastExecutionClassification: classification }
+        ? {
+            lastExecutionClassification: classification,
+            ...(classification === "dependency-outage"
+              ? { accountedExecution: operation.executions }
+              : {}),
+          }
         : {}),
       ...(resultArtifact === undefined ? {} : { resultArtifact }),
       ...(terminalOutcome !== "exhausted" && diagnostic === undefined
@@ -232,6 +237,7 @@ export function reconcilePendingPrimaryExecution(
   operationId: string,
   result: "completed" | "not-dispatched" | "stopped" | "unknown",
   completedResult?: OpenCodeRunResult,
+  stoppedClassification?: "dependency-outage",
 ): TaskExecutionRecord {
   const record = store.read(cardId);
   if (result === "completed" && completedResult === undefined)
@@ -290,7 +296,8 @@ export function reconcilePendingPrimaryExecution(
     result === "stopped" &&
     operation.status !== "intent" &&
     operation.executions > 0 &&
-    operation.lastExecutionClassification !== "dependency-outage" &&
+    (stoppedClassification ?? operation.lastExecutionClassification) !==
+      "dependency-outage" &&
     operation.accountedExecution !== operation.executions &&
     !(
       operation.failureExecutions === undefined &&
@@ -309,6 +316,15 @@ export function reconcilePendingPrimaryExecution(
       executions,
       failureExecutions,
       ...(verifiedFailure ? { accountedExecution: operation.executions } : {}),
+      ...(result === "stopped" && stoppedClassification === "dependency-outage"
+        ? {
+            dependencyOutages:
+              (operation.dependencyOutages ?? 0) +
+              (operation.accountedExecution === operation.executions ? 0 : 1),
+            lastExecutionClassification: "dependency-outage" as const,
+            accountedExecution: operation.executions,
+          }
+        : {}),
       ...(result === "stopped" || result === "not-dispatched"
         ? { retrySafe: true }
         : {}),

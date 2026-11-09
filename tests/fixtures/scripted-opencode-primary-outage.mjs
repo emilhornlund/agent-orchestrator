@@ -27,7 +27,12 @@ if (fs.readFileSync(path.join(cwd, "primary-mode"), "utf8") === "crash") {
   fs.writeSync(2, "agent process interrupted by SIGKILL\n");
   process.kill(process.pid, "SIGKILL");
 }
-if (count <= Number(process.env.PRIMARY_OUTAGE_WINDOWS ?? "5")) {
+const mode = fs.readFileSync(path.join(cwd, "primary-mode"), "utf8");
+if (
+  (mode === "outage-once" && count === 1) ||
+  (mode !== "outage-once" &&
+    count <= Number(process.env.PRIMARY_OUTAGE_WINDOWS ?? "5"))
+) {
   process.stdout.write(
     `${JSON.stringify({ type: "error", error: { name: "APIError", data: { statusCode: 503 } } })}\n`,
   );
