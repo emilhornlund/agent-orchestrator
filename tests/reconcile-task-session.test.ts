@@ -218,7 +218,8 @@ function canonicalSetupFixture() {
 describe("reconcileTaskSession", () => {
   it("adopts a completed setup process from authoritative evidence after restart", async () => {
     const f = canonicalSetupFixture();
-    const setupCommand = "printf recovered >> base.txt";
+    const marker = path.join(root, "first-setup-attempt");
+    const setupCommand = `if [ ! -f '${marker}' ]; then touch '${marker}'; printf leftover > unrelated.txt; exit 9; fi`;
     f.project.repository.setupCommand = setupCommand;
     execFileSync("git", ["init", "-q"], { cwd: f.worktreePath });
     execFileSync("git", ["config", "user.email", "test@example.invalid"], {
@@ -240,6 +241,21 @@ describe("reconcileTaskSession", () => {
       ) as unknown,
     );
     const current = f.store.read("card")!;
+    const firstAttemptResult = await runRepositorySetup(new CommandRunner(), {
+      cwd: f.worktreePath,
+      command: setupCommand,
+      timeoutMilliseconds: 5_000,
+      artifactDirectory: f.store.processExecutionDirectory("card")!,
+      sessionLogPath: path.join(root, "setup-failed-attempt.log"),
+      sessionLabel: "failed setup attempt fixture",
+    });
+    expect(firstAttemptResult.exitCode).toBe(9);
+    const firstAttemptAfter = f.store.writePrimaryResultArtifact(
+      "setup-failed-attempt-after",
+      JSON.parse(
+        (await captureSetupEffects(f.git, f.worktreePath)).toString("utf8"),
+      ) as unknown,
+    );
     f.store.compareAndSwap("card", current.revision, {
       ...current,
       setup: {
@@ -247,6 +263,19 @@ describe("reconcileTaskSession", () => {
         status: "active",
         worktreePath: f.worktreePath,
         before: before.reference,
+        attemptBefore: firstAttemptAfter.reference,
+        attempts: 2,
+        history: [
+          {
+            command: setupCommand,
+            worktreePath: f.worktreePath,
+            before: before.reference,
+            after: firstAttemptAfter.reference,
+            executionId: firstAttemptResult.executionId,
+            exitCode: 9,
+            outcome: "failed",
+          },
+        ],
       },
       revision: current.revision + 1,
       updatedAt: "2026-10-24T09:00:01.000Z",
@@ -254,7 +283,7 @@ describe("reconcileTaskSession", () => {
     let executionId: string | undefined;
     await runRepositorySetup(new CommandRunner(), {
       cwd: f.worktreePath,
-      command: "printf recovered >> base.txt",
+      command: setupCommand,
       timeoutMilliseconds: 5_000,
       artifactDirectory: f.store.processExecutionDirectory("card")!,
       sessionLogPath: path.join(root, "setup.log"),
@@ -273,9 +302,19 @@ describe("reconcileTaskSession", () => {
     await expect(f.reconcile()).resolves.toMatchObject({ status: "resume" });
     expect(f.store.read("card")?.setup).toMatchObject({
       status: "passed",
+      before: before.reference,
+      attemptBefore: firstAttemptAfter.reference,
       executionId,
       exitCode: 0,
       after: expect.stringMatching(/^sha256:/u),
+      history: [
+        { before: before.reference, outcome: "failed" },
+        {
+          before: firstAttemptAfter.reference,
+          outcome: "passed",
+          after: expect.stringMatching(/^sha256:/u),
+        },
+      ],
     });
     fs.writeFileSync(
       path.join(f.worktreePath, "agent.txt"),

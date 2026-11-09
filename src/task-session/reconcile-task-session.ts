@@ -434,7 +434,7 @@ export async function reconcileTaskSession(
             {
               command: record.setup.command!,
               worktreePath: options.worktreePath,
-              before: record.setup.before!,
+              before: record.setup.attemptBefore ?? record.setup.before!,
               after: after.reference,
               executionId: record.setup.executionId,
               exitCode: 0,
@@ -483,7 +483,7 @@ export async function reconcileTaskSession(
             {
               command: record.setup.command!,
               worktreePath: options.worktreePath,
-              before: record.setup.before!,
+              before: record.setup.attemptBefore ?? record.setup.before!,
               after: artifact.reference,
               executionId: record.setup.executionId,
               exitCode:
@@ -536,6 +536,12 @@ export async function reconcileTaskSession(
       );
       readSetupInventory(
         taskRecordStore,
+        record.setup.attemptBefore ?? record.setup.before,
+        options.worktreePath,
+        expectedBranch,
+      );
+      readSetupInventory(
+        taskRecordStore,
         record.setup.after,
         options.worktreePath,
         expectedBranch,
@@ -553,11 +559,20 @@ export async function reconcileTaskSession(
         evidence.exitCode !== 0 ||
         evidence.treeStopped !== true ||
         record.setup.exitCode !== 0 ||
+        !record.setup.history ||
+        record.setup.history.length === 0 ||
+        record.setup.history.length !== record.setup.attempts ||
+        record.setup.history[0]?.before !== record.setup.before ||
+        record.setup.history.at(-1)?.before !==
+          (record.setup.attemptBefore ?? record.setup.before) ||
+        record.setup.history.at(-1)?.after !== record.setup.after ||
+        record.setup.history.at(-1)?.outcome !== "passed" ||
         !record.setup.history?.some(
           (attempt) =>
             attempt.executionId === record.setup!.executionId &&
             attempt.outcome === "passed" &&
-            attempt.before === record.setup!.before &&
+            attempt.before ===
+              (record.setup!.attemptBefore ?? record.setup!.before) &&
             attempt.after === record.setup!.after,
         )
       )

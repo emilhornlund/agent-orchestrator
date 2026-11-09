@@ -134,6 +134,10 @@ const taskSetupState = z.strictObject({
     .string()
     .regex(/^sha256:[0-9a-f]{64}$/u)
     .optional(),
+  attemptBefore: z
+    .string()
+    .regex(/^sha256:[0-9a-f]{64}$/u)
+    .optional(),
   after: z
     .string()
     .regex(/^sha256:[0-9a-f]{64}$/u)

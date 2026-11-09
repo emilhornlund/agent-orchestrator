@@ -94,6 +94,11 @@ async function createSetupDisposition(
   fs.writeFileSync(path.join(f.worktreePath, "yarn.lock"), "task dependency\n");
   fs.writeFileSync(path.join(f.worktreePath, unrelatedPath), "preserve me\n");
   f.isolated.git(f.worktreePath, "add", unrelatedPath);
+  const failedAttemptAfter = JSON.parse(
+    (await captureSetupEffects(f.git, f.worktreePath)).toString("utf8"),
+  ) as Parameters<typeof getSetupTrackedDelta>[1];
+  // The successful retry is a no-op: the committable effect from the failed
+  // attempt remains in the worktree and must still be judged.
   const after = JSON.parse(
     (await captureSetupEffects(f.git, f.worktreePath)).toString("utf8"),
   ) as Parameters<typeof getSetupTrackedDelta>[1];
@@ -120,6 +125,10 @@ async function createSetupDisposition(
     "setup-after-integration",
     after,
   );
+  const failedAttemptAfterArtifact = taskStore.writePrimaryResultArtifact(
+    "setup-failed-attempt-after-integration",
+    failedAttemptAfter,
+  );
   const scopeArtifact = taskStore.writePrimaryResultArtifact(
     "setup-scope-integration",
     {
@@ -141,14 +150,23 @@ async function createSetupDisposition(
         status: "passed",
         worktreePath: f.worktreePath,
         before: beforeArtifact.reference,
+        attemptBefore: failedAttemptAfterArtifact.reference,
         after: afterArtifact.reference,
         relevance: scopeArtifact.reference,
-        attempts: 1,
+        attempts: 2,
         history: [
           {
             command: "yarn install",
             worktreePath: f.worktreePath,
             before: beforeArtifact.reference,
+            after: failedAttemptAfterArtifact.reference,
+            exitCode: 9,
+            outcome: "failed",
+          },
+          {
+            command: "yarn install",
+            worktreePath: f.worktreePath,
+            before: failedAttemptAfterArtifact.reference,
             after: afterArtifact.reference,
             exitCode: 0,
             outcome: "passed",
@@ -214,7 +232,7 @@ function task(f: ReturnType<typeof reopenPublicationFixture>) {
 }
 
 describe("setup-aware initial publication commit scope", () => {
-  it("commits relevant setup output, excludes unrelated setup bytes, and preserves them", async () => {
+  it("judges failed-attempt output across a successful no-op retry and preserves excluded bytes", async () => {
     const f = fixture();
     const disposition = await createSetupDisposition(f, "unrelated.setup");
     await begin(f, "feat: setup aware task", disposition);
@@ -239,6 +257,56 @@ describe("setup-aware initial publication commit scope", () => {
       ),
     ).toBe("task dependency");
     expect(f.services.read().requests.length).toBeGreaterThan(0);
+  });
+
+  it("blocks publication when the immutable original setup baseline is missing", async () => {
+    const f = fixture();
+    const disposition = await createSetupDisposition(f, "unrelated.setup");
+    const store = f.authority.run(
+      () => new TaskExecutionStore(f.project.contextRoot, f.project),
+    );
+    const existing = task(f)!;
+    f.authority.run(() =>
+      store.compareAndSwap(f.services.card().id, existing.revision, {
+        ...existing,
+        revision: existing.revision + 1,
+        updatedAt: new Date().toISOString(),
+        setup: { ...existing.setup!, before: `sha256:${"0".repeat(64)}` },
+      }),
+    );
+    await begin(f, "feat: missing setup baseline", disposition);
+    await expect(poll(f, false)).rejects.toThrow(/baseline|artifact|evidence/u);
+    expect(f.services.read().requests).toHaveLength(0);
+    expect(
+      f.isolated.git(f.worktreePath, "rev-list", "--count", "main..HEAD"),
+    ).toBe("0");
+    expect(
+      fs.readFileSync(path.join(f.worktreePath, "unrelated.setup"), "utf8"),
+    ).toBe("preserve me\n");
+  });
+
+  it("blocks a final-attempt-only proof that overwrote the original baseline", async () => {
+    const f = fixture();
+    const disposition = await createSetupDisposition(f, "unrelated.setup");
+    const store = f.authority.run(
+      () => new TaskExecutionStore(f.project.contextRoot, f.project),
+    );
+    const existing = task(f)!;
+    const retryBaseline = existing.setup!.attemptBefore!;
+    f.authority.run(() =>
+      store.compareAndSwap(f.services.card().id, existing.revision, {
+        ...existing,
+        revision: existing.revision + 1,
+        updatedAt: new Date().toISOString(),
+        setup: { ...existing.setup!, before: retryBaseline },
+      }),
+    );
+    await begin(f, "feat: overwritten setup baseline", disposition);
+    await expect(poll(f, false)).rejects.toThrow(/durable setup evidence/u);
+    expect(f.services.read().requests).toHaveLength(0);
+    expect(
+      f.isolated.git(f.worktreePath, "rev-list", "--count", "main..HEAD"),
+    ).toBe("0");
   });
 
   it("blocks an old configured-setup publication checkpoint without a scope artifact", async () => {

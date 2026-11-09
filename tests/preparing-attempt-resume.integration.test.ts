@@ -26,6 +26,11 @@ import { TaskExecutionStore } from "../src/task-session/task-execution-store.js"
 import type { OpenCodeClient } from "../src/opencode/opencode-client.js";
 import { getRefinementResultPath } from "../src/refinement/refinement-result.js";
 import { CommandRunner } from "../src/process/command-runner.js";
+import {
+  getSetupTrackedDelta,
+  type SetupInventory,
+} from "../src/process/setup-commit-scope.js";
+import { captureSetupEffects } from "../src/process/run-setup.js";
 import { runOrchestrator } from "../src/orchestrator/run-orchestrator.js";
 import { pollProject } from "../src/orchestrator/poll-project.js";
 import type { TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
@@ -88,7 +93,7 @@ describe("resuming canonical preparing attempts", () => {
           ...(taskKind === "implementation"
             ? {
                 setupCommand: interruptSetup
-                  ? "if [ ! -f setup-once ]; then touch setup-once; sleep 1; else true; fi"
+                  ? `if [ ! -f '${path.join(root, "setup-once")}' ]; then touch '${path.join(root, "setup-once")}'; printf changed > unrelated-tracked.txt; exit 1; fi; true`
                   : "true",
               }
             : {}),
@@ -229,12 +234,19 @@ describe("resuming canonical preparing attempts", () => {
         addWorktreeWithNewBranch: async (_repo: string, worktree: string) => {
           effectStates.push(authority.store.read()!.lifecycle);
           fs.mkdirSync(worktree, { recursive: true });
+          if (interruptSetup)
+            fs.writeFileSync(
+              path.join(worktree, "unrelated-tracked.txt"),
+              "original\n",
+            );
         },
         getStatus: async () => "",
         getCurrentBranch: async () => `agent/${cardId}`,
         getHeadSha: async () => "a".repeat(40),
-        getHeadTrackedFiles: async () => [],
-        getCommittableChangedPaths: async () => [],
+        getHeadTrackedFiles: async () =>
+          interruptSetup ? ["unrelated-tracked.txt"] : [],
+        getCommittableChangedPaths: async () =>
+          interruptSetup ? ["unrelated-tracked.txt"] : [],
         getUntrackedFiles: async () => [],
         getIgnoredFiles: async () => [],
         getRebaseState: async () => null,
@@ -263,9 +275,12 @@ describe("resuming canonical preparing attempts", () => {
       const commands = new CommandRunner(async (commandOptions) => {
         effectStates.push(authority.store.read()!.lifecycle);
         setupRuns += 1;
-        if (interruptSetup) setTimeout(() => controller.abort(), 100);
         const result = await actualCommands.run(commandOptions);
-        if (!interruptSetup) controller.abort();
+        if (
+          !interruptSetup ||
+          (interruptSetup && (setupRuns === 2 || result.exitCode !== 0))
+        )
+          controller.abort();
         return result;
       });
       const controller = new AbortController();
@@ -434,9 +449,13 @@ describe("resuming canonical preparing attempts", () => {
       ).toBe(true);
       if (taskKind === "implementation") {
         expect(setupRuns).toBe(interruptSetup ? 2 : 1);
-        expect(
-          new TaskExecutionStore(storageRoot, project, authority).read(cardId),
-        ).toMatchObject({
+        const setupStore = new TaskExecutionStore(
+          storageRoot,
+          project,
+          authority,
+        );
+        const setupRecord = setupStore.read(cardId);
+        expect(setupRecord).toMatchObject({
           phase: "planning",
           setup: {
             status: "passed",
@@ -452,6 +471,32 @@ describe("resuming canonical preparing attempts", () => {
               : [{ outcome: "passed" }],
           },
         });
+        if (interruptSetup) {
+          const original = setupStore.readPrimaryResultArtifact(
+            setupRecord!.setup!.before!,
+          ) as SetupInventory;
+          const latest = setupStore.readPrimaryResultArtifact(
+            setupRecord!.setup!.after!,
+          ) as Parameters<typeof getSetupTrackedDelta>[1];
+          const current = JSON.parse(
+            (
+              await captureSetupEffects(git, path.join(worktreeRoot, cardId))
+            ).toString("utf8"),
+          ) as Parameters<typeof getSetupTrackedDelta>[2];
+          const delta = getSetupTrackedDelta(original, latest, current);
+          expect(delta.candidates.map(({ path }) => path)).toContain(
+            "unrelated-tracked.txt",
+          );
+          expect(setupRecord!.setup!.history![0]!.before).toBe(
+            setupRecord!.setup!.before,
+          );
+          expect(setupRecord!.setup!.history![1]!.before).not.toBe(
+            setupRecord!.setup!.before,
+          );
+          expect(setupRecord!.setup!.attemptBefore).toBe(
+            setupRecord!.setup!.history![1]!.before,
+          );
+        }
       }
     },
     20_000,

@@ -142,6 +142,14 @@ async function validateSetupDisposition(
     artifact.version !== 1 ||
     artifact.before !== task.setup.before ||
     artifact.after !== task.setup.after ||
+    !Array.isArray(task.setup.history) ||
+    task.setup.history.length === 0 ||
+    task.setup.history.length !== task.setup.attempts ||
+    task.setup.history[0]?.before !== task.setup.before ||
+    task.setup.history.at(-1)?.before !==
+      (task.setup.attemptBefore ?? task.setup.before) ||
+    task.setup.history.at(-1)?.after !== task.setup.after ||
+    task.setup.history.at(-1)?.outcome !== "passed" ||
     typeof artifact.verdict !== "object" ||
     artifact.verdict === null ||
     typeof artifact.current !== "object" ||
@@ -151,8 +159,12 @@ async function validateSetupDisposition(
       "Setup scope artifact does not match its durable setup evidence",
     );
   const before = store.readPrimaryResultArtifact(task.setup.before);
+  const attemptBefore = store.readPrimaryResultArtifact(
+    task.setup.attemptBefore ?? task.setup.before,
+  );
   const after = store.readPrimaryResultArtifact(task.setup.after);
   assertSetupInventoryIdentity(before, cwd, checkpoint.branch);
+  assertSetupInventoryIdentity(attemptBefore, cwd, checkpoint.branch);
   assertSetupInventoryIdentity(after, cwd, checkpoint.branch);
   assertSetupInventoryIdentity(artifact.current, cwd, checkpoint.branch);
   const resolved = resolveSetupCommitScope(

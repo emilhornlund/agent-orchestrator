@@ -4141,7 +4141,11 @@ export async function runTaskSessionWorkflow(
             command: project.repository.setupCommand,
             status: "active",
             worktreePath,
-            before: before.reference,
+            // `before` is the immutable pre-first-attempt baseline used to
+            // attribute the cumulative setup effects at publication. Keep a
+            // distinct per-dispatch snapshot for recovery/history evidence.
+            before: attemptRecord.setup?.before ?? before.reference,
+            attemptBefore: before.reference,
             attempts: (attemptRecord.setup?.attempts ?? 0) + 1,
             history: attemptRecord.setup?.history ?? [],
           },
@@ -4233,7 +4237,7 @@ export async function runTaskSessionWorkflow(
             {
               command: setupState.command!,
               worktreePath,
-              before: setupState.before!,
+              before: setupState.attemptBefore ?? setupState.before!,
               after: after.reference,
               ...(executionId === undefined ? {} : { executionId }),
               exitCode: setupResult?.exitCode ?? null,
