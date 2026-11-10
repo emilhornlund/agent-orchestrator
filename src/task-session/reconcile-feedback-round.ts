@@ -35,6 +35,7 @@ function feedbackIdentity(entry: FeedbackLedgerEntry): string {
     threadId: entry.threadId ?? null,
     isResolved: entry.isResolved ?? null,
     isOutdated: entry.isOutdated ?? null,
+    isCurrent: entry.isCurrent ?? true,
   });
 }
 
@@ -47,6 +48,7 @@ function pendingActionableIds(
         (entry) =>
           entry.actionability === "actionable" &&
           entry.status === "pending" &&
+          entry.isCurrent !== false &&
           entry.isResolved !== true &&
           entry.isOutdated !== true,
       )
@@ -80,6 +82,7 @@ export function reconcileFeedbackRound(
   const merged = input.store.mergeIncoming(
     input.cardId,
     input.newlyObservedFeedback,
+    { replaceCurrent: true },
   );
   let ledger = merged;
   const closed = merged.entries.map((entry) => {

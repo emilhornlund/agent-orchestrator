@@ -44,6 +44,11 @@ shared requirements do not pull later CI/maintenance/cleanup implementation here
 
 ## Starting points and checks
 
+After observation retention, implement current semantic feedback refresh before
+arrival dispatch/priority: scheduling must distinguish actionable new requests from
+unchanged exhausted requests and automation status. This refines the order above;
+it does not remove the durable queue/capacity obligations.
+
 Inspect `src/orchestrator/poll-project.ts`, `run-task-session-workflow.ts`,
 `run-task-session-feedback-cycle.ts`, feedback ledger/round modules, RunStore,
 coordination ownership and `task-mutation-queue.ts`. Identify exact callers/state

@@ -279,18 +279,24 @@ discarded, the card remains in Human Review with its existing PR and branch, and
 SHAs before retrying on the next poll. A retry that reuses already committed work skips all OpenCode stages, including
 attachment-dependent prompts, and proceeds directly to publication.
 
-Requested-changes remediation feedback includes a separate, attributed section for every submitted `CHANGES_REQUESTED` review
-targeting the pull request's current head. Once that current-head review state makes a remediation round eligible, unresolved
-inline threads from earlier heads are also included when GitHub explicitly reports them as unresolved and not outdated. Earlier
-thread sections are marked as carried-forward unresolved inline feedback and contain no earlier review body. Each section
-preserves the review or thread identity, reviewer, submission timestamp, and only the inline comments belonging to that review.
+Human feedback includes review summaries, standalone PR comments and inline discussions, including discussion submitted without
+a changes-requested verdict. It does not require a new review on the current head. A later decisive review by the same author
+supersedes that author's earlier review summary; independent inline discussions remain eligible until resolved or outdated.
+Each item preserves its source identity, reviewer, available timestamp and inline context. GitHub Bot actors, the authenticated
+automation actor and managed automation replies/status markers do not trigger corrections.
 Review bodies are treated as general pull-request-level feedback and have no file, line, or diff location. Inline comments retain
 each location field GitHub supplies, including a path, current line, original line, or diff hunk. Resolved, outdated, and
 incompletely described threads are excluded or fail reconciliation rather than being inferred. This applies to review-body-only,
 inline-only, and mixed feedback.
 
-If a feedback remediation produces no repository changes, it is not treated as resolved: the ledger retains the item and the
-workflow does not publish a correction or claim success. The task remains available for another feedback round or human attention.
+OpenCode classifies semantic actionability and whether an edited requested action substantively changed, using a read-only
+operation. The orchestrator validates complete source-revision/identity coverage before updating the ledger. Latest bodies are
+separate from append-only prior handling snapshots; deleted or superseded items are no longer active. Timestamp changes, new
+commits and incidental edits do not renew an attempted request. A substantive changed request can start another cycle.
+
+If a feedback remediation produces no repository changes, it is not treated as resolved: the ledger retains the unresolved
+attempted item and the workflow does not publish a correction or claim success. Unchanged feedback does not restart that attempt,
+even after a new PR head. The task remains available for new or substantively changed human input, or human merge/closure.
 An initial implementation still requires repository changes; validation/review repair remains scoped to its approved task.
 
 For each owned open PR, the coordinator verifies repository, branch, URL, persisted head, and current GitHub head before acting.

@@ -71,7 +71,7 @@ export async function observeActivePullRequest(options: {
   const current =
     pr.state === "OPEN"
       ? {
-          feedback: await github.findChangesRequestedPullRequest(lookup),
+          feedback: await github.findChangesRequestedPullRequest(lookup, true),
           comments: await github.getPullRequestConversationComments({
             ...lookup,
             pullRequestUrl: pr.url,

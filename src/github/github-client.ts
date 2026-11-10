@@ -97,6 +97,7 @@ export interface PullRequest {
 export interface PullRequestConversationComment {
   id: number;
   author: string | null;
+  authorIsBot?: boolean;
   createdAt: string;
   updatedAt: string | null;
   body: string;
@@ -260,6 +261,7 @@ export interface PullRequestReview {
   commitSha?: string;
   body: string | null;
   author: string | null;
+  authorIsBot?: boolean;
   submittedAt: string;
   inlineComments: InlineReviewComment[];
   source?: "current-head" | "carried-forward";
@@ -277,6 +279,7 @@ interface RequestedChangesReview {
   body: string | null;
   commitId: string;
   author: string | null;
+  authorIsBot?: boolean;
   state: string;
   submittedAt: string;
 }
@@ -287,6 +290,7 @@ interface ValidatedInlineReviewComment {
   commitSha?: string;
   body: string | null;
   author: string | null;
+  authorIsBot?: boolean;
   path?: string;
   line?: number;
   originalLine?: number;
@@ -301,6 +305,7 @@ interface ValidatedReviewThreadComment {
   isOutdated: boolean;
   body: string;
   author: string | null;
+  authorIsBot?: boolean;
   path?: string;
   line?: number;
   originalLine?: number;
@@ -322,6 +327,7 @@ export interface InlineReviewComment {
   isOutdated?: boolean;
   body: string;
   author: string | null;
+  authorIsBot?: boolean;
   path?: string;
   line?: number;
   originalLine?: number;
@@ -565,6 +571,9 @@ function validateRequestedChangesReview(
     commitId,
     author,
     state,
+    ...(isRecord(user) && typeof user.type === "string"
+      ? { authorIsBot: user.type === "Bot" }
+      : {}),
     submittedAt,
   };
 }
@@ -680,6 +689,9 @@ function validateInlineReviewComment(
     body,
     author,
     ...(typeof path === "string" ? { path } : {}),
+    ...(isRecord(user) && typeof user.type === "string"
+      ? { authorIsBot: user.type === "Bot" }
+      : {}),
     ...(typeof line === "number" ? { line } : {}),
     ...(typeof originalLine === "number" ? { originalLine } : {}),
     ...(typeof diffHunk === "string" ? { diffHunk } : {}),
@@ -699,7 +711,7 @@ query($owner: String!, $name: String!, $number: Int!) {
             nodes {
               databaseId
               body
-              author { login }
+              author { login __typename }
               path
               line
               originalLine
@@ -783,6 +795,9 @@ function validateReviewThreadComment(
     body,
     author,
     ...(typeof path === "string" ? { path } : {}),
+    ...(isRecord(authorValue) && typeof authorValue.__typename === "string"
+      ? { authorIsBot: authorValue.__typename === "Bot" }
+      : {}),
     ...(typeof line === "number" ? { line } : {}),
     ...(typeof originalLine === "number" ? { originalLine } : {}),
     ...(typeof diffHunk === "string" ? { diffHunk } : {}),
@@ -2063,6 +2078,9 @@ export class GitHubClient {
       return {
         id: value.id,
         author,
+        ...(isRecord(user) && typeof user.type === "string"
+          ? { authorIsBot: user.type === "Bot" }
+          : {}),
         createdAt: value.created_at,
         updatedAt:
           typeof value.updated_at === "string" ? value.updated_at : null,
@@ -2072,6 +2090,32 @@ export class GitHubClient {
           : {}),
       };
     });
+  }
+
+  async getAutomationActor(options: {
+    cwd: string;
+    project: ProjectConfig;
+  }): Promise<string | null> {
+    // Installation-token comments are identified as Bot by GitHub. Personal
+    // credentials may share a human login, so resolve that exact actor as well.
+    if (options.project.repository.githubApp) return null;
+    const credential = await this.resolveCredential(options.project);
+    const result = await this.runWithOrigin(
+      options.cwd,
+      ["api", "user"],
+      credential,
+    );
+    const value: unknown = JSON.parse(result.output);
+    if (
+      !isRecord(value) ||
+      typeof value.login !== "string" ||
+      value.login.length === 0
+    )
+      throw new MalformedGitHubResponseError(
+        "authenticated GitHub actor",
+        result.origin,
+      );
+    return value.login;
   }
 
   async replyToReviewThread(
@@ -2924,6 +2968,7 @@ export class GitHubClient {
 
   async findChangesRequestedPullRequest(
     options: FindPullRequestOptions,
+    includeDiscussions = false,
   ): Promise<ChangesRequestedPullRequest | null> {
     const credential = await this.resolveCredential(options.project);
     let pullRequestOrigin: GitHubOutputOrigin | undefined;
@@ -2966,7 +3011,11 @@ export class GitHubClient {
     );
     const pullRequest = pullRequests[0];
 
-    if (!pullRequest || pullRequest.reviewDecision !== "CHANGES_REQUESTED") {
+    if (
+      !pullRequest ||
+      (!includeDiscussions &&
+        pullRequest.reviewDecision !== "CHANGES_REQUESTED")
+    ) {
       return null;
     }
 
@@ -2994,7 +3043,13 @@ export class GitHubClient {
       reviewOrigin,
     )
       .filter(
-        (review) => isRecord(review) && review.state === "CHANGES_REQUESTED",
+        (review) =>
+          isRecord(review) &&
+          (review.state === "CHANGES_REQUESTED" ||
+            (includeDiscussions &&
+              ["COMMENTED", "APPROVED", "DISMISSED"].includes(
+                String(review.state),
+              ))),
       )
       .map((review) => {
         try {
@@ -3018,12 +3073,13 @@ export class GitHubClient {
     }
 
     const currentHeadReviews = reviews.filter(
-      (review) => review.commitId === pullRequest.headRefOid,
+      (review) =>
+        includeDiscussions || review.commitId === pullRequest.headRefOid,
     );
 
     // Older reviews may carry inline threads forward, but cannot make the PR
     // actionable without a current-head requested-changes review.
-    if (currentHeadReviews.length === 0) {
+    if (!includeDiscussions && currentHeadReviews.length === 0) {
       return null;
     }
 
@@ -3113,11 +3169,30 @@ export class GitHubClient {
       }
     }
 
+    const latestByAuthor = new Map(
+      reviews
+        .filter((review) =>
+          ["CHANGES_REQUESTED", "APPROVED"].includes(review.state),
+        )
+        .map((review) => [review.author, review.id]),
+    );
     const currentReviewFeedback = currentHeadReviews.map((review) => ({
       id: review.id,
       commitSha: review.commitId,
-      body: review.body,
+      body:
+        includeDiscussions &&
+        (review.state === "DISMISSED" ||
+          (review.state !== "COMMENTED" &&
+            latestByAuthor.get(review.author) !== review.id))
+          ? null
+          : review.body,
+      ...(includeDiscussions && review.commitId !== pullRequest.headRefOid
+        ? { source: "carried-forward" as const }
+        : {}),
       author: review.author,
+      ...(review.authorIsBot === undefined
+        ? {}
+        : { authorIsBot: review.authorIsBot }),
       submittedAt: review.submittedAt,
       inlineComments: inlineComments
         .filter((comment) => comment.reviewId === review.id)
@@ -3134,6 +3209,9 @@ export class GitHubClient {
           return {
             body: comment.body,
             author: comment.author,
+            ...(comment.authorIsBot === undefined
+              ? {}
+              : { authorIsBot: comment.authorIsBot }),
             ...(comment.id === undefined ? {} : { id: comment.id }),
             ...(comment.reviewId === null
               ? {}
@@ -3155,7 +3233,7 @@ export class GitHubClient {
         }),
     }));
 
-    const carriedReviewFeedback = reviews
+    const carriedReviewFeedback = (includeDiscussions ? [] : reviews)
       .filter((review) => review.commitId !== pullRequest.headRefOid)
       .flatMap((review) => {
         const comments = carriedCommentsByReview.get(review.id) ?? [];
@@ -3170,6 +3248,9 @@ export class GitHubClient {
             commitSha: review.commitId,
             body: null,
             author: review.author,
+            ...(review.authorIsBot === undefined
+              ? {}
+              : { authorIsBot: review.authorIsBot }),
             submittedAt: review.submittedAt,
             source: "carried-forward" as const,
             inlineComments: comments.map((comment): InlineReviewComment => ({
@@ -3180,6 +3261,9 @@ export class GitHubClient {
               isOutdated: comment.isOutdated,
               body: comment.body,
               author: comment.author,
+              ...(comment.authorIsBot === undefined
+                ? {}
+                : { authorIsBot: comment.authorIsBot }),
               threadId: comment.threadId,
               source: "carried-forward",
               ...(comment.path === undefined ? {} : { path: comment.path }),

@@ -30,6 +30,7 @@ export interface ObservedTaskSessionReviewCard {
   feedbackIds: string[];
   requestedChanges: ChangesRequestedPullRequest | null;
   conversationComments: PullRequestConversationComment[];
+  automationActor?: string | null;
   baseRelation: "current" | "behind" | "diverged" | "uncertain";
 }
 
@@ -230,7 +231,7 @@ export async function observeTaskSessionReviewCards(
           ),
           project,
         }),
-        github.findChangesRequestedPullRequest(lookup),
+        github.findChangesRequestedPullRequest(lookup, true),
         github.getPullRequestConversationComments({
           cwd: lookup.cwd,
           repository: project.repository.github,
@@ -290,6 +291,14 @@ export async function observeTaskSessionReviewCards(
       requestedChanges,
       conversationComments,
       baseRelation,
+      ...(typeof github.getAutomationActor === "function"
+        ? {
+            automationActor: await github.getAutomationActor({
+              cwd: lookup.cwd,
+              project,
+            }),
+          }
+        : {}),
     };
     if (
       failedFeedbackReview ||

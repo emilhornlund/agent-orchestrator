@@ -17,10 +17,6 @@ import { runAdvisoryTaskSessionFeedbackVerification } from "../task-session/run-
 import { publishVerifiedFeedbackReplies } from "../task-session/publish-verified-feedback-replies.js";
 import type { FeedbackVerificationResult } from "../task-session/feedback-verification.js";
 import { reconcileFeedbackRound } from "../task-session/reconcile-feedback-round.js";
-import {
-  selectActionableFeedback,
-  type ConversationClassification,
-} from "../task-session/select-actionable-feedback.js";
 import { FeedbackLedgerStore } from "../task-session/feedback-ledger-store.js";
 import type { FeedbackLedgerEntry } from "../task-session/feedback-ledger.js";
 import { TaskExecutionStore } from "../task-session/task-execution-store.js";
@@ -62,6 +58,7 @@ import {
   findPrimaryRecoveryError,
   persistPrimaryOperationRecovery,
 } from "../task-session/persist-primary-operation-recovery.js";
+import { classifyCurrentFeedback } from "../task-session/classify-current-feedback.js";
 
 export interface RunTaskSessionFeedbackCycleOptions {
   project: ProjectConfig;
@@ -137,8 +134,21 @@ function toFeedbackEntries(
   observation: ObservedTaskSessionReviewCard,
 ): FeedbackLedgerEntry[] {
   const entries: FeedbackLedgerEntry[] = [];
+  const isHuman = (item: {
+    author: string | null;
+    authorIsBot?: boolean;
+    body: string | null;
+  }) =>
+    item.author !== null &&
+    item.authorIsBot !== true &&
+    item.author !== observation.automationActor &&
+    !item.body?.includes("<!-- agent-orchestrator-");
   for (const review of observation.requestedChanges?.feedback.reviews ?? []) {
-    if (review.body !== null && review.body.trim().length > 0) {
+    if (
+      isHuman(review) &&
+      review.body !== null &&
+      review.body.trim().length > 0
+    ) {
       entries.push({
         kind: "review",
         id: String(review.id),
@@ -150,14 +160,13 @@ function toFeedbackEntries(
           ? {}
           : { commitSha: review.commitSha }),
         headSha: observation.headSha,
-        actionability:
-          review.source === "carried-forward" ? "not-actionable" : "actionable",
+        actionability: "unclassified",
         status: "pending",
         verificationEvidence: [],
       });
     }
     for (const comment of review.inlineComments) {
-      if (comment.id === undefined) continue;
+      if (comment.id === undefined || !isHuman(comment)) continue;
       entries.push({
         kind: "inline-comment",
         id: String(comment.id),
@@ -171,6 +180,12 @@ function toFeedbackEntries(
         headSha: observation.headSha,
         ...(comment.path === undefined ? {} : { path: comment.path }),
         ...(comment.line === undefined ? {} : { line: comment.line }),
+        ...(comment.originalLine === undefined
+          ? {}
+          : { originalLine: comment.originalLine }),
+        ...(comment.diffHunk === undefined
+          ? {}
+          : { diffHunk: comment.diffHunk }),
         ...(comment.threadId === undefined
           ? {}
           : { threadId: comment.threadId }),
@@ -183,14 +198,14 @@ function toFeedbackEntries(
         actionability:
           comment.isResolved === true || comment.isOutdated === true
             ? "not-actionable"
-            : "actionable",
+            : "unclassified",
         status: "pending",
         verificationEvidence: [],
       });
     }
   }
   for (const comment of observation.conversationComments) {
-    if (comment.body.includes("<!-- agent-orchestrator-feedback:")) continue;
+    if (!isHuman(comment)) continue;
     entries.push({
       kind: "conversation-comment",
       id: String(comment.id),
@@ -276,10 +291,43 @@ export async function runTaskSessionFeedbackCycle(
       "Feedback review checkpoint is not eligible for exhausted-review recovery",
     );
   const storedPlan = planStore.read(card.id);
+  const resumingReservedRound =
+    resumingReviewRepair ||
+    recoveringReview ||
+    (record.feedbackRemediation?.status === "active" &&
+      record.feedbackRemediation.feedbackIds !== undefined &&
+      options.mutationQueue.getActive()?.eventId ===
+        record.feedbackRemediation.operationId);
+  const previousHead = record.pullRequest.headSha;
+  const incoming = resumingReservedRound
+    ? []
+    : await classifyCurrentFeedback({
+        project,
+        cardId: card.id,
+        worktreePath,
+        incoming: toFeedbackEntries(observation),
+        previous: ledgerStore.read(card.id)?.entries ?? [],
+        openCode,
+        signal,
+      });
+  const reconciliation = resumingReservedRound
+    ? null
+    : ledgerStore.read(card.id) === null
+      ? null
+      : reconcileFeedbackRound({
+          store: ledgerStore,
+          projectId: project.id,
+          cardId: card.id,
+          previousHeadSha: previousHead,
+          observedHeadSha: observation.headSha,
+          newlyObservedFeedback: incoming,
+        });
+  if (reconciliation === null && !resumingReservedRound)
+    ledgerStore.create(card.id, incoming);
   const ledgerBeforeSync = ledgerStore.read(card.id);
   const checksReady = observation.ciEvaluation.status === "passed";
   if (
-    !resumingReviewRepair &&
+    !resumingReservedRound &&
     checksReady &&
     ledgerBeforeSync !== null &&
     record.publicationQuality !== undefined
@@ -479,73 +527,11 @@ export async function runTaskSessionFeedbackCycle(
       throw error;
     }
   }
-  const previousHead = record.pullRequest.headSha;
-  const incoming = toFeedbackEntries(observation);
-  const reconciliation = resumingReviewRepair
-    ? null
-    : ledgerStore.read(card.id) === null
-      ? null
-      : reconcileFeedbackRound({
-          store: ledgerStore,
-          projectId: project.id,
-          cardId: card.id,
-          previousHeadSha: previousHead,
-          observedHeadSha: observation.headSha,
-          newlyObservedFeedback: incoming,
-        });
-  if (reconciliation === null && !resumingReviewRepair)
-    ledgerStore.create(card.id, incoming);
   const ledger = ledgerStore.read(card.id);
   if (ledger === null)
     throw new Error("Feedback ledger could not be loaded after observation");
-  const classifications = Object.fromEntries(
-    ledger.entries
-      .filter(
-        (item) =>
-          item.kind === "conversation-comment" &&
-          (item.actionability === "actionable" ||
-            item.actionability === "discussion" ||
-            item.actionability === "not-actionable"),
-      )
-      .map((item) => [
-        `conversation-comment:${item.id}`,
-        item.actionability as ConversationClassification,
-      ]),
-  ) as Readonly<Record<string, ConversationClassification>>;
-  const externalComments = observation.conversationComments.filter(
-    (comment) => !comment.body.includes("<!-- agent-orchestrator-feedback:"),
-  );
-  const selection = resumingReviewRepair
-    ? null
-    : selectActionableFeedback({
-        currentHeadSha: observation.headSha,
-        botAuthor: "__automation_replies_are_filtered_by_marker__",
-        reviews: observation.requestedChanges?.feedback.reviews ?? [],
-        conversationComments: externalComments,
-        conversationClassifications: classifications,
-      });
-  if (selection !== null && selection.attentionNeeded.length > 0) {
-    const latest = taskStore.read(card.id);
-    if (latest !== null && latest.phase === "human-feedback") {
-      taskStore.compareAndSwap(
-        card.id,
-        latest.revision,
-        transitionTaskExecutionRecord(latest, {
-          type: "attention-required",
-          eventId: `${latest.operationKey}:feedback-ambiguous:${ledger.revision}`,
-          projectId: project.id,
-          cardId: card.id,
-          operationKey: latest.operationKey,
-          occurredAt: new Date(
-            Math.max(Date.now(), Date.parse(latest.updatedAt) + 1),
-          ).toISOString(),
-        }),
-      );
-    }
-    return "attention-required";
-  }
   const pendingIds = new Set(
-    resumingReviewRepair
+    resumingReservedRound
       ? (record.feedbackRemediation?.feedbackIds ??
           ledger.entries
             .filter(
@@ -554,7 +540,14 @@ export async function runTaskSessionFeedbackCycle(
                 entry.actionability === "actionable",
             )
             .map((entry) => `${entry.kind}:${entry.id}`))
-      : selection!.actionable.map((item) => item.key),
+      : ledger.entries
+          .filter(
+            (item) =>
+              item.isCurrent !== false &&
+              item.actionability === "actionable" &&
+              item.status === "pending",
+          )
+          .map((item) => `${item.kind}:${item.id}`),
   );
   const actionableFeedback = ledger.entries.filter(
     (item) =>

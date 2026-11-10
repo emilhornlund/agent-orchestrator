@@ -43,6 +43,38 @@ const entry = (
 });
 
 describe("reconcileFeedbackRound", () => {
+  it("uses latest bodies, retires deleted requests and retains immutable prior handling across restart", () => {
+    const f = fixture();
+    const attempted = entry("edited", {
+      status: "escalated",
+      unresolvedReason: "Not implemented",
+    });
+    const deleted = entry("deleted");
+    f.store.create("card", [attempted, deleted]);
+    const result = reconcileFeedbackRound({
+      store: f.store,
+      projectId: "p",
+      cardId: "card",
+      previousHeadSha: f.sha,
+      observedHeadSha: f.sha,
+      newlyObservedFeedback: [entry("edited", { body: "Latest request text" })],
+    });
+    expect(result.ledger.entries).toMatchObject([
+      { id: "edited", body: "Latest request text", status: "escalated" },
+      { id: "deleted", status: "closed", isCurrent: false },
+    ]);
+    expect(result.ledger.history).toEqual([attempted, deleted]);
+    expect(result.remainingActionableFeedbackIds).toEqual([]);
+    expect(f.store.read("card")).toEqual(result.ledger);
+    expect(() =>
+      f.store.compareAndSwap("card", result.ledger.revision, {
+        ...result.ledger,
+        revision: result.ledger.revision + 1,
+        history: [],
+      }),
+    ).toThrow("history cannot be rewritten");
+  });
+
   it("carries earlier unresolved feedback and adds a late actionable item", () => {
     const f = fixture();
     f.store.create("card", [entry("old")]);

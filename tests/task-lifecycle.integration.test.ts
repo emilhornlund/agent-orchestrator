@@ -2,6 +2,7 @@ import { execFile as nodeExecFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import { actionableFeedbackResponse } from "./support/feedback-classification-response.js";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -766,6 +767,12 @@ describe("task lifecycle through pollProject", () => {
       }
       const openCode = new OpenCodeClient(
         async (options: OpenCodeRunOptions) => {
+          if (options.sessionLabel === "Human feedback classification")
+            return {
+              exitCode: 0,
+              output: actionableFeedbackResponse(options.prompt),
+              errorOutput: "",
+            };
           const cardId = path.basename(options.cwd);
           openCodeCards.push(cardId);
           if (feedbackReviewRecovery !== undefined && correctionFeedback) {

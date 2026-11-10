@@ -31,6 +31,28 @@
   Self-review inspected the new source/tests, `pollProject` wiring, authority writes,
   timer lifetime and read races. Added final PR/head verification and insulated
   diagnostics from writer completion. No known observer-task defect remains.
+- P7-T4 implements current semantic feedback refresh before T2b dispatch. Production
+  observation includes standalone inline/review discussion without requiring a
+  current-head changes-requested verdict, preserves inline context and API actor
+  identity, and excludes automation. A read-only OpenCode classification is checked
+  against exact complete source identities/revisions. Substantive changes renew a
+  request; incidental edits/head/timestamp changes do not renew attempted work.
+  Deleted/superseded items become inactive, prior handling is append-only, and
+  supported older ledgers retain their handling state. Reserved rounds with explicit
+  IDs retain their original inputs; legacy rounds still verify their operation hash.
+  No-op primary correction records unresolved attempted feedback so later heads
+  cannot silently restart it. Refresh now precedes contextual replies.
+- T4 checks: nine focused feedback/GitHub/dispatch suites passed **135 tests**;
+  `yarn test tests/task-lifecycle.integration.test.ts` passed **20 tests**;
+  `yarn typecheck` and changed-file ESLint passed. The broad `yarn test` initially
+  found seven lifecycle fixture failures (2,090 passed): the new semantic operation
+  was incorrectly treated as implementation review by the fixture. Its explicit
+  classification response fixed those failures. A later focused run caught a legacy
+  reservation without feedback IDs and no-op outstanding-count compatibility; both
+  were corrected without guessing identities or claiming unresolved feedback fixed.
+  Self-review covered clients, current/historical ledger writes, original-operation
+  recovery, selection and reply ordering. Queue/quality/terminal obligations below
+  remain unfinished, not implied complete by this task.
 - Remaining P7 order: arrival consumption/priority/prerequisites (T2b), durable fair global AI
   capacity (T3), current semantic feedback/history (T4), same-PR correction and list
   recovery (T5), truthful replies/managed description (T6), active terminal precedence

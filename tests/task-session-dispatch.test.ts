@@ -34,6 +34,7 @@ import { writeTrustedCommitState } from "../src/orchestrator/trusted-commit-stat
 import { transitionTaskExecutionRecord } from "../src/task-session/task-execution-transition.js";
 import { getTaskSessionSourceSnapshotIdentity } from "../src/task-session/source-snapshot.js";
 import type { TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
+import { actionableFeedbackResponse } from "./support/feedback-classification-response.js";
 
 let root: string;
 afterEach(() => {
@@ -497,6 +498,12 @@ describe("task-session production dispatch", () => {
       let abortAtValidation = false;
       const validationRestartController = new AbortController();
       const run = vi.fn<RunOpenCode>(async (options) => {
+        if (options.sessionLabel === "Human feedback classification")
+          return {
+            exitCode: 0,
+            output: actionableFeedbackResponse(options.prompt),
+            errorOutput: "",
+          };
         if (options.prompt.includes("Reconstruct")) {
           listedSessionId = replacementSessionId;
           return {
@@ -1308,6 +1315,8 @@ describe("task-session production dispatch", () => {
       addComment: vi.fn(async () => undefined),
     } as unknown as TrelloClient;
     const githubRun = vi.fn<RunGitHubCommand>(async (_cwd, args) => {
+      if (args[0] === "api" && args[1] === "user")
+        return JSON.stringify({ login: "automation" });
       if (args[0] === "pr" && args[1] === "list") {
         const requestedFields =
           args.find((argument) => argument.includes("headRefOid")) ?? "";
@@ -1663,6 +1672,12 @@ describe("task-session production dispatch", () => {
     const openCodeRun = vi
       .fn<RunOpenCode>()
       .mockImplementation(async (run: OpenCodeRunOptions) => {
+        if (run.sessionLabel === "Human feedback classification")
+          return {
+            exitCode: 0,
+            output: actionableFeedbackResponse(run.prompt),
+            errorOutput: "",
+          };
         let processEvidence:
           | {
               executionId: string;

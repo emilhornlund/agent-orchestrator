@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { reconcileFeedbackRound } from "../src/task-session/reconcile-feedback-round.js";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -207,8 +208,22 @@ describe("runTaskSessionFeedbackRemediation", () => {
       "no-op",
     );
     expect(f.feedbackLedgerStore.read("card")?.entries[0]?.status).toBe(
-      "pending",
+      "escalated",
     );
+    const retained = f.feedbackLedgerStore.read("card")!;
+    const refreshed = reconcileFeedbackRound({
+      store: f.feedbackLedgerStore,
+      projectId: retained.projectId,
+      cardId: "card",
+      previousHeadSha: "a".repeat(40),
+      observedHeadSha: "b".repeat(40),
+      newlyObservedFeedback: retained.entries.map((entry) => ({
+        ...entry,
+        status: "pending",
+        headSha: "b".repeat(40),
+      })),
+    });
+    expect(refreshed.remainingActionableFeedbackIds).toEqual([]);
   });
 
   it("rejects a mismatched primary session before invoking OpenCode", async () => {

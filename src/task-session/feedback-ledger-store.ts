@@ -182,6 +182,17 @@ export class FeedbackLedgerStore {
     nextValue: FeedbackLedger,
   ): FeedbackLedger {
     const next = parseFeedbackLedger(nextValue);
+    const assertHistory = (current: FeedbackLedger): void => {
+      if (
+        (current.history ?? []).some(
+          (entry, index) =>
+            JSON.stringify(entry) !== JSON.stringify(next.history?.[index]),
+        )
+      )
+        throw new FeedbackLedgerConflictError(
+          "Feedback handling history cannot be rewritten",
+        );
+    };
     if (this.authority !== undefined)
       return this.authority.mutate(
         ProjectRunAuthority.taskKey("feedback-ledger", cardId),
@@ -192,6 +203,7 @@ export class FeedbackLedgerStore {
             throw new FeedbackLedgerConflictError(
               "Feedback ledger projection revision conflict",
             );
+          assertHistory(current);
           if (
             next.projectId !== this.projectId ||
             next.cardId !== cardId ||
@@ -221,6 +233,7 @@ export class FeedbackLedgerStore {
           `Feedback ledger revision conflict: expected ${expectedRevision}, found ${current?.revision ?? "missing"}`,
         );
       }
+      assertHistory(current);
       this.write(file, next, false);
       return next;
     });
@@ -229,24 +242,43 @@ export class FeedbackLedgerStore {
   mergeIncoming(
     cardId: string,
     entries: readonly FeedbackLedgerEntry[],
+    options: { replaceCurrent?: boolean } = {},
   ): FeedbackLedger {
     const current = this.read(cardId);
     if (current === null) return this.create(cardId, entries);
     const byKey = new Map(
       current.entries.map((entry) => [`${entry.kind}:${entry.id}`, entry]),
     );
+    const history = [...(current.history ?? [])];
     for (const incoming of entries) {
       const key = `${incoming.kind}:${incoming.id}`;
       const previous = byKey.get(key);
+      if (
+        previous !== undefined &&
+        (previous.body !== incoming.body ||
+          previous.author !== incoming.author ||
+          previous.path !== incoming.path ||
+          previous.line !== incoming.line ||
+          previous.originalLine !== incoming.originalLine ||
+          previous.diffHunk !== incoming.diffHunk ||
+          (incoming.requestRevision ?? 0) > (previous.requestRevision ?? 0) ||
+          previous.isCurrent === false)
+      )
+        history.push(previous);
       byKey.set(
         key,
-        previous === undefined
+        previous === undefined ||
+          (incoming.requestRevision ?? 0) > (previous.requestRevision ?? 0)
           ? incoming
           : {
               ...incoming,
               actionability: previous.actionability,
               status: previous.status,
               verificationEvidence: previous.verificationEvidence,
+              sourceRevision:
+                incoming.sourceRevision ?? previous.sourceRevision,
+              requestRevision:
+                incoming.requestRevision ?? previous.requestRevision,
               ...(previous.remediationCommitSha === undefined
                 ? {}
                 : { remediationCommitSha: previous.remediationCommitSha }),
@@ -265,6 +297,21 @@ export class FeedbackLedgerStore {
             },
       );
     }
+    if (options.replaceCurrent === true) {
+      const incomingKeys = new Set(
+        entries.map((entry) => `${entry.kind}:${entry.id}`),
+      );
+      for (const [key, entry] of byKey) {
+        if (incomingKeys.has(key) || entry.isCurrent === false) continue;
+        history.push(entry);
+        byKey.set(key, {
+          ...entry,
+          isCurrent: false,
+          actionability: "not-actionable",
+          status: "closed",
+        });
+      }
+    }
     return this.compareAndSwap(cardId, current.revision, {
       ...current,
       revision: current.revision + 1,
@@ -272,6 +319,7 @@ export class FeedbackLedgerStore {
         Math.max(Date.now(), Date.parse(current.updatedAt) + 1),
       ).toISOString(),
       entries: [...byKey.values()],
+      ...(history.length === 0 ? {} : { history }),
     });
   }
 

@@ -253,11 +253,41 @@ export async function runTaskSessionFeedbackRemediation(
     options.git,
     options.worktreePath,
   );
-  const latestLedger = options.feedbackLedgerStore.read(options.card.id);
+  let latestLedger = options.feedbackLedgerStore.read(options.card.id);
   if (latestLedger === null)
     throw new TaskSessionFeedbackRemediationError(
       "Feedback ledger disappeared during remediation",
     );
+  const feedbackChangedDuringRun = latestLedger.revision !== ledger.revision;
+  if (beforeIdentity === afterIdentity) {
+    const attempted = new Map(
+      pending.map((entry) => [`${entry.kind}:${entry.id}`, entry]),
+    );
+    latestLedger = options.feedbackLedgerStore.compareAndSwap(
+      options.card.id,
+      latestLedger.revision,
+      {
+        ...latestLedger,
+        revision: latestLedger.revision + 1,
+        updatedAt: new Date(
+          Math.max(Date.now(), Date.parse(latestLedger.updatedAt) + 1),
+        ).toISOString(),
+        entries: latestLedger.entries.map((entry) => {
+          const original = attempted.get(`${entry.kind}:${entry.id}`);
+          return original &&
+            original.body === entry.body &&
+            original.requestRevision === entry.requestRevision
+            ? {
+                ...entry,
+                status: "escalated" as const,
+                unresolvedReason:
+                  "The correction attempt produced no implementation changes; this request remains unresolved.",
+              }
+            : entry;
+        }),
+      },
+    );
+  }
   const updatedRecord = updateRecord(options.taskRecordStore, current, {
     feedbackRemediation: {
       operationId: options.operationId,
@@ -269,10 +299,11 @@ export async function runTaskSessionFeedbackRemediation(
   });
   return {
     status: beforeIdentity === afterIdentity ? "no-op" : "changed",
-    feedbackChangedDuringRun: latestLedger.revision !== ledger.revision,
+    feedbackChangedDuringRun,
     remainingActionableFeedback: latestLedger.entries.filter(
       (entry) =>
-        entry.actionability === "actionable" && entry.status === "pending",
+        entry.actionability === "actionable" &&
+        (entry.status === "pending" || entry.status === "escalated"),
     ).length,
     ledgerRevision: latestLedger.revision,
     runResult,

@@ -215,7 +215,9 @@ records the completion checkpoint. Later active-PR workflow changes remain in P7
 Persist arrivals while a single writer executes, separate project occupancy from
 AI slots, and schedule human work before CI/maintenance. Keep current feedback
 separate from immutable handling history; semantic actionability belongs to
-OpenCode. Correct on the same PR/session, with truthful partial replies and current
+OpenCode. Current semantic feedback refresh precedes arrival dispatch/priority so
+automation and unchanged exhausted requests cannot monopolize the queue.
+Correct on the same PR/session, with truthful partial replies and current
 managed status. Human merge/closure fences stale work and reconciles dispatched
 effects; final cleanup/retry belongs to P10. See the [P7 guide](p7-execution.md).
 
