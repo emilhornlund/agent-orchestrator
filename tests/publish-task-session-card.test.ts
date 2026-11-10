@@ -158,7 +158,27 @@ describe("publishTaskSessionCard", () => {
     expect(publicationOptions?.reviewResult).toBe("Passed");
     await expect(
       publicationOptions?.beforePushVerification?.(),
-    ).resolves.toEqual(preparedReviewPublication);
+    ).resolves.toEqual({
+      ...preparedReviewPublication,
+      readinessEvidence: currentEvidence,
+    });
+  });
+
+  it("keeps an explicitly cleared review disclosure after current verification", async () => {
+    const { base } = fixture();
+    vi.mocked(publishCard).mockClear();
+    await publishTaskSessionCard({
+      ...base,
+      exhaustedReview: evidence.review!,
+      getPreparedReviewPublication: () => ({
+        reviewResult: "Passed",
+        reviewDisclosure: null,
+        qualityNeedsDraft: false,
+      }),
+    });
+    await expect(
+      vi.mocked(publishCard).mock.calls[0]?.[0].beforePushVerification?.(),
+    ).resolves.toMatchObject({ reviewDisclosure: null });
   });
 
   it("blocks publication when configured setup has no validated commit disposition", async () => {

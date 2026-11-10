@@ -3293,6 +3293,87 @@ export class GitHubClient {
       );
   }
 
+  async ensurePullRequestReady(options: {
+    cwd: string;
+    repository: string;
+    pullRequestUrl: string;
+    headBranch: string;
+    expectedHeadSha: string;
+    expectedBody: string;
+    project?: ProjectConfig;
+  }): Promise<void> {
+    options = { ...options };
+    const authority = mutationAuthority(options.project?.id);
+    const args = {
+      cwd: options.cwd,
+      repository: options.repository,
+      pullRequestUrl: options.pullRequestUrl,
+      headBranch: options.headBranch,
+      expectedHeadSha: options.expectedHeadSha,
+      expectedBody: options.expectedBody,
+    };
+    const request = { route: "github-pr-ready", args };
+    const verify = async () => {
+      await this.assertMutationOpen(options);
+      const state = await this.getPullRequestPublicationFields(options);
+      const pullRequest = await this.findPullRequestState({
+        cwd: options.cwd,
+        repository: options.repository,
+        headBranch: options.headBranch,
+        ...(options.project === undefined ? {} : { project: options.project }),
+      });
+      if (
+        pullRequest?.url !== options.pullRequestUrl ||
+        pullRequest.headRefOid !== options.expectedHeadSha ||
+        state.body !== options.expectedBody
+      )
+        throw new Error(
+          "Pull request readiness evidence changed before promotion",
+        );
+      return state;
+    };
+    if (!consumeJournaledDispatch(authority, request) && authority) {
+      this.assertMutationPullRequest(
+        authority,
+        options.repository,
+        options.pullRequestUrl,
+      );
+      await workflowMutation({
+        authority,
+        kind: "github-pr-draft",
+        target: options.pullRequestUrl,
+        request,
+        preflight: async () => {
+          await verify();
+        },
+        send: () => this.ensurePullRequestReady(options),
+        observe: async () => {
+          const fields = await verify();
+          return !fields.isDraft
+            ? { id: options.pullRequestUrl, fields, result: true }
+            : null;
+        },
+      });
+      return;
+    }
+    const state = await verify();
+    if (!state.isDraft) return;
+    const credential = await this.resolveCredential(options.project);
+    await this.run(
+      options.cwd,
+      [
+        "pr",
+        "ready",
+        parsePullRequestUrl(options.pullRequestUrl),
+        "--repo",
+        options.repository,
+      ],
+      credential,
+    );
+    if ((await verify()).isDraft)
+      throw new Error("GitHub did not confirm ready status for pull request");
+  }
+
   async createPullRequest(
     options: CreatePullRequestOptions,
   ): Promise<PullRequest> {

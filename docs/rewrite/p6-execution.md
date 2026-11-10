@@ -1,8 +1,9 @@
 # P6 — advisory implementation and truthful publication
 
 Temporary implementation guide. Use the [delivery workflow](phase-execution.md).
-Prepare small complete tasks covering the remaining T2–T10 scope, implement and
-review them sequentially, then inspect final integration. T1 is committed as `d441859`.
+T1–T5 are implemented. T6–T9 publication/isolation changes and the T10 readiness
+checkpoint are recorded in [current progress](phase-status.md). Finish the remaining
+isolation integration follow-up, then inspect final P6 integration.
 Do not recreate readiness, manifest, live-qualification or evidence work.
 
 ## Product target
@@ -49,10 +50,9 @@ prompts and existing-PR feedback callers before changing common contracts.
 Persist primary/advisory/outage/unknown outcomes truthfully across result/ledger gaps.
 Keep optional quality outcomes from T1 intact, including skipped and uncertain.
 
-Prior local experiments allowed task writes and denied source/index/HEAD/ref and
-unrelated-worktree writes using Bubblewrap and Podman. This is a useful technical
-lead, not production integration. Wrap the actual OpenCode spawn boundary; cwd or
-prompt instructions alone are insufficient. Keep common Git metadata and orchestrator
+Writable OpenCode dispatch now wraps the actual spawn boundary using Bubblewrap;
+cwd or prompt instructions alone are insufficient. Complete startup/container
+dependency integration and verify mount boundaries. Keep common Git metadata and orchestrator
 state/logs outside the agent's writable mounts. Scope model config/auth reads and
 OpenCode writable cache/session state explicitly. Do not copy the experiment's broad
 read-only host mount or disabled SELinux labeling into a production profile blindly.

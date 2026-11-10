@@ -6785,7 +6785,10 @@ export async function runTaskSessionWorkflow(
             throw new Error(
               `Prepared human-review publication evidence is invalid: ${decision.reasons.join("; ")}`,
             );
-          return preparedReviewPublication;
+          return {
+            ...preparedReviewPublication,
+            readinessEvidence: preparedEvidence,
+          };
         },
       });
       publishedSha = await git.getHeadSha(worktreePath);

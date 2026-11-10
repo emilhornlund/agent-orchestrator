@@ -152,6 +152,7 @@ export async function withJournaledDispatch<T>(
     "github-pr-create": "github-pr-create",
     "github-pr-body": "github-pr-body",
     "github-pr-draft": "github-pr-draft",
+    "github-pr-ready": "github-pr-draft",
     "github-thread-reply": "github-reply",
     "github-conversation-reply": "github-reply",
     "git-worktree": "git-worktree",

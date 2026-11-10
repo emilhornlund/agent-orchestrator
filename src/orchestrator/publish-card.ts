@@ -38,6 +38,10 @@ import {
 } from "../opencode/render-pull-request-description.js";
 import type { CommandRunner } from "../process/command-runner.js";
 import type { PersistedSetupDisposition } from "../process/setup-commit-scope.js";
+import type { VerifiedPublicationDecisionInput } from "../task-session/verified-publication-decision.js";
+import { decideValidatedHumanReviewPublication } from "../task-session/verified-publication-decision.js";
+import { getTaskSessionSourceSnapshotIdentity } from "../task-session/source-snapshot.js";
+import { FeedbackLedgerStore } from "../task-session/feedback-ledger-store.js";
 
 import { toFailureError } from "./failure-diagnostic.js";
 import { PublishedCardStateError } from "./published-card-state-error.js";
@@ -83,6 +87,7 @@ export interface PreparedReviewPublication {
   /** Current-source material concerns to disclose and use for draft selection. */
   reviewDisclosure: ImplementationReviewResult | null;
   qualityNeedsDraft?: boolean;
+  readinessEvidence?: VerifiedPublicationDecisionInput;
 }
 
 /** Presentation is finalized before the durable payload is hashed. Recovery
@@ -522,6 +527,7 @@ export async function publishCard({
   let publicationReviewResult = reviewResult;
   let publicationReviewDisclosure = exhaustedReview ?? null;
   let publicationQualityNeedsDraft = qualityNeedsDraft;
+  let readinessEvidence: VerifiedPublicationDecisionInput | undefined;
   if (
     expectedExistingPullRequestUrl === undefined &&
     ProjectRunAuthority.isProjectLeaseScoped(project.id) &&
@@ -639,6 +645,7 @@ export async function publishCard({
     if (preparedReview !== undefined) {
       publicationReviewResult = preparedReview.reviewResult;
       publicationReviewDisclosure = preparedReview.reviewDisclosure;
+      readinessEvidence = preparedReview.readinessEvidence;
       if (preparedReview.qualityNeedsDraft !== undefined)
         publicationQualityNeedsDraft = preparedReview.qualityNeedsDraft;
     }
@@ -821,7 +828,52 @@ export async function publishCard({
               `Pull request description enriched: ${pullRequest.url}`,
             );
           }
+          const authority = ProjectRunAuthority.current(project.id);
+          const ledger = authority
+            ? new FeedbackLedgerStore(
+                authority.store.storageRoot,
+                project,
+              ).read(card.id)
+            : null;
+          const unresolvedHumanRequests =
+            ledger?.entries.some(
+              (entry) =>
+                entry.actionability === "unclassified" ||
+                (entry.actionability === "actionable" &&
+                  entry.status !== "closed" &&
+                  (entry.unresolvedReason !== undefined ||
+                    entry.verificationEvidence.length === 0 ||
+                    !["verified", "published"].includes(entry.status))),
+            ) ?? false;
+          if (
+            readinessEvidence !== undefined &&
+            !publicationQualityNeedsDraft &&
+            publicationReviewDisclosure === null &&
+            ["Passed", reviewConcernsDismissedAsNonMaterialLabel].includes(
+              publicationReviewResult,
+            ) &&
+            !unresolvedHumanRequests &&
+            readinessEvidence.validation?.status === "passed" &&
+            readinessEvidence.coverage?.status === "passed" &&
+            readinessEvidence.review?.reviewedContentIdentity ===
+              readinessEvidence.currentContentIdentity &&
+            decideValidatedHumanReviewPublication(readinessEvidence).allowed &&
+            readinessEvidence.currentContentIdentity ===
+              (await getTaskSessionSourceSnapshotIdentity(git, worktreePath)) &&
+            enrichedBody !== null
+          ) {
+            await github.ensurePullRequestReady({
+              cwd: worktreePath,
+              repository: project.repository.github,
+              pullRequestUrl: pullRequest.url,
+              headBranch: branch,
+              expectedHeadSha: publishedCommitSha,
+              expectedBody: enrichedBody,
+              project,
+            });
+          }
         } catch (error) {
+          if (error instanceof WorkflowMutationWaitingError) throw error;
           logDescriptionFallback(
             cardLog,
             "existing pull request enrichment",

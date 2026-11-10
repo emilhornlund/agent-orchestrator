@@ -383,7 +383,20 @@ export async function publishTaskSessionCard(
           : (preparedReviewPublication.reviewDisclosure ?? undefined),
         allowStaleExhaustedReview,
       );
-      return preparedReviewPublication;
+      return {
+        ...preparedReviewPublication,
+        reviewResult:
+          preparedReviewPublication?.reviewResult ?? options.reviewResult,
+        reviewDisclosure:
+          preparedReviewPublication === undefined
+            ? (options.exhaustedReview ?? null)
+            : preparedReviewPublication.reviewDisclosure,
+        qualityNeedsDraft:
+          preparedReviewPublication?.qualityNeedsDraft ??
+          (preparedEvidence.validation?.status !== "passed" ||
+            preparedEvidence.coverage?.status !== "passed"),
+        readinessEvidence: preparedEvidence,
+      };
     },
   });
   return options.git.getHeadSha(options.worktreePath);
