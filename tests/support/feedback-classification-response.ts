@@ -13,14 +13,18 @@ export function actionableFeedbackResponse(prompt: string): string {
   const candidates = JSON.parse(blocks.at(-1)!) as {
     feedbackId: string;
     sourceRevision: string;
+    current: { body: string };
+    previous: { body: string } | null;
   }[];
   return JSON.stringify({
     ...identity,
-    assessments: candidates.map(({ feedbackId, sourceRevision }) => ({
-      feedbackId,
-      sourceRevision,
-      actionability: "actionable",
-      substantiveChange: true,
-    })),
+    assessments: candidates.map(
+      ({ feedbackId, sourceRevision, current, previous }) => ({
+        feedbackId,
+        sourceRevision,
+        actionability: "actionable",
+        substantiveChange: previous === null || previous.body !== current.body,
+      }),
+    ),
   });
 }

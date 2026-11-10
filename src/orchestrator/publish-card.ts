@@ -75,6 +75,8 @@ export interface PublishCardOptions {
   commands?: CommandRunner;
   rebaseAlreadyCompleted?: boolean;
   beforePushVerification?: () => Promise<PreparedReviewPublication | void>;
+  beforeHumanReviewTransition?: () => Promise<void>;
+  afterHumanReviewTransition?: () => Promise<void>;
   expectedExistingPullRequestUrl?: string;
   verifiedDescriptionFacts?: () => readonly string[];
   setupDisposition?: PersistedSetupDisposition;
@@ -521,6 +523,8 @@ export async function publishCard({
   commands,
   rebaseAlreadyCompleted = false,
   beforePushVerification,
+  beforeHumanReviewTransition,
+  afterHumanReviewTransition,
   expectedExistingPullRequestUrl,
   qualityNeedsDraft = false,
 }: PublishCardOptions): Promise<void> {
@@ -999,7 +1003,9 @@ export async function publishCard({
     );
 
   try {
+    await beforeHumanReviewTransition?.();
     await trello.moveCard(card.id, project.trello.reviewListId);
+    await afterHumanReviewTransition?.();
   } catch (error) {
     if (error instanceof TrelloRequestAbortedError) {
       throw error;

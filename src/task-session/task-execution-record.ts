@@ -638,6 +638,12 @@ const feedbackRemediationSchema = z.strictObject({
   status: z.enum(["active", "changed", "no-op", "failed"]),
   headSha: gitSha,
   ledgerRevision: z.number().int().positive().safe(),
+  reviewSourceAttempts: z
+    .record(
+      taskSessionContentIdentity,
+      z.number().int().nonnegative().max(OPERATION_RECOVERY_MAX_EXECUTIONS),
+    )
+    .optional(),
   feedbackIds: z
     .array(nonBlankIdentifier)
     .min(1)
@@ -740,6 +746,14 @@ const taskExecutionRecordSchema = z
       .optional(),
     ciRepair: ciRepairSchema.optional(),
     feedbackRemediation: feedbackRemediationSchema.optional(),
+    expectedTrelloListId: nonBlankIdentifier.optional(),
+    feedbackCardMove: z
+      .strictObject({
+        operationId: nonBlankIdentifier,
+        fromListId: nonBlankIdentifier,
+        toListId: nonBlankIdentifier,
+      })
+      .optional(),
     /** Consumed before an operator-authorized failed feedback checkpoint is resumed. */
     feedbackRecoveryAttemptEventId: nonBlankIdentifier.optional(),
     reviewObservation: reviewObservationSchema.optional(),

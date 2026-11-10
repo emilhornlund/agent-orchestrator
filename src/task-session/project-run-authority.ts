@@ -808,11 +808,19 @@ export class ProjectRunAuthority {
                   : current.operation.generation + 1,
             },
             expectedTrelloListId:
-              projection.phase === "ci" || projection.phase === "human-feedback"
+              options.terminal?.evidence.trelloListId ??
+              projection.expectedTrelloListId ??
+              (projection.pullRequest !== undefined &&
+              projection.phase !== "done" &&
+              (projection.feedbackRemediation !== undefined ||
+                projection.ciRepair?.activePrimaryOperation !== undefined)
                 ? current.pinned.lists.review
-                : projection.phase === "done"
-                  ? current.pinned.lists.done
-                  : current.pinned.lists.working,
+                : projection.phase === "ci" ||
+                    projection.phase === "human-feedback"
+                  ? current.pinned.lists.review
+                  : projection.phase === "done"
+                    ? current.pinned.lists.done
+                    : current.pinned.lists.working),
             ...(projection.recoveryWait
               ? {
                   wait: {

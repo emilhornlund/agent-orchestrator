@@ -87,8 +87,34 @@
   primary creation/reservation, all OpenCode callers, persisted ticket compatibility,
   shutdown and stopped-evidence release. Fixed live-slot stealing, detached nested
   token reuse, pre-dispatch cancellation accounting and recovery-wait eligibility.
-- Remaining P7 order: same-PR correction and list
-  recovery (T5), truthful replies/managed description (T6), active terminal precedence
+- P7-T5 completes advisory same-PR correction publication and verified Working/Review
+  transitions. Failed local checks and bounded unavailable review still publish
+  available additive corrections with current failure/uncertainty disclosure and
+  draft status. Review attempts persist per source without a lifetime human-round
+  cap. Semantic request revisions distinguish same-body changed requests while
+  legacy operation hashes remain supported. Primary session, attachment refresh,
+  separate independent review and genuine-primary-failure handling remain intact.
+  Explicit expected card location and pending move identity replace phase-based
+  assumptions for new transitions; old published corrections retain their old Review
+  expectation until verified migration. Both normal and recovered publication callers
+  persist return intent before the move and confirm readback afterward. Known stopped
+  exhausted primary correction returns to Review with retained PR/work/ownership;
+  unknown writers remain fenced in Working.
+- T5 checks: nine focused suites (including all **22 real-Git lifecycle scenarios**)
+  passed **152 tests**. New scenarios publish failed validation and unavailable review
+  to the same descendant PR head, and recover an accepted Working move without a
+  duplicate write. Initial failures exposed missing stateful move/body fixtures and
+  a fixture PATH-restoration defect; these were corrected, retaining real crash and
+  unknown-writer assertions. Self-review traced original-session and generic recovery,
+  both publication callers, terminal expected-list precedence, move identity/manual
+  interference and current quality evidence. Corrected same-body request identity,
+  nullable unavailable review recovery and truthful failed-quality persistence.
+  After two lint-only corrections (retained error cause and unused initializer),
+  the eight non-lifecycle suites passed **130 tests**, and both new quality lifecycle
+  scenarios passed again (20 unrelated scenarios filtered out). Typecheck,
+  changed-file ESLint, documentation Prettier and `git diff --check` passed. The
+  selected guide/roadmap scope and dependencies remain accurate.
+- Remaining P7 order: truthful replies/managed description (T6), active terminal precedence
   (T7), combined checks and final `yarn validate` (T8). These are not complete.
 
 ## Inherited P6 checkpoint

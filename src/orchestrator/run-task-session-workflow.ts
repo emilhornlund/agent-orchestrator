@@ -123,6 +123,7 @@ import {
 } from "../task-session/task-mutation-queue.js";
 import {
   reconcileTaskSession,
+  expectedTaskTrelloList,
   persistTaskSessionContextWait,
   type TaskSessionRecoverySnapshot,
 } from "../task-session/reconcile-task-session.js";
@@ -168,6 +169,11 @@ import { maintainOutdatedPr } from "./maintain-outdated-pr.js";
 import { reconcileUnobservedTerminalPrEvents } from "./reconcile-unobserved-terminal-pr.js";
 import { verifyMergedTaskPrHeadContinuity } from "./verify-merged-task-pr-head-continuity.js";
 import { TaskMutationBlockStore } from "./task-mutation-block-store.js";
+import {
+  reconcilePendingFeedbackCardMove,
+  ensureFeedbackCardLocation,
+  prepareFeedbackCardMove,
+} from "./feedback-card-location.js";
 import {
   findPrimaryRecoveryError,
   persistPrimaryOperationRecovery,
@@ -1183,6 +1189,28 @@ export async function runTaskSessionWorkflow(
       "Task-session workflow requires a configured external context root",
     );
   const taskStore = new TaskExecutionStore(root, project);
+  const correctionPublicationLocation = (
+    source: TaskExecutionRecord | null,
+  ) => {
+    if (!source?.pullRequest || !source.feedbackRemediation) return {};
+    const location = {
+      project,
+      cardId: source.cardId,
+      taskStore,
+      trello,
+      github,
+    };
+    return {
+      beforeHumanReviewTransition: () =>
+        prepareFeedbackCardMove(
+          location,
+          project.trello.reviewListId,
+          `${source.feedbackRemediation!.operationId}:review`,
+        ),
+      afterHumanReviewTransition: () =>
+        reconcilePendingFeedbackCardMove(location),
+    };
+  };
   const planStore = new TaskPlanStore(root, project);
   const inspectSessionForWorktree = (cwd: string) => (sessionId: string) =>
     inspectPrimaryOpenCodeSession({
@@ -1857,6 +1885,7 @@ export async function runTaskSessionWorkflow(
       humanReviewCards.push(currentCard);
     if (
       canonicalTask.recoveryWait !== undefined ||
+      canonicalTask.feedbackCardMove !== undefined ||
       currentCard.idList !== project.trello.reviewListId
     )
       executionRecoveryCard = currentCard;
@@ -2106,6 +2135,20 @@ export async function runTaskSessionWorkflow(
         throw error;
       }
       return;
+    }
+    if (taskStore.read(observation.cardId)?.feedbackCardMove) {
+      await reconcilePendingFeedbackCardMove({
+        project,
+        cardId: observation.cardId,
+        taskStore,
+        trello,
+        github,
+      });
+      const currentCard = await trello.getCard(observation.cardId);
+      const index = humanReviewCards.findIndex(
+        (candidate) => candidate.id === currentCard.id,
+      );
+      if (index >= 0) humanReviewCards[index] = currentCard;
     }
     const executionCard = humanReviewCards.find(
       (candidate) => candidate.id === observation.cardId,
@@ -3113,6 +3156,16 @@ export async function runTaskSessionWorkflow(
     canonicalCardId !== undefined &&
     !recoveryCheckedThisPoll.has(canonicalCardId)
   ) {
+    if (taskStore.read(executionRecoveryCard.id)?.feedbackCardMove) {
+      await reconcilePendingFeedbackCardMove({
+        project,
+        cardId: executionRecoveryCard.id,
+        taskStore,
+        trello,
+        github,
+      });
+      executionRecoveryCard = await trello.getCard(executionRecoveryCard.id);
+    }
     const recoveryRecord = taskStore.read(executionRecoveryCard.id);
     if (recoveryRecord === null)
       throw new Error(
@@ -4463,6 +4516,23 @@ export async function runTaskSessionWorkflow(
       cardLog.event(
         `Recovering existing task in ${recoveryRecord.phase} phase`,
       );
+      if (
+        mutation.kind === "feedback" &&
+        recoveryRecord.pullRequest !== undefined &&
+        !(
+          recoveryRecord.phase === "publication" &&
+          expectedTaskTrelloList(project, recoveryRecord) ===
+            project.trello.reviewListId
+        )
+      ) {
+        await ensureFeedbackCardLocation(
+          { project, cardId: card.id, taskStore, trello, github },
+          project.trello.workingListId,
+          `${mutation.eventId}:working`,
+        );
+        recoveryRecord = taskStore.read(card.id)!;
+        card = await trello.getCard(card.id);
+      }
     }
     if (mutation.kind === "refinement") {
       if (recoveryRecord !== null) {
@@ -5864,6 +5934,7 @@ export async function runTaskSessionWorkflow(
             : {
                 expectedExistingPullRequestUrl: recoveryRecord.pullRequest.url,
               }),
+          ...correctionPublicationLocation(recoveryRecord),
         });
         publishedSha = await git.getHeadSha(worktreePath);
       } else {
@@ -6901,6 +6972,7 @@ export async function runTaskSessionWorkflow(
         ...(recoveryRecord?.pullRequest?.url === undefined
           ? {}
           : { expectedExistingPullRequestUrl: recoveryRecord.pullRequest.url }),
+        ...correctionPublicationLocation(recoveryRecord),
         beforePushVerification: async () => {
           preparedEvidence = await verifyPreparedContent();
           const reviewDisclosure =

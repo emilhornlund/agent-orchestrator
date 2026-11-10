@@ -188,7 +188,7 @@ describe("task-session production dispatch", () => {
         ...createCard(),
         idList: project.trello.reviewListId,
       };
-      const cardListId = project.trello.reviewListId;
+      let cardListId = project.trello.reviewListId;
       const headSha = "a".repeat(40);
       const worktreePath = path.join(worktreeRoot, card.id);
       fs.mkdirSync(worktreePath, { recursive: true });
@@ -386,10 +386,11 @@ describe("task-session production dispatch", () => {
           listId === cardListId ? [card] : [],
         ),
         getCard: vi.fn(async () => card),
-        moveCard: vi.fn(async (_cardId: string, listId: string) => ({
-          ...card,
-          idList: listId,
-        })),
+        moveCard: vi.fn(async (_cardId: string, listId: string) => {
+          cardListId = listId;
+          card.idList = listId;
+          return { ...card };
+        }),
         getCardAttachments: vi.fn(async () => []),
       } as unknown as TrelloClient;
       const git = {
@@ -1137,8 +1138,8 @@ describe("task-session production dispatch", () => {
       expect(afterValidationRestart?.operationKey).toBe(
         "original-task-operation",
       );
-      expect(cardListId).toBe(project.trello.reviewListId);
-      expect(card.idList).toBe(project.trello.reviewListId);
+      expect(cardListId).toBe(project.trello.workingListId);
+      expect(card.idList).toBe(project.trello.workingListId);
       expect(feedbackQueue.getActive()).toMatchObject({
         eventId: checkpointOperationId,
         kind: "feedback",

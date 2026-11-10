@@ -51,6 +51,7 @@ interface LifecycleScenario {
   quality: "validation" | "none" | "coverage" | "both";
   terminalReadRaceAt?: number;
   correctionFailure?: boolean;
+  feedbackQuality?: "validation" | "unavailable";
   preparedReview?: "material" | "unavailable";
   ciReviewHandoffs?: boolean;
   feedbackReviewRecovery?:
@@ -74,6 +75,14 @@ afterEach(async () => {
 
 describe("task lifecycle through pollProject", () => {
   it.each<LifecycleScenario>([
+    ...(["validation", "unavailable"] as const).map((feedbackQuality) => ({
+      draft: false,
+      terminal: "merged" as const,
+      destination: "done" as const,
+      ackLoss: false,
+      quality: "both" as const,
+      feedbackQuality,
+    })),
     {
       draft: false,
       terminal: "merged",
@@ -174,7 +183,7 @@ describe("task lifecycle through pollProject", () => {
       ciReviewRecovery,
     })),
   ] as const)(
-    "preserves the owned lifecycle (quality=$quality, draft=$draft, terminal=$terminal, ackLoss=$ackLoss, correctionFailure=$correctionFailure, preparedReview=$preparedReview, ciReviewHandoffs=$ciReviewHandoffs, feedbackReviewRecovery=$feedbackReviewRecovery, ciReviewRecovery=$ciReviewRecovery)",
+    "preserves the owned lifecycle (quality=$quality, draft=$draft, terminal=$terminal, ackLoss=$ackLoss, correctionFailure=$correctionFailure, feedbackQuality=$feedbackQuality, preparedReview=$preparedReview, ciReviewHandoffs=$ciReviewHandoffs, feedbackReviewRecovery=$feedbackReviewRecovery, ciReviewRecovery=$ciReviewRecovery)",
     async ({
       draft,
       terminal,
@@ -182,12 +191,16 @@ describe("task lifecycle through pollProject", () => {
       ackLoss,
       terminalReadRaceAt = 2,
       correctionFailure = false,
+      feedbackQuality,
       quality,
       preparedReview,
       ciReviewHandoffs = false,
       feedbackReviewRecovery,
       ciReviewRecovery,
     }) => {
+      // Restore the inherited environment even in scenarios without a scripted child.
+      originalProcessPath = process.env.PATH;
+      originalPrimaryMode = process.env.PRIMARY_MODE;
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "task-lifecycle-"));
       roots.push(root);
       const home = path.join(root, "home");
@@ -332,7 +345,14 @@ describe("task lifecycle through pollProject", () => {
           refinement: { model: "refine", variant: "high" },
           implementation: { model: "implement", variant: "high" },
           review: { model: "review", variant: "high" },
-          remediation: { model: "repair", variant: "high", maxPasses: 1 },
+          remediation: {
+            model: "repair",
+            variant: "high",
+            maxPasses: 1,
+            ...(feedbackQuality === "validation"
+              ? { validationMaxPasses: 0 }
+              : {}),
+          },
           commit: { model: "commit", variant: "low" },
           timeoutMinutes: 1,
         },
@@ -467,6 +487,15 @@ describe("task lifecycle through pollProject", () => {
           });
           if (trapNextClaim && id === "next" && listId === "working")
             throw new Error("observed next claim boundary");
+          if (
+            correctionFeedback &&
+            id === "first" &&
+            listId === "working" &&
+            loseFeedbackWorkingAck
+          ) {
+            loseFeedbackWorkingAck = false;
+            throw new Error("lost feedback Working acknowledgment");
+          }
           return { ...cards.find((card) => card.id === id)!, idList: listId };
         },
         addComment: async (id: string, comment: string) => {
@@ -518,6 +547,7 @@ describe("task lifecycle through pollProject", () => {
       let loseCreateAcknowledgement = false;
       let feedbackReads = 0;
       let correctionFeedback = false;
+      let loseFeedbackWorkingAck = feedbackQuality === "validation";
       let feedbackBody = "Please handle the empty result.";
       let feedbackPrimaryCorrections = 0;
       const feedbackReviewDispatches: {
@@ -579,6 +609,25 @@ describe("task lifecycle through pollProject", () => {
           );
           if (!pr) throw new Error("PR not found");
           return { title: pr.title, body: pr.body, isDraft: pr.isDraft };
+        },
+        getPullRequestDescription: async (input: {
+          pullRequestUrl: string;
+        }) => {
+          const pr = [...prs.values()].find(
+            (candidate) => candidate.url === input.pullRequestUrl,
+          );
+          if (!pr) throw new Error("PR not found");
+          return pr.body;
+        },
+        editPullRequestDescription: async (input: {
+          pullRequestUrl: string;
+          body: string;
+        }) => {
+          const pr = [...prs.values()].find(
+            (candidate) => candidate.url === input.pullRequestUrl,
+          );
+          if (!pr) throw new Error("PR not found");
+          pr.body = input.body;
         },
         createPullRequest: async (input: {
           headBranch: string;
@@ -775,7 +824,11 @@ describe("task lifecycle through pollProject", () => {
             };
           const cardId = path.basename(options.cwd);
           openCodeCards.push(cardId);
-          if (feedbackReviewRecovery !== undefined && correctionFeedback) {
+          if (
+            (feedbackReviewRecovery !== undefined ||
+              feedbackQuality !== undefined) &&
+            correctionFeedback
+          ) {
             if (
               options.prompt.startsWith(
                 "Address the following verified-as-actionable human PR feedback",
@@ -830,12 +883,21 @@ describe("task lifecycle through pollProject", () => {
               options.readOnly &&
               options.prompt.includes("Independently review the implementation")
             ) {
+              if (feedbackQuality === "unavailable")
+                return {
+                  exitCode: 1,
+                  output: "",
+                  errorOutput: "Provider unavailable",
+                  failureClassification: "dependency-outage" as const,
+                };
               const identity = options.prompt.match(
                 /Reviewed source content identity: (sha256:[0-9a-f]{64})/u,
               )?.[1];
               if (identity === undefined)
                 throw new Error("Feedback review omitted source identity");
-              const repaired = feedbackReviewDispatches.length > 0;
+              const repaired =
+                feedbackQuality !== undefined ||
+                feedbackReviewDispatches.length > 0;
               const task = new TaskExecutionStore(
                 contextRoot,
                 project,
@@ -1262,6 +1324,18 @@ describe("task lifecycle through pollProject", () => {
       const observedCommands: string[] = [];
       const commandOutcomes: string[] = [];
       const commands = new CommandRunner(async (options: CommandRunOptions) => {
+        if (
+          feedbackQuality === "validation" &&
+          correctionFeedback &&
+          options.command === project.repository.validationCommand
+        )
+          return {
+            exitCode: 1,
+            output: "Observed correction test failure",
+            errorOutput: "Regression remains",
+            timedOut: false,
+            aborted: false,
+          };
         if (options.command.startsWith("opencode session list"))
           return {
             exitCode: 0,
@@ -1730,6 +1804,71 @@ describe("task lifecycle through pollProject", () => {
       expect(requests).toEqual(["agent/first"]);
       expect(accepted).toEqual([firstPr?.url]);
       expect(lists.get("first")).toBe("review");
+      if (feedbackQuality !== undefined) {
+        const originalHead = store.read("first")!.pullRequest!.headSha!;
+        correctionFeedback = true;
+        if (feedbackQuality === "validation") {
+          await expect(poll()).rejects.toThrow(
+            "lost feedback Working acknowledgment",
+          );
+          expect(store.read("first")?.feedbackCardMove).toMatchObject({
+            fromListId: "review",
+            toListId: "working",
+          });
+          expect(feedbackPrimaryCorrections).toBe(0);
+          const moves = ledger.filter(
+            (event) =>
+              event.service === "trello" &&
+              event.id === "first" &&
+              event.action === "move:working",
+          ).length;
+          await poll();
+          expect(
+            ledger.filter(
+              (event) =>
+                event.service === "trello" &&
+                event.id === "first" &&
+                event.action === "move:working",
+            ),
+          ).toHaveLength(moves);
+        } else {
+          await poll();
+        }
+        const corrected = store.read("first")!;
+        expect(corrected.pullRequest!.headSha).not.toBe(originalHead);
+        expect(
+          await git.isAncestor(
+            path.join(worktrees, "first"),
+            originalHead,
+            corrected.pullRequest!.headSha!,
+          ),
+        ).toBe(true);
+        expect(corrected.primarySessionId).toBe(sessionId);
+        expect(corrected.phase).toBe("ci");
+        expect(corrected.expectedTrelloListId).toBe("review");
+        expect(corrected.feedbackCardMove).toBeUndefined();
+        expect(lists.get("first")).toBe("review");
+        expect(feedbackPrimaryCorrections).toBe(1);
+        expect(prs.size).toBe(1);
+        expect(firstPr?.isDraft).toBe(true);
+        if (feedbackQuality === "validation") {
+          expect(corrected.publicationQuality?.validation).toMatchObject({
+            status: "failed",
+            exitCode: 1,
+          });
+          expect(firstPr?.body).toContain("failed");
+        } else {
+          expect(corrected.publicationQuality?.review).toBeNull();
+          expect(
+            Object.values(
+              corrected.feedbackRemediation?.reviewSourceAttempts ?? {},
+            ),
+          ).toEqual([3]);
+          expect(firstPr?.body).toContain("Unavailable");
+        }
+        expect(lists.get("next")).toBe("ready");
+        return;
+      }
       if (feedbackReviewRecovery !== undefined) {
         const originalHead = store.read("first")!.pullRequest!.headSha;
         let writesStopped = false;
@@ -1829,7 +1968,9 @@ describe("task lifecycle through pollProject", () => {
         }
         const resumed = store.read("first")!;
         expect(feedbackPrimaryCorrections).toBe(1);
-        expect(lists.get("first")).toBe("review");
+        expect(lists.get("first")).toBe(
+          feedbackReviewRecovery === "unknown" ? "working" : "review",
+        );
         expect(lists.get("next")).toBe("ready");
         expect(store.read("next")).toBeNull();
         expect(requests).toEqual(["agent/first"]);
@@ -1904,6 +2045,19 @@ describe("task lifecycle through pollProject", () => {
           accountedExecution: 3,
         });
         const callsFile = path.join(worktree, "primary-cli-calls.jsonl");
+        expect(
+          fs.existsSync(callsFile),
+          JSON.stringify({
+            operation: correctionOperation,
+            stderr: fs.readFileSync(
+              path.join(
+                path.dirname(correctionOperation!.processMetadataPath!),
+                "stderr.txt",
+              ),
+              "utf8",
+            ),
+          }),
+        ).toBe(true);
         expect(
           fs.readFileSync(callsFile, "utf8").trim().split("\n"),
         ).toHaveLength(3);

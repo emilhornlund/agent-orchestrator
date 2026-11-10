@@ -193,10 +193,13 @@ function clearWaitAndResume(
   return { status: "resume", phase: recovered.phase, record: recovered };
 }
 
-function expectedTrelloList(
+export function expectedTaskTrelloList(
   project: ProjectConfig,
   record: TaskExecutionRecord,
 ): string {
+  if (record.phase === "done") return project.trello.doneListId;
+  if (record.expectedTrelloListId !== undefined)
+    return record.expectedTrelloListId;
   const { phase } = record;
   // A feedback-remediation checkpoint has durable ownership evidence that it
   // belongs to an already-published PR. Its phase can temporarily move back
@@ -206,13 +209,11 @@ function expectedTrelloList(
   if (
     record.pullRequest !== undefined &&
     (record.feedbackRemediation !== undefined ||
-      record.ciRepair?.activePrimaryOperation !== undefined) &&
-    phase !== "done"
+      record.ciRepair?.activePrimaryOperation !== undefined)
   )
     return project.trello.reviewListId;
   if (phase === "human-feedback" || phase === "ci")
     return project.trello.reviewListId;
-  if (phase === "done") return project.trello.doneListId;
   return project.trello.workingListId;
 }
 
@@ -691,7 +692,7 @@ export async function reconcileTaskSession(
       "Repository setup state is missing, changed, or has an uncertain outcome",
     );
   }
-  if (snapshot.trelloListId !== expectedTrelloList(project, record)) {
+  if (snapshot.trelloListId !== expectedTaskTrelloList(project, record)) {
     if (record.phase === "done")
       return preserveAttention(
         taskRecordStore,

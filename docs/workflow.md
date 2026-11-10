@@ -52,7 +52,7 @@ Ready for Agent -> Working -> advisory plan + independent plan feedback
        -> waiting/uncertain: preserve state; do not repair, reply, or merge
        -> complete failures: bounded same-session repair -> local gates/review -> same PR -> re-observe new head
        -> complete pass: remain active in Human Review
-  -> Human Review: ledger actionable feedback -> same primary session -> verify -> gates -> publish -> CI -> contextual reply
+  -> Human Review: current actionable feedback -> Working -> same primary session -> advisory checks -> publish -> Human Review
   -> manually merged PR -> Done; deliberately closed PR -> Backlog
 ```
 
@@ -269,9 +269,18 @@ different branch, has unmerged paths or an active rebase, is dirty, or has a pre
 Already-absent worktrees and branches are successful idempotent outcomes. Shutdown cancellation stops before destructive
 cleanup, and preserved worktrees, branches, and prepared-conflict handoffs remain available for diagnosis.
 
-When requested changes are detected, the orchestrator creates a worktree from the existing task branch, supplies the GitHub
+When requested changes are detected, the orchestrator uses the owned worktree and existing task branch, supplies the GitHub
 review feedback to the implementation session after refreshing the current Trello attachment context, runs the same initial-review and
 bounded remediation loop, and republishes the updated branch and pull request. The open PR remains in Human Review after publication.
+The existing owned worktree/branch and primary session are reused. The card moves to Working before correction and returns to
+Human Review after publication or a no-op, with both list outcomes verified. Pending transitions and the verified expected list
+are persisted independently of internal execution phase, including across acknowledgment loss or restart. Older published
+correction records retain their previous Human Review expectation until a verified explicit transition occurs.
+Validation, coverage and independent review are advisory during correction: failed checks or bounded review unavailability
+cannot veto additive publication to the same PR. Current failures, skipped/uncertain results and unresolved requests keep the PR
+as a draft and are disclosed. Review dispatch recovery is bounded per source and retained across interruption; human-requested
+rounds have no lifetime cap. A genuinely unrecoverable primary correction preserves the PR, unshipped changes and ownership in
+an explicit recoverable wait, rather than failing the task or publishing interrupted work as a correction.
 A requested-changes pass captures the authoritative PR head
 SHA used to select the feedback and re-reads the expected open PR head after review bodies and inline comments have been collected.
 Only a stable, commit-exact snapshot can move the card to Working or reach OpenCode. If the head changes, the complete snapshot is

@@ -16,7 +16,7 @@ import {
 import { assertOwnedTaskWorktreePath } from "./run-task-session-implementation.js";
 import { getTaskSessionSourceSnapshotIdentity } from "./source-snapshot.js";
 import {
-  decideValidatedHumanReviewPublication,
+  decideHumanReviewPublication,
   type VerifiedPublicationDecisionInput,
 } from "./verified-publication-decision.js";
 
@@ -82,8 +82,9 @@ export async function runTaskSessionFeedbackVerification(
       "Feedback verification source identity does not match current validation evidence",
     );
   }
-  const decision = decideValidatedHumanReviewPublication(
+  const decision = decideHumanReviewPublication(
     options.qualityEvidence,
+    undefined,
   );
   if (!decision.allowed) {
     throw new TaskSessionFeedbackVerificationError(
@@ -207,7 +208,7 @@ export async function runAdvisoryTaskSessionFeedbackVerification(
       identity !== options.qualityEvidence.currentContentIdentity ||
       head !== options.expectedHeadSha ||
       branch !== options.expectedBranch ||
-      !decideValidatedHumanReviewPublication(options.qualityEvidence).allowed
+      !decideHumanReviewPublication(options.qualityEvidence, undefined).allowed
     ) {
       throw new TaskSessionFeedbackVerificationError(
         "Cannot use advisory feedback fallback after source, branch, head, or validation changed",
