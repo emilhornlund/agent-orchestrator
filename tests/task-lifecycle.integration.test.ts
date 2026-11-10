@@ -1906,7 +1906,9 @@ describe("task lifecycle through pollProject", () => {
         expect(metadata).toMatchObject({
           status: "nonzero",
           treeStopped: true,
-          signal: "SIGKILL",
+          // Bubblewrap propagates a killed inner process as 128 + SIGKILL.
+          // Record the supervisor's actual outcome, not an invented outer signal.
+          exitCode: 137,
         });
         expect(exhaustedRecord).toMatchObject({
           phase: "human-feedback",

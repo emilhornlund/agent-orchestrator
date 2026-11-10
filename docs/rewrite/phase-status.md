@@ -59,6 +59,15 @@ requirements/specification sections and meaningful regression tests:
   gates. `yarn test tests/publish-card.test.ts tests/notification-outbox.test.ts`
   passed 63 tests; `yarn typecheck`, changed-file ESLint and Prettier passed.
 - Remaining: final `yarn validate` and completion checkpoint.
+- Integrated validation initially passed lint/format/typecheck but exposed six
+  fixture-contract failures. Corrections retain actual Bubblewrap exit `137` for
+  an inner SIGKILL (not a fabricated outer signal), exercise real namespace startup
+  probing with the isolated fixture PATH, and model required draft-state mutations
+  in the existing dispatch adapters. Three verified crash failures, preserved PR
+  ownership/work and recovery assertions remain enforced.
+  `yarn test tests/task-session-dispatch.test.ts tests/process-adapter-matrix.integration.test.ts tests/task-lifecycle.integration.test.ts`
+  passed all 70 tests; typecheck, changed-file ESLint and Prettier passed. Full
+  validation must be rerun on the corrected tree.
 
 P6 implementation and scoped integration inspection are complete, pending final
 `yarn validate`. P7–P10 have not started; P11 covers

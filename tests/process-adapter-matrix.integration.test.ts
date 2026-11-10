@@ -567,6 +567,13 @@ describe("production child adapter outcome matrix", () => {
       { mode: 0o700 },
     );
     process.env.PATH = binaries;
+    const bubblewrap = (originalPath ?? "")
+      .split(path.delimiter)
+      .map((directory) => path.join(directory, "bwrap"))
+      .find((candidate) => fs.existsSync(candidate));
+    if (!bubblewrap)
+      throw new Error("test host does not provide Bubblewrap on PATH");
+    fs.symlinkSync(bubblewrap, path.join(binaries, "bwrap"));
     configureProcessRuntime({
       runtimeRoot: path.join(root, "runtime"),
       signal: new AbortController().signal,
@@ -578,7 +585,7 @@ describe("production child adapter outcome matrix", () => {
     const records = fs.readdirSync(
       path.join(root, "runtime", "process-executions"),
     );
-    expect(records).toHaveLength(4);
+    expect(records).toHaveLength(5);
     for (const entry of records) {
       const metadata = JSON.parse(
         fs.readFileSync(

@@ -337,6 +337,7 @@ describe("task-session production dispatch", () => {
       let feedbackMode = false;
       let malformedFeedbackCommitResult = false;
       const github = {
+        ensurePullRequestDraft: vi.fn(async () => undefined),
         findPullRequest: vi.fn(async () => ({
           number: 9,
           url: "https://github.com/owner/repo/pull/9",
@@ -1148,6 +1149,7 @@ describe("task-session production dispatch", () => {
     let cardList = project.trello.readyListId;
     let failFirstClaimMove = true;
     let pullRequestCreated = false;
+    let pullRequestDraft = false;
     let feedbackActive = false;
     let lateFeedback = false;
     let failAllChecks = false;
@@ -1258,6 +1260,7 @@ describe("task-session production dispatch", () => {
         return pullRequestCreated ? "https://github.com/owner/repo/pull/9" : "";
       }
       if (args[0] === "pr" && args[1] === "create") {
+        pullRequestDraft = args.includes("--draft");
         pullRequestCreated = true;
         return "https://github.com/owner/repo/pull/9";
       }
@@ -1383,6 +1386,16 @@ describe("task-session production dispatch", () => {
           },
         });
       }
+      if (args[0] === "pr" && args[1] === "ready") {
+        pullRequestDraft = args.includes("--undo");
+        return "";
+      }
+      if (
+        args[0] === "pr" &&
+        args[1] === "view" &&
+        args[args.indexOf("--json") + 1] === "isDraft"
+      )
+        return String(pullRequestDraft);
       if (args[0] === "pr" && args[1] === "view")
         return JSON.stringify([
           {
