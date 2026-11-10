@@ -1,7 +1,6 @@
 import type { ProjectConfig } from "../config/config.js";
 import type { GitClient } from "../git/git-client.js";
 import type { GitHubClient } from "../github/github-client.js";
-import { buildPullRequestAttributionFooter } from "../github/pull-request-attribution.js";
 import type { ImplementationReviewResult } from "../task-session/implementation-review-result.js";
 import { reviewConcernsDismissedAsNonMaterialLabel } from "../task-session/implementation-review-result.js";
 import { enrichPullRequestDescription } from "../github/enrich-pull-request-description.js";
@@ -33,7 +32,10 @@ import {
   PullRequestDescriptionParseError,
   type PullRequestDescription,
 } from "../opencode/pull-request-description.js";
-import { renderPullRequestDescription } from "../opencode/render-pull-request-description.js";
+import {
+  renderPullRequestDescription,
+  AGENT_ORCHESTRATOR_DESCRIPTION_END,
+} from "../opencode/render-pull-request-description.js";
 import type { CommandRunner } from "../process/command-runner.js";
 import type { PersistedSetupDisposition } from "../process/setup-commit-scope.js";
 
@@ -83,17 +85,6 @@ export interface PreparedReviewPublication {
   qualityNeedsDraft?: boolean;
 }
 
-function appendVerifiedWorkflowEvidence(
-  body: string,
-  verifiedFacts: readonly string[],
-): string {
-  if (verifiedFacts.length === 0) return body;
-  const section = `## Orchestrator-observed workflow evidence\n${verifiedFacts
-    .map((fact) => `- ${fact.replace(/[\r\n]+/gu, " ")}`)
-    .join("\n")}`;
-  return body.includes(section) ? body : `${body}\n\n${section}`;
-}
-
 /** Presentation is finalized before the durable payload is hashed. Recovery
  * uses that exact body and never asks an agent to regenerate dispatched text. */
 export async function prepareInitialPublicationBody(
@@ -101,6 +92,18 @@ export async function prepareInitialPublicationBody(
   generateDescription = true,
 ): Promise<string> {
   let description = options.pullRequestDescription;
+  const task = {
+    ...options.card,
+    name:
+      typeof options.card.name === "string" ? options.card.name : "Trello card",
+  };
+  if (description !== undefined) {
+    try {
+      description = parsePullRequestDescription(JSON.stringify(description));
+    } catch {
+      description = undefined;
+    }
+  }
   const verifiedFacts = options.verifiedDescriptionFacts?.() ?? [];
   if (options.opencode && generateDescription)
     description = await generatePullRequestDescription({
@@ -119,34 +122,53 @@ export async function prepareInitialPublicationBody(
         cardId: options.card.id,
       }),
     });
-  let body = renderDeterministicPullRequestBody(
-    options.card,
+  if (!description) {
+    let changedFiles = "";
+    try {
+      changedFiles = await options.git.getChangedFiles(
+        options.worktreePath,
+        `origin/${options.project.repository.defaultBranch}`,
+      );
+    } catch {
+      /* Context collection is presentation-only, not a publication gate. */
+    }
+    description = {
+      summary: task.name,
+      changes: changedFiles?.trim()
+        ? changedFiles
+            .trim()
+            .split(/\r?\n/u)
+            .map((file) => `Changed file: ${file}`)
+        : [
+            "Change details could not be summarized automatically; inspect the task diff.",
+          ],
+      validation: [],
+    };
+  }
+  let body = renderPullRequestDescription(
+    {
+      ...description,
+      // An agent's claim is never a substitute for observed command results.
+      validation: verifiedFacts.length
+        ? [...verifiedFacts]
+        : ["No verified validation or test results are available."],
+    },
+    task,
     options.project.repository.gitIdentity.name,
   );
-  if (description)
-    body = renderPullRequestDescription(
-      verifiedFacts.length
-        ? description
-        : {
-            ...description,
-            validation: [
-              "No verified validation or test results are available.",
-            ],
-          },
-      options.card,
-      options.project.repository.gitIdentity.name,
-    );
-  body = appendVerifiedWorkflowEvidence(body, verifiedFacts);
-  body += `\n\nReview: ${options.reviewResult}\nRemediation: ${options.remediationResult}`;
+  let disclosure = `\n\n## Outstanding issues\nReview: ${options.reviewResult}\nRemediation: ${options.remediationResult}`;
+  if (options.qualityNeedsDraft)
+    disclosure +=
+      "\nLocal checks failed, were skipped, or remain uncertain; this PR is not represented as ready to merge.";
   if (options.exhaustedReview) {
-    body += `\n\n## Automated review — human action required\nThis PR has **not** passed automated review.\n${options.exhaustedReview.blockingFindings
+    disclosure += `\n\n## Automated review — human action required\nThe current independent AI review reported material concerns. This PR has **not** passed automated review.\n${options.exhaustedReview.blockingFindings
       .slice(0, 20)
       .map(
         (finding) =>
           `> ${[finding.summary, finding.detail].join(": ").replace(/\s+/gu, " ").slice(0, 400)}`,
       )
       .join("\n")}`;
-    body += options.exhaustedReview.requirementAssessments
+    disclosure += options.exhaustedReview.requirementAssessments
       .filter((assessment) => assessment.status === "unsatisfied")
       .map(
         (assessment) =>
@@ -154,22 +176,15 @@ export async function prepareInitialPublicationBody(
       )
       .join("");
   }
+  body = body.replace(
+    AGENT_ORCHESTRATOR_DESCRIPTION_END,
+    `${disclosure}\n${AGENT_ORCHESTRATOR_DESCRIPTION_END}`,
+  );
   return body;
 }
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-function renderDeterministicPullRequestBody(
-  card: TrelloCard,
-  gitIdentityName: string,
-): string {
-  return [
-    `Trello: ${card.url}`,
-    "",
-    buildPullRequestAttributionFooter(gitIdentityName),
-  ].join("\n");
 }
 
 function logDescriptionFallback(
@@ -541,7 +556,8 @@ export async function publishCard({
   let pullRequest;
   let publishedCommitSha: string;
   let finalPullRequestDescription = pullRequestDescription;
-  let verifiedDescriptionFacts: readonly string[] = [];
+  let verifiedDescriptionFacts: readonly string[] =
+    verifiedDescriptionFactsOption?.() ?? [];
 
   try {
     if (signal?.aborted) {
@@ -740,6 +756,7 @@ export async function publishCard({
       cardLog.event(`Existing pull request found: ${pullRequest.url}`);
       if (
         publicationReviewDisclosure !== null ||
+        publicationQualityNeedsDraft ||
         (publicationReviewResult !== "Passed" &&
           publicationReviewResult !== reviewConcernsDismissedAsNonMaterialLabel)
       ) {
@@ -754,24 +771,31 @@ export async function publishCard({
         );
       }
       if (
-        finalPullRequestDescription !== undefined &&
         typeof github.getPullRequestDescription === "function" &&
         typeof github.editPullRequestDescription === "function"
       ) {
         try {
-          const publishableDescription =
-            verifiedDescriptionFacts.length === 0
-              ? {
-                  ...finalPullRequestDescription,
-                  validation: [
-                    "No verified validation or test results are available.",
-                  ],
-                }
-              : finalPullRequestDescription;
-          const generatedBody = renderPullRequestDescription(
-            publishableDescription,
-            card,
-            project.repository.gitIdentity.name,
+          const generatedBody = await prepareInitialPublicationBody(
+            {
+              trello,
+              git,
+              github,
+              project,
+              card,
+              worktreePath,
+              branch,
+              reviewResult: publicationReviewResult,
+              remediationResult,
+              qualityNeedsDraft: publicationQualityNeedsDraft,
+              ...(publicationReviewDisclosure === null
+                ? {}
+                : { exhaustedReview: publicationReviewDisclosure }),
+              ...(finalPullRequestDescription === undefined
+                ? {}
+                : { pullRequestDescription: finalPullRequestDescription }),
+              verifiedDescriptionFacts: () => verifiedDescriptionFacts,
+            },
+            false,
           );
           const currentBody = await github.getPullRequestDescription({
             cwd: worktreePath,
@@ -812,67 +836,28 @@ export async function publishCard({
 
       cardLog.event("Creating pull request...");
 
-      let body = renderDeterministicPullRequestBody(
-        card,
-        project.repository.gitIdentity.name,
+      const body = await prepareInitialPublicationBody(
+        {
+          trello,
+          git,
+          github,
+          project,
+          card,
+          worktreePath,
+          branch,
+          reviewResult: publicationReviewResult,
+          remediationResult,
+          qualityNeedsDraft: publicationQualityNeedsDraft,
+          ...(publicationReviewDisclosure === null
+            ? {}
+            : { exhaustedReview: publicationReviewDisclosure }),
+          ...(finalPullRequestDescription === undefined
+            ? {}
+            : { pullRequestDescription: finalPullRequestDescription }),
+          verifiedDescriptionFacts: () => verifiedDescriptionFacts,
+        },
+        false,
       );
-
-      if (finalPullRequestDescription !== undefined) {
-        try {
-          const publishableDescription =
-            verifiedDescriptionFacts.length === 0
-              ? {
-                  ...finalPullRequestDescription,
-                  validation: [
-                    "No verified validation or test results are available.",
-                  ],
-                }
-              : finalPullRequestDescription;
-          body = renderPullRequestDescription(
-            publishableDescription,
-            card,
-            project.repository.gitIdentity.name,
-          );
-        } catch (error) {
-          logDescriptionFallback(cardLog, "Markdown rendering", error);
-        }
-      }
-
-      body = appendVerifiedWorkflowEvidence(body, verifiedDescriptionFacts);
-
-      if (publicationReviewDisclosure !== null) {
-        // This section is authored by the orchestrator and is not delegated
-        // to AI-generated PR description text.
-        const findings = publicationReviewDisclosure.blockingFindings
-          .map((finding) => [finding.summary, finding.detail].join(": "))
-          .slice(0, 20);
-        const unsatisfied = publicationReviewDisclosure.requirementAssessments
-          .filter((assessment) => assessment.status === "unsatisfied")
-          .map((assessment) => assessment.requirementId);
-        const detail = [
-          ...findings,
-          ...unsatisfied.map((id) => `Unsatisfied requirement: ${id}`),
-        ]
-          .map((entry) => `> ${entry.replace(/\s+/gu, " ").slice(0, 400)}`)
-          .join("\n");
-        body += [
-          "",
-          "## Automated review — human action required",
-          "The current independent AI review reported material concerns for this source snapshot. This PR has **not** passed automated review. Please inspect the changes and findings before merging.",
-          ...(publishedCommitSha !== commitSha
-            ? [
-                "**Post-rebase disclosure:** The published commit differs from the originally reviewed commit. Existing findings refer to the pre-rebase snapshot; the rebased content passed required local validation but has not received another AI review. Human review is mandatory.",
-              ]
-            : []),
-          ...(detail.length > 0 ? [detail] : []),
-        ].join("\n");
-      }
-
-      if (
-        publicationReviewResult !== "Passed" ||
-        remediationResult !== "Not required"
-      )
-        body += `\n\nReview: ${publicationReviewResult}\nRemediation: ${remediationResult}`;
 
       pullRequest = await github.createPullRequest({
         cwd: worktreePath,

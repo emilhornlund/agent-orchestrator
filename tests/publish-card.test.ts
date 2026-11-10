@@ -124,6 +124,62 @@ afterEach(() => {
 });
 
 describe("publishCard", () => {
+  it("refreshes fallback evidence on the same PR, preserves human text, and drafts failed checks even after passing review", async () => {
+    let body = "";
+    let published = false;
+    const github = {
+      findPullRequest: vi.fn(async () =>
+        published
+          ? { url: "https://github.com/example/repository/pull/123" }
+          : null,
+      ),
+      createPullRequest: vi.fn(async (options: { body: string }) => {
+        body = options.body;
+        published = true;
+        return { url: "https://github.com/example/repository/pull/123" };
+      }),
+      getPullRequestDescription: vi.fn(async () => body),
+      editPullRequestDescription: vi.fn(async (options: { body: string }) => {
+        body = options.body;
+      }),
+      ensurePullRequestDraft: vi.fn(),
+    } as unknown as GitHubClient;
+    const options = {
+      github,
+      trello: {
+        moveCard: vi.fn(),
+        addComment: vi.fn(),
+      } as unknown as TrelloClient,
+      git: createPublicationGit({
+        getChangedFiles: vi.fn().mockResolvedValue("src/task.ts"),
+      }),
+      project: createProject(),
+      card: createCard(),
+      worktreePath: "/worktree",
+      branch: "agent/card-1",
+      commitSha: "abc123",
+      reviewResult: "Passed",
+      remediationResult: "Not required",
+      verifiedDescriptionFacts: () => ["Validation passed on initial content"],
+    };
+    await publishCard(options);
+    body = `Human release notes\n${body}\nHuman checklist`;
+    await publishCard({
+      ...options,
+      qualityNeedsDraft: true,
+      verifiedDescriptionFacts: () => [
+        "Validation failed on current content (exit 1)",
+      ],
+    });
+    expect(github.createPullRequest).toHaveBeenCalledOnce();
+    expect(github.ensurePullRequestDraft).toHaveBeenCalledOnce();
+    expect(body).toContain("Human release notes");
+    expect(body).toContain("Human checklist");
+    expect(body).toContain("Changed file: src/task.ts");
+    expect(body).toContain("Validation failed on current content (exit 1)");
+    expect(body).not.toContain("Validation passed on initial content");
+  });
+
   it("does not force draft solely for dismissed non-material review findings", async () => {
     const trello = {
       moveCard: vi.fn().mockResolvedValue({
@@ -686,11 +742,7 @@ describe("publishCard", () => {
         "--title",
         "Example task",
         "--body",
-        [
-          "Trello: https://trello.com/c/card-1",
-          "",
-          "Implemented automatically by Configured Git Author.",
-        ].join("\n"),
+        expect.stringContaining("## Outstanding issues"),
       ],
     );
 
@@ -889,6 +941,11 @@ describe("publishCard", () => {
           "",
           "## Validation",
           "- yarn validate passed.",
+          "",
+          "",
+          "## Outstanding issues",
+          "Review: Passed",
+          "Remediation: Not required",
           "<!-- agent-orchestrator-description:end -->",
           "",
           "## Task",
@@ -898,9 +955,6 @@ describe("publishCard", () => {
           "",
           "<!-- agent-orchestrator-status:start -->",
           "<!-- agent-orchestrator-status:end -->",
-          "",
-          "## Orchestrator-observed workflow evidence",
-          "- yarn validate passed.",
         ].join("\n"),
       }),
     );
@@ -1061,7 +1115,7 @@ describe("publishCard", () => {
 
     expect(createPullRequest).toHaveBeenCalledWith(
       expect.objectContaining({
-        body: expect.stringContaining("Trello: https://trello.com/c/card-1"),
+        body: expect.stringContaining("https://trello.com/c/card-1"),
       }),
     );
     expect(createPullRequest).toHaveBeenCalledWith(
@@ -1245,11 +1299,7 @@ describe("publishCard", () => {
     expect(git.push).toHaveBeenCalled();
     expect(createPullRequest).toHaveBeenCalledWith(
       expect.objectContaining({
-        body: [
-          "Trello: https://trello.com/c/card-1",
-          "",
-          "Implemented automatically by Configured Git Author.",
-        ].join("\n"),
+        body: expect.stringContaining("## Outstanding issues"),
       }),
     );
     expect(trello.moveCard).toHaveBeenCalledWith("card-1", "review-list");
@@ -1294,11 +1344,7 @@ describe("publishCard", () => {
     expect(github.findPullRequest).toHaveBeenCalled();
     expect(createPullRequest).toHaveBeenCalledWith(
       expect.objectContaining({
-        body: [
-          "Trello: https://trello.com/c/card-1",
-          "",
-          "Implemented automatically by Configured Git Author.",
-        ].join("\n"),
+        body: expect.stringContaining("## Outstanding issues"),
       }),
     );
     expect(trello.moveCard).toHaveBeenCalledWith("card-1", "review-list");
@@ -1345,11 +1391,7 @@ describe("publishCard", () => {
     expect(opencode.run).toHaveBeenCalledTimes(1);
     expect(createPullRequest).toHaveBeenCalledWith(
       expect.objectContaining({
-        body: [
-          "Trello: https://trello.com/c/card-1",
-          "",
-          "Implemented automatically by Configured Git Author.",
-        ].join("\n"),
+        body: expect.stringContaining("## Outstanding issues"),
       }),
     );
     expect(trello.moveCard).toHaveBeenCalledWith("card-1", "review-list");
@@ -1408,11 +1450,7 @@ describe("publishCard", () => {
 
     expect(createPullRequest).toHaveBeenCalledWith(
       expect.objectContaining({
-        body: [
-          "Trello: https://trello.com/c/card-1",
-          "",
-          "Implemented automatically by Configured Git Author.",
-        ].join("\n"),
+        body: expect.stringContaining("## Outstanding issues"),
       }),
     );
     expect(runDescription).toHaveBeenCalledTimes(2);
@@ -1467,11 +1505,7 @@ describe("publishCard", () => {
 
     expect(createPullRequest).toHaveBeenCalledWith(
       expect.objectContaining({
-        body: [
-          "Trello: https://trello.com/c/card-1",
-          "",
-          "Implemented automatically by Configured Git Author.",
-        ].join("\n"),
+        body: expect.stringContaining("## Outstanding issues"),
       }),
     );
     expect(opencode.run).toHaveBeenCalledTimes(1);
@@ -1519,11 +1553,7 @@ describe("publishCard", () => {
 
     expect(createPullRequest).toHaveBeenCalledWith(
       expect.objectContaining({
-        body: [
-          "Trello: https://trello.com/c/card-1",
-          "",
-          "Implemented automatically by Configured Git Author.",
-        ].join("\n"),
+        body: expect.stringContaining("## Outstanding issues"),
       }),
     );
     expect(trello.moveCard).toHaveBeenCalledWith("card-1", "review-list");
@@ -1797,8 +1827,8 @@ describe("publishCard", () => {
 
     expect(events).toEqual(["push", "find-pr", "move", "comment"]);
 
-    expect(runGitHubCommand).toHaveBeenCalledTimes(1);
-    expect(getInstallationToken).toHaveBeenCalledTimes(4);
+    expect(runGitHubCommand).toHaveBeenCalledTimes(2);
+    expect(getInstallationToken).toHaveBeenCalledTimes(5);
     expect(getInstallationToken).toHaveBeenNthCalledWith(
       1,
       project.repository.githubApp,
@@ -2439,7 +2469,7 @@ describe("publishCard", () => {
       "was published, but the Trello card could not be moved to Human Review",
     );
 
-    expect(runGitHubCommand).toHaveBeenCalledTimes(1);
+    expect(runGitHubCommand).toHaveBeenCalledTimes(2);
     expect(moveCard).toHaveBeenCalledWith("card-1", "review-list");
   });
 });

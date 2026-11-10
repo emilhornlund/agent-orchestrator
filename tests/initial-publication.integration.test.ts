@@ -285,6 +285,50 @@ function task(f: ReturnType<typeof reopenPublicationFixture>) {
 }
 
 describe("setup-aware initial publication commit scope", () => {
+  it("publishes a complete observed fallback after advisory description failure and retains its exact payload on restart", async () => {
+    const f = fixture();
+    const identity = await getTaskSessionSourceSnapshotIdentity(
+      f.git,
+      f.worktreePath,
+    );
+    f.authority.run(() =>
+      beginInitialPublication(
+        {
+          project: f.project,
+          card: f.services.card(),
+          git: f.git,
+          trello: f.services.trello,
+          github: f.services.github,
+          worktreePath: f.worktreePath,
+          branch: "agent/card",
+          commitMessage: "feat: implement the requested task",
+          reviewResult: "Passed",
+          remediationResult: "Validation improvement exhausted",
+          qualityNeedsDraft: true,
+          verifiedDescriptionFacts: () => [
+            "Validation: failed (exit 1)",
+            "Coverage: skipped (not configured)",
+          ],
+        },
+        "pending presentation",
+        identity,
+      ),
+    );
+    await through(f, "pr");
+    const published = f.services.read().prs[0]!;
+    expect(published.draft).toBe(true);
+    expect(published.body).toContain("## Summary\nImplement task");
+    expect(published.body).toContain("Changed file: source.txt");
+    expect(published.body).toContain("Validation: failed (exit 1)");
+    expect(published.body).toContain("Coverage: skipped (not configured)");
+    expect(published.body).toContain("## Outstanding issues");
+    expect(published.body).toContain("https://trello.com/c/card");
+    const restarted = reopenPublicationFixture(f.root);
+    await through(restarted, "comment");
+    expect(restarted.services.read().prs).toEqual([published]);
+    expect(restarted.services.read().list).toBe("review");
+  });
+
   it("judges failed-attempt output across a successful no-op retry and preserves excluded bytes", async () => {
     const f = fixture();
     const disposition = await createSetupDisposition(f, "unrelated.setup");

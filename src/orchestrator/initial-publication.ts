@@ -384,8 +384,7 @@ export function beginInitialPublication(
     attentionNotified: false,
     waitingReason: null,
     diagnostic: null,
-    descriptionPending:
-      "commitMessage" in options && options.opencode !== undefined,
+    descriptionPending: true,
     verifiedFacts: (options.verifiedDescriptionFacts?.() ?? []).map(
       sanitizeControlledText,
     ),
@@ -921,10 +920,6 @@ export async function resumeInitialPublication(options: {
       commitSha: sha,
     });
     if (checkpoint.descriptionPending) {
-      if (!options.opencode)
-        throw new PublicationSafetyError(
-          "Publication presentation client unavailable",
-        );
       const storedTask = new TaskExecutionStore(
         run.pinned.storageRoot,
         project,
@@ -940,7 +935,9 @@ export async function resumeInitialPublication(options: {
         git,
         github,
         trello,
-        opencode: options.opencode,
+        ...(options.opencode === undefined
+          ? {}
+          : { opencode: options.opencode }),
         card: {
           id: checkpoint.cardId,
           name: checkpoint.title,
@@ -953,6 +950,7 @@ export async function resumeInitialPublication(options: {
         branch: checkpoint.branch,
         reviewResult: checkpoint.reviewResult,
         remediationResult: checkpoint.remediationResult,
+        qualityNeedsDraft: checkpoint.qualityNeedsDraft ?? false,
         verifiedDescriptionFacts: () => checkpoint!.verifiedFacts,
         ...(exhaustedReview === undefined ? {} : { exhaustedReview }),
         ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -1261,7 +1259,7 @@ export async function resumeInitialPublication(options: {
         outstandingIssues: publicationNotificationIssues(
           checkpoint.reviewResult,
           checkpoint.remediationResult,
-        ),
+        ).concat(checkpoint.qualityNeedsDraft ? checkpoint.verifiedFacts : []),
         publicationContext: `Verified initial publication; draft: ${checkpoint.draft}.`,
         ...(checkpoint.elapsedWorkflowTime
           ? { elapsedWorkflowTime: checkpoint.elapsedWorkflowTime }
@@ -1309,6 +1307,13 @@ export async function resumeInitialPublication(options: {
           commitSha: sha,
           reviewResult: checkpoint.reviewResult,
           remediationResult: checkpoint.remediationResult,
+          actualDraft: checkpoint.draft,
+          outstandingIssues: publicationNotificationIssues(
+            checkpoint.reviewResult,
+            checkpoint.remediationResult,
+          ).concat(
+            checkpoint.qualityNeedsDraft ? checkpoint.verifiedFacts : [],
+          ),
           publicationContext: `Verified initial publication; draft: ${checkpoint.draft}.`,
           ...(checkpoint.elapsedWorkflowTime
             ? { elapsedWorkflowTime: checkpoint.elapsedWorkflowTime }
