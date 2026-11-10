@@ -83,6 +83,7 @@ const checkpointSchema = z.strictObject({
   retryAt: z.string().datetime().nullable(),
   attention: z.boolean(),
   completed: z.boolean(),
+  noOutput: z.strictObject({ parent: gitSha, tree: gitSha }).optional(),
   startedAt: z.string().datetime(),
   attentionNotified: z.boolean(),
   waitingReason: z.enum(["recheck", "dependency-or-conflict"]).nullable(),
@@ -417,6 +418,69 @@ export async function resumeInitialPublication(options: {
     return true;
   const { project, git, github, trello } = options;
   const run = authority.store.read()!;
+  const finishNoOutput = async (): Promise<void> => {
+    const proof = checkpoint!.noOutput!;
+    const cwd = path.join(run.pinned.worktreeRoot, checkpoint!.cardId);
+    assertOwnedTaskWorktreePath(project, cwd);
+    if (
+      (await git.getHeadSha(cwd)) !== proof.parent ||
+      (await git.getCommitTreeSha(cwd)) !== proof.tree ||
+      (await getTaskSessionSourceSnapshotIdentity(git, cwd)) !==
+        checkpoint!.sourceIdentity ||
+      (await github.findPullRequestState({
+        cwd,
+        repository: run.pinned.repository,
+        headBranch: checkpoint!.branch,
+        baseBranch: checkpoint!.baseBranch,
+        project,
+      }))
+    )
+      throw new PublicationSafetyError(
+        "No-output evidence changed; preserving task for reconciliation",
+      );
+    const store = new TaskExecutionStore(run.pinned.storageRoot, project);
+    const task = store.read(checkpoint!.cardId);
+    if (
+      !task ||
+      task.pullRequest ||
+      task.externalRecovery ||
+      !["publication", "attention-required"].includes(task.phase)
+    )
+      throw new PublicationSafetyError(
+        "No-output outcome no longer matches an unpublished task",
+      );
+    if (task.phase === "publication") {
+      const terminal = transitionTaskExecutionRecord(task, {
+        type: "attention-required",
+        eventId: `${task.operationKey}:no-meaningful-output`,
+        projectId: project.id,
+        cardId: task.cardId,
+        operationKey: task.operationKey,
+        occurredAt: new Date().toISOString(),
+      });
+      store.compareAndSwap(task.cardId, task.revision, {
+        ...terminal,
+        terminalFailure: {
+          kind: "implementation",
+          reason:
+            "No meaningful task-related changes remain after implementation. The task may already be satisfied. No artificial commit or PR was created. Review the preserved worktree and diagnostics, clarify any remaining work, then explicitly return this card to Ready for Agent to retry.",
+          outcome: "pending",
+        },
+      });
+    }
+    save(authority, {
+      ...checkpoint!,
+      completed: true,
+      retryAt: null,
+      waitingReason: null,
+      diagnostic:
+        "No meaningful task output; terminal failure reconciliation pending",
+    });
+  };
+  if (checkpoint.noOutput) {
+    await finishNoOutput();
+    return true;
+  }
   // Crash after the atomic task transition but before queue/checkpoint closure.
   // No external write is repeated; all workflow mutations must already have
   // immutable verification before the final local handoff can be completed.
@@ -818,8 +882,15 @@ export async function resumeInitialPublication(options: {
               }),
           identity: project.repository.gitIdentity,
         };
-        if (payload.tree === (await git.getCommitTreeSha(cwd)))
-          throw new PublicationSafetyError("No meaningful changes to commit");
+        if (payload.tree === (await git.getCommitTreeSha(cwd))) {
+          checkpoint = {
+            ...checkpoint,
+            noOutput: { parent: payload.parent, tree: payload.tree },
+          };
+          save(authority, checkpoint);
+          await finishNoOutput();
+          return true;
+        }
       }
       if (
         payload.setupScopeReference !==

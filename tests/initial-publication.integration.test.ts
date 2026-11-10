@@ -285,6 +285,58 @@ function task(f: ReturnType<typeof reopenPublicationFixture>) {
 }
 
 describe("setup-aware initial publication commit scope", () => {
+  it.each([false, true])(
+    "confirms an actionable no-output failure without manufacturing a commit or retrying the task (excluded setup: %s)",
+    async (withExcludedSetup) => {
+      const f = fixture();
+      fs.writeFileSync(path.join(f.worktreePath, "source.txt"), "original\n");
+      const head = await f.git.getHeadSha(f.worktreePath);
+      const disposition = withExcludedSetup
+        ? await createSetupDisposition(f, "unrelated.setup", false)
+        : undefined;
+      await begin(f, "feat: task", disposition);
+      await poll(f);
+      expect(task(f)?.terminalFailure?.reason).toContain(
+        "No meaningful task-related changes",
+      );
+      expect(operation(f, "commit")).toBeUndefined();
+      const restarted = reopenPublicationFixture(f.root);
+      for (
+        let count = 0;
+        count < 8 && restarted.services.read().list !== "failed";
+        count++
+      )
+        await poll(restarted);
+      // A verified move alone is not completion: reconcile the journaled failure comment too.
+      for (
+        let count = 0;
+        count < 8 && restarted.store.read()?.lifecycle !== "failed";
+        count++
+      )
+        await poll(restarted);
+      expect(restarted.services.read().list).toBe("failed");
+      expect(restarted.store.read()?.lifecycle).toBe("failed");
+      expect(
+        restarted.services
+          .read()
+          .comments.some(
+            ({ text }) =>
+              text.includes("No meaningful task-related changes") &&
+              text.includes("Ready for Agent"),
+          ),
+      ).toBe(true);
+      expect(await f.git.getHeadSha(f.worktreePath)).toBe(head);
+      expect(fs.existsSync(f.worktreePath)).toBe(true);
+      if (withExcludedSetup)
+        expect(
+          fs.readFileSync(path.join(f.worktreePath, "unrelated.setup"), "utf8"),
+        ).toBe("preserve me\n");
+      expect(f.services.read().requests).toEqual([]);
+      await poll(restarted);
+      expect(f.services.read().requests).toEqual([]);
+    },
+  );
+
   it("publishes a complete observed fallback after advisory description failure and retains its exact payload on restart", async () => {
     const f = fixture();
     const identity = await getTaskSessionSourceSnapshotIdentity(
