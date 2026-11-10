@@ -7,6 +7,7 @@ import type { GitHubClient } from "../src/github/github-client.js";
 import { RunStore } from "../src/task-session/run-store.js";
 import { ProjectRunAuthority } from "../src/task-session/project-run-authority.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
+import { TaskMutationQueue } from "../src/task-session/task-mutation-queue.js";
 import {
   observeActivePullRequest,
   readActivePrArrivals,
@@ -172,6 +173,16 @@ it("retains deduplicated arrivals during a blocked writer without changing its c
   f.edit("new request during execution");
   await vi.advanceTimersByTimeAsync(100);
   expect(readActivePrArrivals(f.authority)).toHaveLength(2);
+  const queue = new TaskMutationQueue(
+    f.project.contextRoot,
+    f.project,
+    f.authority,
+  );
+  expect(queue.list()).toMatchObject([
+    { kind: "feedback", status: "queued", dispatchReady: false },
+    { kind: "feedback", status: "queued", dispatchReady: false },
+  ]);
+  expect(queue.claimNext()).toBeNull();
   expect(f.tasks.read("card")).toEqual(before);
   const restarted = new ProjectRunAuthority(
     f.project.id,
@@ -223,4 +234,28 @@ it("does not persist mixed feedback when the PR changes during observation", asy
     >);
   await observeActivePullRequest(f);
   expect(readActivePrArrivals(f.authority)).toHaveLength(0);
+});
+
+it("reconciles interruption between durable observation and queue descriptor without losing or duplicating the arrival", async () => {
+  const f = fixture();
+  const interrupted = vi
+    .spyOn(TaskMutationQueue.prototype, "enqueue")
+    .mockImplementationOnce(() => {
+      throw new Error("descriptor write interrupted");
+    });
+  await expect(observeActivePullRequest(f)).rejects.toThrow(
+    "descriptor write interrupted",
+  );
+  interrupted.mockRestore();
+  expect(readActivePrArrivals(f.authority)).toHaveLength(1);
+  await observeActivePullRequest(f);
+  await observeActivePullRequest(f);
+  const queue = new TaskMutationQueue(
+    f.project.contextRoot,
+    f.project,
+    f.authority,
+  );
+  expect(queue.list()).toHaveLength(1);
+  expect(queue.list()[0]?.dispatchReady).toBe(false);
+  expect(readActivePrArrivals(f.authority)).toHaveLength(1);
 });

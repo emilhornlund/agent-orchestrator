@@ -300,6 +300,10 @@ even after a new PR head. The task remains available for new or substantively ch
 An initial implementation still requires repository changes; validation/review repair remains scoped to its approved task.
 
 For each owned open PR, the coordinator verifies repository, branch, URL, persisted head, and current GitHub head before acting.
+Observation continues during an active writer, retaining deduplicated arrivals outside the repository. Unclassified feedback
+cannot dispatch a writer. Current human requests take priority over queued CI repair, followed by routine maintenance; an
+already-running operation is not preempted by new feedback. Explicit required prerequisites may run first. Pending descriptors
+and their order survive restart, and only never-started work superseded by authoritative current observations is retired.
 It normalizes submitted review bodies, unresolved inline threads, and conversation comments into a durable task-scoped ledger.
 Actionable feedback is remediated in the original primary session, then independently verified; earlier still-applicable items remain
 tracked when new feedback arrives. Replies are sent only in the originating conversation/thread after the correcting commit has

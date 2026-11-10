@@ -53,7 +53,25 @@
   Self-review covered clients, current/historical ledger writes, original-operation
   recovery, selection and reply ordering. Queue/quality/terminal obligations below
   remain unfinished, not implied complete by this task.
-- Remaining P7 order: arrival consumption/priority/prerequisites (T2b), durable fair global AI
+- P7-T2b persists feedback/failed-CI/maintenance descriptors while execution holds
+  the project, with unclassified feedback explicitly nondispatchable. An interruption
+  between retained snapshot and descriptor is reconciled on the next observation.
+  Scheduler refresh consumes current feedback, retires only verified never-started
+  superseded descriptors and prioritizes human corrections before CI before routine
+  maintenance. The same policy applies to specific-event claim callers, while an
+  active/failed writer retains recovery priority. Persisted explicit prerequisites
+  can run first and invalid/missing/cyclic prerequisites are refused. Legacy queue
+  records default to dispatchable without losing order/owners. A new task event
+  permits human work during failed/pending CI without falsely recording CI passed.
+  Maintenance execution remains disabled for P8; only descriptors are retained here.
+- T2b checks: seven focused observation/queue/dispatch/transition suites passed
+  **95 tests**; lifecycle/authority/attachment checks passed **26 tests in three files**.
+  Typecheck and changed-file ESLint passed. Production regression now demonstrates
+  human correction superseding obsolete failed CI before a CI writer starts; it
+  retains later CI-budget, late-feedback and uncertain-reply coverage. Self-review
+  inspected producer/scheduler/recovery callers, queued retirement, prerequisite
+  validation, schema defaults and the interrupted snapshot-to-queue handoff.
+- Remaining P7 order: durable fair global AI
   capacity (T3), current semantic feedback/history (T4), same-PR correction and list
   recovery (T5), truthful replies/managed description (T6), active terminal precedence
   (T7), combined checks and final `yarn validate` (T8). These are not complete.

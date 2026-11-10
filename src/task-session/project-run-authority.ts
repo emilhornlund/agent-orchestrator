@@ -632,6 +632,7 @@ export class ProjectRunAuthority {
       },
       "publication-completed": { event: "publication-completed", to: "ci" },
       "ci-passed-awaiting-human": { event: "ci-observed", to: "human-review" },
+      "human-feedback-pending": { event: "ci-observed", to: "human-review" },
       "ci-failed": { event: "implementation-correction", to: "implementation" },
       "feedback-received": { event: "feedback-received", to: "implementation" },
       "feedback-ci-failed": { event: "feedback-ci-failed", to: "ci" },

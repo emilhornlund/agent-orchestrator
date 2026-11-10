@@ -5,6 +5,9 @@ import type { GitHubClient } from "../github/github-client.js";
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 import { TaskExecutionStore } from "../task-session/task-execution-store.js";
 import { sanitizeControlledText } from "../security/redact-secrets.js";
+import { TaskMutationQueue } from "../task-session/task-mutation-queue.js";
+import { evaluateCiChecks } from "../github/evaluate-ci-checks.js";
+import { establishCiCheckExpectations } from "../github/ci-check-expectations.js";
 
 const arrivalSchema = z.strictObject({
   id: z.string().regex(/^[0-9a-f]{64}$/u),
@@ -84,6 +87,16 @@ export async function observeActivePullRequest(options: {
           }),
         }
       : null;
+  const baseRelation =
+    current !== null && project.maintenance?.enabled === true
+      ? await github
+          .comparePullRequestHeadToBase({
+            ...lookup,
+            baseBranch: project.repository.defaultBranch,
+            headSha: pr.headRefOid,
+          })
+          .catch(() => "uncertain" as const)
+      : "uncertain";
   if (current !== null) {
     const confirmed = await github.findPullRequestState(lookup);
     if (
@@ -106,15 +119,15 @@ export async function observeActivePullRequest(options: {
     return;
   authority.assertHeld();
   const content = sanitizeControlledText(
-    JSON.stringify({ pullRequest: pr, current }),
+    JSON.stringify({ pullRequest: pr, current, baseRelation }),
   );
   const id = createHash("sha256").update(content).digest("hex");
-  if (readActivePrArrivals(authority).some((arrival) => arrival.id === id))
-    return;
-  const artifact = authority.store.writeArtifact(
-    Buffer.from(content),
-    "application/json",
+  const existing = readActivePrArrivals(authority).find(
+    (arrival) => arrival.id === id,
   );
+  const artifactId =
+    existing?.artifactId ??
+    authority.store.writeArtifact(Buffer.from(content), "application/json").id;
   authority.mutate(
     inboxKey,
     { version: 1, arrivals: [] },
@@ -134,7 +147,7 @@ export async function observeActivePullRequest(options: {
               headSha: pr.headRefOid,
               state: pr.state,
               observedAt: new Date().toISOString(),
-              artifactId: artifact.id,
+              artifactId,
             },
           ],
         }),
@@ -143,6 +156,54 @@ export async function observeActivePullRequest(options: {
     },
     (value) => inboxSchema.parse(value),
   );
+  if (current !== null) {
+    const queue = new TaskMutationQueue(
+      project.contextRoot,
+      project,
+      authority,
+    );
+    const observedAt = existing?.observedAt ?? new Date().toISOString();
+    if (current.feedback !== null || current.comments.length > 0) {
+      // Semantic classification is performed by the serialized scheduler, never
+      // concurrently against its ledger. This arrival cannot dispatch a writer.
+      queue.enqueue({
+        projectId: project.id,
+        cardId: task.cardId,
+        eventId: `observed-feedback:${id}`,
+        operationKey: `observed-feedback:${id}`,
+        kind: "feedback",
+        enqueuedAt: observedAt,
+        dispatchReady: false,
+        observationArtifactId: artifactId,
+      });
+    }
+    const ci = evaluateCiChecks({
+      expectedHeadSha: pr.headRefOid,
+      observedHeadSha: current.ci.headSha,
+      expectations: establishCiCheckExpectations(current.ci.expectationSources),
+      checks: current.ci.checks,
+    });
+    if (ci.status === "failed")
+      queue.enqueue({
+        projectId: project.id,
+        cardId: task.cardId,
+        eventId: `ci-repair:${task.cardId}:${pr.headRefOid}`,
+        operationKey: `${task.operationKey}:ci:${pr.headRefOid}`,
+        kind: "ci-repair",
+        enqueuedAt: observedAt,
+      });
+    if (baseRelation === "behind" || baseRelation === "diverged") {
+      const eventId = `pr-maintenance:${task.cardId}:${pr.headRefOid}`;
+      queue.enqueue({
+        projectId: project.id,
+        cardId: task.cardId,
+        eventId,
+        operationKey: eventId,
+        kind: "pr-maintenance",
+        enqueuedAt: observedAt,
+      });
+    }
+  }
 }
 
 /** Run one serialized observer alongside the writer, with bounded error backoff.

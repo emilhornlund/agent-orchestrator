@@ -234,6 +234,48 @@ function reviewRunOptions(project: ProjectConfig, signal: AbortSignal) {
   };
 }
 
+export async function refreshCurrentTaskFeedback(options: {
+  project: ProjectConfig;
+  cardId: string;
+  observation: ObservedTaskSessionReviewCard;
+  ledgerStore: FeedbackLedgerStore;
+  openCode: OpenCodeClient;
+  worktreePath: string;
+  signal: AbortSignal;
+}): Promise<void> {
+  const previous = options.ledgerStore.read(options.cardId);
+  const incoming = await classifyCurrentFeedback({
+    ...options,
+    incoming: toFeedbackEntries(options.observation),
+    previous: previous?.entries ?? [],
+  });
+  if (previous === null) options.ledgerStore.create(options.cardId, incoming);
+  else
+    reconcileFeedbackRound({
+      store: options.ledgerStore,
+      projectId: options.project.id,
+      cardId: options.cardId,
+      previousHeadSha: options.observation.headSha,
+      observedHeadSha: options.observation.headSha,
+      newlyObservedFeedback: incoming,
+    });
+}
+
+export function feedbackOperationId(
+  headSha: string,
+  feedback: readonly FeedbackLedgerEntry[],
+): string {
+  return `feedback:${headSha}:${createHash("sha256")
+    .update(
+      feedback
+        .map((item) => `${item.kind}:${item.id}:${item.body}`)
+        .sort()
+        .join("\n"),
+    )
+    .digest("hex")
+    .slice(0, 16)}`;
+}
+
 function validationRepairRunOptions(
   project: ProjectConfig,
   signal: AbortSignal,
@@ -298,32 +340,16 @@ export async function runTaskSessionFeedbackCycle(
       record.feedbackRemediation.feedbackIds !== undefined &&
       options.mutationQueue.getActive()?.eventId ===
         record.feedbackRemediation.operationId);
-  const previousHead = record.pullRequest.headSha;
-  const incoming = resumingReservedRound
-    ? []
-    : await classifyCurrentFeedback({
-        project,
-        cardId: card.id,
-        worktreePath,
-        incoming: toFeedbackEntries(observation),
-        previous: ledgerStore.read(card.id)?.entries ?? [],
-        openCode,
-        signal,
-      });
-  const reconciliation = resumingReservedRound
-    ? null
-    : ledgerStore.read(card.id) === null
-      ? null
-      : reconcileFeedbackRound({
-          store: ledgerStore,
-          projectId: project.id,
-          cardId: card.id,
-          previousHeadSha: previousHead,
-          observedHeadSha: observation.headSha,
-          newlyObservedFeedback: incoming,
-        });
-  if (reconciliation === null && !resumingReservedRound)
-    ledgerStore.create(card.id, incoming);
+  if (!resumingReservedRound)
+    await refreshCurrentTaskFeedback({
+      project,
+      cardId: card.id,
+      worktreePath,
+      observation,
+      ledgerStore,
+      openCode,
+      signal,
+    });
   const ledgerBeforeSync = ledgerStore.read(card.id);
   const checksReady = observation.ciEvaluation.status === "passed";
   if (
@@ -567,15 +593,10 @@ export async function runTaskSessionFeedbackCycle(
   cardLog.event(
     `Requested-changes remediation started (${actionableFeedback.length} actionable item(s))`,
   );
-  const operationId = `feedback:${observation.headSha}:${createHash("sha256")
-    .update(
-      actionableFeedback
-        .map((item) => `${item.kind}:${item.id}:${item.body}`)
-        .sort()
-        .join("\n"),
-    )
-    .digest("hex")
-    .slice(0, 16)}`;
+  const operationId = feedbackOperationId(
+    observation.headSha,
+    actionableFeedback,
+  );
   if (
     resumingReviewRepair &&
     record.feedbackRemediation?.operationId !== operationId

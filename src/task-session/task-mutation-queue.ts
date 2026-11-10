@@ -22,12 +22,19 @@ const eventSchema = z.strictObject({
   ]),
   operationKey: z.string().min(1),
   enqueuedAt: z.string().datetime(),
+  prerequisites: z.array(z.string().min(1)).optional(),
+  dispatchReady: z.boolean().optional(),
+  observationArtifactId: z.string().min(1).optional(),
   status: z.enum(["queued", "active", "failed", "completed", "retired"]),
   ownerToken: z.string().uuid().optional(),
   ownerPid: z.number().int().positive().optional(),
   retiredAt: z.string().datetime().optional(),
   retirementReason: z
-    .enum(["card-left-ready", "operator-confirmed-never-started"])
+    .enum([
+      "card-left-ready",
+      "operator-confirmed-never-started",
+      "superseded-observation",
+    ])
     .optional(),
 });
 const queueSchema = z
@@ -68,9 +75,52 @@ const queueSchema = z
         });
       }
       ids.add(event.eventId);
+      if (
+        event.dispatchReady === false &&
+        ["active", "failed", "completed"].includes(event.status)
+      )
+        ctx.addIssue({
+          code: "custom",
+          path: ["events", index, "dispatchReady"],
+          message:
+            "Unclassified observations cannot own or complete a writer operation",
+        });
+      if (
+        (event.prerequisites ?? []).some((id) => id === event.eventId) ||
+        new Set(event.prerequisites ?? []).size !==
+          (event.prerequisites ?? []).length
+      )
+        ctx.addIssue({
+          code: "custom",
+          path: ["events", index, "prerequisites"],
+          message:
+            "Mutation prerequisites must be distinct and cannot include itself",
+        });
       if (event.status === "active" || event.status === "failed") {
         activeIds.push(event.eventId);
       }
+    }
+    for (const event of queue.events) {
+      const visit = (id: string, ancestors: ReadonlySet<string>): boolean => {
+        if (ancestors.has(id)) return false;
+        const prerequisite = queue.events.find((item) => item.eventId === id);
+        return (
+          prerequisite !== undefined &&
+          (prerequisite.prerequisites ?? []).every((next) =>
+            visit(next, new Set([...ancestors, id])),
+          )
+        );
+      };
+      if (
+        !(event.prerequisites ?? []).every((id) =>
+          visit(id, new Set([event.eventId])),
+        )
+      )
+        ctx.addIssue({
+          code: "custom",
+          path: ["events", event.eventId, "prerequisites"],
+          message: "Mutation prerequisite is absent or cyclic",
+        });
     }
     if (
       activeIds.length > 1 ||
@@ -92,6 +142,39 @@ export function parseTaskMutationQueue(
 }
 export type TaskMutationEvent = z.infer<typeof eventSchema>;
 type QueueRecord = z.infer<typeof queueSchema>;
+const mutationPriority: Record<TaskMutationEvent["kind"], number> = {
+  "terminal-pr": 0,
+  feedback: 1,
+  "ci-repair": 2,
+  "pr-maintenance": 3,
+  implementation: 4,
+  refinement: 4,
+};
+
+function nextQueued(queue: QueueRecord): TaskMutationEvent | undefined {
+  const next = [...queue.events]
+    .filter(
+      (event) => event.status === "queued" && event.dispatchReady !== false,
+    )
+    .sort(
+      (left, right) =>
+        mutationPriority[left.kind] - mutationPriority[right.kind] ||
+        left.enqueuedAt.localeCompare(right.enqueuedAt) ||
+        left.cardId.localeCompare(right.cardId) ||
+        left.eventId.localeCompare(right.eventId),
+    )[0];
+  const ready = (event: TaskMutationEvent): TaskMutationEvent | undefined => {
+    if (event.dispatchReady === false) return undefined;
+    for (const id of event.prerequisites ?? []) {
+      const prerequisite = queue.events.find((item) => item.eventId === id)!;
+      if (prerequisite.status === "completed") continue;
+      if (prerequisite.status !== "queued") return undefined;
+      return ready(prerequisite);
+    }
+    return event;
+  };
+  return next === undefined ? undefined : ready(next);
+}
 const liveMutationOwners = new Set<string>();
 
 function isProcessAlive(pid: number | undefined): boolean {
@@ -270,14 +353,7 @@ export class TaskMutationQueue {
   claimNext(): TaskMutationEvent | null {
     return this.update((queue) => {
       if (queue.activeEventId !== null) return { queue, result: null };
-      const next = [...queue.events]
-        .filter((event) => event.status === "queued")
-        .sort(
-          (left, right) =>
-            left.enqueuedAt.localeCompare(right.enqueuedAt) ||
-            left.cardId.localeCompare(right.cardId) ||
-            left.eventId.localeCompare(right.eventId),
-        )[0];
+      const next = nextQueued(queue);
       if (next === undefined) return { queue, result: null };
       const claimed = {
         ...next,
@@ -354,6 +430,14 @@ export class TaskMutationQueue {
         };
       }
       if (target.status !== "queued") return { queue, result: null };
+      // Recovery of an active/failed owner above is not preempted. New active-PR
+      // work, including callers asking for a specific descriptor, obeys priority.
+      // Ready claims use current Trello order instead of historical timestamps.
+      if (
+        !["implementation", "refinement"].includes(target.kind) &&
+        nextQueued(queue)?.eventId !== eventId
+      )
+        return { queue, result: null };
       const active = {
         ...target,
         status: "active" as const,
@@ -477,6 +561,36 @@ export class TaskMutationQueue {
 
   complete(eventId: string): TaskMutationEvent {
     return this.finish(eventId, "completed");
+  }
+
+  retireSupersededObservation(eventId: string): void {
+    this.update((queue) => {
+      const target = queue.events.find((event) => event.eventId === eventId);
+      if (
+        !target ||
+        target.status !== "queued" ||
+        !["feedback", "ci-repair", "pr-maintenance"].includes(target.kind)
+      )
+        throw new TaskMutationQueueConflictError(
+          "Only a never-started active-PR observation may be superseded",
+        );
+      return {
+        queue: {
+          ...queue,
+          events: queue.events.map((event) =>
+            event.eventId === eventId
+              ? {
+                  ...event,
+                  status: "retired" as const,
+                  retiredAt: new Date().toISOString(),
+                  retirementReason: "superseded-observation" as const,
+                }
+              : event,
+          ),
+        },
+        result: undefined,
+      };
+    });
   }
 
   fail(eventId: string): TaskMutationEvent {

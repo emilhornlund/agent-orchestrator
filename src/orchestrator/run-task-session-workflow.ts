@@ -98,7 +98,11 @@ import {
   TaskSessionReviewRepairError,
 } from "../task-session/run-task-session-review-repairs.js";
 import { runTaskSessionCiRepairs } from "../task-session/run-task-session-ci-repairs.js";
-import { runTaskSessionFeedbackCycle } from "./run-task-session-feedback-cycle.js";
+import {
+  runTaskSessionFeedbackCycle,
+  refreshCurrentTaskFeedback,
+  feedbackOperationId,
+} from "./run-task-session-feedback-cycle.js";
 import { inspectPrimaryOperationEvidence } from "../task-session/inspect-primary-operation.js";
 import { FeedbackLedgerStore } from "../task-session/feedback-ledger-store.js";
 import {
@@ -2134,6 +2138,123 @@ export async function runTaskSessionWorkflow(
     }
     if (executionRecoveryBlocked) continue;
     let record = taskStore.read(observation.cardId);
+    if (
+      record &&
+      ["ci", "human-feedback"].includes(record.phase) &&
+      !hasUnresolvedLegacyMaintenance &&
+      queue.getActive()?.kind !== "feedback"
+    ) {
+      const card = humanReviewCards.find(
+        (candidate) => candidate.id === observation.cardId,
+      )!;
+      const worktreePath = path.join(project.repository.worktreeRoot, card.id);
+      await refreshCurrentTaskFeedback({
+        project,
+        cardId: card.id,
+        observation,
+        ledgerStore: feedbackLedgerStore,
+        openCode,
+        worktreePath,
+        signal,
+      });
+      const pending =
+        feedbackLedgerStore
+          .read(card.id)
+          ?.entries.filter(
+            (entry) =>
+              entry.isCurrent !== false &&
+              entry.status === "pending" &&
+              entry.actionability === "actionable",
+          ) ?? [];
+      const selectedFeedbackId =
+        pending.length === 0
+          ? null
+          : feedbackOperationId(observation.headSha, pending);
+      const ciEventId = `ci-repair:${card.id}:${observation.headSha}`;
+      const maintenanceEventId = `pr-maintenance:${card.id}:${observation.headSha}`;
+      const maintenanceNeeded =
+        project.maintenance?.enabled === true &&
+        ["behind", "diverged"].includes(observation.baseRelation);
+      for (const queued of queue.list()) {
+        if (queued.cardId !== card.id || queued.status !== "queued") continue;
+        if (
+          (queued.kind === "feedback" &&
+            queued.eventId !== selectedFeedbackId) ||
+          (queued.kind === "ci-repair" && queued.eventId !== ciEventId) ||
+          (queued.kind === "pr-maintenance" &&
+            (!maintenanceNeeded || queued.eventId !== maintenanceEventId))
+        )
+          queue.retireSupersededObservation(queued.eventId);
+      }
+      if (observation.ciEvaluation.status === "failed")
+        queue.enqueue({
+          projectId: project.id,
+          cardId: card.id,
+          eventId: ciEventId,
+          operationKey: `${record.operationKey}:ci:${observation.headSha}`,
+          kind: "ci-repair",
+          enqueuedAt: record.updatedAt,
+        });
+      if (maintenanceNeeded)
+        queue.enqueue({
+          projectId: project.id,
+          cardId: card.id,
+          eventId: maintenanceEventId,
+          operationKey: maintenanceEventId,
+          kind: "pr-maintenance",
+          enqueuedAt: record.updatedAt,
+        });
+      if (pending.length > 0) {
+        const operationId = feedbackOperationId(observation.headSha, pending);
+        queue.enqueue({
+          projectId: project.id,
+          cardId: card.id,
+          eventId: operationId,
+          operationKey: operationId,
+          kind: "feedback",
+          enqueuedAt: new Date().toISOString(),
+        });
+        if (queue.getActive() === null) {
+          if (record.phase === "ci") {
+            record = taskStore.compareAndSwap(
+              card.id,
+              record.revision,
+              transitionTaskExecutionRecord(record, {
+                type: "human-feedback-pending",
+                eventId: `${operationId}:pending`,
+                projectId: project.id,
+                cardId: card.id,
+                operationKey: record.operationKey,
+                occurredAt: timestamp(record),
+              }),
+            );
+          }
+          const result = await runTaskSessionFeedbackCycle({
+            project,
+            card,
+            observation,
+            taskStore,
+            planStore,
+            ledgerStore: feedbackLedgerStore,
+            mutationQueue: queue,
+            trello,
+            git,
+            github,
+            openCode,
+            commands,
+            worktreePath,
+            prepareAttachmentContext: () =>
+              options.prepareAttachmentContext(card),
+            signal,
+            ...(emailNotifier === undefined ? {} : { emailNotifier }),
+            ...(options.retryIntervalMs === undefined
+              ? {}
+              : { retryIntervalMs: options.retryIntervalMs }),
+          });
+          if (result !== "idle") return;
+        }
+      }
+    }
     const ciStateKey = `${project.id}/${observation.cardId}/${observation.headSha}`;
     const ciState = observation.ciEvaluation.status;
     if (lastLoggedCiState.get(ciStateKey) !== ciState) {

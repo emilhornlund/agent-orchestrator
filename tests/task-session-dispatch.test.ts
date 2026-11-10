@@ -2002,7 +2002,9 @@ describe("task-session production dispatch", () => {
     ]);
     feedbackActive = true;
     await pollProject(trello, git, github, openCode, commands, project, signal);
-    expect(git.commit).toHaveBeenCalledTimes(3);
+    // Human corrections take priority; their new head supersedes the old failed
+    // checks before a CI repair starts. No obsolete CI commit is manufactured.
+    expect(git.commit).toHaveBeenCalledTimes(2);
     expect(pullRequestCreated).toBe(true);
     expect(
       githubRun.mock.calls.filter(
@@ -2018,14 +2020,14 @@ describe("task-session production dispatch", () => {
           options.prompt.includes("Security") &&
           options.sessionId === "ses_primary-task",
       ),
-    ).toBe(true);
+    ).toBe(false);
     const record = new TaskExecutionStore(project.contextRoot, project).read(
       card.id,
     );
     expect(record).toMatchObject({
       phase: "ci",
-      retryCounters: { ci: 1 },
-      pullRequest: { headSha: "d".repeat(40) },
+      retryCounters: { ci: 0 },
+      pullRequest: { headSha: "c".repeat(40) },
       publicationQuality: {
         validation: { status: "passed", exitCode: 0 },
         coverageEvidence: { status: "skipped", exitCode: null, command: "" },
@@ -2035,7 +2037,7 @@ describe("task-session production dispatch", () => {
       new TaskMutationQueue(project.contextRoot, project)
         .list()
         .map(({ status }) => status),
-    ).toEqual(["completed", "completed", "completed"]);
+    ).toEqual(["completed", "queued", "completed"]);
     expect(trello.getCards).toHaveBeenCalled();
     expect(fs.existsSync(path.join(worktreeRoot, card.id))).toBe(true);
     expect(fs.existsSync(repositoryPath)).toBe(true);
@@ -2045,13 +2047,21 @@ describe("task-session production dispatch", () => {
     ).rejects.toThrow("outcome is uncertain");
     expect(reviewReplyMutationCount).toBe(1);
     expect(conversationReplyCount).toBe(1);
+    expect(
+      new TaskMutationQueue(project.contextRoot, project)
+        .list()
+        .find((entry) => entry.kind === "ci-repair"),
+    ).toMatchObject({
+      status: "retired",
+      retirementReason: "superseded-observation",
+    });
     const afterUncertainReply = new TaskExecutionStore(
       project.contextRoot,
       project,
     ).read(card.id);
     expect(afterUncertainReply).toMatchObject({
       phase: "human-feedback",
-      pullRequest: { headSha: "d".repeat(40) },
+      pullRequest: { headSha: "c".repeat(40) },
     });
     expect(afterUncertainReply?.publicationQuality).toBeDefined();
     expect(feedbackLedger.read(card.id)?.entries).toContainEqual(
@@ -2094,7 +2104,7 @@ describe("task-session production dispatch", () => {
       project,
     ).read(card.id);
     expect(recoveredRecord?.reviewObservation).toMatchObject({
-      headSha: "d".repeat(40),
+      headSha: "c".repeat(40),
       ciEvaluation: {
         status: "passed",
         expectedCheckNames: ["Build", "Security", "Tests"],
@@ -2107,7 +2117,7 @@ describe("task-session production dispatch", () => {
         id: "501",
         status: "published",
         replyId: "900",
-        remediationCommitSha: "d".repeat(40),
+        remediationCommitSha: "c".repeat(40),
       }),
     );
     expect(recoveredRecord?.phase).toBe("ci");
@@ -2117,13 +2127,13 @@ describe("task-session production dispatch", () => {
         id: "601",
         status: "published",
         replyId: "910",
-        remediationCommitSha: "d".repeat(40),
+        remediationCommitSha: "c".repeat(40),
       }),
     );
 
     // The late request is preserved and starts a second remediation round.
     await pollProject(trello, git, github, openCode, commands, project, signal);
-    expect(git.commit).toHaveBeenCalledTimes(4);
+    expect(git.commit).toHaveBeenCalledTimes(3);
     expect(reviewReplyMutationCount).toBe(1);
     const secondRoundRecord = new TaskExecutionStore(
       project.contextRoot,
@@ -2131,7 +2141,7 @@ describe("task-session production dispatch", () => {
     ).read(card.id);
     expect(secondRoundRecord).toMatchObject({
       phase: "ci",
-      pullRequest: { headSha: "e".repeat(40) },
+      pullRequest: { headSha: "d".repeat(40) },
     });
     await pollProject(trello, git, github, openCode, commands, project, signal);
     expect(reviewReplyMutationCount).toBe(2);
@@ -2146,7 +2156,7 @@ describe("task-session production dispatch", () => {
       retryCounters: { ci: 2 },
       ciRepair: { status: "exhausted" },
     });
-    expect(git.commit).toHaveBeenCalledTimes(6);
+    expect(git.commit).toHaveBeenCalledTimes(5);
     expect(
       new TaskMutationQueue(project.contextRoot, project).list().at(-1)?.status,
     ).toBe("failed");
@@ -2157,7 +2167,7 @@ describe("task-session production dispatch", () => {
         id: "502",
         status: "published",
         replyId: "901",
-        remediationCommitSha: "e".repeat(40),
+        remediationCommitSha: "d".repeat(40),
       }),
     );
     await pollProject(trello, git, github, openCode, commands, project, signal);

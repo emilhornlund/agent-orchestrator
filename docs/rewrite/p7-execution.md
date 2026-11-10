@@ -16,6 +16,9 @@ shared requirements do not pull later CI/maintenance/cleanup implementation here
    observer stores immutable snapshots without changing the writer projection.
    Arrival consumption, priority and prerequisites remain a separate complete task;
    snapshot retention alone does not satisfy the coordinated scheduling criteria.
+   Retained unclassified feedback descriptors are nondispatchable. The serialized
+   scheduler refreshes authoritative current feedback before replacing them with
+   actionable descriptors; stale never-started descriptors are retired, not executed.
 2. Persist queue descriptors/order: human corrections before CI before maintenance,
    with explicit necessary prerequisites. Keep arrivals across restart. Maintenance
    execution itself belongs to P8.
