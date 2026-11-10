@@ -40,6 +40,11 @@ shared requirements do not pull later CI/maintenance/cleanup implementation here
 7. Publish truthful partial/uncertain replies and managed activity/body updates,
    preserving human content and P4 uncertain-mutation reconciliation. Never resolve
    human-owned threads or claim a fix solely from an agent's declaration.
+   Body edits retain their observed-body precondition. A changed precondition may
+   cancel only never-dispatched intent; a prior dispatched write still reconciles.
+   A completed repeatable body intent is not cached proof of the provider's later
+   fields after observed drift. Replies retain immutable accepted outcomes even
+   when the originating request is edited or deleted.
 8. Observe human merge/closure during active/queued work. Fence stale completions,
    safely cancel and reconcile in-flight effects. No new push, branch resurrection
    or stale Human Review move. Preserve unshipped work; missing PID/group does not

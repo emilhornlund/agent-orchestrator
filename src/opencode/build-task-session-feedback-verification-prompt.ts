@@ -40,6 +40,6 @@ export function buildTaskSessionFeedbackVerificationPrompt(input: {
     "Feedback items requiring one disposition each:",
     JSON.stringify(input.actionableFeedback, null, 2),
     ...taskSessionRepositoryGuidance,
-    "Return only JSON matching {version:1, projectId, cardId, headSha, contentIdentity, dispositions:[...]}. Each disposition must contain feedbackId and either status=verified-fixed with nonempty evidence paths/tests, or status=unresolved with a concrete reason. Do not omit or invent an item.",
+    "Return only JSON matching {version:1, projectId, cardId, headSha, contentIdentity, dispositions:[...]}. Each disposition must contain feedbackId and either status=verified-fixed with nonempty supporting evidence paths/tests, status=unresolved for an established remaining request, or status=uncertain when available evidence cannot establish fulfillment. Unresolved and uncertain dispositions require a concrete reason. Failed/pending checks are context, not a veto on evaluating available corrections. Never claim fulfillment solely from the implementation agent's declaration. Do not omit or invent an item.",
   ].join("\n");
 }

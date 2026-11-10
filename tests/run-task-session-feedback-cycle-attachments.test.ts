@@ -25,6 +25,7 @@ function fixture() {
   root = fs.mkdtempSync(path.join(os.tmpdir(), "feedback-cycle-attachments-"));
   const project = {
     id: "project",
+    trello: { reviewListId: "review", workingListId: "working" },
     repository: {
       path: path.join(root, "repo"),
       github: "owner/repo",
@@ -100,7 +101,7 @@ function fixture() {
     mutationQueue: new TaskMutationQueue(stateRoot, project),
     trello: {} as never,
     git: {} as never,
-    github: {} as never,
+    github: { ensurePullRequestDraft: vi.fn(async () => undefined) } as never,
     openCode: new OpenCodeClient(async ({ prompt }) => ({
       exitCode: 0,
       output: actionableFeedbackResponse(prompt),
@@ -125,6 +126,41 @@ function fixture() {
 }
 
 describe("Human Review attachment preparation", () => {
+  it("preserves both operation and cleanup failures when managed activity cannot be reconciled", async () => {
+    const f = fixture();
+    const startFailure = new Error("status start unavailable");
+    const clearFailure = new Error("status clear unavailable");
+    const updateStatus = vi
+      .fn()
+      .mockRejectedValueOnce(startFailure)
+      .mockRejectedValueOnce(clearFailure);
+    const result = runTaskSessionFeedbackCycle({
+      ...f.common,
+      github: {
+        ensurePullRequestDraft: vi.fn(async () => undefined),
+        updatePullRequestDescriptionStatus: updateStatus,
+      } as never,
+      observation: {
+        ...f.observation,
+        conversationComments: [
+          {
+            id: 10,
+            author: "human",
+            body: "Please fix this",
+            createdAt: "2026-10-24T09:00:00.000Z",
+            updatedAt: null,
+          },
+        ],
+      } as never,
+    });
+    await expect(result).rejects.toMatchObject({
+      errors: [{ cause: startFailure }, { cause: clearFailure }],
+      cause: { cause: clearFailure },
+    });
+    expect(f.common.mutationQueue.getActive()?.status).toBe("failed");
+    expect(f.common.taskStore.read("card")?.phase).toBe("human-feedback");
+  });
+
   it("does not trigger classification or correction from self, bot, or managed-status comments", async () => {
     const f = fixture();
     const classify = vi.spyOn(f.common.openCode, "run");

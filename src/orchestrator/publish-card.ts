@@ -42,6 +42,7 @@ import type { VerifiedPublicationDecisionInput } from "../task-session/verified-
 import { decideValidatedHumanReviewPublication } from "../task-session/verified-publication-decision.js";
 import { getTaskSessionSourceSnapshotIdentity } from "../task-session/source-snapshot.js";
 import { FeedbackLedgerStore } from "../task-session/feedback-ledger-store.js";
+import { updateMaintenanceStatus } from "./maintenance-status.js";
 
 import { toFailureError } from "./failure-diagnostic.js";
 import { PublishedCardStateError } from "./published-card-state-error.js";
@@ -733,6 +734,16 @@ export async function publishCard({
       }
 
       cardLog.event(`Pushing branch ${branch}...`);
+      if (expectedExistingPullRequestUrl)
+        await updateMaintenanceStatus(
+          github,
+          project,
+          card,
+          expectedExistingPullRequestUrl,
+          "publishing-pr-changes",
+          "existing PR publication",
+          cardLog,
+        );
 
       await git.push(worktreePath, "origin", branch, project);
 
@@ -826,6 +837,7 @@ export async function publishCard({
               repository: project.repository.github,
               pullRequestUrl: pullRequest.url,
               body: enrichedBody,
+              expectedBody: currentBody,
               project,
             });
             cardLog.event(
@@ -1006,6 +1018,16 @@ export async function publishCard({
     await beforeHumanReviewTransition?.();
     await trello.moveCard(card.id, project.trello.reviewListId);
     await afterHumanReviewTransition?.();
+    if (expectedExistingPullRequestUrl)
+      await updateMaintenanceStatus(
+        github,
+        project,
+        card,
+        expectedExistingPullRequestUrl,
+        null,
+        "existing PR publication completed",
+        cardLog,
+      );
   } catch (error) {
     if (error instanceof TrelloRequestAbortedError) {
       throw error;

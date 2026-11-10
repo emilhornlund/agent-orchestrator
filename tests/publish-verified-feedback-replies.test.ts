@@ -71,6 +71,106 @@ function fixture() {
 }
 
 describe("publishVerifiedFeedbackReplies", () => {
+  it.each(["unresolved", "uncertain"] as const)(
+    "publishes truthful %s replies without converting them into verified fixes",
+    async (status) => {
+      const f = fixture();
+      const sendReply = vi.fn(async (_entry, body: string) => {
+        expect(body).toContain(
+          status === "uncertain" ? "remains uncertain" : "remains unresolved",
+        );
+        expect(body).not.toContain("Verified in published commit");
+        expect(body).toContain("#discussion_r77");
+        return "partial-901";
+      });
+      const options = {
+        ...f.base,
+        verification: {
+          ...f.base.verification,
+          dispositions: [
+            {
+              feedbackId: "inline-comment:77",
+              status,
+              reason: "No adequate evidence of fulfillment",
+            },
+          ],
+        },
+        reconcileReply: async () => ({ status: "absent" as const }),
+        sendReply,
+      };
+      await publishVerifiedFeedbackReplies(options);
+      await publishVerifiedFeedbackReplies(options);
+      expect(sendReply).toHaveBeenCalledOnce();
+      expect(f.store.read("card")?.entries[0]).toMatchObject({
+        status: "published",
+        resolution: status,
+        unresolvedReason: "No adequate evidence of fulfillment",
+        verificationEvidence: [],
+      });
+    },
+  );
+
+  it("reconciles a prior uncertain reply after a substantive edit without overwriting or consuming the new request", async () => {
+    const f = fixture();
+    const sendReply = vi.fn(async () => {
+      throw new Error("accepted but acknowledgment lost");
+    });
+    await expect(
+      publishVerifiedFeedbackReplies({
+        ...f.base,
+        reconcileReply: async () => ({ status: "absent" }),
+        sendReply,
+      }),
+    ).rejects.toThrow("uncertain");
+    const old = f.store.read("card")!.entries[0]!;
+    f.store.mergeIncoming("card", [
+      {
+        ...old,
+        body: "A different requested action",
+        requestRevision: 1,
+        status: "pending",
+        verificationEvidence: [],
+        replyId: undefined,
+        replyOperationId: undefined,
+        replyState: undefined,
+      },
+    ]);
+    const result = await publishVerifiedFeedbackReplies({
+      ...f.base,
+      verification: { ...f.base.verification, dispositions: [] },
+      reconcileReply: async () => ({ status: "found", replyId: "late-901" }),
+      sendReply,
+    });
+    expect(result.publishedReplyIds).toEqual([
+      { feedbackId: "inline-comment:77", replyId: "late-901" },
+    ]);
+    expect(sendReply).toHaveBeenCalledOnce();
+    expect(f.store.read("card")?.entries[0]).toMatchObject({
+      body: "A different requested action",
+      status: "pending",
+    });
+    expect(
+      f.store.read("card")?.replyOutcomes?.[old.replyOperationId!],
+    ).toMatchObject({ replyId: "late-901" });
+  });
+
+  it("keeps exact-head identity checks even when CI itself is advisory", async () => {
+    const f = fixture();
+    const sendReply = vi.fn();
+    await expect(
+      publishVerifiedFeedbackReplies({
+        ...f.base,
+        ciEvaluation: {
+          ...f.base.ciEvaluation,
+          expectedHeadSha: "c".repeat(40),
+        },
+        reconcileReply: async () => ({ status: "absent" }),
+        sendReply,
+      }),
+    ).rejects.toThrow("another PR head");
+    expect(sendReply).not.toHaveBeenCalled();
+  });
+
   it("publishes only verified replies after all exact-head CI checks pass and persists reply IDs", async () => {
     const f = fixture();
     const reconcileReply = vi.fn(async () => ({ status: "absent" as const }));
@@ -102,9 +202,12 @@ describe("publishVerifiedFeedbackReplies", () => {
     expect(sendReply).toHaveBeenCalledOnce();
   });
 
-  it("does not send replies before CI succeeds on the published head", async () => {
+  it("publishes evidence-based replies while reporting pending CI without claiming it passed", async () => {
     const f = fixture();
-    const sendReply = vi.fn();
+    const sendReply = vi.fn(async (_entry, body: string) => {
+      expect(body).toContain("Observed CI status for this head: waiting");
+      return "901";
+    });
     await expect(
       publishVerifiedFeedbackReplies({
         ...f.base,
@@ -118,8 +221,8 @@ describe("publishVerifiedFeedbackReplies", () => {
         reconcileReply: async () => ({ status: "absent" }),
         sendReply,
       }),
-    ).rejects.toThrow("Complete current-head CI evidence has not passed");
-    expect(sendReply).not.toHaveBeenCalled();
+    ).resolves.toMatchObject({ publishedReplyIds: [{ replyId: "901" }] });
+    expect(sendReply).toHaveBeenCalledOnce();
   });
 
   it("reconciles an uncertain send by marker instead of duplicating the reply", async () => {

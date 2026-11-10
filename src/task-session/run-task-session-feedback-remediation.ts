@@ -280,6 +280,8 @@ export async function runTaskSessionFeedbackRemediation(
             ? {
                 ...entry,
                 status: "escalated" as const,
+                resolution: "unresolved" as const,
+                remediationCommitSha: options.expectedPullRequestHeadSha,
                 unresolvedReason:
                   "The correction attempt produced no implementation changes; this request remains unresolved.",
               }

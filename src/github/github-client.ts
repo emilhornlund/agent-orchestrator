@@ -2550,22 +2550,30 @@ export class GitHubClient {
     repository: string;
     pullRequestUrl: string;
     body: string;
+    expectedBody?: string | undefined;
     project?: ProjectConfig;
   }): Promise<void> {
     options = { ...options };
     const authority = mutationAuthority(options.project?.id);
-    if (
-      !consumeJournaledDispatch(authority, {
-        route: "github-pr-body",
-        args: {
-          cwd: options.cwd,
-          repository: options.repository,
-          pullRequestUrl: options.pullRequestUrl,
-          body: options.body,
-        },
-      }) &&
-      authority
-    ) {
+    const journaled = consumeJournaledDispatch(authority, {
+      route: "github-pr-body",
+      args: {
+        cwd: options.cwd,
+        repository: options.repository,
+        pullRequestUrl: options.pullRequestUrl,
+        body: options.body,
+        ...(options.expectedBody === undefined
+          ? {}
+          : { expectedBody: options.expectedBody }),
+      },
+    });
+    const assertCurrentBody = async () => {
+      if (options.expectedBody === undefined) return;
+      const current = await this.getPullRequestDescription(options);
+      if (current !== options.expectedBody && current !== options.body)
+        throw new WorkflowMutationPreconditionChangedError({ body: current });
+    };
+    if (!journaled && authority) {
       options = {
         ...options,
         body: await this.sanitizeMutationBody(options.body, options.project),
@@ -2579,6 +2587,7 @@ export class GitHubClient {
         authority,
         kind: "github-pr-body",
         target: options.pullRequestUrl,
+        observedStateChanged: options.expectedBody !== undefined,
         request: {
           route: "github-pr-body",
           args: {
@@ -2586,9 +2595,15 @@ export class GitHubClient {
             repository: options.repository,
             pullRequestUrl: options.pullRequestUrl,
             body: options.body,
+            ...(options.expectedBody === undefined
+              ? {}
+              : { expectedBody: options.expectedBody }),
           },
         },
-        preflight: () => this.assertMutationOpen(options),
+        preflight: async () => {
+          await this.assertMutationOpen(options);
+          await assertCurrentBody();
+        },
         send: async () => {
           return this.editPullRequestDescription(options);
         },
@@ -2601,6 +2616,7 @@ export class GitHubClient {
       });
       return;
     }
+    if (!journaled) await assertCurrentBody();
     const credential = await this.resolveCredential(options.project);
     const pullRequestUrl = parsePullRequestUrl(options.pullRequestUrl);
     await this.run(
@@ -2652,7 +2668,11 @@ export class GitHubClient {
     }
 
     // The body read immediately above is intentional: never write a body from an earlier poll.
-    await this.editPullRequestDescription({ ...options, body: nextBody });
+    await this.editPullRequestDescription({
+      ...options,
+      body: nextBody,
+      expectedBody: currentBody,
+    });
 
     return true;
   }
@@ -3652,4 +3672,5 @@ import {
   assertJournaledTransport,
   rejectJournaledDispatch,
   workflowMutation,
+  WorkflowMutationPreconditionChangedError,
 } from "../task-session/workflow-mutation.js";

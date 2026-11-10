@@ -34,6 +34,7 @@ const feedbackEntrySchema = z.strictObject({
   ]),
   status: z.enum(["pending", "verified", "escalated", "published", "closed"]),
   unresolvedReason: z.string().min(1).optional(),
+  resolution: z.enum(["verified-fixed", "unresolved", "uncertain"]).optional(),
   verificationEvidence: z.array(z.string().min(1)),
   remediationCommitSha: sha.optional(),
   replyId: z.string().min(1).optional(),
@@ -50,6 +51,15 @@ const feedbackLedgerSchema = z
     updatedAt: z.string().datetime(),
     entries: z.array(feedbackEntrySchema),
     history: z.array(feedbackEntrySchema).optional(),
+    replyOutcomes: z
+      .record(
+        z.string().min(1),
+        z.strictObject({
+          replyId: z.string().min(1),
+          observedAt: z.string().datetime(),
+        }),
+      )
+      .optional(),
   })
   .superRefine((ledger, ctx) => {
     const keys = new Set<string>();

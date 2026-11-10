@@ -223,7 +223,7 @@ export async function runAdvisoryTaskSessionFeedbackVerification(
       contentIdentity: identity,
       dispositions: options.actionableFeedback.map((entry) => ({
         feedbackId: `${entry.kind}:${entry.id}`,
-        status: "unresolved" as const,
+        status: "uncertain" as const,
         reason:
           "Independent AI feedback verification was inconclusive; human review required",
       })),

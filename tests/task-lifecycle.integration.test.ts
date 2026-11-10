@@ -37,6 +37,10 @@ import { TaskPlanStore } from "../src/task-session/task-plan-store.js";
 import { TaskMutationQueue } from "../src/task-session/task-mutation-queue.js";
 import type { TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
 import { createPublicationFixture } from "./support/initial-publication-fixture.js";
+import {
+  reconcileManagedPullRequestStatus,
+  type ManagedPullRequestStatus,
+} from "../src/github/pull-request-status.js";
 
 const execFile = promisify(nodeExecFile);
 let roots: string[] = [];
@@ -51,7 +55,7 @@ interface LifecycleScenario {
   quality: "validation" | "none" | "coverage" | "both";
   terminalReadRaceAt?: number;
   correctionFailure?: boolean;
-  feedbackQuality?: "validation" | "unavailable";
+  feedbackQuality?: "validation" | "unavailable" | "no-op";
   preparedReview?: "material" | "unavailable";
   ciReviewHandoffs?: boolean;
   feedbackReviewRecovery?:
@@ -75,14 +79,16 @@ afterEach(async () => {
 
 describe("task lifecycle through pollProject", () => {
   it.each<LifecycleScenario>([
-    ...(["validation", "unavailable"] as const).map((feedbackQuality) => ({
-      draft: false,
-      terminal: "merged" as const,
-      destination: "done" as const,
-      ackLoss: false,
-      quality: "both" as const,
-      feedbackQuality,
-    })),
+    ...(["validation", "unavailable", "no-op"] as const).map(
+      (feedbackQuality) => ({
+        draft: false,
+        terminal: "merged" as const,
+        destination: "done" as const,
+        ackLoss: false,
+        quality: "both" as const,
+        feedbackQuality,
+      }),
+    ),
     {
       draft: false,
       terminal: "merged",
@@ -550,6 +556,7 @@ describe("task lifecycle through pollProject", () => {
       let loseFeedbackWorkingAck = feedbackQuality === "validation";
       let feedbackBody = "Please handle the empty result.";
       let feedbackPrimaryCorrections = 0;
+      const feedbackReplyBodies: string[] = [];
       const feedbackReviewDispatches: {
         operationId: string;
         prompt: string;
@@ -628,6 +635,23 @@ describe("task lifecycle through pollProject", () => {
           );
           if (!pr) throw new Error("PR not found");
           pr.body = input.body;
+        },
+        updatePullRequestDescriptionStatus: async (input: {
+          pullRequestUrl: string;
+          status: ManagedPullRequestStatus | null;
+        }) => {
+          const pr = [...prs.values()].find(
+            (candidate) => candidate.url === input.pullRequestUrl,
+          );
+          if (!pr) throw new Error("PR not found");
+          const next = reconcileManagedPullRequestStatus(
+            pr.body,
+            input.status,
+            "main",
+          );
+          const changed = next !== pr.body;
+          pr.body = next;
+          return changed;
         },
         createPullRequest: async (input: {
           headBranch: string;
@@ -768,7 +792,19 @@ describe("task lifecycle through pollProject", () => {
         },
         getPullRequestConversationComments: async () => {
           feedbackReads += 1;
-          return [];
+          return feedbackReplyBodies.map((body, index) => ({
+            id: 900 + index,
+            author: "automation[bot]",
+            authorIsBot: true,
+            body,
+            createdAt: "2026-11-01T10:00:00.000Z",
+            updatedAt: null,
+          }));
+        },
+        replyToConversationComment: async (input: { body: string }) => {
+          const id = String(900 + feedbackReplyBodies.length);
+          feedbackReplyBodies.push(input.body);
+          return { id };
         },
         mergePullRequest: async (input: { pullRequestUrl?: string }) => {
           ledger.push({
@@ -835,6 +871,17 @@ describe("task lifecycle through pollProject", () => {
               )
             ) {
               feedbackPrimaryCorrections += 1;
+              expect(lists.get("first")).toBe("working");
+              expect(
+                prs
+                  .get("agent/first")
+                  ?.body.startsWith("<!-- agent-orchestrator-status:start -->"),
+              ).toBe(true);
+              expect(prs.get("agent/first")?.body).toContain(
+                "addressing requested review feedback",
+              );
+              if (feedbackQuality === "no-op")
+                return { exitCode: 0, output: "No changes", errorOutput: "" };
               fs.writeFileSync(
                 path.join(options.cwd, "app.js"),
                 "module.exports = 'feedback correction';\n",
@@ -1806,6 +1853,7 @@ describe("task lifecycle through pollProject", () => {
       expect(lists.get("first")).toBe("review");
       if (feedbackQuality !== undefined) {
         const originalHead = store.read("first")!.pullRequest!.headSha!;
+        firstPr!.body += "\n\nHuman-only deployment note.";
         correctionFeedback = true;
         if (feedbackQuality === "validation") {
           await expect(poll()).rejects.toThrow(
@@ -1835,6 +1883,27 @@ describe("task lifecycle through pollProject", () => {
           await poll();
         }
         const corrected = store.read("first")!;
+        expect(firstPr?.body).toContain("Human-only deployment note.");
+        expect(firstPr?.body).not.toContain("remediation is in progress");
+        if (feedbackQuality === "no-op") {
+          expect(corrected.pullRequest!.headSha).toBe(originalHead);
+          expect(corrected.feedbackRemediation).toMatchObject({
+            status: "no-op",
+            outcomeReported: true,
+          });
+          expect(firstPr?.body).toContain("No repository changes");
+          expect(firstPr?.isDraft).toBe(true);
+          expect(lists.get("first")).toBe("review");
+          await poll();
+          await poll();
+          expect(feedbackPrimaryCorrections).toBe(1);
+          expect(feedbackReplyBodies).toHaveLength(1);
+          expect(feedbackReplyBodies[0]).toContain(
+            "This request remains unresolved",
+          );
+          expect(store.read("first")?.pullRequest?.headSha).toBe(originalHead);
+          return;
+        }
         expect(corrected.pullRequest!.headSha).not.toBe(originalHead);
         expect(
           await git.isAncestor(

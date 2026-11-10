@@ -1242,6 +1242,7 @@ describe("task-session production dispatch", () => {
     let failFirstClaimMove = true;
     let pullRequestCreated = false;
     let pullRequestDraft = false;
+    let pullRequestBody = "Human description";
     let feedbackActive = false;
     let lateFeedback = false;
     let failAllChecks = false;
@@ -1318,6 +1319,26 @@ describe("task-session production dispatch", () => {
     const githubRun = vi.fn<RunGitHubCommand>(async (_cwd, args) => {
       if (args[0] === "api" && args[1] === "user")
         return JSON.stringify({ login: "automation" });
+      if (
+        args[0] === "pr" &&
+        args[1] === "view" &&
+        args[args.indexOf("--json") + 1] === "body"
+      )
+        return JSON.stringify({ body: pullRequestBody });
+      if (
+        args[0] === "pr" &&
+        args[1] === "view" &&
+        args[args.indexOf("--json") + 1] === "title,body,isDraft"
+      )
+        return JSON.stringify({
+          title: card.name,
+          body: pullRequestBody,
+          isDraft: pullRequestDraft,
+        });
+      if (args[0] === "pr" && args[1] === "edit") {
+        pullRequestBody = args[args.indexOf("--body") + 1]!;
+        return "";
+      }
       if (args[0] === "pr" && args[1] === "list") {
         const requestedFields =
           args.find((argument) => argument.includes("headRefOid")) ?? "";
@@ -1354,6 +1375,7 @@ describe("task-session production dispatch", () => {
         return pullRequestCreated ? "https://github.com/owner/repo/pull/9" : "";
       }
       if (args[0] === "pr" && args[1] === "create") {
+        pullRequestBody = args[args.indexOf("--body") + 1]!;
         pullRequestDraft = args.includes("--draft");
         pullRequestCreated = true;
         return "https://github.com/owner/repo/pull/9";

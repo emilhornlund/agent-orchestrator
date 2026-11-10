@@ -114,7 +114,34 @@
   scenarios passed again (20 unrelated scenarios filtered out). Typecheck,
   changed-file ESLint, documentation Prettier and `git diff --check` passed. The
   selected guide/roadmap scope and dependencies remain accurate.
-- Remaining P7 order: truthful replies/managed description (T6), active terminal precedence
+- P7-T6 publishes verified/unresolved/uncertain contextual replies on the observed
+  published head without requiring green CI. CI status is reported truthfully,
+  review summaries can receive attributed PR replies, and no conversation is
+  automatically resolved. Immutable accepted reply outcomes survive substantive
+  edits/deletions; unknown sends reconcile rather than resend. Reply operation and
+  marker identity retain request revisions and interrupted batches keep their owner.
+  Outstanding requests remain draft, including no-op/failed corrections. Managed
+  activity is wired through editing/validation/publication and appears at the top;
+  verified completion clears it, while unknown execution reports attention.
+  No-op outcome reporting is durable and independently resumable without another
+  primary execution or fabricated commit/check. Managed body writes retain current
+  human content through observed-body preconditions; only never-dispatched conflicts
+  cancel, while dispatched uncertainty retains P4 reconciliation. Repeated field
+  drift does not reuse a historical completed body intent as current proof.
+- T6 checks: seven focused reply/status/verification/client/dispatch/mutation suites
+  passed **153 tests**; all three quality/no-op lifecycle scenarios passed, including
+  activity visible during the primary writer, human-body preservation and an
+  unresolved no-op reply without another correction. Broad `yarn test` then passed
+  **2,129 tests across 166 files** (not a full `yarn validate`). Self-review traced
+  current/head/revision evidence, edited/deleted uncertain replies, queue recovery,
+  no-op completion, description/status callers and the original P4 dispatch boundary.
+  Corrected cached body-success reuse after drift and preserved the original error
+  cause in status-reconciliation failures. Final affected checks are recorded below.
+  The final eight affected suites passed **196 tests**, including a new dual-failure
+  recovery regression. Typecheck, changed-file ESLint, docs Prettier and
+  `git diff --check` passed. No known T6 defect remains; terminal-race handling below
+  is still unfinished. No live-service qualification or full validation is claimed.
+- Remaining P7 order: active terminal precedence
   (T7), combined checks and final `yarn validate` (T8). These are not complete.
 
 ## Inherited P6 checkpoint

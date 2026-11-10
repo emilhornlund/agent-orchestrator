@@ -10,6 +10,7 @@ export type ManagedPullRequestStatus =
   | "addressing-review-feedback"
   | "validating-review-changes"
   | "publishing-review-changes"
+  | "publishing-pr-changes"
   | "attention-required"
   | "failed";
 
@@ -80,6 +81,8 @@ function statusMessage(
       return "Agent Orchestrator status: validating requested review changes; remediation is in progress and the review is not yet resolved.";
     case "publishing-review-changes":
       return "Agent Orchestrator status: publishing requested review changes; remediation is in progress and the review is not yet resolved.";
+    case "publishing-pr-changes":
+      return "Agent Orchestrator status: publishing updates to this existing pull request; outstanding issues remain disclosed.";
     case "attention-required":
       return "Agent Orchestrator status: requested review changes remain unresolved. Human attention is required; do not assume the review was resolved.";
     case "failed":
@@ -114,12 +117,9 @@ export function reconcileManagedPullRequestStatus(
   const replacement = section(statusMessage(status, defaultBranch));
 
   if (managedSection === null) {
-    return body.length === 0 ? replacement : `${body}\n\n${replacement}`;
+    return body.length === 0 ? replacement : `${replacement}\n\n${body}`;
   }
-
-  return (
-    body.slice(0, managedSection.start) +
-    replacement +
-    body.slice(managedSection.end)
-  );
+  if (managedSection.start === 0)
+    return replacement + body.slice(managedSection.end);
+  return `${replacement}\n\n${body.slice(0, managedSection.start)}${body.slice(managedSection.end)}`;
 }

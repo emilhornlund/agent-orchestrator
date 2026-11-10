@@ -638,6 +638,7 @@ const feedbackRemediationSchema = z.strictObject({
   status: z.enum(["active", "changed", "no-op", "failed"]),
   headSha: gitSha,
   ledgerRevision: z.number().int().positive().safe(),
+  outcomeReported: z.boolean().optional(),
   reviewSourceAttempts: z
     .record(
       taskSessionContentIdentity,

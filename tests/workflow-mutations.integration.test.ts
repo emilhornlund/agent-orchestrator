@@ -308,6 +308,75 @@ function realGit(f: ReturnType<typeof fixture>) {
 }
 
 describe("production workflow client journal", () => {
+  it("cancels a never-dispatched managed body update after a human edit and refreshes safely after restart", async () => {
+    const f = fixture();
+    let body = "Human original";
+    let race = true;
+    let edits = 0;
+    const github = new GitHubClient(async (_cwd, args) => {
+      if (
+        args[0] === "pr" &&
+        args[1] === "view" &&
+        args[args.indexOf("--json") + 1] === "body"
+      ) {
+        const snapshot = body;
+        if (race) {
+          race = false;
+          body = "Human original\nHuman concurrent addition";
+        }
+        return JSON.stringify({ body: snapshot });
+      }
+      if (args[0] === "pr" && args[1] === "edit") {
+        edits++;
+        body = args[args.indexOf("--body") + 1]!;
+        return "";
+      }
+      throw new Error("Unexpected body-update fixture command");
+    });
+    vi.spyOn(github, "getPullRequestStateByNumber").mockResolvedValue({
+      state: "OPEN",
+    } as Awaited<ReturnType<GitHubClient["getPullRequestStateByNumber"]>>);
+    const options = {
+      cwd: f.pinned.repositoryPath,
+      repository: "owner/repo",
+      pullRequestUrl: f.url,
+      project: f.project,
+      status: "addressing-review-feedback" as const,
+    };
+    await expect(
+      f.run(() => github.updatePullRequestDescriptionStatus(options)),
+    ).rejects.toThrow("External fields changed");
+    expect(edits).toBe(0);
+    expect(f.store.read()!.pendingOperations[0]).toMatchObject({
+      status: "cancelled",
+      mutation: {
+        dispatches: [],
+        cancellation: { reason: "precondition-changed" },
+      },
+    });
+    f.restart();
+    await f.run(() => github.updatePullRequestDescriptionStatus(options));
+    expect(edits).toBe(1);
+    expect(body.startsWith("<!-- agent-orchestrator-status:start -->")).toBe(
+      true,
+    );
+    expect(body).toContain("Human original\nHuman concurrent addition");
+    expect(f.store.read()!.pendingOperations.at(-1)?.status).toBe("completed");
+    // A human may remove the owned status after a verified completed write.
+    // The repeated desired state needs a new intent, not a cached old success.
+    body = "Human original\nHuman concurrent addition";
+    await f.run(() => github.updatePullRequestDescriptionStatus(options));
+    expect(edits).toBe(2);
+    expect(body.startsWith("<!-- agent-orchestrator-status:start -->")).toBe(
+      true,
+    );
+    expect(
+      f.store
+        .read()!
+        .pendingOperations.filter((entry) => entry.status === "completed"),
+    ).toHaveLength(2);
+  });
+
   it("revokes an already-consumed method before a delayed unawaited transport can send", async () => {
     const f = fixture();
     intent(

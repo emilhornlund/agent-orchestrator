@@ -184,6 +184,16 @@ export class FeedbackLedgerStore {
     const next = parseFeedbackLedger(nextValue);
     const assertHistory = (current: FeedbackLedger): void => {
       if (
+        Object.entries(current.replyOutcomes ?? {}).some(
+          ([marker, outcome]) =>
+            JSON.stringify(next.replyOutcomes?.[marker]) !==
+            JSON.stringify(outcome),
+        )
+      )
+        throw new FeedbackLedgerConflictError(
+          "Known feedback reply outcomes cannot be rewritten",
+        );
+      if (
         (current.history ?? []).some(
           (entry, index) =>
             JSON.stringify(entry) !== JSON.stringify(next.history?.[index]),
@@ -275,6 +285,7 @@ export class FeedbackLedgerStore {
               actionability: previous.actionability,
               status: previous.status,
               verificationEvidence: previous.verificationEvidence,
+              resolution: previous.resolution,
               sourceRevision:
                 incoming.sourceRevision ?? previous.sourceRevision,
               requestRevision:

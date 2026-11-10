@@ -421,12 +421,22 @@ export interface WorkflowMutationRequest {
   args: unknown;
 }
 
+export class WorkflowMutationPreconditionChangedError extends Error {
+  constructor(readonly observed: unknown) {
+    super(
+      "External fields changed before dispatch; preserve current human content and refresh the intended update",
+    );
+    this.name = "WorkflowMutationPreconditionChangedError";
+  }
+}
+
 /** Deterministic identity used both by dispatch and by pre-dispatch event obligations. */
 export function workflowMutationIdentity(
   run: RunRecord,
   kind: MutationIntent["kind"],
   target: string,
   request: WorkflowMutationRequest,
+  observedStateChanged = false,
 ): string {
   const hash = createHash("sha256")
     .update(sanitizeControlledText(JSON.stringify(request)))
@@ -441,7 +451,9 @@ export function workflowMutationIdentity(
         entry.mutation.executionFence.generation === run.operation.generation,
     )
     .at(-1);
-  return previous?.id.startsWith(`${prefix}:`)
+  return previous?.id.startsWith(`${prefix}:`) &&
+    previous.status !== "cancelled" &&
+    !(observedStateChanged && previous.status === "completed")
     ? previous.id
     : `${prefix}:${run.pendingOperations.length}`;
 }
@@ -453,6 +465,9 @@ export async function workflowMutation<T>(options: {
   kind: MutationIntent["kind"];
   target: string;
   request: WorkflowMutationRequest;
+  /** Repeatable field-setting only: a fresh read established that an earlier
+   * completed intent no longer describes the provider's current fields. */
+  observedStateChanged?: boolean;
   send: (marker: string) => Promise<unknown>;
   preflight?: () => Promise<void>;
   rejected?: (
@@ -463,6 +478,10 @@ export async function workflowMutation<T>(options: {
   ) => Promise<{ id: string; fields: unknown; result: T } | null>;
 }): Promise<T> {
   const { authority } = options;
+  if (options.observedStateChanged && options.kind !== "github-pr-body")
+    throw new Error(
+      "Observed body drift cannot authorize repeating a non-idempotent mutation",
+    );
   const run = authority.store.assertCurrentLease(authority.ownerGeneration);
   const id =
     reconciliationContext.getStore() ??
@@ -471,6 +490,7 @@ export async function workflowMutation<T>(options: {
       options.kind,
       options.target,
       options.request,
+      options.observedStateChanged,
     );
   const existing = run.pendingOperations.find((entry) => entry.id === id);
   if (
@@ -573,7 +593,20 @@ export async function workflowMutation<T>(options: {
     !operation.mutation!.dispatches.length ||
     mutationProvenNotDelivered(operation.mutation!)
   ) {
-    await options.preflight?.();
+    try {
+      await options.preflight?.();
+    } catch (error) {
+      if (
+        error instanceof WorkflowMutationPreconditionChangedError &&
+        !operation.mutation!.dispatches.length
+      )
+        event({
+          type: "cancel",
+          reason: "precondition-changed",
+          evidence: evidence({ observed: error.observed }),
+        });
+      throw error;
+    }
     event({ type: "dispatch", nextRecheckAt: next() });
     try {
       await authority.dispatch(() =>

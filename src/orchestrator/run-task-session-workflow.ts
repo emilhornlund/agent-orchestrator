@@ -102,6 +102,7 @@ import {
   runTaskSessionFeedbackCycle,
   refreshCurrentTaskFeedback,
   feedbackOperationId,
+  feedbackReplyOperationId,
 } from "./run-task-session-feedback-cycle.js";
 import { inspectPrimaryOperationEvidence } from "../task-session/inspect-primary-operation.js";
 import { FeedbackLedgerStore } from "../task-session/feedback-ledger-store.js";
@@ -169,6 +170,7 @@ import { maintainOutdatedPr } from "./maintain-outdated-pr.js";
 import { reconcileUnobservedTerminalPrEvents } from "./reconcile-unobserved-terminal-pr.js";
 import { verifyMergedTaskPrHeadContinuity } from "./verify-merged-task-pr-head-continuity.js";
 import { TaskMutationBlockStore } from "./task-mutation-block-store.js";
+import { updateMaintenanceStatus } from "./maintenance-status.js";
 import {
   reconcilePendingFeedbackCardMove,
   ensureFeedbackCardLocation,
@@ -2191,15 +2193,19 @@ export async function runTaskSessionWorkflow(
         (candidate) => candidate.id === observation.cardId,
       )!;
       const worktreePath = path.join(project.repository.worktreeRoot, card.id);
-      await refreshCurrentTaskFeedback({
-        project,
-        cardId: card.id,
-        observation,
-        ledgerStore: feedbackLedgerStore,
-        openCode,
-        worktreePath,
-        signal,
-      });
+      const noOpReportPending =
+        record.feedbackRemediation?.status === "no-op" &&
+        record.feedbackRemediation.outcomeReported !== true;
+      if (!noOpReportPending)
+        await refreshCurrentTaskFeedback({
+          project,
+          cardId: card.id,
+          observation,
+          ledgerStore: feedbackLedgerStore,
+          openCode,
+          worktreePath,
+          signal,
+        });
       const pending =
         feedbackLedgerStore
           .read(card.id)
@@ -2213,6 +2219,17 @@ export async function runTaskSessionWorkflow(
         pending.length === 0
           ? null
           : feedbackOperationId(observation.headSha, pending);
+      const currentFeedback = feedbackLedgerStore.read(card.id)?.entries ?? [];
+      const repliesPending = currentFeedback.some(
+        (entry) =>
+          entry.isCurrent !== false &&
+          entry.actionability === "actionable" &&
+          ["verified", "escalated"].includes(entry.status) &&
+          entry.remediationCommitSha === observation.headSha,
+      );
+      const replyEventId = repliesPending
+        ? feedbackReplyOperationId(observation.headSha, currentFeedback)
+        : null;
       const ciEventId = `ci-repair:${card.id}:${observation.headSha}`;
       const maintenanceEventId = `pr-maintenance:${card.id}:${observation.headSha}`;
       const maintenanceNeeded =
@@ -2222,7 +2239,8 @@ export async function runTaskSessionWorkflow(
         if (queued.cardId !== card.id || queued.status !== "queued") continue;
         if (
           (queued.kind === "feedback" &&
-            queued.eventId !== selectedFeedbackId) ||
+            queued.eventId !== selectedFeedbackId &&
+            queued.eventId !== replyEventId) ||
           (queued.kind === "ci-repair" && queued.eventId !== ciEventId) ||
           (queued.kind === "pr-maintenance" &&
             (!maintenanceNeeded || queued.eventId !== maintenanceEventId))
@@ -2247,16 +2265,33 @@ export async function runTaskSessionWorkflow(
           kind: "pr-maintenance",
           enqueuedAt: record.updatedAt,
         });
-      if (pending.length > 0) {
-        const operationId = feedbackOperationId(observation.headSha, pending);
+      if (selectedFeedbackId !== null)
         queue.enqueue({
           projectId: project.id,
           cardId: card.id,
-          eventId: operationId,
-          operationKey: operationId,
+          eventId: selectedFeedbackId,
+          operationKey: selectedFeedbackId,
           kind: "feedback",
           enqueuedAt: new Date().toISOString(),
         });
+      if (replyEventId !== null)
+        queue.enqueue({
+          projectId: project.id,
+          cardId: card.id,
+          eventId: replyEventId,
+          operationKey: replyEventId,
+          kind: "feedback",
+          enqueuedAt: record.createdAt,
+        });
+      if (
+        selectedFeedbackId !== null ||
+        replyEventId !== null ||
+        noOpReportPending
+      ) {
+        const operationId =
+          replyEventId ??
+          selectedFeedbackId ??
+          `feedback-report:${record.feedbackRemediation!.operationId}`;
         if (queue.getActive() === null) {
           if (record.phase === "ci") {
             record = taskStore.compareAndSwap(
@@ -4532,6 +4567,17 @@ export async function runTaskSessionWorkflow(
         );
         recoveryRecord = taskStore.read(card.id)!;
         card = await trello.getCard(card.id);
+        await updateMaintenanceStatus(
+          github,
+          project,
+          card,
+          recoveryRecord.pullRequest!.url,
+          recoveryRecord.phase === "publication"
+            ? "publishing-review-changes"
+            : "validating-review-changes",
+          "feedback recovery",
+          cardLog,
+        );
       }
     }
     if (mutation.kind === "refinement") {

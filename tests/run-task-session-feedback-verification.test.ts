@@ -377,7 +377,7 @@ describe("runTaskSessionFeedbackVerification", () => {
   );
 
   it.each(["malformed", "nonzero", "execution"] as const)(
-    "preserves unresolved feedback when AI verification is %s",
+    "reports uncertain feedback when AI verification is %s",
     async (failure) => {
       const f = fixture();
       const identity = await getTaskSessionSourceSnapshotIdentity(
@@ -429,7 +429,7 @@ describe("runTaskSessionFeedbackVerification", () => {
       expect(result.dispositions).toMatchObject([
         {
           feedbackId: "inline-comment:comment-1",
-          status: "unresolved",
+          status: "uncertain",
         },
       ]);
     },
@@ -483,7 +483,7 @@ describe("runTaskSessionFeedbackVerification", () => {
     ).rejects.toThrow("source or PR head changed");
   });
 
-  it("preserves unresolved feedback on an invalid AI disposition", async () => {
+  it("reports uncertain feedback on an invalid AI disposition", async () => {
     const f = fixture();
     const identity = await getTaskSessionSourceSnapshotIdentity(
       f.git,
@@ -544,7 +544,7 @@ describe("runTaskSessionFeedbackVerification", () => {
     expect(result.dispositions).toEqual([
       {
         feedbackId: "inline-comment:comment-1",
-        status: "unresolved",
+        status: "uncertain",
         reason: expect.stringContaining("inconclusive"),
       },
     ]);

@@ -315,9 +315,20 @@ already-running operation is not preempted by new feedback. Explicit required pr
 and their order survive restart, and only never-started work superseded by authoritative current observations is retired.
 It normalizes submitted review bodies, unresolved inline threads, and conversation comments into a durable task-scoped ledger.
 Actionable feedback is remediated in the original primary session, then independently verified; earlier still-applicable items remain
-tracked when new feedback arrives. Replies are sent only in the originating conversation/thread after the correcting commit has
-been published and the complete current-head CI result passes. The service never approves a PR, dismisses a review, or resolves a
-reviewer thread.
+tracked when new feedback arrives. Replies refer to the observed published head, using the originating thread when available
+or an attributed PR comment linking a review summary or inline source. Replies distinguish independently
+verified fixes, established unresolved requests and uncertain fulfillment. Pending or failed CI does not prevent a truthful reply;
+its observed current-head status is reported rather than called a pass. A published reply does not mean a request was fulfilled.
+Unknown reply acceptance is reconciled by the original marker, including after an edit/deletion; a negative lookup never
+authorizes a blind resend. The service never approves a PR, dismisses a review, or resolves a reviewer thread.
+
+During correction, a managed activity block appears at the top of the PR description and changes as work proceeds through
+editing, validation and publication. It is cleared on verified completion; unknown execution is reported as requiring attention
+rather than silently declared stopped. Managed body edits preserve human content outside owned markers. A detected intervening
+human edit cancels only an intent that never dispatched, then refreshes the intended body. Already-dispatched uncertainty is
+reconciled first. These read/compare checks are not atomic provider-side compare-and-write and cannot prevent every late race.
+A no-op correction retains an unresolved outcome, refreshes the managed description without claiming a new commit/check, and
+can resume interrupted reporting without rerunning the primary correction.
 
 Pending or uncertain CI retains the PR in `Human Review` without consuming a repair attempt. Complete failures start one bounded
 CI repair operation containing all failed checks; a published new head invalidates every previous check observation. Automatic

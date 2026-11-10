@@ -37,7 +37,11 @@ const requestSchema = z.discriminatedUnion("route", [
   }),
   z.strictObject({
     route: z.literal("github-pr-body"),
-    args: z.strictObject({ ...pr, body: z.string() }),
+    args: z.strictObject({
+      ...pr,
+      body: z.string(),
+      expectedBody: z.string().optional(),
+    }),
   }),
   z.strictObject({
     route: z.literal("github-pr-draft"),
