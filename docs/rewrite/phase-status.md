@@ -45,13 +45,23 @@ requirements/specification sections and meaningful regression tests:
 - Checks: `yarn test tests/initial-publication.integration.test.ts tests/publish-card.test.ts tests/publish-task-session-card.test.ts`
   passed 133 tests; `yarn typecheck` and ESLint on all changed code/tests passed.
   The earlier isolation integration test also passed. Final validation is pending.
-- Isolation follow-up checks: `yarn test tests/validate-toolchain.test.ts tests/opencode-isolation.integration.test.ts tests/run-startup.test.ts`
+- Isolation follow-up (`33e325f`) checks: `yarn test tests/validate-toolchain.test.ts tests/opencode-isolation.integration.test.ts tests/run-startup.test.ts`
   passed 32 tests; `yarn typecheck`, changed-file ESLint and Prettier passed.
-- Remaining: scoped combined P6 verification, documentation completion and final
-  `yarn validate`.
+- Combined P6 inspection covered advisory planning, separate persisted improvement
+  budgets, primary failure/unknown-writer fences, setup-aware single initial commit
+  and uncertain-write recovery, draft/normal descriptions and notifications,
+  clarification/no-output failure reconciliation and current-evidence promotion.
+  Existing production regressions cover these paths; completed T1–T5 work was not
+  restarted. P7 feedback/observation and P8 CI/maintenance changes remain out of scope.
+- Final integration correction: shared publisher notifications now include observed
+  failed/skipped/uncertain check facts even when AI review passed. Product workflow
+  and fallback-description guidance no longer describes initial checks as approval
+  gates. `yarn test tests/publish-card.test.ts tests/notification-outbox.test.ts`
+  passed 63 tests; `yarn typecheck`, changed-file ESLint and Prettier passed.
+- Remaining: final `yarn validate` and completion checkpoint.
 
-Review completed small tasks, inspect combined P6 integration, and run `yarn validate` on the final integrated
-change. P6 is not implementation-complete yet. P7–P10 have not started; P11 covers
+P6 implementation and scoped integration inspection are complete, pending final
+`yarn validate`. P7–P10 have not started; P11 covers
 remaining integration/regression gaps, with broader qualification only if requested.
 
 ## Known carryovers

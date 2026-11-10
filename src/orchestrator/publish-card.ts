@@ -987,7 +987,7 @@ export async function publishCard({
         outstandingIssues: publicationNotificationIssues(
           publicationReviewResult,
           remediationResult,
-        ),
+        ).concat(publicationQualityNeedsDraft ? verifiedDescriptionFacts : []),
         publicationContext:
           "Verified PR publication; notification awaits Human Review destination verification.",
       }),
@@ -1061,7 +1061,7 @@ export async function publishCard({
         outstandingIssues: publicationNotificationIssues(
           publicationReviewResult,
           remediationResult,
-        ),
+        ).concat(publicationQualityNeedsDraft ? verifiedDescriptionFacts : []),
         ...(elapsedWorkflowTime === undefined ? {} : { elapsedWorkflowTime }),
         publicationContext:
           "The pull request was published and the card was moved to Human Review by the implementation workflow.",

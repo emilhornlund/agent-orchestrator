@@ -145,6 +145,7 @@ describe("publishCard", () => {
       ensurePullRequestDraft: vi.fn(),
     } as unknown as GitHubClient;
     const options = {
+      emailNotifier: { send: vi.fn() } as unknown as EmailNotifier,
       github,
       trello: {
         moveCard: vi.fn(),
@@ -178,6 +179,13 @@ describe("publishCard", () => {
     expect(body).toContain("Changed file: src/task.ts");
     expect(body).toContain("Validation failed on current content (exit 1)");
     expect(body).not.toContain("Validation passed on initial content");
+    expect(options.emailNotifier.send).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining(
+          "Validation failed on current content (exit 1)",
+        ),
+      }),
+    );
   });
 
   it("does not force draft solely for dismissed non-material review findings", async () => {

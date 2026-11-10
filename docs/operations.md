@@ -283,9 +283,13 @@ The post-commit AI pull-request-description step is presentation-only. Its stric
 1,000 characters, at most 20 `changes` entries and 20 `validation` entries, and at most 500 characters per entry. Empty arrays
 remain valid, including `validation` when no result is known. Its context collection, OpenCode execution, structured output
 parsing or validation, and Markdown rendering failures, including oversized output, are logged with the failed stage and do not
-block publication. New pull requests use the deterministic fallback body, consisting of the Trello card URL followed by the
-footer `Implemented automatically by <projects[].repository.gitIdentity.name>.`; generated descriptions use that same footer.
-Existing open pull requests are reused without description updates, as usual.
+block publication. The deterministic fallback includes task purpose, changed files
+when available, observed quality results (or explicit absence of evidence),
+outstanding issues and the Trello link. Generated and fallback descriptions use
+the configured Git identity attribution footer. Agent-reported validation claims
+never replace orchestrator-observed results. Existing PR updates refresh only the
+managed description region, preserving human content outside it. Unknown or
+malformed ownership markers are preserved rather than overwritten.
 
 For every open owned PR, the worker verifies the persisted URL, branch, repository, and exact current head before observing CI and
 feedback. Checks and commit statuses are matched to automatically established expectations from repository rules and static
@@ -532,8 +536,10 @@ the cycle without repeating unchanged checks, and early finish is explicit. CI
 repair retains its existing finite two-attempt limit. Implementation review
 repair honors `opencode.remediation.maxPasses` (default one). On
 exhaustion, the last structured failed review and its source identity are
-persisted and the implementation can be published for Human Review after current
-local validation and coverage pass. No Attention Required email is generated
+persisted and meaningful safe initial implementation is published for Human Review
+as a draft when local validation/coverage failed, were skipped or remain uncertain,
+or material issues remain. Passing quality checks are not required for initial
+delivery. No Attention Required email is generated
 for review exhaustion alone; polling and restart reuse the persisted final
 review without consuming more attempts. Legacy exhausted records lacking final
 review evidence perform at most one read-only verification review during

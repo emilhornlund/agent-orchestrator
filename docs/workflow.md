@@ -44,7 +44,7 @@ Every project uses one durable task-session lifecycle. A Ready card is claimed o
 classification, then serialized behind the project's single mutation owner:
 
 ```text
-Ready for Agent -> Working -> approved plan + independent plan check
+Ready for Agent -> Working -> advisory plan + independent plan feedback
   -> implementation in the persisted primary OpenCode session
   -> orchestrator validation + configured coverage + independent review
   -> trusted commit + existing/new PR publication
@@ -57,13 +57,17 @@ Ready for Agent -> Working -> approved plan + independent plan check
 ```
 
 One primary OpenCode session ID is persisted per task and resumed for implementation, CI repair, and human-feedback remediation.
-Independent plan and implementation reviewers use separate sessions. The orchestrator, not OpenCode, decides whether local
-commands, independent review, and CI evidence pass before publication and feedback replies. Those signals never authorize PR
-merge. The
-exception is a structurally valid, content-bound failed implementation review after the configured
-`remediation.maxPasses`: local validation/coverage must pass and the PR is published for human
-review with an explicit warning, but is never automatically merged. Other exhausted or ambiguous
-operations preserve their durable records and require operator attention. No manual check-name configuration is required. Local
+Independent plan and implementation reviewers use separate sessions. Planning,
+plan review, local checks and implementation review are advisory, not publication
+approval gates. The orchestrator executes configured checks and records their actual
+results; meaningful safe implementation output is published even when those checks
+fail or advisory steps are unavailable. Both normal and draft PRs move to Human
+Review only after publication is verified. Failed, skipped or uncertain local
+checks and material unresolved issues produce a draft with accurate disclosure.
+AI reviewer approval is not required; the primary agent supplies substantive
+dispositions for review concerns. None of these signals authorizes a merge.
+Unsafe Git state, unknown writers and genuinely unrecoverable primary execution
+remain distinct operational failures with preserved state. No manual check-name configuration is required. Local
 mock tests cover the lifecycle; no live Trello/GitHub/OpenCode pilot has been performed. See
 [Configuration](configuration.md#ci-expectation-discovery) and [Recovery](recovery.md#restart-and-task-ownership).
 
@@ -73,6 +77,23 @@ before dispatch, the primary session may finish early, and an attempt that leave
 exact source content unchanged ends the cycle without rerunning unchanged checks.
 Exhaustion proceeds toward publication with observed quality results; it does not
 fail the task by itself.
+
+Implementation-review improvement uses its own persisted `opencode.remediation.maxPasses`
+maximum (default `1`), with the same early-finish and exact-content no-op rules.
+Restart preserves both budgets and the original pending operation rather than
+starting another cycle. Initial output is recorded in one descriptive commit;
+unrelated setup changes remain preserved but excluded. Essential clarification
+after examining the task/repository/attachments, or no meaningful task output,
+produces an actionable verified `Failed` outcome without an artificial commit or
+PR. A human can clarify and deliberately requeue the task later.
+
+Descriptions include purpose, significant changes, orchestrator-observed checks,
+outstanding issues and the Trello link, even when AI description generation fails.
+Updates replace only the managed description region and preserve human text.
+The same draft PR can become ready when current source-bound passing evidence and
+recorded issue dispositions support it, no unresolved human requests remain, and
+the open PR's exact published head and refreshed description are verified. Stale
+or uncertain evidence cannot promote it.
 
 Automatic CI expectations come from available branch-protection policies and static repository-owned pull-request workflow
 contracts. Conditional jobs, dynamic matrices, unsupported workflow constructs, inaccessible policies, empty contracts, and
