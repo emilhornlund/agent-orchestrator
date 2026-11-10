@@ -3,8 +3,9 @@
 Temporary implementation guide. Use the [delivery workflow](phase-execution.md).
 T1–T5 are implemented. T6–T9 publication/isolation changes and the T10 readiness
 checkpoint are recorded in [current progress](phase-status.md). Isolation startup
-integration and the scoped combined inspection are complete; final integrated
-validation and the completion checkpoint remain.
+integration, scoped combined inspection and integrated validation are complete.
+See current progress for actual checks and checkpoints. Stop before P7 unless
+separately selected.
 Do not recreate readiness, manifest, live-qualification or evidence work.
 
 ## Product target

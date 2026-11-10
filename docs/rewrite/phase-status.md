@@ -2,6 +2,12 @@
 
 ## Current checkpoint
 
+- **P6 complete.** Scoped implementation, production-path inspection and integrated
+  validation passed: `yarn validate` (lint, formatting, typecheck and all **2,076
+  tests across 160 files**). No known unresolved P6 defect. P7 has not started.
+- Resume-session checkpoints: `faf726f` current-evidence same-PR promotion,
+  `33e325f` isolation startup integration, `24c1d76` notification disclosure and
+  product guidance, `cb9d511` integrated recovery/draft fixture coverage.
 - Phase base: `92a8276` (P5 integrated).
 - P6-T1 (`d441859`), T2 (`9e9b6a4`), T3 (`ca63a51`) and T4 (`0da3bb7`) are
   committed; temporary-guide cleanup is `2940ea1`.
@@ -44,7 +50,7 @@ requirements/specification sections and meaningful regression tests:
   Explicitly cleared current review disclosures no longer restore old findings.
 - Checks: `yarn test tests/initial-publication.integration.test.ts tests/publish-card.test.ts tests/publish-task-session-card.test.ts`
   passed 133 tests; `yarn typecheck` and ESLint on all changed code/tests passed.
-  The earlier isolation integration test also passed. Final validation is pending.
+  The real isolation integration test also passed.
 - Isolation follow-up (`33e325f`) checks: `yarn test tests/validate-toolchain.test.ts tests/opencode-isolation.integration.test.ts tests/run-startup.test.ts`
   passed 32 tests; `yarn typecheck`, changed-file ESLint and Prettier passed.
 - Combined P6 inspection covered advisory planning, separate persisted improvement
@@ -58,7 +64,6 @@ requirements/specification sections and meaningful regression tests:
   and fallback-description guidance no longer describes initial checks as approval
   gates. `yarn test tests/publish-card.test.ts tests/notification-outbox.test.ts`
   passed 63 tests; `yarn typecheck`, changed-file ESLint and Prettier passed.
-- Remaining: final `yarn validate` and completion checkpoint.
 - Integrated validation initially passed lint/format/typecheck but exposed six
   fixture-contract failures. Corrections retain actual Bubblewrap exit `137` for
   an inner SIGKILL (not a fabricated outer signal), exercise real namespace startup
@@ -66,11 +71,10 @@ requirements/specification sections and meaningful regression tests:
   in the existing dispatch adapters. Three verified crash failures, preserved PR
   ownership/work and recovery assertions remain enforced.
   `yarn test tests/task-session-dispatch.test.ts tests/process-adapter-matrix.integration.test.ts tests/task-lifecycle.integration.test.ts`
-  passed all 70 tests; typecheck, changed-file ESLint and Prettier passed. Full
-  validation must be rerun on the corrected tree.
+  passed all 70 tests; typecheck, changed-file ESLint and Prettier passed. The
+  corrected integrated tree then passed full `yarn validate` as recorded above.
 
-P6 implementation and scoped integration inspection are complete, pending final
-`yarn validate`. P7–P10 have not started; P11 covers
+No P6 implementation work remains. P7–P10 have not started; P11 covers
 remaining integration/regression gaps, with broader qualification only if requested.
 
 ## Known carryovers

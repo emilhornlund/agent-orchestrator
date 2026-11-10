@@ -207,6 +207,8 @@ than requiring AI approval or passing checks. Preserve primary-crash exceptions,
 source isolation, setup exclusions and uncertain commit/publication recovery.
 Initial descriptions, notifications, clarification/no-output and draft-to-ready
 behavior are included. [P6 guide](p6-execution.md) supplies the task-level scope.
+This contribution is implemented and validated; [current progress](phase-status.md)
+records the completion checkpoint. Later active-PR workflow changes remain in P7/P8.
 
 ### P7 — Active observation, fair capacity and human feedback
 
