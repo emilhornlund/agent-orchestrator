@@ -71,8 +71,23 @@
   retains later CI-budget, late-feedback and uncertain-reply coverage. Self-review
   inspected producer/scheduler/recovery callers, queued retirement, prerequisite
   validation, schema defaults and the interrupted snapshot-to-queue handoff.
-- Remaining P7 order: durable fair global AI
-  capacity (T3), current semantic feedback/history (T4), same-PR correction and list
+- P7-T3 implements optional `workflow.maxConcurrentAiProjects` (unlimited when
+  omitted), plus the optional 15-second polling default. FCFS tickets and dispatch
+  evidence live in the authoritative attempts. Production workers share the limiter;
+  primary session creation/operation accounting waits before reservation, and direct
+  OpenCode dispatches also acquire capacity. Nested activities reuse a live token;
+  a competing same-project caller cannot steal it. Busy projects requeue, shutdown
+  preserves unserved order, deliberate cancellation does not dispatch, and dormant
+  dependency/Human Review ownership consumes no slot. Unknown execution retains
+  capacity across restart until verified stopped; missing PID is not used as proof.
+- T3 checks: `yarn test tests/ai-execution-capacity.test.ts tests/config.test.ts tests/opencode-client.test.ts tests/run-primary-operation.test.ts tests/primary-task-session.test.ts`
+  passed **203 tests in five files**, including production worker dispatch, restart
+  FCFS, cancellation, nested/same-project exclusion and primary accounting. Typecheck,
+  changed-file ESLint and `git diff --check` passed. Self-review traced worker scope,
+  primary creation/reservation, all OpenCode callers, persisted ticket compatibility,
+  shutdown and stopped-evidence release. Fixed live-slot stealing, detached nested
+  token reuse, pre-dispatch cancellation accounting and recovery-wait eligibility.
+- Remaining P7 order: same-PR correction and list
   recovery (T5), truthful replies/managed description (T6), active terminal precedence
   (T7), combined checks and final `yarn validate` (T8). These are not complete.
 

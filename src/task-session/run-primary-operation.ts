@@ -10,6 +10,10 @@ import {
 } from "./primary-operation-ledger.js";
 import type { TaskExecutionStore } from "./task-execution-store.js";
 import type { TaskExecutionRecord } from "./task-execution-record.js";
+import {
+  withAiExecutionCapacity,
+  AiCapacityCancelledError,
+} from "../orchestrator/ai-execution-capacity.js";
 export type PrimaryOperationEntry = NonNullable<
   NonNullable<TaskExecutionRecord["primaryOperations"]>[string]
 >;
@@ -41,6 +45,7 @@ export class PrimaryOperationWaitingError extends Error {
 }
 
 export interface RunPrimaryOperationOptions {
+  signal?: AbortSignal;
   store: TaskExecutionStore;
   cardId: string;
   operationId: string;
@@ -52,6 +57,14 @@ export interface RunPrimaryOperationOptions {
 }
 
 export async function runPrimaryOperation(
+  options: RunPrimaryOperationOptions,
+): Promise<OpenCodeRunResult> {
+  return withAiExecutionCapacity(options.signal, () =>
+    runPrimaryOperationOwned(options),
+  );
+}
+
+async function runPrimaryOperationOwned(
   options: RunPrimaryOperationOptions,
 ): Promise<OpenCodeRunResult> {
   const { store, cardId, operationId, activity } = options;
@@ -165,6 +178,19 @@ export async function runPrimaryOperation(
     try {
       result = await options.execute();
     } catch (error) {
+      if (
+        error instanceof AiCapacityCancelledError &&
+        store.read(cardId)?.primaryOperations?.[operationId]
+          ?.processExecutionId === undefined
+      ) {
+        reconcilePendingPrimaryExecution(
+          store,
+          cardId,
+          operationId,
+          "not-dispatched",
+        );
+        throw error;
+      }
       if (!(error instanceof OpenCodeTimeoutError && error.treeStopped)) {
         completePrimaryExecution(
           store,

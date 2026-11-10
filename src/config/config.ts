@@ -262,7 +262,8 @@ const configSchema = z
       .optional(),
 
     workflow: z.strictObject({
-      pollIntervalSeconds: z.number().int().positive(),
+      pollIntervalSeconds: z.number().int().positive().default(15),
+      maxConcurrentAiProjects: z.number().int().positive().safe().optional(),
       logRetentionDays: z.number().int().positive().default(30),
       contextRetentionDays: z.number().int().positive().default(14),
       contextRoot: absolutePath.default(DEFAULT_CONTEXT_ROOT),

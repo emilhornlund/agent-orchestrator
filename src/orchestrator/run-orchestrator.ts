@@ -158,6 +158,10 @@ import { getCardsForDiscovery } from "./trello-list-discovery.js";
 import { getWorkflowKind } from "./workflow-kind.js";
 import { isCardStartDateReached } from "./card-start-eligibility.js";
 import { MAX_VALIDATION_REPAIR_ATTEMPTS } from "../task-session/run-task-session-validation-repairs.js";
+import {
+  AiExecutionCapacity,
+  AiCapacityCancelledError,
+} from "./ai-execution-capacity.js";
 
 function sleep(milliseconds: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -193,6 +197,7 @@ function isShutdownCancellation(error: unknown, signal: AbortSignal): boolean {
 
     if (
       current instanceof OpenCodeRunAbortedError ||
+      current instanceof AiCapacityCancelledError ||
       current instanceof CommandRunAbortedError ||
       current instanceof TrelloRequestAbortedError
     ) {
@@ -1677,37 +1682,49 @@ export async function runOrchestrator(
   );
 
   try {
-    await Promise.all(
-      config.projects.map((project) =>
-        runProjectWorker(
-          trello,
-          git,
-          github,
-          opencode,
-          commands,
-          {
-            ...project,
-            contextRoot:
-              projectRunContexts?.get(project.id)?.pinned?.storageRoot ??
-              config.workflow.contextRoot,
-            ...(config.workflow.maxAttachmentBytes === undefined
-              ? {}
-              : { maxAttachmentBytes: config.workflow.maxAttachmentBytes }),
-            ...(config.workflow.maxTotalAttachmentBytes === undefined
-              ? {}
-              : {
-                  maxTotalAttachmentBytes:
-                    config.workflow.maxTotalAttachmentBytes,
-                }),
-          } satisfies PollingProject,
-          pollIntervalMilliseconds,
-          signal,
-          emailNotifier,
-          deferredTrelloValidation,
-          projectRunContexts?.get(project.id),
+    const execute = () =>
+      Promise.all(
+        config.projects.map((project) =>
+          runProjectWorker(
+            trello,
+            git,
+            github,
+            opencode,
+            commands,
+            {
+              ...project,
+              contextRoot:
+                projectRunContexts?.get(project.id)?.pinned?.storageRoot ??
+                config.workflow.contextRoot,
+              ...(config.workflow.maxAttachmentBytes === undefined
+                ? {}
+                : { maxAttachmentBytes: config.workflow.maxAttachmentBytes }),
+              ...(config.workflow.maxTotalAttachmentBytes === undefined
+                ? {}
+                : {
+                    maxTotalAttachmentBytes:
+                      config.workflow.maxTotalAttachmentBytes,
+                  }),
+            } satisfies PollingProject,
+            pollIntervalMilliseconds,
+            signal,
+            emailNotifier,
+            deferredTrelloValidation,
+            projectRunContexts?.get(project.id),
+          ),
         ),
-      ),
-    );
+      );
+    if (config.workflow.maxConcurrentAiProjects === undefined) await execute();
+    else {
+      const capacity = new AiExecutionCapacity(
+        config.workflow.maxConcurrentAiProjects,
+        [...(projectRunContexts?.values() ?? [])].flatMap((context) =>
+          context.authority ? [context.authority] : [],
+        ),
+        pollIntervalMilliseconds,
+      );
+      await capacity.runInScope(signal, execute);
+    }
   } finally {
     clearInterval(retentionTimer);
   }

@@ -34,6 +34,7 @@ export async function notificationAuthorityFixture(
     otherProjects: { project: ProjectConfig; lease: ProjectOwnershipLease }[];
   },
   actualGit = false,
+  taskKind: "refinement" | "implementation" = "refinement",
 ) {
   const base = path.join(root, id);
   fs.mkdirSync(base, { recursive: true });
@@ -301,7 +302,7 @@ export async function notificationAuthorityFixture(
   const authority = await ProjectRunAuthority.createPreparingAttempt({
     projectId: id,
     cardId: card.id,
-    taskKind: "refinement",
+    taskKind,
     pinned,
     projectLease: lease,
     coordinationRoot,
