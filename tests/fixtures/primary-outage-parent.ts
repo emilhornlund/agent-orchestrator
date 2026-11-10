@@ -49,7 +49,13 @@ if (!store.read(cardId)) {
     sessionCreationStatus: "bound",
     expectedBranch: "agent/card",
     ...(published
-      ? { pullRequest: { number: 9, url: "https://github.com/o/r/pull/9" } }
+      ? {
+          pullRequest: {
+            number: 9,
+            url: "https://github.com/o/r/pull/9",
+            headSha: "a".repeat(40),
+          },
+        }
       : {}),
     operationKey: "attempt-1",
     revision: 1,
@@ -70,8 +76,8 @@ const snapshot: TaskSessionRecoverySnapshot = {
   worktreeBranch: "agent/card",
   worktreeHeadSha: "a".repeat(40),
   worktreeRebaseActive: false,
-  trustedCommitSha: null,
-  remoteBranchHeadSha: null,
+  trustedCommitSha: published ? "a".repeat(40) : null,
+  remoteBranchHeadSha: published ? "a".repeat(40) : null,
   trelloListId: "working",
   pullRequest:
     record.pullRequest === undefined

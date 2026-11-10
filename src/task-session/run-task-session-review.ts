@@ -88,7 +88,9 @@ export interface TaskSessionReviewOperationResult {
   review: ImplementationReviewResult;
   runResult: OpenCodeRunResult;
   contentIdentity: string;
-  previousFindings: NonNullable<ImplementationReviewExpectations["previousFindings"]>;
+  previousFindings: NonNullable<
+    ImplementationReviewExpectations["previousFindings"]
+  >;
 }
 
 const MAX_FORMAT_ONLY_RETRIES = 1;
@@ -424,7 +426,9 @@ export async function runTaskSessionReview(
     previousFindings: (previousFindings ?? []).map(
       ({ id, sourceContentIdentity, sourceIdentities, status }) => ({
         id,
-        ...(sourceContentIdentity === undefined ? {} : { sourceContentIdentity }),
+        ...(sourceContentIdentity === undefined
+          ? {}
+          : { sourceContentIdentity }),
         sourceIdentities,
         status,
       }),

@@ -7,6 +7,9 @@ import type { TaskPlan } from "../task-session/task-plan.js";
 import type { TrelloCard } from "../trello/trello-client.js";
 import { taskSessionRepositoryGuidance } from "./task-session-prompt-guidance.js";
 
+export const REVIEW_REPAIR_FINISHED_EARLY_MARKER =
+  "REVIEW_REPAIR_FINISHED_EARLY";
+
 export interface TaskSessionReviewRepairPromptInput {
   projectId: string;
   card: TrelloCard;
@@ -66,6 +69,7 @@ export function buildTaskSessionReviewRepairPrompt(
     "Address every blocking finding; do not focus only on the first or leave any finding without explicit consideration.",
     "For each blocking finding, understand the underlying defect, identify and implement the smallest complete correction, and add or update regression tests when appropriate.",
     'After considering every finding and every unsatisfied requirement assessment, finish with exactly one JSON object on a single line: {"version":1,"findingDispositions":[{"findingId":string,"status":"addressed"|"dismissed","rationale":string}],"requirementDispositions":[{"requirementId":string,"status":"addressed"|"dismissed","rationale":string}]}. Include exactly one finding disposition per finding ID and one requirement disposition per unsatisfied requirement ID in the review; use empty arrays when there are none. Use addressed when you made a correction; use dismissed only when you conclude the concern or unmet-requirement assessment is not material to the task or an applicable contract, and provide a substantive explanation. Do not claim a concern is resolved merely because you attempted a fix. Every rationale must be no more than 4,000 characters.',
+    `If no further review remediation would be useful, append the exact line ${REVIEW_REPAIR_FINISHED_EARLY_MARKER} after the JSON object. Otherwise omit this marker.`,
     "After addressing the findings, ensure the original task remains satisfied. Keep changes within the task scope; do not broaden the task.",
     "Do not make superficial changes that merely silence a test or match review wording. Fix the underlying problem rather than hiding its symptoms.",
     "Continue in this primary task session and its existing repository/worktree context. Do not start another AI session or remediation stage.",

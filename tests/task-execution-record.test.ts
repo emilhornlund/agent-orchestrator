@@ -30,6 +30,42 @@ const record: TaskExecutionRecord = {
 };
 
 describe("parseTaskExecutionRecord", () => {
+  it.each(["active", "passed"] as const)(
+    "rejects a completed review stop reason on a %s cycle",
+    (status) => {
+      expect(() =>
+        parseTaskExecutionRecord({
+          ...record,
+          phase: "review",
+          reviewRepair: {
+            cycleId: "review-cycle",
+            status,
+            stopReason: "no-change",
+            maxAttempts: 3,
+          },
+        }),
+      ).toThrow("A completed review stop reason requires an exhausted cycle");
+    },
+  );
+
+  it.each(["no-change", "finished-early"] as const)(
+    "accepts a bounded review cycle stopped by %s before its maximum",
+    (stopReason) => {
+      expect(
+        parseTaskExecutionRecord({
+          ...record,
+          phase: "review",
+          reviewRepair: {
+            cycleId: "review-cycle",
+            status: "exhausted",
+            stopReason,
+            maxAttempts: 3,
+          },
+        }).reviewRepair?.stopReason,
+      ).toBe(stopReason);
+    },
+  );
+
   it("round-trips a valid versioned record through JSON", () => {
     const decoded = JSON.parse(JSON.stringify(record)) as unknown;
 

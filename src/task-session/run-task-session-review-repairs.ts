@@ -4,9 +4,13 @@ import type {
   PrimaryReviewDispositionReport,
 } from "./implementation-review-result.js";
 import type { TaskExecutionRecord } from "./task-execution-record.js";
+import { transitionTaskExecutionRecord } from "./task-execution-transition.js";
 import { logger } from "../logging/logger.js";
 import { TaskExecutionStore } from "./task-execution-store.js";
 import { findPrimaryRecoveryError } from "./persist-primary-operation-recovery.js";
+import { extractOpenCodeTextOutput } from "../opencode/opencode-client.js";
+import { REVIEW_REPAIR_FINISHED_EARLY_MARKER } from "../opencode/build-task-session-review-repair-prompt.js";
+import { parsePrimaryReviewDispositionReport } from "./implementation-review-result.js";
 
 type TrackedFinding = NonNullable<
   NonNullable<TaskExecutionRecord["reviewRepair"]>["findings"]
@@ -23,11 +27,43 @@ export interface TaskSessionReviewRound {
   }[];
 }
 
+/** Carry the same CI episode's review history across its next primary correction. */
+export function carryReviewRepairIntoCiCorrection(
+  reviewRepair: TaskExecutionRecord["reviewRepair"],
+  ciReviewCycleId: string,
+): TaskExecutionRecord["reviewRepair"] {
+  if (
+    reviewRepair === undefined ||
+    reviewRepair.cycleId !== ciReviewCycleId ||
+    reviewRepair.activePrimaryOperation !== undefined
+  )
+    return undefined;
+  return reviewRepair;
+}
+
+/** Reuses a precomputed first round once; all later rounds must read current source. */
+export function createReviewRoundRunner(
+  initialRound: TaskSessionReviewRound | undefined,
+  runFreshReview: (
+    previousFindings: readonly TrackedFinding[],
+  ) => Promise<TaskSessionReviewRound>,
+): (
+  previousFindings: readonly TrackedFinding[],
+) => Promise<TaskSessionReviewRound> {
+  let pendingInitialRound = initialRound;
+  return async (previousFindings) => {
+    const cached = pendingInitialRound;
+    pendingInitialRound = undefined;
+    return cached ?? runFreshReview(previousFindings);
+  };
+}
+
 export interface RunTaskSessionReviewRepairsOptions {
   store: TaskExecutionStore;
   projectId: string;
   cardId: string;
   operationKey: string;
+  reviewCycleId?: string;
   expectedPrimarySessionId: string;
   runReview: (
     previousFindings: readonly TrackedFinding[],
@@ -37,7 +73,15 @@ export interface RunTaskSessionReviewRepairsOptions {
     attempt: number,
     operationId: string,
     persistedPrompt?: string,
-  ) => Promise<void | PrimaryReviewDispositionReport | undefined>;
+  ) => Promise<
+    | void
+    | PrimaryReviewDispositionReport
+    | {
+        dispositions?: PrimaryReviewDispositionReport;
+        finishedEarly?: boolean;
+      }
+    | undefined
+  >;
   buildRepairPrompt?: (
     review: ImplementationReviewResult,
     attempt: number,
@@ -45,6 +89,66 @@ export interface RunTaskSessionReviewRepairsOptions {
   rerunQuality: () => Promise<void>;
   getCurrentContentIdentity: () => Promise<string>;
   maxAttempts: number;
+}
+
+interface ReviewRepairOutcome {
+  dispositions?: PrimaryReviewDispositionReport;
+  finishedEarly: boolean;
+}
+
+function normalizeRepairOutcome(
+  value:
+    | void
+    | PrimaryReviewDispositionReport
+    | { dispositions?: PrimaryReviewDispositionReport; finishedEarly?: boolean }
+    | undefined,
+): ReviewRepairOutcome {
+  if (value === undefined) return { finishedEarly: false };
+  if ("findingDispositions" in value)
+    return { dispositions: value, finishedEarly: false };
+  return {
+    ...(value.dispositions === undefined
+      ? {}
+      : { dispositions: value.dispositions }),
+    finishedEarly: value.finishedEarly === true,
+  };
+}
+
+export function parsePrimaryReviewRepairOutcome(
+  output: string,
+  expectedFindingIds: readonly string[],
+  expectedRequirementIds: readonly string[],
+): ReviewRepairOutcome {
+  try {
+    const text = extractOpenCodeTextOutput(output);
+    const lines = text.split(/\r?\n/u);
+    const markerLines = lines.flatMap((line, index) =>
+      line === REVIEW_REPAIR_FINISHED_EARLY_MARKER ? [index] : [],
+    );
+    let finishedEarly = false;
+    let reportText = text;
+    if (markerLines.length > 0) {
+      const markerIndex = markerLines[0]!;
+      if (
+        markerLines.length !== 1 ||
+        lines.slice(markerIndex + 1).some((line) => line.trim().length > 0)
+      )
+        return { finishedEarly: false };
+      finishedEarly = true;
+      reportText = lines.slice(0, markerIndex).join("\n").trim();
+    }
+    const dispositions = parsePrimaryReviewDispositionReport(
+      reportText,
+      expectedFindingIds,
+      expectedRequirementIds,
+    );
+    return {
+      ...(dispositions === undefined ? {} : { dispositions }),
+      finishedEarly,
+    };
+  } catch {
+    return { finishedEarly: false };
+  }
 }
 
 export interface TaskSessionReviewRepairResult extends TaskSessionReviewRound {
@@ -308,6 +412,113 @@ function updateFindingLedger(
   };
 }
 
+async function completePrimaryRepair(
+  options: RunTaskSessionReviewRepairsOptions,
+  review: ImplementationReviewResult,
+  operationId: string,
+  outcome: ReviewRepairOutcome,
+  afterIdentity: string,
+): Promise<{
+  record: TaskExecutionRecord;
+  noChange: boolean;
+  contentIdentity: string;
+}> {
+  logReviewDiagnostic(options, "repair-content-checked", {
+    operationId,
+    beforeContentIdentity: review.reviewedContentIdentity,
+    afterContentIdentity: afterIdentity,
+    changedImmediately: afterIdentity !== review.reviewedContentIdentity,
+  });
+  await options.rerunQuality();
+  const finalIdentity = await options.getCurrentContentIdentity();
+  const noChange = finalIdentity === review.reviewedContentIdentity;
+  const finishAfterNextReview =
+    afterIdentity === review.reviewedContentIdentity
+      ? ("no-change" as const)
+      : outcome.finishedEarly
+        ? ("finished-early" as const)
+        : undefined;
+  let latest = options.store.read(options.cardId);
+  assertOwner(latest, options);
+  const findingIds = new Set(
+    review.blockingFindings.flatMap(({ id }) => (id === undefined ? [] : [id])),
+  );
+  const transitionEvent = {
+    type: "validation-reviewed" as const,
+    eventId: `${options.operationKey}:validation-reviewed`,
+    projectId: options.projectId,
+    cardId: options.cardId,
+    operationKey: options.operationKey,
+    occurredAt: nextTimestamp(latest.updatedAt),
+  };
+  const baseRevision = latest.revision;
+  const baseTimestamp = latest.updatedAt;
+  const needsReviewTransition = noChange && latest.phase === "validation";
+  if (needsReviewTransition)
+    latest = transitionTaskExecutionRecord(latest, transitionEvent);
+  const reviewRepair = latest.reviewRepair;
+  if (reviewRepair?.activePrimaryOperation?.operationId !== operationId)
+    return { record: latest, noChange: false, contentIdentity: finalIdentity };
+  const update = {
+    reviewRepair: {
+      ...reviewRepair,
+      ...(noChange
+        ? {
+            status: "exhausted" as const,
+            stopReason: "no-change" as const,
+            finishAfterNextReview: undefined,
+          }
+        : {
+            status: "active" as const,
+            stopReason: undefined,
+            finishAfterNextReview,
+          }),
+      activePrimaryOperation: undefined,
+      finalReview: review,
+      findings: reviewRepair.findings?.map((finding) => {
+        if (!findingIds.has(finding.id)) return finding;
+        const disposition = outcome.dispositions?.findingDispositions.find(
+          (item) => item.findingId === finding.id,
+        );
+        return disposition === undefined
+          ? { ...finding, primaryDisposition: undefined }
+          : {
+              ...finding,
+              primaryDisposition: {
+                reviewedContentIdentity: review.reviewedContentIdentity,
+                status: disposition.status,
+                rationale: disposition.rationale,
+              },
+            };
+      }),
+      requirementDispositions: (reviewRepair.requirementDispositions ?? [])
+        .filter(
+          (item) =>
+            !review.requirementAssessments.some(
+              (assessment) =>
+                assessment.status === "unsatisfied" &&
+                assessment.requirementId === item.requirementId,
+            ),
+        )
+        .concat(
+          outcome.dispositions?.requirementDispositions.map((disposition) => ({
+            ...disposition,
+            reviewedContentIdentity: review.reviewedContentIdentity,
+          })) ?? [],
+        ),
+    },
+  } satisfies Partial<TaskExecutionRecord>;
+  const updated = needsReviewTransition
+    ? options.store.compareAndSwap(options.cardId, baseRevision, {
+        ...latest,
+        ...update,
+        revision: baseRevision + 1,
+        updatedAt: nextTimestamp(baseTimestamp),
+      })
+    : updateRecord(options.store, latest, update);
+  return { record: updated, noChange, contentIdentity: finalIdentity };
+}
+
 export async function runTaskSessionReviewWithRepairs(
   options: RunTaskSessionReviewRepairsOptions,
 ): Promise<TaskSessionReviewRepairResult> {
@@ -317,7 +528,10 @@ export async function runTaskSessionReviewWithRepairs(
     );
   let record = options.store.read(options.cardId);
   assertOwner(record, options);
-  const cycleId = options.operationKey;
+  const cycleId =
+    record.reviewRepair?.activePrimaryOperation !== undefined
+      ? record.reviewRepair.cycleId
+      : (options.reviewCycleId ?? options.operationKey);
 
   if (record.reviewRepair?.cycleId !== cycleId) {
     record = updateRecord(options.store, record, {
@@ -326,6 +540,18 @@ export async function runTaskSessionReviewWithRepairs(
         cycleId,
         status: "active",
         maxAttempts: options.maxAttempts,
+      },
+    });
+  } else if (record.reviewRepair.maxAttempts === undefined) {
+    const legacyMaximum = Math.max(
+      options.maxAttempts,
+      record.retryCounters.review,
+      record.reviewRepair.activePrimaryOperation?.pass ?? 0,
+    );
+    record = updateRecord(options.store, record, {
+      reviewRepair: {
+        ...record.reviewRepair,
+        maxAttempts: legacyMaximum,
       },
     });
   }
@@ -474,69 +700,48 @@ export async function runTaskSessionReviewWithRepairs(
           finalReview: retainedReview,
         },
       });
-      let dispositions: PrimaryReviewDispositionReport | undefined;
+      let outcome: ReviewRepairOutcome;
+      let afterRepairIdentity: string;
       try {
-        dispositions =
-          (await options.repair(
+        outcome = normalizeRepairOutcome(
+          await options.repair(
             retainedReview,
             active.pass,
             active.operationId,
             stored.prompt,
-          )) || undefined;
-        await options.rerunQuality();
+          ),
+        );
+        afterRepairIdentity = await options.getCurrentContentIdentity();
       } catch (error) {
         throw new TaskSessionReviewRepairError(
           `Reserved review repair pass ${active.pass} did not complete; reservation is preserved`,
           { cause: error },
         );
       }
-      const afterQuality = options.store.read(options.cardId);
-      assertOwner(afterQuality, options);
-      const dispositionFindingIds = new Set(
-        retainedReview.blockingFindings.flatMap(({ id }) =>
-          id === undefined ? [] : [id],
-        ),
+      const completed = await completePrimaryRepair(
+        options,
+        retainedReview,
+        active.operationId,
+        outcome,
+        afterRepairIdentity,
       );
-      record = updateRecord(options.store, afterQuality, {
-        reviewRepair: {
-          ...afterQuality.reviewRepair!,
-          activePrimaryOperation: undefined,
-          findings: afterQuality.reviewRepair!.findings?.map((finding) => {
-            if (!dispositionFindingIds.has(finding.id)) return finding;
-            const disposition = dispositions?.findingDispositions.find(
-              (item) => item.findingId === finding.id,
-            );
-            return disposition === undefined
-              ? { ...finding, primaryDisposition: undefined }
-              : {
-                  ...finding,
-                  primaryDisposition: {
-                    reviewedContentIdentity:
-                      retainedReview.reviewedContentIdentity,
-                    status: disposition.status,
-                    rationale: disposition.rationale,
-                  },
-                };
-          }),
-          requirementDispositions: (
-            afterQuality.reviewRepair!.requirementDispositions ?? []
-          )
-            .filter(
-              (item) =>
-                !retainedReview.requirementAssessments.some(
-                  (assessment) =>
-                    assessment.status === "unsatisfied" &&
-                    assessment.requirementId === item.requirementId,
-                ),
-            )
-            .concat(
-              dispositions?.requirementDispositions.map((disposition) => ({
-                ...disposition,
-                reviewedContentIdentity: retainedReview.reviewedContentIdentity,
-              })) ?? [],
-            ),
-        },
-      });
+      record = completed.record;
+      if (completed.noChange) {
+        logReviewDiagnostic(options, "cycle-stopped", {
+          stopReason: "no-change",
+          remediationAttempt: active.pass,
+          contentIdentity: completed.contentIdentity,
+          blockingFindingIds: boundedIds(
+            retainedReview.blockingFindings.map(({ id }) => id ?? "unknown"),
+          ),
+        });
+        return {
+          review: retainedReview,
+          contentIdentity: completed.contentIdentity,
+          attempts: record.retryCounters.review,
+          record,
+        };
+      }
       continue;
     }
     let round: TaskSessionReviewRound;
@@ -623,6 +828,9 @@ export async function runTaskSessionReviewWithRepairs(
     });
 
     const attempts = record.retryCounters.review;
+    const pendingFinish = record.reviewRepair?.finishAfterNextReview;
+    const finishAfterNextReview =
+      pendingFinish === true ? "finished-early" : pendingFinish || undefined;
     if (round.review.verdict === "pass") {
       record = updateRecord(options.store, record, {
         reviewRepair: {
@@ -644,11 +852,37 @@ export async function runTaskSessionReviewWithRepairs(
       return { ...trackedRound, attempts: record.retryCounters.review, record };
     }
 
+    if (finishAfterNextReview) {
+      record = updateRecord(options.store, record, {
+        reviewRepair: {
+          cycleId,
+          status: "exhausted",
+          stopReason: finishAfterNextReview,
+          maxAttempts: record.reviewRepair?.maxAttempts ?? options.maxAttempts,
+          requirementDispositions: record.reviewRepair?.requirementDispositions,
+          finalReview: ledger.review,
+          findings: ledger.findings,
+        },
+      });
+      logReviewDiagnostic(options, "cycle-stopped", {
+        stopReason: finishAfterNextReview,
+        reviewPass: attempts + 1,
+        remediationAttempt: attempts,
+        contentIdentity: round.contentIdentity,
+        blockingFindingIds: boundedIds(
+          ledger.review.blockingFindings.map(({ id }) => id ?? "unknown"),
+        ),
+        ...qualityDiagnostic(record),
+      });
+      return { ...trackedRound, attempts, record };
+    }
+
     if (attempts >= (record.reviewRepair?.maxAttempts ?? options.maxAttempts)) {
       record = updateRecord(options.store, record, {
         reviewRepair: {
           cycleId,
           status: "exhausted",
+          stopReason: "attempt-limit",
           maxAttempts: record.reviewRepair?.maxAttempts ?? options.maxAttempts,
           requirementDispositions: record.reviewRepair?.requirementDispositions,
           finalReview: ledger.review,
@@ -681,7 +915,7 @@ export async function runTaskSessionReviewWithRepairs(
       `${operationId}:prompt`,
       { prompt, review: ledger.review },
     );
-    record = updateRecord(options.store, record, {
+    updateRecord(options.store, record, {
       retryCounters: { ...record.retryCounters, review: repairAttempt },
       // Once a primary repair is durably reserved, older remediation-failure
       // state must not be allowed to classify or publish around it.
@@ -710,76 +944,50 @@ export async function runTaskSessionReviewWithRepairs(
       ),
       contentIdentity: round.contentIdentity,
     });
-    let failureCategory: "remediation-execution" | "validation" =
+    let failureCategory:
+      "remediation-execution" | "source-identity-check" | "validation" =
       "remediation-execution";
-    let dispositions: PrimaryReviewDispositionReport | undefined;
+    let outcome: ReviewRepairOutcome;
+    let afterRepairIdentity: string;
     try {
-      dispositions =
-        (await options.repair(
-          ledger.review,
-          repairAttempt,
-          operationId,
-          prompt,
-        )) || undefined;
+      outcome = normalizeRepairOutcome(
+        await options.repair(ledger.review, repairAttempt, operationId, prompt),
+      );
+      failureCategory = "source-identity-check";
+      afterRepairIdentity = await options.getCurrentContentIdentity();
       failureCategory = "validation";
-      await options.rerunQuality();
-      const afterQuality = options.store.read(options.cardId);
-      assertOwner(afterQuality, options);
-      if (
-        afterQuality.reviewRepair?.activePrimaryOperation?.operationId ===
-        operationId
-      ) {
-        const dispositionFindingIds = new Set(
-          ledger.review.blockingFindings.flatMap(({ id }) =>
-            id === undefined ? [] : [id],
-          ),
-        );
-        record = updateRecord(options.store, afterQuality, {
-          reviewRepair: {
-            ...afterQuality.reviewRepair,
-            activePrimaryOperation: undefined,
-            findings: afterQuality.reviewRepair.findings?.map((finding) => {
-              if (!dispositionFindingIds.has(finding.id)) return finding;
-              const disposition = dispositions?.findingDispositions.find(
-                (item) => item.findingId === finding.id,
-              );
-              return disposition === undefined
-                ? { ...finding, primaryDisposition: undefined }
-                : {
-                    ...finding,
-                    primaryDisposition: {
-                      reviewedContentIdentity: round.contentIdentity,
-                      status: disposition.status,
-                      rationale: disposition.rationale,
-                    },
-                  };
-            }),
-            requirementDispositions: (
-              afterQuality.reviewRepair.requirementDispositions ?? []
-            )
-              .filter(
-                (item) =>
-                  !ledger.review.requirementAssessments.some(
-                    (assessment) =>
-                      assessment.status === "unsatisfied" &&
-                      assessment.requirementId === item.requirementId,
-                  ),
-              )
-              .concat(
-                dispositions?.requirementDispositions.map((disposition) => ({
-                  ...disposition,
-                  reviewedContentIdentity: round.contentIdentity,
-                })) ?? [],
-              ),
-          },
-        });
-      }
+      const completed = await completePrimaryRepair(
+        options,
+        ledger.review,
+        operationId,
+        outcome,
+        afterRepairIdentity,
+      );
+      record = completed.record;
       logReviewDiagnostic(options, "remediation-completed", {
         reviewPass: attempts + 1,
         remediationAttempt: attempts + 1,
         beforeContentIdentity: round.contentIdentity,
+        afterContentIdentity: afterRepairIdentity,
+        noChange: completed.noChange,
         ...qualityDiagnostic(options.store.read(options.cardId) ?? record),
       });
+      if (completed.noChange) {
+        logReviewDiagnostic(options, "cycle-stopped", {
+          stopReason: "no-change",
+          remediationAttempt: repairAttempt,
+          contentIdentity: afterRepairIdentity,
+          blockingFindingIds: boundedIds(
+            ledger.review.blockingFindings.map(({ id }) => id ?? "unknown"),
+          ),
+        });
+        return {
+          review: ledger.review,
+          contentIdentity: afterRepairIdentity,
+          attempts: record.retryCounters.review,
+          record,
+        };
+      }
     } catch (error) {
       const primaryRecoveryError = findPrimaryRecoveryError(error);
       if (primaryRecoveryError !== undefined)

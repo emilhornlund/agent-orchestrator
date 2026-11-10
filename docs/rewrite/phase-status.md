@@ -2,10 +2,16 @@
 
 ## Current checkpoint
 
-- Branch: `refactor/p6-advisory-publication`; phase base: `92a8276` (P5 integrated).
-- P6-T1 implementation is committed as `d441859`: independently optional validation
-  and coverage, truthful skipped/uncertain outcomes, persistence/recovery and caller
-  compatibility, including signal-terminated commands.
+- Phase base: `92a8276` (P5 integrated).
+- P6-T1 (`d441859`), T2 (`9e9b6a4`), T3 (`ca63a51`) and T4 (`0da3bb7`) are
+  committed; temporary-guide cleanup is `2940ea1`.
+- T5 is implemented: distinct bounded review
+  remediation, no-op/early finish, and original operation/prompt recovery through
+  initial, feedback and CI callers. CI review budgets retain their episode and usage.
+- Production regressions cover reservation, durable primary completion, validation
+  and completed-review interruptions, plus unknown-execution fencing. Feedback
+  recovery retains its original round when newer feedback is observed. Final
+  validation results are reported in the task handoff.
 - The implementation baseline passed `yarn validate`: lint, formatting, typecheck
   and 1,956 tests across 156 files. Validate the final changed candidate before handoff.
 - Delivery follows the [whole-phase workflow](phase-execution.md): prepare once,
@@ -22,10 +28,6 @@
 Use the behavior contracts in the [P6 checklist](p6-execution.md), with relevant
 requirements/specification sections and meaningful regression tests:
 
-- T2: advisory planning and plan review, including unusable/unavailable advice.
-- T3: bounded validation improvement; no-op, early finish and restart behavior.
-- T4: separate advisory implementation review, without a verdict veto.
-- T5: distinct bounded review improvement and restart behavior.
 - T6: enforced source-checkout protection and safe, scoped initial commits.
 - T7: truthful draft/normal publication and verified workflow transitions.
 - T8: accurate descriptions, fallback content and notifications.

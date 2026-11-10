@@ -167,6 +167,7 @@ export async function runTaskSessionFeedbackRemediation(
       status: "active",
       headSha: options.expectedPullRequestHeadSha,
       ledgerRevision: ledger.revision,
+      feedbackIds: pending.map((entry) => `${entry.kind}:${entry.id}`),
     },
   });
   const prompt = buildTaskSessionFeedbackRemediationPrompt({
@@ -263,6 +264,7 @@ export async function runTaskSessionFeedbackRemediation(
       status: beforeIdentity === afterIdentity ? "no-op" : "changed",
       headSha: options.expectedPullRequestHeadSha,
       ledgerRevision: latestLedger.revision,
+      feedbackIds: pending.map((entry) => `${entry.kind}:${entry.id}`),
     },
   });
   return {

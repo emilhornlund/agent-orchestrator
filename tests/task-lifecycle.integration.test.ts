@@ -31,6 +31,7 @@ import { pollProject } from "../src/orchestrator/poll-project.js";
 import { beginInitialPublication } from "../src/orchestrator/initial-publication.js";
 import { getTaskSessionSourceSnapshotIdentity } from "../src/task-session/source-snapshot.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
+import type { TaskExecutionRecord } from "../src/task-session/task-execution-record.js";
 import { TaskPlanStore } from "../src/task-session/task-plan-store.js";
 import { TaskMutationQueue } from "../src/task-session/task-mutation-queue.js";
 import type { TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
@@ -41,6 +42,21 @@ let roots: string[] = [];
 let originalProcessPath: string | undefined;
 let originalPrimaryMode: string | undefined;
 const leases: ProjectOwnershipLease[] = [];
+interface LifecycleScenario {
+  draft: boolean;
+  terminal: "merged" | "closed";
+  destination: "done" | "backlog";
+  ackLoss: boolean;
+  quality: "validation" | "none" | "coverage" | "both";
+  terminalReadRaceAt?: number;
+  correctionFailure?: boolean;
+  preparedReview?: "material" | "unavailable";
+  ciReviewHandoffs?: boolean;
+  feedbackReviewRecovery?:
+    "reserved" | "completed" | "validation" | "reviewed" | "unknown";
+  ciReviewRecovery?:
+    "reserved" | "completed" | "validation" | "reviewed" | "unknown";
+}
 afterEach(async () => {
   vi.restoreAllMocks();
   vi.useRealTimers();
@@ -56,7 +72,7 @@ afterEach(async () => {
 });
 
 describe("task lifecycle through pollProject", () => {
-  it.each([
+  it.each<LifecycleScenario>([
     {
       draft: false,
       terminal: "merged",
@@ -127,27 +143,37 @@ describe("task lifecycle through pollProject", () => {
       quality: "both",
       preparedReview: "unavailable",
     },
+    {
+      draft: false,
+      terminal: "merged",
+      destination: "done",
+      ackLoss: false,
+      quality: "both",
+      ciReviewHandoffs: true,
+    },
+    ...(
+      ["reserved", "completed", "validation", "reviewed", "unknown"] as const
+    ).map((feedbackReviewRecovery) => ({
+      draft: false,
+      terminal: "merged" as const,
+      destination: "done" as const,
+      ackLoss: false,
+      quality: "both" as const,
+      feedbackReviewRecovery,
+    })),
+    ...(
+      ["reserved", "completed", "validation", "reviewed", "unknown"] as const
+    ).map((ciReviewRecovery) => ({
+      draft: false,
+      terminal: "merged" as const,
+      destination: "done" as const,
+      ackLoss: false,
+      quality: "both" as const,
+      ciReviewHandoffs: true,
+      ciReviewRecovery,
+    })),
   ] as const)(
-    ({
-      draft,
-      terminal,
-      ackLoss,
-      correctionFailure = false,
-      quality,
-      preparedReview,
-    }: {
-      draft: boolean;
-      terminal: string;
-      ackLoss: boolean;
-      correctionFailure?: boolean;
-      quality: "validation" | "none" | "coverage" | "both";
-      preparedReview?: "material" | "unavailable";
-    }) =>
-      ackLoss
-        ? "reconciles an accepted PR whose create acknowledgement was lost without claiming the next card"
-        : correctionFailure
-          ? `blocks exhausted published-PR correction until human ${terminal}`
-          : `publishes a ${draft ? "draft" : "normal"} PR (${quality}) and waits for human ${terminal} before releasing the next card (${JSON.stringify({ draft, terminal, ackLoss, correctionFailure, quality, preparedReview })})`,
+    "preserves the owned lifecycle (quality=$quality, draft=$draft, terminal=$terminal, ackLoss=$ackLoss, correctionFailure=$correctionFailure, preparedReview=$preparedReview, ciReviewHandoffs=$ciReviewHandoffs, feedbackReviewRecovery=$feedbackReviewRecovery, ciReviewRecovery=$ciReviewRecovery)",
     async ({
       draft,
       terminal,
@@ -157,6 +183,9 @@ describe("task lifecycle through pollProject", () => {
       correctionFailure = false,
       quality,
       preparedReview,
+      ciReviewHandoffs = false,
+      feedbackReviewRecovery,
+      ciReviewRecovery,
     }) => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "task-lifecycle-"));
       roots.push(root);
@@ -307,6 +336,7 @@ describe("task lifecycle through pollProject", () => {
           timeoutMinutes: 1,
         },
       };
+      if (ciReviewHandoffs) project.opencode.remediation.maxPasses = 2;
       const coordinationRoot = path.join(root, "coordination");
       fs.mkdirSync(coordinationRoot);
       provisionCoordinationNamespace(coordinationRoot, "lifecycle-test");
@@ -477,9 +507,23 @@ describe("task lifecycle through pollProject", () => {
       const accepted: string[] = [];
       const publicationQualityAtCreate: unknown[] = [];
       const authorities = new Map<string, ProjectRunAuthority>();
+      let ciPrimaryCorrections = 0;
+      const ciReviewRepairOperationIds: string[] = [];
+      const ciReviewRepairDispatches: {
+        operationId: string;
+        prompt: string;
+        sessionId: string | undefined;
+      }[] = [];
       let loseCreateAcknowledgement = false;
       let feedbackReads = 0;
       let correctionFeedback = false;
+      let feedbackBody = "Please handle the empty result.";
+      let feedbackPrimaryCorrections = 0;
+      const feedbackReviewDispatches: {
+        operationId: string;
+        prompt: string;
+        sessionId: string | undefined;
+      }[] = [];
       let reviewerRounds = 0;
       let terminalRaceTarget: "MERGED" | "CLOSED" | null = null;
       let terminalRaceReads = 0;
@@ -598,28 +642,57 @@ describe("task lifecycle through pollProject", () => {
           }
           return { number, url };
         },
-        getCiObservations: async ({ headSha }: { headSha: string }) => ({
+        getCiObservations: async ({ headSha }: { headSha: string }) => {
+          const currentPhase = new TaskExecutionStore(
+            contextRoot,
+            project,
+            authorities.get("first"),
+          ).read("first")?.phase;
+          const failed =
+            ciReviewHandoffs &&
+            prs.has("agent/first") &&
+            (currentPhase === "ci" || currentPhase === "human-feedback") &&
+            ciPrimaryCorrections < 2;
+          return {
+            headSha,
+            checks: [
+              {
+                source: "check-run" as const,
+                id: 1,
+                name: "Build",
+                headSha,
+                status: "completed" as const,
+                conclusion: failed
+                  ? ("failure" as const)
+                  : ("success" as const),
+                url: null,
+              },
+            ],
+            expectationSources: [
+              {
+                kind: "repository-rules" as const,
+                sourceId: "fixture",
+                complete: true,
+                checkNames: ["Build"],
+              },
+            ],
+          };
+        },
+        getCiCheckRunDiagnostics: async ({
           headSha,
-          checks: [
-            {
-              source: "check-run" as const,
-              id: 1,
-              name: "Build",
-              headSha,
-              status: "completed" as const,
-              conclusion: "success",
-              url: null,
-            },
-          ],
-          expectationSources: [
-            {
-              kind: "repository-rules" as const,
-              sourceId: "fixture",
-              complete: true,
-              checkNames: ["Build"],
-            },
-          ],
-        }),
+          checks,
+        }: {
+          headSha: string;
+          checks: readonly { name: string; id: number }[];
+        }) =>
+          checks.map((check) => ({
+            name: check.name,
+            headSha,
+            checkRunId: check.id,
+            logUrl: null,
+            available: true,
+            diagnostic: "The fixture CI check failed.",
+          })),
         findChangesRequestedPullRequest: async (input: {
           headBranch: string;
         }) => {
@@ -634,7 +707,7 @@ describe("task lifecycle through pollProject", () => {
                 {
                   id: 202,
                   commitSha: pr.headRefOid,
-                  body: "Please handle the empty result.",
+                  body: feedbackBody,
                   author: "reviewer",
                   submittedAt: "2026-11-01T09:00:00.000Z",
                   inlineComments: [],
@@ -695,6 +768,185 @@ describe("task lifecycle through pollProject", () => {
         async (options: OpenCodeRunOptions) => {
           const cardId = path.basename(options.cwd);
           openCodeCards.push(cardId);
+          if (feedbackReviewRecovery !== undefined && correctionFeedback) {
+            if (
+              options.prompt.startsWith(
+                "Address the following verified-as-actionable human PR feedback",
+              )
+            ) {
+              feedbackPrimaryCorrections += 1;
+              fs.writeFileSync(
+                path.join(options.cwd, "app.js"),
+                "module.exports = 'feedback correction';\n",
+              );
+              return {
+                exitCode: 0,
+                output: "Feedback correction applied",
+                errorOutput: "",
+              };
+            }
+            if (
+              options.prompt.startsWith(
+                "Address the independent implementation review findings",
+              )
+            ) {
+              const task = new TaskExecutionStore(
+                contextRoot,
+                project,
+                authorities.get(cardId),
+              ).read(cardId);
+              const reservation = task?.reviewRepair?.activePrimaryOperation;
+              if (reservation === undefined)
+                throw new Error("Feedback review writer lacks a reservation");
+              feedbackReviewDispatches.push({
+                operationId: reservation.operationId,
+                prompt: options.prompt,
+                sessionId: options.sessionId,
+              });
+              if (feedbackReviewRecovery === "unknown")
+                throw new Error("Feedback review process outcome is unknown");
+              fs.writeFileSync(
+                path.join(options.cwd, "app.js"),
+                "module.exports = 'reviewed feedback correction';\n",
+              );
+              return {
+                exitCode: 0,
+                output: JSON.stringify({
+                  version: 1,
+                  findingDispositions: [],
+                  requirementDispositions: [],
+                }),
+                errorOutput: "",
+              };
+            }
+            if (
+              options.readOnly &&
+              options.prompt.includes("Independently review the implementation")
+            ) {
+              const identity = options.prompt.match(
+                /Reviewed source content identity: (sha256:[0-9a-f]{64})/u,
+              )?.[1];
+              if (identity === undefined)
+                throw new Error("Feedback review omitted source identity");
+              const repaired = feedbackReviewDispatches.length > 0;
+              const task = new TaskExecutionStore(
+                contextRoot,
+                project,
+                authorities.get(cardId),
+              ).read(cardId);
+              const prior = task?.reviewRepair?.findings ?? [];
+              return {
+                exitCode: 0,
+                output: JSON.stringify({
+                  version: 1,
+                  projectId: project.id,
+                  cardId,
+                  verdict: repaired ? "pass" : "fail",
+                  requirementAssessments: [
+                    {
+                      requirementId: "REQ-1",
+                      status: repaired ? "satisfied" : "unsatisfied",
+                      details: "Feedback correction review",
+                      evidence: repaired ? ["app.js"] : [],
+                    },
+                  ],
+                  blockingFindings: repaired
+                    ? []
+                    : [
+                        {
+                          kind: "defect",
+                          summary:
+                            "Feedback correction needs review remediation",
+                          detail:
+                            "The empty-result behavior needs the final correction.",
+                        },
+                      ],
+                  previousFindingAssessments: prior.map(({ id }) => ({
+                    findingId: id,
+                    status: "resolved",
+                  })),
+                  reviewedContentIdentity: identity,
+                }),
+                errorOutput: "",
+              };
+            }
+          }
+          if (
+            ciReviewHandoffs &&
+            options.readOnly &&
+            options.prompt.includes("Independently review the implementation")
+          ) {
+            const identity = options.prompt.match(
+              /Reviewed source content identity: (sha256:[0-9a-f]{64})/u,
+            )?.[1];
+            if (identity === undefined)
+              throw new Error("CI review prompt omitted source identity");
+            const record = new TaskExecutionStore(
+              contextRoot,
+              project,
+              authorities.get(cardId),
+            ).read(cardId);
+            const ciPass = record?.ciRepair?.activePrimaryOperation?.pass ?? 0;
+            const reviewRepairCount = record?.retryCounters.review ?? 0;
+            const verdict =
+              ciPass === 0 || reviewRepairCount >= ciPass ? "pass" : "fail";
+            const includesPriorFindings = !options.prompt.includes(
+              "Previously reported blocking findings in this review cycle (empty on the first review):\n[]",
+            );
+            const trackedFindings = includesPriorFindings
+              ? (record?.reviewRepair?.findings ?? [])
+              : [];
+            return {
+              exitCode: 0,
+              output: JSON.stringify({
+                version: 1,
+                projectId: project.id,
+                cardId,
+                verdict,
+                requirementAssessments: [
+                  {
+                    requirementId: "REQ-1",
+                    status: verdict === "pass" ? "satisfied" : "unsatisfied",
+                    details:
+                      verdict === "pass"
+                        ? "The current CI-corrected source meets the task."
+                        : "CI correction exposed a review finding to remediate.",
+                    evidence: verdict === "pass" ? ["app.js"] : [],
+                  },
+                ],
+                blockingFindings:
+                  verdict === "pass"
+                    ? []
+                    : [
+                        ...trackedFindings
+                          .filter(({ status }) => status === "unresolved")
+                          .map(({ id, kind, summary, detail }) => ({
+                            id,
+                            kind,
+                            summary,
+                            detail,
+                          })),
+                        {
+                          kind: "defect",
+                          summary: `CI correction ${ciPass} requires review remediation`,
+                          detail:
+                            "The correction left a demonstrable behavior gap in app.js.",
+                        },
+                      ],
+                previousFindingAssessments: trackedFindings.map(
+                  ({ id, status }) => ({
+                    findingId: id,
+                    status:
+                      verdict === "pass" || status !== "unresolved"
+                        ? "resolved"
+                        : "unresolved",
+                  }),
+                ),
+                reviewedContentIdentity: identity,
+              }),
+              errorOutput: "",
+            };
+          }
           if (
             preparedReview !== undefined &&
             options.readOnly &&
@@ -772,6 +1024,84 @@ describe("task lifecycle through pollProject", () => {
             )
           ) {
             return realRunner.run(options);
+          }
+          if (
+            ciReviewHandoffs &&
+            options.prompt.startsWith("Repair the required GitHub CI failures")
+          ) {
+            ciPrimaryCorrections += 1;
+            fs.writeFileSync(
+              path.join(options.cwd, "app.js"),
+              `module.exports = 'CI correction ${ciPrimaryCorrections}';\n`,
+            );
+            return {
+              exitCode: 0,
+              output: "CI correction applied",
+              errorOutput: "",
+            };
+          }
+          if (
+            ciReviewHandoffs &&
+            options.prompt.startsWith(
+              "Address the independent implementation review findings",
+            )
+          ) {
+            const taskStore = new TaskExecutionStore(
+              contextRoot,
+              project,
+              authorities.get(cardId),
+            );
+            const task = taskStore.read(cardId);
+            const review = task?.reviewRepair?.finalReview;
+            const pending = task?.reviewRepair?.activePrimaryOperation;
+            if (review === undefined || pending === undefined)
+              throw new Error("CI review repair lacks its durable reservation");
+            ciReviewRepairOperationIds.push(pending.operationId);
+            ciReviewRepairDispatches.push({
+              operationId: pending.operationId,
+              prompt: options.prompt,
+              sessionId: options.sessionId,
+            });
+            if (ciReviewRecovery === "unknown")
+              throw new Error("CI review process outcome is unknown");
+            fs.writeFileSync(
+              path.join(options.cwd, "app.js"),
+              `module.exports = 'CI review repair ${pending.pass}';\n`,
+            );
+            const dispositions = {
+              version: 1,
+              findingDispositions: review.blockingFindings.flatMap(({ id }) =>
+                id === undefined
+                  ? []
+                  : [
+                      {
+                        findingId: id,
+                        status: "addressed",
+                        rationale:
+                          "The CI-correction defect was corrected in the current source.",
+                      },
+                    ],
+              ),
+              requirementDispositions: review.requirementAssessments
+                .filter(({ status }) => status === "unsatisfied")
+                .map(({ requirementId }) => ({
+                  requirementId,
+                  status: "addressed",
+                  rationale:
+                    "The requested behavior is implemented in the current source.",
+                })),
+            };
+            return {
+              exitCode: 0,
+              output: JSON.stringify({
+                type: "text",
+                part: {
+                  type: "text",
+                  text: JSON.stringify(dispositions),
+                },
+              }),
+              errorOutput: "",
+            };
           }
           if (options.captureSessionId)
             return {
@@ -909,7 +1239,10 @@ describe("task lifecycle through pollProject", () => {
             fs.mkdirSync(path.dirname(resultPath), { recursive: true });
             fs.writeFileSync(
               resultPath,
-              JSON.stringify({ message: "feat: implement requested change" }),
+              JSON.stringify({
+                message:
+                  "fix(task): preserve CI behavior\n\n- Correct the reported CI failure.\n- Preserve the requested implementation.\n\nThe CI correction is complete.",
+              }),
             );
           }
           return {
@@ -1144,6 +1477,174 @@ describe("task lifecycle through pollProject", () => {
         }
         return;
       }
+      if (ciReviewHandoffs) {
+        let ciInterrupted: TaskExecutionRecord | undefined;
+        let ciWritesStopped = false;
+        const originalCompare = TaskExecutionStore.prototype.compareAndSwap;
+        const ciFault = new Error(
+          "Simulated CI review checkpoint interruption",
+        );
+        const ciInterception =
+          ciReviewRecovery === undefined
+            ? undefined
+            : vi
+                .spyOn(TaskExecutionStore.prototype, "compareAndSwap")
+                .mockImplementation(function (
+                  this: TaskExecutionStore,
+                  cardId,
+                  revision,
+                  next,
+                ) {
+                  if (ciWritesStopped) throw ciFault;
+                  const persisted = originalCompare.call(
+                    this,
+                    cardId,
+                    revision,
+                    next,
+                  );
+                  const repair = persisted.reviewRepair;
+                  if (
+                    !repair?.cycleId.includes(":ci-review:") ||
+                    ciInterrupted !== undefined
+                  )
+                    return persisted;
+                  const reservation = repair.activePrimaryOperation;
+                  const entry =
+                    reservation &&
+                    persisted.primaryOperations?.[reservation.operationId];
+                  const matches =
+                    ciReviewRecovery === "reserved"
+                      ? reservation !== undefined && entry === undefined
+                      : ciReviewRecovery === "completed"
+                        ? reservation !== undefined &&
+                          entry?.status === "completed" &&
+                          persisted.phase === "implementation"
+                        : ciReviewRecovery === "validation"
+                          ? reservation !== undefined &&
+                            entry?.status === "completed" &&
+                            persisted.phase === "validation"
+                          : ciReviewRecovery === "reviewed" &&
+                            repair.status === "passed";
+                  if (matches) {
+                    ciInterrupted = persisted;
+                    ciWritesStopped = true;
+                    throw ciFault;
+                  }
+                  return persisted;
+                });
+        if (ciReviewRecovery !== undefined) {
+          for (
+            let pass = 0;
+            pass < 8 &&
+            ciInterrupted === undefined &&
+            ciReviewRepairOperationIds.length === 0;
+            pass += 1
+          ) {
+            try {
+              await poll();
+            } catch (error) {
+              expect(error).toBeInstanceOf(Error);
+            }
+          }
+          expect(ciWritesStopped).toBe(ciReviewRecovery !== "unknown");
+          ciInterception?.mockRestore();
+          ciWritesStopped = false;
+          const checkpoint = ciInterrupted ?? store.read("first")!;
+          const reservation = checkpoint.reviewRepair?.activePrimaryOperation;
+          const savedPrompt =
+            reservation?.promptArtifact === undefined
+              ? undefined
+              : (new TaskExecutionStore(
+                  contextRoot,
+                  project,
+                  activeAuthority,
+                ).readPrimaryResultArtifact({
+                  reference: reservation.promptArtifact
+                    .reference as `sha256:${string}`,
+                  bytes: reservation.promptArtifact.bytes,
+                  ...(reservation.promptArtifact.path === undefined
+                    ? {}
+                    : { path: reservation.promptArtifact.path }),
+                }) as { prompt: string } | undefined);
+          const priorHead = checkpoint.pullRequest!.headSha;
+          const sourceBytes = fs.readFileSync(
+            path.join(worktrees, "first", "app.js"),
+          );
+          expect(ciPrimaryCorrections).toBe(1);
+          expect(checkpoint.retryCounters.review).toBe(1);
+          git = new GitClient(runGit);
+          for (
+            let pass = 0;
+            pass < (ciReviewRecovery === "unknown" ? 3 : 8);
+            pass += 1
+          ) {
+            await poll();
+            if (
+              ciReviewRecovery !== "unknown" &&
+              ciPrimaryCorrections === 2 &&
+              store.read("first")?.phase === "human-feedback"
+            )
+              break;
+          }
+          if (reservation !== undefined)
+            expect(ciReviewRepairDispatches[0]).toEqual({
+              operationId: reservation.operationId,
+              prompt: savedPrompt!.prompt,
+              sessionId,
+            });
+          if (ciReviewRecovery === "unknown") {
+            const resumed = store.read("first")!;
+            expect(ciPrimaryCorrections).toBe(1);
+            expect(ciReviewRepairOperationIds).toHaveLength(1);
+            expect(resumed.pullRequest?.headSha).toBe(priorHead);
+            expect(resumed.reviewRepair?.activePrimaryOperation).toEqual(
+              reservation,
+            );
+            expect(
+              resumed.primaryOperations?.[reservation!.operationId]?.status,
+            ).toBe("ambiguous");
+            expect(resumed.phase).toBe("implementation");
+            expect(resumed.retryCounters.review).toBe(1);
+            expect(
+              fs.readFileSync(path.join(worktrees, "first", "app.js")),
+            ).toEqual(sourceBytes);
+            expect(lists.get("next")).toBe("ready");
+            expect(requests).toEqual(["agent/first"]);
+            return;
+          }
+        }
+        for (let pass = 0; pass < 20 && ciPrimaryCorrections < 2; pass += 1)
+          await poll();
+        const ciTask = store.read("first");
+        const ciRun = authorities.get("first")?.store.read();
+        expect(ciTask?.phase).toBe("human-feedback");
+        expect(
+          ciPrimaryCorrections,
+          JSON.stringify({
+            ciReviewHandoffs,
+            task: store.read("first"),
+            run: authorities.get("first")?.store.read(),
+          }),
+        ).toBe(2);
+        expect(ciReviewRepairOperationIds).toHaveLength(2);
+        expect(ciReviewRepairOperationIds[0]).toMatch(/:pass:1$/u);
+        expect(ciReviewRepairOperationIds[1]).toMatch(/:pass:2$/u);
+        expect(new Set(ciReviewRepairOperationIds).size).toBe(2);
+        expect(ciTask?.reviewRepair).toMatchObject({
+          cycleId: `${ciTask?.operationKey}:ci-review:${ciTask?.ciRepair?.cycleId}`,
+          status: "passed",
+          maxAttempts: 2,
+        });
+        expect(ciTask?.retryCounters.review).toBe(2);
+        expect(ciRun?.budgets.review).toMatchObject({
+          episodeId: ciTask?.reviewRepair?.cycleId,
+          limit: 3,
+          used: 2,
+        });
+        expect(requests).toEqual(["agent/first"]);
+        expect(prs.size).toBe(1);
+        return;
+      }
       for (
         let attempt = 0;
         attempt < 15 && store.read("first")?.phase !== "human-feedback";
@@ -1222,6 +1723,148 @@ describe("task lifecycle through pollProject", () => {
       expect(requests).toEqual(["agent/first"]);
       expect(accepted).toEqual([firstPr?.url]);
       expect(lists.get("first")).toBe("review");
+      if (feedbackReviewRecovery !== undefined) {
+        const originalHead = store.read("first")!.pullRequest!.headSha;
+        let writesStopped = false;
+        let interrupted: TaskExecutionRecord | undefined;
+        const fault = new Error("Simulated feedback checkpoint interruption");
+        const compare = TaskExecutionStore.prototype.compareAndSwap;
+        const interception = vi
+          .spyOn(TaskExecutionStore.prototype, "compareAndSwap")
+          .mockImplementation(function (
+            this: TaskExecutionStore,
+            cardId,
+            revision,
+            next,
+          ) {
+            if (writesStopped) throw fault;
+            const persisted = compare.call(this, cardId, revision, next);
+            const repair = persisted.reviewRepair;
+            if (
+              persisted.feedbackRemediation?.status !== "changed" ||
+              !repair?.cycleId.includes(":feedback:")
+            )
+              return persisted;
+            const reservation = repair.activePrimaryOperation;
+            const primary =
+              reservation &&
+              persisted.primaryOperations?.[reservation.operationId];
+            const matches =
+              feedbackReviewRecovery === "reserved"
+                ? reservation !== undefined && primary === undefined
+                : feedbackReviewRecovery === "completed"
+                  ? reservation !== undefined &&
+                    primary?.status === "completed" &&
+                    persisted.phase === "implementation"
+                  : feedbackReviewRecovery === "validation"
+                    ? reservation !== undefined &&
+                      primary?.status === "completed" &&
+                      persisted.phase === "validation"
+                    : feedbackReviewRecovery === "reviewed" &&
+                      repair.status === "passed";
+            if (matches) {
+              interrupted = persisted;
+              writesStopped = true;
+              throw fault;
+            }
+            return persisted;
+          });
+        correctionFeedback = true;
+        try {
+          await poll();
+        } catch (error) {
+          expect(feedbackReviewRecovery).not.toBe("unknown");
+          expect(error).toBeInstanceOf(Error);
+        }
+        expect(writesStopped).toBe(feedbackReviewRecovery !== "unknown");
+        interception.mockRestore();
+        writesStopped = false;
+        interrupted ??= store.read("first") ?? undefined;
+        expect(interrupted?.feedbackRemediation).toMatchObject({
+          status: "changed",
+          feedbackIds: ["review:202"],
+        });
+        expect(feedbackPrimaryCorrections).toBe(1);
+        const reservation = interrupted?.reviewRepair?.activePrimaryOperation;
+        if (feedbackReviewRecovery !== "reviewed")
+          expect(reservation).toBeDefined();
+        const originalPrompt =
+          reservation?.promptArtifact === undefined
+            ? undefined
+            : (new TaskExecutionStore(
+                contextRoot,
+                project,
+                activeAuthority,
+              ).readPrimaryResultArtifact({
+                reference: reservation.promptArtifact
+                  .reference as `sha256:${string}`,
+                bytes: reservation.promptArtifact.bytes,
+                ...(reservation.promptArtifact.path === undefined
+                  ? {}
+                  : { path: reservation.promptArtifact.path }),
+              }) as { prompt: string } | undefined);
+        const beforeRestart = feedbackReviewDispatches.length;
+        const reviewedSource = fs.readFileSync(
+          path.join(worktrees, "first", "app.js"),
+          "utf8",
+        );
+        // New observations must not replace the round that owns the persisted writer.
+        feedbackBody =
+          "A different human request arrived while the original correction was paused.";
+        git = new GitClient(runGit);
+        for (let pass = 0; pass < 5; pass += 1) {
+          await poll();
+          if (
+            feedbackReviewRecovery !== "unknown" &&
+            store.read("first")?.pullRequest?.headSha !== originalHead
+          )
+            break;
+        }
+        const resumed = store.read("first")!;
+        expect(feedbackPrimaryCorrections).toBe(1);
+        expect(lists.get("first")).toBe("review");
+        expect(lists.get("next")).toBe("ready");
+        expect(store.read("next")).toBeNull();
+        expect(requests).toEqual(["agent/first"]);
+        expect(prs.size).toBe(1);
+        if (feedbackReviewRecovery === "unknown") {
+          expect(feedbackReviewDispatches).toHaveLength(beforeRestart);
+          expect(resumed.pullRequest?.headSha).toBe(originalHead);
+          expect(resumed.reviewRepair?.activePrimaryOperation).toEqual(
+            reservation,
+          );
+          expect(
+            resumed.primaryOperations?.[reservation!.operationId]?.status,
+          ).toBe("ambiguous");
+          expect(resumed.recoveryWait).toBeDefined();
+          expect(
+            fs.readFileSync(path.join(worktrees, "first", "app.js"), "utf8"),
+          ).toBe(reviewedSource);
+        } else {
+          expect(feedbackReviewDispatches).toHaveLength(1);
+          if (reservation !== undefined)
+            expect(feedbackReviewDispatches[0]).toEqual({
+              operationId: reservation.operationId,
+              prompt: originalPrompt!.prompt,
+              sessionId,
+            });
+          expect(resumed.reviewRepair?.activePrimaryOperation).toBeUndefined();
+          expect(resumed.reviewRepair).toMatchObject({
+            status: "passed",
+            maxAttempts: 1,
+          });
+          expect(resumed.retryCounters.review).toBe(1);
+          expect(resumed.phase).toBe("ci");
+          expect(resumed.pullRequest?.headSha).not.toBe(originalHead);
+          expect(
+            authorities.get("first")?.store.read()?.budgets.review,
+          ).toMatchObject({
+            used: 1,
+            episodeId: resumed.reviewRepair?.cycleId,
+          });
+        }
+        return;
+      }
       if (correctionFailure) {
         const worktree = path.join(worktrees, "first");
         const unshippedPath = path.join(worktree, "reviewer-followup.ts");

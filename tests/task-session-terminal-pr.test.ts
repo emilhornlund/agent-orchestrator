@@ -94,6 +94,12 @@ describe("task-session terminal PR reconciliation", () => {
       errorOutput: "",
       sessionId: "session-1",
     }));
+    const claimedBoundary = new Error(
+      "Claimed task reached attachment preparation",
+    );
+    const prepareAttachmentContext = vi.fn(async () => {
+      throw claimedBoundary;
+    });
     const poll = () =>
       runTaskSessionWorkflow({
         project,
@@ -111,7 +117,7 @@ describe("task-session terminal PR reconciliation", () => {
         openCode: new OpenCodeClient(implementationRun),
         commands: new CommandRunner(vi.fn()),
         signal: new AbortController().signal,
-        prepareAttachmentContext: async () => undefined,
+        prepareAttachmentContext,
       });
 
     await poll();
@@ -195,11 +201,11 @@ describe("task-session terminal PR reconciliation", () => {
     });
 
     queue.complete("queue-occupier");
-    await expect(poll()).rejects.toThrow(
-      "OpenCode planning exited with code 1",
-    );
+    await expect(poll()).rejects.toBe(claimedBoundary);
     expect(fetch).toHaveBeenCalledTimes(1);
-    expect(implementationRun).toHaveBeenCalledTimes(1);
+    expect(prepareAttachmentContext).toHaveBeenCalledOnce();
+    expect(implementationRun).not.toHaveBeenCalled();
+    expect(currentList).toBe("working");
     expect(
       queue.list().filter((event) => event.cardId === card.id),
     ).toHaveLength(4);

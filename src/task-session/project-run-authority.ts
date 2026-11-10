@@ -726,11 +726,7 @@ export class ProjectRunAuthority {
               projection.retryCounters[
                 counterName as keyof TaskExecutionRecord["retryCounters"]
               ];
-            if (
-              name === "review" &&
-              projection.reviewRepair !== undefined &&
-              budget.episodeId !== projection.reviewRepair.cycleId
-            ) {
+            if (name === "review" && projection.reviewRepair !== undefined) {
               // Select the review cycle's durable bound in the same fenced
               // mutation that publishes reviewRepair. The task-session
               // bound counts repairs; the canonical budget also includes
@@ -738,12 +734,20 @@ export class ProjectRunAuthority {
               const maxAttempts =
                 projection.reviewRepair.maxAttempts ??
                 projection.retryCounters.review;
+              const limit = maxAttempts + 1;
+              const sameCycle =
+                budget.episodeId === projection.reviewRepair.cycleId;
+              const nextUsed = sameCycle
+                ? Math.max(budget.used, used ?? 0)
+                : (used ?? budget.used);
               return [
                 name,
                 {
                   ...budget,
-                  limit: maxAttempts + 1,
-                  used: used ?? budget.used,
+                  limit: sameCycle
+                    ? Math.max(budget.limit, limit, nextUsed)
+                    : Math.max(limit, nextUsed),
+                  used: nextUsed,
                   episodeId: projection.reviewRepair.cycleId,
                 },
               ];

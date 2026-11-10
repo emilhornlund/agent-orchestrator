@@ -129,6 +129,7 @@ describe("lease-backed project store projections", () => {
     });
     const authority = new ProjectRunAuthority(project.id, envelopeStore, 1);
     const store = new TaskExecutionStore(runtime, project, authority);
+    const ciReviewCycleId = "cycle-two:ci-review:cycle-two";
     const initial = {
       version: 1 as const,
       projectId: project.id,
@@ -155,6 +156,7 @@ describe("lease-backed project store projections", () => {
         projectId: project.id,
         cardId: "card-one",
         operationKey: "cycle-two",
+        reviewCycleId: ciReviewCycleId,
         expectedPrimarySessionId: "primary-session",
         runReview: async (previousFindings) => {
           reviewCalls += 1;
@@ -207,7 +209,7 @@ describe("lease-backed project store projections", () => {
 
     const exhausted = await authority.run(() => run(3));
     expect(exhausted.record.reviewRepair).toMatchObject({
-      cycleId: "cycle-two",
+      cycleId: ciReviewCycleId,
       status: "exhausted",
       maxAttempts: 3,
     });
@@ -220,7 +222,7 @@ describe("lease-backed project store projections", () => {
     expect(envelopeStore.read()?.budgets.review).toMatchObject({
       limit: 4,
       used: 3,
-      episodeId: "cycle-two",
+      episodeId: ciReviewCycleId,
     });
 
     // A compatible restart with a lower configured value keeps the selected
@@ -237,7 +239,7 @@ describe("lease-backed project store projections", () => {
     expect(envelopeStore.read()?.budgets.review).toMatchObject({
       limit: 4,
       used: 3,
-      episodeId: "cycle-two",
+      episodeId: ciReviewCycleId,
     });
   });
 

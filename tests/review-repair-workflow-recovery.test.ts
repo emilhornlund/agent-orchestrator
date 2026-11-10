@@ -659,6 +659,8 @@ describe("production workflow recovery of reserved review repairs", () => {
       const reviewFailureError =
         reviewFailure === undefined ? undefined : reviewFailure;
       let independentReviewRounds = 0;
+      let priorReviewIdentity: string | undefined;
+      let dispositionFindingId: string | undefined;
       let restartingSecondPass = false;
       let secondPassDispatch:
         { operationId: string; prompt: string; sessionId?: string } | undefined;
@@ -666,8 +668,6 @@ describe("production workflow recovery of reserved review repairs", () => {
         if (options.readOnly) {
           order.push("review");
           if (reviewFailureError !== undefined) throw reviewFailureError;
-          if (restartingSecondPass)
-            throw new Error("stop after second-pass prompt recovery");
           if (interruptAfterUnavailable) {
             independentReviewRounds += 1;
             const reviewedIdentity = options.prompt.match(
@@ -681,6 +681,7 @@ describe("production workflow recovery of reserved review repairs", () => {
                 output: "",
                 errorOutput: "review service unavailable after correction",
               };
+            priorReviewIdentity = reviewedIdentity;
             return {
               exitCode: 0,
               output: JSON.stringify({
@@ -716,6 +717,8 @@ describe("production workflow recovery of reserved review repairs", () => {
             )?.[1];
             if (reviewedIdentity === undefined)
               throw new Error("review prompt omitted source identity");
+            const previousFindings =
+              store.read(card.id)?.reviewRepair?.findings ?? [];
             return {
               exitCode: 0,
               output: JSON.stringify({
@@ -732,13 +735,17 @@ describe("production workflow recovery of reserved review repairs", () => {
                   },
                 ],
                 blockingFindings: [
-                  {
-                    kind: "defect",
-                    summary: "The implementation still has a defect.",
-                    detail:
-                      "A repeatable error remains after the first repair.",
-                  },
+                  ...previousFindings.map(({ id, kind, summary, detail }) => ({
+                    id,
+                    kind,
+                    summary,
+                    detail,
+                  })),
                 ],
+                previousFindingAssessments: previousFindings.map(({ id }) => ({
+                  findingId: id,
+                  status: "unresolved",
+                })),
                 reviewedContentIdentity: reviewedIdentity,
               }),
               errorOutput: "",
@@ -798,6 +805,51 @@ describe("production workflow recovery of reserved review repairs", () => {
               ? {}
               : { sessionId: options.sessionId }),
           });
+          if (interruptAfterUnavailable)
+            fs.writeFileSync(
+              path.join(options.cwd, "src.ts"),
+              "review correction changed the source\n",
+            );
+          if (interruptAfterUnavailable) {
+            const findingId = options.prompt.match(
+              /"id":\s*"(finding-[^"]+)"/u,
+            )?.[1];
+            if (findingId === undefined)
+              throw new Error(
+                "review repair prompt omitted its stable finding ID",
+              );
+            dispositionFindingId = findingId;
+            const report = JSON.stringify({
+              version: 1,
+              findingDispositions: [
+                {
+                  findingId,
+                  status: "dismissed",
+                  rationale:
+                    "The implementation meets the requirement; the prior finding is not material to this task.",
+                },
+              ],
+              requirementDispositions: [
+                {
+                  requirementId: "REQ-1",
+                  status: "dismissed",
+                  rationale:
+                    "The primary confirms the requested behavior is implemented.",
+                },
+              ],
+            });
+            return {
+              exitCode: 0,
+              output: JSON.stringify({
+                type: "text",
+                part: {
+                  type: "text",
+                  text: `${report}\nREVIEW_REPAIR_FINISHED_EARLY`,
+                },
+              }),
+              errorOutput: "",
+            };
+          }
           return { exitCode: 0, output: "repair complete", errorOutput: "" };
         }
         if (options.prompt.includes("Generate the commit message")) {
@@ -1036,6 +1088,22 @@ describe("production workflow recovery of reserved review repairs", () => {
           phase: "publication",
           reviewRepair: {
             status: "stopped",
+            findings: [
+              {
+                id: dispositionFindingId,
+                primaryDisposition: {
+                  reviewedContentIdentity: priorReviewIdentity,
+                  status: "dismissed",
+                },
+              },
+            ],
+            requirementDispositions: [
+              {
+                requirementId: "REQ-1",
+                reviewedContentIdentity: priorReviewIdentity,
+                status: "dismissed",
+              },
+            ],
           },
           reviewUnavailable: {
             priorReview: {
@@ -1054,6 +1122,9 @@ describe("production workflow recovery of reserved review repairs", () => {
             },
           },
         });
+        expect(reopenedStore.read(card.id)?.reviewRepair).not.toHaveProperty(
+          "finishAfterNextReview",
+        );
         expect(
           reopenedStore.read(card.id)?.reviewRepair?.finalReview,
         ).toBeUndefined();
@@ -1139,14 +1210,33 @@ describe("production workflow recovery of reserved review repairs", () => {
           ...(pending!.promptArtifact!.path === undefined
             ? {}
             : { path: pending!.promptArtifact!.path }),
-        }) as { prompt: string };
+        }) as {
+          prompt: string;
+          review: ImplementationReviewResult;
+        };
         expect(savedPrompt.prompt).toBe(secondPassDispatch?.prompt);
         expect(savedPrompt.prompt).toContain("Advisory plan and task scope:");
         expect(savedPrompt.prompt).toContain(
           "Latest independent review result and blocking findings:",
         );
 
+        fs.writeFileSync(
+          path.join(worktree, "src.ts"),
+          "early-finished primary correction\n",
+        );
         const current = store.read(card.id)!;
+        const dispositionReport = JSON.stringify({
+          version: 1,
+          findingDispositions: [],
+          requirementDispositions: [
+            {
+              requirementId: "REQ-1",
+              status: "dismissed",
+              rationale:
+                "The primary confirms the requested behavior is implemented.",
+            },
+          ],
+        });
         store.compareAndSwap(card.id, current.revision, {
           ...current,
           recoveryWait: undefined,
@@ -1159,7 +1249,13 @@ describe("production workflow recovery of reserved review repairs", () => {
               status: "completed",
               result: {
                 exitCode: 0,
-                output: "authoritatively inspected completed result",
+                output: JSON.stringify({
+                  type: "text",
+                  part: {
+                    type: "text",
+                    text: `${dispositionReport}\nREVIEW_REPAIR_FINISHED_EARLY`,
+                  },
+                }),
                 errorOutput: "",
                 sessionId: "primary-session",
               },
@@ -1172,19 +1268,17 @@ describe("production workflow recovery of reserved review repairs", () => {
         });
         restartingSecondPass = true;
         const dispatchesBeforeRestart = primaryDispatches.length;
-        await expect(
-          runTaskSessionWorkflow({
-            project,
-            trello,
-            git,
-            github,
-            openCode: new OpenCodeClient(runOpenCode),
-            commands: new CommandRunner(runCommand),
-            signal: new AbortController().signal,
-            prepareAttachmentContext: async () => undefined,
-            retryIntervalMs: 1_000,
-          }),
-        ).rejects.toThrow("stop after second-pass prompt recovery");
+        await runTaskSessionWorkflow({
+          project,
+          trello,
+          git,
+          github,
+          openCode: new OpenCodeClient(runOpenCode),
+          commands: new CommandRunner(runCommand),
+          signal: new AbortController().signal,
+          prepareAttachmentContext: async () => undefined,
+          retryIntervalMs: 1_000,
+        });
         expect(primaryDispatches).toHaveLength(dispatchesBeforeRestart);
         const resumed = store.read(card.id)!;
         expect(resumed.reviewRepair?.activePrimaryOperation).toBeUndefined();
@@ -1198,10 +1292,29 @@ describe("production workflow recovery of reserved review repairs", () => {
           runCommand.mock.calls.filter(
             ([options]) => options.command === "validate",
           ),
-        ).toHaveLength(1);
-        expect(github.findPullRequestState).not.toHaveBeenCalled();
-        expect(resumed.phase).toBe("attention-required");
+        ).toHaveLength(3);
+        expect(github.findPullRequestState).toHaveBeenCalled();
+        expect(resumed.reviewRepair).toMatchObject({
+          status: "exhausted",
+          stopReason: "finished-early",
+          finalReview: { verdict: "fail" },
+          requirementDispositions: [
+            {
+              requirementId: "REQ-1",
+              reviewedContentIdentity:
+                savedPrompt.review.reviewedContentIdentity,
+              status: "dismissed",
+            },
+          ],
+        });
+        expect(resumed.reviewRepair?.finalReview).toMatchObject({
+          verdict: "fail",
+          reviewedContentIdentity: expect.not.stringMatching(identity),
+        });
+        expect(resumed.phase).toBe("ci");
         expect(resumed.reviewUnavailable).toBeUndefined();
+        expect(publishedDraft).toBe(true);
+        expect(publishedBody).toContain("Unsatisfied requirement: REQ-1");
         return;
       }
 

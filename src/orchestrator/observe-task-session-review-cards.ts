@@ -73,7 +73,14 @@ export async function observeTaskSessionReviewCards(
         record.feedbackRemediation.operationId;
     const owningFeedbackCheckpoint =
       record.feedbackRemediation?.status === "changed" &&
-      (record.phase === "validation" || record.phase === "review");
+      (record.phase === "validation" ||
+        record.phase === "review" ||
+        (record.phase === "implementation" &&
+          record.reviewRepair?.activePrimaryOperation !== undefined));
+    const owningCiReviewCheckpoint =
+      record.ciRepair?.activePrimaryOperation !== undefined &&
+      record.reviewRepair !== undefined &&
+      ["implementation", "validation", "review"].includes(record.phase);
     // Persisted PR identity, rather than the transient correction checkpoint,
     // is the durable authority for observing merge/close. Feedback corrections
     // can move through implementation, validation, review, and publication.
@@ -150,7 +157,8 @@ export async function observeTaskSessionReviewCards(
       (record.phase !== "human-feedback" &&
         record.phase !== "ci" &&
         !failedFeedbackReview &&
-        !owningFeedbackCheckpoint)
+        !owningFeedbackCheckpoint &&
+        !owningCiReviewCheckpoint)
     )
       continue;
     if (pullRequest.headRefOid !== headSha) {
@@ -283,7 +291,11 @@ export async function observeTaskSessionReviewCards(
       conversationComments,
       baseRelation,
     };
-    if (failedFeedbackReview || owningFeedbackCheckpoint) {
+    if (
+      failedFeedbackReview ||
+      owningFeedbackCheckpoint ||
+      owningCiReviewCheckpoint
+    ) {
       observed.push(openObservation);
       continue;
     }

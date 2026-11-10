@@ -67,8 +67,10 @@ export interface RunTaskSessionValidationOptions {
   commands: CommandRunner;
   signal: AbortSignal;
   timeoutMilliseconds: number;
-  /** Only for a verified, failed requested-changes review checkpoint. */
+  /** Only after verifying the owning feedback review checkpoint and no reserved writer. */
   feedbackReviewRecovery?: boolean;
+  /** Only after verifying a CI-owned review checkpoint with no reserved review writer. */
+  ciReviewRecovery?: boolean;
   commandOverride?: string;
   skipWhenUnconfigured?: boolean;
   commandLabel?: string;
@@ -137,10 +139,15 @@ export async function runTaskSessionValidation(
     record.phase !== "validation" &&
     record.phase !== "publication" &&
     !(
-      options.feedbackReviewRecovery === true &&
+      (options.feedbackReviewRecovery === true ||
+        options.ciReviewRecovery === true) &&
       record.phase === "review" &&
-      record.reviewRepair?.status === "exhausted" &&
-      record.feedbackRemediation?.status === "changed"
+      record.reviewRepair !== undefined &&
+      ["active", "passed", "exhausted"].includes(record.reviewRepair.status) &&
+      record.reviewRepair.activePrimaryOperation === undefined &&
+      (options.feedbackReviewRecovery === true
+        ? record.feedbackRemediation?.status === "changed"
+        : record.ciRepair?.activePrimaryOperation !== undefined)
     )
   ) {
     throw new Error(

@@ -10,8 +10,13 @@ import { Logger } from "../src/logging/logger.js";
 import {
   hasUndisposedReviewConcerns,
   parsePrimaryReviewDispositionReport,
+  type ImplementationReviewResult,
 } from "../src/task-session/implementation-review-result.js";
+import { REVIEW_REPAIR_FINISHED_EARLY_MARKER } from "../src/opencode/build-task-session-review-repair-prompt.js";
 import {
+  carryReviewRepairIntoCiCorrection,
+  createReviewRoundRunner,
+  parsePrimaryReviewRepairOutcome,
   runTaskSessionReviewWithRepairs,
   TaskSessionReviewRepairError,
 } from "../src/task-session/run-task-session-review-repairs.js";
@@ -47,7 +52,12 @@ function fixture() {
     updatedAt: "2026-10-24T09:00:00.000Z",
   };
   store.create(record);
-  const identity = `sha256:${"a".repeat(64)}`;
+  let currentIdentity = `sha256:${"a".repeat(64)}`;
+  let identityGeneration = 1;
+  const advanceIdentity = () => {
+    identityGeneration += 1;
+    currentIdentity = `sha256:${String.fromCharCode(96 + identityGeneration).repeat(64)}`;
+  };
   const makeReview = (verdict: "pass" | "fail") => ({
     version: 1 as const,
     projectId: "project",
@@ -74,7 +84,7 @@ function fixture() {
               detail: "Fix requirement",
             },
           ],
-    reviewedContentIdentity: identity,
+    reviewedContentIdentity: currentIdentity,
   });
   const run = (verdicts: ("pass" | "fail")[], maxAttempts = 2) => {
     let index = 0;
@@ -109,11 +119,13 @@ function fixture() {
                   : ("unresolved" as const),
             })),
           },
-          contentIdentity: identity,
+          contentIdentity: currentIdentity,
         };
       },
     );
-    const repair = vi.fn(async () => undefined);
+    const repair = vi.fn(async () => {
+      advanceIdentity();
+    });
     const rerunQuality = vi.fn(async () => undefined);
     return {
       repair,
@@ -130,16 +142,69 @@ function fixture() {
           runReview: reviewRun,
           repair: async () => repair(),
           rerunQuality,
-          getCurrentContentIdentity: async () => identity,
+          getCurrentContentIdentity: async () => currentIdentity,
         }),
     };
   };
-  return { store, identity, run, makeReview, project };
+  return {
+    store,
+    get identity() {
+      return currentIdentity;
+    },
+    run,
+    makeReview,
+    advanceIdentity,
+    project,
+  };
 }
 
 describe("runTaskSessionReviewWithRepairs", () => {
+  it("consumes a cached first review once and requests current source for later rounds", async () => {
+    const f = fixture();
+    const identities = [
+      `sha256:${"a".repeat(64)}`,
+      `sha256:${"b".repeat(64)}`,
+      `sha256:${"c".repeat(64)}`,
+    ];
+    let current = 0;
+    const readOnlyReviews = vi.fn(async () => {
+      current += 1;
+      const identity = identities[current]!;
+      return {
+        review: {
+          ...f.makeReview("fail"),
+          reviewedContentIdentity: identity,
+        },
+        contentIdentity: identity,
+      };
+    });
+    const runner = createReviewRoundRunner(
+      {
+        review: {
+          ...f.makeReview("fail"),
+          reviewedContentIdentity: identities[0]!,
+        },
+        contentIdentity: identities[0]!,
+      },
+      async () => readOnlyReviews(),
+    );
+
+    const first = await runner([]);
+    const afterCorrectionOne = await runner([]);
+    const afterCorrectionTwo = await runner([]);
+
+    expect(first.contentIdentity).toBe(identities[0]);
+    expect(afterCorrectionOne.contentIdentity).toBe(identities[1]);
+    expect(afterCorrectionTwo.contentIdentity).toBe(identities[2]);
+    expect(afterCorrectionTwo.review.reviewedContentIdentity).toBe(
+      identities[2],
+    );
+    expect(readOnlyReviews).toHaveBeenCalledTimes(2);
+  });
+
   it("persists primary materiality dispositions tied to the reviewed content", async () => {
     const f = fixture();
+    const firstReviewedIdentity = f.identity;
     let reviews = 0;
     const result = await runTaskSessionReviewWithRepairs({
       store: f.store,
@@ -167,23 +232,26 @@ describe("runTaskSessionReviewWithRepairs", () => {
           contentIdentity: f.identity,
         };
       },
-      repair: async (review) => ({
-        version: 1,
-        findingDispositions: review.blockingFindings.map(({ id }) => ({
-          findingId: id!,
-          status: "dismissed" as const,
-          rationale:
-            "The task behavior is correct; this suggestion is an unrelated stylistic preference.",
-        })),
-        requirementDispositions: review.requirementAssessments
-          .filter(({ status }) => status === "unsatisfied")
-          .map(({ requirementId }) => ({
-            requirementId,
+      repair: async (review) => {
+        f.advanceIdentity();
+        return {
+          version: 1,
+          findingDispositions: review.blockingFindings.map(({ id }) => ({
+            findingId: id!,
             status: "dismissed" as const,
             rationale:
-              "The requirement is implemented; the assessment interpreted its expected behavior too narrowly.",
+              "The task behavior is correct; this suggestion is an unrelated stylistic preference.",
           })),
-      }),
+          requirementDispositions: review.requirementAssessments
+            .filter(({ status }) => status === "unsatisfied")
+            .map(({ requirementId }) => ({
+              requirementId,
+              status: "dismissed" as const,
+              rationale:
+                "The requirement is implemented; the assessment interpreted its expected behavior too narrowly.",
+            })),
+        };
+      },
       rerunQuality: async () => undefined,
       getCurrentContentIdentity: async () => f.identity,
     });
@@ -192,7 +260,7 @@ describe("runTaskSessionReviewWithRepairs", () => {
     expect(
       result.record.reviewRepair?.findings?.[0]?.primaryDisposition,
     ).toEqual({
-      reviewedContentIdentity: f.identity,
+      reviewedContentIdentity: firstReviewedIdentity,
       status: "dismissed",
       rationale:
         "The task behavior is correct; this suggestion is an unrelated stylistic preference.",
@@ -200,7 +268,7 @@ describe("runTaskSessionReviewWithRepairs", () => {
     expect(result.record.reviewRepair?.requirementDispositions).toEqual([
       {
         requirementId: "REQ-1",
-        reviewedContentIdentity: f.identity,
+        reviewedContentIdentity: firstReviewedIdentity,
         status: "dismissed",
         rationale:
           "The requirement is implemented; the assessment interpreted its expected behavior too narrowly.",
@@ -213,6 +281,7 @@ describe("runTaskSessionReviewWithRepairs", () => {
     const recovered = restartedStore.read("card")!;
     const requirementOnlyNegativeReview = {
       ...f.makeReview("fail"),
+      reviewedContentIdentity: firstReviewedIdentity,
       blockingFindings: [],
       requirementAssessments: [
         {
@@ -270,8 +339,9 @@ describe("runTaskSessionReviewWithRepairs", () => {
           contentIdentity: f.identity,
         };
       },
-      repair: async (review) =>
-        parsePrimaryReviewDispositionReport(
+      repair: async (review) => {
+        f.advanceIdentity();
+        return parsePrimaryReviewDispositionReport(
           JSON.stringify({
             version: 1,
             findingDispositions: review.blockingFindings.map(
@@ -296,7 +366,8 @@ describe("runTaskSessionReviewWithRepairs", () => {
           review.requirementAssessments
             .filter(({ status }) => status === "unsatisfied")
             .map(({ requirementId }) => requirementId),
-        ),
+        );
+      },
       rerunQuality: async () => undefined,
       getCurrentContentIdentity: async () => f.identity,
     });
@@ -352,6 +423,7 @@ describe("runTaskSessionReviewWithRepairs", () => {
         expect(id).toBe(operationId);
         expect(exactPrompt).toBe(prompt);
         order.push("repair");
+        f.advanceIdentity();
       },
     );
     const quality = vi.fn(async () => undefined);
@@ -575,7 +647,9 @@ describe("runTaskSessionReviewWithRepairs", () => {
           contentIdentity: validationFixture.identity,
         }),
         getCurrentContentIdentity: async () => validationFixture.identity,
-        repair: async () => undefined,
+        repair: async () => {
+          validationFixture.advanceIdentity();
+        },
         rerunQuality: async () => {
           throw new Error("quality failed");
         },
@@ -725,7 +799,9 @@ describe("runTaskSessionReviewWithRepairs", () => {
           contentIdentity: f.identity,
         };
       },
-      repair: async () => undefined,
+      repair: async () => {
+        f.advanceIdentity();
+      },
       rerunQuality: async () => undefined,
       getCurrentContentIdentity: async () => f.identity,
     });
@@ -736,7 +812,7 @@ describe("runTaskSessionReviewWithRepairs", () => {
     ).toEqual(["First defect", "Regression"]);
     expect(result.review.blockingFindings[0]?.id).toMatch(/^finding-/);
     expect(result.record.reviewRepair?.findings?.[0]?.sourceIdentities).toEqual(
-      [f.identity],
+      [`sha256:${"a".repeat(64)}`, f.identity],
     );
   });
 
@@ -868,7 +944,9 @@ describe("runTaskSessionReviewWithRepairs", () => {
           },
           contentIdentity: f.identity,
         }),
-        repair: async () => undefined,
+        repair: async () => {
+          f.advanceIdentity();
+        },
         rerunQuality: async () => undefined,
         getCurrentContentIdentity: async () => f.identity,
       }),
@@ -899,12 +977,374 @@ describe("runTaskSessionReviewWithRepairs", () => {
             contentIdentity: f.identity,
           };
         },
-        repair: async () => undefined,
+        repair: async () => {
+          f.advanceIdentity();
+        },
         rerunQuality: async () => undefined,
         getCurrentContentIdentity: async () => f.identity,
       }),
     ).rejects.toThrow("Unresolved prior finding must remain blocking");
     expect(f.store.read("card")?.reviewRepair?.status).toBe("active");
+  });
+
+  it("stops after a completed no-op repair without reviewing unchanged source again", async () => {
+    const f = fixture();
+    const reviewRun = vi.fn(async () => ({
+      review: f.makeReview("fail"),
+      contentIdentity: f.identity,
+    }));
+    const repair = vi.fn(async (review: ImplementationReviewResult) => ({
+      version: 1 as const,
+      findingDispositions: review.blockingFindings.flatMap(({ id }) =>
+        id === undefined
+          ? []
+          : [
+              {
+                findingId: id,
+                status: "dismissed" as const,
+                rationale:
+                  "The existing implementation satisfies the task behavior.",
+              },
+            ],
+      ),
+      requirementDispositions: review.requirementAssessments
+        .filter(({ status }) => status === "unsatisfied")
+        .map(({ requirementId }) => ({
+          requirementId,
+          status: "dismissed" as const,
+          rationale: "The existing implementation satisfies this requirement.",
+        })),
+    }));
+    const run = () =>
+      runTaskSessionReviewWithRepairs({
+        store: f.store,
+        maxAttempts: 2,
+        projectId: "project",
+        cardId: "card",
+        operationKey: "operation",
+        expectedPrimarySessionId: "primary-session",
+        runReview: reviewRun,
+        repair,
+        rerunQuality: async () => undefined,
+        getCurrentContentIdentity: async () => f.identity,
+      });
+    const result = await run();
+
+    expect(result.review.verdict).toBe("fail");
+    expect(result.attempts).toBe(1);
+    expect(repair).toHaveBeenCalledOnce();
+    expect(reviewRun).toHaveBeenCalledOnce();
+    expect(result.record.reviewRepair).toMatchObject({
+      status: "exhausted",
+      stopReason: "no-change",
+      maxAttempts: 2,
+      finalReview: { reviewedContentIdentity: f.identity, verdict: "fail" },
+      findings: [
+        {
+          status: "unresolved",
+          primaryDisposition: {
+            reviewedContentIdentity: f.identity,
+            status: "dismissed",
+          },
+        },
+      ],
+    });
+    expect(
+      hasUndisposedReviewConcerns(
+        result.review,
+        result.record.reviewRepair?.findings ?? [],
+        result.record.reviewRepair?.requirementDispositions ?? [],
+      ),
+    ).toBe(false);
+    await run();
+    expect(reviewRun).toHaveBeenCalledOnce();
+    expect(repair).toHaveBeenCalledOnce();
+  });
+
+  it("honors a primary early-finish decision after one current-source review", async () => {
+    const f = fixture();
+    let reviews = 0;
+    const result = await runTaskSessionReviewWithRepairs({
+      store: f.store,
+      maxAttempts: 3,
+      projectId: "project",
+      cardId: "card",
+      operationKey: "operation",
+      expectedPrimarySessionId: "primary-session",
+      runReview: async (previousFindings) => {
+        reviews += 1;
+        return {
+          review: {
+            ...f.makeReview("fail"),
+            blockingFindings:
+              previousFindings.length === 0
+                ? f.makeReview("fail").blockingFindings
+                : previousFindings.map(({ id, kind, summary, detail }) => ({
+                    id,
+                    kind,
+                    summary,
+                    detail,
+                  })),
+            previousFindingAssessments: previousFindings.map(({ id }) => ({
+              findingId: id,
+              status: "unresolved" as const,
+            })),
+          },
+          contentIdentity: f.identity,
+        };
+      },
+      repair: async (review) => {
+        f.advanceIdentity();
+        const report = JSON.stringify({
+          version: 1,
+          findingDispositions: review.blockingFindings.flatMap(({ id }) =>
+            id === undefined
+              ? []
+              : [
+                  {
+                    findingId: id,
+                    status: "dismissed",
+                    rationale: "The finding is not material to the request.",
+                  },
+                ],
+          ),
+          requirementDispositions: review.requirementAssessments
+            .filter(({ status }) => status === "unsatisfied")
+            .map(({ requirementId }) => ({
+              requirementId,
+              status: "dismissed",
+              rationale: "The requested behavior is implemented.",
+            })),
+        });
+        const output = JSON.stringify({
+          type: "text",
+          part: {
+            type: "text",
+            text: `${report}\n${REVIEW_REPAIR_FINISHED_EARLY_MARKER}`,
+          },
+        });
+        return parsePrimaryReviewRepairOutcome(
+          output,
+          review.blockingFindings.flatMap(({ id }) =>
+            id === undefined ? [] : [id],
+          ),
+          review.requirementAssessments
+            .filter(({ status }) => status === "unsatisfied")
+            .map(({ requirementId }) => requirementId),
+        );
+      },
+      rerunQuality: async () => undefined,
+      getCurrentContentIdentity: async () => f.identity,
+    });
+
+    expect(reviews).toBe(2);
+    expect(result.attempts).toBe(1);
+    expect(result.record.reviewRepair).toMatchObject({
+      status: "exhausted",
+      stopReason: "finished-early",
+      maxAttempts: 3,
+    });
+    const recovered = await runTaskSessionReviewWithRepairs({
+      store: f.store,
+      maxAttempts: 0,
+      projectId: "project",
+      cardId: "card",
+      operationKey: "operation",
+      expectedPrimarySessionId: "primary-session",
+      runReview: async () => {
+        reviews += 1;
+        return { review: f.makeReview("fail"), contentIdentity: f.identity };
+      },
+      repair: async () => undefined,
+      rerunQuality: async () => undefined,
+      getCurrentContentIdentity: async () => f.identity,
+    });
+    expect(recovered.attempts).toBe(1);
+    expect(reviews).toBe(2);
+  });
+
+  it("ends a no-op review correction even when subsequent quality work changes source", async () => {
+    const f = fixture();
+    let reviews = 0;
+    const repair = vi.fn(async () => undefined);
+    const result = await runTaskSessionReviewWithRepairs({
+      store: f.store,
+      maxAttempts: 3,
+      projectId: "project",
+      cardId: "card",
+      operationKey: "operation",
+      expectedPrimarySessionId: "primary-session",
+      runReview: async (previousFindings) => {
+        reviews += 1;
+        return {
+          review: {
+            ...f.makeReview("fail"),
+            blockingFindings:
+              previousFindings.length === 0
+                ? f.makeReview("fail").blockingFindings
+                : previousFindings.map(({ id, kind, summary, detail }) => ({
+                    id,
+                    kind,
+                    summary,
+                    detail,
+                  })),
+            previousFindingAssessments: previousFindings.map(({ id }) => ({
+              findingId: id,
+              status: "unresolved" as const,
+            })),
+          },
+          contentIdentity: f.identity,
+        };
+      },
+      repair,
+      rerunQuality: async () => {
+        f.advanceIdentity();
+      },
+      getCurrentContentIdentity: async () => f.identity,
+    });
+    expect(repair).toHaveBeenCalledOnce();
+    expect(reviews).toBe(2);
+    expect(result.record.reviewRepair).toMatchObject({
+      status: "exhausted",
+      stopReason: "no-change",
+      maxAttempts: 3,
+    });
+    expect(result.review.reviewedContentIdentity).toBe(f.identity);
+  });
+
+  it("carries the same review budget across two CI correction handoffs", async () => {
+    const f = fixture();
+    const cycleId = "operation:ci-review:operation:ci";
+    const operationIds: string[] = [];
+    let firstCycleReviewCalls = 0;
+    const firstCycle = await runTaskSessionReviewWithRepairs({
+      store: f.store,
+      maxAttempts: 2,
+      projectId: "project",
+      cardId: "card",
+      operationKey: "operation",
+      reviewCycleId: cycleId,
+      expectedPrimarySessionId: "primary-session",
+      runReview: async (previousFindings) => {
+        const remainsNegative = firstCycleReviewCalls++ === 0;
+        const review = f.makeReview(remainsNegative ? "fail" : "pass");
+        return {
+          review: {
+            ...review,
+            blockingFindings: remainsNegative ? review.blockingFindings : [],
+            previousFindingAssessments: previousFindings.map(
+              ({ id, status }) => ({
+                findingId: id,
+                status:
+                  remainsNegative && status === "unresolved"
+                    ? ("unresolved" as const)
+                    : ("resolved" as const),
+              }),
+            ),
+          },
+          contentIdentity: f.identity,
+        };
+      },
+      repair: async (_review, _attempt, operationId) => {
+        operationIds.push(operationId);
+        f.advanceIdentity();
+      },
+      rerunQuality: async () => undefined,
+      getCurrentContentIdentity: async () => f.identity,
+    });
+    expect(firstCycle.attempts).toBe(1);
+    expect(firstCycle.record.reviewRepair).toMatchObject({
+      status: "passed",
+      maxAttempts: 2,
+      cycleId,
+    });
+
+    const current = f.store.read("card")!;
+    const retained = carryReviewRepairIntoCiCorrection(
+      current.reviewRepair,
+      cycleId,
+    );
+    expect(retained).toMatchObject({
+      cycleId,
+      maxAttempts: 2,
+      findings: [{ status: "resolved" }],
+    });
+    f.store.compareAndSwap("card", current.revision, {
+      ...current,
+      reviewRepair: {
+        ...retained!,
+        status: "active",
+        stopReason: undefined,
+        finalReview: undefined,
+      },
+      revision: current.revision + 1,
+      updatedAt: new Date().toISOString(),
+    });
+    f.advanceIdentity();
+
+    let secondReviewCalls = 0;
+    const secondCycle = await runTaskSessionReviewWithRepairs({
+      store: f.store,
+      maxAttempts: 0,
+      projectId: "project",
+      cardId: "card",
+      operationKey: "operation",
+      reviewCycleId: cycleId,
+      expectedPrimarySessionId: "primary-session",
+      runReview: async (previousFindings) => {
+        const remainsNegative = secondReviewCalls++ === 0;
+        const review = f.makeReview(remainsNegative ? "fail" : "pass");
+        return {
+          review: {
+            ...review,
+            blockingFindings: remainsNegative ? review.blockingFindings : [],
+            previousFindingAssessments: previousFindings.map(({ id }) => ({
+              findingId: id,
+              status: "resolved" as const,
+            })),
+          },
+          contentIdentity: f.identity,
+        };
+      },
+      repair: async (_review, _attempt, operationId) => {
+        operationIds.push(operationId);
+        f.advanceIdentity();
+        return { finishedEarly: false };
+      },
+      rerunQuality: async () => undefined,
+      getCurrentContentIdentity: async () => f.identity,
+    });
+
+    expect(operationIds).toEqual([
+      "operation:review:operation:ci-review:operation:ci:pass:1",
+      "operation:review:operation:ci-review:operation:ci:pass:2",
+    ]);
+    expect(secondCycle.attempts).toBe(2);
+    expect(secondCycle.record.reviewRepair).toMatchObject({
+      cycleId,
+      maxAttempts: 2,
+      status: "passed",
+    });
+    expect(secondCycle.record.retryCounters.review).toBe(2);
+  });
+
+  it("rejects junk after the exact finish marker without extracting a hidden report", () => {
+    const report = JSON.stringify({
+      version: 1,
+      findingDispositions: [],
+      requirementDispositions: [],
+    });
+    const output = JSON.stringify({
+      type: "text",
+      part: {
+        type: "text",
+        text: `${report}\n${REVIEW_REPAIR_FINISHED_EARLY_MARKER}\njunk`,
+      },
+    });
+
+    expect(parsePrimaryReviewRepairOutcome(output, [], [])).toEqual({
+      finishedEarly: false,
+    });
   });
 
   it.each([0, 1, 2])(

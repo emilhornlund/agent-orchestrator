@@ -493,7 +493,18 @@ const validationRepairSchema = z
 const reviewRepairSchema = z.strictObject({
   cycleId: nonBlankIdentifier,
   status: z.enum(["active", "passed", "exhausted", "stopped"]),
-  stopReason: z.enum(["validation-exhausted", "review-unavailable"]).optional(),
+  stopReason: z
+    .enum([
+      "attempt-limit",
+      "no-change",
+      "finished-early",
+      "validation-exhausted",
+      "review-unavailable",
+    ])
+    .optional(),
+  finishAfterNextReview: z
+    .union([z.boolean(), z.enum(["no-change", "finished-early"])])
+    .optional(),
   activePrimaryOperation: z
     .strictObject({
       operationId: nonBlankIdentifier,
@@ -626,6 +637,11 @@ const feedbackRemediationSchema = z.strictObject({
   status: z.enum(["active", "changed", "no-op", "failed"]),
   headSha: gitSha,
   ledgerRevision: z.number().int().positive().safe(),
+  feedbackIds: z
+    .array(nonBlankIdentifier)
+    .min(1)
+    .refine((ids) => new Set(ids).size === ids.length)
+    .optional(),
 });
 
 const reviewObservationSchema = z.strictObject({
@@ -909,6 +925,7 @@ const taskExecutionRecordSchema = z
         "implementation",
         "validation",
         "review",
+        "ci",
         "attention-required",
       ];
 
@@ -923,9 +940,24 @@ const taskExecutionRecordSchema = z
         });
       }
 
+      const stopReasonRequiresStopped = [
+        "validation-exhausted",
+        "review-unavailable",
+      ].includes(record.reviewRepair.stopReason ?? "");
+      if (
+        record.reviewRepair.stopReason !== undefined &&
+        !stopReasonRequiresStopped &&
+        record.reviewRepair.status !== "exhausted"
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["reviewRepair", "stopReason"],
+          message: "A completed review stop reason requires an exhausted cycle",
+        });
+      }
       if (
         (record.reviewRepair.status === "stopped") !==
-        (record.reviewRepair.stopReason !== undefined)
+        stopReasonRequiresStopped
       ) {
         ctx.addIssue({
           code: "custom",
@@ -941,6 +973,17 @@ const taskExecutionRecordSchema = z
           code: "custom",
           path: ["reviewRepair", "activePrimaryOperation"],
           message: "Stopped review repair cannot retain an active writer",
+        });
+      }
+      if (
+        record.reviewRepair.finishAfterNextReview !== undefined &&
+        record.reviewRepair.finishAfterNextReview !== false &&
+        record.reviewRepair.status !== "active"
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["reviewRepair", "finishAfterNextReview"],
+          message: "Early-finish review must remain active until reviewed",
         });
       }
 
@@ -987,7 +1030,10 @@ const taskExecutionRecordSchema = z
       if (
         record.reviewRepair.status === "exhausted" &&
         maxAttempts !== undefined &&
-        record.retryCounters.review !== maxAttempts
+        (record.reviewRepair.stopReason === undefined ||
+        record.reviewRepair.stopReason === "attempt-limit"
+          ? record.retryCounters.review !== maxAttempts
+          : record.retryCounters.review > maxAttempts)
       ) {
         ctx.addIssue({
           code: "custom",

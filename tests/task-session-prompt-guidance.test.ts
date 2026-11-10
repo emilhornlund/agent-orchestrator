@@ -64,7 +64,7 @@ describe("task-session repository prompt guidance", () => {
     },
   );
 
-  it("keeps implementation constrained to the verified plan", () => {
+  it("keeps the original task as scope while treating the plan as advisory", () => {
     const prompt = buildTaskSessionImplementationPrompt({
       projectId,
       card,
@@ -73,8 +73,10 @@ describe("task-session repository prompt guidance", () => {
 
     expect(prompt).toContain('"id": "REQ-1"');
     expect(prompt).toContain(
-      "Implement only the approved requirements and steps",
+      "Treat the plan as advisory. Adopt, adapt, or disregard it while preserving the original task scope",
     );
+    expect(prompt).toContain(card.desc);
+    expect(prompt).toContain("They are not approval requirements.");
     expect(prompt).toContain("do not silently broaden scope");
   });
 

@@ -43,7 +43,11 @@ import {
   runTaskSessionReview,
   TaskSessionReviewUnavailableError,
 } from "../task-session/run-task-session-review.js";
-import { runTaskSessionReviewWithRepairs } from "../task-session/run-task-session-review-repairs.js";
+import {
+  createReviewRoundRunner,
+  parsePrimaryReviewRepairOutcome,
+  runTaskSessionReviewWithRepairs,
+} from "../task-session/run-task-session-review-repairs.js";
 import {
   decideValidatedHumanReviewPublication,
   type VerifiedPublicationDecisionInput,
@@ -53,6 +57,7 @@ import { publishTaskSessionCard } from "./publish-task-session-card.js";
 import { inspectPrimaryOperationEvidence } from "../task-session/inspect-primary-operation.js";
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 import { getProcessRuntime } from "../process/process-runtime.js";
+import { canResumeFeedbackReviewRepair } from "../task-session/can-resume-failed-feedback-review.js";
 import {
   findPrimaryRecoveryError,
   persistPrimaryOperationRecovery,
@@ -246,16 +251,22 @@ export async function runTaskSessionFeedbackCycle(
   } = options;
   const record = taskStore.read(card.id);
   const cardLog = logger.child({ projectId: project.id, cardId: card.id });
+  const resumingReviewRepair = canResumeFeedbackReviewRepair(
+    record,
+    options.mutationQueue.getActive(),
+  );
   if (
     record === null ||
-    (record.phase !== "human-feedback" && record.phase !== "review") ||
+    (record.phase !== "human-feedback" &&
+      record.phase !== "review" &&
+      !resumingReviewRepair) ||
     record.pullRequest?.headSha !== observation.headSha
   ) {
     throw new Error(
       "Feedback round task record does not match the current owned PR head",
     );
   }
-  const recoveringReview = record.phase === "review";
+  const recoveringReview = record.phase === "review" && !resumingReviewRepair;
   if (
     recoveringReview &&
     (record.reviewRepair?.status !== "exhausted" ||
@@ -268,6 +279,7 @@ export async function runTaskSessionFeedbackCycle(
   const ledgerBeforeSync = ledgerStore.read(card.id);
   const checksReady = observation.ciEvaluation.status === "passed";
   if (
+    !resumingReviewRepair &&
     checksReady &&
     ledgerBeforeSync !== null &&
     record.publicationQuality !== undefined
@@ -469,8 +481,9 @@ export async function runTaskSessionFeedbackCycle(
   }
   const previousHead = record.pullRequest.headSha;
   const incoming = toFeedbackEntries(observation);
-  const reconciliation =
-    ledgerStore.read(card.id) === null
+  const reconciliation = resumingReviewRepair
+    ? null
+    : ledgerStore.read(card.id) === null
       ? null
       : reconcileFeedbackRound({
           store: ledgerStore,
@@ -480,7 +493,8 @@ export async function runTaskSessionFeedbackCycle(
           observedHeadSha: observation.headSha,
           newlyObservedFeedback: incoming,
         });
-  if (reconciliation === null) ledgerStore.create(card.id, incoming);
+  if (reconciliation === null && !resumingReviewRepair)
+    ledgerStore.create(card.id, incoming);
   const ledger = ledgerStore.read(card.id);
   if (ledger === null)
     throw new Error("Feedback ledger could not be loaded after observation");
@@ -501,14 +515,16 @@ export async function runTaskSessionFeedbackCycle(
   const externalComments = observation.conversationComments.filter(
     (comment) => !comment.body.includes("<!-- agent-orchestrator-feedback:"),
   );
-  const selection = selectActionableFeedback({
-    currentHeadSha: observation.headSha,
-    botAuthor: "__automation_replies_are_filtered_by_marker__",
-    reviews: observation.requestedChanges?.feedback.reviews ?? [],
-    conversationComments: externalComments,
-    conversationClassifications: classifications,
-  });
-  if (selection.attentionNeeded.length > 0) {
+  const selection = resumingReviewRepair
+    ? null
+    : selectActionableFeedback({
+        currentHeadSha: observation.headSha,
+        botAuthor: "__automation_replies_are_filtered_by_marker__",
+        reviews: observation.requestedChanges?.feedback.reviews ?? [],
+        conversationComments: externalComments,
+        conversationClassifications: classifications,
+      });
+  if (selection !== null && selection.attentionNeeded.length > 0) {
     const latest = taskStore.read(card.id);
     if (latest !== null && latest.phase === "human-feedback") {
       taskStore.compareAndSwap(
@@ -528,13 +544,32 @@ export async function runTaskSessionFeedbackCycle(
     }
     return "attention-required";
   }
-  const pendingIds = new Set(selection.actionable.map((item) => item.key));
+  const pendingIds = new Set(
+    resumingReviewRepair
+      ? (record.feedbackRemediation?.feedbackIds ??
+          ledger.entries
+            .filter(
+              (entry) =>
+                entry.status === "pending" &&
+                entry.actionability === "actionable",
+            )
+            .map((entry) => `${entry.kind}:${entry.id}`))
+      : selection!.actionable.map((item) => item.key),
+  );
   const actionableFeedback = ledger.entries.filter(
     (item) =>
       pendingIds.has(`${item.kind}:${item.id}`) &&
-      item.status === "pending" &&
+      (resumingReviewRepair || item.status === "pending") &&
       item.actionability === "actionable",
   );
+  if (
+    resumingReviewRepair &&
+    (actionableFeedback.length === 0 ||
+      actionableFeedback.length !== pendingIds.size)
+  )
+    throw new Error(
+      "Reserved feedback review has no matching persisted feedback context",
+    );
   if (actionableFeedback.length === 0) return "idle";
   cardLog.event(
     `Requested-changes remediation started (${actionableFeedback.length} actionable item(s))`,
@@ -549,7 +584,15 @@ export async function runTaskSessionFeedbackCycle(
     .digest("hex")
     .slice(0, 16)}`;
   if (
+    resumingReviewRepair &&
+    record.feedbackRemediation?.operationId !== operationId
+  )
+    throw new Error(
+      "Reserved feedback review does not match its original feedback round",
+    );
+  if (
     !recoveringReview &&
+    !resumingReviewRepair &&
     record.feedbackRemediation?.operationId === operationId
   ) {
     if (record.feedbackRemediation.status === "active") {
@@ -605,11 +648,40 @@ export async function runTaskSessionFeedbackCycle(
       options.prepareAttachmentContext === undefined
         ? options.attachmentContext
         : await options.prepareAttachmentContext();
-    let quality: {
-      validation: TaskSessionValidationResult;
-      coverage: TaskSessionValidationResult;
-    };
+    let quality:
+      | {
+          validation: TaskSessionValidationResult;
+          coverage: TaskSessionValidationResult;
+        }
+      | undefined;
     let finalReview: { review: ImplementationReviewResult };
+    let firstReview:
+      Awaited<ReturnType<typeof runTaskSessionReview>> | undefined;
+    const validationOptions = {
+      project,
+      cardId: card.id,
+      expectedBranch: record.expectedBranch!,
+      operationKey: record.operationKey,
+      worktreePath,
+      taskRecordStore: taskStore,
+      git,
+      commands,
+      signal,
+      timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
+    };
+    if (
+      resumingReviewRepair &&
+      record.reviewRepair?.activePrimaryOperation === undefined
+    ) {
+      const recoveryValidation = {
+        ...validationOptions,
+        feedbackReviewRecovery: record.phase === "review",
+      };
+      quality = {
+        validation: await runTaskSessionValidation(recoveryValidation),
+        coverage: await runTaskSessionCoverage(recoveryValidation),
+      };
+    }
     if (recoveringReview) {
       const validationOptions = {
         project,
@@ -632,159 +704,134 @@ export async function runTaskSessionFeedbackCycle(
         "Resuming failed feedback review with preserved implementation and exhausted review",
       );
     } else {
-      const remediation = await runTaskSessionFeedbackRemediation({
-        project,
-        card,
-        expectedBranch: record.expectedBranch!,
-        operationKey: record.operationKey,
-        operationId,
-        expectedPrimarySessionId: record.primarySessionId!,
-        inspectPrimarySession: (sessionId) =>
-          inspectPrimaryOpenCodeSession({
-            commands,
-            cwd: worktreePath,
-            sessionId,
+      if (!resumingReviewRepair) {
+        const remediation = await runTaskSessionFeedbackRemediation({
+          project,
+          card,
+          expectedBranch: record.expectedBranch!,
+          operationKey: record.operationKey,
+          operationId,
+          expectedPrimarySessionId: record.primarySessionId!,
+          inspectPrimarySession: (sessionId) =>
+            inspectPrimaryOpenCodeSession({
+              commands,
+              cwd: worktreePath,
+              sessionId,
+              signal,
+              timeoutMilliseconds: 30_000,
+            }),
+          expectedPullRequestHeadSha: observation.headSha,
+          worktreePath,
+          taskRecordStore: taskStore,
+          planStore,
+          feedbackLedgerStore: ledgerStore,
+          git,
+          openCode,
+          ...(attachmentContext === undefined ? {} : { attachmentContext }),
+          runOptions: {
+            model: project.opencode.remediation.model,
+            variant: project.opencode.remediation.variant,
+            timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
             signal,
-            timeoutMilliseconds: 30_000,
-          }),
-        expectedPullRequestHeadSha: observation.headSha,
-        worktreePath,
-        taskRecordStore: taskStore,
-        planStore,
-        feedbackLedgerStore: ledgerStore,
-        git,
-        openCode,
-        ...(attachmentContext === undefined ? {} : { attachmentContext }),
-        runOptions: {
-          model: project.opencode.remediation.model,
-          variant: project.opencode.remediation.variant,
-          timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
-          signal,
-        },
-      });
-      cardLog.event(`Requested-changes remediation ${remediation.status}`);
-      if (remediation.status === "no-op") {
-        options.mutationQueue.complete(operationId);
-        return "remediated";
+          },
+        });
+        cardLog.event(`Requested-changes remediation ${remediation.status}`);
+        if (remediation.status === "no-op") {
+          options.mutationQueue.complete(operationId);
+          return "remediated";
+        }
+        let current = taskStore.read(card.id);
+        if (current === null)
+          throw new Error("Task record disappeared after feedback remediation");
+        current = updateRecord(taskStore, current, {
+          ciRepair: undefined,
+          reviewObservation: undefined,
+          publicationQuality: undefined,
+          reviewRepair: undefined,
+        });
+        const feedbackReceived = transitionTaskExecutionRecord(current, {
+          type: "feedback-received",
+          eventId: `${operationId}:feedback-received`,
+          projectId: project.id,
+          cardId: card.id,
+          operationKey: current.operationKey,
+          occurredAt: new Date(
+            Math.max(Date.now(), Date.parse(current.updatedAt) + 1),
+          ).toISOString(),
+        });
+        current = taskStore.compareAndSwap(
+          card.id,
+          current.revision,
+          feedbackReceived,
+        );
+        const implementationCompleted = transitionTaskExecutionRecord(current, {
+          type: "implementation-completed",
+          eventId: `${operationId}:implementation-completed`,
+          projectId: project.id,
+          cardId: card.id,
+          operationKey: current.operationKey,
+          occurredAt: new Date(
+            Math.max(Date.now(), Date.parse(current.updatedAt) + 1),
+          ).toISOString(),
+        });
+        current = taskStore.compareAndSwap(
+          card.id,
+          current.revision,
+          implementationCompleted,
+        );
+        quality = await runTaskSessionValidationWithRepairs({
+          validation: validationOptions,
+          openCode,
+          planStore,
+          card,
+          expectedPrimarySessionId: record.primarySessionId!,
+          inspectPrimarySession: (sessionId) =>
+            inspectPrimaryOpenCodeSession({
+              commands,
+              cwd: worktreePath,
+              sessionId,
+              signal,
+              timeoutMilliseconds: 30_000,
+            }),
+          primaryOperationEvidence: {
+            trustedRoot:
+              ProjectRunAuthority.current(project.id)?.store.storageRoot ??
+              getProcessRuntime().artifactRoot,
+            cwd: worktreePath,
+          },
+          ...(attachmentContext === undefined ? {} : { attachmentContext }),
+          repairRunOptions: validationRepairRunOptions(project, signal),
+        });
+        firstReview = await runTaskSessionReview({
+          project,
+          card,
+          expectedBranch: record.expectedBranch!,
+          operationKey: record.operationKey,
+          worktreePath,
+          taskRecordStore: taskStore,
+          planStore,
+          git,
+          openCode,
+          validation: quality.validation,
+          coverage: quality.coverage,
+          previousFindings: [],
+          ...(attachmentContext === undefined ? {} : { attachmentContext }),
+          runOptions: reviewRunOptions(project, signal),
+        });
       }
-      let current = taskStore.read(card.id);
-      if (current === null)
-        throw new Error("Task record disappeared after feedback remediation");
-      current = updateRecord(taskStore, current, {
-        ciRepair: undefined,
-        reviewObservation: undefined,
-        publicationQuality: undefined,
-        reviewRepair: undefined,
-      });
-      const feedbackReceived = transitionTaskExecutionRecord(current, {
-        type: "feedback-received",
-        eventId: `${operationId}:feedback-received`,
-        projectId: project.id,
-        cardId: card.id,
-        operationKey: current.operationKey,
-        occurredAt: new Date(
-          Math.max(Date.now(), Date.parse(current.updatedAt) + 1),
-        ).toISOString(),
-      });
-      current = taskStore.compareAndSwap(
-        card.id,
-        current.revision,
-        feedbackReceived,
-      );
-      const implementationCompleted = transitionTaskExecutionRecord(current, {
-        type: "implementation-completed",
-        eventId: `${operationId}:implementation-completed`,
-        projectId: project.id,
-        cardId: card.id,
-        operationKey: current.operationKey,
-        occurredAt: new Date(
-          Math.max(Date.now(), Date.parse(current.updatedAt) + 1),
-        ).toISOString(),
-      });
-      current = taskStore.compareAndSwap(
-        card.id,
-        current.revision,
-        implementationCompleted,
-      );
-      const validationOptions = {
-        project,
-        cardId: card.id,
-        expectedBranch: record.expectedBranch!,
-        operationKey: record.operationKey,
-        worktreePath,
-        taskRecordStore: taskStore,
-        git,
-        commands,
-        signal,
-        timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
-      };
-      quality = await runTaskSessionValidationWithRepairs({
-        validation: validationOptions,
-        openCode,
-        planStore,
-        card,
-        expectedPrimarySessionId: record.primarySessionId!,
-        inspectPrimarySession: (sessionId) =>
-          inspectPrimaryOpenCodeSession({
-            commands,
-            cwd: worktreePath,
-            sessionId,
-            signal,
-            timeoutMilliseconds: 30_000,
-          }),
-        primaryOperationEvidence: {
-          trustedRoot:
-            ProjectRunAuthority.current(project.id)?.store.storageRoot ??
-            getProcessRuntime().artifactRoot,
-          cwd: worktreePath,
-        },
-        ...(attachmentContext === undefined ? {} : { attachmentContext }),
-        repairRunOptions: validationRepairRunOptions(project, signal),
-      });
-      let firstReview = await runTaskSessionReview({
-        project,
-        card,
-        expectedBranch: record.expectedBranch!,
-        operationKey: record.operationKey,
-        worktreePath,
-        taskRecordStore: taskStore,
-        planStore,
-        git,
-        openCode,
-        validation: quality.validation,
-        coverage: quality.coverage,
-        previousFindings:
-          taskStore.read(card.id)?.reviewRepair?.cycleId === record.operationKey
-            ? (taskStore.read(card.id)?.reviewRepair?.findings ?? [])
-            : [],
-        ...(attachmentContext === undefined ? {} : { attachmentContext }),
-        runOptions: reviewRunOptions(project, signal),
-      });
-      let roundIndex = 0;
-      finalReview = await runTaskSessionReviewWithRepairs({
-        maxAttempts: project.opencode.remediation.maxPasses,
-        store: taskStore,
-        projectId: project.id,
-        cardId: card.id,
-        operationKey: record.operationKey,
-        expectedPrimarySessionId: record.primarySessionId!,
-        buildRepairPrompt: (review, attempt) =>
-          buildTaskSessionReviewRepairPrompt({
-            projectId: project.id,
-            card,
-            ...(storedPlan === null ? {} : { approvedPlan: storedPlan.plan }),
-            review,
-            attempt,
-            maxAttempts: project.opencode.remediation.maxPasses,
-            ...(attachmentContext === undefined ? {} : { attachmentContext }),
-          }),
-        runReview: async (previousFindings) => {
-          if (roundIndex++ === 0)
-            return {
+      const reviewRoundRunner = createReviewRoundRunner(
+        firstReview === undefined
+          ? undefined
+          : {
               review: firstReview.review,
               contentIdentity: firstReview.contentIdentity,
-            };
-          firstReview = await runTaskSessionReview({
+            },
+        async (previousFindings) => {
+          if (quality === undefined)
+            throw new Error(
+              "Review repair completed without fresh quality evidence",
+            );
+          const currentReview = await runTaskSessionReview({
             project,
             card,
             expectedBranch: record.expectedBranch!,
@@ -801,10 +848,30 @@ export async function runTaskSessionFeedbackCycle(
             runOptions: reviewRunOptions(project, signal),
           });
           return {
-            review: firstReview.review,
-            contentIdentity: firstReview.contentIdentity,
+            review: currentReview.review,
+            contentIdentity: currentReview.contentIdentity,
           };
         },
+      );
+      finalReview = await runTaskSessionReviewWithRepairs({
+        maxAttempts: project.opencode.remediation.maxPasses,
+        store: taskStore,
+        projectId: project.id,
+        cardId: card.id,
+        operationKey: record.operationKey,
+        reviewCycleId: `${record.operationKey}:feedback:${operationId}`,
+        expectedPrimarySessionId: record.primarySessionId!,
+        buildRepairPrompt: (review, attempt) =>
+          buildTaskSessionReviewRepairPrompt({
+            projectId: project.id,
+            card,
+            ...(storedPlan === null ? {} : { approvedPlan: storedPlan.plan }),
+            review,
+            attempt,
+            maxAttempts: project.opencode.remediation.maxPasses,
+            ...(attachmentContext === undefined ? {} : { attachmentContext }),
+          }),
+        runReview: reviewRoundRunner,
         repair: async (
           review,
           attempt,
@@ -816,20 +883,36 @@ export async function runTaskSessionFeedbackCycle(
             throw new Error(
               "Task state disappeared during feedback review repair",
             );
-          taskStore.compareAndSwap(
-            card.id,
-            latest.revision,
-            transitionTaskExecutionRecord(latest, {
-              type: "review-failed",
-              eventId: `${operationId}:review-failed:${attempt}`,
-              projectId: project.id,
-              cardId: card.id,
-              operationKey: latest.operationKey,
-              occurredAt: new Date(
-                Math.max(Date.now(), Date.parse(latest.updatedAt) + 1),
-              ).toISOString(),
-            }),
-          );
+          if (latest.phase === "review")
+            taskStore.compareAndSwap(
+              card.id,
+              latest.revision,
+              transitionTaskExecutionRecord(latest, {
+                type: "review-failed",
+                eventId: `${operationId}:review-failed:${attempt}`,
+                projectId: project.id,
+                cardId: card.id,
+                operationKey: latest.operationKey,
+                occurredAt: new Date(
+                  Math.max(Date.now(), Date.parse(latest.updatedAt) + 1),
+                ).toISOString(),
+              }),
+            );
+          else if (
+            latest.phase !== "implementation" &&
+            latest.phase !== "validation"
+          )
+            throw new Error(
+              "Feedback review repair lost its owned execution checkpoint",
+            );
+          if (
+            latest.phase === "validation" &&
+            latest.primaryOperations?.[primaryOperationId]?.status !==
+              "completed"
+          )
+            throw new Error(
+              "Feedback review validation checkpoint lacks a completed primary operation",
+            );
           const prompt =
             persistedPrompt ??
             buildTaskSessionReviewRepairPrompt({
@@ -884,17 +967,30 @@ export async function runTaskSessionFeedbackCycle(
             throw new Error(
               "Task state disappeared after feedback review repair",
             );
-          const validationPhase = transitionTaskExecutionRecord(latest, {
-            type: "implementation-completed",
-            eventId: `${operationId}:review-implementation-completed:${attempt}`,
-            projectId: project.id,
-            cardId: card.id,
-            operationKey: latest.operationKey,
-            occurredAt: new Date(
-              Math.max(Date.now(), Date.parse(latest.updatedAt) + 1),
-            ).toISOString(),
-          });
-          taskStore.compareAndSwap(card.id, latest.revision, validationPhase);
+          if (latest.phase === "implementation") {
+            const validationPhase = transitionTaskExecutionRecord(latest, {
+              type: "implementation-completed",
+              eventId: `${operationId}:review-implementation-completed:${attempt}`,
+              projectId: project.id,
+              cardId: card.id,
+              operationKey: latest.operationKey,
+              occurredAt: new Date(
+                Math.max(Date.now(), Date.parse(latest.updatedAt) + 1),
+              ).toISOString(),
+            });
+            taskStore.compareAndSwap(card.id, latest.revision, validationPhase);
+          } else if (latest.phase !== "validation") {
+            throw new Error("Task phase changed after feedback review repair");
+          }
+          return parsePrimaryReviewRepairOutcome(
+            repaired.output,
+            review.blockingFindings.flatMap(({ id }) =>
+              id === undefined ? [] : [id],
+            ),
+            review.requirementAssessments
+              .filter(({ status }) => status === "unsatisfied")
+              .map(({ requirementId }) => requirementId),
+          );
         },
         rerunQuality: async () => {
           quality = await runTaskSessionValidationWithRepairs({
@@ -931,6 +1027,10 @@ export async function runTaskSessionFeedbackCycle(
       git,
       worktreePath,
     );
+    if (quality === undefined)
+      throw new Error(
+        "Feedback review completed without current quality evidence",
+      );
     const qualityEvidence: VerifiedPublicationDecisionInput = {
       currentContentIdentity: currentIdentity,
       ...(project.repository.validationCommand === undefined
