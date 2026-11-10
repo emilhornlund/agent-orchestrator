@@ -13,6 +13,10 @@ import type {
 import type { TrelloClient } from "../trello/trello-client.js";
 import { sanitizeControlledText } from "../security/redact-secrets.js";
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
+import {
+  implementationReviewResultSchema,
+  reviewConcernsDismissedAsNonMaterialLabel,
+} from "../task-session/implementation-review-result.js";
 import type {
   MutationEvent,
   MutationIntent,
@@ -69,6 +73,7 @@ const checkpointSchema = z.strictObject({
   body: nonBlank,
   draft: z.boolean(),
   qualityNeedsDraft: z.boolean().optional(),
+  reviewDisclosure: implementationReviewResultSchema.nullable().optional(),
   reviewResult: z.string(),
   remediationResult: z.string(),
   message: nonBlank.optional(),
@@ -356,8 +361,10 @@ export function beginInitialPublication(
     remediationResult: sanitizeControlledText(options.remediationResult),
     draft:
       options.exhaustedReview !== undefined ||
-      options.reviewResult !== "Passed" ||
+      (options.reviewResult !== "Passed" &&
+        options.reviewResult !== reviewConcernsDismissedAsNonMaterialLabel) ||
       options.qualityNeedsDraft === true,
+    reviewDisclosure: options.exhaustedReview ?? null,
     ...(options.qualityNeedsDraft === undefined
       ? {}
       : { qualityNeedsDraft: options.qualityNeedsDraft }),
@@ -923,9 +930,11 @@ export async function resumeInitialPublication(options: {
         project,
       ).read(checkpoint.cardId);
       const exhaustedReview =
-        storedTask?.reviewRepair?.status === "exhausted"
-          ? storedTask.reviewRepair.finalReview
-          : undefined;
+        checkpoint.reviewDisclosure !== undefined
+          ? (checkpoint.reviewDisclosure ?? undefined)
+          : storedTask?.reviewRepair?.status === "exhausted"
+            ? storedTask.reviewRepair.finalReview
+            : undefined;
       const body = await prepareInitialPublicationBody({
         project,
         git,

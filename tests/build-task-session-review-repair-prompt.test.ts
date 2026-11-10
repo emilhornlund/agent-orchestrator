@@ -84,6 +84,11 @@ describe("buildTaskSessionReviewRepairPrompt", () => {
       "inspect the relevant implementation and existing tests",
     );
     expect(prompt).toContain("Address every blocking finding");
+    expect(prompt).toContain('status":"addressed"|"dismissed"');
+    expect(prompt).toContain("substantive explanation");
+    expect(prompt).toContain("requirementDispositions");
+    expect(prompt).toContain("per unsatisfied requirement ID");
+    expect(prompt).toContain("4,000 characters");
     expect(prompt).toContain("material unsatisfied requested behavior");
     expect(prompt).toContain("Serious demonstrable defects may be addressed");
     expect(prompt).toContain(

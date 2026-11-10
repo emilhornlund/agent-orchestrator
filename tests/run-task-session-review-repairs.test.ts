@@ -8,6 +8,10 @@ import type { TaskExecutionRecord } from "../src/task-session/task-execution-rec
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
 import { Logger } from "../src/logging/logger.js";
 import {
+  hasUndisposedReviewConcerns,
+  parsePrimaryReviewDispositionReport,
+} from "../src/task-session/implementation-review-result.js";
+import {
   runTaskSessionReviewWithRepairs,
   TaskSessionReviewRepairError,
 } from "../src/task-session/run-task-session-review-repairs.js";
@@ -130,10 +134,186 @@ function fixture() {
         }),
     };
   };
-  return { store, identity, run, makeReview };
+  return { store, identity, run, makeReview, project };
 }
 
 describe("runTaskSessionReviewWithRepairs", () => {
+  it("persists primary materiality dispositions tied to the reviewed content", async () => {
+    const f = fixture();
+    let reviews = 0;
+    const result = await runTaskSessionReviewWithRepairs({
+      store: f.store,
+      projectId: "project",
+      cardId: "card",
+      operationKey: "operation",
+      expectedPrimarySessionId: "primary-session",
+      maxAttempts: 1,
+      runReview: async (previousFindings) => {
+        reviews += 1;
+        if (reviews === 1)
+          return {
+            review: f.makeReview("fail"),
+            contentIdentity: f.identity,
+          };
+        const pass = f.makeReview("pass");
+        return {
+          review: {
+            ...pass,
+            previousFindingAssessments: previousFindings.map(({ id }) => ({
+              findingId: id,
+              status: "resolved" as const,
+            })),
+          },
+          contentIdentity: f.identity,
+        };
+      },
+      repair: async (review) => ({
+        version: 1,
+        findingDispositions: review.blockingFindings.map(({ id }) => ({
+          findingId: id!,
+          status: "dismissed" as const,
+          rationale:
+            "The task behavior is correct; this suggestion is an unrelated stylistic preference.",
+        })),
+        requirementDispositions: review.requirementAssessments
+          .filter(({ status }) => status === "unsatisfied")
+          .map(({ requirementId }) => ({
+            requirementId,
+            status: "dismissed" as const,
+            rationale:
+              "The requirement is implemented; the assessment interpreted its expected behavior too narrowly.",
+          })),
+      }),
+      rerunQuality: async () => undefined,
+      getCurrentContentIdentity: async () => f.identity,
+    });
+
+    expect(result.review.verdict).toBe("pass");
+    expect(
+      result.record.reviewRepair?.findings?.[0]?.primaryDisposition,
+    ).toEqual({
+      reviewedContentIdentity: f.identity,
+      status: "dismissed",
+      rationale:
+        "The task behavior is correct; this suggestion is an unrelated stylistic preference.",
+    });
+    expect(result.record.reviewRepair?.requirementDispositions).toEqual([
+      {
+        requirementId: "REQ-1",
+        reviewedContentIdentity: f.identity,
+        status: "dismissed",
+        rationale:
+          "The requirement is implemented; the assessment interpreted its expected behavior too narrowly.",
+      },
+    ]);
+    const restartedStore = new TaskExecutionStore(
+      path.join(root, "state"),
+      f.project,
+    );
+    const recovered = restartedStore.read("card")!;
+    const requirementOnlyNegativeReview = {
+      ...f.makeReview("fail"),
+      blockingFindings: [],
+      requirementAssessments: [
+        {
+          requirementId: "REQ-1",
+          status: "unsatisfied" as const,
+          details: "The reviewer assessment remains negative.",
+          evidence: [],
+        },
+      ],
+    };
+    expect(
+      hasUndisposedReviewConcerns(
+        requirementOnlyNegativeReview,
+        recovered.reviewRepair?.findings ?? [],
+        recovered.reviewRepair?.requirementDispositions ?? [],
+      ),
+    ).toBe(false);
+  });
+
+  it("treats an oversized primary disposition as absent and clears the completed reservation", async () => {
+    const f = fixture();
+    let reviews = 0;
+    const result = await runTaskSessionReviewWithRepairs({
+      store: f.store,
+      projectId: "project",
+      cardId: "card",
+      operationKey: "operation",
+      expectedPrimarySessionId: "primary-session",
+      maxAttempts: 1,
+      runReview: async (previousFindings) => {
+        reviews += 1;
+        if (reviews === 1)
+          return {
+            review: f.makeReview("fail"),
+            contentIdentity: f.identity,
+          };
+        const fail = f.makeReview("fail");
+        return {
+          review: {
+            ...fail,
+            blockingFindings: previousFindings.map(
+              ({ id, kind, summary, detail, location }) => ({
+                id,
+                kind,
+                summary,
+                detail,
+                ...(location === undefined ? {} : { location }),
+              }),
+            ),
+            previousFindingAssessments: previousFindings.map(({ id }) => ({
+              findingId: id,
+              status: "unresolved" as const,
+            })),
+          },
+          contentIdentity: f.identity,
+        };
+      },
+      repair: async (review) =>
+        parsePrimaryReviewDispositionReport(
+          JSON.stringify({
+            version: 1,
+            findingDispositions: review.blockingFindings.map(
+              ({ id }, index) => ({
+                findingId: id,
+                status: "addressed",
+                rationale:
+                  index === 0 ? "r".repeat(4_001) : "Handled the finding.",
+              }),
+            ),
+            requirementDispositions: review.requirementAssessments
+              .filter(({ status }) => status === "unsatisfied")
+              .map(({ requirementId }) => ({
+                requirementId,
+                status: "addressed",
+                rationale: "Implemented the requested requirement.",
+              })),
+          }),
+          review.blockingFindings.flatMap(({ id }) =>
+            id === undefined ? [] : [id],
+          ),
+          review.requirementAssessments
+            .filter(({ status }) => status === "unsatisfied")
+            .map(({ requirementId }) => requirementId),
+        ),
+      rerunQuality: async () => undefined,
+      getCurrentContentIdentity: async () => f.identity,
+    });
+
+    expect(result.review.verdict).toBe("fail");
+    expect(result.record.reviewRepair?.status).toBe("exhausted");
+    expect(result.record.reviewRepair?.activePrimaryOperation).toBeUndefined();
+    expect(result.record.reviewRemediationFailure).toBeUndefined();
+    expect(
+      result.record.reviewRepair?.findings?.[0]?.primaryDisposition,
+    ).toBeUndefined();
+    expect(result.record.reviewRepair?.findings?.[0]?.status).toBe(
+      "unresolved",
+    );
+    expect(result.record.reviewRepair?.requirementDispositions).toEqual([]);
+  });
+
   it("resumes a reserved last-pass repair before review and reuses exact ID and prompt", async () => {
     const f = fixture();
     const prompt = "persisted exact repair prompt";

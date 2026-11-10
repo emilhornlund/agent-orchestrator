@@ -133,6 +133,117 @@ export type ImplementationReviewResult = z.infer<
   typeof implementationReviewResultSchema
 >;
 
+const primaryFindingDispositionSchema = z.strictObject({
+  findingId: stableId,
+  status: z.enum(["addressed", "dismissed"]),
+  rationale: nonEmptyText.max(4_000),
+});
+
+const primaryRequirementDispositionSchema = z.strictObject({
+  requirementId: stableId,
+  status: z.enum(["addressed", "dismissed"]),
+  rationale: nonEmptyText.max(4_000),
+});
+
+const primaryFindingDispositionReportSchema = z.strictObject({
+  version: z.literal(1),
+  findingDispositions: z.array(primaryFindingDispositionSchema),
+  requirementDispositions: z.array(primaryRequirementDispositionSchema),
+});
+
+export type PrimaryReviewDispositionReport = z.infer<
+  typeof primaryFindingDispositionReportSchema
+>;
+
+export interface PersistedReviewFindingDisposition {
+  id: string;
+  sourceIdentities: readonly string[];
+  primaryDisposition?:
+    | {
+        reviewedContentIdentity: string;
+        status: "addressed" | "dismissed";
+        rationale: string;
+      }
+    | undefined;
+}
+
+export interface PersistedReviewRequirementDisposition {
+  requirementId: string;
+  reviewedContentIdentity: string;
+  status: "addressed" | "dismissed";
+  rationale: string;
+}
+
+export function hasUndisposedReviewConcerns(
+  review: ImplementationReviewResult,
+  findings: readonly PersistedReviewFindingDisposition[],
+  requirementDispositions: readonly PersistedReviewRequirementDisposition[],
+): boolean {
+  const findingsById = new Map(
+    findings.map((finding) => [finding.id, finding]),
+  );
+  const requirementsById = new Map(
+    requirementDispositions.map((disposition) => [
+      disposition.requirementId,
+      disposition,
+    ]),
+  );
+  const unresolvedFinding = review.blockingFindings.some((finding) => {
+    if (finding.id === undefined) return true;
+    const persisted = findingsById.get(finding.id)?.primaryDisposition;
+    return (
+      persisted?.status !== "dismissed" ||
+      persisted.reviewedContentIdentity !== review.reviewedContentIdentity
+    );
+  });
+  const unresolvedRequirement = review.requirementAssessments.some(
+    (assessment) => {
+      if (assessment.status !== "unsatisfied") return false;
+      const persisted = requirementsById.get(assessment.requirementId);
+      return (
+        persisted?.status !== "dismissed" ||
+        persisted.reviewedContentIdentity !== review.reviewedContentIdentity
+      );
+    },
+  );
+  return unresolvedFinding || unresolvedRequirement;
+}
+
+export const reviewConcernsDismissedAsNonMaterialLabel =
+  "Failed (primary assessed review concerns as non-material)";
+
+export function parsePrimaryReviewDispositionReport(
+  output: string,
+  expectedFindingIds: readonly string[],
+  expectedRequirementIds: readonly string[],
+): PrimaryReviewDispositionReport | undefined {
+  try {
+    const parsed = primaryFindingDispositionReportSchema.parse(
+      JSON.parse(output) as unknown,
+    );
+    const receivedFindingIds = parsed.findingDispositions.map(
+      ({ findingId }) => findingId,
+    );
+    const receivedRequirementIds = parsed.requirementDispositions.map(
+      ({ requirementId }) => requirementId,
+    );
+    if (
+      new Set(receivedFindingIds).size !== receivedFindingIds.length ||
+      receivedFindingIds.length !== expectedFindingIds.length ||
+      expectedFindingIds.some((id) => !receivedFindingIds.includes(id)) ||
+      new Set(receivedRequirementIds).size !== receivedRequirementIds.length ||
+      receivedRequirementIds.length !== expectedRequirementIds.length ||
+      expectedRequirementIds.some((id) => !receivedRequirementIds.includes(id))
+    )
+      return undefined;
+    return parsed;
+  } catch {
+    // A missing or malformed primary disposition is conservative: reviewers'
+    // material findings remain unresolved for publication reporting.
+    return undefined;
+  }
+}
+
 export interface ImplementationReviewExpectations {
   projectId: string;
   cardId: string;
@@ -141,7 +252,7 @@ export interface ImplementationReviewExpectations {
   previousFindingIds?: readonly string[];
   previousFindings?: readonly {
     id: string;
-    sourceContentIdentity?: string;
+    sourceContentIdentity?: string | undefined;
     sourceIdentities: readonly string[];
     status: "unresolved" | "resolved" | "superseded";
   }[];
@@ -282,4 +393,70 @@ export function parseImplementationReviewResult(
   }
 
   return result;
+}
+
+/** Validates an orchestrator-normalized cached review using its original prior-finding context. */
+export function parseCachedImplementationReviewResult(
+  value: unknown,
+  expected: ImplementationReviewExpectations,
+): ImplementationReviewResult {
+  const cached = implementationReviewResultSchema.parse(value);
+  if (expected.previousFindings !== undefined) {
+    const previousIds = new Set(expected.previousFindingIds ?? []);
+    const responseShape = {
+      ...cached,
+      // The ledger adds IDs to newly introduced findings after validation.
+      // Retain IDs known in the original prior-finding set so unresolved
+      // assessments remain linked to their blocking finding.
+      blockingFindings: cached.blockingFindings.map((finding) =>
+        finding.id !== undefined && !previousIds.has(finding.id)
+          ? { ...finding, id: undefined }
+          : finding,
+      ),
+    };
+    parseImplementationReviewResult(responseShape, expected);
+    return cached;
+  }
+
+  const legacyResponseShape = {
+    ...cached,
+    // Without the original prior-finding snapshot, cached IDs cannot reliably
+    // distinguish prior findings from IDs assigned after validation.
+    blockingFindings: cached.blockingFindings.map((finding) => ({
+      ...finding,
+      id: undefined,
+    })),
+  };
+
+  // Older cached publications may not have retained the pre-review finding
+  // snapshot. Validate task/content/requirement evidence without rerunning
+  // response novelty rules against the already-updated finding ledger.
+  parseImplementationReviewResult(
+    { ...legacyResponseShape, previousFindingAssessments: [] },
+    { ...expected, previousFindingIds: [], previousFindings: [] },
+  );
+  const assessments = cached.previousFindingAssessments ?? [];
+  const assessmentIds = assessments.map(({ findingId }) => findingId);
+  if (
+    new Set(assessmentIds).size !== assessmentIds.length ||
+    assessmentIds.length !== (expected.previousFindingIds ?? []).length ||
+    (expected.previousFindingIds ?? []).some(
+      (id) => !assessmentIds.includes(id),
+    )
+  )
+    throw new Error(
+      "Cached implementation review prior assessments are incomplete",
+    );
+  for (const assessment of assessments) {
+    if (
+      assessment.status === "unresolved" &&
+      !cached.blockingFindings.some(
+        (finding) => finding.id === assessment.findingId,
+      )
+    )
+      throw new Error(
+        `Cached unresolved prior finding is missing from blockingFindings: ${assessment.findingId}`,
+      );
+  }
+  return cached;
 }

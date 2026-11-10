@@ -617,6 +617,7 @@ export class ProjectRunAuthority {
         to: "validation",
       },
       "validation-passed": { event: "validation-passed", to: "review" },
+      "validation-reviewed": { event: "validation-reviewed", to: "review" },
       "validation-exhausted": { event: "validation-failed", to: "publication" },
       "validation-failed": {
         event: "implementation-correction",

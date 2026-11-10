@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  hasUndisposedReviewConcerns,
+  parseCachedImplementationReviewResult,
+  parsePrimaryReviewDispositionReport,
   parseImplementationReviewResult,
   type ImplementationReviewResult,
 } from "../src/task-session/implementation-review-result.js";
@@ -37,10 +40,244 @@ const result: ImplementationReviewResult = {
 };
 
 describe("parseImplementationReviewResult", () => {
+  it("accepts complete primary dispositions and conservatively rejects incomplete reports", () => {
+    const output = JSON.stringify({
+      version: 1,
+      findingDispositions: [
+        {
+          findingId: "finding-style",
+          status: "dismissed",
+          rationale:
+            "The requested behavior is correct and this preference is not a repository contract.",
+        },
+        {
+          findingId: "finding-defect",
+          status: "addressed",
+          rationale:
+            "Fixed the incorrect persisted-value lookup and added a regression test.",
+        },
+      ],
+      requirementDispositions: [
+        {
+          requirementId: "REQ-1",
+          status: "dismissed",
+          rationale:
+            "The requirement assessment misread the task; the requested behavior is implemented.",
+        },
+      ],
+    });
+
+    const parsed = parsePrimaryReviewDispositionReport(
+      output,
+      ["finding-style", "finding-defect"],
+      ["REQ-1"],
+    );
+    expect(parsed?.findingDispositions).toMatchObject([
+      { findingId: "finding-style", status: "dismissed" },
+      { findingId: "finding-defect", status: "addressed" },
+    ]);
+    expect(parsed?.requirementDispositions).toMatchObject([
+      { requirementId: "REQ-1", status: "dismissed" },
+    ]);
+    expect(
+      parsePrimaryReviewDispositionReport(
+        output,
+        ["finding-style", "finding-defect", "finding-missing"],
+        ["REQ-1"],
+      ),
+    ).toBeUndefined();
+    expect(
+      parsePrimaryReviewDispositionReport(
+        output,
+        ["finding-style", "finding-defect"],
+        ["REQ-1", "REQ-2"],
+      ),
+    ).toBeUndefined();
+    expect(
+      parsePrimaryReviewDispositionReport("not JSON", ["finding-style"], []),
+    ).toBeUndefined();
+    const oversized = JSON.stringify({
+      version: 1,
+      findingDispositions: [],
+      requirementDispositions: [
+        {
+          requirementId: "REQ-1",
+          status: "dismissed",
+          rationale: "r".repeat(4_001),
+        },
+      ],
+    });
+    expect(
+      parsePrimaryReviewDispositionReport(oversized, [], ["REQ-1"]),
+    ).toBeUndefined();
+    expect(
+      parsePrimaryReviewDispositionReport(
+        JSON.stringify({
+          version: 1,
+          findingDispositions: [],
+          requirementDispositions: [
+            {
+              requirementId: "REQ-1",
+              status: "dismissed",
+              rationale: "r".repeat(4_000),
+            },
+          ],
+        }),
+        [],
+        ["REQ-1"],
+      ),
+    ).toBeDefined();
+  });
+
+  it("lets a content-bound primary requirement dismissal resolve a reviewer-only concern", () => {
+    const review: ImplementationReviewResult = {
+      ...result,
+      verdict: "fail",
+      requirementAssessments: [
+        {
+          requirementId: "REQ-1",
+          status: "unsatisfied",
+          details: "The reviewer interpreted the requirement incorrectly.",
+          evidence: [],
+        },
+        result.requirementAssessments[1]!,
+      ],
+    };
+    const dismissal = {
+      requirementId: "REQ-1",
+      reviewedContentIdentity: contentIdentity,
+      status: "dismissed" as const,
+      rationale:
+        "The primary confirms the requirement is implemented in the current source.",
+    };
+
+    expect(hasUndisposedReviewConcerns(review, [], [dismissal])).toBe(false);
+    expect(hasUndisposedReviewConcerns(review, [], [])).toBe(true);
+    expect(
+      hasUndisposedReviewConcerns(
+        review,
+        [],
+        [{ ...dismissal, reviewedContentIdentity: `sha256:${"b".repeat(64)}` }],
+      ),
+    ).toBe(true);
+  });
+
   it("round-trips a complete result bound to the expected source", () => {
     const decoded = JSON.parse(JSON.stringify(result)) as unknown;
 
     expect(parseImplementationReviewResult(decoded, expected)).toEqual(result);
+  });
+
+  it("restores an introduced cached finding without treating its ledger ID as a prior finding", () => {
+    const cached = {
+      ...result,
+      verdict: "fail" as const,
+      blockingFindings: [
+        {
+          id: "finding-ledger-generated",
+          sourceContentIdentity: contentIdentity,
+          kind: "defect" as const,
+          summary: "A current-source defect",
+          detail: "The source loses the setting on reload.",
+        },
+      ],
+      previousFindingAssessments: [],
+    };
+    const cachedExpectations = {
+      ...expected,
+      previousFindingIds: [],
+      previousFindings: [
+        {
+          id: "finding-ledger-generated",
+          sourceContentIdentity: contentIdentity,
+          sourceIdentities: [contentIdentity],
+          status: "unresolved" as const,
+        },
+      ],
+    };
+
+    expect(
+      parseCachedImplementationReviewResult(cached, cachedExpectations),
+    ).toEqual(cached);
+    expect(() =>
+      parseCachedImplementationReviewResult(cached, {
+        ...cachedExpectations,
+        contentIdentity: `sha256:${"b".repeat(64)}`,
+      }),
+    ).toThrow("content identity is stale");
+  });
+
+  it("accepts legacy cached reviews with prior blocking IDs but no source snapshot", () => {
+    const cached = {
+      ...result,
+      verdict: "fail" as const,
+      blockingFindings: [
+        {
+          id: "finding-prior",
+          kind: "defect" as const,
+          summary: "The prior defect remains",
+          detail:
+            "The concrete failure remains present in the reviewed source.",
+        },
+      ],
+      previousFindingAssessments: [
+        { findingId: "finding-prior", status: "unresolved" as const },
+      ],
+    };
+    const legacyExpectations = {
+      ...expected,
+      previousFindingIds: ["finding-prior"],
+    };
+
+    expect(
+      parseCachedImplementationReviewResult(cached, legacyExpectations),
+    ).toEqual(cached);
+    expect(() =>
+      parseCachedImplementationReviewResult(cached, {
+        ...legacyExpectations,
+        cardId: "different-card",
+      }),
+    ).toThrow("task identity does not match");
+    expect(() =>
+      parseCachedImplementationReviewResult(cached, {
+        ...legacyExpectations,
+        contentIdentity: `sha256:${"b".repeat(64)}`,
+      }),
+    ).toThrow("content identity is stale");
+  });
+
+  it("retains prior IDs for unresolved findings when validating full-context cached reviews", () => {
+    const priorFindingId = "finding-prior";
+    const cached = {
+      ...result,
+      verdict: "fail" as const,
+      blockingFindings: [
+        {
+          id: priorFindingId,
+          kind: "defect" as const,
+          summary: "The prior defect remains",
+          detail: "The same concrete failure remains in the current source.",
+        },
+      ],
+      previousFindingAssessments: [
+        { findingId: priorFindingId, status: "unresolved" as const },
+      ],
+    };
+
+    expect(
+      parseCachedImplementationReviewResult(cached, {
+        ...expected,
+        previousFindingIds: [priorFindingId],
+        previousFindings: [
+          {
+            id: priorFindingId,
+            sourceContentIdentity: contentIdentity,
+            sourceIdentities: [contentIdentity],
+            status: "unresolved",
+          },
+        ],
+      }),
+    ).toEqual(cached);
   });
 
   it("accepts an actionable evidence-backed blocking finding", () => {

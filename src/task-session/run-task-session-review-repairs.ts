@@ -1,5 +1,8 @@
 import { createHash } from "node:crypto";
-import type { ImplementationReviewResult } from "./implementation-review-result.js";
+import type {
+  ImplementationReviewResult,
+  PrimaryReviewDispositionReport,
+} from "./implementation-review-result.js";
 import type { TaskExecutionRecord } from "./task-execution-record.js";
 import { logger } from "../logging/logger.js";
 import { TaskExecutionStore } from "./task-execution-store.js";
@@ -12,6 +15,12 @@ type TrackedFinding = NonNullable<
 export interface TaskSessionReviewRound {
   review: ImplementationReviewResult;
   contentIdentity: string;
+  previousFindings?: readonly {
+    id: string;
+    sourceContentIdentity?: string | undefined;
+    sourceIdentities: readonly string[];
+    status: "unresolved" | "resolved" | "superseded";
+  }[];
 }
 
 export interface RunTaskSessionReviewRepairsOptions {
@@ -28,7 +37,7 @@ export interface RunTaskSessionReviewRepairsOptions {
     attempt: number,
     operationId: string,
     persistedPrompt?: string,
-  ) => Promise<void>;
+  ) => Promise<void | PrimaryReviewDispositionReport | undefined>;
   buildRepairPrompt?: (
     review: ImplementationReviewResult,
     attempt: number,
@@ -154,10 +163,11 @@ function assertOwner(
     record.primarySessionId !== options.expectedPrimarySessionId ||
     (record.phase !== "review" &&
       record.phase !== "validation" &&
-      record.phase !== "implementation")
+      record.phase !== "implementation" &&
+      record.phase !== "publication")
   ) {
     throw new TaskSessionReviewRepairError(
-      "Review repair requires the owned review-phase task and exact primary session",
+      "Review repair requires the owned task and exact primary session",
     );
   }
 }
@@ -405,6 +415,7 @@ export async function runTaskSessionReviewWithRepairs(
       reviewRepair: {
         cycleId,
         status: round.review.verdict === "pass" ? "passed" : "exhausted",
+        requirementDispositions: record.reviewRepair?.requirementDispositions,
         finalReview: round.review,
         // The old hardcoded limit was two; do not retroactively change it.
         maxAttempts:
@@ -456,13 +467,22 @@ export async function runTaskSessionReviewWithRepairs(
         throw new TaskSessionReviewRepairError(
           "Persisted review repair evidence is invalid; preserving the reservation",
         );
+      const retainedReview = stored.review as ImplementationReviewResult;
+      updateRecord(options.store, record, {
+        reviewRepair: {
+          ...record.reviewRepair!,
+          finalReview: retainedReview,
+        },
+      });
+      let dispositions: PrimaryReviewDispositionReport | undefined;
       try {
-        await options.repair(
-          stored.review as ImplementationReviewResult,
-          active.pass,
-          active.operationId,
-          stored.prompt,
-        );
+        dispositions =
+          (await options.repair(
+            retainedReview,
+            active.pass,
+            active.operationId,
+            stored.prompt,
+          )) || undefined;
         await options.rerunQuality();
       } catch (error) {
         throw new TaskSessionReviewRepairError(
@@ -472,10 +492,49 @@ export async function runTaskSessionReviewWithRepairs(
       }
       const afterQuality = options.store.read(options.cardId);
       assertOwner(afterQuality, options);
+      const dispositionFindingIds = new Set(
+        retainedReview.blockingFindings.flatMap(({ id }) =>
+          id === undefined ? [] : [id],
+        ),
+      );
       record = updateRecord(options.store, afterQuality, {
         reviewRepair: {
           ...afterQuality.reviewRepair!,
           activePrimaryOperation: undefined,
+          findings: afterQuality.reviewRepair!.findings?.map((finding) => {
+            if (!dispositionFindingIds.has(finding.id)) return finding;
+            const disposition = dispositions?.findingDispositions.find(
+              (item) => item.findingId === finding.id,
+            );
+            return disposition === undefined
+              ? { ...finding, primaryDisposition: undefined }
+              : {
+                  ...finding,
+                  primaryDisposition: {
+                    reviewedContentIdentity:
+                      retainedReview.reviewedContentIdentity,
+                    status: disposition.status,
+                    rationale: disposition.rationale,
+                  },
+                };
+          }),
+          requirementDispositions: (
+            afterQuality.reviewRepair!.requirementDispositions ?? []
+          )
+            .filter(
+              (item) =>
+                !retainedReview.requirementAssessments.some(
+                  (assessment) =>
+                    assessment.status === "unsatisfied" &&
+                    assessment.requirementId === item.requirementId,
+                ),
+            )
+            .concat(
+              dispositions?.requirementDispositions.map((disposition) => ({
+                ...disposition,
+                reviewedContentIdentity: retainedReview.reviewedContentIdentity,
+              })) ?? [],
+            ),
         },
       });
       continue;
@@ -570,6 +629,7 @@ export async function runTaskSessionReviewWithRepairs(
           cycleId,
           status: "passed",
           maxAttempts: record.reviewRepair?.maxAttempts ?? options.maxAttempts,
+          requirementDispositions: record.reviewRepair?.requirementDispositions,
           finalReview: ledger.review,
           findings: ledger.findings,
         },
@@ -590,6 +650,7 @@ export async function runTaskSessionReviewWithRepairs(
           cycleId,
           status: "exhausted",
           maxAttempts: record.reviewRepair?.maxAttempts ?? options.maxAttempts,
+          requirementDispositions: record.reviewRepair?.requirementDispositions,
           finalReview: ledger.review,
           findings: ledger.findings,
         },
@@ -629,6 +690,8 @@ export async function runTaskSessionReviewWithRepairs(
         cycleId,
         status: "active",
         maxAttempts: record.reviewRepair?.maxAttempts ?? options.maxAttempts,
+        finalReview: ledger.review,
+        requirementDispositions: record.reviewRepair?.requirementDispositions,
         findings: ledger.findings,
         activePrimaryOperation: {
           operationId,
@@ -649,8 +712,15 @@ export async function runTaskSessionReviewWithRepairs(
     });
     let failureCategory: "remediation-execution" | "validation" =
       "remediation-execution";
+    let dispositions: PrimaryReviewDispositionReport | undefined;
     try {
-      await options.repair(ledger.review, repairAttempt, operationId, prompt);
+      dispositions =
+        (await options.repair(
+          ledger.review,
+          repairAttempt,
+          operationId,
+          prompt,
+        )) || undefined;
       failureCategory = "validation";
       await options.rerunQuality();
       const afterQuality = options.store.read(options.cardId);
@@ -659,10 +729,48 @@ export async function runTaskSessionReviewWithRepairs(
         afterQuality.reviewRepair?.activePrimaryOperation?.operationId ===
         operationId
       ) {
+        const dispositionFindingIds = new Set(
+          ledger.review.blockingFindings.flatMap(({ id }) =>
+            id === undefined ? [] : [id],
+          ),
+        );
         record = updateRecord(options.store, afterQuality, {
           reviewRepair: {
             ...afterQuality.reviewRepair,
             activePrimaryOperation: undefined,
+            findings: afterQuality.reviewRepair.findings?.map((finding) => {
+              if (!dispositionFindingIds.has(finding.id)) return finding;
+              const disposition = dispositions?.findingDispositions.find(
+                (item) => item.findingId === finding.id,
+              );
+              return disposition === undefined
+                ? { ...finding, primaryDisposition: undefined }
+                : {
+                    ...finding,
+                    primaryDisposition: {
+                      reviewedContentIdentity: round.contentIdentity,
+                      status: disposition.status,
+                      rationale: disposition.rationale,
+                    },
+                  };
+            }),
+            requirementDispositions: (
+              afterQuality.reviewRepair.requirementDispositions ?? []
+            )
+              .filter(
+                (item) =>
+                  !ledger.review.requirementAssessments.some(
+                    (assessment) =>
+                      assessment.status === "unsatisfied" &&
+                      assessment.requirementId === item.requirementId,
+                  ),
+              )
+              .concat(
+                dispositions?.requirementDispositions.map((disposition) => ({
+                  ...disposition,
+                  reviewedContentIdentity: round.contentIdentity,
+                })) ?? [],
+              ),
           },
         });
       }

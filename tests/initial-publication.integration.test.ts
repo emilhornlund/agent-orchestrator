@@ -27,6 +27,7 @@ import {
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
 import { getTaskSessionSourceSnapshotIdentity } from "../src/task-session/source-snapshot.js";
 import { TaskMutationQueue } from "../src/task-session/task-mutation-queue.js";
+import type { ImplementationReviewResult } from "../src/task-session/implementation-review-result.js";
 import {
   getSetupTrackedDelta,
   resolveSetupCommitScope,
@@ -235,17 +236,18 @@ async function publicationEvidence(
 async function poll(
   f: ReturnType<typeof reopenPublicationFixture>,
   tick = true,
+  openCode: unknown = {
+    run: () => {
+      throw new Error("Publication recovery must not invoke AI");
+    },
+  },
 ) {
   if (tick) vi.setSystemTime(Date.now() + PUBLICATION_RECHECK_MS + 1);
   await pollProject(
     f.services.trello,
     f.git,
     f.services.github,
-    {
-      run: () => {
-        throw new Error("Publication recovery must not invoke AI");
-      },
-    } as never,
+    openCode as never,
     {} as never,
     f.project,
     new AbortController().signal,
@@ -266,10 +268,11 @@ function operation(
 async function through(
   f: ReturnType<typeof reopenPublicationFixture>,
   name: string,
+  openCode?: unknown,
 ) {
   for (let count = 0; count < 12; count++) {
     if (operation(f, name)?.status === "completed") return;
-    await poll(f);
+    await poll(f, true, openCode);
   }
   throw new Error(
     `Did not complete ${name}: ${JSON.stringify(f.store.read()?.compatibility)}`,
@@ -1820,6 +1823,126 @@ describe("initial publication production checkpoint with independent simulated s
       ),
     ).toBeNull();
     expect(f.store.read()!.publicationState).toBe("open");
+  });
+
+  it.each([
+    {
+      name: "prepared pass clears obsolete prior concerns",
+      result: "Passed",
+      disclosure: null,
+      evidenceReview: "pass" as const,
+      draft: false,
+      expectedText: undefined,
+      forbiddenText: "OUTDATED prior finding",
+    },
+    {
+      name: "current prepared material concern remains draft",
+      result: "Failed (human review required; material findings unresolved)",
+      disclosure: "current" as const,
+      evidenceReview: "fail" as const,
+      draft: true,
+      expectedText: "CURRENT prepared finding",
+      forbiddenText: "OUTDATED prior finding",
+    },
+    {
+      name: "unavailable prepared review preserves prior concern text and draft status",
+      result:
+        "Unavailable (current review unavailable). Prior finding OUTDATED prior finding remains from the earlier source.",
+      disclosure: null,
+      evidenceReview: null,
+      draft: true,
+      expectedText: "OUTDATED prior finding",
+      forbiddenText: "## Automated review — human action required",
+    },
+  ] as const)("durably maps $name", async (scenario) => {
+    const f = fixture();
+    const initial = await publicationEvidence(f);
+    const priorReview: ImplementationReviewResult = {
+      ...initial.review!,
+      verdict: "fail",
+      requirementAssessments: [
+        {
+          requirementId: "REQ-1",
+          status: "unsatisfied",
+          details: "The earlier source did not meet the requirement.",
+          evidence: [],
+        },
+      ],
+      blockingFindings: [
+        {
+          id: "old-finding",
+          kind: "defect",
+          summary: "OUTDATED prior finding",
+          detail: "This concern belongs to the earlier source snapshot.",
+        },
+      ],
+    };
+    const currentReview: ImplementationReviewResult = {
+      ...initial.review!,
+      verdict: "fail",
+      blockingFindings: [
+        {
+          id: "current-finding",
+          kind: "defect",
+          summary: "CURRENT prepared finding",
+          detail: "The prepared source still has this defect.",
+        },
+      ],
+    };
+    const initialEvidence = { ...initial, review: priorReview };
+    const preparedEvidence = {
+      ...initial,
+      review:
+        scenario.evidenceReview === "pass"
+          ? initial.review
+          : scenario.evidenceReview === "fail"
+            ? currentReview
+            : null,
+    };
+    const preparedReview = {
+      reviewResult: scenario.result,
+      reviewDisclosure:
+        scenario.disclosure === "current" ? currentReview : null,
+      qualityNeedsDraft: false,
+    };
+    const openCode = {
+      run: vi.fn(async () => ({
+        exitCode: 1,
+        output: "",
+        errorOutput: "description service unavailable",
+      })),
+    };
+
+    await expect(
+      f.authority.run(() =>
+        publishTaskSessionCard({
+          project: f.project,
+          card: f.services.card(),
+          git: f.git,
+          trello: f.services.trello,
+          github: f.services.github,
+          opencode: openCode as never,
+          worktreePath: f.worktreePath,
+          branch: "agent/card",
+          commitMessage: "feat: implement task",
+          reviewResult: "Failed (human review required; previous review)",
+          remediationResult: "Review follow-up complete",
+          exhaustedReview: priorReview,
+          initialEvidence,
+          verifyPreparedContent: async () => preparedEvidence,
+          getPreparedReviewPublication: () => preparedReview,
+        }),
+      ),
+    ).rejects.toBeInstanceOf(PublicationWaitingError);
+
+    await through(f, "pr", openCode);
+    const pullRequest = f.services.read().prs[0];
+    expect(pullRequest?.draft).toBe(scenario.draft);
+    expect(pullRequest?.body).toContain(`Review: ${scenario.result}`);
+    if (scenario.expectedText !== undefined)
+      expect(pullRequest?.body).toContain(scenario.expectedText);
+    if (scenario.forbiddenText !== undefined)
+      expect(pullRequest?.body).not.toContain(scenario.forbiddenText);
   });
 
   it("keeps a negative lookup ambiguous, handles late acceptance after restart, and never dispatches a second PR", async () => {

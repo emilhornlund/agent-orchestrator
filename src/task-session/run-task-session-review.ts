@@ -7,9 +7,12 @@ import type { CardAttachmentPromptContext } from "../context/card-attachment-pro
 import type { GitClient } from "../git/git-client.js";
 import {
   OpenCodeClient,
+  OpenCodeRunAbortedError,
+  OpenCodeTimeoutError,
   type OpenCodeRunOptions,
   type OpenCodeRunResult,
 } from "../opencode/opencode-client.js";
+import { ProcessExecutionError } from "../process/process-runtime.js";
 import {
   buildTaskSessionReviewPrompt,
   type TaskSessionReviewDiff,
@@ -22,6 +25,7 @@ import { getTaskSessionSourceSnapshotIdentity } from "./source-snapshot.js";
 import { TaskPlanStore } from "./task-plan-store.js";
 import { transitionTaskExecutionRecord } from "./task-execution-transition.js";
 import type { ImplementationReviewResult } from "./implementation-review-result.js";
+import type { ImplementationReviewExpectations } from "./implementation-review-result.js";
 import { parseImplementationReviewResult } from "./implementation-review-result.js";
 import type { TrelloCard } from "../trello/trello-client.js";
 import { getSessionLogPath } from "../logging/session-log.js";
@@ -84,6 +88,7 @@ export interface TaskSessionReviewOperationResult {
   review: ImplementationReviewResult;
   runResult: OpenCodeRunResult;
   contentIdentity: string;
+  previousFindings: NonNullable<ImplementationReviewExpectations["previousFindings"]>;
 }
 
 const MAX_FORMAT_ONLY_RETRIES = 1;
@@ -216,21 +221,13 @@ export async function runTaskSessionReview(
     );
   }
 
-  const validationSkipped =
-    validation.status === "skipped" &&
-    project.repository.validationCommand === undefined;
   if (
-    (!validationSkipped &&
-      (validation.status !== "passed" ||
-        validation.exitCode !== 0 ||
-        validation.command !== project.repository.validationCommand)) ||
-    (record.validationRepair?.status !== "passed" &&
-      record.validationRepair?.status !== "skipped") ||
-    record.validationRepair?.evidence?.contentIdentity !==
-      validation.contentIdentity
+    project.repository.validationCommand === undefined
+      ? validation.status !== "skipped"
+      : validation.command !== project.repository.validationCommand
   ) {
     throw new TaskSessionReviewError(
-      "Implementation review requires current successful local validation evidence",
+      "Implementation review requires current local validation evidence",
     );
   }
 
@@ -250,14 +247,7 @@ export async function runTaskSessionReview(
         "Persisted coverage evidence conflicts with current coverage configuration",
       );
     }
-  } else if (
-    coverage === null ||
-    coverage.status !== "passed" ||
-    coverage.exitCode !== 0 ||
-    coverage.command !== coverageCommand ||
-    record.validationRepair?.coverageEvidence?.contentIdentity !==
-      coverage.contentIdentity
-  ) {
+  } else if (coverage === null || coverage.command !== coverageCommand) {
     throw new TaskSessionReviewError(
       "Implementation review requires successful configured coverage evidence",
     );
@@ -300,8 +290,11 @@ export async function runTaskSessionReview(
 
   if (record.phase === "validation") {
     const reviewedRecord = transitionTaskExecutionRecord(record, {
-      type: "validation-passed",
-      eventId: `${operationKey}:validation-passed`,
+      type:
+        validation.status === "passed" || validation.status === "skipped"
+          ? "validation-passed"
+          : "validation-reviewed",
+      eventId: `${operationKey}:validation-reviewed`,
       projectId: project.id,
       cardId: card.id,
       operationKey,
@@ -340,7 +333,17 @@ export async function runTaskSessionReview(
         readOnly: true,
       });
     } catch (error) {
-      if (runOptions.signal?.aborted) throw error;
+      if (
+        runOptions.signal?.aborted ||
+        error instanceof OpenCodeRunAbortedError
+      )
+        throw error;
+      const safelyStoppedTimeout =
+        error instanceof OpenCodeTimeoutError && error.treeStopped;
+      const verifiedNeverDispatched =
+        error instanceof ProcessExecutionError &&
+        error.classification === "spawn-failure";
+      if (!safelyStoppedTimeout && !verifiedNeverDispatched) throw error;
       throw new TaskSessionReviewUnavailableError(
         "Independent implementation review execution failed",
         undefined,
@@ -388,14 +391,8 @@ export async function runTaskSessionReview(
         continue;
       }
 
-      if (error instanceof SyntaxError)
-        throw new TaskSessionReviewUnavailableError(
-          "Independent implementation review returned malformed JSON",
-          runResult,
-          { cause: error },
-        );
-      throw new TaskSessionReviewError(
-        "Independent implementation review returned a malformed, stale, or out-of-scope result",
+      throw new TaskSessionReviewUnavailableError(
+        "Independent implementation review returned malformed, stale, or out-of-scope output",
         runResult,
         { cause: error },
       );
@@ -420,5 +417,17 @@ export async function runTaskSessionReview(
     );
   }
 
-  return { review, runResult, contentIdentity };
+  return {
+    review,
+    runResult,
+    contentIdentity,
+    previousFindings: (previousFindings ?? []).map(
+      ({ id, sourceContentIdentity, sourceIdentities, status }) => ({
+        id,
+        ...(sourceContentIdentity === undefined ? {} : { sourceContentIdentity }),
+        sourceIdentities,
+        status,
+      }),
+    ),
+  };
 }

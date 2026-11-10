@@ -3,6 +3,7 @@ import type { GitClient } from "../git/git-client.js";
 import type { GitHubClient } from "../github/github-client.js";
 import { buildPullRequestAttributionFooter } from "../github/pull-request-attribution.js";
 import type { ImplementationReviewResult } from "../task-session/implementation-review-result.js";
+import { reviewConcernsDismissedAsNonMaterialLabel } from "../task-session/implementation-review-result.js";
 import { enrichPullRequestDescription } from "../github/enrich-pull-request-description.js";
 import { logger } from "../logging/logger.js";
 import { getSessionLogPath } from "../logging/session-log.js";
@@ -59,7 +60,7 @@ export interface PublishCardOptions {
   commitSha: string;
   reviewResult: string;
   remediationResult: string;
-  exhaustedReview?: ImplementationReviewResult;
+  exhaustedReview?: ImplementationReviewResult | undefined;
   pullRequestDescription?: PullRequestDescription;
   sessionLogPath?: string;
   emailNotifier?: EmailNotifier;
@@ -67,12 +68,30 @@ export interface PublishCardOptions {
   signal?: AbortSignal;
   commands?: CommandRunner;
   rebaseAlreadyCompleted?: boolean;
-  beforePushVerification?: () => Promise<void>;
+  beforePushVerification?: () => Promise<PreparedReviewPublication | void>;
   expectedExistingPullRequestUrl?: string;
   verifiedDescriptionFacts?: () => readonly string[];
   setupDisposition?: PersistedSetupDisposition;
   /** Non-passing or skipped local checks require draft publication. */
   qualityNeedsDraft?: boolean;
+}
+
+export interface PreparedReviewPublication {
+  reviewResult: string;
+  /** Current-source material concerns to disclose and use for draft selection. */
+  reviewDisclosure: ImplementationReviewResult | null;
+  qualityNeedsDraft?: boolean;
+}
+
+function appendVerifiedWorkflowEvidence(
+  body: string,
+  verifiedFacts: readonly string[],
+): string {
+  if (verifiedFacts.length === 0) return body;
+  const section = `## Orchestrator-observed workflow evidence\n${verifiedFacts
+    .map((fact) => `- ${fact.replace(/[\r\n]+/gu, " ")}`)
+    .join("\n")}`;
+  return body.includes(section) ? body : `${body}\n\n${section}`;
 }
 
 /** Presentation is finalized before the durable payload is hashed. Recovery
@@ -117,10 +136,7 @@ export async function prepareInitialPublicationBody(
       options.card,
       options.project.repository.gitIdentity.name,
     );
-  if (verifiedFacts.length > 0)
-    body += `\n\n## Orchestrator-observed workflow evidence\n${verifiedFacts
-      .map((fact) => `- ${fact.replace(/[\r\n]+/gu, " ")}`)
-      .join("\n")}`;
+  body = appendVerifiedWorkflowEvidence(body, verifiedFacts);
   body += `\n\nReview: ${options.reviewResult}\nRemediation: ${options.remediationResult}`;
   if (options.exhaustedReview) {
     body += `\n\n## Automated review — human action required\nThis PR has **not** passed automated review.\n${options.exhaustedReview.blockingFindings
@@ -488,6 +504,9 @@ export async function publishCard({
   expectedExistingPullRequestUrl,
   qualityNeedsDraft = false,
 }: PublishCardOptions): Promise<void> {
+  let publicationReviewResult = reviewResult;
+  let publicationReviewDisclosure = exhaustedReview ?? null;
+  let publicationQualityNeedsDraft = qualityNeedsDraft;
   if (
     expectedExistingPullRequestUrl === undefined &&
     ProjectRunAuthority.isProjectLeaseScoped(project.id) &&
@@ -600,7 +619,13 @@ export async function publishCard({
 
     // Task-session callers use this hook to revalidate content-bound quality
     // evidence after the fetch/rebase preparation and before any remote write.
-    await beforePushVerification?.();
+    const preparedReview = await beforePushVerification?.();
+    if (preparedReview !== undefined) {
+      publicationReviewResult = preparedReview.reviewResult;
+      publicationReviewDisclosure = preparedReview.reviewDisclosure;
+      if (preparedReview.qualityNeedsDraft !== undefined)
+        publicationQualityNeedsDraft = preparedReview.qualityNeedsDraft;
+    }
 
     cardLog.event(`Publication commit is ${publishedCommitSha}`);
 
@@ -638,7 +663,7 @@ export async function publishCard({
         card,
         worktreePath,
         commitSha: publishedCommitSha,
-        reviewResult,
+        reviewResult: publicationReviewResult,
         remediationResult,
         verifiedFacts: verifiedDescriptionFacts,
         signal: signal ?? new AbortController().signal,
@@ -713,7 +738,11 @@ export async function publishCard({
 
     if (pullRequest) {
       cardLog.event(`Existing pull request found: ${pullRequest.url}`);
-      if (exhaustedReview !== undefined || reviewResult !== "Passed") {
+      if (
+        publicationReviewDisclosure !== null ||
+        (publicationReviewResult !== "Passed" &&
+          publicationReviewResult !== reviewConcernsDismissedAsNonMaterialLabel)
+      ) {
         await github.ensurePullRequestDraft({
           cwd: worktreePath,
           repository: project.repository.github,
@@ -809,13 +838,15 @@ export async function publishCard({
         }
       }
 
-      if (exhaustedReview !== undefined) {
+      body = appendVerifiedWorkflowEvidence(body, verifiedDescriptionFacts);
+
+      if (publicationReviewDisclosure !== null) {
         // This section is authored by the orchestrator and is not delegated
         // to AI-generated PR description text.
-        const findings = exhaustedReview.blockingFindings
+        const findings = publicationReviewDisclosure.blockingFindings
           .map((finding) => [finding.summary, finding.detail].join(": "))
           .slice(0, 20);
-        const unsatisfied = exhaustedReview.requirementAssessments
+        const unsatisfied = publicationReviewDisclosure.requirementAssessments
           .filter((assessment) => assessment.status === "unsatisfied")
           .map((assessment) => assessment.requirementId);
         const detail = [
@@ -827,7 +858,7 @@ export async function publishCard({
         body += [
           "",
           "## Automated review — human action required",
-          "The independent AI review still reported blocking findings after the configured remediation limit. This PR has **not** passed automated review. Please inspect the changes and findings before merging.",
+          "The current independent AI review reported material concerns for this source snapshot. This PR has **not** passed automated review. Please inspect the changes and findings before merging.",
           ...(publishedCommitSha !== commitSha
             ? [
                 "**Post-rebase disclosure:** The published commit differs from the originally reviewed commit. Existing findings refer to the pre-rebase snapshot; the rebased content passed required local validation but has not received another AI review. Human review is mandatory.",
@@ -837,6 +868,12 @@ export async function publishCard({
         ].join("\n");
       }
 
+      if (
+        publicationReviewResult !== "Passed" ||
+        remediationResult !== "Not required"
+      )
+        body += `\n\nReview: ${publicationReviewResult}\nRemediation: ${remediationResult}`;
+
       pullRequest = await github.createPullRequest({
         cwd: worktreePath,
         repository: project.repository.github,
@@ -845,9 +882,11 @@ export async function publishCard({
         title: card.name,
         body,
         draft:
-          exhaustedReview !== undefined ||
-          reviewResult !== "Passed" ||
-          qualityNeedsDraft,
+          publicationReviewDisclosure !== null ||
+          (publicationReviewResult !== "Passed" &&
+            publicationReviewResult !==
+              reviewConcernsDismissedAsNonMaterialLabel) ||
+          publicationQualityNeedsDraft,
         project,
       });
 
@@ -905,11 +944,11 @@ export async function publishCard({
         card,
         pullRequestUrl: pullRequest.url,
         commitSha: publishedCommitSha,
-        reviewResult,
+        reviewResult: publicationReviewResult,
         remediationResult,
         ...(observedDraft === undefined ? {} : { actualDraft: observedDraft }),
         outstandingIssues: publicationNotificationIssues(
-          reviewResult,
+          publicationReviewResult,
           remediationResult,
         ),
         publicationContext:
@@ -979,11 +1018,11 @@ export async function publishCard({
         card,
         pullRequestUrl: pullRequest.url,
         commitSha: publishedCommitSha,
-        reviewResult,
+        reviewResult: publicationReviewResult,
         remediationResult,
         ...(actualDraft === undefined ? {} : { actualDraft }),
         outstandingIssues: publicationNotificationIssues(
-          reviewResult,
+          publicationReviewResult,
           remediationResult,
         ),
         ...(elapsedWorkflowTime === undefined ? {} : { elapsedWorkflowTime }),
@@ -999,7 +1038,7 @@ export async function publishCard({
     "",
     `PR: ${pullRequest.url}`,
     `Commit: ${publishedCommitSha}`,
-    `Review: ${reviewResult}`,
+    `Review: ${publicationReviewResult}`,
     `Remediation: ${remediationResult}`,
     ...(elapsedWorkflowTime === undefined
       ? []

@@ -15,7 +15,9 @@ import { MAX_PULL_REQUEST_DESCRIPTION_SUMMARY_LENGTH } from "../src/opencode/pul
 import { Logger } from "../src/logging/logger.js";
 import { formatFailureDiagnostic } from "../src/orchestrator/failure-diagnostic.js";
 import { publishCard } from "../src/orchestrator/publish-card.js";
+import { reviewConcernsDismissedAsNonMaterialLabel } from "../src/task-session/implementation-review-result.js";
 import { WorkflowError } from "../src/orchestrator/workflow-error.js";
+import type { ImplementationReviewResult } from "../src/task-session/implementation-review-result.js";
 import { type TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
 
 function createProject(validationCommand?: string): ProjectConfig {
@@ -122,6 +124,148 @@ afterEach(() => {
 });
 
 describe("publishCard", () => {
+  it("does not force draft solely for dismissed non-material review findings", async () => {
+    const trello = {
+      moveCard: vi.fn().mockResolvedValue({
+        ...createCard(),
+        idList: "review-list",
+      }),
+    } as unknown as TrelloClient;
+    let createdDraft: boolean | undefined;
+    const createPullRequest = vi.fn(async (options: { draft: boolean }) => {
+      createdDraft = options.draft;
+      return { url: "https://github.com/example/repository/pull/123" };
+    });
+    const github = {
+      findPullRequest: vi.fn().mockResolvedValue(null),
+      createPullRequest,
+    } as unknown as GitHubClient;
+
+    await publishCard({
+      trello,
+      git: createPublicationGit(),
+      github,
+      project: createProject(),
+      card: createCard(),
+      worktreePath: "/worktree",
+      branch: "agent/card-1",
+      commitSha: "abc123",
+      reviewResult: reviewConcernsDismissedAsNonMaterialLabel,
+      remediationResult: "Findings were evaluated in the primary session",
+    });
+
+    expect(createdDraft).toBe(false);
+    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "review-list");
+  });
+
+  it("uses the current prepared negative review for draft status and disclosure", async () => {
+    let publication: { draft: boolean; body: string } | undefined;
+    const reviewDisclosure: ImplementationReviewResult = {
+      version: 1,
+      projectId: "example",
+      cardId: "card-1",
+      verdict: "fail",
+      requirementAssessments: [
+        {
+          requirementId: "REQ-1",
+          status: "unsatisfied",
+          details: "The requested persisted state is lost after reload.",
+          evidence: [],
+        },
+      ],
+      blockingFindings: [
+        {
+          kind: "defect",
+          summary: "Reload loses the saved setting",
+          detail: "The current rebased source initializes the default value.",
+        },
+      ],
+      reviewedContentIdentity: `sha256:${"c".repeat(64)}`,
+    };
+    const trello = {
+      moveCard: vi.fn().mockResolvedValue({
+        ...createCard(),
+        idList: "review-list",
+      }),
+    } as unknown as TrelloClient;
+    const github = {
+      findPullRequest: vi.fn().mockResolvedValue(null),
+      createPullRequest: vi.fn(
+        async (options: { draft: boolean; body: string }) => {
+          publication = { draft: options.draft, body: options.body };
+          return { url: "https://github.com/example/repository/pull/123" };
+        },
+      ),
+    } as unknown as GitHubClient;
+
+    await publishCard({
+      trello,
+      git: createPublicationGit(),
+      github,
+      project: createProject(),
+      card: createCard(),
+      worktreePath: "/worktree",
+      branch: "agent/card-1",
+      commitSha: "abc123",
+      reviewResult: "Passed",
+      remediationResult: "Not required",
+      beforePushVerification: async () => ({
+        reviewResult:
+          "Failed (human review required; material findings unresolved)",
+        reviewDisclosure,
+        qualityNeedsDraft: false,
+      }),
+    });
+
+    expect(publication?.draft).toBe(true);
+    expect(publication?.body).toContain("The current independent AI review");
+    expect(publication?.body).toContain("Reload loses the saved setting");
+    expect(publication?.body).toContain("Unsatisfied requirement: REQ-1");
+  });
+
+  it("keeps an unavailable prepared review in draft without claiming a pass", async () => {
+    let publication: { draft: boolean; body: string } | undefined;
+    const trello = {
+      moveCard: vi.fn().mockResolvedValue({
+        ...createCard(),
+        idList: "review-list",
+      }),
+    } as unknown as TrelloClient;
+    const github = {
+      findPullRequest: vi.fn().mockResolvedValue(null),
+      createPullRequest: vi.fn(
+        async (options: { draft: boolean; body: string }) => {
+          publication = { draft: options.draft, body: options.body };
+          return { url: "https://github.com/example/repository/pull/123" };
+        },
+      ),
+    } as unknown as GitHubClient;
+
+    await publishCard({
+      trello,
+      git: createPublicationGit(),
+      github,
+      project: createProject(),
+      card: createCard(),
+      worktreePath: "/worktree",
+      branch: "agent/card-1",
+      commitSha: "abc123",
+      reviewResult: "Passed",
+      remediationResult: "Not required",
+      beforePushVerification: async () => ({
+        reviewResult: "Unavailable (current-source review timed out)",
+        reviewDisclosure: null,
+        qualityNeedsDraft: false,
+      }),
+    });
+
+    expect(publication?.draft).toBe(true);
+    expect(publication?.body).toContain(
+      "Review: Unavailable (current-source review timed out)",
+    );
+    expect(publication?.body).not.toContain("Review: Passed");
+  });
+
   it("publishes to Human Review even when passed a forged autoMerge value", async () => {
     const trello = {
       moveCard: vi.fn().mockResolvedValue({
@@ -754,6 +898,9 @@ describe("publishCard", () => {
           "",
           "<!-- agent-orchestrator-status:start -->",
           "<!-- agent-orchestrator-status:end -->",
+          "",
+          "## Orchestrator-observed workflow evidence",
+          "- yarn validate passed.",
         ].join("\n"),
       }),
     );

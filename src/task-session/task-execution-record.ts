@@ -18,6 +18,7 @@ export const taskExecutionEventTypes = [
   "plan-approved",
   "implementation-completed",
   "validation-passed",
+  "validation-reviewed",
   "validation-exhausted",
   "validation-failed",
   "review-passed",
@@ -492,7 +493,7 @@ const validationRepairSchema = z
 const reviewRepairSchema = z.strictObject({
   cycleId: nonBlankIdentifier,
   status: z.enum(["active", "passed", "exhausted", "stopped"]),
-  stopReason: z.literal("validation-exhausted").optional(),
+  stopReason: z.enum(["validation-exhausted", "review-unavailable"]).optional(),
   activePrimaryOperation: z
     .strictObject({
       operationId: nonBlankIdentifier,
@@ -529,6 +530,13 @@ const reviewRepairSchema = z.strictObject({
         sourceIdentities: z.array(taskSessionContentIdentity).min(1),
         status: z.enum(["unresolved", "resolved", "superseded"]),
         justification: z.string().min(1).optional(),
+        primaryDisposition: z
+          .strictObject({
+            reviewedContentIdentity: taskSessionContentIdentity,
+            status: z.enum(["addressed", "dismissed"]),
+            rationale: z.string().min(1).max(4_000),
+          })
+          .optional(),
       }),
     )
     .superRefine((findings, ctx) => {
@@ -552,6 +560,28 @@ const reviewRepairSchema = z.strictObject({
             message: "Superseded tracked findings require justification",
           });
         }
+      }
+    })
+    .optional(),
+  requirementDispositions: z
+    .array(
+      z.strictObject({
+        requirementId: nonBlankIdentifier,
+        reviewedContentIdentity: taskSessionContentIdentity,
+        status: z.enum(["addressed", "dismissed"]),
+        rationale: z.string().min(1).max(4_000),
+      }),
+    )
+    .superRefine((dispositions, ctx) => {
+      const ids = new Set<string>();
+      for (const [index, disposition] of dispositions.entries()) {
+        if (ids.has(disposition.requirementId))
+          ctx.addIssue({
+            code: "custom",
+            path: [index, "requirementId"],
+            message: `Duplicate primary requirement disposition: ${disposition.requirementId}`,
+          });
+        ids.add(disposition.requirementId);
       }
     })
     .optional(),
@@ -617,6 +647,20 @@ const publicationQualitySchema = z.strictObject({
   validation: validationEvidenceSchema,
   coverageEvidence: validationEvidenceSchema.optional(),
   review: z.unknown(),
+  reviewPreviousFindingIds: z
+    .array(nonBlankIdentifier)
+    .refine((ids) => new Set(ids).size === ids.length)
+    .optional(),
+  reviewPreviousFindings: z
+    .array(
+      z.strictObject({
+        id: nonBlankIdentifier,
+        sourceContentIdentity: taskSessionContentIdentity.optional(),
+        sourceIdentities: z.array(taskSessionContentIdentity),
+        status: z.enum(["unresolved", "resolved", "superseded"]),
+      }),
+    )
+    .optional(),
 });
 
 const taskExecutionRecordSchema = z
@@ -662,6 +706,19 @@ const taskExecutionRecordSchema = z
       .strictObject({
         contentIdentity: taskSessionContentIdentity,
         diagnostic: z.string().min(1).max(500),
+        priorReview: implementationReviewResultSchema.optional(),
+      })
+      .superRefine((marker, ctx) => {
+        if (
+          marker.priorReview !== undefined &&
+          marker.priorReview.verdict !== "fail"
+        )
+          ctx.addIssue({
+            code: "custom",
+            path: ["priorReview", "verdict"],
+            message:
+              "Only a prior negative review may be retained as unavailable-review context",
+          });
       })
       .optional(),
     ciRepair: ciRepairSchema.optional(),

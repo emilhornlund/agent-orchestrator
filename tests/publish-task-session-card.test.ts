@@ -107,6 +107,60 @@ function fixture() {
 }
 
 describe("publishTaskSessionCard", () => {
+  it("forwards the prepared current-review outcome to the publisher", async () => {
+    const { base } = fixture();
+    vi.mocked(publishCard).mockClear();
+    const review = {
+      ...evidence.review!,
+      verdict: "fail" as const,
+      requirementAssessments: [
+        {
+          requirementId: "REQ-1",
+          status: "unsatisfied" as const,
+          details:
+            "The current source misses the requested persistence behavior.",
+          evidence: [],
+        },
+      ],
+      blockingFindings: [
+        {
+          kind: "incomplete" as const,
+          summary: "Persistence is missing after reload",
+          detail: "The current source restores the default value instead.",
+        },
+      ],
+      reviewedContentIdentity: `sha256:${"c".repeat(64)}`,
+    };
+    const currentEvidence = {
+      ...evidence,
+      currentContentIdentity: review.reviewedContentIdentity,
+      validation: {
+        ...evidence.validation!,
+        contentIdentity: review.reviewedContentIdentity,
+      },
+      review,
+    };
+    const preparedReviewPublication = {
+      reviewResult:
+        "Failed (human review required; material findings unresolved)",
+      reviewDisclosure: review,
+      qualityNeedsDraft: false,
+    };
+
+    await publishTaskSessionCard({
+      ...base,
+      initialEvidence: currentEvidence,
+      verifyPreparedContent: async () => currentEvidence,
+      getPreparedReviewPublication: () => preparedReviewPublication,
+    } as never);
+
+    const publicationOptions = vi.mocked(publishCard).mock.calls[0]?.[0];
+    expect(publicationOptions?.reviewResult).toBe("Passed");
+    await expect(
+      publicationOptions?.beforePushVerification?.(),
+    ).resolves.toEqual(preparedReviewPublication);
+  });
+
   it("blocks publication when configured setup has no validated commit disposition", async () => {
     const { base, git } = fixture();
     vi.mocked(publishCard).mockClear();

@@ -8,8 +8,14 @@ import type { ProjectConfig } from "../src/config/config.js";
 import type { GitClient } from "../src/git/git-client.js";
 import {
   OpenCodeClient,
+  OpenCodeTimeoutError,
   type RunOpenCode,
 } from "../src/opencode/opencode-client.js";
+import {
+  ProcessEvidenceError,
+  ProcessExecutionError,
+  ProcessGroupTerminationError,
+} from "../src/process/process-runtime.js";
 import {
   runTaskSessionReview,
   TaskSessionReviewUnavailableError,
@@ -302,6 +308,72 @@ describe("runTaskSessionReview", () => {
     ).rejects.toBeInstanceOf(TaskSessionReviewUnavailableError);
   });
 
+  it.each([
+    ["process-group uncertainty", new ProcessGroupTerminationError(1234)],
+    ["process evidence failure", new ProcessEvidenceError("evidence failed")],
+  ])(
+    "propagates %s instead of treating it as optional review failure",
+    async (_label, failure) => {
+      const fixture = createFixture();
+      const identity = await fixture.createStoredPlan();
+      const run = vi.fn<RunOpenCode>().mockRejectedValue(failure);
+
+      await expect(
+        runTaskSessionReview(
+          reviewOptions(
+            fixture,
+            new OpenCodeClient(run),
+            successfulQualityEvidence(identity).validation,
+          ),
+        ),
+      ).rejects.toBe(failure);
+    },
+  );
+
+  it("classifies a timeout as optional only when the process tree is confirmed stopped", async () => {
+    const fixture = createFixture();
+    const identity = await fixture.createStoredPlan();
+    const run = vi
+      .fn<RunOpenCode>()
+      .mockRejectedValue(
+        new OpenCodeTimeoutError(1_000, "review-execution", true),
+      );
+
+    await expect(
+      runTaskSessionReview(
+        reviewOptions(
+          fixture,
+          new OpenCodeClient(run),
+          successfulQualityEvidence(identity).validation,
+        ),
+      ),
+    ).rejects.toBeInstanceOf(TaskSessionReviewUnavailableError);
+  });
+
+  it("classifies a proven never-dispatched spawn failure as optional review unavailability", async () => {
+    const fixture = createFixture();
+    const identity = await fixture.createStoredPlan();
+    const run = vi
+      .fn<RunOpenCode>()
+      .mockRejectedValue(
+        new ProcessExecutionError(
+          "OpenCode",
+          "review-execution",
+          "spawn-failure",
+        ),
+      );
+
+    await expect(
+      runTaskSessionReview(
+        reviewOptions(
+          fixture,
+          new OpenCodeClient(run),
+          successfulQualityEvidence(identity).validation,
+        ),
+      ),
+    ).rejects.toBeInstanceOf(TaskSessionReviewUnavailableError);
+  });
+
   it("classifies malformed review output as unavailable after retry", async () => {
     const fixture = createFixture();
     const identity = await fixture.createStoredPlan();
@@ -407,6 +479,56 @@ describe("runTaskSessionReview", () => {
       true,
     );
     expect(fixture.git.getDiff).toHaveBeenCalledWith(fixture.worktreePath);
+  });
+
+  it("attempts an independent review after current configured quality checks fail", async () => {
+    const fixture = createFixture({ coverageCommand: "yarn coverage" });
+    const contentIdentity = await fixture.createStoredPlan();
+    const stored = fixture.taskRecordStore.read(card.id)!;
+    fixture.taskRecordStore.compareAndSwap(card.id, stored.revision, {
+      ...stored,
+      validationRepair: {
+        ...stored.validationRepair!,
+        status: "exhausted",
+        maxAttempts: 2,
+        stopReason: "finished-early",
+        evidence: {
+          ...stored.validationRepair!.evidence!,
+          status: "failed",
+          exitCode: 1,
+        },
+        coverageEvidence: {
+          ...stored.validationRepair!.coverageEvidence!,
+          status: "failed",
+          exitCode: 1,
+        },
+      },
+      revision: stored.revision + 1,
+      updatedAt: "2026-10-24T09:04:00.000Z",
+    });
+    const quality = successfulQualityEvidence(contentIdentity, "yarn coverage");
+    const run = vi.fn<RunOpenCode>().mockResolvedValue({
+      exitCode: 0,
+      output: JSON.stringify(passingReview(contentIdentity)),
+      errorOutput: "",
+    });
+
+    const result = await runTaskSessionReview(
+      reviewOptions(
+        fixture,
+        new OpenCodeClient(run),
+        { ...quality.validation, status: "failed", exitCode: 1 },
+        { ...quality.coverage!, status: "failed", exitCode: 1 },
+      ),
+    );
+
+    expect(result.review.verdict).toBe("pass");
+    expect(run).toHaveBeenCalledOnce();
+    expect(fixture.taskRecordStore.read(card.id)).toMatchObject({
+      phase: "review",
+      lastEvent: { type: "validation-reviewed" },
+      validationRepair: { status: "exhausted" },
+    });
   });
 
   it("reviews against the original task when planning advice was unavailable", async () => {
@@ -566,10 +688,14 @@ describe("runTaskSessionReview", () => {
     );
   });
 
-  it("rejects review when local validation evidence is missing, failed, or stale", async () => {
+  it("reviews failed evidence but rejects stale source evidence", async () => {
     const fixture = createFixture();
     const contentIdentity = await fixture.createStoredPlan();
-    const runOpenCode = vi.fn<RunOpenCode>();
+    const runOpenCode = vi.fn<RunOpenCode>().mockResolvedValue({
+      exitCode: 0,
+      output: JSON.stringify(passingReview(contentIdentity)),
+      errorOutput: "",
+    });
     const evidence = successfulQualityEvidence(contentIdentity);
 
     await expect(
@@ -580,8 +706,8 @@ describe("runTaskSessionReview", () => {
           exitCode: 1,
         }),
       ),
-    ).rejects.toThrow("successful local validation evidence");
-    expect(runOpenCode).not.toHaveBeenCalled();
+    ).resolves.toMatchObject({ review: { verdict: "pass" } });
+    expect(runOpenCode).toHaveBeenCalledOnce();
 
     fs.writeFileSync(
       path.join(fixture.worktreePath, "src.ts"),
@@ -598,8 +724,8 @@ describe("runTaskSessionReview", () => {
         ),
       ),
     ).rejects.toThrow("stale source snapshot");
-    expect(runOpenCode).not.toHaveBeenCalled();
-    expect(fixture.taskRecordStore.read(card.id)?.phase).toBe("validation");
+    expect(runOpenCode).toHaveBeenCalledOnce();
+    expect(fixture.taskRecordStore.read(card.id)?.phase).toBe("review");
   });
 
   it("requires configured coverage evidence before independent review", async () => {
@@ -737,7 +863,7 @@ describe("runTaskSessionReview", () => {
           successfulQualityEvidence(contentIdentity).validation,
         ),
       ),
-    ).rejects.toThrow("out-of-scope result");
+    ).rejects.toBeInstanceOf(TaskSessionReviewUnavailableError);
     expect(runOpenCode).toHaveBeenCalledOnce();
   });
 

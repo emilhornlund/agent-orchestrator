@@ -42,6 +42,7 @@ let originalProcessPath: string | undefined;
 let originalPrimaryMode: string | undefined;
 const leases: ProjectOwnershipLease[] = [];
 afterEach(async () => {
+  vi.restoreAllMocks();
   vi.useRealTimers();
   if (originalProcessPath === undefined) delete process.env.PATH;
   else process.env.PATH = originalProcessPath;
@@ -110,6 +111,22 @@ describe("task lifecycle through pollProject", () => {
       ackLoss: false,
       quality: "both",
     },
+    {
+      draft: false,
+      terminal: "merged",
+      destination: "done",
+      ackLoss: false,
+      quality: "both",
+      preparedReview: "material",
+    },
+    {
+      draft: false,
+      terminal: "merged",
+      destination: "done",
+      ackLoss: false,
+      quality: "both",
+      preparedReview: "unavailable",
+    },
   ] as const)(
     ({
       draft,
@@ -117,18 +134,20 @@ describe("task lifecycle through pollProject", () => {
       ackLoss,
       correctionFailure = false,
       quality,
+      preparedReview,
     }: {
       draft: boolean;
       terminal: string;
       ackLoss: boolean;
       correctionFailure?: boolean;
       quality: "validation" | "none" | "coverage" | "both";
+      preparedReview?: "material" | "unavailable";
     }) =>
       ackLoss
         ? "reconciles an accepted PR whose create acknowledgement was lost without claiming the next card"
         : correctionFailure
           ? `blocks exhausted published-PR correction until human ${terminal}`
-          : `publishes a ${draft ? "draft" : "normal"} PR (${quality}) and waits for human ${terminal} before releasing the next card (${JSON.stringify({ draft, terminal, ackLoss, correctionFailure, quality })})`,
+          : `publishes a ${draft ? "draft" : "normal"} PR (${quality}) and waits for human ${terminal} before releasing the next card (${JSON.stringify({ draft, terminal, ackLoss, correctionFailure, quality, preparedReview })})`,
     async ({
       draft,
       terminal,
@@ -137,6 +156,7 @@ describe("task lifecycle through pollProject", () => {
       terminalReadRaceAt = 2,
       correctionFailure = false,
       quality,
+      preparedReview,
     }) => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "task-lifecycle-"));
       roots.push(root);
@@ -191,6 +211,38 @@ describe("task lifecycle through pollProject", () => {
         return result.stdout.trim();
       };
       let git = new GitClient(runGit);
+      let changedPreparedSource = false;
+      if (preparedReview !== undefined) {
+        const compareAndSwap = TaskExecutionStore.prototype.compareAndSwap;
+        vi.spyOn(
+          TaskExecutionStore.prototype,
+          "compareAndSwap",
+        ).mockImplementation(function (
+          this: TaskExecutionStore,
+          cardId,
+          revision,
+          nextRecord,
+        ) {
+          const persisted = compareAndSwap.call(
+            this,
+            cardId,
+            revision,
+            nextRecord,
+          );
+          if (
+            !changedPreparedSource &&
+            cardId === "first" &&
+            nextRecord.lastEvent?.type === "review-passed"
+          ) {
+            fs.writeFileSync(
+              path.join(worktrees, "first", "app.js"),
+              "module.exports = 'prepared publication source';\n",
+            );
+            changedPreparedSource = true;
+          }
+          return persisted;
+        });
+      }
       const gitRun = async (cwd: string, ...args: string[]) =>
         runGit(cwd, args);
       await gitRun(root, "init", "--bare", "--initial-branch=main", remote);
@@ -428,6 +480,7 @@ describe("task lifecycle through pollProject", () => {
       let loseCreateAcknowledgement = false;
       let feedbackReads = 0;
       let correctionFeedback = false;
+      let reviewerRounds = 0;
       let terminalRaceTarget: "MERGED" | "CLOSED" | null = null;
       let terminalRaceReads = 0;
       let terminalRaceReadAt = 2;
@@ -642,6 +695,76 @@ describe("task lifecycle through pollProject", () => {
         async (options: OpenCodeRunOptions) => {
           const cardId = path.basename(options.cwd);
           openCodeCards.push(cardId);
+          if (
+            preparedReview !== undefined &&
+            options.readOnly &&
+            options.prompt.includes("Independently review the implementation")
+          ) {
+            reviewerRounds += 1;
+            const identity = options.prompt.match(
+              /Reviewed source content identity: (sha256:[0-9a-f]{64})/u,
+            )?.[1];
+            if (identity === undefined)
+              throw new Error("review prompt omitted source identity");
+            if (reviewerRounds === 1)
+              return {
+                exitCode: 0,
+                output: JSON.stringify({
+                  version: 1,
+                  projectId: project.id,
+                  cardId,
+                  verdict: "pass",
+                  requirementAssessments: [
+                    {
+                      requirementId: "REQ-1",
+                      status: "satisfied",
+                      details: "The initial implementation meets the request.",
+                      evidence: ["app.js"],
+                    },
+                  ],
+                  blockingFindings: [],
+                  previousFindingAssessments: [],
+                  reviewedContentIdentity: identity,
+                }),
+                errorOutput: "",
+              };
+            if (preparedReview === "unavailable")
+              return {
+                exitCode: 1,
+                output: "",
+                errorOutput: "follow-up review service unavailable",
+              };
+            return {
+              exitCode: 0,
+              output: JSON.stringify({
+                version: 1,
+                projectId: project.id,
+                cardId,
+                verdict: "fail",
+                requirementAssessments: [
+                  {
+                    requirementId: "REQ-1",
+                    status: "unsatisfied",
+                    details:
+                      "The prepared source loses the requested value after reload.",
+                    evidence: [],
+                  },
+                ],
+                blockingFindings: [
+                  {
+                    kind: "defect",
+                    summary: "Prepared source loses state after reload",
+                    detail:
+                      "The changed publication source restores the default value.",
+                    location: { filePath: "app.js", line: 1 },
+                  },
+                ],
+                previousFindingAssessments: [],
+                reviewedContentIdentity: identity,
+              }),
+              errorOutput: "",
+            };
+          }
           if (
             correctionFailure &&
             options.prompt.startsWith(
@@ -943,14 +1066,20 @@ describe("task lifecycle through pollProject", () => {
           ),
         ).toBe(acceptedHead);
         expect(await gitRun(source, "show", `${acceptedHead}:app.js`)).toBe(
-          "module.exports = 'implemented';",
+          preparedReview === undefined
+            ? "module.exports = 'implemented';"
+            : "module.exports = 'prepared publication source';",
         );
         expect(await git.getHeadSha(path.join(worktrees, "first"))).toMatch(
           /^[0-9a-f]{40}$/u,
         );
         expect(
           fs.readFileSync(path.join(worktrees, "first", "app.js"), "utf8"),
-        ).toBe("module.exports = 'implemented';\n");
+        ).toBe(
+          preparedReview === undefined
+            ? "module.exports = 'implemented';\n"
+            : "module.exports = 'prepared publication source';\n",
+        );
         expect(lists.get("first")).toBe("working");
         expect(fs.existsSync(path.join(worktrees, "first"))).toBe(true);
         expect(lists.get("next")).toBe("ready");
@@ -972,6 +1101,49 @@ describe("task lifecycle through pollProject", () => {
         // Retained dispatch evidence and the correlation marker authorize only
         // readback after restart, never another create.
       }
+      if (preparedReview !== undefined) {
+        for (let pass = 0; pass < 8 && !prs.has("agent/first"); pass++)
+          await poll();
+        const preparedPr = prs.get("agent/first");
+        expect(preparedPr).toBeDefined();
+        expect(reviewerRounds).toBe(2);
+        expect(publicationQualityAtCreate).toHaveLength(1);
+        const persistedPublicationQuality = publicationQualityAtCreate[0] as {
+          contentIdentity: string;
+          review: { verdict: string; blockingFindings: unknown[] } | null;
+        };
+        expect(persistedPublicationQuality.contentIdentity).toMatch(
+          /^sha256:[0-9a-f]{64}$/u,
+        );
+        if (preparedReview === "material") {
+          expect(persistedPublicationQuality.review).toMatchObject({
+            verdict: "fail",
+            blockingFindings: [
+              expect.objectContaining({
+                summary: "Prepared source loses state after reload",
+              }),
+            ],
+          });
+          expect(preparedPr?.isDraft).toBe(true);
+          expect(preparedPr?.body).toContain(
+            "Review: Failed (human review required",
+          );
+          expect(preparedPr?.body).toContain(
+            "The changed publication source restores the default value.",
+          );
+        } else {
+          expect(persistedPublicationQuality.review).toBeNull();
+          expect(store.read("first")?.reviewUnavailable).toMatchObject({
+            contentIdentity: persistedPublicationQuality.contentIdentity,
+          });
+          expect(preparedPr?.isDraft).toBe(true);
+          expect(preparedPr?.body).toContain("Review: Unavailable");
+          expect(preparedPr?.body).toContain(
+            "Independent implementation review exited with code 1",
+          );
+        }
+        return;
+      }
       for (
         let attempt = 0;
         attempt < 15 && store.read("first")?.phase !== "human-feedback";
@@ -982,7 +1154,31 @@ describe("task lifecycle through pollProject", () => {
       expect(record?.phase).toBe("human-feedback");
       const firstPr = prs.get("agent/first");
       expect(firstPr).toBeDefined();
-      expect(firstPr?.isDraft).toBe(draft || ackLoss || quality !== "both");
+      expect(firstPr?.isDraft).toBe(
+        draft || ackLoss || quality !== "both" || preparedReview !== undefined,
+      );
+      if (preparedReview !== undefined) {
+        expect(reviewerRounds).toBe(2);
+        if (preparedReview === "material") {
+          expect(firstPr?.body).toContain(
+            "Prepared source loses state after reload",
+          );
+          expect(firstPr?.body).toContain(
+            "The changed publication source restores the default value.",
+          );
+          expect(firstPr?.body).toContain("REQ-1");
+          expect(firstPr?.body).toContain("unsatisfied");
+          expect(firstPr?.body).toContain(
+            "Review: Failed (human review required",
+          );
+        } else {
+          expect(firstPr?.body).toContain("Review: Unavailable");
+          expect(firstPr?.body).toContain(
+            "Independent implementation review exited with code 1",
+          );
+          expect(firstPr?.body).not.toContain("Review: Passed");
+        }
+      }
       expect(firstPr?.body).not.toContain(
         "All configured validation and coverage passed.",
       );
@@ -1386,7 +1582,9 @@ describe("task lifecycle through pollProject", () => {
         ))!;
         expect(publishedHeadSha).toMatch(/^[0-9a-f]{40}$/u);
         expect(await gitRun(source, "show", `${publishedHeadSha}:app.js`)).toBe(
-          "module.exports = 'implemented';",
+          preparedReview === undefined
+            ? "module.exports = 'implemented';"
+            : "module.exports = 'prepared publication source';",
         );
         expect(
           Number(
