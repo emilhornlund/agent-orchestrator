@@ -2,9 +2,17 @@
 
 ## Current checkpoint
 
-- **P6 complete.** Scoped implementation, production-path inspection and integrated
-  validation passed: `yarn validate` (lint, formatting, typecheck and all **2,076
-  tests across 160 files**). No known unresolved P6 defect. P7 has not started.
+- **P6 implementation complete; distinguish local checks from PR CI.** The original
+  local `yarn validate` passed lint, formatting, typecheck and **2,076 tests across
+  160 files**. PR #219's first CI run (`42883831283`) instead failed one command-crash
+  regression: Bash implicitly execs its last command, while CI's Dash preserves the
+  shell and reports the killed child as exit `143`. This test now explicitly execs
+  when requiring a supervisor signal; a separate retained-shell regression requires
+  numeric `143` with no fabricated signal. Production classification is unchanged.
+  Focused checks passed all 42 adapter tests locally and all seven command/shell
+  cases in a disposable Debian Node 24/Dash container, plus typecheck, ESLint and
+  Prettier. Final local and current-head CI results are reported in the PR/session;
+  a local pass alone does not establish CI success. P7 has not started.
 - Resume-session checkpoints: `faf726f` current-evidence same-PR promotion,
   `33e325f` isolation startup integration, `24c1d76` notification disclosure and
   product guidance, `cb9d511` integrated recovery/draft fixture coverage.
@@ -24,9 +32,9 @@
   implement and review small complete tasks sequentially, then check final integration
   and validate once. No evidence reports or full-suite runs per task.
 - Preserve existing working changes and staging when resuming.
-- Local reviewed-task commits require explicit session authorization. Otherwise
-  leave changes unstaged and uncommitted for user review. No push, PR, merge,
-  deployment or P7 is authorized by the current scope.
+- Local reviewed-task commits require explicit session authorization. The current
+  session authorizes publishing this branch to PR #219 and correcting its failed CI.
+  No merge, deployment or P7 is authorized.
 
 ## P6 publication checkpoints and remaining work
 
@@ -87,8 +95,9 @@ remaining integration/regression gaps, with broader qualification only if reques
   genuine failures with outage/reconstruction accounting separate. Apply and test
   that policy when touching budgets; do not reopen the approval.
 - **Source protection:** writable dispatch uses Bubblewrap and startup verifies its
-  required capabilities; deployment policies must permit those namespaces. No live
-  container/service qualification has been run in this session.
+  required capabilities; deployment policies must permit those namespaces. Focused
+  shell behavior was checked in a disposable container; full container workflow or
+  live-service qualification has not been performed.
 
 Do not reopen P5 or reconstruct deleted audit/evidence records. Current source,
 tests and specification govern implementation. Keep useful new task guidance in

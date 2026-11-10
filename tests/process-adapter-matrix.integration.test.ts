@@ -103,7 +103,12 @@ describe("production child adapter outcome matrix", () => {
       fs.rmSync(root, { recursive: true, force: true });
   });
 
-  async function run(family: Family, scenario: Case, root: string) {
+  async function run(
+    family: Family,
+    scenario: Case,
+    root: string,
+    retainCommandShell = false,
+  ) {
     const runtimeRoot = path.join(root, "runtime");
     const binaries = path.join(root, "bin");
     fs.mkdirSync(binaries, { recursive: true });
@@ -153,7 +158,14 @@ describe("production child adapter outcome matrix", () => {
           });
         return new CommandRunner().run({
           cwd: root,
-          command: executable,
+          // Exercise an actual signal on the supervised PID, independently of
+          // whether /bin/sh optimizes its final command into an implicit exec.
+          command:
+            scenario === "crash"
+              ? retainCommandShell
+                ? `${executable}; status=$?; exit "$status"`
+                : `exec ${executable}`
+              : executable,
           timeoutMilliseconds,
           captureOutput: true,
           suppressOutput: true,
@@ -205,6 +217,34 @@ describe("production child adapter outcome matrix", () => {
       ),
     };
   }
+
+  it("records a retained shell's numeric child-crash status without inventing a supervisor signal", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "adapter-shell-crash-"));
+    roots.push(root);
+    const { request, artifactRoot, timeline } = await run(
+      "command",
+      "crash",
+      root,
+      true,
+    );
+    await expect(request).resolves.toMatchObject({ exitCode: 143 });
+    const evidence = await inspectArtifact(artifactRoot);
+    expect(evidence.metadata).toMatchObject({
+      status: "nonzero",
+      exitCode: 143,
+    });
+    expect(evidence.metadata.signal).toBeUndefined();
+    expect(evidence.stdout).toBe("RAW_OUT_command_crash\n");
+    expect(evidence.stderr).toContain("RAW_ERR_command_crash\n");
+    expect(timeline.map((event) => event.type)).toEqual([
+      "process-started",
+      "process-finished",
+    ]);
+    expect(timeline[1]).toMatchObject({
+      executionId: evidence.metadata.executionId,
+      status: "nonzero",
+    });
+  });
 
   it.each(
     families.flatMap((family) =>
