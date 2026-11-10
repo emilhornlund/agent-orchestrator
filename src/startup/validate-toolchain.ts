@@ -2,6 +2,10 @@ import type { CommandRunner } from "../process/command-runner.js";
 
 export const MINIMUM_GIT_VERSION = "2.30.0";
 export const MINIMUM_OPENCODE_VERSION = "1.0.0";
+// Exercise the namespace/mount operations used by writable dispatch, not merely
+// the presence of a binary. No agent or repository mutation runs in this probe.
+export const ISOLATION_PROBE_COMMAND =
+  "bwrap --die-with-parent --new-session --unshare-pid --unshare-ipc --unshare-uts --ro-bind / / --proc /proc --dev /dev -- /bin/true";
 
 export class ToolchainCompatibilityError extends Error {
   constructor(tool: string, detail: string, cause?: unknown) {
@@ -161,4 +165,21 @@ export async function validateGitAndOpenCode(
       "OpenCode",
       `run command is missing required options: ${missing.join(", ")}`,
     );
+  try {
+    const result = await commands.run({
+      cwd: process.cwd(),
+      command: ISOLATION_PROBE_COMMAND,
+      timeoutMilliseconds,
+      captureOutput: true,
+      suppressOutput: true,
+    });
+    if (!result || result.exitCode !== 0)
+      throw new Error("Isolation capability probe failed");
+  } catch (error) {
+    throw new ToolchainCompatibilityError(
+      "Bubblewrap",
+      "install bwrap on Linux and permit user/mount/PID namespaces for the service identity (including inside containers); writable agent execution cannot run safely without them",
+      error,
+    );
+  }
 }

@@ -132,6 +132,18 @@ container command must execute from that directory so package resolution finds t
 same configuration and namespace ID in every participant. A container that cannot access the marker/owner files fails startup
 before project processing; do not work around that failure by making the namespace writable by everyone.
 
+Writable OpenCode execution additionally requires Linux Bubblewrap (`bwrap`). Install
+it in the runtime image as well as on local hosts (for example, the distribution's
+`bubblewrap` package). Startup probes the actual mount/PID namespace capability as
+the service user before processing tasks. Container seccomp, user-namespace and
+SELinux policies must permit this bounded nested isolation; installing the binary
+alone is insufficient. Keep these policies explicit and least-privilege: do not
+use privileged containers or disable SELinux labeling as a workaround. A denied
+probe fails startup with an actionable isolation error, without claiming a task.
+The probe mounts the host read-only only to execute `/bin/true`; agent dispatch
+instead mounts explicit tool/configuration dependencies, read-only Git/runtime
+context and the owned writable task content, never the whole host root.
+
 The volume may be bind-mounted at different absolute paths in host and container. Active attempt state itself remains pinned
 to its configured storage root; changing that root during an active attempt is not an equivalent alias. Stop and verify all
 old-version workers before enabling a version that understands this namespace: old binaries do not participate in these leases,

@@ -31,10 +31,15 @@ it("confines the actual writable OpenCode child and its descendants to task cont
     path.join(common, "refs/heads/intrusion"),
     path.join(f.project.contextRoot, "intrusion"),
   ];
+  const attachment = path.join(f.project.contextRoot, "attachment.txt");
+  fs.writeFileSync(attachment, "task attachment context");
   fs.writeFileSync(
     path.join(bin, "opencode"),
     `#!${process.execPath}\nconst fs = require('node:fs'); const {spawnSync} = require('node:child_process');
 const paths = ${JSON.stringify(protectedPaths)};
+if (fs.readFileSync(${JSON.stringify(attachment)}, 'utf8') !== 'task attachment context') process.exit(35);
+fs.writeFileSync(process.env.HOME + '/.local/share/opencode/session-test', 'session state');
+fs.writeFileSync(process.env.TMPDIR + '/scratch', 'scratch');
 for (const p of paths) { try { fs.writeFileSync(p, 'unsafe'); process.exit(31); } catch {} }
 const child = spawnSync(${JSON.stringify(process.execPath)}, ['-e', "try {require('node:fs').writeFileSync(" + JSON.stringify(paths[0]) + ", 'unsafe'); process.exit(32)} catch {}"]);
 if (child.status !== 0) process.exit(33);
