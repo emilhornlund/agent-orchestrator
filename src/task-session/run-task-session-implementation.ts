@@ -236,15 +236,6 @@ export async function runTaskSessionImplementation(
   } = options;
   const projectId = project.id;
 
-  if (
-    project.repository.validationCommand === undefined ||
-    project.repository.validationCommand.trim().length === 0
-  ) {
-    throw new Error(
-      "Task-session implementation requires a nonempty repository.validationCommand",
-    );
-  }
-
   assertOwnedTaskWorktreePath(project, worktreePath);
 
   const record = loadOwnedTaskExecutionRecord(taskRecordStore, {
@@ -266,18 +257,26 @@ export async function runTaskSessionImplementation(
 
   const storedPlan = planStore.read(
     card.id,
-    record.phase === "planning" ? record.revision : undefined,
+    record.phase === "planning" &&
+      record.planReviewAdvice?.planRevision === undefined
+      ? record.revision
+      : undefined,
+    record.operationKey,
   );
 
-  if (storedPlan === null) {
+  if (
+    record.phase === "planning" &&
+    record.planReviewAdvice !== undefined &&
+    storedPlan !== null &&
+    (record.planReviewAdvice.planRevision === undefined
+      ? storedPlan.taskRecordRevision !== record.revision - 1
+      : record.planReviewAdvice.planRevision !== storedPlan.planRevision ||
+        record.planReviewAdvice.taskRecordRevision !==
+          storedPlan.taskRecordRevision ||
+        record.planReviewAdvice.operationKey !== record.operationKey)
+  ) {
     throw new Error(
-      `Task-session implementation requires a persisted plan for ${projectId}/${card.id}`,
-    );
-  }
-
-  if (storedPlan.verification?.verdict !== "pass") {
-    throw new Error(
-      `Task-session implementation requires passing independent plan verification for ${projectId}/${card.id}`,
+      `Task plan and independent review advice are not associated with the current task operation for ${projectId}/${card.id}`,
     );
   }
 
@@ -292,7 +291,13 @@ export async function runTaskSessionImplementation(
   const prompt = buildTaskSessionImplementationPrompt({
     projectId,
     card,
-    approvedPlan: storedPlan.plan,
+    ...(storedPlan === null ? {} : { approvedPlan: storedPlan.plan }),
+    ...(storedPlan?.verification === undefined
+      ? {}
+      : {
+          planReviewAdvice: storedPlan.verification,
+          planRevision: storedPlan.planRevision,
+        }),
     ...(attachmentContext === undefined ? {} : { attachmentContext }),
   });
 
@@ -363,7 +368,13 @@ export async function runTaskSessionImplementation(
             attemptId: recoveryAttemptId ?? record.operationKey,
             worktreePath,
             record,
-            plan: storedPlan.plan,
+            plan: storedPlan?.plan ?? null,
+            ...(storedPlan === null
+              ? {}
+              : { planRevision: storedPlan.planRevision }),
+            ...(storedPlan?.verification === undefined
+              ? {}
+              : { planReviewAdvice: storedPlan.verification }),
             ...(attachmentContext === undefined
               ? {}
               : { attachments: attachmentContext }),

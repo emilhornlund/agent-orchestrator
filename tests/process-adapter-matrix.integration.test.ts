@@ -10,7 +10,10 @@ import {
 } from "../src/coordination/project-ownership.js";
 import { GitHubClient } from "../src/github/github-client.js";
 import { OpenCodeClient } from "../src/opencode/opencode-client.js";
-import { CommandRunner } from "../src/process/command-runner.js";
+import {
+  CommandRunInterruptedError,
+  CommandRunner,
+} from "../src/process/command-runner.js";
 import {
   configureProcessRuntime,
   withTaskProcessArtifacts,
@@ -37,8 +40,8 @@ const cases: Case[] = [
 ];
 
 function executableScript(family: Family, scenario: Case): string {
-  const outMarker = `P3_RAW_OUT_${family}_${scenario}`;
-  const errMarker = `P3_RAW_ERR_${family}_${scenario}`;
+  const outMarker = `RAW_OUT_${family}_${scenario}`;
+  const errMarker = `RAW_ERR_${family}_${scenario}`;
   const partialOut =
     family === "gh"
       ? `https://github.com/owner/repository/pull/1?marker=${outMarker}\n`
@@ -75,8 +78,8 @@ function executableScript(family: Family, scenario: Case): string {
 
 function fixtureMarkers(family: Family, scenario: Case) {
   return {
-    stdout: `P3_RAW_OUT_${family}_${scenario}`,
-    stderr: `P3_RAW_ERR_${family}_${scenario}`,
+    stdout: `RAW_OUT_${family}_${scenario}`,
+    stderr: `RAW_ERR_${family}_${scenario}`,
   };
 }
 
@@ -100,7 +103,12 @@ describe("production child adapter outcome matrix", () => {
       fs.rmSync(root, { recursive: true, force: true });
   });
 
-  async function run(family: Family, scenario: Case, root: string) {
+  async function run(
+    family: Family,
+    scenario: Case,
+    root: string,
+    retainCommandShell = false,
+  ) {
     const runtimeRoot = path.join(root, "runtime");
     const binaries = path.join(root, "bin");
     fs.mkdirSync(binaries, { recursive: true });
@@ -137,7 +145,7 @@ describe("production child adapter outcome matrix", () => {
           return new GitHubClient().findPullRequest({
             cwd: root,
             repository: "owner/repository",
-            headBranch: "agent/p3-matrix",
+            headBranch: "agent/adapter-matrix",
           });
         if (family === "opencode")
           return new OpenCodeClient().run({
@@ -150,7 +158,14 @@ describe("production child adapter outcome matrix", () => {
           });
         return new CommandRunner().run({
           cwd: root,
-          command: executable,
+          // Exercise an actual signal on the supervised PID, independently of
+          // whether /bin/sh optimizes its final command into an implicit exec.
+          command:
+            scenario === "crash"
+              ? retainCommandShell
+                ? `${executable}; status=$?; exit "$status"`
+                : `exec ${executable}`
+              : executable,
           timeoutMilliseconds,
           captureOutput: true,
           suppressOutput: true,
@@ -203,6 +218,34 @@ describe("production child adapter outcome matrix", () => {
     };
   }
 
+  it("records a retained shell's numeric child-crash status without inventing a supervisor signal", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "adapter-shell-crash-"));
+    roots.push(root);
+    const { request, artifactRoot, timeline } = await run(
+      "command",
+      "crash",
+      root,
+      true,
+    );
+    await expect(request).resolves.toMatchObject({ exitCode: 143 });
+    const evidence = await inspectArtifact(artifactRoot);
+    expect(evidence.metadata).toMatchObject({
+      status: "nonzero",
+      exitCode: 143,
+    });
+    expect(evidence.metadata.signal).toBeUndefined();
+    expect(evidence.stdout).toBe("RAW_OUT_command_crash\n");
+    expect(evidence.stderr).toContain("RAW_ERR_command_crash\n");
+    expect(timeline.map((event) => event.type)).toEqual([
+      "process-started",
+      "process-finished",
+    ]);
+    expect(timeline[1]).toMatchObject({
+      executionId: evidence.metadata.executionId,
+      status: "nonzero",
+    });
+  });
+
   it.each(
     families.flatMap((family) =>
       cases.map((scenario) => [family, scenario] as const),
@@ -210,7 +253,7 @@ describe("production child adapter outcome matrix", () => {
   )(
     "records %s %s from a real executable",
     async (family, scenario) => {
-      const root = fs.mkdtempSync(path.join(os.tmpdir(), "p3-adapter-matrix-"));
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "adapter-matrix-"));
       roots.push(root);
       const { request, artifactRoot, timeline } = await run(
         family,
@@ -222,8 +265,9 @@ describe("production child adapter outcome matrix", () => {
         expect(result).toBeDefined();
       } else if (scenario === "nonzero" || scenario === "crash") {
         if (family === "command" && scenario === "crash") {
-          const result = (await request) as { exitCode: number };
-          expect(result.exitCode).toBeGreaterThan(0);
+          await expect(request).rejects.toBeInstanceOf(
+            CommandRunInterruptedError,
+          );
         } else if (family === "command" || family === "opencode") {
           await expect(request).resolves.toMatchObject({
             exitCode: scenario === "crash" ? 1 : 9,
@@ -245,15 +289,17 @@ describe("production child adapter outcome matrix", () => {
       const expectedStatus =
         scenario === "partial"
           ? "success"
-          : scenario === "nonzero" || scenario === "crash"
-            ? "nonzero"
-            : scenario === "spawn-failure"
-              ? family === "command"
-                ? "nonzero"
-                : "spawn-failure"
-              : scenario === "timeout"
-                ? "timeout"
-                : "interrupted";
+          : scenario === "crash" && family === "command"
+            ? "interrupted"
+            : scenario === "nonzero" || scenario === "crash"
+              ? "nonzero"
+              : scenario === "spawn-failure"
+                ? family === "command"
+                  ? "nonzero"
+                  : "spawn-failure"
+                : scenario === "timeout"
+                  ? "timeout"
+                  : "interrupted";
       expect(evidence.metadata.status).toBe(expectedStatus);
       const markers = fixtureMarkers(family, scenario);
       if (scenario === "spawn-failure") {
@@ -280,6 +326,10 @@ describe("production child adapter outcome matrix", () => {
         expect(evidence.stderr).not.toContain(markers.stdout);
       }
       if (scenario === "nonzero") expect(evidence.metadata.exitCode).toBe(9);
+      if (scenario === "crash" && family === "command") {
+        expect(evidence.metadata.exitCode).toBeUndefined();
+        expect(evidence.metadata.signal).toBe("SIGTERM");
+      }
       if (scenario === "crash" && family !== "command")
         expect(evidence.metadata.signal).toBe("SIGTERM");
       const start = timeline.find((event) => event.type === "process-started");
@@ -363,16 +413,14 @@ describe("production child adapter outcome matrix", () => {
   it.each(families)(
     "%s does not settle before killing a pipe-closed SIGTERM-resistant descendant",
     async (family) => {
-      const root = fs.mkdtempSync(
-        path.join(os.tmpdir(), "p3-descendant-matrix-"),
-      );
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "descendant-matrix-"));
       roots.push(root);
       const binaries = path.join(root, "bin");
       fs.mkdirSync(binaries);
       const sentinel = path.join(root, "sentinel");
       const executable = family === "command" ? "fixture-command" : family;
-      const outMarker = `P3_RAW_OUT_${family}_pipe-close`;
-      const errMarker = `P3_RAW_ERR_${family}_pipe-close`;
+      const outMarker = `RAW_OUT_${family}_pipe-close`;
+      const errMarker = `RAW_ERR_${family}_pipe-close`;
       const leaderOutput =
         family === "gh"
           ? `process.stdout.write("https://github.com/owner/repository/pull/1?marker=${outMarker}\\n");`
@@ -439,7 +487,7 @@ describe("production child adapter outcome matrix", () => {
   it.each(["git", "gh", "opencode"] as const)(
     "%s decodes independently split UTF-8 streams before redaction and flushes malformed tails",
     async (family) => {
-      const root = fs.mkdtempSync(path.join(os.tmpdir(), "p3-utf8-streams-"));
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "utf8-streams-"));
       roots.push(root);
       const binaries = path.join(root, "bin");
       fs.mkdirSync(binaries);
@@ -496,15 +544,13 @@ describe("production child adapter outcome matrix", () => {
   it.each(["git", "opencode"] as const)(
     "%s records a zero-exit-on-SIGTERM capture overflow as evidence-failure",
     async (family) => {
-      const root = fs.mkdtempSync(
-        path.join(os.tmpdir(), "p3-capture-overflow-"),
-      );
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "capture-overflow-"));
       roots.push(root);
       const binaries = path.join(root, "bin");
       fs.mkdirSync(binaries);
       const filename = path.join(binaries, family);
-      const outMarker = `P3_RAW_OUT_${family}_capture-overflow`;
-      const errMarker = `P3_RAW_ERR_${family}_capture-overflow`;
+      const outMarker = `RAW_OUT_${family}_capture-overflow`;
+      const errMarker = `RAW_ERR_${family}_capture-overflow`;
       fs.writeFileSync(
         filename,
         `#!${process.execPath}\nprocess.on("SIGTERM", () => process.exit(0)); process.stderr.write(${JSON.stringify(errMarker)},()=>{process.stdout.write(${JSON.stringify(outMarker)});process.stdout.write(Buffer.alloc(17 * 1024 * 1024, 120));});\n`,
@@ -544,7 +590,7 @@ describe("production child adapter outcome matrix", () => {
   );
 
   it("runs real startup compatibility probes through CommandRunner", async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "p3-toolchain-probes-"));
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "toolchain-probes-"));
     roots.push(root);
     const binaries = path.join(root, "bin");
     fs.mkdirSync(binaries);
@@ -561,6 +607,13 @@ describe("production child adapter outcome matrix", () => {
       { mode: 0o700 },
     );
     process.env.PATH = binaries;
+    const bubblewrap = (originalPath ?? "")
+      .split(path.delimiter)
+      .map((directory) => path.join(directory, "bwrap"))
+      .find((candidate) => fs.existsSync(candidate));
+    if (!bubblewrap)
+      throw new Error("test host does not provide Bubblewrap on PATH");
+    fs.symlinkSync(bubblewrap, path.join(binaries, "bwrap"));
     configureProcessRuntime({
       runtimeRoot: path.join(root, "runtime"),
       signal: new AbortController().signal,
@@ -572,7 +625,7 @@ describe("production child adapter outcome matrix", () => {
     const records = fs.readdirSync(
       path.join(root, "runtime", "process-executions"),
     );
-    expect(records).toHaveLength(4);
+    expect(records).toHaveLength(5);
     for (const entry of records) {
       const metadata = JSON.parse(
         fs.readFileSync(
@@ -591,7 +644,7 @@ describe("production child adapter outcome matrix", () => {
   });
 
   it("clones a local disposable repository through ensureRepository's real CommandRunner call", async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "p3-clone-caller-"));
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "clone-caller-"));
     roots.push(root);
     const systemGit = (originalPath ?? "")
       .split(path.delimiter)
@@ -675,11 +728,11 @@ describe("production child adapter outcome matrix", () => {
   ] as const)(
     "captures flock %s through actual project lease acquisition",
     async (fault, status) => {
-      const root = fs.mkdtempSync(path.join(os.tmpdir(), "p3-flock-matrix-"));
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "flock-matrix-"));
       roots.push(root);
       const coordination = path.join(root, "coordination");
       fs.mkdirSync(coordination);
-      provisionCoordinationNamespace(coordination, "p3-flock-matrix");
+      provisionCoordinationNamespace(coordination, "flock-matrix");
       const binaries = path.join(root, "bin");
       fs.mkdirSync(binaries);
       if (fault !== "missing") {
@@ -704,7 +757,7 @@ describe("production child adapter outcome matrix", () => {
         acquireProjectOwnership(
           coordination,
           { trelloBoardId: "flock-board", githubRepository: "flock/repo" },
-          "p3-flock-matrix",
+          "flock-matrix",
         ),
       ).rejects.toBeDefined();
       const entries = fs.readdirSync(
@@ -727,11 +780,11 @@ describe("production child adapter outcome matrix", () => {
   );
 
   it("records real flock contention, release, and reacquisition", async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "p3-flock-contention-"));
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "flock-contention-"));
     roots.push(root);
     const coordination = path.join(root, "coordination");
     fs.mkdirSync(coordination);
-    provisionCoordinationNamespace(coordination, "p3-real-flock");
+    provisionCoordinationNamespace(coordination, "real-flock");
     const runtimeRoot = path.join(root, "runtime");
     configureProcessRuntime({
       runtimeRoot,
@@ -745,16 +798,16 @@ describe("production child adapter outcome matrix", () => {
     const first = await acquireProjectOwnership(
       coordination,
       identity,
-      "p3-real-flock",
+      "real-flock",
     );
     await expect(
-      acquireProjectOwnership(coordination, identity, "p3-real-flock"),
+      acquireProjectOwnership(coordination, identity, "real-flock"),
     ).rejects.toThrow(/already held/);
     await first.release();
     const replacement = await acquireProjectOwnership(
       coordination,
       identity,
-      "p3-real-flock",
+      "real-flock",
     );
     replacement.assertHeld();
     await replacement.release();
@@ -783,15 +836,13 @@ describe("production child adapter outcome matrix", () => {
   it.each(["git", "opencode"] as const)(
     "%s persists evidence-failure metadata when the stream recorder fails",
     async (family) => {
-      const root = fs.mkdtempSync(
-        path.join(os.tmpdir(), "p3-recorder-failure-"),
-      );
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "recorder-failure-"));
       roots.push(root);
       const binaries = path.join(root, "bin");
       fs.mkdirSync(binaries);
       const filename = path.join(binaries, family);
-      const outMarker = `P3_RAW_OUT_${family}_recorder-failure`;
-      const errMarker = `P3_RAW_ERR_${family}_recorder-failure`;
+      const outMarker = `RAW_OUT_${family}_recorder-failure`;
+      const errMarker = `RAW_ERR_${family}_recorder-failure`;
       fs.writeFileSync(
         filename,
         `#!${process.execPath}\nprocess.on("SIGTERM", () => process.exit(0)); process.stderr.write(${JSON.stringify(errMarker)},()=>process.stdout.write(${JSON.stringify(outMarker)})); setInterval(() => {}, 1000);\n`,

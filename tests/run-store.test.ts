@@ -124,6 +124,56 @@ const transitionCells = runEventTypes.flatMap((event) =>
 );
 
 describe("RunStore authoritative foundation", () => {
+  it("projects skipped and uncertain quality statuses without relabeling them as passed", () => {
+    const base = setup();
+    base.store.create(fixture(base.identity));
+    const current = base.store.read()!;
+    base.store.mutateCompatibility({
+      expectedRevision: current.revision,
+      expectedOwnerGeneration: current.owner.generation,
+      key: "task-execution-card",
+      current: () => ({
+        value: {
+          phase: "validation",
+          validation: { status: "skipped" },
+          coverage: { status: "uncertain" },
+        },
+        result: undefined,
+      }),
+      validate: (value) => value,
+    });
+    const timelinePath = path.join(
+      base.identity.storageRoot,
+      "history",
+      encodeURIComponent(current.projectId),
+      encodeURIComponent(current.cardId),
+      encodeURIComponent(current.attemptId),
+      "events.jsonl",
+    );
+    const events = fs
+      .readFileSync(timelinePath, "utf8")
+      .trim()
+      .split("\n")
+      .map(
+        (line) =>
+          JSON.parse(line) as {
+            after: { taskProjections?: Record<string, unknown>[] };
+          },
+      );
+    expect(events.at(-1)?.after.taskProjections).toContainEqual(
+      expect.objectContaining({
+        validationStatus: "skipped",
+        coverageStatus: "uncertain",
+      }),
+    );
+    expect(events.at(-1)?.after.taskProjections).not.toContainEqual(
+      expect.objectContaining({
+        validationStatus: "passed",
+        coverageStatus: "passed",
+      }),
+    );
+  });
+
   it.each(transitionCells)(
     "executes $event: $source -> $target and rejects every unlisted destination",
     ({ event, source, target, allowed }) => {

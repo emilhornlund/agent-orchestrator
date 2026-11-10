@@ -7,6 +7,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { pollProject } from "../src/orchestrator/poll-project.js";
 import { runOrchestrator } from "../src/orchestrator/run-orchestrator.js";
 import type { Config } from "../src/config/config.js";
+import { GitHubClient } from "../src/github/github-client.js";
+import { reconcileWorkflowMutations } from "../src/orchestrator/reconcile-workflow-mutations.js";
+import { WorkflowMutationWaitingError } from "../src/task-session/workflow-mutation.js";
 import { registerProcessSecrets } from "../src/process/process-runtime.js";
 import { ProcessExecutionError } from "../src/process/process-runtime.js";
 import { ProjectRunAuthority } from "../src/task-session/project-run-authority.js";
@@ -27,6 +30,7 @@ import {
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
 import { getTaskSessionSourceSnapshotIdentity } from "../src/task-session/source-snapshot.js";
 import { TaskMutationQueue } from "../src/task-session/task-mutation-queue.js";
+import type { ImplementationReviewResult } from "../src/task-session/implementation-review-result.js";
 import {
   getSetupTrackedDelta,
   resolveSetupCommitScope,
@@ -58,6 +62,7 @@ async function begin(
   f: ReturnType<typeof fixture>,
   message = "feat: implement task",
   setupDisposition?: PersistedSetupDisposition,
+  qualityNeedsDraft = false,
 ) {
   const identity = await getTaskSessionSourceSnapshotIdentity(
     f.git,
@@ -76,6 +81,7 @@ async function begin(
         commitMessage: message,
         reviewResult: "Passed",
         remediationResult: "Not required",
+        qualityNeedsDraft,
         ...(setupDisposition === undefined ? {} : { setupDisposition }),
       },
       "Trello: https://trello.com/c/card",
@@ -235,17 +241,18 @@ async function publicationEvidence(
 async function poll(
   f: ReturnType<typeof reopenPublicationFixture>,
   tick = true,
+  openCode: unknown = {
+    run: () => {
+      throw new Error("Publication recovery must not invoke AI");
+    },
+  },
 ) {
   if (tick) vi.setSystemTime(Date.now() + PUBLICATION_RECHECK_MS + 1);
   await pollProject(
     f.services.trello,
     f.git,
     f.services.github,
-    {
-      run: () => {
-        throw new Error("Publication recovery must not invoke AI");
-      },
-    } as never,
+    openCode as never,
     {} as never,
     f.project,
     new AbortController().signal,
@@ -266,10 +273,11 @@ function operation(
 async function through(
   f: ReturnType<typeof reopenPublicationFixture>,
   name: string,
+  openCode?: unknown,
 ) {
   for (let count = 0; count < 12; count++) {
     if (operation(f, name)?.status === "completed") return;
-    await poll(f);
+    await poll(f, true, openCode);
   }
   throw new Error(
     `Did not complete ${name}: ${JSON.stringify(f.store.read()?.compatibility)}`,
@@ -282,6 +290,242 @@ function task(f: ReturnType<typeof reopenPublicationFixture>) {
 }
 
 describe("setup-aware initial publication commit scope", () => {
+  it("reconciles a lost draft-promotion acknowledgment without resending after restart", async () => {
+    const f = fixture();
+    await begin(f, "feat: initial draft", undefined, true);
+    await through(f, "comment");
+    const pr = f.services.read().prs[0]!;
+    let draft = true;
+    const run = vi.fn(async () => {
+      draft = false;
+      throw new Error("accepted but acknowledgment lost");
+    });
+    const github = new GitHubClient(run);
+    vi.spyOn(github, "getPullRequestStateByNumber").mockImplementation(
+      async () => (await f.services.github.findPullRequestState({} as never))!,
+    );
+    vi.spyOn(github, "findPullRequestState").mockImplementation(async () =>
+      f.services.github.findPullRequestState({} as never),
+    );
+    vi.spyOn(github, "getPullRequestPublicationFields").mockImplementation(
+      async () => ({ title: pr.title, body: pr.body, isDraft: draft }),
+    );
+    await expect(
+      f.authority.run(() =>
+        github.ensurePullRequestReady({
+          cwd: f.worktreePath,
+          repository: "owner/repo",
+          pullRequestUrl: pr.url,
+          headBranch: "agent/card",
+          expectedHeadSha: pr.head,
+          expectedBody: pr.body,
+          project: f.project,
+        }),
+      ),
+    ).rejects.toBeInstanceOf(WorkflowMutationWaitingError);
+    const restarted = reopenPublicationFixture(f.root);
+    vi.setSystemTime(Date.now() + PUBLICATION_RECHECK_MS + 1);
+    await restarted.authority.run(() =>
+      reconcileWorkflowMutations({
+        project: restarted.project,
+        trello: restarted.services.trello,
+        git: restarted.git,
+        github,
+      }),
+    );
+    expect(run).toHaveBeenCalledOnce();
+    expect(
+      restarted.store
+        .read()!
+        .pendingOperations.filter((entry) => entry.id.startsWith("workflow:"))
+        .every((entry) => entry.status === "completed"),
+    ).toBe(true);
+  });
+
+  it.each([
+    "passed",
+    "dismissed",
+    "failed",
+    "skipped",
+    "uncertain",
+    "stale",
+    "material",
+  ] as const)(
+    "updates the same draft PR using current readiness, not reviewer approval (%s)",
+    async (outcome) => {
+      const f = fixture();
+      await begin(f, "feat: initial draft", undefined, true);
+      await through(f, "comment");
+      const pr = f.services.read().prs[0]!;
+      let body = `Human introduction\n${pr.body}`;
+      const evidence = await publicationEvidence(f);
+      evidence.coverage = { ...evidence.validation! };
+      evidence.coverageCommand = "true";
+      if (["failed", "skipped", "uncertain"].includes(outcome))
+        evidence.validation = {
+          ...evidence.validation!,
+          status: outcome as "failed" | "skipped" | "uncertain",
+          exitCode: 1,
+        };
+      if (outcome === "stale")
+        evidence.validation = {
+          ...evidence.validation!,
+          contentIdentity: `sha256:${"f".repeat(64)}`,
+        };
+      if (outcome === "dismissed")
+        evidence.review = { ...evidence.review!, verdict: "fail" };
+      const ready = vi.fn();
+      const github = {
+        ...f.services.github,
+        findPullRequest: async () => ({ url: pr.url }),
+        getPullRequestDescription: async () => body,
+        editPullRequestDescription: async (options: { body: string }) => {
+          body = options.body;
+        },
+        ensurePullRequestReady: ready,
+        ensurePullRequestDraft: vi.fn(),
+      };
+      await publishCard({
+        project: f.project,
+        card: f.services.card(),
+        trello: f.services.trello,
+        git: f.git,
+        github: github as never,
+        worktreePath: f.worktreePath,
+        branch: "agent/card",
+        commitSha: pr.head,
+        expectedExistingPullRequestUrl: pr.url,
+        reviewResult: "Passed",
+        remediationResult: "Outstanding checks addressed",
+        verifiedDescriptionFacts: () => [`Current validation: ${outcome}`],
+        beforePushVerification: async () => ({
+          reviewResult:
+            outcome === "dismissed"
+              ? "Failed (primary assessed review concerns as non-material)"
+              : "Passed",
+          reviewDisclosure:
+            outcome === "material"
+              ? { ...evidence.review!, verdict: "fail" }
+              : null,
+          qualityNeedsDraft: ["failed", "skipped", "uncertain"].includes(
+            outcome,
+          ),
+          readinessEvidence: evidence,
+        }),
+      });
+      expect(ready).toHaveBeenCalledTimes(
+        ["passed", "dismissed"].includes(outcome) ? 1 : 0,
+      );
+      if (ready.mock.calls.length)
+        expect(ready).toHaveBeenCalledWith(
+          expect.objectContaining({
+            pullRequestUrl: pr.url,
+            expectedHeadSha: pr.head,
+            expectedBody: body,
+          }),
+        );
+      expect(body).toContain("Human introduction");
+      expect(body).toContain(`Current validation: ${outcome}`);
+      expect(f.services.read().prs).toHaveLength(1);
+    },
+  );
+
+  it.each([false, true])(
+    "confirms an actionable no-output failure without manufacturing a commit or retrying the task (excluded setup: %s)",
+    async (withExcludedSetup) => {
+      const f = fixture();
+      fs.writeFileSync(path.join(f.worktreePath, "source.txt"), "original\n");
+      const head = await f.git.getHeadSha(f.worktreePath);
+      const disposition = withExcludedSetup
+        ? await createSetupDisposition(f, "unrelated.setup", false)
+        : undefined;
+      await begin(f, "feat: task", disposition);
+      await poll(f);
+      expect(task(f)?.terminalFailure?.reason).toContain(
+        "No meaningful task-related changes",
+      );
+      expect(operation(f, "commit")).toBeUndefined();
+      const restarted = reopenPublicationFixture(f.root);
+      for (
+        let count = 0;
+        count < 8 && restarted.services.read().list !== "failed";
+        count++
+      )
+        await poll(restarted);
+      // A verified move alone is not completion: reconcile the journaled failure comment too.
+      for (
+        let count = 0;
+        count < 8 && restarted.store.read()?.lifecycle !== "failed";
+        count++
+      )
+        await poll(restarted);
+      expect(restarted.services.read().list).toBe("failed");
+      expect(restarted.store.read()?.lifecycle).toBe("failed");
+      expect(
+        restarted.services
+          .read()
+          .comments.some(
+            ({ text }) =>
+              text.includes("No meaningful task-related changes") &&
+              text.includes("Ready for Agent"),
+          ),
+      ).toBe(true);
+      expect(await f.git.getHeadSha(f.worktreePath)).toBe(head);
+      expect(fs.existsSync(f.worktreePath)).toBe(true);
+      if (withExcludedSetup)
+        expect(
+          fs.readFileSync(path.join(f.worktreePath, "unrelated.setup"), "utf8"),
+        ).toBe("preserve me\n");
+      expect(f.services.read().requests).toEqual([]);
+      await poll(restarted);
+      expect(f.services.read().requests).toEqual([]);
+    },
+  );
+
+  it("publishes a complete observed fallback after advisory description failure and retains its exact payload on restart", async () => {
+    const f = fixture();
+    const identity = await getTaskSessionSourceSnapshotIdentity(
+      f.git,
+      f.worktreePath,
+    );
+    f.authority.run(() =>
+      beginInitialPublication(
+        {
+          project: f.project,
+          card: f.services.card(),
+          git: f.git,
+          trello: f.services.trello,
+          github: f.services.github,
+          worktreePath: f.worktreePath,
+          branch: "agent/card",
+          commitMessage: "feat: implement the requested task",
+          reviewResult: "Passed",
+          remediationResult: "Validation improvement exhausted",
+          qualityNeedsDraft: true,
+          verifiedDescriptionFacts: () => [
+            "Validation: failed (exit 1)",
+            "Coverage: skipped (not configured)",
+          ],
+        },
+        "pending presentation",
+        identity,
+      ),
+    );
+    await through(f, "pr");
+    const published = f.services.read().prs[0]!;
+    expect(published.draft).toBe(true);
+    expect(published.body).toContain("## Summary\nImplement task");
+    expect(published.body).toContain("Changed file: source.txt");
+    expect(published.body).toContain("Validation: failed (exit 1)");
+    expect(published.body).toContain("Coverage: skipped (not configured)");
+    expect(published.body).toContain("## Outstanding issues");
+    expect(published.body).toContain("https://trello.com/c/card");
+    const restarted = reopenPublicationFixture(f.root);
+    await through(restarted, "comment");
+    expect(restarted.services.read().prs).toEqual([published]);
+    expect(restarted.services.read().list).toBe("review");
+  });
+
   it("judges failed-attempt output across a successful no-op retry and preserves excluded bytes", async () => {
     const f = fixture();
     const disposition = await createSetupDisposition(f, "unrelated.setup");
@@ -434,6 +678,7 @@ describe("setup-aware initial publication commit scope", () => {
             github: {
               ...f.services.github,
               findPullRequest: async () => ({ url: originalPrUrl }),
+              ensurePullRequestDraft: vi.fn(),
             } as never,
             worktreePath: f.worktreePath,
             branch: "agent/card",
@@ -1556,7 +1801,7 @@ describe("initial publication production checkpoint with independent simulated s
 
   it("sanitizes checkpoint, journal payloads, commit message, PR and Trello comment before hashing or dispatch", async () => {
     const f = fixture();
-    const canary = "p4-publication-canary-93bb";
+    const canary = "publication-canary-93bb";
     registerProcessSecrets([canary]);
     const encoded = Buffer.from(canary).toString("base64");
     const sourceIdentity = await getTaskSessionSourceSnapshotIdentity(
@@ -1820,6 +2065,126 @@ describe("initial publication production checkpoint with independent simulated s
       ),
     ).toBeNull();
     expect(f.store.read()!.publicationState).toBe("open");
+  });
+
+  it.each([
+    {
+      name: "prepared pass clears obsolete prior concerns",
+      result: "Passed",
+      disclosure: null,
+      evidenceReview: "pass" as const,
+      draft: false,
+      expectedText: undefined,
+      forbiddenText: "OUTDATED prior finding",
+    },
+    {
+      name: "current prepared material concern remains draft",
+      result: "Failed (human review required; material findings unresolved)",
+      disclosure: "current" as const,
+      evidenceReview: "fail" as const,
+      draft: true,
+      expectedText: "CURRENT prepared finding",
+      forbiddenText: "OUTDATED prior finding",
+    },
+    {
+      name: "unavailable prepared review preserves prior concern text and draft status",
+      result:
+        "Unavailable (current review unavailable). Prior finding OUTDATED prior finding remains from the earlier source.",
+      disclosure: null,
+      evidenceReview: null,
+      draft: true,
+      expectedText: "OUTDATED prior finding",
+      forbiddenText: "## Automated review — human action required",
+    },
+  ] as const)("durably maps $name", async (scenario) => {
+    const f = fixture();
+    const initial = await publicationEvidence(f);
+    const priorReview: ImplementationReviewResult = {
+      ...initial.review!,
+      verdict: "fail",
+      requirementAssessments: [
+        {
+          requirementId: "REQ-1",
+          status: "unsatisfied",
+          details: "The earlier source did not meet the requirement.",
+          evidence: [],
+        },
+      ],
+      blockingFindings: [
+        {
+          id: "old-finding",
+          kind: "defect",
+          summary: "OUTDATED prior finding",
+          detail: "This concern belongs to the earlier source snapshot.",
+        },
+      ],
+    };
+    const currentReview: ImplementationReviewResult = {
+      ...initial.review!,
+      verdict: "fail",
+      blockingFindings: [
+        {
+          id: "current-finding",
+          kind: "defect",
+          summary: "CURRENT prepared finding",
+          detail: "The prepared source still has this defect.",
+        },
+      ],
+    };
+    const initialEvidence = { ...initial, review: priorReview };
+    const preparedEvidence = {
+      ...initial,
+      review:
+        scenario.evidenceReview === "pass"
+          ? initial.review
+          : scenario.evidenceReview === "fail"
+            ? currentReview
+            : null,
+    };
+    const preparedReview = {
+      reviewResult: scenario.result,
+      reviewDisclosure:
+        scenario.disclosure === "current" ? currentReview : null,
+      qualityNeedsDraft: false,
+    };
+    const openCode = {
+      run: vi.fn(async () => ({
+        exitCode: 1,
+        output: "",
+        errorOutput: "description service unavailable",
+      })),
+    };
+
+    await expect(
+      f.authority.run(() =>
+        publishTaskSessionCard({
+          project: f.project,
+          card: f.services.card(),
+          git: f.git,
+          trello: f.services.trello,
+          github: f.services.github,
+          opencode: openCode as never,
+          worktreePath: f.worktreePath,
+          branch: "agent/card",
+          commitMessage: "feat: implement task",
+          reviewResult: "Failed (human review required; previous review)",
+          remediationResult: "Review follow-up complete",
+          exhaustedReview: priorReview,
+          initialEvidence,
+          verifyPreparedContent: async () => preparedEvidence,
+          getPreparedReviewPublication: () => preparedReview,
+        }),
+      ),
+    ).rejects.toBeInstanceOf(PublicationWaitingError);
+
+    await through(f, "pr", openCode);
+    const pullRequest = f.services.read().prs[0];
+    expect(pullRequest?.draft).toBe(scenario.draft);
+    expect(pullRequest?.body).toContain(`Review: ${scenario.result}`);
+    if (scenario.expectedText !== undefined)
+      expect(pullRequest?.body).toContain(scenario.expectedText);
+    if (scenario.forbiddenText !== undefined)
+      expect(pullRequest?.body).not.toContain(scenario.forbiddenText);
   });
 
   it("keeps a negative lookup ambiguous, handles late acceptance after restart, and never dispatches a second PR", async () => {

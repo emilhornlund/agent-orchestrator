@@ -1,5 +1,5 @@
-// Public, synthetic localhost-only material, identical to the established P3
-// SMTP fixture. Keeping it in test source avoids a new OpenSSL CLI prerequisite.
+// Public, synthetic localhost-only SMTP material. Keeping it in test source
+// avoids an OpenSSL CLI prerequisite.
 export const testCertificate = `-----BEGIN CERTIFICATE-----
 MIIDJTCCAg2gAwIBAgIUWhkfBYi5FSzO9BOwLxyIO1//mZkwDQYJKoZIhvcNAQEL
 BQAwFDESMBAGA1UEAwwJbG9jYWxob3N0MB4XDTI2MDgzMTE3MDU1NVoXDTM2MDgy

@@ -1,8 +1,8 @@
 import type { ProjectConfig } from "../config/config.js";
 import type { GitClient } from "../git/git-client.js";
 import type { GitHubClient } from "../github/github-client.js";
-import { buildPullRequestAttributionFooter } from "../github/pull-request-attribution.js";
 import type { ImplementationReviewResult } from "../task-session/implementation-review-result.js";
+import { reviewConcernsDismissedAsNonMaterialLabel } from "../task-session/implementation-review-result.js";
 import { enrichPullRequestDescription } from "../github/enrich-pull-request-description.js";
 import { logger } from "../logging/logger.js";
 import { getSessionLogPath } from "../logging/session-log.js";
@@ -32,9 +32,16 @@ import {
   PullRequestDescriptionParseError,
   type PullRequestDescription,
 } from "../opencode/pull-request-description.js";
-import { renderPullRequestDescription } from "../opencode/render-pull-request-description.js";
+import {
+  renderPullRequestDescription,
+  AGENT_ORCHESTRATOR_DESCRIPTION_END,
+} from "../opencode/render-pull-request-description.js";
 import type { CommandRunner } from "../process/command-runner.js";
 import type { PersistedSetupDisposition } from "../process/setup-commit-scope.js";
+import type { VerifiedPublicationDecisionInput } from "../task-session/verified-publication-decision.js";
+import { decideValidatedHumanReviewPublication } from "../task-session/verified-publication-decision.js";
+import { getTaskSessionSourceSnapshotIdentity } from "../task-session/source-snapshot.js";
+import { FeedbackLedgerStore } from "../task-session/feedback-ledger-store.js";
 
 import { toFailureError } from "./failure-diagnostic.js";
 import { PublishedCardStateError } from "./published-card-state-error.js";
@@ -59,7 +66,7 @@ export interface PublishCardOptions {
   commitSha: string;
   reviewResult: string;
   remediationResult: string;
-  exhaustedReview?: ImplementationReviewResult;
+  exhaustedReview?: ImplementationReviewResult | undefined;
   pullRequestDescription?: PullRequestDescription;
   sessionLogPath?: string;
   emailNotifier?: EmailNotifier;
@@ -67,10 +74,20 @@ export interface PublishCardOptions {
   signal?: AbortSignal;
   commands?: CommandRunner;
   rebaseAlreadyCompleted?: boolean;
-  beforePushVerification?: () => Promise<void>;
+  beforePushVerification?: () => Promise<PreparedReviewPublication | void>;
   expectedExistingPullRequestUrl?: string;
   verifiedDescriptionFacts?: () => readonly string[];
   setupDisposition?: PersistedSetupDisposition;
+  /** Non-passing or skipped local checks require draft publication. */
+  qualityNeedsDraft?: boolean;
+}
+
+export interface PreparedReviewPublication {
+  reviewResult: string;
+  /** Current-source material concerns to disclose and use for draft selection. */
+  reviewDisclosure: ImplementationReviewResult | null;
+  qualityNeedsDraft?: boolean;
+  readinessEvidence?: VerifiedPublicationDecisionInput;
 }
 
 /** Presentation is finalized before the durable payload is hashed. Recovery
@@ -80,6 +97,18 @@ export async function prepareInitialPublicationBody(
   generateDescription = true,
 ): Promise<string> {
   let description = options.pullRequestDescription;
+  const task = {
+    ...options.card,
+    name:
+      typeof options.card.name === "string" ? options.card.name : "Trello card",
+  };
+  if (description !== undefined) {
+    try {
+      description = parsePullRequestDescription(JSON.stringify(description));
+    } catch {
+      description = undefined;
+    }
+  }
   const verifiedFacts = options.verifiedDescriptionFacts?.() ?? [];
   if (options.opencode && generateDescription)
     description = await generatePullRequestDescription({
@@ -98,33 +127,53 @@ export async function prepareInitialPublicationBody(
         cardId: options.card.id,
       }),
     });
-  let body = renderDeterministicPullRequestBody(
-    options.card,
+  if (!description) {
+    let changedFiles = "";
+    try {
+      changedFiles = await options.git.getChangedFiles(
+        options.worktreePath,
+        `origin/${options.project.repository.defaultBranch}`,
+      );
+    } catch {
+      /* Context collection is presentation-only, not a publication gate. */
+    }
+    description = {
+      summary: task.name,
+      changes: changedFiles?.trim()
+        ? changedFiles
+            .trim()
+            .split(/\r?\n/u)
+            .map((file) => `Changed file: ${file}`)
+        : [
+            "Change details could not be summarized automatically; inspect the task diff.",
+          ],
+      validation: [],
+    };
+  }
+  let body = renderPullRequestDescription(
+    {
+      ...description,
+      // An agent's claim is never a substitute for observed command results.
+      validation: verifiedFacts.length
+        ? [...verifiedFacts]
+        : ["No verified validation or test results are available."],
+    },
+    task,
     options.project.repository.gitIdentity.name,
   );
-  if (description)
-    body = renderPullRequestDescription(
-      verifiedFacts.length
-        ? description
-        : {
-            ...description,
-            validation: [
-              "No verified validation or test results are available.",
-            ],
-          },
-      options.card,
-      options.project.repository.gitIdentity.name,
-    );
-  body += `\n\nReview: ${options.reviewResult}\nRemediation: ${options.remediationResult}`;
+  let disclosure = `\n\n## Outstanding issues\nReview: ${options.reviewResult}\nRemediation: ${options.remediationResult}`;
+  if (options.qualityNeedsDraft)
+    disclosure +=
+      "\nLocal checks failed, were skipped, or remain uncertain; this PR is not represented as ready to merge.";
   if (options.exhaustedReview) {
-    body += `\n\n## Automated review — human action required\nThis PR has **not** passed automated review.\n${options.exhaustedReview.blockingFindings
+    disclosure += `\n\n## Automated review — human action required\nThe current independent AI review reported material concerns. This PR has **not** passed automated review.\n${options.exhaustedReview.blockingFindings
       .slice(0, 20)
       .map(
         (finding) =>
           `> ${[finding.summary, finding.detail].join(": ").replace(/\s+/gu, " ").slice(0, 400)}`,
       )
       .join("\n")}`;
-    body += options.exhaustedReview.requirementAssessments
+    disclosure += options.exhaustedReview.requirementAssessments
       .filter((assessment) => assessment.status === "unsatisfied")
       .map(
         (assessment) =>
@@ -132,22 +181,15 @@ export async function prepareInitialPublicationBody(
       )
       .join("");
   }
+  body = body.replace(
+    AGENT_ORCHESTRATOR_DESCRIPTION_END,
+    `${disclosure}\n${AGENT_ORCHESTRATOR_DESCRIPTION_END}`,
+  );
   return body;
 }
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-function renderDeterministicPullRequestBody(
-  card: TrelloCard,
-  gitIdentityName: string,
-): string {
-  return [
-    `Trello: ${card.url}`,
-    "",
-    buildPullRequestAttributionFooter(gitIdentityName),
-  ].join("\n");
 }
 
 function logDescriptionFallback(
@@ -480,7 +522,12 @@ export async function publishCard({
   rebaseAlreadyCompleted = false,
   beforePushVerification,
   expectedExistingPullRequestUrl,
+  qualityNeedsDraft = false,
 }: PublishCardOptions): Promise<void> {
+  let publicationReviewResult = reviewResult;
+  let publicationReviewDisclosure = exhaustedReview ?? null;
+  let publicationQualityNeedsDraft = qualityNeedsDraft;
+  let readinessEvidence: VerifiedPublicationDecisionInput | undefined;
   if (
     expectedExistingPullRequestUrl === undefined &&
     ProjectRunAuthority.isProjectLeaseScoped(project.id) &&
@@ -489,8 +536,7 @@ export async function publishCard({
     throw new Error(
       "Lease-scoped initial publication requires durable attempt authority",
     );
-  // Production initial publication cannot opt out of the journal. Existing-PR
-  // correction/body/draft routes are the subsequent P4-T3 integration.
+  // Production publication under attempt authority cannot opt out of the journal.
   if (ProjectRunAuthority.current(project.id)) {
     const resumed = await resumeInitialPublication({
       project,
@@ -516,7 +562,8 @@ export async function publishCard({
   let pullRequest;
   let publishedCommitSha: string;
   let finalPullRequestDescription = pullRequestDescription;
-  let verifiedDescriptionFacts: readonly string[] = [];
+  let verifiedDescriptionFacts: readonly string[] =
+    verifiedDescriptionFactsOption?.() ?? [];
 
   try {
     if (signal?.aborted) {
@@ -533,7 +580,7 @@ export async function publishCard({
 
     const defaultBranchRef = `origin/${project.repository.defaultBranch}`;
 
-    // Existing PR identity is still checked, but P1 does not rewrite a branch
+    // Existing PR identity is still checked, but this route does not rewrite a branch
     // in any case. A remote-branch absence is never used as proof of
     // unpublished history.
     if (expectedExistingPullRequestUrl !== undefined) {
@@ -586,7 +633,7 @@ export async function publishCard({
       }
 
       cardLog.event(
-        `Published-branch rewriting is disabled by the P1 safety guardrail; attempting ordinary fast-forward-safe publication without rebasing ${branch}`,
+        `Published-branch rewriting is disabled to protect published history; attempting ordinary fast-forward-safe publication without rebasing ${branch}`,
       );
     }
 
@@ -594,7 +641,14 @@ export async function publishCard({
 
     // Task-session callers use this hook to revalidate content-bound quality
     // evidence after the fetch/rebase preparation and before any remote write.
-    await beforePushVerification?.();
+    const preparedReview = await beforePushVerification?.();
+    if (preparedReview !== undefined) {
+      publicationReviewResult = preparedReview.reviewResult;
+      publicationReviewDisclosure = preparedReview.reviewDisclosure;
+      readinessEvidence = preparedReview.readinessEvidence;
+      if (preparedReview.qualityNeedsDraft !== undefined)
+        publicationQualityNeedsDraft = preparedReview.qualityNeedsDraft;
+    }
 
     cardLog.event(`Publication commit is ${publishedCommitSha}`);
 
@@ -632,7 +686,7 @@ export async function publishCard({
         card,
         worktreePath,
         commitSha: publishedCommitSha,
-        reviewResult,
+        reviewResult: publicationReviewResult,
         remediationResult,
         verifiedFacts: verifiedDescriptionFacts,
         signal: signal ?? new AbortController().signal,
@@ -707,7 +761,12 @@ export async function publishCard({
 
     if (pullRequest) {
       cardLog.event(`Existing pull request found: ${pullRequest.url}`);
-      if (exhaustedReview !== undefined || reviewResult !== "Passed") {
+      if (
+        publicationReviewDisclosure !== null ||
+        publicationQualityNeedsDraft ||
+        (publicationReviewResult !== "Passed" &&
+          publicationReviewResult !== reviewConcernsDismissedAsNonMaterialLabel)
+      ) {
         await github.ensurePullRequestDraft({
           cwd: worktreePath,
           repository: project.repository.github,
@@ -719,24 +778,31 @@ export async function publishCard({
         );
       }
       if (
-        finalPullRequestDescription !== undefined &&
         typeof github.getPullRequestDescription === "function" &&
         typeof github.editPullRequestDescription === "function"
       ) {
         try {
-          const publishableDescription =
-            verifiedDescriptionFacts.length === 0
-              ? {
-                  ...finalPullRequestDescription,
-                  validation: [
-                    "No verified validation or test results are available.",
-                  ],
-                }
-              : finalPullRequestDescription;
-          const generatedBody = renderPullRequestDescription(
-            publishableDescription,
-            card,
-            project.repository.gitIdentity.name,
+          const generatedBody = await prepareInitialPublicationBody(
+            {
+              trello,
+              git,
+              github,
+              project,
+              card,
+              worktreePath,
+              branch,
+              reviewResult: publicationReviewResult,
+              remediationResult,
+              qualityNeedsDraft: publicationQualityNeedsDraft,
+              ...(publicationReviewDisclosure === null
+                ? {}
+                : { exhaustedReview: publicationReviewDisclosure }),
+              ...(finalPullRequestDescription === undefined
+                ? {}
+                : { pullRequestDescription: finalPullRequestDescription }),
+              verifiedDescriptionFacts: () => verifiedDescriptionFacts,
+            },
+            false,
           );
           const currentBody = await github.getPullRequestDescription({
             cwd: worktreePath,
@@ -762,7 +828,52 @@ export async function publishCard({
               `Pull request description enriched: ${pullRequest.url}`,
             );
           }
+          const authority = ProjectRunAuthority.current(project.id);
+          const ledger = authority
+            ? new FeedbackLedgerStore(
+                authority.store.storageRoot,
+                project,
+              ).read(card.id)
+            : null;
+          const unresolvedHumanRequests =
+            ledger?.entries.some(
+              (entry) =>
+                entry.actionability === "unclassified" ||
+                (entry.actionability === "actionable" &&
+                  entry.status !== "closed" &&
+                  (entry.unresolvedReason !== undefined ||
+                    entry.verificationEvidence.length === 0 ||
+                    !["verified", "published"].includes(entry.status))),
+            ) ?? false;
+          if (
+            readinessEvidence !== undefined &&
+            !publicationQualityNeedsDraft &&
+            publicationReviewDisclosure === null &&
+            ["Passed", reviewConcernsDismissedAsNonMaterialLabel].includes(
+              publicationReviewResult,
+            ) &&
+            !unresolvedHumanRequests &&
+            readinessEvidence.validation?.status === "passed" &&
+            readinessEvidence.coverage?.status === "passed" &&
+            readinessEvidence.review?.reviewedContentIdentity ===
+              readinessEvidence.currentContentIdentity &&
+            decideValidatedHumanReviewPublication(readinessEvidence).allowed &&
+            readinessEvidence.currentContentIdentity ===
+              (await getTaskSessionSourceSnapshotIdentity(git, worktreePath)) &&
+            enrichedBody !== null
+          ) {
+            await github.ensurePullRequestReady({
+              cwd: worktreePath,
+              repository: project.repository.github,
+              pullRequestUrl: pullRequest.url,
+              headBranch: branch,
+              expectedHeadSha: publishedCommitSha,
+              expectedBody: enrichedBody,
+              project,
+            });
+          }
         } catch (error) {
+          if (error instanceof WorkflowMutationWaitingError) throw error;
           logDescriptionFallback(
             cardLog,
             "existing pull request enrichment",
@@ -777,59 +888,28 @@ export async function publishCard({
 
       cardLog.event("Creating pull request...");
 
-      let body = renderDeterministicPullRequestBody(
-        card,
-        project.repository.gitIdentity.name,
+      const body = await prepareInitialPublicationBody(
+        {
+          trello,
+          git,
+          github,
+          project,
+          card,
+          worktreePath,
+          branch,
+          reviewResult: publicationReviewResult,
+          remediationResult,
+          qualityNeedsDraft: publicationQualityNeedsDraft,
+          ...(publicationReviewDisclosure === null
+            ? {}
+            : { exhaustedReview: publicationReviewDisclosure }),
+          ...(finalPullRequestDescription === undefined
+            ? {}
+            : { pullRequestDescription: finalPullRequestDescription }),
+          verifiedDescriptionFacts: () => verifiedDescriptionFacts,
+        },
+        false,
       );
-
-      if (finalPullRequestDescription !== undefined) {
-        try {
-          const publishableDescription =
-            verifiedDescriptionFacts.length === 0
-              ? {
-                  ...finalPullRequestDescription,
-                  validation: [
-                    "No verified validation or test results are available.",
-                  ],
-                }
-              : finalPullRequestDescription;
-          body = renderPullRequestDescription(
-            publishableDescription,
-            card,
-            project.repository.gitIdentity.name,
-          );
-        } catch (error) {
-          logDescriptionFallback(cardLog, "Markdown rendering", error);
-        }
-      }
-
-      if (exhaustedReview !== undefined) {
-        // This section is authored by the orchestrator and is not delegated
-        // to AI-generated PR description text.
-        const findings = exhaustedReview.blockingFindings
-          .map((finding) => [finding.summary, finding.detail].join(": "))
-          .slice(0, 20);
-        const unsatisfied = exhaustedReview.requirementAssessments
-          .filter((assessment) => assessment.status === "unsatisfied")
-          .map((assessment) => assessment.requirementId);
-        const detail = [
-          ...findings,
-          ...unsatisfied.map((id) => `Unsatisfied requirement: ${id}`),
-        ]
-          .map((entry) => `> ${entry.replace(/\s+/gu, " ").slice(0, 400)}`)
-          .join("\n");
-        body += [
-          "",
-          "## Automated review — human action required",
-          "The independent AI review still reported blocking findings after the configured remediation limit. This PR has **not** passed automated review. Please inspect the changes and findings before merging.",
-          ...(publishedCommitSha !== commitSha
-            ? [
-                "**Post-rebase disclosure:** The published commit differs from the originally reviewed commit. Existing findings refer to the pre-rebase snapshot; the rebased content passed required local validation but has not received another AI review. Human review is mandatory.",
-              ]
-            : []),
-          ...(detail.length > 0 ? [detail] : []),
-        ].join("\n");
-      }
 
       pullRequest = await github.createPullRequest({
         cwd: worktreePath,
@@ -838,7 +918,12 @@ export async function publishCard({
         headBranch: branch,
         title: card.name,
         body,
-        draft: exhaustedReview !== undefined || reviewResult !== "Passed",
+        draft:
+          publicationReviewDisclosure !== null ||
+          (publicationReviewResult !== "Passed" &&
+            publicationReviewResult !==
+              reviewConcernsDismissedAsNonMaterialLabel) ||
+          publicationQualityNeedsDraft,
         project,
       });
 
@@ -896,13 +981,13 @@ export async function publishCard({
         card,
         pullRequestUrl: pullRequest.url,
         commitSha: publishedCommitSha,
-        reviewResult,
+        reviewResult: publicationReviewResult,
         remediationResult,
         ...(observedDraft === undefined ? {} : { actualDraft: observedDraft }),
         outstandingIssues: publicationNotificationIssues(
-          reviewResult,
+          publicationReviewResult,
           remediationResult,
-        ),
+        ).concat(publicationQualityNeedsDraft ? verifiedDescriptionFacts : []),
         publicationContext:
           "Verified PR publication; notification awaits Human Review destination verification.",
       }),
@@ -970,13 +1055,13 @@ export async function publishCard({
         card,
         pullRequestUrl: pullRequest.url,
         commitSha: publishedCommitSha,
-        reviewResult,
+        reviewResult: publicationReviewResult,
         remediationResult,
         ...(actualDraft === undefined ? {} : { actualDraft }),
         outstandingIssues: publicationNotificationIssues(
-          reviewResult,
+          publicationReviewResult,
           remediationResult,
-        ),
+        ).concat(publicationQualityNeedsDraft ? verifiedDescriptionFacts : []),
         ...(elapsedWorkflowTime === undefined ? {} : { elapsedWorkflowTime }),
         publicationContext:
           "The pull request was published and the card was moved to Human Review by the implementation workflow.",
@@ -990,7 +1075,7 @@ export async function publishCard({
     "",
     `PR: ${pullRequest.url}`,
     `Commit: ${publishedCommitSha}`,
-    `Review: ${reviewResult}`,
+    `Review: ${publicationReviewResult}`,
     `Remediation: ${remediationResult}`,
     ...(elapsedWorkflowTime === undefined
       ? []

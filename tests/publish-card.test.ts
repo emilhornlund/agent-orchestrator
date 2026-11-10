@@ -15,7 +15,9 @@ import { MAX_PULL_REQUEST_DESCRIPTION_SUMMARY_LENGTH } from "../src/opencode/pul
 import { Logger } from "../src/logging/logger.js";
 import { formatFailureDiagnostic } from "../src/orchestrator/failure-diagnostic.js";
 import { publishCard } from "../src/orchestrator/publish-card.js";
+import { reviewConcernsDismissedAsNonMaterialLabel } from "../src/task-session/implementation-review-result.js";
 import { WorkflowError } from "../src/orchestrator/workflow-error.js";
+import type { ImplementationReviewResult } from "../src/task-session/implementation-review-result.js";
 import { type TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
 
 function createProject(validationCommand?: string): ProjectConfig {
@@ -122,6 +124,212 @@ afterEach(() => {
 });
 
 describe("publishCard", () => {
+  it("refreshes fallback evidence on the same PR, preserves human text, and drafts failed checks even after passing review", async () => {
+    let body = "";
+    let published = false;
+    const github = {
+      findPullRequest: vi.fn(async () =>
+        published
+          ? { url: "https://github.com/example/repository/pull/123" }
+          : null,
+      ),
+      createPullRequest: vi.fn(async (options: { body: string }) => {
+        body = options.body;
+        published = true;
+        return { url: "https://github.com/example/repository/pull/123" };
+      }),
+      getPullRequestDescription: vi.fn(async () => body),
+      editPullRequestDescription: vi.fn(async (options: { body: string }) => {
+        body = options.body;
+      }),
+      ensurePullRequestDraft: vi.fn(),
+    } as unknown as GitHubClient;
+    const options = {
+      emailNotifier: { send: vi.fn() } as unknown as EmailNotifier,
+      github,
+      trello: {
+        moveCard: vi.fn(),
+        addComment: vi.fn(),
+      } as unknown as TrelloClient,
+      git: createPublicationGit({
+        getChangedFiles: vi.fn().mockResolvedValue("src/task.ts"),
+      }),
+      project: createProject(),
+      card: createCard(),
+      worktreePath: "/worktree",
+      branch: "agent/card-1",
+      commitSha: "abc123",
+      reviewResult: "Passed",
+      remediationResult: "Not required",
+      verifiedDescriptionFacts: () => ["Validation passed on initial content"],
+    };
+    await publishCard(options);
+    body = `Human release notes\n${body}\nHuman checklist`;
+    await publishCard({
+      ...options,
+      qualityNeedsDraft: true,
+      verifiedDescriptionFacts: () => [
+        "Validation failed on current content (exit 1)",
+      ],
+    });
+    expect(github.createPullRequest).toHaveBeenCalledOnce();
+    expect(github.ensurePullRequestDraft).toHaveBeenCalledOnce();
+    expect(body).toContain("Human release notes");
+    expect(body).toContain("Human checklist");
+    expect(body).toContain("Changed file: src/task.ts");
+    expect(body).toContain("Validation failed on current content (exit 1)");
+    expect(body).not.toContain("Validation passed on initial content");
+    expect(options.emailNotifier.send).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining(
+          "Validation failed on current content (exit 1)",
+        ),
+      }),
+    );
+  });
+
+  it("does not force draft solely for dismissed non-material review findings", async () => {
+    const trello = {
+      moveCard: vi.fn().mockResolvedValue({
+        ...createCard(),
+        idList: "review-list",
+      }),
+    } as unknown as TrelloClient;
+    let createdDraft: boolean | undefined;
+    const createPullRequest = vi.fn(async (options: { draft: boolean }) => {
+      createdDraft = options.draft;
+      return { url: "https://github.com/example/repository/pull/123" };
+    });
+    const github = {
+      findPullRequest: vi.fn().mockResolvedValue(null),
+      createPullRequest,
+    } as unknown as GitHubClient;
+
+    await publishCard({
+      trello,
+      git: createPublicationGit(),
+      github,
+      project: createProject(),
+      card: createCard(),
+      worktreePath: "/worktree",
+      branch: "agent/card-1",
+      commitSha: "abc123",
+      reviewResult: reviewConcernsDismissedAsNonMaterialLabel,
+      remediationResult: "Findings were evaluated in the primary session",
+    });
+
+    expect(createdDraft).toBe(false);
+    expect(trello.moveCard).toHaveBeenCalledWith("card-1", "review-list");
+  });
+
+  it("uses the current prepared negative review for draft status and disclosure", async () => {
+    let publication: { draft: boolean; body: string } | undefined;
+    const reviewDisclosure: ImplementationReviewResult = {
+      version: 1,
+      projectId: "example",
+      cardId: "card-1",
+      verdict: "fail",
+      requirementAssessments: [
+        {
+          requirementId: "REQ-1",
+          status: "unsatisfied",
+          details: "The requested persisted state is lost after reload.",
+          evidence: [],
+        },
+      ],
+      blockingFindings: [
+        {
+          kind: "defect",
+          summary: "Reload loses the saved setting",
+          detail: "The current rebased source initializes the default value.",
+        },
+      ],
+      reviewedContentIdentity: `sha256:${"c".repeat(64)}`,
+    };
+    const trello = {
+      moveCard: vi.fn().mockResolvedValue({
+        ...createCard(),
+        idList: "review-list",
+      }),
+    } as unknown as TrelloClient;
+    const github = {
+      findPullRequest: vi.fn().mockResolvedValue(null),
+      createPullRequest: vi.fn(
+        async (options: { draft: boolean; body: string }) => {
+          publication = { draft: options.draft, body: options.body };
+          return { url: "https://github.com/example/repository/pull/123" };
+        },
+      ),
+    } as unknown as GitHubClient;
+
+    await publishCard({
+      trello,
+      git: createPublicationGit(),
+      github,
+      project: createProject(),
+      card: createCard(),
+      worktreePath: "/worktree",
+      branch: "agent/card-1",
+      commitSha: "abc123",
+      reviewResult: "Passed",
+      remediationResult: "Not required",
+      beforePushVerification: async () => ({
+        reviewResult:
+          "Failed (human review required; material findings unresolved)",
+        reviewDisclosure,
+        qualityNeedsDraft: false,
+      }),
+    });
+
+    expect(publication?.draft).toBe(true);
+    expect(publication?.body).toContain("The current independent AI review");
+    expect(publication?.body).toContain("Reload loses the saved setting");
+    expect(publication?.body).toContain("Unsatisfied requirement: REQ-1");
+  });
+
+  it("keeps an unavailable prepared review in draft without claiming a pass", async () => {
+    let publication: { draft: boolean; body: string } | undefined;
+    const trello = {
+      moveCard: vi.fn().mockResolvedValue({
+        ...createCard(),
+        idList: "review-list",
+      }),
+    } as unknown as TrelloClient;
+    const github = {
+      findPullRequest: vi.fn().mockResolvedValue(null),
+      createPullRequest: vi.fn(
+        async (options: { draft: boolean; body: string }) => {
+          publication = { draft: options.draft, body: options.body };
+          return { url: "https://github.com/example/repository/pull/123" };
+        },
+      ),
+    } as unknown as GitHubClient;
+
+    await publishCard({
+      trello,
+      git: createPublicationGit(),
+      github,
+      project: createProject(),
+      card: createCard(),
+      worktreePath: "/worktree",
+      branch: "agent/card-1",
+      commitSha: "abc123",
+      reviewResult: "Passed",
+      remediationResult: "Not required",
+      beforePushVerification: async () => ({
+        reviewResult: "Unavailable (current-source review timed out)",
+        reviewDisclosure: null,
+        qualityNeedsDraft: false,
+      }),
+    });
+
+    expect(publication?.draft).toBe(true);
+    expect(publication?.body).toContain(
+      "Review: Unavailable (current-source review timed out)",
+    );
+    expect(publication?.body).not.toContain("Review: Passed");
+  });
+
   it("publishes to Human Review even when passed a forged autoMerge value", async () => {
     const trello = {
       moveCard: vi.fn().mockResolvedValue({
@@ -542,11 +750,7 @@ describe("publishCard", () => {
         "--title",
         "Example task",
         "--body",
-        [
-          "Trello: https://trello.com/c/card-1",
-          "",
-          "Implemented automatically by Configured Git Author.",
-        ].join("\n"),
+        expect.stringContaining("## Outstanding issues"),
       ],
     );
 
@@ -745,6 +949,11 @@ describe("publishCard", () => {
           "",
           "## Validation",
           "- yarn validate passed.",
+          "",
+          "",
+          "## Outstanding issues",
+          "Review: Passed",
+          "Remediation: Not required",
           "<!-- agent-orchestrator-description:end -->",
           "",
           "## Task",
@@ -914,7 +1123,7 @@ describe("publishCard", () => {
 
     expect(createPullRequest).toHaveBeenCalledWith(
       expect.objectContaining({
-        body: expect.stringContaining("Trello: https://trello.com/c/card-1"),
+        body: expect.stringContaining("https://trello.com/c/card-1"),
       }),
     );
     expect(createPullRequest).toHaveBeenCalledWith(
@@ -1098,11 +1307,7 @@ describe("publishCard", () => {
     expect(git.push).toHaveBeenCalled();
     expect(createPullRequest).toHaveBeenCalledWith(
       expect.objectContaining({
-        body: [
-          "Trello: https://trello.com/c/card-1",
-          "",
-          "Implemented automatically by Configured Git Author.",
-        ].join("\n"),
+        body: expect.stringContaining("## Outstanding issues"),
       }),
     );
     expect(trello.moveCard).toHaveBeenCalledWith("card-1", "review-list");
@@ -1147,11 +1352,7 @@ describe("publishCard", () => {
     expect(github.findPullRequest).toHaveBeenCalled();
     expect(createPullRequest).toHaveBeenCalledWith(
       expect.objectContaining({
-        body: [
-          "Trello: https://trello.com/c/card-1",
-          "",
-          "Implemented automatically by Configured Git Author.",
-        ].join("\n"),
+        body: expect.stringContaining("## Outstanding issues"),
       }),
     );
     expect(trello.moveCard).toHaveBeenCalledWith("card-1", "review-list");
@@ -1198,11 +1399,7 @@ describe("publishCard", () => {
     expect(opencode.run).toHaveBeenCalledTimes(1);
     expect(createPullRequest).toHaveBeenCalledWith(
       expect.objectContaining({
-        body: [
-          "Trello: https://trello.com/c/card-1",
-          "",
-          "Implemented automatically by Configured Git Author.",
-        ].join("\n"),
+        body: expect.stringContaining("## Outstanding issues"),
       }),
     );
     expect(trello.moveCard).toHaveBeenCalledWith("card-1", "review-list");
@@ -1261,11 +1458,7 @@ describe("publishCard", () => {
 
     expect(createPullRequest).toHaveBeenCalledWith(
       expect.objectContaining({
-        body: [
-          "Trello: https://trello.com/c/card-1",
-          "",
-          "Implemented automatically by Configured Git Author.",
-        ].join("\n"),
+        body: expect.stringContaining("## Outstanding issues"),
       }),
     );
     expect(runDescription).toHaveBeenCalledTimes(2);
@@ -1320,11 +1513,7 @@ describe("publishCard", () => {
 
     expect(createPullRequest).toHaveBeenCalledWith(
       expect.objectContaining({
-        body: [
-          "Trello: https://trello.com/c/card-1",
-          "",
-          "Implemented automatically by Configured Git Author.",
-        ].join("\n"),
+        body: expect.stringContaining("## Outstanding issues"),
       }),
     );
     expect(opencode.run).toHaveBeenCalledTimes(1);
@@ -1372,11 +1561,7 @@ describe("publishCard", () => {
 
     expect(createPullRequest).toHaveBeenCalledWith(
       expect.objectContaining({
-        body: [
-          "Trello: https://trello.com/c/card-1",
-          "",
-          "Implemented automatically by Configured Git Author.",
-        ].join("\n"),
+        body: expect.stringContaining("## Outstanding issues"),
       }),
     );
     expect(trello.moveCard).toHaveBeenCalledWith("card-1", "review-list");
@@ -1650,8 +1835,8 @@ describe("publishCard", () => {
 
     expect(events).toEqual(["push", "find-pr", "move", "comment"]);
 
-    expect(runGitHubCommand).toHaveBeenCalledTimes(1);
-    expect(getInstallationToken).toHaveBeenCalledTimes(4);
+    expect(runGitHubCommand).toHaveBeenCalledTimes(2);
+    expect(getInstallationToken).toHaveBeenCalledTimes(5);
     expect(getInstallationToken).toHaveBeenNthCalledWith(
       1,
       project.repository.githubApp,
@@ -2292,7 +2477,7 @@ describe("publishCard", () => {
       "was published, but the Trello card could not be moved to Human Review",
     );
 
-    expect(runGitHubCommand).toHaveBeenCalledTimes(1);
+    expect(runGitHubCommand).toHaveBeenCalledTimes(2);
     expect(moveCard).toHaveBeenCalledWith("card-1", "review-list");
   });
 });

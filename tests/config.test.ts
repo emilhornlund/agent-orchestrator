@@ -309,12 +309,12 @@ describe("parseConfig", () => {
     }
   });
 
-  it("requires an orchestrator-owned validation command for every project", () => {
-    expect(() =>
-      parseConfig(
-        validConfig.replace('      validationCommand: "yarn validate"\n', ""),
-      ),
-    ).toThrow("projects.0.repository.validationCommand");
+  it("accepts projects without validation or coverage commands", () => {
+    const config = parseConfig(
+      validConfig.replace('      validationCommand: "yarn validate"\n', ""),
+    );
+    expect(config.projects[0]?.repository.validationCommand).toBeUndefined();
+    expect(config.projects[0]?.repository.coverageCommand).toBeUndefined();
   });
 
   it("rejects the retired manual requiredChecks contract", () => {
@@ -471,6 +471,41 @@ describe("parseConfig", () => {
       maxPasses,
     );
   });
+
+  it.each([0, 4])("accepts validationMaxPasses: %s", (validationMaxPasses) => {
+    const raw = validConfig.replace(
+      `      remediation:
+        model: "openai/remediation-model"
+        variant: "xhigh"`,
+      `      remediation:
+        model: "openai/remediation-model"
+        variant: "xhigh"
+        validationMaxPasses: ${validationMaxPasses}`,
+    );
+
+    expect(
+      parseConfig(raw).projects[0]?.opencode.remediation.validationMaxPasses,
+    ).toBe(validationMaxPasses);
+  });
+
+  it.each(["-1", "1.5", '"many"'])(
+    "rejects invalid validationMaxPasses: %s",
+    (validationMaxPasses) => {
+      const raw = validConfig.replace(
+        `      remediation:
+        model: "openai/remediation-model"
+        variant: "xhigh"`,
+        `      remediation:
+        model: "openai/remediation-model"
+        variant: "xhigh"
+        validationMaxPasses: ${validationMaxPasses}`,
+      );
+
+      expect(() => parseConfig(raw)).toThrow(
+        "projects.0.opencode.remediation.validationMaxPasses",
+      );
+    },
+  );
 
   it.each([
     ["negative", "-1"],
@@ -777,15 +812,15 @@ workflow:`,
     expect(() => parseConfig(raw)).toThrow();
   });
 
-  it("requires validation for every project", () => {
+  it("accepts independently optional validation and coverage commands", () => {
     const raw = validConfig.replace(
       '      validationCommand: "yarn validate"\n',
       "",
     );
 
-    expect(() => parseConfig(raw)).toThrow(
-      "projects.0.repository.validationCommand",
-    );
+    expect(
+      parseConfig(raw).projects[0]?.repository.validationCommand,
+    ).toBeUndefined();
   });
 
   it("accepts multiple projects", () => {

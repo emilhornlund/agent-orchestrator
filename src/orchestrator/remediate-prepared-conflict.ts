@@ -32,7 +32,7 @@ export interface RemediatePreparedConflictOptions {
 }
 
 /**
- * P1 intentionally refuses every prepared-rebase continuation. Remote branch
+ * Prepared-rebase continuation is refused. Remote branch
  * absence or an OPEN-only PR lookup cannot establish that history was never
  * published (the branch may have been deleted or its PR closed/merged).
  */
@@ -42,6 +42,6 @@ export async function remediatePreparedConflict(
   void _options;
   throw new PreparedConflictRemediationError(
     "Git/GitHub",
-    "Prepared-conflict continuation is disabled by the P1 safety guardrail; preserve the handoff, refs, objects, intent, and worktree for additive conflict handling in P8",
+    "Prepared-conflict continuation is disabled to protect published history; preserve the handoff, refs, objects, intent, and worktree for operator reconciliation",
   );
 }

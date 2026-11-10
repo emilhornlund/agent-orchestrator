@@ -4,6 +4,8 @@ import type {
   OpenCodeRunOptions,
   OpenCodeRunResult,
 } from "../opencode/opencode-client.js";
+import { OpenCodeTimeoutError } from "../opencode/opencode-client.js";
+import { ProcessExecutionError } from "../process/process-runtime.js";
 import type { TrelloCard } from "../trello/trello-client.js";
 import { getSessionLogPath } from "../logging/session-log.js";
 import { TaskExecutionStore } from "./task-execution-store.js";
@@ -18,6 +20,7 @@ export class PlanVerificationOperationError extends Error {
   constructor(
     message: string,
     public readonly runResult?: OpenCodeRunResult,
+    public readonly advisoryFailure = false,
     options?: ErrorOptions,
   ) {
     super(message, options);
@@ -70,7 +73,11 @@ export async function runPlanVerification(
     );
   }
 
-  const storedPlan = planStore.read(card.id, taskRecord.revision);
+  const storedPlan = planStore.read(
+    card.id,
+    taskRecord.revision,
+    taskRecord.operationKey,
+  );
 
   if (storedPlan === null) {
     throw new PlanVerificationOperationError(
@@ -88,18 +95,36 @@ export async function runPlanVerification(
     ...(attachmentContext === undefined ? {} : { attachmentContext }),
   });
 
-  const runResult = await openCode.run({
-    ...runOptions,
-    sessionLogPath:
-      runOptions.sessionLogPath ?? getSessionLogPath(projectId, card.id),
-    sessionLabel: runOptions.sessionLabel ?? "Independent plan verification",
-    prompt,
-  });
+  let runResult: OpenCodeRunResult;
+  try {
+    runResult = await openCode.run({
+      ...runOptions,
+      sessionLogPath:
+        runOptions.sessionLogPath ?? getSessionLogPath(projectId, card.id),
+      sessionLabel: runOptions.sessionLabel ?? "Independent plan verification",
+      prompt,
+    });
+  } catch (error) {
+    if (runOptions.signal?.aborted) throw error;
+    const safelyStoppedTimeout =
+      error instanceof OpenCodeTimeoutError && error.treeStopped;
+    const verifiedNeverDispatched =
+      error instanceof ProcessExecutionError &&
+      error.classification === "spawn-failure";
+    if (!safelyStoppedTimeout && !verifiedNeverDispatched) throw error;
+    throw new PlanVerificationOperationError(
+      "Independent plan review execution failed",
+      undefined,
+      true,
+      { cause: error },
+    );
+  }
 
   if (runResult.exitCode !== 0) {
     throw new PlanVerificationOperationError(
       `Independent plan review exited with code ${runResult.exitCode}`,
       runResult,
+      true,
     );
   }
 
@@ -113,6 +138,7 @@ export async function runPlanVerification(
     throw new PlanVerificationOperationError(
       "Independent plan review returned a malformed structured result",
       runResult,
+      true,
       { cause: error },
     );
   }
@@ -125,6 +151,7 @@ export async function runPlanVerification(
     throw new PlanVerificationOperationError(
       `Independent plan review identity does not match ${projectId}/${card.id} plan revision ${storedPlan.planRevision}`,
       runResult,
+      true,
     );
   }
 

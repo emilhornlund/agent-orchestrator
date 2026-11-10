@@ -44,6 +44,15 @@ const requestSchema = z.discriminatedUnion("route", [
     args: z.strictObject(pr),
   }),
   z.strictObject({
+    route: z.literal("github-pr-ready"),
+    args: z.strictObject({
+      ...pr,
+      headBranch: string,
+      expectedHeadSha: string,
+      expectedBody: z.string(),
+    }),
+  }),
+  z.strictObject({
     route: z.literal("github-conversation-reply"),
     args: z.strictObject({ ...pr, body: string }),
   }),
@@ -195,6 +204,8 @@ export async function reconcileWorkflowMutations(options: {
             });
           case "github-pr-draft":
             return github.ensurePullRequestDraft({ ...request.args, project });
+          case "github-pr-ready":
+            return github.ensurePullRequestReady({ ...request.args, project });
           case "github-conversation-reply":
             return github.replyToConversationComment({
               ...request.args,

@@ -45,7 +45,7 @@ export interface RunPrimaryOperationOptions {
   cardId: string;
   operationId: string;
   activity: string;
-  role?: "primary" | "reconstruction";
+  role?: "primary" | "reconstruction" | "advisory";
   sessionId?: string;
   execute: () => Promise<OpenCodeRunResult>;
   inspectPending: (entry: OperationEntry) => Promise<PendingPrimaryInspection>;

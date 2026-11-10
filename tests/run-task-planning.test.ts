@@ -9,6 +9,7 @@ import type { CardAttachmentPromptContext } from "../src/context/card-attachment
 import type { CardAttachmentManifest } from "../src/context/materialize-card-attachments.js";
 import {
   OpenCodeClient,
+  OpenCodeTimeoutError,
   type RunOpenCode,
 } from "../src/opencode/opencode-client.js";
 import { buildTaskPlanningPrompt } from "../src/opencode/build-task-planning-prompt.js";
@@ -17,6 +18,7 @@ import {
   TaskClarificationRequiredError,
 } from "../src/task-session/run-task-planning.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
+import type { PrimaryOperationEntry } from "../src/task-session/run-primary-operation.js";
 import { TaskPlanStore } from "../src/task-session/task-plan-store.js";
 import {
   parseTaskPlanningResult,
@@ -267,6 +269,90 @@ describe("buildTaskPlanningPrompt", () => {
 });
 
 describe("runTaskPlanningOperation", () => {
+  it("recovers a bound planning timeout from verified stop evidence and does not rerun saved advice after restart", async () => {
+    const fixture = createFixture();
+    const initial = fixture.executionStore.read(card.id);
+    if (initial === null) throw new Error("Expected task execution record");
+    fixture.executionStore.compareAndSwap(card.id, initial.revision, {
+      ...initial,
+      primarySessionId: "ses_planning-one",
+      sessionCreationStatus: "bound",
+      revision: initial.revision + 1,
+      updatedAt: "2026-10-24T09:01:00.000Z",
+    });
+    const runOpenCode = vi
+      .fn<RunOpenCode>()
+      .mockRejectedValueOnce(
+        new OpenCodeTimeoutError(100, "planning-timeout", true),
+      )
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        output: structuredPlanningOutput(JSON.stringify(validPlan)),
+        errorOutput: "",
+        sessionId: "ses_planning-one",
+      });
+    const operationId = "initial-plan:planning";
+    const operation = {
+      operationId,
+      trustedRoot: path.join(temporaryRoot!, "runtime-state"),
+      cwd: fixture.worktreePath,
+      inspectPending: async (entry: PrimaryOperationEntry) => ({
+        status: "stopped-after-dispatch" as const,
+        operationId: entry.id,
+        execution: entry.executions,
+        ...(entry.lastSessionId === undefined
+          ? {}
+          : { sessionId: entry.lastSessionId }),
+      }),
+    };
+
+    const result = await runTaskPlanningOperation({
+      taskRecordStore: fixture.executionStore,
+      planStore: fixture.planStore,
+      openCode: new OpenCodeClient(runOpenCode),
+      projectId,
+      card,
+      runOptions: {
+        cwd: fixture.worktreePath,
+        timeoutMilliseconds: 100,
+        signal: new AbortController().signal,
+      },
+      primaryOperation: operation,
+    });
+
+    expect(result.plan).toEqual(validPlan);
+    expect(runOpenCode).toHaveBeenCalledTimes(2);
+    expect(
+      fixture.executionStore.read(card.id)?.primaryOperations,
+    ).toMatchObject({
+      [operationId]: { role: "advisory", executions: 2, status: "completed" },
+    });
+    const restartedStore = new TaskExecutionStore(
+      path.join(temporaryRoot!, "runtime-state"),
+      fixture.project,
+    );
+    const restartedPlanStore = new TaskPlanStore(
+      path.join(temporaryRoot!, "runtime-state"),
+      fixture.project,
+    );
+    await expect(
+      runTaskPlanningOperation({
+        taskRecordStore: restartedStore,
+        planStore: restartedPlanStore,
+        openCode: new OpenCodeClient(runOpenCode),
+        projectId,
+        card,
+        runOptions: {
+          cwd: fixture.worktreePath,
+          timeoutMilliseconds: 100,
+          signal: new AbortController().signal,
+        },
+        primaryOperation: operation,
+      }),
+    ).rejects.toThrow("refusing to replace it");
+    expect(runOpenCode).toHaveBeenCalledTimes(2);
+  });
+
   it("accepts only an authenticated, evidence-backed actionable clarification and leaves planning unadvanced", async () => {
     const fixture = createFixture();
     const clarification = {

@@ -10,7 +10,7 @@ import { taskSessionRepositoryGuidance } from "./task-session-prompt-guidance.js
 export interface TaskSessionValidationRepairPromptInput {
   projectId: string;
   card: TrelloCard;
-  approvedPlan: TaskPlan;
+  approvedPlan?: TaskPlan;
   validation: TaskSessionValidationResult;
   coverage?: TaskSessionValidationResult | null;
   attempt: number;
@@ -22,8 +22,9 @@ export function buildTaskSessionValidationRepairPrompt(
   input: TaskSessionValidationRepairPromptInput,
 ): string {
   if (
-    input.approvedPlan.projectId !== input.projectId ||
-    input.approvedPlan.cardId !== input.card.id
+    input.approvedPlan !== undefined &&
+    (input.approvedPlan.projectId !== input.projectId ||
+      input.approvedPlan.cardId !== input.card.id)
   ) {
     throw new Error(
       "Approved plan does not match the validation repair task identity",
@@ -50,10 +51,13 @@ export function buildTaskSessionValidationRepairPrompt(
       ? input.card.desc
       : "No additional description was provided.",
     ...buildCardAttachmentPromptLines(input.attachmentContext),
-    "Approved plan:",
-    JSON.stringify(input.approvedPlan, null, 2),
+    "Advisory plan:",
+    input.approvedPlan === undefined
+      ? "No usable plan was available. Use the original task and repository evidence to preserve scope."
+      : JSON.stringify(input.approvedPlan, null, 2),
     ...taskSessionRepositoryGuidance,
     `This is bounded validation repair attempt ${input.attempt} of ${input.maxAttempts}.`,
+    `If no further source changes are useful, you may finish early by printing exactly ${"VALIDATION_REPAIR_FINISHED_EARLY"} on its own line. This does not claim that validation passed.`,
     `Validation command: ${JSON.stringify(input.validation.command)}`,
     `Validation status: ${input.validation.status}`,
     `Validation exit code: ${input.validation.exitCode === null ? "unavailable" : input.validation.exitCode}`,
@@ -75,7 +79,7 @@ export function buildTaskSessionValidationRepairPrompt(
             : "No coverage diagnostic output was captured.",
           "The coverage command's exit code enforces repository-owned thresholds; do not invent or change coverage percentages.",
         ]),
-    "Make only changes needed to satisfy the approved plan and fix the failing quality gates. Leave all repository changes in the worktree for orchestrator-owned validation and coverage checks.",
+    "Make only changes needed to satisfy the original task and fix the failing quality gates. Treat planning advice as optional and advisory. Leave all repository changes in the worktree for orchestrator-owned validation and coverage checks.",
     "Do not run Git commands or invoke GitHub tools. Do not commit, change branches, push, or open pull requests; the orchestrator owns all Git and GitHub operations.",
   ].join("\n");
 }

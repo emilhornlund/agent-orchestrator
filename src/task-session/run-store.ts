@@ -615,6 +615,8 @@ export class RunStore {
                 "failed",
                 "timed-out",
                 "aborted",
+                "uncertain",
+                "skipped",
                 "unavailable",
               ].includes(quality.status)
             )

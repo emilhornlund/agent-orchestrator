@@ -9,6 +9,7 @@ import { FeedbackLedgerStore } from "../src/task-session/feedback-ledger-store.j
 import { PrMaintenanceStore } from "../src/task-session/pr-maintenance-store.js";
 import { ProjectRunAuthority } from "../src/task-session/project-run-authority.js";
 import { runTaskSessionReviewWithRepairs } from "../src/task-session/run-task-session-review-repairs.js";
+import { runTaskSessionValidationWithRepairs } from "../src/task-session/run-task-session-validation-repairs.js";
 import { RunStore } from "../src/task-session/run-store.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
 import { TaskMutationQueue } from "../src/task-session/task-mutation-queue.js";
@@ -34,6 +35,14 @@ import {
   writeReconciliationBlock,
 } from "../src/orchestrator/reconciliation-block-storage.js";
 import { cleanupPersistedStateTemporaryFiles } from "../src/orchestrator/persisted-state-temporary-files.js";
+import {
+  CommandRunner,
+  type RunCommand,
+} from "../src/process/command-runner.js";
+import {
+  OpenCodeClient,
+  type RunOpenCode,
+} from "../src/opencode/opencode-client.js";
 
 let root: string;
 afterEach(() => {
@@ -120,6 +129,7 @@ describe("lease-backed project store projections", () => {
     });
     const authority = new ProjectRunAuthority(project.id, envelopeStore, 1);
     const store = new TaskExecutionStore(runtime, project, authority);
+    const ciReviewCycleId = "cycle-two:ci-review:cycle-two";
     const initial = {
       version: 1 as const,
       projectId: project.id,
@@ -146,6 +156,7 @@ describe("lease-backed project store projections", () => {
         projectId: project.id,
         cardId: "card-one",
         operationKey: "cycle-two",
+        reviewCycleId: ciReviewCycleId,
         expectedPrimarySessionId: "primary-session",
         runReview: async (previousFindings) => {
           reviewCalls += 1;
@@ -198,7 +209,7 @@ describe("lease-backed project store projections", () => {
 
     const exhausted = await authority.run(() => run(3));
     expect(exhausted.record.reviewRepair).toMatchObject({
-      cycleId: "cycle-two",
+      cycleId: ciReviewCycleId,
       status: "exhausted",
       maxAttempts: 3,
     });
@@ -211,7 +222,7 @@ describe("lease-backed project store projections", () => {
     expect(envelopeStore.read()?.budgets.review).toMatchObject({
       limit: 4,
       used: 3,
-      episodeId: "cycle-two",
+      episodeId: ciReviewCycleId,
     });
 
     // A compatible restart with a lower configured value keeps the selected
@@ -228,7 +239,231 @@ describe("lease-backed project store projections", () => {
     expect(envelopeStore.read()?.budgets.review).toMatchObject({
       limit: 4,
       used: 3,
-      episodeId: "cycle-two",
+      episodeId: ciReviewCycleId,
+    });
+  });
+
+  it("reconciles a legacy canonical validation limit before charging a configured higher bound", async () => {
+    root = fs.mkdtempSync(
+      path.join(os.tmpdir(), "validation-budget-authority-"),
+    );
+    const repository = path.join(root, "repository");
+    const worktrees = path.join(root, "worktrees");
+    const runtime = path.join(root, "runtime");
+    const worktree = path.join(worktrees, "card-one");
+    fs.mkdirSync(repository);
+    fs.mkdirSync(worktree, { recursive: true });
+    fs.writeFileSync(path.join(worktree, "src.ts"), "initial\n");
+    const project = {
+      id: "project-one",
+      opencode: { remediation: { validationMaxPasses: 4 } },
+      repository: {
+        path: repository,
+        worktreeRoot: worktrees,
+        validationCommand: "validate",
+      },
+    } as ProjectConfig;
+    const integrationId = JSON.stringify({
+      trelloBoardId: "board-one",
+      githubRepository: "owner/repository",
+    });
+    const pinned = {
+      integrationId,
+      projectId: project.id,
+      boardId: "board-one",
+      lists: {
+        ready: "ready",
+        working: "working",
+        review: "review",
+        failed: "failed",
+        done: "done",
+        backlog: "backlog",
+      },
+      repository: "owner/repository",
+      repositoryPath: repository,
+      worktreeRoot: worktrees,
+      storageRoot: runtime,
+    };
+    const lease = {
+      integrationId,
+      instanceId: "validation-budget-owner",
+      token: "validation-budget-token",
+      assertHeld: vi.fn(),
+    };
+    const runStore = new RunStore(runtime, "attempt-validation", pinned, lease);
+    const timestamp = new Date().toISOString();
+    runStore.create({
+      version: 1,
+      revision: 1,
+      projectId: project.id,
+      cardId: "card-one",
+      attemptId: "attempt-validation",
+      taskKind: "implementation",
+      pinned,
+      lifecycle: "validation",
+      checkpoint: "validation",
+      publicationState: "none",
+      operation: {
+        id: "validation-operation",
+        kind: "validation",
+        generation: 1,
+      },
+      wait: { reason: null, dependency: null, since: null, retryAt: null },
+      owner: {
+        instanceId: lease.instanceId,
+        token: lease.token,
+        generation: 1,
+      },
+      resources: [],
+      pendingOperations: [],
+      queue: [],
+      budgets: {
+        validation: {
+          limit: 2,
+          used: 0,
+          episodeId: "card-one:initial-validation",
+          trigger: "initial-implementation",
+        },
+      },
+      sessions: { primary: "session-one" },
+      artifacts: [],
+      expectedTrelloListId: "working",
+      terminalSync: "not-applicable",
+      terminalEvidence: null,
+      legacy: {},
+      compatibility: {},
+      updatedAt: timestamp,
+    });
+    const authority = new ProjectRunAuthority(project.id, runStore, 1);
+    const store = new TaskExecutionStore(runtime, project, authority);
+    await authority.run(() =>
+      store.create({
+        version: 1,
+        projectId: project.id,
+        cardId: "card-one",
+        phase: "validation",
+        primarySessionId: "session-one",
+        sessionCreationStatus: "bound",
+        expectedBranch: "agent/card-one",
+        operationKey: "validation-operation",
+        validationRepair: {
+          cycleId: "validation-operation",
+          status: "active",
+        },
+        revision: 1,
+        retryCounters: { validation: 0, review: 0, ci: 0, humanFeedback: 0 },
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }),
+    );
+    const command = vi.fn<RunCommand>(async () => ({
+      exitCode: 1,
+      output: "validation still fails",
+      errorOutput: "failing check",
+    }));
+    let repairNumber = 0;
+    const runOpenCode = vi.fn<RunOpenCode>(async () => {
+      repairNumber += 1;
+      fs.writeFileSync(
+        path.join(worktree, "src.ts"),
+        `repair ${repairNumber}\n`,
+      );
+      return { exitCode: 0, output: "repair changed source", errorOutput: "" };
+    });
+    const git = {
+      getCurrentBranch: vi.fn(async () => "agent/card-one"),
+      getHeadSha: vi.fn(async () => "a".repeat(40)),
+      getHeadTrackedFiles: vi.fn(async () => ["src.ts"]),
+      getIndexEntries: vi.fn(
+        async () =>
+          "100644 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0\tsrc.ts\0",
+      ),
+      getUntrackedFiles: vi.fn(async () => []),
+    } as never;
+    const planStore = new TaskPlanStore(runtime, project, authority);
+
+    const result = await runTaskSessionValidationWithRepairs({
+      validation: {
+        project,
+        cardId: "card-one",
+        expectedBranch: "agent/card-one",
+        operationKey: "validation-operation",
+        worktreePath: worktree,
+        taskRecordStore: store,
+        git,
+        commands: new CommandRunner(command),
+        signal: new AbortController().signal,
+        timeoutMilliseconds: 60_000,
+      },
+      openCode: new OpenCodeClient(runOpenCode),
+      planStore,
+      card: {
+        id: "card-one",
+        name: "Task",
+        desc: "Current task",
+        idList: "working",
+        idLabels: [],
+        url: "https://trello.example/card-one",
+      },
+      expectedPrimarySessionId: "session-one",
+      primaryOperationEvidence: { trustedRoot: runtime, cwd: worktree },
+      repairRunOptions: {
+        timeoutMilliseconds: 60_000,
+        signal: new AbortController().signal,
+      },
+    });
+
+    expect(result.attempts).toBe(4);
+    expect(result.record.validationRepair).toMatchObject({
+      maxAttempts: 4,
+      status: "exhausted",
+      stopReason: "attempt-limit",
+    });
+    expect(runStore.read()?.budgets.validation).toMatchObject({
+      limit: 4,
+      used: 4,
+      episodeId: "validation-operation",
+    });
+
+    project.opencode.remediation.validationMaxPasses = 1;
+    const resumed = await runTaskSessionValidationWithRepairs({
+      validation: {
+        project,
+        cardId: "card-one",
+        expectedBranch: "agent/card-one",
+        operationKey: "validation-operation",
+        worktreePath: worktree,
+        taskRecordStore: store,
+        git,
+        commands: new CommandRunner(command),
+        signal: new AbortController().signal,
+        timeoutMilliseconds: 60_000,
+      },
+      openCode: new OpenCodeClient(runOpenCode),
+      planStore,
+      card: {
+        id: "card-one",
+        name: "Task",
+        desc: "Current task",
+        idList: "working",
+        idLabels: [],
+        url: "https://trello.example/card-one",
+      },
+      expectedPrimarySessionId: "session-one",
+      primaryOperationEvidence: { trustedRoot: runtime, cwd: worktree },
+      repairRunOptions: {
+        timeoutMilliseconds: 60_000,
+        signal: new AbortController().signal,
+      },
+    });
+
+    expect(resumed.attempts).toBe(4);
+    expect(runOpenCode).toHaveBeenCalledTimes(4);
+    expect(command).toHaveBeenCalledTimes(5);
+    expect(runStore.read()?.budgets.validation).toMatchObject({
+      limit: 4,
+      used: 4,
+      episodeId: "validation-operation",
     });
   });
 

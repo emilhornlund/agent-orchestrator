@@ -4,11 +4,6 @@ This specification translates the agreed behavior in [requirements.md](requireme
 
 Each ID is stable and must not be reused. Requirements are grouped by domain, with short context explaining why they exist. Acceptance criteria describe observable outcomes, not prescribed implementation details. The full set of requirements is tracked here; proposed changes to requirements or acceptance criteria must be reconciled with the authoritative requirements document.
 
-Delivery ownership is specified in the [phase execution packets](phase-execution.md).
-A packet identifies the variants implemented and verified by that phase; it does not
-change any criterion here or declare a complete requirement demonstrated by a subset.
-Cross-phase composition and realistic evidence retain explicit owners and levels.
-
 ## Workflow progression (REQ-WF)
 
 A task must make progress through verified workflow transitions. Internal defects, stale execution state, or uncontrolled retries must not strand a card in an intermediate state. Legitimate waits for human decisions or unavailable external services are different from stalled execution.
@@ -77,7 +72,7 @@ An actual unrecoverable primary implementation crash may fail a task, unlike fai
 **Acceptance criteria**
 
 - Crash classification relies on execution evidence, not failed tests, nonzero test results, or negative review findings.
-- The primary implementation process receives bounded recovery attempts using the existing operation retry configuration: three verified genuine failures per semantic primary operation. Actual dispatches are recorded truthfully; recognized temporary outages do not consume that failure allowance. Separate reconstruction-role accounting uses the same existing limit without consuming primary implementation attempts; no new crash setting is introduced. See [D6-RECOVERY](p6-decisions.md#d6-recovery--counted-unit-and-limit).
+- The primary implementation process receives bounded recovery attempts using the existing operation retry configuration: three verified genuine failures per semantic primary operation. Actual dispatches are recorded truthfully; recognized temporary outages do not consume that failure allowance. Separate reconstruction-role accounting uses the same existing limit without consuming primary implementation attempts; no new crash setting is introduced.
 - Before PR publication, unrecoverable primary execution moves the card to `Failed` with preserved partial work and diagnostics rather than automatically publishing interrupted code.
 - After PR publication, an unrecoverable primary correction operation preserves the existing PR and project ownership, reports its failure, and enters explicit recovery/waiting without marking the task `Failed` or starting another task.
 - An advisory process crash is recorded and skipped after bounded recovery, allowing PR delivery to continue.
@@ -1017,4 +1012,4 @@ The table maps every behavioral section in [requirements.md](requirements.md) to
 - Requirement IDs remain unique and are not renumbered when sections change.
 - Every entry must have observable acceptance criteria. A requirement is not implemented merely because its identifier is mapped to a source section.
 - When changing the baseline, compare source statements and acceptance criteria for omissions, contradictions, or accidental tightening of behavior; resolve differences against the authoritative requirements document.
-- Verification scenarios and implementation status are tracked separately in [verification.md](verification.md) and [implementation-audit.md](implementation-audit.md), referencing these IDs.
+- Regression tests and implementation assessments reference these stable requirement IDs where useful; documentation alone does not establish that behavior is implemented or verified.

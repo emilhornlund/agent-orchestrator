@@ -1270,7 +1270,7 @@ describe("production workflow client journal", () => {
 
   it("verifies exact GitHub body/draft fields and discovers a late conversation reply", async () => {
     const f = fixture();
-    const secret = 'p4-route /+=& "known\\credential"';
+    const secret = 'mutation-route /+=& "known\\credential"';
     registerProcessSecrets([secret]);
     const forms = [
       secret,

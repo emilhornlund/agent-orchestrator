@@ -6,7 +6,7 @@ import { taskSessionRepositoryGuidance } from "./task-session-prompt-guidance.js
 export function buildTaskSessionFeedbackVerificationPrompt(input: {
   projectId: string;
   card: TrelloCard;
-  approvedPlan: TaskPlan;
+  approvedPlan?: TaskPlan;
   currentHeadSha: string;
   contentIdentity: string;
   currentDiff: string;
@@ -14,8 +14,9 @@ export function buildTaskSessionFeedbackVerificationPrompt(input: {
   qualityEvidence: unknown;
 }): string {
   if (
-    input.approvedPlan.projectId !== input.projectId ||
-    input.approvedPlan.cardId !== input.card.id
+    input.approvedPlan !== undefined &&
+    (input.approvedPlan.projectId !== input.projectId ||
+      input.approvedPlan.cardId !== input.card.id)
   ) {
     throw new Error("Feedback verification plan does not match task identity");
   }
@@ -28,8 +29,10 @@ export function buildTaskSessionFeedbackVerificationPrompt(input: {
     `Task title: ${JSON.stringify(input.card.name)}`,
     "Original task:",
     input.card.desc,
-    "Approved plan:",
-    JSON.stringify(input.approvedPlan, null, 2),
+    "Advisory task plan:",
+    input.approvedPlan === undefined
+      ? "No usable plan was available. Assess feedback against the original task, attachments, and repository evidence."
+      : JSON.stringify(input.approvedPlan, null, 2),
     "Current diff:",
     input.currentDiff,
     "Previously successful local quality and independent review evidence:",

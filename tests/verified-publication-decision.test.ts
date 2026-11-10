@@ -23,6 +23,13 @@ const coverage: TaskSessionValidationResult = {
   ...validation,
   command: "yarn coverage",
 };
+const skippedCoverage: TaskSessionValidationResult = {
+  ...coverage,
+  command: "",
+  exitCode: null,
+  status: "skipped",
+  diagnostic: "Not configured; skipped",
+};
 const review: ImplementationReviewResult = {
   version: 1,
   projectId: "project",
@@ -47,7 +54,7 @@ function input(
     currentContentIdentity: identity,
     validationCommand: "yarn validate",
     validation,
-    coverage: null,
+    coverage: skippedCoverage,
     review,
     ...overrides,
   };
@@ -56,6 +63,14 @@ function input(
 describe("decideVerifiedPublication", () => {
   it("allows publication only with current passing validation and review", () => {
     expect(decideVerifiedPublication(input())).toEqual({
+      allowed: true,
+      reasons: [],
+      contentIdentity: identity,
+    });
+  });
+
+  it("retains legacy null-as-unconfigured coverage without calling it a pass", () => {
+    expect(decideVerifiedPublication(input({ coverage: null }))).toEqual({
       allowed: true,
       reasons: [],
       contentIdentity: identity,

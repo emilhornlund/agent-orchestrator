@@ -10,7 +10,7 @@ import { taskSessionRepositoryGuidance } from "./task-session-prompt-guidance.js
 export interface TaskSessionFeedbackRemediationPromptInput {
   projectId: string;
   card: TrelloCard;
-  approvedPlan: TaskPlan;
+  approvedPlan?: TaskPlan;
   currentHeadSha: string;
   operationId: string;
   actionableFeedback: readonly FeedbackLedgerEntry[];
@@ -21,8 +21,9 @@ export function buildTaskSessionFeedbackRemediationPrompt(
   input: TaskSessionFeedbackRemediationPromptInput,
 ): string {
   if (
-    input.approvedPlan.projectId !== input.projectId ||
-    input.approvedPlan.cardId !== input.card.id
+    input.approvedPlan !== undefined &&
+    (input.approvedPlan.projectId !== input.projectId ||
+      input.approvedPlan.cardId !== input.card.id)
   ) {
     throw new Error("Feedback remediation plan does not match task ownership");
   }
@@ -50,14 +51,16 @@ export function buildTaskSessionFeedbackRemediationPrompt(
       ? input.card.desc
       : "No additional description was provided.",
     ...buildCardAttachmentPromptLines(input.attachmentContext),
-    "Approved plan:",
-    JSON.stringify(input.approvedPlan, null, 2),
+    "Advisory task plan:",
+    input.approvedPlan === undefined
+      ? "No usable plan was available. Use the original task, attachments, and repository evidence to preserve scope."
+      : JSON.stringify(input.approvedPlan, null, 2),
     "Current task source:",
     "Inspect the current code and tests in this worktree before making changes; do not assume prior feedback or implementation context is still accurate.",
     "Pending actionable feedback (all items must remain represented until independently verified):",
     JSON.stringify(input.actionableFeedback, null, 2),
     ...taskSessionRepositoryGuidance,
-    "Make only changes needed to address these feedback items while preserving the approved task scope. Leave changes in the worktree for orchestrator-owned validation, coverage, and independent review.",
+    "Make only changes needed to address these feedback items while preserving the original task scope. Treat any plan as advisory. Leave changes in the worktree for orchestrator-owned validation, coverage, and independent review.",
     "Do not run Git commands or invoke GitHub tools. Do not create commits, change branches, push, open pull requests, reply to comments, or resolve threads; the orchestrator owns all Git and GitHub operations.",
   ].join("\n");
 }

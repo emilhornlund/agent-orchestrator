@@ -7,8 +7,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProjectConfig } from "../src/config/config.js";
 import {
   OpenCodeClient,
+  OpenCodeTimeoutError,
   type RunOpenCode,
 } from "../src/opencode/opencode-client.js";
+import {
+  ProcessEvidenceError,
+  ProcessExecutionError,
+  ProcessGroupTerminationError,
+} from "../src/process/process-runtime.js";
 import { runPlanVerification } from "../src/task-session/run-plan-verification.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
 import { TaskPlanStore } from "../src/task-session/task-plan-store.js";
@@ -103,7 +109,7 @@ function createFixture(): {
     createdAt: "2026-10-24T09:00:00.000Z",
     updatedAt: "2026-10-24T09:00:00.000Z",
   });
-  planStore.create(plan, 1);
+  planStore.create(plan, 1, "planning-operation");
 
   return { executionStore, planStore };
 }
@@ -176,6 +182,38 @@ describe("runPlanVerification", () => {
     expect(runOpenCode.mock.calls[0]?.[0].sessionId).toBeUndefined();
   });
 
+  it("verifies the same operation-bound plan after a durable planning recovery wait", async () => {
+    const { executionStore, planStore } = createFixture();
+    const initial = executionStore.read(card.id);
+    if (initial === null) throw new Error("Expected task execution record");
+    executionStore.compareAndSwap(card.id, initial.revision, {
+      ...initial,
+      recoveryWait: {
+        kind: "dependency",
+        reason: "planning-context-unavailable",
+        resumePhase: "planning",
+        since: "2026-10-24T09:01:00.000Z",
+        retryAt: "2026-10-24T09:02:00.000Z",
+        attempts: 1,
+        notificationId: "planning-context-wait",
+      },
+      revision: initial.revision + 1,
+      updatedAt: "2026-10-24T09:01:00.000Z",
+    });
+    const runOpenCode = runOpenCodeWithResult(verification());
+
+    const result = await runPlanVerification(
+      options(executionStore, planStore, new OpenCodeClient(runOpenCode)),
+    );
+
+    expect(result.verification.verdict).toBe("pass");
+    expect(planStore.read(card.id)?.taskOperationKey).toBe(
+      "planning-operation",
+    );
+    expect(executionStore.read(card.id)?.revision).toBe(2);
+    expect(runOpenCode).toHaveBeenCalledOnce();
+  });
+
   it.each([
     ["omitted criterion", "missing-requirement", "REQ-2"],
     ["invented scope", "invented-scope", undefined],
@@ -232,6 +270,91 @@ describe("runPlanVerification", () => {
     expect(planStore.read(card.id)?.verification).toBeUndefined();
     expect(executionStore.read(card.id)?.phase).toBe("planning");
   });
+
+  it("classifies only verified stopped or never-dispatched reviewer failures as advisory", async () => {
+    const safelyStoppedTimeout = new OpenCodeTimeoutError(
+      100,
+      "review-exec",
+      true,
+    );
+    const { executionStore, planStore } = createFixture();
+    const timedOut = vi
+      .fn<RunOpenCode>()
+      .mockRejectedValue(safelyStoppedTimeout);
+    await expect(
+      runPlanVerification(
+        options(executionStore, planStore, new OpenCodeClient(timedOut)),
+      ),
+    ).rejects.toMatchObject({ advisoryFailure: true });
+    expect(planStore.read(card.id)?.verification).toBeUndefined();
+
+    const spawnFailure = new ProcessExecutionError(
+      "OpenCode",
+      "spawn-exec",
+      "spawn-failure",
+    );
+    const failedToSpawn = vi.fn<RunOpenCode>().mockRejectedValue(spawnFailure);
+    await expect(
+      runPlanVerification(
+        options(executionStore, planStore, new OpenCodeClient(failedToSpawn)),
+      ),
+    ).rejects.toMatchObject({ advisoryFailure: true });
+    expect(planStore.read(card.id)?.verification).toBeUndefined();
+  });
+
+  it("preserves caller cancellation even if timeout metadata claims the child stopped", async () => {
+    const { executionStore, planStore } = createFixture();
+    const controller = new AbortController();
+    controller.abort();
+    const failure = new OpenCodeTimeoutError(100, "review-exec", true);
+    const run = vi.fn<RunOpenCode>().mockRejectedValue(failure);
+    const runOptions = options(
+      executionStore,
+      planStore,
+      new OpenCodeClient(run),
+    );
+    runOptions.runOptions.signal = controller.signal;
+
+    await expect(runPlanVerification(runOptions)).rejects.toBe(failure);
+    expect(planStore.read(card.id)?.verification).toBeUndefined();
+    expect(executionStore.read(card.id)?.planReviewAdvice).toBeUndefined();
+  });
+
+  it.each([
+    [
+      "process evidence failure",
+      () => new ProcessEvidenceError("evidence unavailable"),
+    ],
+    [
+      "unverified timeout",
+      () => new OpenCodeTimeoutError(100, "review-exec", false),
+    ],
+    [
+      "process group termination uncertainty",
+      () => new ProcessGroupTerminationError(123),
+    ],
+    [
+      "generic operation failure",
+      () => new Error("ownership or storage failure"),
+    ],
+  ])(
+    "does not downgrade %s into completed advisory advice",
+    async (_label, createError) => {
+      const { executionStore, planStore } = createFixture();
+      const failure = createError();
+      const run = vi.fn<RunOpenCode>().mockRejectedValue(failure);
+
+      await expect(
+        runPlanVerification(
+          options(executionStore, planStore, new OpenCodeClient(run)),
+        ),
+      ).rejects.toBe(failure);
+
+      expect(planStore.read(card.id)?.verification).toBeUndefined();
+      expect(executionStore.read(card.id)).toMatchObject({ phase: "planning" });
+      expect(executionStore.read(card.id)?.planReviewAdvice).toBeUndefined();
+    },
+  );
 
   it("refuses verification after the task record has moved to another phase", async () => {
     const { executionStore, planStore } = createFixture();

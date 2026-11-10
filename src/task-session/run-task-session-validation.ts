@@ -2,6 +2,7 @@ import type { ProjectConfig } from "../config/config.js";
 import type { GitClient } from "../git/git-client.js";
 import {
   CommandRunAbortedError,
+  CommandRunInterruptedError,
   CommandRunner,
   CommandTimeoutError,
 } from "../process/command-runner.js";
@@ -9,12 +10,13 @@ import type { CommandRunOptions } from "../process/command-runner.js";
 import { presentExternalDiagnostic } from "../security/bounded-diagnostic.js";
 import { getTaskSessionSourceSnapshotIdentity } from "./source-snapshot.js";
 import type { TaskExecutionStore } from "./task-execution-store.js";
+import type { TaskExecutionRecord } from "./task-execution-record.js";
 import { loadOwnedTaskExecutionRecord } from "./task-execution-ownership.js";
 import { assertOwnedTaskWorktreePath } from "./run-task-session-implementation.js";
 import { getSessionLogPath } from "../logging/session-log.js";
 
 export type TaskSessionValidationStatus =
-  "passed" | "failed" | "timed-out" | "aborted";
+  "passed" | "failed" | "timed-out" | "aborted" | "uncertain" | "skipped";
 
 export interface TaskSessionValidationResult {
   command: string;
@@ -26,6 +28,25 @@ export interface TaskSessionValidationResult {
   aborted: boolean;
   diagnostic: string;
   contentIdentity: string;
+}
+
+export function restorePersistedTaskSessionQualityEvidence(
+  evidence: NonNullable<
+    NonNullable<TaskExecutionRecord["publicationQuality"]>["validation"]
+  >,
+): TaskSessionValidationResult {
+  const legacySuccessfulEvidence =
+    evidence.status === undefined &&
+    evidence.exitCode === 0 &&
+    evidence.command.trim().length > 0;
+  const status =
+    evidence.status ?? (legacySuccessfulEvidence ? "passed" : "uncertain");
+  return {
+    ...evidence,
+    status,
+    timedOut: status === "timed-out",
+    aborted: status === "aborted",
+  };
 }
 
 export interface RunTaskSessionValidationOptions {
@@ -46,9 +67,12 @@ export interface RunTaskSessionValidationOptions {
   commands: CommandRunner;
   signal: AbortSignal;
   timeoutMilliseconds: number;
-  /** Only for a verified, failed requested-changes review checkpoint. */
+  /** Only after verifying the owning feedback review checkpoint and no reserved writer. */
   feedbackReviewRecovery?: boolean;
+  /** Only after verifying a CI-owned review checkpoint with no reserved review writer. */
+  ciReviewRecovery?: boolean;
   commandOverride?: string;
+  skipWhenUnconfigured?: boolean;
   commandLabel?: string;
   secretValues?: readonly string[];
   sessionLogPath?: string;
@@ -81,19 +105,18 @@ export async function runTaskSessionValidation(
     options;
 
   const validationCommand = project.repository.validationCommand;
+  const skipped =
+    (options.commandOverride === undefined &&
+      validationCommand === undefined) ||
+    options.skipWhenUnconfigured === true;
+  if (validationCommand !== undefined && validationCommand.trim().length === 0)
+    throw new Error("Task-session validation command must not be blank");
 
-  if (
-    validationCommand === undefined ||
-    validationCommand.trim().length === 0
-  ) {
-    throw new Error(
-      "Task-session validation requires a nonempty repository.validationCommand",
-    );
-  }
+  const command = skipped
+    ? ""
+    : (options.commandOverride ?? validationCommand!);
 
-  const command = options.commandOverride ?? validationCommand;
-
-  if (command.trim().length === 0) {
+  if (!skipped && command.trim().length === 0) {
     throw new Error("Task-session command must not be blank");
   }
 
@@ -116,10 +139,15 @@ export async function runTaskSessionValidation(
     record.phase !== "validation" &&
     record.phase !== "publication" &&
     !(
-      options.feedbackReviewRecovery === true &&
+      (options.feedbackReviewRecovery === true ||
+        options.ciReviewRecovery === true) &&
       record.phase === "review" &&
-      record.reviewRepair?.status === "exhausted" &&
-      record.feedbackRemediation?.status === "changed"
+      record.reviewRepair !== undefined &&
+      ["active", "passed", "exhausted"].includes(record.reviewRepair.status) &&
+      record.reviewRepair.activePrimaryOperation === undefined &&
+      (options.feedbackReviewRecovery === true
+        ? record.feedbackRemediation?.status === "changed"
+        : record.ciRepair?.activePrimaryOperation !== undefined)
     )
   ) {
     throw new Error(
@@ -139,6 +167,20 @@ export async function runTaskSessionValidation(
     options.git,
     worktreePath,
   );
+  if (skipped) {
+    const now = new Date().toISOString();
+    return {
+      command: "",
+      startedAt: now,
+      completedAt: now,
+      exitCode: null,
+      status: "skipped",
+      timedOut: false,
+      aborted: false,
+      diagnostic: "Not configured; skipped",
+      contentIdentity,
+    };
+  }
   const startedAt = new Date().toISOString();
 
   try {
@@ -165,17 +207,22 @@ export async function runTaskSessionValidation(
   } catch (error) {
     const timedOut = error instanceof CommandTimeoutError;
     const aborted = error instanceof CommandRunAbortedError;
+    const interrupted = error instanceof CommandRunInterruptedError;
 
     return {
       command,
       startedAt,
       completedAt: new Date().toISOString(),
       exitCode: null,
-      status: timedOut ? "timed-out" : aborted ? "aborted" : "failed",
+      status: timedOut ? "timed-out" : aborted ? "aborted" : "uncertain",
       timedOut,
       aborted,
       diagnostic: presentExternalDiagnostic(
-        error instanceof Error ? error.message : String(error),
+        interrupted
+          ? `${error.message}; exit status is unavailable`
+          : error instanceof Error
+            ? error.message
+            : String(error),
         options.secretValues,
       ),
       contentIdentity,

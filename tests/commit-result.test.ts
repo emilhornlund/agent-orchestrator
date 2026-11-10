@@ -136,6 +136,43 @@ describe("commit result", () => {
     expect(git.getUntrackedFiles).toHaveBeenCalledWith("/worktree");
   });
 
+  it("excludes only the positively owned commit-result path from a repository snapshot", async () => {
+    const worktreePath = fs.mkdtempSync(
+      path.join(os.tmpdir(), "commit-result-ownership-"),
+    );
+    const ownedPath = `.agent-orchestrator/commit-result-${"a".repeat(64)}.json`;
+    const otherPath = `.agent-orchestrator/commit-result-${"b".repeat(64)}.json`;
+    try {
+      fs.mkdirSync(path.dirname(path.join(worktreePath, ownedPath)), {
+        recursive: true,
+      });
+      fs.writeFileSync(path.join(worktreePath, ownedPath), "owned result");
+      fs.writeFileSync(path.join(worktreePath, otherPath), "unowned result");
+      const git = {
+        getStatus: vi
+          .fn()
+          .mockResolvedValue(`?? ${ownedPath}\n?? ${otherPath}`),
+        getDiff: vi.fn().mockResolvedValue(""),
+        getUntrackedFiles: vi.fn().mockResolvedValue([ownedPath, otherPath]),
+      } as unknown as GitClient;
+
+      const ownedSnapshot = await captureRepositorySnapshot(git, worktreePath, [
+        ownedPath,
+      ]);
+      expect(ownedSnapshot.status).toBe(`?? ${otherPath}`);
+      expect(JSON.parse(ownedSnapshot.untrackedFiles)).toMatchObject([
+        { path: otherPath, type: "file" },
+      ]);
+
+      const fullSnapshot = await captureRepositorySnapshot(git, worktreePath);
+      expect(fullSnapshot.status).toContain(ownedPath);
+      expect(fullSnapshot.status).toContain(otherPath);
+      expect(JSON.parse(fullSnapshot.untrackedFiles)).toHaveLength(2);
+    } finally {
+      fs.rmSync(worktreePath, { recursive: true, force: true });
+    }
+  });
+
   it("detects status, unstaged-diff, and staged-diff mutations", () => {
     const snapshot = {
       status: " M tracked.txt",

@@ -9,6 +9,7 @@ import {
 } from "../src/process/command-runner.js";
 import {
   MINIMUM_GIT_VERSION,
+  ISOLATION_PROBE_COMMAND,
   MINIMUM_OPENCODE_VERSION,
   ToolchainCompatibilityError,
   validateGitAndOpenCode,
@@ -27,6 +28,7 @@ function runner(
 
 const ok = (output: string) => ({ exitCode: 0, output });
 const supported = {
+  [ISOLATION_PROBE_COMMAND]: ok(""),
   "git --version": ok(`git version ${MINIMUM_GIT_VERSION}`),
   "git --list-cmds=main": ok(
     "branch cat-file commit diff fetch ls-remote merge-base push rev-parse status worktree",
@@ -41,23 +43,34 @@ describe("Git and OpenCode startup compatibility", () => {
   it("accepts supported executable versions and consumed OpenCode capabilities", async () => {
     const { commands, run } = runner(supported);
     await expect(validateGitAndOpenCode(commands)).resolves.toBeUndefined();
-    expect(run).toHaveBeenCalledTimes(4);
+    expect(run).toHaveBeenCalledTimes(5);
   });
 
   it("uses the supplied project timeout consistently for every startup probe", async () => {
     const { commands, run } = runner(supported);
     await validateGitAndOpenCode(commands, 17_000);
     expect(run.mock.calls.map(([input]) => input.timeoutMilliseconds)).toEqual([
-      17_000, 17_000, 17_000, 17_000,
+      17_000, 17_000, 17_000, 17_000, 17_000,
     ]);
     const secondProject = runner(supported);
     await validateGitAndOpenCode(secondProject.commands, 83_000);
     expect(
       secondProject.run.mock.calls.map(([input]) => input.timeoutMilliseconds),
-    ).toEqual([83_000, 83_000, 83_000, 83_000]);
+    ).toEqual([83_000, 83_000, 83_000, 83_000, 83_000]);
   });
 
   it.each([
+    [
+      "missing isolation tool",
+      { ...supported, [ISOLATION_PROBE_COMMAND]: undefined },
+    ],
+    [
+      "denied namespaces",
+      {
+        ...supported,
+        [ISOLATION_PROBE_COMMAND]: { exitCode: 1, output: "denied" },
+      },
+    ],
     ["missing Git", { ...supported, "git --version": undefined }],
     [
       "incompatible Git",
@@ -103,6 +116,7 @@ describe("Git and OpenCode startup compatibility", () => {
         "opencode",
         `if [ "$1" = "--version" ]; then printf '${MINIMUM_OPENCODE_VERSION}\\n'; else printf '%03000d' 0; printf '%s\\n' '--auto --model --variant --dir --session --format'; printf '%03000d' 0 >&2; fi`,
       );
+      writeExecutable("bwrap", "exit 0");
       process.env.PATH = fixtureRoot;
       await expect(
         validateGitAndOpenCode(new CommandRunner()),

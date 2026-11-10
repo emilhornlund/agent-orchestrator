@@ -3,7 +3,10 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProjectConfig } from "../src/config/config.js";
-import { runTaskSessionFeedbackCycle } from "../src/orchestrator/run-task-session-feedback-cycle.js";
+import {
+  persistQualityEvidence,
+  runTaskSessionFeedbackCycle,
+} from "../src/orchestrator/run-task-session-feedback-cycle.js";
 import { FeedbackLedgerStore } from "../src/task-session/feedback-ledger-store.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
 import { TaskMutationQueue } from "../src/task-session/task-mutation-queue.js";
@@ -116,6 +119,88 @@ function fixture() {
 }
 
 describe("Human Review attachment preparation", () => {
+  it("preserves a higher validation budget and used attempts when feedback publication stores fresh evidence", () => {
+    const f = fixture();
+    const current = f.common.taskStore.read(f.common.card.id);
+    if (current === null) throw new Error("Expected task record");
+    const identity = `sha256:${"c".repeat(64)}`;
+    const withPriorValidation = f.common.taskStore.compareAndSwap(
+      f.common.card.id,
+      current.revision,
+      {
+        ...current,
+        retryCounters: { ...current.retryCounters, validation: 3 },
+        validationRepair: {
+          cycleId: "operation",
+          status: "exhausted",
+          maxAttempts: 4,
+          stopReason: "no-change",
+          evidence: {
+            command: "yarn validate",
+            startedAt: "2026-10-24T09:00:00.000Z",
+            completedAt: "2026-10-24T09:01:00.000Z",
+            exitCode: 1,
+            status: "failed",
+            diagnostic: "Prior validation failure",
+            contentIdentity: identity,
+          },
+          coverageEvidence: {
+            command: "",
+            startedAt: "2026-10-24T09:00:00.000Z",
+            completedAt: "2026-10-24T09:00:00.000Z",
+            exitCode: null,
+            status: "skipped",
+            diagnostic: "Coverage is not configured",
+            contentIdentity: identity,
+          },
+        },
+        revision: current.revision + 1,
+        updatedAt: new Date().toISOString(),
+      },
+    );
+    const validation = {
+      command: "yarn validate",
+      startedAt: "2026-10-24T09:02:00.000Z",
+      completedAt: "2026-10-24T09:03:00.000Z",
+      exitCode: 0,
+      status: "passed" as const,
+      timedOut: false,
+      aborted: false,
+      diagnostic: "Prepared feedback content passes validation",
+      contentIdentity: identity,
+    };
+    const coverage = {
+      command: "",
+      startedAt: "2026-10-24T09:03:00.000Z",
+      completedAt: "2026-10-24T09:03:00.000Z",
+      exitCode: null,
+      status: "skipped" as const,
+      timedOut: false,
+      aborted: false,
+      diagnostic: "Coverage is not configured",
+      contentIdentity: identity,
+    };
+
+    const persisted = persistQualityEvidence(
+      f.common.taskStore,
+      withPriorValidation,
+      "feedback-operation",
+      validation,
+      coverage,
+    );
+
+    expect(persisted.retryCounters.validation).toBe(3);
+    expect(persisted.validationRepair).toMatchObject({
+      cycleId: "operation",
+      maxAttempts: 4,
+      status: "passed",
+      evidence: {
+        status: "passed",
+        diagnostic: "Prepared feedback content passes validation",
+      },
+    });
+  });
+
   it("skips attachment reconciliation across repeated idle polls", async () => {
     const f = fixture();
     const prepareAttachmentContext = vi.fn(async () => undefined);

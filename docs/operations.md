@@ -5,11 +5,6 @@
 This page is the canonical operator reference for execution isolation, publication boundaries, timing, notifications,
 shutdown, logging, retention, and multi-project operation.
 
-Architecture work is incremental. [phase-status.md](phase-status.md) records delivery
-milestones and remaining qualification; the [execution packets](phase-execution.md)
-assign future behavior changes. Legacy block/quality/maintenance descriptions below
-are not authority to retain policies contradicted by the agreed requirements.
-
 ## Reconciliation block storage
 
 For legacy reconciliation records, when a retryable GitHub or Trello reconciliation reaches the existing three-attempt limit, the project worker writes its
@@ -32,12 +27,11 @@ persisted `retryAt`: bounded immediate read failures preserve the verified check
 and recheck it later instead of requiring a manual Ready move solely for an outage.
 Do not confuse this with a deliberate fresh retry or a legacy block lacking evidence.
 Primary execution accounting separately records actual dispatches, verified genuine
-failures and dependency outages. The user-approved
-[D6-RECOVERY](p6-decisions.md#d6-recovery--counted-unit-and-limit) counts three verified
+failures and dependency outages. The recovery policy counts three verified
 genuine failures per primary operation and separately accounts outages/reconstruction;
 do not infer another global task deadline or
 reuse service-request counts as correction-pass budgets. Orphan execution without
-reliable stopped proof remains fenced (CO-C2), not automatically retried.
+reliable stopped proof remains fenced, not automatically retried.
 
 Before repository bootstrap and project reconciliation at startup, the service removes stale atomic-write temporary files for
 each configured project. The recognized scope is limited to these writer-generated names:
@@ -281,7 +275,7 @@ access and retry through the normal workflow; the service does not persist token
 strictly later than the current time plus the five-minute refresh window; expired, nearly expired, and exact-boundary
 responses therefore fail through the safe App exchange error path without being returned or cached.
 
-Immediately before publication, the task worktree fetches `origin/<defaultBranch>`. P1 disables all automatic rebasing and
+Immediately before publication, the task worktree fetches `origin/<defaultBranch>`. This release disables all automatic rebasing and
 prepared-conflict continuation. Ordinary initial publication is still available when the task branch can be published without
 rewriting history; otherwise the workflow preserves state and defers publication.
 
@@ -289,9 +283,13 @@ The post-commit AI pull-request-description step is presentation-only. Its stric
 1,000 characters, at most 20 `changes` entries and 20 `validation` entries, and at most 500 characters per entry. Empty arrays
 remain valid, including `validation` when no result is known. Its context collection, OpenCode execution, structured output
 parsing or validation, and Markdown rendering failures, including oversized output, are logged with the failed stage and do not
-block publication. New pull requests use the deterministic fallback body, consisting of the Trello card URL followed by the
-footer `Implemented automatically by <projects[].repository.gitIdentity.name>.`; generated descriptions use that same footer.
-Existing open pull requests are reused without description updates, as usual.
+block publication. The deterministic fallback includes task purpose, changed files
+when available, observed quality results (or explicit absence of evidence),
+outstanding issues and the Trello link. Generated and fallback descriptions use
+the configured Git identity attribution footer. Agent-reported validation claims
+never replace orchestrator-observed results. Existing PR updates refresh only the
+managed description region, preserving human content outside it. Unknown or
+malformed ownership markers are preserved rather than overwritten.
 
 For every open owned PR, the worker verifies the persisted URL, branch, repository, and exact current head before observing CI and
 feedback. Checks and commit statuses are matched to automatically established expectations from repository rules and static
@@ -327,15 +325,15 @@ project's next task until a human merges or closes it. `autoMerge: true` is reje
 Prepared-publication conflicts and legacy prepared handoffs are not automatically handled. The worker does not inspect them to infer
 that rewriting is safe, and does not run a conflict agent, continue/abort/reset, clean, remove, recreate, or publish the worktree.
 The record, branch, refs, objects, intent, dirty/unshipped work, and handoff are preserved. PR state observation and verified
-terminal reconciliation continue read-only; affected task writers and claims remain blocked pending explicit reconciliation or
-the additive P8 implementation. See [Recovery](recovery.md).
+terminal reconciliation continue read-only; affected task writers and claims remain blocked pending explicit reconciliation.
+See [Recovery](recovery.md).
 
 ### Published branch rewriting is disabled
 
-P1 removes the `pushWithLease` capability and disables all automatic rebases, including pre-publication and conflict continuation.
+The service exposes no `pushWithLease` capability and disables all automatic rebases, including pre-publication and conflict continuation.
 No force-push or rebase-based publication is promised. Published history, remote refs, maintenance intents, conflict handoffs,
-worktrees, local-only commits, and dirty changes are retained when safe continuation is unavailable. The intended additive target
-merge and ordinary push replacement is deferred to P8; operators must not manually retry an uncertain operation or reset/discard
+worktrees, local-only commits, and dirty changes are retained when safe continuation is unavailable. Automatic additive target
+merging is not supported by this release; operators must not manually retry an uncertain operation or reset/discard
 its worktree. Ordinary initial publication requiring no synchronization remains supported.
 
 ## Elapsed workflow time
@@ -493,7 +491,10 @@ own project; it does not silently advance another project's workflow.
 ## Unified task-session operation
 
 Every configured project runs the same durable task-session workflow; there is no per-project mode switch or required-check-name
-list. Configure the required `repository.validationCommand`; `coverageCommand` remains optional and becomes a gate when set. CI
+list. `repository.validationCommand` and `coverageCommand` are independently optional.
+The orchestrator runs configured commands and records unconfigured commands as skipped,
+never passed. Some legacy routes still require configured checks to pass; see
+[Configuration](configuration.md#projectsrepository) for current quality-policy limitations. CI
 expectations are discovered from branch-protection information and repository-owned pull-request workflows. See
 [Configuration](configuration.md#ci-expectation-discovery) for how unknown and dynamic CI contracts fail closed.
 
@@ -527,11 +528,18 @@ using existing application recovery tooling before resuming. Do not manually edi
 as a routine recovery step. If the persisted state cannot be unambiguously reconciled through supported procedures, keep that
 project blocked and escalate rather than creating a replacement attempt.
 
-Validation and CI repair each retain their finite two-attempt limit. Implementation review
-repair instead honors `opencode.remediation.maxPasses` (default one). On
+Validation/coverage repair honors its independently configured
+`opencode.remediation.validationMaxPasses` limit (default two); the maximum,
+attempt counter, original prompt, pre-dispatch content identity, and final quality
+evidence are persisted for restart-safe continuation. An exact-content no-op ends
+the cycle without repeating unchanged checks, and early finish is explicit. CI
+repair retains its existing finite two-attempt limit. Implementation review
+repair honors `opencode.remediation.maxPasses` (default one). On
 exhaustion, the last structured failed review and its source identity are
-persisted and the implementation can be published for Human Review after current
-local validation and coverage pass. No Attention Required email is generated
+persisted and meaningful safe initial implementation is published for Human Review
+as a draft when local validation/coverage failed, were skipped or remain uncertain,
+or material issues remain. Passing quality checks are not required for initial
+delivery. No Attention Required email is generated
 for review exhaustion alone; polling and restart reuse the persisted final
 review without consuming more attempts. Legacy exhausted records lacking final
 review evidence perform at most one read-only verification review during
@@ -543,7 +551,7 @@ gates and review are rerun after each correction. `autoMerge: true` is rejected 
 preserve compatibility, and current-head CI/local evidence never authorizes a merge. Exhaustion or ambiguous state is preserved for operator attention rather than retried
 indefinitely. Replies are published only for independently verified items after the correcting commit and a complete passing CI
 result. The process does not approve reviews or resolve reviewer threads. See [Workflow](workflow.md#unified-task-lifecycle) and
-[Recovery](recovery.md#task-session-recovery) for lifecycle and recovery details.
+[Recovery](recovery.md#restart-and-task-ownership) for lifecycle and recovery details.
 
 The unified implementation has been verified locally with mocked Trello, GitHub, and OpenCode boundaries. This does not establish
 that a particular GitHub check, permission, Trello board, or OpenCode runtime is available. No real-world pilot, deployed-service

@@ -20,7 +20,7 @@ const realLease =
     ? await acquireProjectOwnership(
         path.join(root, "coordination"),
         { trelloBoardId: "board", githubRepository: "owner/repo" },
-        "p4-evidence",
+        "publication-evidence",
       )
     : undefined;
 const f = reopenPublicationFixture(

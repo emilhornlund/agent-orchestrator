@@ -18,6 +18,7 @@ export const taskExecutionEventTypes = [
   "plan-approved",
   "implementation-completed",
   "validation-passed",
+  "validation-reviewed",
   "validation-exhausted",
   "validation-failed",
   "review-passed",
@@ -200,10 +201,38 @@ const retryCountersSchema = z.strictObject({
   humanFeedback: z.number().int().nonnegative(),
 });
 
+const advisoryOutcomeSchema = z
+  .strictObject({
+    status: z.enum(["unavailable", "invalid", "completed"]),
+    diagnostic: z.string().min(1).max(2_000),
+    planRevision: z.number().int().positive().safe().optional(),
+    taskRecordRevision: z.number().int().positive().safe().optional(),
+    operationKey: nonBlankIdentifier.optional(),
+  })
+  .superRefine((outcome, ctx) => {
+    const associationFields = [
+      outcome.planRevision,
+      outcome.taskRecordRevision,
+      outcome.operationKey,
+    ];
+    if (
+      associationFields.some((value) => value !== undefined) &&
+      associationFields.some((value) => value === undefined)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          "Plan-review advice association must include plan, task revision, and operation identity",
+      });
+    }
+  });
+
+const taskSessionContentIdentity = z.string().regex(/^sha256:[0-9a-f]{64}$/u);
+
 export const primaryOperationSchema = z.strictObject({
   id: nonBlankIdentifier,
   activity: nonBlankIdentifier,
-  role: z.enum(["primary", "reconstruction"]).optional(),
+  role: z.enum(["primary", "reconstruction", "advisory"]).optional(),
   executions: z.number().int().nonnegative().safe(),
   failureExecutions: z.number().int().nonnegative().safe().optional(),
   dependencyOutages: z.number().int().nonnegative().safe().optional(),
@@ -247,6 +276,12 @@ export const primaryOperationSchema = z.strictObject({
     .optional(),
   retrySafe: z.boolean().optional(),
   diagnostic: z.string().max(2_000).optional(),
+  commitMessageResult: z
+    .strictObject({
+      intentIdentity: taskSessionContentIdentity,
+      message: z.string().min(1).max(4_000),
+    })
+    .optional(),
 });
 const primaryOperationsSchema = z
   .record(nonBlankIdentifier, primaryOperationSchema)
@@ -278,6 +313,16 @@ const primaryOperationsSchema = z
           code: "custom",
           path: [key, "result"],
           message: "Completed operation requires replay result",
+        });
+      if (
+        operation.commitMessageResult !== undefined &&
+        (operation.status !== "completed" || operation.role !== "advisory")
+      )
+        ctx.addIssue({
+          code: "custom",
+          path: [key, "commitMessageResult"],
+          message:
+            "Commit-message result requires a completed advisory operation",
         });
       if (
         operation.status === "exhausted" &&
@@ -322,67 +367,144 @@ const recoveryWaitSchema = z.strictObject({
   notificationId: nonBlankIdentifier,
 });
 
-const taskSessionContentIdentity = z.string().regex(/^sha256:[0-9a-f]{64}$/u);
-
 const validationEvidenceSchema = z.strictObject({
-  command: nonBlankIdentifier,
+  command: z.string().max(2_000),
   startedAt: z.string().datetime(),
   completedAt: z.string().datetime(),
-  exitCode: z.literal(0),
+  exitCode: z.number().int().nullable(),
+  status: z
+    .enum(["passed", "failed", "timed-out", "aborted", "uncertain", "skipped"])
+    .optional(),
   diagnostic: z.string().max(2_000),
   contentIdentity: taskSessionContentIdentity,
 });
 
-const validationRepairSchema = z.strictObject({
-  cycleId: nonBlankIdentifier,
-  status: z.enum(["active", "passed", "exhausted"]),
-  activePrimaryOperation: z
-    .strictObject({
-      operationId: nonBlankIdentifier,
-      pass: z.number().int().positive().safe(),
-      validationResult: z.union([
-        z.strictObject({
-          command: z.string().min(1).max(2_000),
-          startedAt: z.string().datetime(),
-          completedAt: z.string().datetime(),
-          exitCode: z.number().int().nullable(),
-          status: z.enum(["passed", "failed", "timed-out", "aborted"]),
-          timedOut: z.boolean(),
-          aborted: z.boolean(),
-          diagnostic: z.string().max(8_000),
-          contentIdentity: taskSessionContentIdentity,
-        }),
-        z.strictObject({
-          reference: z.string().regex(/^sha256:[0-9a-f]{64}$/u),
-          path: z.string().min(1).max(2_048).optional(),
-          bytes: z
-            .number()
-            .int()
-            .nonnegative()
-            .max(64 * 1024 * 1024),
-        }),
-      ]),
-      promptContext: z.string().regex(/^sha256:[0-9a-f]{64}$/u),
-      promptArtifact: z
-        .strictObject({
-          reference: z.string().regex(/^sha256:[0-9a-f]{64}$/u),
-          path: z.string().min(1).max(2_048).optional(),
-          bytes: z
-            .number()
-            .int()
-            .nonnegative()
-            .max(1024 * 1024),
-        })
-        .optional(),
-    })
-    .optional(),
-  evidence: validationEvidenceSchema.optional(),
-  coverageEvidence: validationEvidenceSchema.optional(),
-});
+const validationRepairSchema = z
+  .strictObject({
+    cycleId: nonBlankIdentifier,
+    status: z.enum(["active", "passed", "exhausted", "skipped"]),
+    maxAttempts: z.number().int().nonnegative().safe().optional(),
+    stopReason: z
+      .enum(["attempt-limit", "no-change", "finished-early"])
+      .optional(),
+    finishAfterNextCheck: z.enum(["no-change", "finished-early"]).optional(),
+    activePrimaryOperation: z
+      .strictObject({
+        operationId: nonBlankIdentifier,
+        pass: z.number().int().positive().safe(),
+        beforeContentIdentity: taskSessionContentIdentity.optional(),
+        validationResult: z.union([
+          z
+            .strictObject({
+              command: z.string().max(2_000),
+              startedAt: z.string().datetime(),
+              completedAt: z.string().datetime(),
+              exitCode: z.number().int().nullable(),
+              status: z.enum([
+                "passed",
+                "failed",
+                "timed-out",
+                "aborted",
+                "uncertain",
+                "skipped",
+              ]),
+              timedOut: z.boolean(),
+              aborted: z.boolean(),
+              diagnostic: z.string().max(8_000),
+              contentIdentity: taskSessionContentIdentity,
+            })
+            .superRefine((result, ctx) => {
+              if (result.command.length === 0 && result.status !== "skipped")
+                ctx.addIssue({
+                  code: "custom",
+                  path: ["command"],
+                  message: "Only skipped quality evidence may have no command",
+                });
+            }),
+          z.strictObject({
+            reference: z.string().regex(/^sha256:[0-9a-f]{64}$/u),
+            path: z.string().min(1).max(2_048).optional(),
+            bytes: z
+              .number()
+              .int()
+              .nonnegative()
+              .max(64 * 1024 * 1024),
+          }),
+        ]),
+        promptContext: z.string().regex(/^sha256:[0-9a-f]{64}$/u),
+        promptArtifact: z
+          .strictObject({
+            reference: z.string().regex(/^sha256:[0-9a-f]{64}$/u),
+            path: z.string().min(1).max(2_048).optional(),
+            bytes: z
+              .number()
+              .int()
+              .nonnegative()
+              .max(1024 * 1024),
+          })
+          .optional(),
+      })
+      .optional(),
+    evidence: validationEvidenceSchema.optional(),
+    coverageEvidence: validationEvidenceSchema.optional(),
+  })
+  .superRefine((repair, ctx) => {
+    if (
+      repair.status === "exhausted" &&
+      repair.stopReason !== undefined &&
+      repair.evidence === undefined
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["evidence"],
+        message: "Stopped validation repair requires final quality evidence",
+      });
+    }
+    if (repair.status !== "exhausted" && repair.stopReason !== undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["stopReason"],
+        message: "Only exhausted validation repairs have a stop reason",
+      });
+    }
+    if (
+      repair.finishAfterNextCheck !== undefined &&
+      repair.status !== "active"
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["finishAfterNextCheck"],
+        message: "Early-finish quality check must remain active until observed",
+      });
+    }
+    if (
+      repair.maxAttempts !== undefined &&
+      repair.activePrimaryOperation !== undefined &&
+      repair.activePrimaryOperation.pass > repair.maxAttempts
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["activePrimaryOperation", "pass"],
+        message: "Reserved validation repair exceeds its persisted maximum",
+      });
+    }
+  });
 
 const reviewRepairSchema = z.strictObject({
   cycleId: nonBlankIdentifier,
-  status: z.enum(["active", "passed", "exhausted"]),
+  status: z.enum(["active", "passed", "exhausted", "stopped"]),
+  stopReason: z
+    .enum([
+      "attempt-limit",
+      "no-change",
+      "finished-early",
+      "validation-exhausted",
+      "review-unavailable",
+    ])
+    .optional(),
+  finishAfterNextReview: z
+    .union([z.boolean(), z.enum(["no-change", "finished-early"])])
+    .optional(),
   activePrimaryOperation: z
     .strictObject({
       operationId: nonBlankIdentifier,
@@ -419,6 +541,13 @@ const reviewRepairSchema = z.strictObject({
         sourceIdentities: z.array(taskSessionContentIdentity).min(1),
         status: z.enum(["unresolved", "resolved", "superseded"]),
         justification: z.string().min(1).optional(),
+        primaryDisposition: z
+          .strictObject({
+            reviewedContentIdentity: taskSessionContentIdentity,
+            status: z.enum(["addressed", "dismissed"]),
+            rationale: z.string().min(1).max(4_000),
+          })
+          .optional(),
       }),
     )
     .superRefine((findings, ctx) => {
@@ -442,6 +571,28 @@ const reviewRepairSchema = z.strictObject({
             message: "Superseded tracked findings require justification",
           });
         }
+      }
+    })
+    .optional(),
+  requirementDispositions: z
+    .array(
+      z.strictObject({
+        requirementId: nonBlankIdentifier,
+        reviewedContentIdentity: taskSessionContentIdentity,
+        status: z.enum(["addressed", "dismissed"]),
+        rationale: z.string().min(1).max(4_000),
+      }),
+    )
+    .superRefine((dispositions, ctx) => {
+      const ids = new Set<string>();
+      for (const [index, disposition] of dispositions.entries()) {
+        if (ids.has(disposition.requirementId))
+          ctx.addIssue({
+            code: "custom",
+            path: [index, "requirementId"],
+            message: `Duplicate primary requirement disposition: ${disposition.requirementId}`,
+          });
+        ids.add(disposition.requirementId);
       }
     })
     .optional(),
@@ -486,6 +637,11 @@ const feedbackRemediationSchema = z.strictObject({
   status: z.enum(["active", "changed", "no-op", "failed"]),
   headSha: gitSha,
   ledgerRevision: z.number().int().positive().safe(),
+  feedbackIds: z
+    .array(nonBlankIdentifier)
+    .min(1)
+    .refine((ids) => new Set(ids).size === ids.length)
+    .optional(),
 });
 
 const reviewObservationSchema = z.strictObject({
@@ -507,6 +663,20 @@ const publicationQualitySchema = z.strictObject({
   validation: validationEvidenceSchema,
   coverageEvidence: validationEvidenceSchema.optional(),
   review: z.unknown(),
+  reviewPreviousFindingIds: z
+    .array(nonBlankIdentifier)
+    .refine((ids) => new Set(ids).size === ids.length)
+    .optional(),
+  reviewPreviousFindings: z
+    .array(
+      z.strictObject({
+        id: nonBlankIdentifier,
+        sourceContentIdentity: taskSessionContentIdentity.optional(),
+        sourceIdentities: z.array(taskSessionContentIdentity),
+        status: z.enum(["unresolved", "resolved", "superseded"]),
+      }),
+    )
+    .optional(),
 });
 
 const taskExecutionRecordSchema = z
@@ -519,6 +689,8 @@ const taskExecutionRecordSchema = z
     primarySessionId: nonBlankIdentifier.optional(),
     sessionCreationStatus: sessionCreationStatus.optional(),
     sessionRecovery: sessionRecoveryStateSchema.optional(),
+    planningAdvice: advisoryOutcomeSchema.optional(),
+    planReviewAdvice: advisoryOutcomeSchema.optional(),
     setup: taskSetupState.optional(),
     terminalFailure: terminalFailureState.optional(),
     externalRecovery: externalRecoveryState.optional(),
@@ -550,6 +722,19 @@ const taskExecutionRecordSchema = z
       .strictObject({
         contentIdentity: taskSessionContentIdentity,
         diagnostic: z.string().min(1).max(500),
+        priorReview: implementationReviewResultSchema.optional(),
+      })
+      .superRefine((marker, ctx) => {
+        if (
+          marker.priorReview !== undefined &&
+          marker.priorReview.verdict !== "fail"
+        )
+          ctx.addIssue({
+            code: "custom",
+            path: ["priorReview", "verdict"],
+            message:
+              "Only a prior negative review may be retained as unavailable-review context",
+          });
       })
       .optional(),
     ciRepair: ciRepairSchema.optional(),
@@ -659,7 +844,8 @@ const taskExecutionRecordSchema = z
         });
       }
 
-      if (record.retryCounters.validation > 2) {
+      const validationMaximum = record.validationRepair.maxAttempts ?? 2;
+      if (record.retryCounters.validation > validationMaximum) {
         ctx.addIssue({
           code: "custom",
           path: ["retryCounters", "validation"],
@@ -669,7 +855,9 @@ const taskExecutionRecordSchema = z
 
       if (
         record.validationRepair.status === "exhausted" &&
-        record.retryCounters.validation !== 2
+        (record.validationRepair.stopReason === undefined ||
+          record.validationRepair.stopReason === "attempt-limit") &&
+        record.retryCounters.validation !== validationMaximum
       ) {
         ctx.addIssue({
           code: "custom",
@@ -691,6 +879,9 @@ const taskExecutionRecordSchema = z
 
       if (
         record.validationRepair.status !== "passed" &&
+        record.validationRepair.status !== "skipped" &&
+        record.validationRepair.status !== "active" &&
+        record.validationRepair.status !== "exhausted" &&
         record.validationRepair.evidence !== undefined
       ) {
         ctx.addIssue({
@@ -702,6 +893,9 @@ const taskExecutionRecordSchema = z
 
       if (
         record.validationRepair.status !== "passed" &&
+        record.validationRepair.status !== "skipped" &&
+        record.validationRepair.status !== "active" &&
+        record.validationRepair.status !== "exhausted" &&
         record.validationRepair.coverageEvidence !== undefined
       ) {
         ctx.addIssue({
@@ -731,6 +925,7 @@ const taskExecutionRecordSchema = z
         "implementation",
         "validation",
         "review",
+        "ci",
         "attention-required",
       ];
 
@@ -745,11 +940,60 @@ const taskExecutionRecordSchema = z
         });
       }
 
+      const stopReasonRequiresStopped = [
+        "validation-exhausted",
+        "review-unavailable",
+      ].includes(record.reviewRepair.stopReason ?? "");
+      if (
+        record.reviewRepair.stopReason !== undefined &&
+        !stopReasonRequiresStopped &&
+        record.reviewRepair.status !== "exhausted"
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["reviewRepair", "stopReason"],
+          message: "A completed review stop reason requires an exhausted cycle",
+        });
+      }
+      if (
+        (record.reviewRepair.status === "stopped") !==
+        stopReasonRequiresStopped
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["reviewRepair", "stopReason"],
+          message: "Stopped review repair requires its stop reason",
+        });
+      }
+      if (
+        record.reviewRepair.status === "stopped" &&
+        record.reviewRepair.activePrimaryOperation !== undefined
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["reviewRepair", "activePrimaryOperation"],
+          message: "Stopped review repair cannot retain an active writer",
+        });
+      }
+      if (
+        record.reviewRepair.finishAfterNextReview !== undefined &&
+        record.reviewRepair.finishAfterNextReview !== false &&
+        record.reviewRepair.status !== "active"
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["reviewRepair", "finishAfterNextReview"],
+          message: "Early-finish review must remain active until reviewed",
+        });
+      }
+
       if (
         record.reviewRepair.status !== "active" &&
         record.phase !== "review" &&
         !(
-          ["passed", "exhausted"].includes(record.reviewRepair.status) &&
+          ["passed", "exhausted", "stopped"].includes(
+            record.reviewRepair.status,
+          ) &&
           [
             "publication",
             "ci",
@@ -757,6 +1001,11 @@ const taskExecutionRecordSchema = z
             "attention-required",
             "done",
           ].includes(record.phase)
+        ) &&
+        !(
+          record.reviewRepair.status === "stopped" &&
+          record.reviewRepair.stopReason === "validation-exhausted" &&
+          record.phase === "validation"
         )
       ) {
         ctx.addIssue({
@@ -781,7 +1030,10 @@ const taskExecutionRecordSchema = z
       if (
         record.reviewRepair.status === "exhausted" &&
         maxAttempts !== undefined &&
-        record.retryCounters.review !== maxAttempts
+        (record.reviewRepair.stopReason === undefined ||
+        record.reviewRepair.stopReason === "attempt-limit"
+          ? record.retryCounters.review !== maxAttempts
+          : record.retryCounters.review > maxAttempts)
       ) {
         ctx.addIssue({
           code: "custom",

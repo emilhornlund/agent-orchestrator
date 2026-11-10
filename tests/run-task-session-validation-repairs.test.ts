@@ -12,8 +12,8 @@ import {
 } from "../src/opencode/opencode-client.js";
 import {
   MAX_VALIDATION_REPAIR_ATTEMPTS,
+  VALIDATION_REPAIR_EARLY_FINISH_MARKER,
   runTaskSessionValidationWithRepairs,
-  StaleTaskSessionValidationEvidenceError,
 } from "../src/task-session/run-task-session-validation-repairs.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
 import { transitionTaskExecutionRecord } from "../src/task-session/task-execution-transition.js";
@@ -23,6 +23,7 @@ import type { RunCommand } from "../src/process/command-runner.js";
 import { CommandRunner } from "../src/process/command-runner.js";
 import type { PlanVerificationResult } from "../src/task-session/plan-verification.js";
 import type { TrelloCard } from "../src/trello/trello-client.js";
+import { getTaskSessionSourceSnapshotIdentity } from "../src/task-session/source-snapshot.js";
 
 let temporaryRoot: string | undefined;
 
@@ -107,6 +108,7 @@ function createFixture(): {
 
   const project = {
     id: projectId,
+    opencode: { remediation: {} },
     repository: {
       path: repositoryPath,
       worktreeRoot,
@@ -209,6 +211,85 @@ function runRepairs(
 }
 
 describe("runTaskSessionValidationWithRepairs", () => {
+  it("replays a reserved repair and recognizes its unchanged source without rerunning quality", async () => {
+    const fixture = createFixture();
+    const contentIdentity = await getTaskSessionSourceSnapshotIdentity(
+      fixture.git,
+      fixture.worktreePath,
+    );
+    const operationId = `${operationKey}:validation:${operationKey}:pass:1`;
+    const promptArtifact = fixture.executionStore.writePrimaryResultArtifact(
+      `${operationId}:prompt`,
+      { prompt: "resume exact reserved validation prompt" },
+    );
+    const initial = fixture.executionStore.read(card.id);
+    if (initial === null) throw new Error("Expected validation record");
+    fixture.executionStore.compareAndSwap(card.id, initial.revision, {
+      ...initial,
+      retryCounters: { ...initial.retryCounters, validation: 1 },
+      validationRepair: {
+        cycleId: operationKey,
+        status: "active",
+        maxAttempts: 3,
+        evidence: {
+          command: "yarn validate",
+          startedAt: "2026-10-24T09:00:00.000Z",
+          completedAt: "2026-10-24T09:01:00.000Z",
+          exitCode: 1,
+          status: "failed",
+          diagnostic: "Still failing before repair.",
+          contentIdentity,
+        },
+        coverageEvidence: {
+          command: "",
+          startedAt: "2026-10-24T09:00:00.000Z",
+          completedAt: "2026-10-24T09:00:00.000Z",
+          exitCode: null,
+          status: "skipped",
+          diagnostic: "Coverage is not configured.",
+          contentIdentity,
+        },
+        activePrimaryOperation: {
+          operationId,
+          pass: 1,
+          beforeContentIdentity: contentIdentity,
+          validationResult: {
+            command: "yarn validate",
+            startedAt: "2026-10-24T09:00:00.000Z",
+            completedAt: "2026-10-24T09:01:00.000Z",
+            exitCode: 1,
+            status: "failed",
+            timedOut: false,
+            aborted: false,
+            diagnostic: "Still failing before repair.",
+            contentIdentity,
+          },
+          promptContext: `sha256:${"b".repeat(64)}`,
+          promptArtifact,
+        },
+      },
+      revision: initial.revision + 1,
+      updatedAt: "2026-10-24T09:01:00.000Z",
+    });
+    fixture.runOpenCode.mockImplementation(async (runOptions) => {
+      expect(runOptions.prompt).toBe("resume exact reserved validation prompt");
+      return { exitCode: 0, output: "no changes", errorOutput: "" };
+    });
+
+    const result = await runRepairs(fixture);
+
+    expect(result.validation.status).toBe("failed");
+    expect(result.validation.contentIdentity).toBe(contentIdentity);
+    expect(result.record.validationRepair).toMatchObject({
+      status: "exhausted",
+      maxAttempts: 3,
+      stopReason: "no-change",
+      evidence: { status: "failed", contentIdentity },
+    });
+    expect(fixture.runOpenCode).toHaveBeenCalledOnce();
+    expect(fixture.runCommand).not.toHaveBeenCalled();
+  });
+
   it("resumes a reserved final validation repair before commands or exhaustion using its exact prompt and ID", async () => {
     const fixture = createFixture();
     const operationId = `${operationKey}:validation:${operationKey}:pass:2`;
@@ -217,6 +298,10 @@ describe("runTaskSessionValidationWithRepairs", () => {
       `${operationId}:prompt`,
       { prompt },
     );
+    const beforeContentIdentity = await getTaskSessionSourceSnapshotIdentity(
+      fixture.git,
+      fixture.worktreePath,
+    );
     const record = fixture.executionStore.read(card.id)!;
     fixture.executionStore.compareAndSwap(card.id, record.revision, {
       ...record,
@@ -224,9 +309,11 @@ describe("runTaskSessionValidationWithRepairs", () => {
       validationRepair: {
         cycleId: operationKey,
         status: "active",
+        maxAttempts: 2,
         activePrimaryOperation: {
           operationId,
           pass: 2,
+          beforeContentIdentity,
           validationResult: {
             command: "yarn validate",
             startedAt: "2026-10-24T09:00:00.000Z",
@@ -245,6 +332,7 @@ describe("runTaskSessionValidationWithRepairs", () => {
       revision: record.revision + 1,
       updatedAt: new Date().toISOString(),
     });
+    fixture.project.opencode.remediation.validationMaxPasses = 0;
     fixture.runCommand.mockResolvedValue({
       exitCode: 0,
       output: "validation passed after resume",
@@ -263,6 +351,7 @@ describe("runTaskSessionValidationWithRepairs", () => {
     expect(fixture.runCommand).toHaveBeenCalledOnce();
     expect(fixture.runOpenCode).toHaveBeenCalledOnce();
     expect(result.attempts).toBe(2);
+    expect(result.record.validationRepair?.maxAttempts).toBe(2);
     expect(
       result.record.validationRepair?.activePrimaryOperation,
     ).toBeUndefined();
@@ -292,6 +381,7 @@ describe("runTaskSessionValidationWithRepairs", () => {
       expect(options.prompt).toContain("yarn validate");
       expect(options.prompt).toContain("assertion failed");
       expect(options.prompt).toContain("attempt 1 of 2");
+      expect(options.prompt).toContain(VALIDATION_REPAIR_EARLY_FINISH_MARKER);
       expect(options.prompt).toContain(plan.requirements[0]?.text);
       expect(
         fixture.executionStore.read(card.id)?.retryCounters.validation,
@@ -324,16 +414,32 @@ describe("runTaskSessionValidationWithRepairs", () => {
     });
   });
 
-  it("exhausts after two repairs and always reruns validation after the final one", async () => {
+  it("exhausts after the persisted default limit and reuses unchanged final evidence on restart", async () => {
     const fixture = createFixture();
+    let repairNumber = 0;
     fixture.runCommand.mockResolvedValue({
       exitCode: 1,
       output: "still failing",
       errorOutput: "failure diagnostic",
     });
+    fixture.runOpenCode.mockImplementation(async () => {
+      repairNumber += 1;
+      fs.writeFileSync(
+        path.join(fixture.worktreePath, "src.ts"),
+        `repair ${repairNumber}\n`,
+      );
+      return { exitCode: 0, output: "repair changed source", errorOutput: "" };
+    });
 
     await expect(runRepairs(fixture)).resolves.toMatchObject({
-      record: { validationRepair: { status: "exhausted" } },
+      record: {
+        validationRepair: {
+          status: "exhausted",
+          maxAttempts: MAX_VALIDATION_REPAIR_ATTEMPTS,
+          stopReason: "attempt-limit",
+          evidence: { status: "failed" },
+        },
+      },
     });
     expect(fixture.runCommand).toHaveBeenCalledTimes(
       MAX_VALIDATION_REPAIR_ATTEMPTS + 1,
@@ -350,11 +456,290 @@ describe("runTaskSessionValidationWithRepairs", () => {
       record: { validationRepair: { status: "exhausted" } },
     });
     expect(fixture.runCommand).toHaveBeenCalledTimes(
-      MAX_VALIDATION_REPAIR_ATTEMPTS + 2,
+      MAX_VALIDATION_REPAIR_ATTEMPTS + 1,
     );
     expect(fixture.runOpenCode).toHaveBeenCalledTimes(
       MAX_VALIDATION_REPAIR_ATTEMPTS,
     );
+  });
+
+  it("honors a zero validation maximum without dispatching a writer", async () => {
+    const fixture = createFixture();
+    fixture.project.opencode.remediation.validationMaxPasses = 0;
+    fixture.runCommand.mockResolvedValue({
+      exitCode: 1,
+      output: "still failing",
+      errorOutput: "failure diagnostic",
+    });
+
+    const result = await runRepairs(fixture);
+
+    expect(result.attempts).toBe(0);
+    expect(result.record.validationRepair).toMatchObject({
+      status: "exhausted",
+      maxAttempts: 0,
+      stopReason: "attempt-limit",
+      evidence: { status: "failed" },
+    });
+    expect(fixture.runCommand).toHaveBeenCalledOnce();
+    expect(fixture.runOpenCode).not.toHaveBeenCalled();
+  });
+
+  it("recovers an exhausted publication by reusing unchanged evidence and refreshing only changed content", async () => {
+    const fixture = createFixture();
+    fixture.project.opencode.remediation.validationMaxPasses = 0;
+    fixture.runCommand.mockResolvedValue({
+      exitCode: 1,
+      output: "quality remains failed",
+      errorOutput: "failure",
+    });
+    const exhausted = await runRepairs(fixture);
+    const publication = transitionTaskExecutionRecord(exhausted.record, {
+      type: "validation-exhausted",
+      eventId: `${operationKey}:validation-exhausted`,
+      projectId,
+      cardId: card.id,
+      operationKey,
+      occurredAt: new Date(
+        Date.parse(exhausted.record.updatedAt) + 1,
+      ).toISOString(),
+    });
+    fixture.executionStore.compareAndSwap(
+      card.id,
+      exhausted.record.revision,
+      publication,
+    );
+    fixture.runCommand.mockClear();
+
+    const unchanged = await runRepairs(fixture);
+
+    expect(unchanged.record.phase).toBe("publication");
+    expect(unchanged.validation).toMatchObject({
+      status: "failed",
+      contentIdentity: exhausted.validation.contentIdentity,
+    });
+    expect(fixture.runCommand).not.toHaveBeenCalled();
+    expect(fixture.runOpenCode).not.toHaveBeenCalled();
+
+    const beforeUnknownWriter = fixture.executionStore.read(card.id)!;
+    fixture.executionStore.compareAndSwap(
+      card.id,
+      beforeUnknownWriter.revision,
+      {
+        ...beforeUnknownWriter,
+        primaryOperations: {
+          "unresolved-validation-writer": {
+            id: "unresolved-validation-writer",
+            activity: "validation-repair-pass-1",
+            executions: 1,
+            status: "ambiguous",
+            lastSessionId: primarySessionId,
+            updatedAt: new Date().toISOString(),
+          },
+        },
+        revision: beforeUnknownWriter.revision + 1,
+        updatedAt: new Date().toISOString(),
+      },
+    );
+    await expect(runRepairs(fixture)).rejects.toThrow(
+      "unresolved primary operation unresolved-validation-writer",
+    );
+    expect(fixture.runCommand).not.toHaveBeenCalled();
+    const afterFence = fixture.executionStore.read(card.id)!;
+    fixture.executionStore.compareAndSwap(card.id, afterFence.revision, {
+      ...afterFence,
+      primaryOperations: undefined,
+      revision: afterFence.revision + 1,
+      updatedAt: new Date().toISOString(),
+    });
+
+    fs.writeFileSync(
+      path.join(fixture.worktreePath, "src.ts"),
+      "changed before publication resume\n",
+    );
+    const refreshed = await runRepairs(fixture);
+
+    expect(refreshed.record.phase).toBe("publication");
+    expect(refreshed.validation.status).toBe("failed");
+    expect(refreshed.validation.contentIdentity).not.toBe(
+      exhausted.validation.contentIdentity,
+    );
+    expect(refreshed.record.retryCounters.validation).toBe(0);
+    expect(fixture.runCommand).toHaveBeenCalledOnce();
+    expect(fixture.runOpenCode).not.toHaveBeenCalled();
+  });
+
+  it("stops at a separately configured positive validation maximum", async () => {
+    const fixture = createFixture();
+    fixture.project.opencode.remediation.validationMaxPasses = 1;
+    fixture.runCommand.mockResolvedValue({
+      exitCode: 1,
+      output: "still failing",
+      errorOutput: "failure diagnostic",
+    });
+    fixture.runOpenCode.mockImplementation(async () => {
+      fs.writeFileSync(
+        path.join(fixture.worktreePath, "src.ts"),
+        "repair changed source\n",
+      );
+      return { exitCode: 0, output: "repair complete", errorOutput: "" };
+    });
+
+    const result = await runRepairs(fixture);
+
+    expect(result.attempts).toBe(1);
+    expect(result.record.validationRepair).toMatchObject({
+      status: "exhausted",
+      maxAttempts: 1,
+      stopReason: "attempt-limit",
+    });
+    expect(fixture.runOpenCode).toHaveBeenCalledOnce();
+    expect(fixture.runCommand).toHaveBeenCalledTimes(2);
+  });
+
+  it("ends a source-identical no-op without repeating unchanged quality checks, including untracked content", async () => {
+    const fixture = createFixture();
+    const untracked = path.join(fixture.worktreePath, "draft.txt");
+    fs.writeFileSync(untracked, "untracked draft\n", "utf8");
+    vi.mocked(fixture.git.getUntrackedFiles).mockResolvedValue(["draft.txt"]);
+    fixture.runCommand.mockResolvedValue({
+      exitCode: 1,
+      output: "assertion failed",
+      errorOutput: "still failing",
+    });
+    const beforeIdentity = await getTaskSessionSourceSnapshotIdentity(
+      fixture.git,
+      fixture.worktreePath,
+    );
+
+    const result = await runRepairs(fixture);
+
+    expect(result.record.validationRepair).toMatchObject({
+      status: "exhausted",
+      stopReason: "no-change",
+      evidence: { status: "failed", contentIdentity: beforeIdentity },
+    });
+    expect(fs.readFileSync(untracked, "utf8")).toBe("untracked draft\n");
+    expect(fixture.runCommand).toHaveBeenCalledOnce();
+    expect(fixture.runOpenCode).toHaveBeenCalledOnce();
+
+    await expect(runRepairs(fixture)).resolves.toMatchObject({
+      validation: { status: "failed", contentIdentity: beforeIdentity },
+      record: { validationRepair: { stopReason: "no-change" } },
+    });
+    expect(fixture.runCommand).toHaveBeenCalledOnce();
+    expect(fixture.runOpenCode).toHaveBeenCalledOnce();
+  });
+
+  it("reuses evidence from the produced reservation when a completed writer is restarted before no-op disposition", async () => {
+    const fixture = createFixture();
+    fixture.runCommand.mockResolvedValue({
+      exitCode: 1,
+      output: "assertion failed",
+      errorOutput: "still failing",
+    });
+    const interruption = new Error(
+      "simulated restart after primary result persistence",
+    );
+    const compareAndSwap = fixture.executionStore.compareAndSwap.bind(
+      fixture.executionStore,
+    );
+    const failDisposition = vi
+      .spyOn(fixture.executionStore, "compareAndSwap")
+      .mockImplementation((cardId, expectedRevision, nextRecord) => {
+        if (
+          nextRecord.validationRepair?.status === "exhausted" &&
+          nextRecord.validationRepair.stopReason === "no-change"
+        )
+          throw interruption;
+        return compareAndSwap(cardId, expectedRevision, nextRecord);
+      });
+
+    await expect(runRepairs(fixture)).rejects.toBe(interruption);
+    failDisposition.mockRestore();
+    const interrupted = fixture.executionStore.read(card.id);
+    expect(interrupted?.validationRepair).toMatchObject({
+      status: "active",
+      maxAttempts: MAX_VALIDATION_REPAIR_ATTEMPTS,
+      evidence: { status: "failed" },
+      coverageEvidence: { status: "skipped" },
+      activePrimaryOperation: {
+        beforeContentIdentity: expect.stringMatching(/^sha256:/u),
+      },
+    });
+    expect(interrupted?.primaryOperations).toMatchObject({
+      [`${operationKey}:validation:${operationKey}:pass:1`]: {
+        status: "completed",
+        executions: 1,
+      },
+    });
+    expect(fixture.runCommand).toHaveBeenCalledOnce();
+    expect(fixture.runOpenCode).toHaveBeenCalledOnce();
+
+    fixture.executionStore = new TaskExecutionStore(
+      path.join(temporaryRoot!, "runtime-state"),
+      fixture.project,
+    );
+    fixture.runOpenCode.mockImplementation(async () => {
+      throw new Error("the completed primary operation must be replayed");
+    });
+    const resumed = await runRepairs(fixture);
+
+    expect(resumed.record.validationRepair).toMatchObject({
+      status: "exhausted",
+      stopReason: "no-change",
+      evidence: { status: "failed" },
+      coverageEvidence: { status: "skipped" },
+    });
+    expect(fixture.runCommand).toHaveBeenCalledOnce();
+    expect(fixture.runOpenCode).toHaveBeenCalledOnce();
+  });
+
+  it("honors explicit early finish after one changed repair and preserves its final failed evidence on restart", async () => {
+    const fixture = createFixture();
+    fixture.project.opencode.remediation.validationMaxPasses = 4;
+    fixture.runCommand.mockResolvedValue({
+      exitCode: 1,
+      output: "still failing",
+      errorOutput: "failure diagnostic",
+    });
+    fixture.runOpenCode.mockImplementation(async () => {
+      fs.writeFileSync(
+        path.join(fixture.worktreePath, "src.ts"),
+        "attempted repair\n",
+        "utf8",
+      );
+      return {
+        exitCode: 0,
+        output: JSON.stringify({
+          type: "text",
+          sessionID: primarySessionId,
+          part: {
+            type: "text",
+            text: `No further source changes are useful.\n${VALIDATION_REPAIR_EARLY_FINISH_MARKER}`,
+          },
+        }),
+        errorOutput: "",
+      };
+    });
+
+    const first = await runRepairs(fixture);
+
+    expect(first.attempts).toBe(1);
+    expect(first.record.validationRepair).toMatchObject({
+      status: "exhausted",
+      maxAttempts: 4,
+      stopReason: "finished-early",
+      evidence: { status: "failed" },
+    });
+    expect(fixture.runOpenCode).toHaveBeenCalledOnce();
+    expect(fixture.runCommand).toHaveBeenCalledTimes(2);
+
+    const resumed = await runRepairs(fixture);
+    expect(resumed.validation.status).toBe("failed");
+    expect(resumed.attempts).toBe(1);
+    expect(fixture.runOpenCode).toHaveBeenCalledOnce();
+    expect(fixture.runCommand).toHaveBeenCalledTimes(2);
   });
 
   it("refuses a mismatched primary session before validation or repair", async () => {
@@ -394,7 +779,7 @@ describe("runTaskSessionValidationWithRepairs", () => {
     );
   });
 
-  it("rejects a previously passing result when its source snapshot has changed", async () => {
+  it("refreshes passed quality evidence for changed source without renewing attempts", async () => {
     const fixture = createFixture();
     const firstResult = await runRepairs(fixture);
     expect(firstResult.validation.status).toBe("passed");
@@ -405,10 +790,17 @@ describe("runTaskSessionValidationWithRepairs", () => {
       "changed source\n",
     );
 
-    await expect(runRepairs(fixture)).rejects.toBeInstanceOf(
-      StaleTaskSessionValidationEvidenceError,
+    const refreshed = await runRepairs(fixture);
+    expect(refreshed.validation.status).toBe("passed");
+    expect(refreshed.validation.contentIdentity).not.toBe(
+      firstResult.validation.contentIdentity,
     );
-    expect(fixture.runCommand).toHaveBeenCalledOnce();
+    expect(refreshed.attempts).toBe(0);
+    expect(refreshed.record.validationRepair).toMatchObject({
+      status: "passed",
+      maxAttempts: MAX_VALIDATION_REPAIR_ATTEMPTS,
+    });
+    expect(fixture.runCommand).toHaveBeenCalledTimes(2);
     expect(fixture.runOpenCode).not.toHaveBeenCalled();
   });
 
@@ -496,12 +888,21 @@ describe("runTaskSessionValidationWithRepairs", () => {
 
   it("uses the shared two-attempt limit for repeated coverage failures", async () => {
     const fixture = createFixture();
+    let repairNumber = 0;
     fixture.project.repository.coverageCommand = "yarn coverage";
     fixture.runCommand.mockImplementation(async ({ command }) =>
       command === "yarn validate"
         ? { exitCode: 0, output: "valid", errorOutput: "" }
         : { exitCode: 1, output: "coverage failed", errorOutput: "" },
     );
+    fixture.runOpenCode.mockImplementation(async () => {
+      repairNumber += 1;
+      fs.writeFileSync(
+        path.join(fixture.worktreePath, "src.ts"),
+        `coverage repair ${repairNumber}\n`,
+      );
+      return { exitCode: 0, output: "repair changed source", errorOutput: "" };
+    });
 
     await expect(runRepairs(fixture)).resolves.toMatchObject({
       record: { validationRepair: { status: "exhausted" } },
@@ -523,10 +924,19 @@ describe("runTaskSessionValidationWithRepairs", () => {
 
   it("starts a new bounded repair cycle only when task operation identity changes", async () => {
     const fixture = createFixture();
+    let repairNumber = 0;
     fixture.runCommand.mockResolvedValue({
       exitCode: 1,
       output: "failure",
       errorOutput: "",
+    });
+    fixture.runOpenCode.mockImplementation(async () => {
+      repairNumber += 1;
+      fs.writeFileSync(
+        path.join(fixture.worktreePath, "src.ts"),
+        `cycle repair ${repairNumber}\n`,
+      );
+      return { exitCode: 0, output: "repair changed source", errorOutput: "" };
     });
     await expect(runRepairs(fixture)).resolves.toMatchObject({
       record: { validationRepair: { status: "exhausted" } },

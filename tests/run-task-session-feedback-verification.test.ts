@@ -11,6 +11,7 @@ import {
 } from "../src/task-session/run-task-session-feedback-verification.js";
 import { getTaskSessionSourceSnapshotIdentity } from "../src/task-session/source-snapshot.js";
 import type { TaskPlan } from "../src/task-session/task-plan.js";
+import type { TaskSessionValidationResult } from "../src/task-session/run-task-session-validation.js";
 import type { FeedbackLedgerEntry } from "../src/task-session/feedback-ledger.js";
 import type { GitClient } from "../src/git/git-client.js";
 import type { TrelloCard } from "../src/trello/trello-client.js";
@@ -121,6 +122,20 @@ function fixture() {
   };
 }
 
+function skippedQuality(identity: string): TaskSessionValidationResult {
+  return {
+    command: "",
+    startedAt: "2026-10-24T09:00:00.000Z",
+    completedAt: "2026-10-24T09:00:00.000Z",
+    exitCode: null,
+    status: "skipped",
+    timedOut: false,
+    aborted: false,
+    diagnostic: "Not configured; skipped",
+    contentIdentity: identity,
+  };
+}
+
 describe("runTaskSessionFeedbackVerification", () => {
   it("uses a separate read-only session and returns one disposition per feedback ID", async () => {
     const f = fixture();
@@ -169,7 +184,7 @@ describe("runTaskSessionFeedbackVerification", () => {
           diagnostic: "ok",
           contentIdentity: identity,
         },
-        coverage: null,
+        coverage: skippedQuality(identity),
         review: { ...f.reviewResult, reviewedContentIdentity: identity },
       },
       git: f.git,
@@ -185,7 +200,72 @@ describe("runTaskSessionFeedbackVerification", () => {
     expect(run.mock.calls[0]?.[0].readOnly).toBe(true);
     expect(run.mock.calls[0]?.[0].sessionId).toBeUndefined();
     expect(run.mock.calls[0]?.[0].prompt).toContain("Fix the edge case.");
-    expect(run.mock.calls[0]?.[0].prompt).toContain("Approved plan:");
+    expect(run.mock.calls[0]?.[0].prompt).toContain("Advisory task plan:");
+  });
+
+  it("verifies feedback against the original task when no plan is available", async () => {
+    const f = fixture();
+    const identity = await getTaskSessionSourceSnapshotIdentity(
+      f.git,
+      f.worktreePath,
+    );
+    const run = vi.fn<RunOpenCode>().mockResolvedValue({
+      exitCode: 0,
+      output: JSON.stringify({
+        version: 1,
+        projectId: "project",
+        cardId: "card",
+        headSha: f.headSha,
+        contentIdentity: identity,
+        dispositions: [
+          {
+            feedbackId: "inline-comment:comment-1",
+            status: "verified-fixed",
+            evidence: ["source.ts", "test.ts"],
+          },
+        ],
+      }),
+      errorOutput: "",
+    });
+
+    await runTaskSessionFeedbackVerification({
+      project: f.project,
+      card: f.card,
+      expectedBranch: "agent/card",
+      expectedHeadSha: f.headSha,
+      worktreePath: f.worktreePath,
+      actionableFeedback: f.feedback,
+      qualityEvidence: {
+        currentContentIdentity: identity,
+        validationCommand: "yarn validate",
+        validation: {
+          command: "yarn validate",
+          startedAt: "2026-10-24T09:00:00.000Z",
+          completedAt: "2026-10-24T09:01:00.000Z",
+          exitCode: 0,
+          status: "passed",
+          timedOut: false,
+          aborted: false,
+          diagnostic: "ok",
+          contentIdentity: identity,
+        },
+        coverage: skippedQuality(identity),
+        review: { ...f.reviewResult, reviewedContentIdentity: identity },
+      },
+      git: f.git,
+      openCode: new OpenCodeClient(run),
+      runOptions: {
+        model: "reviewer",
+        variant: "high",
+        timeoutMilliseconds: 60_000,
+        signal: new AbortController().signal,
+      },
+    });
+
+    expect(run.mock.calls[0]?.[0].prompt).toContain(
+      "No usable plan was available",
+    );
+    expect(run.mock.calls[0]?.[0].prompt).toContain("Original task:");
   });
 
   it("does not invoke an independent verifier when local gates are stale or failed", async () => {
@@ -208,7 +288,7 @@ describe("runTaskSessionFeedbackVerification", () => {
           currentContentIdentity: identity,
           validationCommand: "yarn validate",
           validation: null,
-          coverage: null,
+          coverage: skippedQuality(identity),
           review: null,
         },
         git: f.git,
@@ -269,7 +349,7 @@ describe("runTaskSessionFeedbackVerification", () => {
           diagnostic: "ok",
           contentIdentity: identity,
         },
-        coverage: null,
+        coverage: skippedQuality(identity),
         review: {
           ...f.reviewResult,
           verdict: "fail",
@@ -326,7 +406,7 @@ describe("runTaskSessionFeedbackVerification", () => {
             diagnostic: "ok",
             contentIdentity: identity,
           },
-          coverage: null,
+          coverage: skippedQuality(identity),
           review: { ...f.reviewResult, reviewedContentIdentity: identity },
         },
         git: f.git,
@@ -380,7 +460,7 @@ describe("runTaskSessionFeedbackVerification", () => {
             diagnostic: "ok",
             contentIdentity: identity,
           },
-          coverage: null,
+          coverage: skippedQuality(identity),
           review: { ...f.reviewResult, reviewedContentIdentity: identity },
         },
         git: f.git,
@@ -441,7 +521,7 @@ describe("runTaskSessionFeedbackVerification", () => {
           diagnostic: "ok",
           contentIdentity: identity,
         },
-        coverage: null,
+        coverage: skippedQuality(identity),
         review: { ...f.reviewResult, reviewedContentIdentity: identity },
       },
       git: f.git,

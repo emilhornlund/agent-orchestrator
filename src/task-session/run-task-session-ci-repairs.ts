@@ -4,6 +4,7 @@ import type {
 } from "../github/github-client.js";
 import type { CiCheckEvaluation } from "../github/evaluate-ci-checks.js";
 import type { TaskExecutionRecord } from "./task-execution-record.js";
+import { canResumeCiReviewRepair } from "./can-resume-ci-review-repair.js";
 import { TaskExecutionStore } from "./task-execution-store.js";
 
 export const MAX_CI_REPAIR_ATTEMPTS = 2;
@@ -24,6 +25,8 @@ export type TaskSessionCiRepairResult =
     };
 
 export interface RunTaskSessionCiRepairsOptions {
+  /** The caller verified a CI-owned local review checkpoint before dispatch. */
+  resumeReviewRepair?: boolean;
   store: TaskExecutionStore;
   projectId: string;
   cardId: string;
@@ -76,7 +79,13 @@ function ownerRecord(
     record === null ||
     record.projectId !== options.projectId ||
     record.operationKey !== options.operationKey ||
-    record.phase !== "ci" ||
+    (record.phase !== "ci" &&
+      !(
+        options.resumeReviewRepair === true &&
+        record.ciRepair?.activePrimaryOperation !== undefined &&
+        record.reviewRepair !== undefined &&
+        ["implementation", "validation", "review"].includes(record.phase)
+      )) ||
     record.primarySessionId !== options.expectedPrimarySessionId ||
     record.pullRequest?.headSha !== expectedHeadSha
   ) {
@@ -92,6 +101,22 @@ export async function runTaskSessionCiRepairs(
 ): Promise<TaskSessionCiRepairResult> {
   let record = ownerRecord(options);
   let headSha = options.headSha;
+  let resumeReviewRepair = options.resumeReviewRepair === true;
+  if (
+    resumeReviewRepair &&
+    !canResumeCiReviewRepair(record, {
+      projectId: record.projectId,
+      cardId: record.cardId,
+      eventId: `ci-repair:${record.cardId}:${options.headSha}`,
+      operationKey: `${record.operationKey}:ci:${options.headSha}`,
+      kind: "ci-repair",
+      status: "active",
+      enqueuedAt: record.updatedAt,
+    })
+  )
+    throw new TaskSessionCiRepairError(
+      "CI review recovery lacks its completed owning correction",
+    );
   // An episode belongs to the durable task operation, not a mutable commit SHA.
   // Publishing a repair changes headSha but must not reset its correction budget.
   const cycleId = record.ciRepair?.cycleId ?? `${options.operationKey}:ci`;
@@ -203,12 +228,14 @@ export async function runTaskSessionCiRepairs(
       });
     }
     try {
-      await options.repairPrimarySession(
-        diagnostics,
-        attempt,
-        options.expectedPrimarySessionId,
-        operationId,
-      );
+      if (!resumeReviewRepair)
+        await options.repairPrimarySession(
+          diagnostics,
+          attempt,
+          options.expectedPrimarySessionId,
+          operationId,
+        );
+      resumeReviewRepair = false;
       await options.rerunLocalGatesAndReview();
       headSha = await options.publishSamePullRequest();
       if (

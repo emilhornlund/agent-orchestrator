@@ -17,7 +17,6 @@ import {
   OpenCodeClient,
   OpenCodeRunAbortedError,
 } from "../src/opencode/opencode-client.js";
-import { getCommitResultPath } from "../src/opencode/commit-result.js";
 import {
   CommandRunner,
   type RunCommand,
@@ -336,7 +335,9 @@ describe("task-session production dispatch", () => {
         }),
       } as unknown as GitClient;
       let feedbackMode = false;
+      let malformedFeedbackCommitResult = false;
       const github = {
+        ensurePullRequestDraft: vi.fn(async () => undefined),
         findPullRequest: vi.fn(async () => ({
           number: 9,
           url: "https://github.com/owner/repo/pull/9",
@@ -491,8 +492,23 @@ describe("task-session production dispatch", () => {
           };
         }
         if (options.prompt.includes("Generate the commit message")) {
-          const resultPath = getCommitResultPath(options.cwd);
+          const resultRelativePath = options.prompt.match(
+            /Write exactly one JSON object to ([^\n]+)\./u,
+          )?.[1];
+          if (resultRelativePath === undefined)
+            throw new Error(
+              "Commit-message prompt omitted its output location",
+            );
+          const resultPath = path.join(options.cwd, resultRelativePath);
           fs.mkdirSync(path.dirname(resultPath), { recursive: true });
+          if (feedbackMode && malformedFeedbackCommitResult) {
+            fs.writeFileSync(resultPath, "{ malformed", "utf8");
+            return {
+              exitCode: 0,
+              output: "commit message generated",
+              errorOutput: "",
+            };
+          }
           fs.writeFileSync(
             resultPath,
             JSON.stringify({
@@ -799,6 +815,7 @@ describe("task-session production dispatch", () => {
         }),
       );
       feedbackMode = true;
+      malformedFeedbackCommitResult = true;
       replacementSessionId = "ses_feedback-replacement";
       listedSessionId = undefined;
       await feedbackAuthority.run(() =>
@@ -814,6 +831,11 @@ describe("task-session production dispatch", () => {
         }),
       );
       feedbackHeadSha = publishedHeadSha;
+      expect(
+        fs
+          .readdirSync(path.join(worktreePath, ".agent-orchestrator"))
+          .filter((name) => name.startsWith("commit-result-")),
+      ).toEqual([]);
       const afterFeedback = await feedbackAuthority.run(() =>
         feedbackStore.read(card.id),
       );
@@ -1127,6 +1149,7 @@ describe("task-session production dispatch", () => {
     let cardList = project.trello.readyListId;
     let failFirstClaimMove = true;
     let pullRequestCreated = false;
+    let pullRequestDraft = false;
     let feedbackActive = false;
     let lateFeedback = false;
     let failAllChecks = false;
@@ -1237,6 +1260,7 @@ describe("task-session production dispatch", () => {
         return pullRequestCreated ? "https://github.com/owner/repo/pull/9" : "";
       }
       if (args[0] === "pr" && args[1] === "create") {
+        pullRequestDraft = args.includes("--draft");
         pullRequestCreated = true;
         return "https://github.com/owner/repo/pull/9";
       }
@@ -1362,6 +1386,16 @@ describe("task-session production dispatch", () => {
           },
         });
       }
+      if (args[0] === "pr" && args[1] === "ready") {
+        pullRequestDraft = args.includes("--undo");
+        return "";
+      }
+      if (
+        args[0] === "pr" &&
+        args[1] === "view" &&
+        args[args.indexOf("--json") + 1] === "isDraft"
+      )
+        return String(pullRequestDraft);
       if (args[0] === "pr" && args[1] === "view")
         return JSON.stringify([
           {
@@ -1657,7 +1691,7 @@ describe("task-session production dispatch", () => {
             errorOutput: "",
           };
         }
-        if (run.prompt.includes("Implement the approved task plan")) {
+        if (run.prompt.includes("Implement the task plan in this repository")) {
           fs.writeFileSync(
             path.join(run.cwd, "src/settings.ts"),
             "export const settings = { fixed: true };\n",
@@ -1703,7 +1737,14 @@ describe("task-session production dispatch", () => {
           );
         }
         if (run.prompt.includes("Generate the commit message")) {
-          const resultPath = getCommitResultPath(run.cwd);
+          const resultRelativePath = run.prompt.match(
+            /Write exactly one JSON object to ([^\n]+)\./u,
+          )?.[1];
+          if (resultRelativePath === undefined)
+            throw new Error(
+              "Commit-message prompt omitted its output location",
+            );
+          const resultPath = path.join(run.cwd, resultRelativePath);
           fs.mkdirSync(path.dirname(resultPath), { recursive: true });
           fs.writeFileSync(
             resultPath,
@@ -1886,6 +1927,10 @@ describe("task-session production dispatch", () => {
       phase: "ci",
       retryCounters: { ci: 1 },
       pullRequest: { headSha: "d".repeat(40) },
+      publicationQuality: {
+        validation: { status: "passed", exitCode: 0 },
+        coverageEvidence: { status: "skipped", exitCode: null, command: "" },
+      },
     });
     expect(
       new TaskMutationQueue(project.contextRoot, project)

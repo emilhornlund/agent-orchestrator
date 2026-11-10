@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execFile as nodeExecFile } from "node:child_process";
+import { promisify } from "node:util";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -13,14 +15,20 @@ import {
   type RunCommand,
 } from "../src/process/command-runner.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
-import { runTaskSessionValidation } from "../src/task-session/run-task-session-validation.js";
+import {
+  restorePersistedTaskSessionQualityEvidence,
+  runTaskSessionValidation,
+} from "../src/task-session/run-task-session-validation.js";
 import { runTaskSessionCoverage } from "../src/task-session/run-task-session-coverage.js";
 import {
   configureProcessRuntime,
   getProcessRuntime,
 } from "../src/process/process-runtime.js";
 
+const execFile = promisify(nodeExecFile);
+
 let temporaryRoot: string | undefined;
+let additionalTemporaryRoots: string[] = [];
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -33,11 +41,15 @@ afterEach(() => {
     fs.rmSync(temporaryRoot, { recursive: true, force: true });
     temporaryRoot = undefined;
   }
+  for (const root of additionalTemporaryRoots)
+    fs.rmSync(root, { recursive: true, force: true });
+  additionalTemporaryRoots = [];
 });
 
 function createFixture(
   options: {
     validationCommand?: string | null;
+    coverageCommand?: string | null;
   } = {},
 ) {
   temporaryRoot = fs.mkdtempSync(
@@ -60,6 +72,11 @@ function createFixture(
         : {
             validationCommand: options.validationCommand ?? "yarn validate",
           }),
+      ...(options.coverageCommand === null
+        ? {}
+        : options.coverageCommand === undefined
+          ? {}
+          : { coverageCommand: options.coverageCommand }),
     },
   } as ProjectConfig;
   const taskRecordStore = new TaskExecutionStore(storageRoot, project);
@@ -83,7 +100,10 @@ function createFixture(
     updatedAt: "2026-10-24T09:00:00.000Z",
   });
 
-  const getCurrentBranch = vi.fn(async () => "agent/card-one");
+  const getCurrentBranch = vi.fn(async (worktreePath: string) => {
+    void worktreePath;
+    return "agent/card-one";
+  });
   const getHeadSha = vi.fn(async () => "a".repeat(40));
   const getHeadTrackedFiles = vi.fn(async () => [] as string[]);
   const getIndexEntries = vi.fn(async () => "");
@@ -119,6 +139,7 @@ function runValidation(
   overrides: Partial<{
     worktreePath: string;
     timeoutMilliseconds: number;
+    signal: AbortSignal;
     secretValues: readonly string[];
   }> = {},
 ) {
@@ -131,7 +152,7 @@ function runValidation(
     taskRecordStore: fixture.taskRecordStore,
     git: fixture.git,
     commands: fixture.commands,
-    signal: new AbortController().signal,
+    signal: overrides.signal ?? new AbortController().signal,
     timeoutMilliseconds: overrides.timeoutMilliseconds ?? 30_000,
     ...(overrides.secretValues === undefined
       ? {}
@@ -288,21 +309,338 @@ describe("runTaskSessionValidation", () => {
     });
   });
 
-  it.each([
-    ["missing", null],
-    ["blank", "  "],
-  ])(
-    "rejects a %s validation command before running it",
-    async (_label, command) => {
-      const fixture = createFixture({ validationCommand: command });
+  it("records absent validation as skipped, not passed, without dispatch", async () => {
+    const fixture = createFixture({ validationCommand: null });
+    const result = await runValidation(fixture);
+    expect(result).toMatchObject({
+      status: "skipped",
+      exitCode: null,
+      command: "",
+      diagnostic: "Not configured; skipped",
+    });
+    expect(fixture.runCommand).not.toHaveBeenCalled();
+  });
 
-      await expect(runValidation(fixture)).rejects.toThrow(
-        "nonempty repository.validationCommand",
+  it("restores a persisted skipped publication checkpoint as skipped after store reopen", async () => {
+    const fixture = createFixture({ validationCommand: null });
+    const identity = `sha256:${"c".repeat(64)}`;
+    const record = fixture.taskRecordStore.read("card-one")!;
+    fixture.taskRecordStore.compareAndSwap("card-one", record.revision, {
+      ...record,
+      publicationQuality: {
+        contentIdentity: identity,
+        validation: {
+          command: "",
+          startedAt: "2026-10-24T09:00:00.000Z",
+          completedAt: "2026-10-24T09:00:00.000Z",
+          exitCode: null,
+          status: "skipped",
+          diagnostic: "Not configured; skipped",
+          contentIdentity: identity,
+        },
+        coverageEvidence: {
+          command: "",
+          startedAt: "2026-10-24T09:00:00.000Z",
+          completedAt: "2026-10-24T09:00:00.000Z",
+          exitCode: null,
+          status: "skipped",
+          diagnostic: "Not configured; skipped",
+          contentIdentity: identity,
+        },
+        review: null,
+      },
+      revision: record.revision + 1,
+      updatedAt: "2026-10-24T09:00:01.000Z",
+    });
+    const script = `
+      import { TaskExecutionStore } from ${JSON.stringify(path.resolve("src/task-session/task-execution-store.ts"))};
+      import { restorePersistedTaskSessionQualityEvidence } from ${JSON.stringify(path.resolve("src/task-session/run-task-session-validation.ts"))};
+      const input = JSON.parse(process.env.QUALITY_CHECKPOINT_INPUT);
+      const record = new TaskExecutionStore(input.storageRoot, input.project).read("card-one");
+      if (!record?.publicationQuality) throw new Error("Persisted publication quality was missing");
+      process.stdout.write(JSON.stringify(restorePersistedTaskSessionQualityEvidence(record.publicationQuality.validation)));
+    `;
+    const { stdout } = await execFile(
+      process.execPath,
+      ["--import", "tsx", "--input-type=module", "-e", script],
+      {
+        cwd: process.cwd(),
+        env: {
+          PATH: process.env.PATH ?? "/usr/bin:/bin",
+          HOME: process.env.HOME ?? "",
+          QUALITY_CHECKPOINT_INPUT: JSON.stringify({
+            storageRoot: path.join(temporaryRoot!, "runtime-state"),
+            project: fixture.project,
+          }),
+        },
+        encoding: "utf8",
+      },
+    );
+    expect(JSON.parse(stdout)).toMatchObject({
+      status: "skipped",
+      exitCode: null,
+      command: "",
+    });
+  });
+
+  it("does not migrate statusless nullable old evidence into a pass", () => {
+    const restored = restorePersistedTaskSessionQualityEvidence({
+      command: "",
+      startedAt: "2026-10-24T09:00:00.000Z",
+      completedAt: "2026-10-24T09:00:00.000Z",
+      exitCode: null,
+      diagnostic: "execution interrupted",
+      contentIdentity: `sha256:${"a".repeat(64)}`,
+    });
+    expect(restored).toMatchObject({ status: "uncertain", exitCode: null });
+  });
+
+  it("keeps historical statusless evidence passing only with a real zero exit and command", () => {
+    const restored = restorePersistedTaskSessionQualityEvidence({
+      command: "yarn validate",
+      startedAt: "2026-10-24T09:00:00.000Z",
+      completedAt: "2026-10-24T09:01:00.000Z",
+      exitCode: 0,
+      diagnostic: "passed",
+      contentIdentity: `sha256:${"b".repeat(64)}`,
+    });
+    expect(restored).toMatchObject({ status: "passed", exitCode: 0 });
+  });
+
+  it("still verifies ownership, worktree and branch before returning skipped evidence", async () => {
+    const fixture = createFixture({ validationCommand: null });
+    fixture.getCurrentBranch.mockResolvedValue("agent/other-card");
+    await expect(runValidation(fixture)).rejects.toThrow("branch mismatch");
+    expect(fixture.runCommand).not.toHaveBeenCalled();
+    expect(fixture.getCurrentBranch).toHaveBeenCalledWith(fixture.worktreePath);
+  });
+
+  it("invokes configured commands as real processes and records their observed exit", async () => {
+    const fixture = createFixture({
+      validationCommand:
+        "node -e \"require('fs').writeFileSync('validation.marker', 'ran'); process.exit(7)\"",
+    });
+    fixture.commands = new CommandRunner();
+    configureProcessRuntime({
+      runtimeRoot: path.join(temporaryRoot!, "artifacts"),
+      signal: new AbortController().signal,
+    });
+    const result = await runValidation(fixture);
+    expect(result.status).toBe("failed");
+    expect(result.exitCode).toBe(7);
+    expect(
+      fs.readFileSync(
+        path.join(fixture.worktreePath, "validation.marker"),
+        "utf8",
+      ),
+    ).toBe("ran");
+  });
+
+  it("records a generic execution exception as uncertain rather than a verified nonzero failure", async () => {
+    const fixture = createFixture();
+    fixture.runCommand.mockRejectedValue(
+      new Error("process outcome unavailable"),
+    );
+    await expect(runValidation(fixture)).resolves.toMatchObject({
+      status: "uncertain",
+      exitCode: null,
+    });
+  });
+
+  it.each([
+    { name: "neither", validation: false, coverage: false },
+    { name: "validation only", validation: true, coverage: false },
+    { name: "coverage only", validation: false, coverage: true },
+    { name: "both", validation: true, coverage: true },
+  ])(
+    "executes only the configured commands with real processes ($name)",
+    async ({ validation, coverage }) => {
+      const markerRoot = fs.mkdtempSync(
+        path.join(os.tmpdir(), "quality-matrix-"),
       );
-      expect(fixture.runCommand).not.toHaveBeenCalled();
-      expect(fixture.getCurrentBranch).not.toHaveBeenCalled();
+      additionalTemporaryRoots.push(markerRoot);
+      const markerValidation = path.join(markerRoot, "validation.marker");
+      const markerCoverage = path.join(markerRoot, "coverage.marker");
+      const makeCommand = (marker: string) =>
+        `${process.execPath} -e ${JSON.stringify(`require('fs').writeFileSync(${JSON.stringify(marker)}, 'executed')`)}`;
+      const fixture = createFixture({
+        validationCommand: validation ? makeCommand(markerValidation) : null,
+        coverageCommand: coverage ? makeCommand(markerCoverage) : null,
+      });
+      fixture.commands = new CommandRunner();
+      configureProcessRuntime({
+        runtimeRoot: path.join(temporaryRoot!, "artifacts"),
+        signal: new AbortController().signal,
+      });
+      const validationResult = await runValidation(fixture);
+      const coverageResult = await runTaskSessionCoverage({
+        project: fixture.project,
+        cardId: "card-one",
+        expectedBranch: "agent/card-one",
+        operationKey: "implementation-one",
+        worktreePath: fixture.worktreePath,
+        taskRecordStore: fixture.taskRecordStore,
+        git: fixture.git,
+        commands: fixture.commands,
+        signal: new AbortController().signal,
+        timeoutMilliseconds: 30_000,
+      });
+      expect(validationResult.status).toBe(validation ? "passed" : "skipped");
+      expect(coverageResult.status).toBe(coverage ? "passed" : "skipped");
+      expect(fs.existsSync(markerValidation)).toBe(validation);
+      expect(fs.existsSync(markerCoverage)).toBe(coverage);
     },
   );
+
+  it("classifies an actual interrupted process separately from a nonzero exit", async () => {
+    const fixture = createFixture({
+      validationCommand: `${process.execPath} -e "setInterval(() => {}, 1000)"`,
+    });
+    fixture.commands = new CommandRunner();
+    configureProcessRuntime({
+      runtimeRoot: path.join(temporaryRoot!, "interrupt-artifacts"),
+      signal: new AbortController().signal,
+    });
+    const controller = new AbortController();
+    const pending = runValidation(fixture, { signal: controller.signal });
+    setTimeout(() => controller.abort(), 100);
+    await expect(pending).resolves.toMatchObject({
+      status: "aborted",
+      exitCode: null,
+      aborted: true,
+    });
+  });
+
+  it("records the actual nonzero process exit code rather than an agent-supplied result", async () => {
+    const fixture = createFixture({
+      validationCommand: `${process.execPath} -e "process.stdout.write('agent claims pass'); process.exit(23)"`,
+    });
+    fixture.commands = new CommandRunner();
+    configureProcessRuntime({
+      runtimeRoot: path.join(temporaryRoot!, "nonzero-artifacts"),
+      signal: new AbortController().signal,
+    });
+    await expect(runValidation(fixture)).resolves.toMatchObject({
+      status: "failed",
+      exitCode: 23,
+      diagnostic: "agent claims pass",
+    });
+  });
+
+  it("preserves signal termination as uncertain with no invented numeric exit", async () => {
+    const fixture = createFixture({ validationCommand: "kill -TERM $$" });
+    fixture.commands = new CommandRunner();
+    configureProcessRuntime({
+      runtimeRoot: path.join(temporaryRoot!, "signal-artifacts"),
+      signal: new AbortController().signal,
+    });
+    await expect(runValidation(fixture)).resolves.toMatchObject({
+      status: "uncertain",
+      exitCode: null,
+      aborted: false,
+      diagnostic: expect.stringContaining("SIGTERM"),
+    });
+  });
+
+  it("keeps actual command results and markers isolated between projects", async () => {
+    const first = createFixture({
+      validationCommand: `${process.execPath} -e "require('fs').writeFileSync('first-project.marker', 'first')"`,
+    });
+    const secondRoot = path.join(temporaryRoot!, "project-two");
+    const secondRepository = path.join(secondRoot, "repository");
+    const secondWorktrees = path.join(secondRoot, "worktrees");
+    const secondWorktree = path.join(secondWorktrees, "card-two");
+    fs.mkdirSync(secondRepository, { recursive: true });
+    fs.mkdirSync(secondWorktree, { recursive: true });
+    const secondProject = {
+      ...first.project,
+      id: "project-two",
+      repository: {
+        path: secondRepository,
+        worktreeRoot: secondWorktrees,
+        validationCommand: `${process.execPath} -e "require('fs').writeFileSync('second-project.marker', 'second')"`,
+      },
+    } as ProjectConfig;
+    const secondStore = new TaskExecutionStore(
+      path.join(secondRoot, "state"),
+      secondProject,
+    );
+    first.getCurrentBranch.mockImplementation(async (worktreePath) =>
+      worktreePath === secondWorktree ? "agent/card-two" : "agent/card-one",
+    );
+    secondStore.create({
+      version: 1,
+      projectId: secondProject.id,
+      cardId: "card-two",
+      phase: "validation",
+      primarySessionId: "ses_two",
+      sessionCreationStatus: "bound",
+      expectedBranch: "agent/card-two",
+      operationKey: "operation-two",
+      revision: 1,
+      retryCounters: { validation: 0, review: 0, ci: 0, humanFeedback: 0 },
+      createdAt: "2026-10-24T09:00:00.000Z",
+      updatedAt: "2026-10-24T09:00:00.000Z",
+    });
+    const commands = new CommandRunner();
+    const signal = new AbortController().signal;
+    configureProcessRuntime({
+      runtimeRoot: path.join(temporaryRoot!, "project-isolation-artifacts"),
+      signal,
+    });
+    const [firstResult, secondResult] = await Promise.all([
+      runTaskSessionValidation({
+        project: first.project,
+        cardId: "card-one",
+        expectedBranch: "agent/card-one",
+        operationKey: "implementation-one",
+        worktreePath: first.worktreePath,
+        taskRecordStore: first.taskRecordStore,
+        git: first.git,
+        commands,
+        signal,
+        timeoutMilliseconds: 30_000,
+      }),
+      runTaskSessionValidation({
+        project: secondProject,
+        cardId: "card-two",
+        expectedBranch: "agent/card-two",
+        operationKey: "operation-two",
+        worktreePath: secondWorktree,
+        taskRecordStore: secondStore,
+        git: first.git,
+        commands,
+        signal,
+        timeoutMilliseconds: 30_000,
+      }),
+    ]);
+    expect(firstResult).toMatchObject({
+      status: "passed",
+      command: first.project.repository.validationCommand,
+    });
+    expect(secondResult).toMatchObject({
+      status: "passed",
+      command: secondProject.repository.validationCommand,
+    });
+    expect(
+      fs.readFileSync(
+        path.join(first.worktreePath, "first-project.marker"),
+        "utf8",
+      ),
+    ).toBe("first");
+    expect(
+      fs.readFileSync(
+        path.join(secondWorktree, "second-project.marker"),
+        "utf8",
+      ),
+    ).toBe("second");
+    expect(
+      fs.existsSync(path.join(first.worktreePath, "second-project.marker")),
+    ).toBe(false);
+    expect(
+      fs.existsSync(path.join(secondWorktree, "first-project.marker")),
+    ).toBe(false);
+  });
 
   it("rejects a wrong branch before command execution", async () => {
     const branchFixture = createFixture();

@@ -205,7 +205,8 @@ function expectedTrelloList(
   // other workflow checkpoints may legitimately still own a Working card.
   if (
     record.pullRequest !== undefined &&
-    record.feedbackRemediation !== undefined &&
+    (record.feedbackRemediation !== undefined ||
+      record.ciRepair?.activePrimaryOperation !== undefined) &&
     phase !== "done"
   )
     return project.trello.reviewListId;
@@ -219,8 +220,13 @@ function requiresWorktree(phase: TaskExecutionPhase): boolean {
   return phase !== "attention-required" && phase !== "done";
 }
 
-function requiresPullRequest(phase: TaskExecutionPhase): boolean {
-  return phase === "ci" || phase === "human-feedback" || phase === "done";
+function requiresPullRequest(record: TaskExecutionRecord): boolean {
+  return (
+    record.pullRequest !== undefined ||
+    record.phase === "ci" ||
+    record.phase === "human-feedback" ||
+    record.phase === "done"
+  );
 }
 
 function readSetupInventory(
@@ -778,7 +784,7 @@ export async function reconcileTaskSession(
     // Publication verification is one checkpoint, not an escape hatch from
     // the common primary-session recovery gate below.
   }
-  if (requiresPullRequest(record.phase)) {
+  if (requiresPullRequest(record)) {
     const expectedPr = record.pullRequest;
     const actualPr = snapshot.pullRequest;
     if (
@@ -809,10 +815,7 @@ export async function reconcileTaskSession(
         "Done task does not have an authoritatively merged pull request",
       );
     }
-    if (
-      (record.phase === "ci" || record.phase === "human-feedback") &&
-      actualPr.state !== "OPEN"
-    ) {
+    if (record.phase !== "done" && actualPr.state !== "OPEN") {
       return preserveAttention(
         taskRecordStore,
         record,

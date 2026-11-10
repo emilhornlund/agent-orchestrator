@@ -20,7 +20,7 @@ export interface TaskSessionReviewDiff {
 export interface BuildTaskSessionReviewPromptInput {
   projectId: string;
   card: TrelloCard;
-  approvedPlan: TaskPlan;
+  approvedPlan?: TaskPlan;
   contentIdentity: string;
   diff: TaskSessionReviewDiff;
   validation: TaskSessionValidationResult;
@@ -35,8 +35,9 @@ export function buildTaskSessionReviewPrompt(
   input: BuildTaskSessionReviewPromptInput,
 ): string {
   if (
-    input.approvedPlan.projectId !== input.projectId ||
-    input.approvedPlan.cardId !== input.card.id
+    input.approvedPlan !== undefined &&
+    (input.approvedPlan.projectId !== input.projectId ||
+      input.approvedPlan.cardId !== input.card.id)
   ) {
     throw new Error(
       "Approved task plan does not match the implementation review identity",
@@ -62,7 +63,7 @@ export function buildTaskSessionReviewPrompt(
   const passingExample = {
     ...identity,
     verdict: "pass",
-    requirementAssessments: input.approvedPlan.requirements.map(
+    requirementAssessments: (input.approvedPlan?.requirements ?? []).map(
       (requirement) => ({
         requirementId: requirement.id,
         status: "satisfied",
@@ -76,7 +77,7 @@ export function buildTaskSessionReviewPrompt(
   const failingExample = {
     ...identity,
     verdict: "fail",
-    requirementAssessments: input.approvedPlan.requirements.map(
+    requirementAssessments: (input.approvedPlan?.requirements ?? []).map(
       (requirement, index) => ({
         requirementId: requirement.id,
         status: index === 0 ? "unsatisfied" : "satisfied",
@@ -110,8 +111,10 @@ export function buildTaskSessionReviewPrompt(
       ? input.card.desc
       : "No additional description was provided.",
     ...buildCardAttachmentPromptLines(input.attachmentContext),
-    "Approved plan and acceptance criteria:",
-    JSON.stringify(input.approvedPlan, null, 2),
+    "Advisory plan and acceptance criteria:",
+    input.approvedPlan === undefined
+      ? "No usable plan is available. Assess the task directly against its original description, attachments, and repository evidence."
+      : JSON.stringify(input.approvedPlan, null, 2),
     `Reviewed source content identity: ${input.contentIdentity}`,
     "Current source changes, including staged, unstaged, and untracked files:",
     JSON.stringify(input.diff, null, 2),
@@ -126,12 +129,14 @@ export function buildTaskSessionReviewPrompt(
     ),
     "Previously reported blocking findings in this review cycle (empty on the first review):",
     JSON.stringify(input.previousFindings ?? [], null, 2),
-    "Assess every approved plan requirement exactly once, independently of the remediation agent's claims. Identify missing requested behavior, unsupported or invented scope, serious correctness defects, and repository contract violations. The successful agent process exit is not evidence that requirements are satisfied.",
+    input.approvedPlan === undefined
+      ? "No usable plan was available. Assess the implementation against the original task, attachments, repository evidence, serious correctness defects, and repository contract violations. The successful agent process exit is not evidence that requirements are satisfied."
+      : "Assess every plan requirement exactly once, independently of the remediation agent's claims. Identify missing requested behavior, unsupported or invented scope, serious correctness defects, and repository contract violations. The successful agent process exit is not evidence that requirements are satisfied.",
     "For a subsequent review, perform three distinct assessments: (1) verify each previously reported blocking finding against the current source and classify it as resolved, unresolved, or superseded; (2) detect material regressions introduced by remediation, including defects not present in the previous finding list; and (3) independently reassess every approved requirement that remains in scope. Do not let successful remediation or resolution of prior findings reduce the full independent assessment.",
     "A blocking finding must be a material issue: an unsatisfied approved requirement, a demonstrable correctness defect, a violation of an applicable repository contract, or a regression introduced by this implementation. Serious demonstrable defects remain blocking even when not explicitly mentioned in the task. Explain evidence and impact; do not block on an issue that is not material.",
     "Do not report unrelated refactoring opportunities, stylistic preferences without an applicable contract, optional enhancements beyond approved scope, unsupported hypothetical problems, or requests to redesign an otherwise correct implementation as blocking findings. These may not cause a failed review.",
-    "Return exactly one JSON object and no markdown or surrounding text. The top-level object has exactly these fields: version (number, exactly 1), projectId (string, exactly the task identity above), cardId (string, exactly the task identity above), verdict (string enum 'pass' or 'fail'), requirementAssessments (array with exactly one assessment for every approved plan requirement and no others), blockingFindings (array), previousFindingAssessments (array), and reviewedContentIdentity (string, exactly the source identity above).",
-    "Each requirementAssessments item has exactly: requirementId (string, exact approved plan requirement ID), status (string enum 'satisfied' or 'unsatisfied'), details (non-empty string explaining the assessment), and evidence (array of non-empty strings). A 'satisfied' assessment must have at least one concrete evidence item. An 'unsatisfied' assessment may use an empty evidence array.",
+    "Return exactly one JSON object and no markdown or surrounding text. The top-level object has exactly these fields: version (number, exactly 1), projectId (string, exactly the task identity above), cardId (string, exactly the task identity above), verdict (string enum 'pass' or 'fail'), requirementAssessments (array with exactly one assessment for every plan requirement when a plan exists; otherwise empty), blockingFindings (array), previousFindingAssessments (array), and reviewedContentIdentity (string, exactly the source identity above).",
+    "Each requirementAssessments item has exactly: requirementId (string, exact plan requirement ID when a plan exists), status (string enum 'satisfied' or 'unsatisfied'), details (non-empty string explaining the assessment), and evidence (array of non-empty strings). A 'satisfied' assessment must have at least one concrete evidence item. An 'unsatisfied' assessment may use an empty evidence array.",
     "Each blockingFindings item has kind (string enum 'defect', 'incomplete', or 'contract-violation'), summary (non-empty string), detail (non-empty string), and optional location. Include id only when the item represents a previously reported finding, using exactly that finding's ID; do not invent IDs for new findings. Use detail to identify the specific defect or missing behavior, cite the violated approved requirement or repository contract when applicable, explain concrete current-source evidence demonstrating why it is material and blocks the task, and state the expected correct behavior. Include the relevant source location when identifiable, using location when possible. If present, location has filePath (non-empty repository-relative string with no '..' path component) and optional line (positive integer). A previously resolved finding may be reopened only when the current review provides new supporting evidence from the current source; include its exact prior ID, sourceContentIdentity equal to the reviewed source identity, a relevant source location, and concrete evidence in detail. Do not repeat a resolved finding as blocking merely by restating its previous evidence. New blocking findings must omit id. Do not use other finding fields.",
     "For every previously reported finding, include exactly one previousFindingAssessments item with findingId and status ('resolved', 'unresolved', or 'superseded'). Include a non-empty justification for every superseded finding. Any finding classified as unresolved must also appear in blockingFindings with its exact id, and the review verdict must be 'fail'. A resolved finding must not appear as blocking under its prior ID unless the blocking finding includes new current-source evidence as specified above. Assess independently from the remediation agent's claims. Use an empty array when no previous findings are provided. New defects and regressions belong in blockingFindings without a prior ID and must not be omitted because they are not in the previous list.",
     "Use verdict 'pass' only when every requirement is satisfied and blockingFindings is empty. Use verdict 'fail' when any requirement is unsatisfied or there is any blocking finding. A valid 'fail' is a review verdict, not a format/parse error; report it with its complete assessments and findings for normal bounded remediation.",

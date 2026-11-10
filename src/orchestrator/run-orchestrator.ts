@@ -460,7 +460,7 @@ async function hasPreparedConflictRecovery(
   void _project;
   void _blocked;
   void _signal;
-  // P1 deliberately offers no automatic recovery path: neither apparent local
+  // There is no automatic recovery path: neither apparent local
   // completion nor remote-branch absence proves a rebase was unpublished.
   // Preserve blockage and artifacts for explicit operator reconciliation.
   return false;
@@ -789,7 +789,9 @@ async function runProjectWorkerInner(
             ? {
                 budgets: {
                   validation: {
-                    limit: MAX_VALIDATION_REPAIR_ATTEMPTS,
+                    limit:
+                      project.opencode.remediation.validationMaxPasses ??
+                      MAX_VALIDATION_REPAIR_ATTEMPTS,
                     used: 0,
                     episodeId: `${selected.id}:initial-validation`,
                     trigger: "initial-implementation",

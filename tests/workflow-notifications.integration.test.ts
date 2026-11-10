@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { smtpSink } from "./support/p4-smtp-sink.js";
+import { smtpSink } from "./support/smtp-sink.js";
 import {
   createPublicationFixture,
   reopenPublicationFixture,
@@ -86,7 +86,7 @@ describe("actual Git/process workflow events -> durable obligation -> outbox -> 
   ] as const)(
     "$draft publication / $fault / SMTP $smtp",
     async ({ draft, fault, smtp }) => {
-      const root = fs.mkdtempSync(path.join(os.tmpdir(), "p4-workflow-smtp-"));
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "workflow-smtp-"));
       const sink = await smtpSink(root);
       sinks.push(sink);
       sink.mode(smtp);
@@ -316,7 +316,7 @@ describe("actual Git/process workflow events -> durable obligation -> outbox -> 
   )(
     "two real-Git projects: $event / SMTP $smtp preserves actual outcomes and project isolation",
     async ({ event, smtp }) => {
-      const root = fs.mkdtempSync(path.join(os.tmpdir(), "p4-terminal-smtp-"));
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "terminal-smtp-"));
       const sink = await smtpSink(root);
       sinks.push(sink);
       sink.mode(smtp);
@@ -459,7 +459,7 @@ describe("actual Git/process workflow events -> durable obligation -> outbox -> 
         expect(observedFailure).toBe(true);
         expect(a.card.idList).toBe("a-failed");
         // Current genuine failure boundary preserves the failed queue/worktree;
-        // P4 must not invent P10's refinement-failure terminal release protocol.
+        // A failed refinement must retain its terminal-release obligations.
         expect(
           a.authority.run(() =>
             new TaskMutationQueue(a.pinned.storageRoot, a.project).getActive(),

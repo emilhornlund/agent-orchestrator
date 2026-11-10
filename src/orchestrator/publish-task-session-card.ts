@@ -18,6 +18,7 @@ import {
   publishCard,
   prepareInitialPublicationBody,
   type PublishCardOptions,
+  type PreparedReviewPublication,
 } from "./publish-card.js";
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 import {
@@ -43,6 +44,7 @@ export interface PublishTaskSessionCardOptions extends Omit<
   initialEvidence: VerifiedPublicationDecisionInput;
   verifyPreparedContent: () => Promise<VerifiedPublicationDecisionInput>;
   exhaustedReview?: ImplementationReviewResult;
+  getPreparedReviewPublication?: () => PreparedReviewPublication;
 }
 
 function assertPublicationEvidence(
@@ -271,13 +273,28 @@ export async function publishTaskSessionCard(
     ProjectRunAuthority.current(options.project.id)
   ) {
     const preparedEvidence = await options.verifyPreparedContent();
-    assertPublicationEvidence(preparedEvidence, options.exhaustedReview);
+    const preparedReviewPublication = options.getPreparedReviewPublication?.();
+    const publicationOptions =
+      preparedReviewPublication === undefined
+        ? options
+        : {
+            ...options,
+            ...preparedReviewPublication,
+            exhaustedReview:
+              preparedReviewPublication.reviewDisclosure ?? undefined,
+          };
+    assertPublicationEvidence(
+      preparedEvidence,
+      preparedReviewPublication === undefined
+        ? options.exhaustedReview
+        : (preparedReviewPublication.reviewDisclosure ?? undefined),
+    );
     beginInitialPublication(
-      options,
-      await prepareInitialPublicationBody(options, false),
+      publicationOptions,
+      await prepareInitialPublicationBody(publicationOptions, false),
       preparedEvidence.currentContentIdentity,
     );
-    await resumeInitialPublication(options);
+    await resumeInitialPublication(publicationOptions);
     throw new PublicationWaitingError();
   }
   const headBefore = await options.git.getHeadSha(options.worktreePath);
@@ -353,13 +370,33 @@ export async function publishTaskSessionCard(
       const preparedEvidence = await options.verifyPreparedContent();
       const preparedHead = await options.git.getHeadSha(options.worktreePath);
       await assertScopedPostCommitWorktree(scopedOptions);
+      const preparedReviewPublication =
+        options.getPreparedReviewPublication?.();
       const allowStaleExhaustedReview =
-        options.exhaustedReview !== undefined && preparedHead !== commitSha;
+        preparedReviewPublication === undefined &&
+        options.exhaustedReview !== undefined &&
+        preparedHead !== commitSha;
       assertPublicationEvidence(
         preparedEvidence,
-        options.exhaustedReview,
+        preparedReviewPublication === undefined
+          ? options.exhaustedReview
+          : (preparedReviewPublication.reviewDisclosure ?? undefined),
         allowStaleExhaustedReview,
       );
+      return {
+        ...preparedReviewPublication,
+        reviewResult:
+          preparedReviewPublication?.reviewResult ?? options.reviewResult,
+        reviewDisclosure:
+          preparedReviewPublication === undefined
+            ? (options.exhaustedReview ?? null)
+            : preparedReviewPublication.reviewDisclosure,
+        qualityNeedsDraft:
+          preparedReviewPublication?.qualityNeedsDraft ??
+          (preparedEvidence.validation?.status !== "passed" ||
+            preparedEvidence.coverage?.status !== "passed"),
+        readinessEvidence: preparedEvidence,
+      };
     },
   });
   return options.git.getHeadSha(options.worktreePath);

@@ -124,7 +124,7 @@ export function buildHumanReviewEmail(
 }
 
 /** Only explicit successful/not-required status tokens establish no issue for
- * these existing routes. Full material-issue dispositions are supplied by P6. */
+ * these routes; other outcomes must remain disclosed. */
 export function publicationNotificationIssues(
   review: string,
   remediation: string,

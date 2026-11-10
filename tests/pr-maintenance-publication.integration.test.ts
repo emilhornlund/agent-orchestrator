@@ -17,9 +17,9 @@ function git(cwd: string, ...args: string[]): string {
   return fixture.git(cwd, ...args);
 }
 
-describe("P1 maintenance refusal (real Git remote)", () => {
+describe("unsafe maintenance refusal (real Git remote)", () => {
   it("observes a real accepted push by exact remote head without dispatching a second push", async () => {
-    root = fs.mkdtempSync(path.join(os.tmpdir(), "p1-accepted-push-"));
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "accepted-push-"));
     fixture = createIsolatedGitFixture(root);
     const remote = path.join(root, "remote.git");
     const repo = path.join(root, "repo");
@@ -65,7 +65,7 @@ describe("P1 maintenance refusal (real Git remote)", () => {
   });
 
   it("does not infer unpublished history from a deleted branch and preserves local evidence", async () => {
-    root = fs.mkdtempSync(path.join(os.tmpdir(), "p1-deleted-pr-branch-"));
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "deleted-pr-branch-"));
     fixture = createIsolatedGitFixture(root);
     const remote = path.join(root, "remote.git");
     const repo = path.join(root, "repo");
@@ -104,7 +104,7 @@ describe("P1 maintenance refusal (real Git remote)", () => {
         name: "Agent",
         email: "agent@example.test",
       }),
-    ).rejects.toThrow("disabled by the P1 safety guardrail");
+    ).rejects.toThrow("disabled to protect published history");
 
     expect(git(repo, "ls-remote", "origin", "refs/heads/agent/card-1")).toBe(
       "",

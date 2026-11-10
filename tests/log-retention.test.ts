@@ -272,9 +272,9 @@ describe("cleanupLogRetention", () => {
     expect(fs.existsSync(artifact)).toBe(true);
   });
 
-  it("protects legacy P2 HumanReview session logs inferred from safe task identity", () => {
+  it("protects legacy HumanReview session logs inferred from safe task identity", () => {
     useTemporaryWorkingDirectory();
-    const root = path.join(process.cwd(), "legacy-p2-runtime");
+    const root = path.join(process.cwd(), "legacy-runtime");
     const session = path.join(process.cwd(), "logs", "sessions", "p", "c.log");
     fs.mkdirSync(path.dirname(session), { recursive: true });
     fs.writeFileSync(session, "legacy evidence");
@@ -283,8 +283,8 @@ describe("cleanupLogRetention", () => {
       new Date("2025-12-01T00:00:00.000Z"),
       new Date("2025-12-01T00:00:00.000Z"),
     );
-    // P2-shaped imported HumanReview record: no modern sessionLogPaths/references.
-    writeAttempt(root, canonicalAttempt({ attemptId: "imported-p2" }));
+    // Imported legacy HumanReview record: no modern sessionLogPaths/references.
+    writeAttempt(root, canonicalAttempt({ attemptId: "imported-legacy" }));
     cleanupLogRetention(14, now, [root]);
     expect(fs.existsSync(session)).toBe(true);
   });

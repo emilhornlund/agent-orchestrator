@@ -5,7 +5,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProjectConfig } from "../src/config/config.js";
 import type { GitClient } from "../src/git/git-client.js";
 import type { GitHubClient } from "../src/github/github-client.js";
-import { runTaskSessionWorkflow } from "../src/orchestrator/run-task-session-workflow.js";
+import {
+  isPlanningOutageSafeToSkip,
+  runTaskSessionWorkflow,
+} from "../src/orchestrator/run-task-session-workflow.js";
+import type { PrimaryOperationEntry } from "../src/task-session/run-primary-operation.js";
 import { OpenCodeClient } from "../src/opencode/opencode-client.js";
 import { CommandRunner } from "../src/process/command-runner.js";
 import { TaskMutationQueue } from "../src/task-session/task-mutation-queue.js";
@@ -14,6 +18,7 @@ import { Logger } from "../src/logging/logger.js";
 import type { TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
 import { NotificationOutbox } from "../src/notifications/notification-outbox.js";
 import { runPrimaryOperation } from "../src/task-session/run-primary-operation.js";
+import { ProcessEvidenceError } from "../src/process/process-runtime.js";
 import { PrimaryOperationExhaustedError } from "../src/task-session/primary-operation-ledger.js";
 import { persistPrimaryOperationRecovery } from "../src/task-session/persist-primary-operation-recovery.js";
 import { RunStore } from "../src/task-session/run-store.js";
@@ -27,6 +32,180 @@ afterEach(() => {
 });
 
 describe("terminal failure recovery", () => {
+  it("allows workflow continuation only after a failed planning outage is retry-safe", () => {
+    const operation = {
+      id: "task:planning",
+      activity: "planning",
+      role: "advisory",
+      executions: 3,
+      failureExecutions: 0,
+      dependencyOutages: 3,
+      accountedExecution: 3,
+      lastExecutionClassification: "dependency-outage",
+      status: "failed",
+      updatedAt: new Date().toISOString(),
+    } satisfies PrimaryOperationEntry;
+
+    expect(isPlanningOutageSafeToSkip(operation)).toBe(false);
+    expect(isPlanningOutageSafeToSkip({ ...operation, retrySafe: true })).toBe(
+      true,
+    );
+    expect(
+      isPlanningOutageSafeToSkip({
+        ...operation,
+        retrySafe: true,
+        accountedExecution: 2,
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps a plan-review process-evidence failure fenced before implementation", async () => {
+    root = fs.mkdtempSync(
+      path.join(os.tmpdir(), "plan-review-evidence-failure-"),
+    );
+    const projectId = "agent-orchestrator";
+    const cardId = "plan-review-safety-card";
+    const contextRoot = path.join(root, "state");
+    const repositoryPath = path.join(root, "repo");
+    const worktreeRoot = path.join(root, "worktrees");
+    fs.mkdirSync(repositoryPath, { recursive: true });
+    const project = {
+      id: projectId,
+      autoMerge: false,
+      contextRoot,
+      trello: {
+        boardId: "board",
+        backlogListId: "backlog",
+        readyListId: "ready",
+        workingListId: "working",
+        reviewListId: "review",
+        failedListId: "failed",
+        doneListId: "done",
+        featureLabelId: "feature",
+      },
+      repository: {
+        path: repositoryPath,
+        github: "owner/repo",
+        defaultBranch: "main",
+        worktreeRoot,
+        validationCommand: "yarn validate",
+      },
+      opencode: {
+        timeoutMinutes: 1,
+        implementation: { model: "impl", variant: "high" },
+        planning: { model: "plan", variant: "high" },
+        planReview: { model: "review", variant: "high" },
+      },
+    } as unknown as ProjectConfig & { contextRoot: string };
+    const card: TrelloCard = {
+      id: cardId,
+      name: "Add the export action",
+      desc: "Add a task-scoped export action.",
+      idList: project.trello.readyListId,
+      idLabels: ["feature"],
+      url: "https://trello.example/plan-review-safety-card",
+    };
+    let currentList = project.trello.readyListId;
+    const trello = {
+      getCards: vi.fn(async (listId: string) =>
+        listId === currentList ? [{ ...card, idList: currentList }] : [],
+      ),
+      getCard: vi.fn(async () => ({ ...card, idList: currentList })),
+      moveCard: vi.fn(async (_id: string, listId: string) => {
+        currentList = listId;
+        return { ...card, idList: currentList };
+      }),
+      addComment: vi.fn(async () => ({
+        id: "comment-one",
+        type: "commentCard",
+        date: new Date().toISOString(),
+      })),
+    } as unknown as TrelloClient;
+    const plan = {
+      version: 1,
+      projectId,
+      cardId,
+      requirements: [
+        {
+          id: "REQ-1",
+          text: "Export the requested task data.",
+          verification: "Check the produced export content.",
+        },
+      ],
+      steps: [
+        {
+          id: "STEP-1",
+          description: "Implement the task export action.",
+          requirementIds: ["REQ-1"],
+          verification: "Run a focused export test.",
+        },
+      ],
+      assumptions: [],
+      blockers: [],
+    };
+    const runOpenCode = vi.fn(
+      async (options: { captureSessionId?: boolean }) => {
+        if (!options.captureSessionId)
+          throw new ProcessEvidenceError(
+            "review evidence could not be finalized",
+          );
+        return {
+          exitCode: 0,
+          output: [
+            JSON.stringify({
+              type: "step_start",
+              sessionID: "ses-plan-safety",
+            }),
+            JSON.stringify({
+              type: "text",
+              sessionID: "ses-plan-safety",
+              part: { type: "text", text: JSON.stringify(plan) },
+            }),
+          ].join("\n"),
+          errorOutput: "",
+        };
+      },
+    );
+    const taskStore = new TaskExecutionStore(contextRoot, project);
+
+    await expect(
+      runTaskSessionWorkflow({
+        project,
+        trello,
+        git: {
+          fetch: vi.fn(async () => undefined),
+          branchExists: vi.fn(async () => false),
+          addWorktreeWithNewBranch: vi.fn(
+            async (_repo: string, worktree: string) => {
+              fs.mkdirSync(worktree, { recursive: true });
+            },
+          ),
+        } as unknown as GitClient,
+        github: {
+          findPullRequestState: vi.fn(async () => null),
+        } as unknown as GitHubClient,
+        openCode: new OpenCodeClient(runOpenCode),
+        commands: new CommandRunner(vi.fn()),
+        signal: new AbortController().signal,
+        prepareAttachmentContext: async () => undefined,
+      }),
+    ).rejects.toBeInstanceOf(ProcessEvidenceError);
+
+    const record = taskStore.read(cardId);
+    expect(record).toMatchObject({
+      phase: "planning",
+      sessionCreationStatus: "bound",
+    });
+    expect(record?.planReviewAdvice).toBeUndefined();
+    expect(record?.primarySessionId).toBe("ses-plan-safety");
+    expect(runOpenCode).toHaveBeenCalledTimes(2);
+    expect(
+      runOpenCode.mock.calls.every(
+        ([options]) => options.captureSessionId !== false,
+      ),
+    ).toBe(true);
+  });
+
   it.each([false, true])(
     "routes a planning clarification to durable Failed without implementation (open PR: %s)",
     async (openPr) => {

@@ -173,6 +173,7 @@ export class PublicationServices {
     },
   } as unknown as GitHubClient;
   trello = {
+    getCard: async () => this.card(),
     getCards: async (list: string) => {
       this.ledger(`trello-read:${list}`);
       const state = this.read();

@@ -18,9 +18,9 @@ function git(cwd: string, ...args: string[]): string {
   return fixture.git(cwd, ...args);
 }
 
-describe("P1 published rewrite guard (real Git repository)", () => {
+describe("published history protection (real Git repository)", () => {
   it("ignores inherited Git and Node process configuration", () => {
-    root = fs.mkdtempSync(path.join(os.tmpdir(), "p1-rebase-env-"));
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "rebase-environment-"));
     const hostileConfig = path.join(root, "hostile-gitconfig");
     fs.writeFileSync(
       hostileConfig,
@@ -49,7 +49,7 @@ describe("P1 published rewrite guard (real Git repository)", () => {
   });
 
   it("refuses rebase and leased push without changing refs, objects, or worktree", async () => {
-    root = fs.mkdtempSync(path.join(os.tmpdir(), "p1-rebase-refusal-"));
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "rebase-refusal-"));
     fixture = createIsolatedGitFixture(root);
     const remote = path.join(root, "remote.git");
     const source = path.join(root, "source");
@@ -87,7 +87,7 @@ describe("P1 published rewrite guard (real Git repository)", () => {
         name: "Agent",
         email: "agent@example.test",
       }),
-    ).rejects.toThrow("disabled by the P1 safety guardrail");
+    ).rejects.toThrow("disabled to protect published history");
     await expect(
       client.pushWithLease(worktree, "origin", "agent/card-1", taskHead),
     ).rejects.toThrow("Force-with-lease pushes are disabled");

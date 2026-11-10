@@ -3,6 +3,7 @@ import type {
   OpenCodeClient,
   OpenCodeRunOptions,
 } from "../opencode/opencode-client.js";
+import { extractOpenCodeTextOutput } from "../opencode/opencode-client.js";
 import { buildTaskSessionValidationRepairPrompt } from "../opencode/build-task-session-validation-repair-prompt.js";
 import type { TrelloCard } from "../trello/trello-client.js";
 import { loadOwnedTaskExecutionRecord } from "./task-execution-ownership.js";
@@ -24,6 +25,8 @@ import { assertOwnedTaskWorktreePath } from "./run-task-session-implementation.j
 import { createHash } from "node:crypto";
 
 export const MAX_VALIDATION_REPAIR_ATTEMPTS = 2;
+export const VALIDATION_REPAIR_EARLY_FINISH_MARKER =
+  "VALIDATION_REPAIR_FINISHED_EARLY";
 
 export class StaleTaskSessionValidationEvidenceError extends Error {
   constructor(
@@ -84,7 +87,7 @@ export interface RunTaskSessionValidationRepairsOptions {
 
 export interface TaskSessionValidationRepairResult {
   validation: TaskSessionValidationResult;
-  coverage: TaskSessionValidationResult | null;
+  coverage: TaskSessionValidationResult;
   attempts: number;
   record: TaskExecutionRecord;
 }
@@ -115,11 +118,40 @@ function validationResultFromEvidence(
     throw new Error("Passing validation repair state has no evidence");
   }
 
+  const status =
+    evidence.status ??
+    (evidence.exitCode === 0 && evidence.command.trim().length > 0
+      ? "passed"
+      : "uncertain");
   return {
     ...evidence,
-    status: "passed",
-    timedOut: false,
-    aborted: false,
+    status,
+    timedOut: status === "timed-out",
+    aborted: status === "aborted",
+  };
+}
+
+function explicitlyFinishedEarly(output: string): boolean {
+  try {
+    return extractOpenCodeTextOutput(output)
+      .split(/\r?\n/u)
+      .some((line) => line.trim() === VALIDATION_REPAIR_EARLY_FINISH_MARKER);
+  } catch {
+    return false;
+  }
+}
+
+function toValidationEvidence(
+  result: TaskSessionValidationResult,
+): NonNullable<TaskExecutionRecord["validationRepair"]>["evidence"] {
+  return {
+    command: result.command,
+    startedAt: result.startedAt,
+    completedAt: result.completedAt,
+    exitCode: result.exitCode,
+    status: result.status,
+    diagnostic: result.diagnostic,
+    contentIdentity: result.contentIdentity,
   };
 }
 
@@ -129,11 +161,39 @@ async function assertValidationPrerequisites(
 ): Promise<void> {
   const { validation, expectedPrimarySessionId, card } = options;
 
-  if (record.phase !== "validation") {
+  const exhaustedPublicationRecovery =
+    record.phase === "publication" &&
+    record.validationRepair?.status === "exhausted";
+  if (record.phase !== "validation" && !exhaustedPublicationRecovery) {
     throw new TaskSessionValidationRepairError(
       `Validation repair requires the validation phase, found ${record.phase}`,
       record.retryCounters.validation,
     );
+  }
+
+  if (
+    exhaustedPublicationRecovery &&
+    record.validationRepair?.activePrimaryOperation !== undefined
+  )
+    throw new TaskSessionValidationRepairError(
+      "Exhausted publication cannot bypass an unresolved validation repair operation",
+      record.retryCounters.validation,
+    );
+
+  if (exhaustedPublicationRecovery) {
+    const unresolvedOperation = Object.values(
+      record.primaryOperations ?? {},
+    ).find(
+      (operation) =>
+        operation !== undefined &&
+        (["intent", "dispatched", "ambiguous"].includes(operation.status) ||
+          (operation.status === "failed" && operation.retrySafe !== true)),
+    );
+    if (unresolvedOperation !== undefined)
+      throw new TaskSessionValidationRepairError(
+        `Exhausted publication quality recovery is fenced by unresolved primary operation ${unresolvedOperation.id}`,
+        record.retryCounters.validation,
+      );
   }
 
   if (
@@ -178,16 +238,6 @@ export async function runTaskSessionValidationWithRepairs(
     validation;
 
   if (
-    project.repository.validationCommand === undefined ||
-    project.repository.validationCommand.trim().length === 0
-  ) {
-    throw new TaskSessionValidationRepairError(
-      "Validation repair requires a nonempty repository.validationCommand",
-      0,
-    );
-  }
-
-  if (
     !Number.isSafeInteger(validation.timeoutMilliseconds) ||
     validation.timeoutMilliseconds < 1
   ) {
@@ -217,18 +267,18 @@ export async function runTaskSessionValidationWithRepairs(
   const plan = planStore.read(cardId);
 
   if (
-    plan === null ||
-    plan.plan.projectId !== project.id ||
-    plan.plan.cardId !== cardId ||
-    plan.verification?.verdict !== "pass"
-  ) {
+    plan !== null &&
+    (plan.plan.projectId !== project.id || plan.plan.cardId !== cardId)
+  )
     throw new TaskSessionValidationRepairError(
-      "Validation repair requires the persisted plan to have passed independent verification",
+      "Validation repair plan identity does not match the owned task",
       record.retryCounters.validation,
     );
-  }
 
   const cycleId = operationKey;
+  const configuredMaximum =
+    project.opencode.remediation.validationMaxPasses ??
+    MAX_VALIDATION_REPAIR_ATTEMPTS;
   let currentRecord = record;
   let repairState = currentRecord.validationRepair;
 
@@ -238,17 +288,79 @@ export async function runTaskSessionValidationWithRepairs(
         ...currentRecord.retryCounters,
         validation: 0,
       },
-      validationRepair: { cycleId, status: "active" },
+      validationRepair: {
+        cycleId,
+        status: "active",
+        maxAttempts: configuredMaximum,
+      },
+    });
+    repairState = currentRecord.validationRepair;
+  } else if (repairState.maxAttempts === undefined) {
+    const hasChargedOrReservedAttempt =
+      currentRecord.retryCounters.validation > 0 ||
+      repairState.activePrimaryOperation !== undefined;
+    const persistedMaximum = hasChargedOrReservedAttempt
+      ? Math.max(
+          currentRecord.retryCounters.validation,
+          repairState.activePrimaryOperation?.pass ?? 0,
+          Math.min(MAX_VALIDATION_REPAIR_ATTEMPTS, configuredMaximum),
+        )
+      : configuredMaximum;
+    currentRecord = updateRecord(validation.taskRecordStore, currentRecord, {
+      validationRepair: {
+        ...repairState,
+        maxAttempts: persistedMaximum,
+      },
     });
     repairState = currentRecord.validationRepair;
   }
+  const maxAttempts = repairState?.maxAttempts ?? configuredMaximum;
 
   if (repairState?.status === "exhausted") {
-    // Recovery may observe failed quality again, but must not invoke AI
-    // remediation beyond the durable limit.
+    const evidence = repairState.evidence;
+    const coverageEvidence = repairState.coverageEvidence;
+    const expectedValidationCommand =
+      project.repository.validationCommand ?? "";
+    const expectedCoverageCommand = project.repository.coverageCommand ?? "";
+    if (evidence !== undefined && coverageEvidence !== undefined) {
+      const currentIdentity = await getTaskSessionSourceSnapshotIdentity(
+        validation.git,
+        worktreePath,
+      );
+      if (
+        currentIdentity === evidence.contentIdentity &&
+        currentIdentity === coverageEvidence.contentIdentity &&
+        evidence.command === expectedValidationCommand &&
+        coverageEvidence.command === expectedCoverageCommand
+      ) {
+        return {
+          validation: validationResultFromEvidence(evidence),
+          coverage: validationResultFromEvidence(coverageEvidence),
+          attempts: currentRecord.retryCounters.validation,
+          record: currentRecord,
+        };
+      }
+    }
+    // Changed content (or legacy state without stored evidence) requires fresh
+    // quality observations, but an exhausted cycle never dispatches another writer.
+    const validationResult = await runTaskSessionValidation(validation);
+    const coverageResult = await runTaskSessionCoverage(validation);
+    const latest = validation.taskRecordStore.read(cardId);
+    if (latest === null || latest.operationKey !== operationKey)
+      throw new TaskSessionValidationRepairError(
+        "Task ownership changed before exhausted validation evidence could be refreshed",
+        currentRecord.retryCounters.validation,
+      );
+    currentRecord = updateRecord(validation.taskRecordStore, latest, {
+      validationRepair: {
+        ...repairState,
+        evidence: toValidationEvidence(validationResult),
+        coverageEvidence: toValidationEvidence(coverageResult),
+      },
+    });
     return {
-      validation: await runTaskSessionValidation(validation),
-      coverage: await runTaskSessionCoverage(validation),
+      validation: validationResult,
+      coverage: coverageResult,
       attempts: currentRecord.retryCounters.validation,
       record: currentRecord,
     };
@@ -266,7 +378,11 @@ export async function runTaskSessionValidationWithRepairs(
 
     if (!coverageIsCurrent) {
       currentRecord = updateRecord(validation.taskRecordStore, currentRecord, {
-        validationRepair: { cycleId, status: "active" },
+        validationRepair: {
+          cycleId,
+          status: "active",
+          maxAttempts,
+        },
       });
     } else {
       const currentIdentity = await getTaskSessionSourceSnapshotIdentity(
@@ -279,24 +395,28 @@ export async function runTaskSessionValidationWithRepairs(
         (coverageEvidence !== undefined &&
           currentIdentity !== coverageEvidence.contentIdentity)
       ) {
-        throw new StaleTaskSessionValidationEvidenceError(
-          coverageEvidence !== undefined &&
-            currentIdentity !== coverageEvidence.contentIdentity
-            ? coverageEvidence.contentIdentity
-            : evidence.contentIdentity,
-          currentIdentity,
+        currentRecord = updateRecord(
+          validation.taskRecordStore,
+          currentRecord,
+          {
+            validationRepair: {
+              cycleId,
+              status: "active",
+              maxAttempts,
+            },
+          },
         );
+      } else {
+        return {
+          validation: evidence,
+          coverage:
+            coverageEvidence === undefined
+              ? await runTaskSessionCoverage(validation)
+              : validationResultFromEvidence(coverageEvidence),
+          attempts: currentRecord.retryCounters.validation,
+          record: currentRecord,
+        };
       }
-
-      return {
-        validation: evidence,
-        coverage:
-          coverageEvidence === undefined
-            ? null
-            : validationResultFromEvidence(coverageEvidence),
-        attempts: currentRecord.retryCounters.validation,
-        record: currentRecord,
-      };
     }
   }
 
@@ -333,8 +453,9 @@ export async function runTaskSessionValidationWithRepairs(
         { projectId: project.id, cardId, expectedBranch, operationKey },
       );
       await assertValidationPrerequisites(options, repairRecord);
+      let resumedRepairResult;
       try {
-        await runWithPrimaryTaskSession(
+        resumedRepairResult = await runWithPrimaryTaskSession(
           validation.taskRecordStore,
           openCode,
           project.id,
@@ -378,18 +499,114 @@ export async function runTaskSessionValidationWithRepairs(
           { cause: error },
         );
       }
+      if (resumedRepairResult.exitCode !== 0)
+        throw new TaskSessionValidationRepairError(
+          `Reserved validation repair pass ${reservedOperation.pass} exited with code ${resumedRepairResult.exitCode}; reservation is preserved`,
+          reservedOperation.pass,
+        );
       currentRecord = validation.taskRecordStore.read(cardId) ?? currentRecord;
       await assertValidationPrerequisites(options, currentRecord);
+      const afterContentIdentity = await getTaskSessionSourceSnapshotIdentity(
+        validation.git,
+        worktreePath,
+      );
+      const currentRepair = currentRecord.validationRepair;
+      const noContentChange =
+        reservedOperation.beforeContentIdentity !== undefined &&
+        reservedOperation.beforeContentIdentity === afterContentIdentity;
+      if (
+        noContentChange &&
+        reservedOperation.beforeContentIdentity !== undefined &&
+        currentRepair?.evidence !== undefined &&
+        currentRepair.coverageEvidence !== undefined &&
+        currentRepair.evidence.contentIdentity ===
+          reservedOperation.beforeContentIdentity &&
+        currentRepair.coverageEvidence.contentIdentity ===
+          reservedOperation.beforeContentIdentity &&
+        currentRepair.evidence.command ===
+          (project.repository.validationCommand ?? "") &&
+        currentRepair.coverageEvidence.command ===
+          (project.repository.coverageCommand ?? "")
+      ) {
+        currentRecord = updateRecord(
+          validation.taskRecordStore,
+          currentRecord,
+          {
+            validationRepair: {
+              cycleId,
+              status: "exhausted",
+              maxAttempts,
+              stopReason: "no-change",
+              evidence: currentRepair.evidence,
+              coverageEvidence: currentRepair.coverageEvidence,
+            },
+          },
+        );
+        return {
+          validation: validationResultFromEvidence(currentRepair.evidence),
+          coverage: validationResultFromEvidence(
+            currentRepair.coverageEvidence,
+          ),
+          attempts: currentRecord.retryCounters.validation,
+          record: currentRecord,
+        };
+      }
       currentRecord = updateRecord(validation.taskRecordStore, currentRecord, {
-        validationRepair: { cycleId, status: "active" },
+        validationRepair: {
+          cycleId,
+          status: "active",
+          maxAttempts,
+          ...(noContentChange
+            ? { finishAfterNextCheck: "no-change" }
+            : explicitlyFinishedEarly(resumedRepairResult.output)
+              ? { finishAfterNextCheck: "finished-early" }
+              : {}),
+          ...(currentRepair?.evidence === undefined
+            ? {}
+            : { evidence: currentRepair.evidence }),
+          ...(currentRepair?.coverageEvidence === undefined
+            ? {}
+            : { coverageEvidence: currentRepair.coverageEvidence }),
+        },
       });
       continue;
     }
     const validationResult = await runTaskSessionValidation(validation);
     const coverageResult = await runTaskSessionCoverage(validation);
+    if (
+      validationResult.status === "skipped" &&
+      coverageResult.status === "skipped"
+    ) {
+      const latestRecord = validation.taskRecordStore.read(cardId);
+      if (
+        latestRecord === null ||
+        latestRecord.revision !== currentRecord.revision
+      )
+        throw new TaskSessionValidationRepairError(
+          "Task ownership changed before skipped quality evidence could be persisted",
+          currentRecord.retryCounters.validation,
+        );
+      currentRecord = updateRecord(validation.taskRecordStore, currentRecord, {
+        validationRepair: {
+          cycleId,
+          status: "skipped",
+          maxAttempts,
+          evidence: toValidationEvidence(validationResult),
+          coverageEvidence: toValidationEvidence(coverageResult),
+        },
+      });
+      return {
+        validation: validationResult,
+        coverage: coverageResult,
+        attempts: currentRecord.retryCounters.validation,
+        record: currentRecord,
+      };
+    }
     const allQualityGatesPassed =
-      validationResult.status === "passed" &&
-      (coverageResult === null || coverageResult.status === "passed");
+      (validationResult.status === "passed" ||
+        validationResult.status === "skipped") &&
+      (coverageResult.status === "passed" ||
+        coverageResult.status === "skipped");
 
     if (allQualityGatesPassed) {
       const currentIdentity = await getTaskSessionSourceSnapshotIdentity(
@@ -429,26 +646,9 @@ export async function runTaskSessionValidationWithRepairs(
         validationRepair: {
           cycleId,
           status: "passed",
-          evidence: {
-            command: validationResult.command,
-            startedAt: validationResult.startedAt,
-            completedAt: validationResult.completedAt,
-            exitCode: 0,
-            diagnostic: validationResult.diagnostic,
-            contentIdentity: validationResult.contentIdentity,
-          },
-          ...(coverageResult === null
-            ? {}
-            : {
-                coverageEvidence: {
-                  command: coverageResult.command,
-                  startedAt: coverageResult.startedAt,
-                  completedAt: coverageResult.completedAt,
-                  exitCode: 0,
-                  diagnostic: coverageResult.diagnostic,
-                  contentIdentity: coverageResult.contentIdentity,
-                },
-              }),
+          maxAttempts,
+          evidence: toValidationEvidence(validationResult),
+          coverageEvidence: toValidationEvidence(coverageResult),
         },
       });
 
@@ -462,9 +662,17 @@ export async function runTaskSessionValidationWithRepairs(
 
     const attempts = currentRecord.retryCounters.validation;
 
-    if (attempts >= MAX_VALIDATION_REPAIR_ATTEMPTS) {
+    const finishReason = currentRecord.validationRepair?.finishAfterNextCheck;
+    if (finishReason !== undefined) {
       currentRecord = updateRecord(validation.taskRecordStore, currentRecord, {
-        validationRepair: { cycleId, status: "exhausted" },
+        validationRepair: {
+          cycleId,
+          status: "exhausted",
+          maxAttempts,
+          stopReason: finishReason,
+          evidence: toValidationEvidence(validationResult),
+          coverageEvidence: toValidationEvidence(coverageResult),
+        },
       });
       return {
         validation: validationResult,
@@ -474,14 +682,49 @@ export async function runTaskSessionValidationWithRepairs(
       };
     }
 
+    if (attempts >= maxAttempts) {
+      currentRecord = updateRecord(validation.taskRecordStore, currentRecord, {
+        validationRepair: {
+          cycleId,
+          status: "exhausted",
+          maxAttempts,
+          stopReason: "attempt-limit",
+          evidence: toValidationEvidence(validationResult),
+          coverageEvidence: toValidationEvidence(coverageResult),
+        },
+      });
+      return {
+        validation: validationResult,
+        coverage: coverageResult,
+        attempts: currentRecord.retryCounters.validation,
+        record: currentRecord,
+      };
+    }
+
+    const beforeContentIdentity = await getTaskSessionSourceSnapshotIdentity(
+      validation.git,
+      worktreePath,
+    );
+    if (
+      beforeContentIdentity !== validationResult.contentIdentity ||
+      beforeContentIdentity !== coverageResult.contentIdentity
+    ) {
+      throw new StaleTaskSessionValidationEvidenceError(
+        validationResult.contentIdentity !== beforeContentIdentity
+          ? validationResult.contentIdentity
+          : coverageResult.contentIdentity,
+        beforeContentIdentity,
+      );
+    }
+
     const prompt = buildTaskSessionValidationRepairPrompt({
       projectId: project.id,
       card,
-      approvedPlan: plan.plan,
+      ...(plan === null ? {} : { approvedPlan: plan.plan }),
       validation: validationResult,
       coverage: coverageResult,
       attempt: attempts + 1,
-      maxAttempts: MAX_VALIDATION_REPAIR_ATTEMPTS,
+      maxAttempts,
       ...(options.attachmentContext === undefined
         ? {}
         : { attachmentContext: options.attachmentContext }),
@@ -507,9 +750,13 @@ export async function runTaskSessionValidationWithRepairs(
         validationRepair: {
           cycleId,
           status: "active",
+          maxAttempts,
+          evidence: toValidationEvidence(validationResult),
+          coverageEvidence: toValidationEvidence(coverageResult),
           activePrimaryOperation: {
             operationId: repairOperationId,
             pass: repairAttempt,
+            beforeContentIdentity,
             validationResult: diagnosticResult,
             promptContext: `sha256:${createHash("sha256").update(prompt).digest("hex")}`,
             promptArtifact,
@@ -529,8 +776,9 @@ export async function runTaskSessionValidationWithRepairs(
     );
     await assertValidationPrerequisites(options, repairRecord);
 
+    let repairResult;
     try {
-      await runWithPrimaryTaskSession(
+      repairResult = await runWithPrimaryTaskSession(
         validation.taskRecordStore,
         openCode,
         project.id,
@@ -574,14 +822,69 @@ export async function runTaskSessionValidationWithRepairs(
       );
     }
 
+    if (repairResult.exitCode !== 0)
+      throw new TaskSessionValidationRepairError(
+        `Primary-session validation repair attempt ${repairAttempt} exited with code ${repairResult.exitCode}; reservation is preserved`,
+        repairAttempt,
+      );
+
     currentRecord = validation.taskRecordStore.read(cardId) ?? currentRecord;
     await assertValidationPrerequisites(options, currentRecord);
     if (
       currentRecord.validationRepair?.activePrimaryOperation?.operationId ===
       repairOperationId
     ) {
+      const afterContentIdentity = await getTaskSessionSourceSnapshotIdentity(
+        validation.git,
+        worktreePath,
+      );
+      const repairedWithoutContentChange =
+        currentRecord.validationRepair.activePrimaryOperation
+          .beforeContentIdentity !== undefined &&
+        currentRecord.validationRepair.activePrimaryOperation
+          .beforeContentIdentity === afterContentIdentity;
+      if (repairedWithoutContentChange) {
+        const beforeContentIdentity =
+          currentRecord.validationRepair.activePrimaryOperation
+            .beforeContentIdentity;
+        const observedQualityMatchesReservedContent =
+          currentRecord.validationRepair.evidence?.contentIdentity ===
+            beforeContentIdentity &&
+          currentRecord.validationRepair.coverageEvidence?.contentIdentity ===
+            beforeContentIdentity;
+        if (observedQualityMatchesReservedContent) {
+          currentRecord = updateRecord(
+            validation.taskRecordStore,
+            currentRecord,
+            {
+              validationRepair: {
+                cycleId,
+                status: "exhausted",
+                maxAttempts,
+                stopReason: "no-change",
+                evidence: toValidationEvidence(validationResult),
+                coverageEvidence: toValidationEvidence(coverageResult),
+              },
+            },
+          );
+          return {
+            validation: validationResult,
+            coverage: coverageResult,
+            attempts: currentRecord.retryCounters.validation,
+            record: currentRecord,
+          };
+        }
+      }
+      const finishedEarly = explicitlyFinishedEarly(repairResult.output);
       currentRecord = updateRecord(validation.taskRecordStore, currentRecord, {
-        validationRepair: { cycleId, status: "active" },
+        validationRepair: {
+          cycleId,
+          status: "active",
+          maxAttempts,
+          ...(finishedEarly
+            ? { finishAfterNextCheck: "finished-early" as const }
+            : {}),
+        },
       });
     }
   }

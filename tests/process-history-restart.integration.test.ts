@@ -11,21 +11,23 @@ const millisecondsPerDay = 24 * 60 * 60 * 1_000;
 
 describe("run history and retention survive process restart", () => {
   it("reconstructs transitions independently and retains active Human Review evidence", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "p3-history-restart-"));
+    const root = fs.mkdtempSync(
+      path.join(os.tmpdir(), "process-history-restart-"),
+    );
     try {
       const runtimeRoot = path.join(root, "runtime");
       const activeLog = path.join(
         runtimeRoot,
         "artifacts",
-        "project-p3",
-        "card-p3",
-        "attempt-p3-restart",
+        "history-project",
+        "history-card",
+        "attempt-history-restart",
         "active-child.log",
       );
       const expiredLog = path.join(
         runtimeRoot,
         "artifacts",
-        "project-p3",
+        "history-project",
         "prior-card",
         "prior-attempt",
         "expired-child.log",
@@ -45,11 +47,11 @@ describe("run history and retention survive process restart", () => {
 
       const pinned = {
         integrationId: JSON.stringify({
-          trelloBoardId: "board-p3",
-          githubRepository: "owner/p3",
+          trelloBoardId: "history-board",
+          githubRepository: "owner/history",
         }),
-        projectId: "project-p3",
-        boardId: "board-p3",
+        projectId: "history-project",
+        boardId: "history-board",
         lists: {
           ready: "ready",
           working: "working",
@@ -58,7 +60,7 @@ describe("run history and retention survive process restart", () => {
           done: "done",
           backlog: "backlog",
         },
-        repository: "owner/p3",
+        repository: "owner/history",
         repositoryPath: path.join(root, "repo"),
         worktreeRoot: path.join(root, "worktrees"),
         storageRoot: runtimeRoot,
@@ -67,35 +69,35 @@ describe("run history and retention survive process restart", () => {
         version: 1,
         revision: 1,
         projectId: pinned.projectId,
-        cardId: "card-p3",
-        attemptId: "attempt-p3-restart",
+        cardId: "history-card",
+        attemptId: "attempt-history-restart",
         taskKind: "implementation",
         pinned,
         lifecycle: "ready",
         checkpoint: "ready",
         publicationState: "none",
         operation: {
-          id: "operation-p3-1",
+          id: "operation-history-1",
           kind: "fixture-operation",
           generation: 1,
         },
         wait: { reason: null, dependency: null, since: null, retryAt: null },
         owner: {
-          instanceId: "instance-p3",
-          token: "lease-p3",
+          instanceId: "history-instance",
+          token: "history-lease",
           generation: 1,
         },
         resources: [
           {
             kind: "child-process-log",
-            id: "active-log-p3",
+            id: "active-history-log",
             path: activeLog,
             provenance: "synthetic-adapter-matrix",
           },
         ],
         pendingOperations: [
           {
-            id: "operation-p3-1",
+            id: "operation-history-1",
             kind: "fixture-operation",
             status: "running",
             generation: 1,
@@ -106,7 +108,7 @@ describe("run history and retention survive process restart", () => {
         ],
         queue: [],
         budgets: {},
-        sessions: { primary: "opencode-session-p3" },
+        sessions: { primary: "opencode-history-session" },
         artifacts: [],
         expectedTrelloListId: null,
         terminalSync: "not-applicable",
@@ -129,13 +131,13 @@ describe("run history and retention survive process restart", () => {
         const root = process.argv[2];
         const runtimeRoot = process.argv[3];
         const payload = JSON.parse(process.argv[4]);
-        const lease = { integrationId: payload.record.pinned.integrationId, instanceId: "instance-p3", token: "lease-p3", assertHeld() {} };
-        const store = new RunStore(runtimeRoot, "attempt-p3-restart", payload.record.pinned, lease);
+        const lease = { integrationId: payload.record.pinned.integrationId, instanceId: "history-instance", token: "history-lease", assertHeld() {} };
+        const store = new RunStore(runtimeRoot, "attempt-history-restart", payload.record.pinned, lease);
         if (mode === "write") {
           let current = store.create(payload.record);
           const advance = (event, from, to, update = value => value, final = false) => {
             const operation = current.operation;
-            const nextId = "operation-p3-" + (operation.generation + 1);
+            const nextId = "operation-history-" + (operation.generation + 1);
             const completion = "completion-" + operation.id;
             const transitionUpdate = value => {
               const completed = value.pendingOperations.map(item => item.id === operation.id
@@ -255,7 +257,7 @@ describe("run history and retention survive process restart", () => {
         lifecycle: "human-review",
         checkpoint: "human-review",
         publicationState: "open",
-        sessionReferences: { primary: "opencode-session-p3" },
+        sessionReferences: { primary: "opencode-history-session" },
         activeLogExists: true,
         expiredLogExists: false,
       });
@@ -287,7 +289,7 @@ describe("run history and retention survive process restart", () => {
       for (const event of afterRestart.timeline.filter(
         (entry) => entry.attemptId !== undefined,
       )) {
-        expect(event.attemptId).toBe("attempt-p3-restart");
+        expect(event.attemptId).toBe("attempt-history-restart");
         expect(Date.parse(event.timestamp)).not.toBeNaN();
         expect(Date.parse(event.startedAt)).not.toBeNaN();
         expect(event.elapsedMilliseconds).toBeGreaterThanOrEqual(0);
