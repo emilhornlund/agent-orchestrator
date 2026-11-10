@@ -472,6 +472,41 @@ describe("parseConfig", () => {
     );
   });
 
+  it.each([0, 4])("accepts validationMaxPasses: %s", (validationMaxPasses) => {
+    const raw = validConfig.replace(
+      `      remediation:
+        model: "openai/remediation-model"
+        variant: "xhigh"`,
+      `      remediation:
+        model: "openai/remediation-model"
+        variant: "xhigh"
+        validationMaxPasses: ${validationMaxPasses}`,
+    );
+
+    expect(
+      parseConfig(raw).projects[0]?.opencode.remediation.validationMaxPasses,
+    ).toBe(validationMaxPasses);
+  });
+
+  it.each(["-1", "1.5", '"many"'])(
+    "rejects invalid validationMaxPasses: %s",
+    (validationMaxPasses) => {
+      const raw = validConfig.replace(
+        `      remediation:
+        model: "openai/remediation-model"
+        variant: "xhigh"`,
+        `      remediation:
+        model: "openai/remediation-model"
+        variant: "xhigh"
+        validationMaxPasses: ${validationMaxPasses}`,
+      );
+
+      expect(() => parseConfig(raw)).toThrow(
+        "projects.0.opencode.remediation.validationMaxPasses",
+      );
+    },
+  );
+
   it.each([
     ["negative", "-1"],
     ["fractional", "1.5"],

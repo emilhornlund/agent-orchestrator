@@ -67,6 +67,13 @@ operations preserve their durable records and require operator attention. No man
 mock tests cover the lifecycle; no live Trello/GitHub/OpenCode pilot has been performed. See
 [Configuration](configuration.md#ci-expectation-discovery) and [Recovery](recovery.md#restart-and-task-ownership).
 
+Local validation and coverage repair has a separate maximum, configured by
+`opencode.remediation.validationMaxPasses` (default `2`). Its limit is persisted
+before dispatch, the primary session may finish early, and an attempt that leaves
+exact source content unchanged ends the cycle without rerunning unchanged checks.
+Exhaustion proceeds toward publication with observed quality results; it does not
+fail the task by itself.
+
 Automatic CI expectations come from available branch-protection policies and static repository-owned pull-request workflow
 contracts. Conditional jobs, dynamic matrices, unsupported workflow constructs, inaccessible policies, empty contracts, and
 checks that have not appeared keep the result uncertain or waiting. A visible subset of passing checks is not evidence that the

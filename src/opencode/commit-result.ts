@@ -8,6 +8,13 @@ import type { GitClient } from "../git/git-client.js";
 export const commitResultRelativePath =
   ".agent-orchestrator/commit-result.json";
 
+export function getCommitResultRelativePath(intentHash?: string): string {
+  if (intentHash === undefined) return commitResultRelativePath;
+  if (!/^[a-f0-9]{64}$/u.test(intentHash))
+    throw new Error("Commit-message intent hash is malformed");
+  return `.agent-orchestrator/commit-result-${intentHash}.json`;
+}
+
 export const MAX_COMMIT_MESSAGE_LENGTH = 4_000;
 
 const conventionalCommitHeader =
@@ -46,6 +53,13 @@ const commitResultSchema = z.strictObject({
 });
 
 export type CommitResult = z.infer<typeof commitResultSchema>;
+
+export class InvalidCommitResultError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "InvalidCommitResultError";
+  }
+}
 
 export interface RepositorySnapshot {
   status: string;
@@ -102,17 +116,24 @@ function captureUntrackedFiles(
   return JSON.stringify(files);
 }
 
-export function getCommitResultPath(worktreePath: string): string {
-  return path.join(worktreePath, commitResultRelativePath);
+export function getCommitResultPath(
+  worktreePath: string,
+  intentHash?: string,
+): string {
+  return path.join(worktreePath, getCommitResultRelativePath(intentHash));
 }
 
-export function clearCommitResult(worktreePath: string): void {
-  fs.rmSync(getCommitResultPath(worktreePath), { force: true });
+export function clearCommitResult(
+  worktreePath: string,
+  intentHash?: string,
+): void {
+  fs.rmSync(getCommitResultPath(worktreePath, intentHash), { force: true });
 }
 
 export async function captureRepositorySnapshot(
   git: GitClient,
   worktreePath: string,
+  excludePaths: readonly string[] = [],
 ): Promise<RepositorySnapshot> {
   const [status, unstagedDiff, stagedDiff, untrackedFiles] = await Promise.all([
     git.getStatus(worktreePath),
@@ -121,11 +142,23 @@ export async function captureRepositorySnapshot(
     git.getUntrackedFiles(worktreePath),
   ]);
 
+  const excluded = new Set(excludePaths);
+  const cleanStatus = status
+    .split(/\r?\n/u)
+    .filter((line) => {
+      if (line.length < 4) return line.length > 0;
+      const filePath = line.slice(3).replace(/^"|"$/gu, "");
+      return !excluded.has(filePath);
+    })
+    .join("\n");
   return {
-    status,
+    status: cleanStatus,
     unstagedDiff,
     stagedDiff,
-    untrackedFiles: captureUntrackedFiles(worktreePath, untrackedFiles),
+    untrackedFiles: captureUntrackedFiles(
+      worktreePath,
+      untrackedFiles.filter((filePath) => !excluded.has(filePath)),
+    ),
   };
 }
 
@@ -141,8 +174,11 @@ export function repositorySnapshotsEqual(
   );
 }
 
-export function readCommitResult(worktreePath: string): CommitResult {
-  const resultPath = getCommitResultPath(worktreePath);
+export function readCommitResult(
+  worktreePath: string,
+  intentHash?: string,
+): CommitResult {
+  const resultPath = getCommitResultPath(worktreePath, intentHash);
   let stat: fs.Stats;
 
   try {
@@ -165,14 +201,18 @@ export function readCommitResult(worktreePath: string): CommitResult {
     throw new Error(`Commit result must be a regular file: ${resultPath}`);
   }
 
+  const contents = fs.readFileSync(resultPath, "utf8");
   let parsed: unknown;
 
   try {
-    parsed = JSON.parse(fs.readFileSync(resultPath, "utf8"));
+    parsed = JSON.parse(contents);
   } catch (error) {
-    throw new Error(`Invalid commit result JSON: ${resultPath}`, {
-      cause: error,
-    });
+    throw new InvalidCommitResultError(
+      `Invalid commit result JSON: ${resultPath}`,
+      {
+        cause: error,
+      },
+    );
   }
 
   const result = commitResultSchema.safeParse(parsed);
@@ -183,7 +223,9 @@ export function readCommitResult(worktreePath: string): CommitResult {
       return `${location}: ${issue.message}`;
     });
 
-    throw new Error(`Invalid commit result:\n${messages.join("\n")}`);
+    throw new InvalidCommitResultError(
+      `Invalid commit result:\n${messages.join("\n")}`,
+    );
   }
 
   return result.data;

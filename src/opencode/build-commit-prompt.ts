@@ -5,7 +5,10 @@ import {
   MAX_COMMIT_MESSAGE_LENGTH,
 } from "./commit-result.js";
 
-export function buildCommitPrompt(card: TrelloCard): string {
+export function buildCommitPrompt(
+  card: TrelloCard,
+  resultPath = commitResultRelativePath,
+): string {
   return [
     "Generate the commit message for the final reviewed changes for this task.",
     "",
@@ -17,7 +20,7 @@ export function buildCommitPrompt(card: TrelloCard): string {
     "Do not create or amend commits.",
     "Do not push anything.",
     "",
-    `Write exactly one JSON object to ${commitResultRelativePath}.`,
+    `Write exactly one JSON object to ${resultPath}.`,
     "The artifact is the only permitted repository write.",
     "Do not put the result in stdout; stdout is not authoritative.",
     `The message must be at most ${MAX_COMMIT_MESSAGE_LENGTH} characters and preserve real line breaks.`,

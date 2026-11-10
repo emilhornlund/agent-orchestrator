@@ -169,6 +169,7 @@ const remediationSchema = z.strictObject({
   model: nonBlankString.optional(),
   variant: nonBlankString.optional(),
   maxPasses: z.number().int().nonnegative().default(1),
+  validationMaxPasses: z.number().int().nonnegative().optional(),
 });
 
 const openCodeSchema = z.strictObject({

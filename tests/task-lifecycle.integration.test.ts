@@ -22,7 +22,6 @@ import {
   OpenCodeClient,
   type OpenCodeRunOptions,
 } from "../src/opencode/opencode-client.js";
-import { getCommitResultPath } from "../src/opencode/commit-result.js";
 import {
   CommandRunner,
   type CommandRunOptions,
@@ -755,7 +754,11 @@ describe("task lifecycle through pollProject", () => {
               errorOutput: "",
             };
           }
-          if (options.prompt.includes("Implement the approved task plan")) {
+          if (
+            options.prompt.includes(
+              "Implement the task plan in this repository",
+            )
+          ) {
             if (
               options.sessionId !== sessionId ||
               options.sessionLabel === undefined
@@ -774,7 +777,12 @@ describe("task lifecycle through pollProject", () => {
             void child;
           }
           if (options.prompt.includes("Generate the commit message")) {
-            const resultPath = getCommitResultPath(options.cwd);
+            const resultRelativePath = options.prompt.match(
+              /Write exactly one JSON object to ([^\n]+)\./u,
+            )?.[1];
+            if (resultRelativePath === undefined)
+              throw new Error("Commit-message prompt omitted its result path");
+            const resultPath = path.join(options.cwd, resultRelativePath);
             fs.mkdirSync(path.dirname(resultPath), { recursive: true });
             fs.writeFileSync(
               resultPath,

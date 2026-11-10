@@ -26,13 +26,15 @@ import {
   prepareAttentionNotification,
 } from "../notifications/email-notifier.js";
 import type { OpenCodeClient } from "../opencode/opencode-client.js";
-import { buildCommitPrompt } from "../opencode/build-commit-prompt.js";
 import {
   captureRepositorySnapshot,
-  clearCommitResult,
-  readCommitResult,
   repositorySnapshotsEqual,
 } from "../opencode/commit-result.js";
+import {
+  CommitMessageAdviceUnavailableError,
+  CommitMessageRecoveryBlockedError,
+  runTaskSessionCommitMessage,
+} from "../task-session/run-task-session-commit-message.js";
 import type { CommandRunner } from "../process/command-runner.js";
 import {
   captureSetupEffects,
@@ -80,6 +82,7 @@ import { runTaskSessionCoverage } from "../task-session/run-task-session-coverag
 import { runTaskSessionValidationWithRepairs } from "../task-session/run-task-session-validation-repairs.js";
 import {
   runTaskSessionReview,
+  TaskSessionReviewError,
   TaskSessionReviewUnavailableError,
 } from "../task-session/run-task-session-review.js";
 import {
@@ -677,7 +680,10 @@ function persistQualityEvidence(
 ): TaskExecutionRecord {
   return updateRecord(store, record, {
     validationRepair: {
-      cycleId,
+      cycleId: record.validationRepair?.cycleId ?? cycleId,
+      ...(record.validationRepair?.maxAttempts === undefined
+        ? {}
+        : { maxAttempts: record.validationRepair.maxAttempts }),
       status:
         validation.status === "skipped" && coverage?.status === "skipped"
           ? "skipped"
@@ -2275,15 +2281,7 @@ export async function runTaskSessionWorkflow(
               latest,
               event(latest, "implementation-completed"),
             );
-            latest = taskStore.compareAndSwap(
-              card.id,
-              latest.revision,
-              validationPhase,
-            );
-            updateRecord(taskStore, latest, {
-              retryCounters: { ...latest.retryCounters, validation: 0 },
-              validationRepair: { cycleId: operationKey, status: "active" },
-            });
+            taskStore.compareAndSwap(card.id, latest.revision, validationPhase);
           };
           let roundIndex = 0;
           const ciReviewResult = await runTaskSessionReviewWithRepairs({
@@ -2552,11 +2550,6 @@ export async function runTaskSessionWorkflow(
             const validationRecord = taskStore.read(card.id);
             if (validationRecord !== null)
               updateRecord(taskStore, validationRecord, {
-                retryCounters: {
-                  ...validationRecord.retryCounters,
-                  validation: 0,
-                },
-                validationRepair: { cycleId: operationKey, status: "active" },
                 reviewRepair: { cycleId: operationKey, status: "active" },
               });
           },
@@ -2589,46 +2582,28 @@ export async function runTaskSessionWorkflow(
                 "CI repair cannot publish without the persisted existing PR URL",
               );
             }
-            const snapshotBefore = await captureRepositorySnapshot(
-              git,
-              worktreePath,
-            );
-            clearCommitResult(worktreePath);
-            // Commit-message generation is advisory and deliberately uncounted.
-            const commitMessageRun = await runWithPrimaryTaskSession(
-              taskStore,
-              openCode,
-              project.id,
-              card.id,
-              {
-                ...commitMessageRunOptions(
-                  project,
-                  signal,
-                  getSessionLogPath(project.id, card.id),
-                ),
-                cwd: worktreePath,
-                prompt: buildCommitPrompt(card),
-              },
-              {},
-              {
-                role: "advisory",
-                operationId: `${operationKey}:commit-message`,
-              },
-            );
-            if (commitMessageRun.exitCode !== 0)
-              throw new Error("CI correction commit-message generation failed");
-            const commitMessage = readCommitResult(worktreePath).message;
-            clearCommitResult(worktreePath);
-            if (
-              !repositorySnapshotsEqual(
-                snapshotBefore,
-                await captureRepositorySnapshot(git, worktreePath),
-              )
-            ) {
+            const ciRepairOperationId = taskStore.read(card.id)?.ciRepair
+              ?.activePrimaryOperation?.operationId;
+            if (ciRepairOperationId === undefined)
               throw new Error(
-                "CI correction commit-message session modified source files",
+                "CI repair commit message has no durable commit intent",
               );
-            }
+            const commitMessage = await runTaskSessionCommitMessage({
+              project,
+              card,
+              operationKey,
+              commitIntentId: ciRepairOperationId,
+              operationId: `${ciRepairOperationId}:commit-message`,
+              worktreePath,
+              taskRecordStore: taskStore,
+              git,
+              openCode,
+              runOptions: commitMessageRunOptions(
+                project,
+                signal,
+                getSessionLogPath(project.id, card.id),
+              ),
+            });
             let preparedGate = gateInput;
             const newHead = await publishTaskSessionCard({
               trello,
@@ -4740,11 +4715,6 @@ export async function runTaskSessionWorkflow(
               taskRecord,
               event(taskRecord, "implementation-completed"),
             ),
-            retryCounters: { ...taskRecord.retryCounters, validation: 0 },
-            validationRepair: {
-              cycleId: operationKey,
-              status: "active",
-            },
           },
         );
       }
@@ -4871,15 +4841,7 @@ export async function runTaskSessionWorkflow(
             latest,
             event(latest, "implementation-completed"),
           );
-          const inValidation = taskStore.compareAndSwap(
-            activeCard.id,
-            latest.revision,
-            validation,
-          );
-          updateRecord(taskStore, inValidation, {
-            retryCounters: { ...inValidation.retryCounters, validation: 0 },
-            validationRepair: { cycleId: operationKey, status: "active" },
-          });
+          taskStore.compareAndSwap(activeCard.id, latest.revision, validation);
         }
       };
       try {
@@ -4937,7 +4899,15 @@ export async function runTaskSessionWorkflow(
       } catch (error) {
         const primaryRecoveryError = findPrimaryRecoveryError(error);
         if (primaryRecoveryError !== undefined) throw primaryRecoveryError;
-        throw error;
+        const validationExhausted =
+          recoveredQuality?.record.validationRepair?.status === "exhausted";
+        if (!(
+          validationExhausted &&
+          error instanceof TaskSessionReviewError &&
+          error.message ===
+            "Implementation review requires current successful local validation evidence"
+        ))
+          throw error;
       }
       taskRecord = taskStore.read(activeCard.id);
       if (taskRecord === null)
@@ -5024,13 +4994,29 @@ export async function runTaskSessionWorkflow(
       phaseRecord.reviewRepair?.finalReview === undefined
     ) {
       // An interrupted validation-exhausted publication has no AI review.
-      // Recompute diagnostics without consuming further remediation attempts.
-      quality = {
-        validation: await runTaskSessionValidation(validationOptions),
-        coverage: await runTaskSessionCoverage(validationOptions),
-        attempts: phaseRecord.retryCounters.validation,
-        record: phaseRecord,
-      };
+      // Reuse unchanged final evidence; changed source/config gets fresh
+      // quality observations without consuming further repair attempts.
+      quality = await runTaskSessionValidationWithRepairs({
+        validation: validationOptions,
+        openCode,
+        planStore,
+        card: activeCard,
+        expectedPrimarySessionId: phaseRecord.primarySessionId!,
+        inspectPrimarySession: inspectSessionForWorktree(worktreePath),
+        primaryOperationEvidence: {
+          trustedRoot:
+            ProjectRunAuthority.current(project.id)?.store.storageRoot ??
+            getProcessRuntime().artifactRoot,
+          cwd: worktreePath,
+        },
+        ...(attachmentContext === undefined ? {} : { attachmentContext }),
+        repairRunOptions: {
+          model: project.opencode.remediation.model,
+          variant: project.opencode.remediation.variant,
+          timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
+          signal,
+        },
+      });
     } else if (
       phaseRecord.phase === "review" ||
       phaseRecord.phase === "publication"
@@ -5189,9 +5175,48 @@ export async function runTaskSessionWorkflow(
         coverage: quality.coverage,
         review: null,
       };
-      const beforePublication = taskStore.read(activeCard.id);
+      let beforePublication = taskStore.read(activeCard.id);
       if (beforePublication === null)
         throw new Error("Task record missing before no-review publication");
+      const stopReviewRepairForValidation =
+        reason === "validation-exhausted" &&
+        beforePublication.reviewRepair?.status === "active";
+      if (stopReviewRepairForValidation) {
+        if (
+          beforePublication.reviewRepair?.activePrimaryOperation !== undefined
+        )
+          throw new Error(
+            "Cannot hand off validation exhaustion while a review-repair writer is reserved",
+          );
+        const unresolvedWriter = Object.values(
+          beforePublication.primaryOperations ?? {},
+        ).find(
+          (operation) =>
+            operation !== undefined &&
+            (["intent", "dispatched", "ambiguous"].includes(operation.status) ||
+              (operation.status === "failed" && operation.retrySafe !== true)),
+        );
+        if (unresolvedWriter !== undefined)
+          throw new Error(
+            `Cannot hand off validation exhaustion while primary operation ${unresolvedWriter.id} is unresolved`,
+          );
+        beforePublication = taskStore.compareAndSwap(
+          activeCard.id,
+          beforePublication.revision,
+          {
+            ...beforePublication,
+            reviewRepair: {
+              ...beforePublication.reviewRepair!,
+              status: "stopped",
+              stopReason: "validation-exhausted",
+              activePrimaryOperation: undefined,
+              finalReview: undefined,
+            },
+            revision: beforePublication.revision + 1,
+            updatedAt: timestamp(beforePublication),
+          },
+        );
+      }
       if (beforePublication.phase !== "publication") {
         const publication = transitionTaskExecutionRecord(
           beforePublication,
@@ -5248,17 +5273,31 @@ export async function runTaskSessionWorkflow(
         ],
         signal,
         beforePushVerification: async () => {
-          const validation = await runTaskSessionValidation(validationOptions);
-          const coverage = await runTaskSessionCoverage(validationOptions);
-          preparedEvidence = {
-            ...failedEvidence,
-            currentContentIdentity: await getTaskSessionSourceSnapshotIdentity(
-              git,
-              worktreePath,
-            ),
-            validation,
-            coverage,
-          };
+          const currentIdentity = await getTaskSessionSourceSnapshotIdentity(
+            git,
+            worktreePath,
+          );
+          const finalEvidenceMatchesCurrent =
+            currentIdentity === failedEvidence.currentContentIdentity &&
+            failedEvidence.validation !== null &&
+            failedEvidence.validation.command === validationCommand &&
+            failedEvidence.coverage !== null &&
+            failedEvidence.coverage.command ===
+              (project.repository.coverageCommand ?? "");
+          if (finalEvidenceMatchesCurrent) {
+            preparedEvidence = failedEvidence;
+          } else {
+            const validation =
+              await runTaskSessionValidation(validationOptions);
+            const coverage = await runTaskSessionCoverage(validationOptions);
+            preparedEvidence = {
+              ...failedEvidence,
+              currentContentIdentity:
+                await getTaskSessionSourceSnapshotIdentity(git, worktreePath),
+              validation,
+              coverage,
+            };
+          }
           const decision = decideHumanReviewPublication(
             preparedEvidence,
             undefined,
@@ -5610,15 +5649,11 @@ export async function runTaskSessionWorkflow(
               current,
               event(current, "implementation-completed"),
             );
-            const inValidation = taskStore.compareAndSwap(
+            taskStore.compareAndSwap(
               activeCard.id,
               current.revision,
               implemented,
             );
-            updateRecord(taskStore, inValidation, {
-              retryCounters: { ...inValidation.retryCounters, validation: 0 },
-              validationRepair: { cycleId: operationKey, status: "active" },
-            });
           },
           rerunQuality: runQualityAgain,
           getCurrentContentIdentity: () =>
@@ -5627,6 +5662,15 @@ export async function runTaskSessionWorkflow(
       } catch (error) {
         const primaryRecoveryError = findPrimaryRecoveryError(error);
         if (primaryRecoveryError !== undefined) throw primaryRecoveryError;
+        if (
+          error instanceof TaskSessionReviewError &&
+          error.message ===
+            "Implementation review requires current successful local validation evidence" &&
+          quality.record.validationRepair?.status === "exhausted"
+        ) {
+          await publishWithoutReview("validation-exhausted");
+          return;
+        }
         if (error instanceof TaskSessionReviewRepairError) {
           const failure = error.sourceIdentity;
           const current = taskStore.read(activeCard.id);
@@ -5778,7 +5822,6 @@ export async function runTaskSessionWorkflow(
         signal,
         getSessionLogPath(project.id, activeCard.id),
       );
-      clearCommitResult(worktreePath);
       const snapshotBefore = await captureRepositorySnapshot(git, worktreePath);
       const setupCheckpoint = taskStore.read(activeCard.id)?.setup;
       if (setupCheckpoint?.command !== null && setupCheckpoint !== undefined) {
@@ -5893,40 +5936,31 @@ export async function runTaskSessionWorkflow(
       // snapshot safety check below even when generation fails.
       const fallbackCommitMessage = `chore(task): implement Trello card ${activeCard.id}`;
       try {
-        // Commit-message generation is advisory and deliberately uncounted.
-        const commitMessageResult = await runWithPrimaryTaskSession(
-          taskStore,
+        commitMessage = await runTaskSessionCommitMessage({
+          project,
+          card: activeCard,
+          operationKey,
+          commitIntentId: "initial-publication",
+          operationId: `${operationKey}:commit-message`,
+          worktreePath,
+          taskRecordStore: taskStore,
+          git,
           openCode,
-          project.id,
-          activeCard.id,
-          {
-            ...commitOptions,
-            cwd: worktreePath,
-            prompt: buildCommitPrompt(activeCard),
-          },
-          {},
-          {
-            role: "advisory",
-            operationId: `${operationKey}:commit-message`,
-          },
-        );
-        if (commitMessageResult.exitCode !== 0)
-          throw new Error(
-            `Commit message session exited with code ${commitMessageResult.exitCode}`,
-          );
-        commitMessage = readCommitResult(worktreePath).message;
+          runOptions: commitOptions,
+        });
       } catch (error) {
         if (signal.aborted) throw error;
+        if (
+          !(error instanceof CommitMessageAdviceUnavailableError) ||
+          findPrimaryRecoveryError(error) !== undefined ||
+          error instanceof CommitMessageRecoveryBlockedError
+        )
+          throw error;
         cardLog.warn(
           `Commit message generation failed (${error instanceof Error ? error.name : "unknown failure"}); diagnostics are available in session log ${getSessionLogPath(project.id, activeCard.id)}. Using deterministic fallback.`,
         );
         commitMessage = fallbackCommitMessage;
-      } finally {
-        clearCommitResult(worktreePath);
       }
-      const snapshotAfter = await captureRepositorySnapshot(git, worktreePath);
-      if (!repositorySnapshotsEqual(snapshotBefore, snapshotAfter))
-        throw new Error("Commit message generation changed source files");
       const latest = taskStore.read(activeCard.id);
       if (latest === null)
         throw new Error("Task record disappeared before publication");

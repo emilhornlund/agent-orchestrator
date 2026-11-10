@@ -184,6 +184,7 @@ describe("runOrchestrator", () => {
     const controller = new AbortController();
     const project = createProject("validation-budget");
     project.opencode!.remediation.maxPasses = 0;
+    project.opencode!.remediation.validationMaxPasses = 4;
     const coordinationRoot = path.join(runtimeStorageRoot, "coordination");
     fs.mkdirSync(coordinationRoot);
     provisionCoordinationNamespace(coordinationRoot, "validation-budget");
@@ -259,7 +260,7 @@ describe("runOrchestrator", () => {
       );
 
       expect(workerBudgets?.budgets).toMatchObject({
-        validation: { limit: 2, used: 0 },
+        validation: { limit: 4, used: 0 },
         review: { limit: 1, used: 0 },
       });
     } finally {
@@ -346,8 +347,13 @@ describe("runOrchestrator", () => {
         output: "validation remains failing",
         errorOutput: "persistent validation failure",
       }));
+      let repairNumber = 0;
       const runOpenCode = vi.fn(async () => {
-        fs.writeFileSync(path.join(worktreePath, "src.ts"), "repaired\n");
+        repairNumber += 1;
+        fs.writeFileSync(
+          path.join(worktreePath, "src.ts"),
+          `repaired ${repairNumber}\n`,
+        );
         return { exitCode: 0, output: "repair applied", errorOutput: "" };
       });
       let dispatches = 0;
@@ -484,7 +490,8 @@ describe("runOrchestrator", () => {
             limit: 2,
             used: 2,
           });
-          // Recovery performs the final quality observation but cannot dispatch another repair.
+          // Recovery reuses the final failed quality evidence without repeating
+          // unchanged checks or dispatching another repair.
           await runTaskSessionValidationWithRepairs({
             validation: {
               project,
@@ -510,7 +517,7 @@ describe("runOrchestrator", () => {
             },
           });
           expect(runOpenCode).toHaveBeenCalledTimes(2);
-          expect(command).toHaveBeenCalledTimes(4);
+          expect(command).toHaveBeenCalledTimes(3);
         } catch (error) {
           workerError = error;
         } finally {

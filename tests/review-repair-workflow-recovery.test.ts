@@ -121,10 +121,13 @@ describe("production workflow recovery of reserved review repairs", () => {
       const project = projectConfig(root);
       if (useDefaults) project.opencode.remediation = { maxPasses: 1 };
       if (twoPass) project.opencode.remediation.maxPasses = 2;
+      if (!includePlan) project.opencode.remediation.validationMaxPasses = 0;
       fs.mkdirSync(project.repository.path, { recursive: true });
       const worktree = path.join(project.repository.worktreeRoot, "card");
       fs.mkdirSync(worktree, { recursive: true });
       fs.writeFileSync(path.join(worktree, "src.ts"), "partial work\n");
+      let taskCommitCreated = false;
+      let publishedPullRequest = false;
       const card: TrelloCard = {
         id: "card",
         name: "Implement the feature",
@@ -205,6 +208,21 @@ describe("production workflow recovery of reserved review repairs", () => {
           cycleId: operationKey,
           status: "active",
           maxAttempts: twoPass ? 2 : 1,
+          ...(!includePlan
+            ? {
+                findings: [
+                  {
+                    id: "preserved-review-finding",
+                    kind: "defect" as const,
+                    summary: "Correct the failing behavior.",
+                    detail: "A concrete failure was reproduced.",
+                    sourceContentIdentity: identity,
+                    sourceIdentities: [identity],
+                    status: "unresolved" as const,
+                  },
+                ],
+              }
+            : {}),
           activePrimaryOperation: {
             operationId,
             pass: 1,
@@ -289,16 +307,24 @@ describe("production workflow recovery of reserved review repairs", () => {
         ),
         getCard: vi.fn(async () => card),
         getCardAttachments: vi.fn(async () => []),
-        moveCard: vi.fn(async () => card),
+        moveCard: vi.fn(async (_cardId: string, listId: string) => ({
+          ...card,
+          idList: listId,
+        })),
       } as unknown as TrelloClient;
       const git = {
         getCurrentBranch: vi.fn(async () => "agent/card"),
-        getHeadSha: vi.fn(async () => "a".repeat(40)),
+        getHeadSha: vi.fn(async () =>
+          taskCommitCreated ? "b".repeat(40) : "a".repeat(40),
+        ),
         getRefSha: vi.fn(async () => "a".repeat(40)),
         getRemoteBranchSha: vi.fn(async () => null),
-        getCommitCountBetween: vi.fn(async () => 0),
-        getStatus: vi.fn(async () => " M src.ts"),
-        getDiff: vi.fn(async () => "partial work"),
+        getCommitCountBetween: vi.fn(
+          async (_cwd: string, _base: string, head: string) =>
+            taskCommitCreated && head === "b".repeat(40) ? 1 : 0,
+        ),
+        getStatus: vi.fn(async () => (taskCommitCreated ? "" : " M src.ts")),
+        getDiff: vi.fn(async () => (taskCommitCreated ? "" : "partial work")),
         getIndexEntries: vi.fn(async () => ""),
         getUntrackedFiles: vi.fn(async () => []),
         getHeadTrackedFiles: vi.fn(async () => ["src.ts"]),
@@ -306,9 +332,30 @@ describe("production workflow recovery of reserved review repairs", () => {
         getConflictedPaths: vi.fn(async () => []),
         getRefsIdentity: vi.fn(async () => "refs"),
         fetch: vi.fn(async () => undefined),
+        stageAllExcept: vi.fn(async () => undefined),
+        commit: vi.fn(async () => {
+          taskCommitCreated = true;
+        }),
+        push: vi.fn(async () => undefined),
       } as unknown as GitClient;
       const github = {
-        findPullRequestState: vi.fn(async () => null),
+        findPullRequest: vi.fn(async () => null),
+        findPullRequestState: vi.fn(async () =>
+          publishedPullRequest
+            ? {
+                number: 42,
+                url: "https://github.com/owner/repo/pull/42",
+                state: "OPEN",
+                headRefOid: "b".repeat(40),
+                baseRefName: "main",
+                headRefName: "agent/card",
+              }
+            : null,
+        ),
+        createPullRequest: vi.fn(async () => {
+          publishedPullRequest = true;
+          return { url: "https://github.com/owner/repo/pull/42" };
+        }),
       } as unknown as GitHubClient;
       const primaryDispatches: Array<{
         prompt: string;
@@ -409,7 +456,16 @@ describe("production workflow recovery of reserved review repairs", () => {
             ]),
             errorOutput: "",
           };
-        if (options.command === "validate") order.push("validation");
+        if (options.command === "validate") {
+          order.push("validation");
+          return includePlan
+            ? { exitCode: 0, output: "quality passed", errorOutput: "" }
+            : {
+                exitCode: 1,
+                output: "validation still fails",
+                errorOutput: "failure",
+              };
+        }
         return { exitCode: 0, output: "quality passed", errorOutput: "" };
       });
 
@@ -424,17 +480,18 @@ describe("production workflow recovery of reserved review repairs", () => {
         prepareAttachmentContext: async () => undefined,
         retryIntervalMs: 1_000,
       });
-      if (twoPass) await initialWorkflow;
+      if (twoPass || !includePlan) await initialWorkflow;
       else {
         const initialError = await initialWorkflow.catch(
           (error: unknown) => error,
         );
         expect(initialError).toBeInstanceOf(Error);
-        expect(initialError).toMatchObject({
-          message: expect.stringContaining(
-            "Independent implementation review execution failed",
-          ),
-        });
+        if (includePlan)
+          expect(initialError).toMatchObject({
+            message: expect.stringContaining(
+              "Independent implementation review execution failed",
+            ),
+          });
       }
 
       if (twoPass) {
@@ -511,7 +568,7 @@ describe("production workflow recovery of reserved review repairs", () => {
           runCommand.mock.calls.filter(
             ([options]) => options.command === "validate",
           ),
-        ).toHaveLength(2);
+        ).toHaveLength(1);
         expect(github.findPullRequestState).not.toHaveBeenCalled();
         return;
       }
@@ -550,9 +607,48 @@ describe("production workflow recovery of reserved review repairs", () => {
       expect(order).toEqual(
         completed
           ? ["validation", "review"]
-          : ["repair", "validation", "review"],
+          : includePlan
+            ? ["repair", "validation", "review"]
+            : ["repair", "validation"],
       );
-      expect(github.findPullRequestState).not.toHaveBeenCalled();
+      if (!includePlan) {
+        const resultRecord = store.read(card.id);
+        expect(
+          resultRecord,
+          `record=${JSON.stringify(resultRecord)}`,
+        ).toMatchObject({
+          validationRepair: {
+            status: "exhausted",
+            maxAttempts: 0,
+            evidence: { status: "failed" },
+          },
+          reviewRepair: {
+            status: "stopped",
+            stopReason: "validation-exhausted",
+            maxAttempts: 1,
+            findings: [
+              expect.objectContaining({
+                id: "preserved-review-finding",
+                status: "unresolved",
+              }),
+            ],
+          },
+        });
+        expect(
+          store.read(card.id)?.reviewRepair?.activePrimaryOperation,
+        ).toBeUndefined();
+        expect(
+          store.read(card.id)?.primaryOperations?.[operationId],
+        ).toMatchObject({ status: "completed", executions: 1 });
+        expect(store.read(card.id)?.reviewRepair?.finalReview).toBeUndefined();
+        expect(store.read(card.id)).toMatchObject({
+          phase: "ci",
+          pullRequest: { headSha: "b".repeat(40) },
+        });
+      }
+      if (includePlan)
+        expect(github.findPullRequestState).not.toHaveBeenCalled();
+      else expect(github.findPullRequestState).toHaveBeenCalled();
       expect(
         store.read(card.id)?.reviewRepair?.activePrimaryOperation,
       ).toBeUndefined();

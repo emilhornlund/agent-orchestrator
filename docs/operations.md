@@ -524,8 +524,13 @@ using existing application recovery tooling before resuming. Do not manually edi
 as a routine recovery step. If the persisted state cannot be unambiguously reconciled through supported procedures, keep that
 project blocked and escalate rather than creating a replacement attempt.
 
-Validation and CI repair each retain their finite two-attempt limit. Implementation review
-repair instead honors `opencode.remediation.maxPasses` (default one). On
+Validation/coverage repair honors its independently configured
+`opencode.remediation.validationMaxPasses` limit (default two); the maximum,
+attempt counter, original prompt, pre-dispatch content identity, and final quality
+evidence are persisted for restart-safe continuation. An exact-content no-op ends
+the cycle without repeating unchanged checks, and early finish is explicit. CI
+repair retains its existing finite two-attempt limit. Implementation review
+repair honors `opencode.remediation.maxPasses` (default one). On
 exhaustion, the last structured failed review and its source identity are
 persisted and the implementation can be published for Human Review after current
 local validation and coverage pass. No Attention Required email is generated

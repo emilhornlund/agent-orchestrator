@@ -789,7 +789,9 @@ async function runProjectWorkerInner(
             ? {
                 budgets: {
                   validation: {
-                    limit: MAX_VALIDATION_REPAIR_ATTEMPTS,
+                    limit:
+                      project.opencode.remediation.validationMaxPasses ??
+                      MAX_VALIDATION_REPAIR_ATTEMPTS,
                     used: 0,
                     episodeId: `${selected.id}:initial-validation`,
                     trigger: "initial-implementation",

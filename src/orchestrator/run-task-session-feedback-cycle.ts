@@ -7,13 +7,6 @@ import { getSessionLogPath } from "../logging/session-log.js";
 import { logger } from "../logging/logger.js";
 import type { EmailNotifier } from "../notifications/email-notifier.js";
 import type { OpenCodeClient } from "../opencode/opencode-client.js";
-import { buildCommitPrompt } from "../opencode/build-commit-prompt.js";
-import {
-  captureRepositorySnapshot,
-  clearCommitResult,
-  readCommitResult,
-  repositorySnapshotsEqual,
-} from "../opencode/commit-result.js";
 import { buildTaskSessionReviewRepairPrompt } from "../opencode/build-task-session-review-repair-prompt.js";
 import { inspectPrimaryOpenCodeSession } from "../opencode/inspect-primary-session.js";
 import type { CommandRunner } from "../process/command-runner.js";
@@ -38,6 +31,11 @@ import { TaskPlanStore } from "../task-session/task-plan-store.js";
 import { transitionTaskExecutionRecord } from "../task-session/task-execution-transition.js";
 import { runWithPrimaryTaskSession } from "../task-session/primary-task-session.js";
 import { runTaskSessionValidationWithRepairs } from "../task-session/run-task-session-validation-repairs.js";
+import {
+  CommitMessageAdviceUnavailableError,
+  CommitMessageRecoveryBlockedError,
+  runTaskSessionCommitMessage,
+} from "../task-session/run-task-session-commit-message.js";
 import type { TaskSessionValidationResult } from "../task-session/run-task-session-validation.js";
 import { runTaskSessionValidation } from "../task-session/run-task-session-validation.js";
 import { runTaskSessionCoverage } from "../task-session/run-task-session-coverage.js";
@@ -55,7 +53,10 @@ import { publishTaskSessionCard } from "./publish-task-session-card.js";
 import { inspectPrimaryOperationEvidence } from "../task-session/inspect-primary-operation.js";
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 import { getProcessRuntime } from "../process/process-runtime.js";
-import { persistPrimaryOperationRecovery } from "../task-session/persist-primary-operation-recovery.js";
+import {
+  findPrimaryRecoveryError,
+  persistPrimaryOperationRecovery,
+} from "../task-session/persist-primary-operation-recovery.js";
 
 export interface RunTaskSessionFeedbackCycleOptions {
   project: ProjectConfig;
@@ -95,7 +96,7 @@ function updateRecord(
   });
 }
 
-function persistQualityEvidence(
+export function persistQualityEvidence(
   store: TaskExecutionStore,
   record: TaskExecutionRecord,
   cycleId: string,
@@ -113,7 +114,10 @@ function persistQualityEvidence(
   });
   return updateRecord(store, record, {
     validationRepair: {
-      cycleId,
+      cycleId: record.validationRepair?.cycleId ?? cycleId,
+      ...(record.validationRepair?.maxAttempts === undefined
+        ? {}
+        : { maxAttempts: record.validationRepair.maxAttempts }),
       status:
         validation.status === "skipped" && coverage?.status === "skipped"
           ? "skipped"
@@ -702,15 +706,6 @@ export async function runTaskSessionFeedbackCycle(
         current.revision,
         implementationCompleted,
       );
-      current = taskStore.compareAndSwap(card.id, current.revision, {
-        ...current,
-        validationRepair: { cycleId: operationId, status: "active" },
-        retryCounters: { ...current.retryCounters, validation: 0 },
-        revision: current.revision + 1,
-        updatedAt: new Date(
-          Math.max(Date.now(), Date.parse(current.updatedAt) + 1),
-        ).toISOString(),
-      });
       const validationOptions = {
         project,
         cardId: card.id,
@@ -899,20 +894,7 @@ export async function runTaskSessionFeedbackCycle(
               Math.max(Date.now(), Date.parse(latest.updatedAt) + 1),
             ).toISOString(),
           });
-          latest = taskStore.compareAndSwap(
-            card.id,
-            latest.revision,
-            validationPhase,
-          );
-          taskStore.compareAndSwap(card.id, latest.revision, {
-            ...latest,
-            validationRepair: { cycleId: operationId, status: "active" },
-            retryCounters: { ...latest.retryCounters, validation: 0 },
-            revision: latest.revision + 1,
-            updatedAt: new Date(
-              Math.max(Date.now(), Date.parse(latest.updatedAt) + 1),
-            ).toISOString(),
-          });
+          taskStore.compareAndSwap(card.id, latest.revision, validationPhase);
         },
         rerunQuality: async () => {
           quality = await runTaskSessionValidationWithRepairs({
@@ -1016,53 +998,38 @@ export async function runTaskSessionFeedbackCycle(
         "Feedback remediation has not passed current local quality and review gates",
       );
     }
-    const snapshotBeforeCommitMessage = await captureRepositorySnapshot(
-      git,
-      worktreePath,
-    );
-    clearCommitResult(worktreePath);
     let commitMessage = "fix(feedback): address requested changes";
     try {
-      const commitResult = await runWithPrimaryTaskSession(
-        taskStore,
+      commitMessage = await runTaskSessionCommitMessage({
+        project,
+        card,
+        operationKey: record.operationKey,
+        commitIntentId: operationId,
+        operationId: `${operationId}:commit-message`,
+        worktreePath,
+        taskRecordStore: taskStore,
+        git,
         openCode,
-        project.id,
-        card.id,
-        {
+        runOptions: {
           model: project.opencode.commit.model,
           variant: project.opencode.commit.variant,
           timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
           signal,
           sessionLogPath: getSessionLogPath(project.id, card.id),
           sessionLabel: "Task-session feedback commit message",
-          cwd: worktreePath,
-          prompt: buildCommitPrompt(card),
         },
-        {},
-        { role: "advisory", operationId: `${operationId}:commit-message` },
-      );
-      if (commitResult.exitCode === 0) {
-        commitMessage = readCommitResult(worktreePath).message;
-      } else {
-        cardLog.warn(
-          "Feedback commit-message agent unavailable; using deterministic message",
-        );
-      }
+      });
     } catch (error) {
       if (signal.aborted) throw error;
+      if (
+        !(error instanceof CommitMessageAdviceUnavailableError) ||
+        findPrimaryRecoveryError(error) !== undefined ||
+        error instanceof CommitMessageRecoveryBlockedError
+      )
+        throw error;
       cardLog.warn(
         "Feedback commit-message generation unavailable; using deterministic message",
       );
-    } finally {
-      clearCommitResult(worktreePath);
-    }
-    if (
-      !repositorySnapshotsEqual(
-        snapshotBeforeCommitMessage,
-        await captureRepositorySnapshot(git, worktreePath),
-      )
-    ) {
-      throw new Error("Feedback commit-message session modified source files");
     }
     let latest = taskStore.read(card.id);
     if (latest === null || latest.phase !== "review")

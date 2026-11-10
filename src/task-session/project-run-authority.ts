@@ -717,6 +717,62 @@ export class ProjectRunAuthority {
             lifecycleTransition = mapped;
           }
         }
+        const projectedBudgets = Object.fromEntries(
+          Object.entries(current.budgets).map(([name, budget]) => {
+            const counterName =
+              name === "human-feedback" ? "humanFeedback" : name;
+            const used =
+              projection.retryCounters[
+                counterName as keyof TaskExecutionRecord["retryCounters"]
+              ];
+            if (
+              name === "review" &&
+              projection.reviewRepair !== undefined &&
+              budget.episodeId !== projection.reviewRepair.cycleId
+            ) {
+              // Select the review cycle's durable bound in the same fenced
+              // mutation that publishes reviewRepair. The task-session
+              // bound counts repairs; the canonical budget also includes
+              // its initial read-only review pass.
+              const maxAttempts =
+                projection.reviewRepair.maxAttempts ??
+                projection.retryCounters.review;
+              return [
+                name,
+                {
+                  ...budget,
+                  limit: maxAttempts + 1,
+                  used: used ?? budget.used,
+                  episodeId: projection.reviewRepair.cycleId,
+                },
+              ];
+            }
+            return [name, used === undefined ? budget : { ...budget, used }];
+          }),
+        );
+        const validationRepair = projection.validationRepair;
+        if (validationRepair?.maxAttempts !== undefined) {
+          const previous = current.budgets.validation;
+          const firstLegacyEpisode = `${projection.cardId}:initial-validation`;
+          const sameCycle = previous?.episodeId === validationRepair.cycleId;
+          const importingLegacyBudget =
+            previous?.episodeId === firstLegacyEpisode;
+          const used =
+            previous === undefined
+              ? projection.retryCounters.validation
+              : sameCycle || importingLegacyBudget
+                ? Math.max(previous.used, projection.retryCounters.validation)
+                : projection.retryCounters.validation;
+          projectedBudgets.validation = {
+            // A persisted canonical usage count is authoritative even if an
+            // older configured limit is lower than the incoming projection.
+            // Never lower the limit below already charged work.
+            limit: Math.max(validationRepair.maxAttempts, used),
+            used,
+            episodeId: validationRepair.cycleId,
+            trigger: previous?.trigger ?? "initial-implementation",
+          };
+        }
         return {
           ...(lifecycleTransition === undefined ? {} : { lifecycleTransition }),
           runState: {
@@ -735,42 +791,7 @@ export class ProjectRunAuthority {
                     primary: projection.primarySessionId,
                   },
                 }),
-            budgets: Object.fromEntries(
-              Object.entries(current.budgets).map(([name, budget]) => {
-                const counterName =
-                  name === "human-feedback" ? "humanFeedback" : name;
-                const used =
-                  projection.retryCounters[
-                    counterName as keyof TaskExecutionRecord["retryCounters"]
-                  ];
-                if (
-                  name === "review" &&
-                  projection.reviewRepair !== undefined &&
-                  budget.episodeId !== projection.reviewRepair.cycleId
-                ) {
-                  // Select the review cycle's durable bound in the same fenced
-                  // mutation that publishes reviewRepair. The task-session
-                  // bound counts repairs; the canonical budget also includes
-                  // its initial read-only review pass.
-                  const maxAttempts =
-                    projection.reviewRepair.maxAttempts ??
-                    projection.retryCounters.review;
-                  return [
-                    name,
-                    {
-                      ...budget,
-                      limit: maxAttempts + 1,
-                      used: used ?? budget.used,
-                      episodeId: projection.reviewRepair.cycleId,
-                    },
-                  ];
-                }
-                return [
-                  name,
-                  used === undefined ? budget : { ...budget, used },
-                ];
-              }),
-            ),
+            budgets: projectedBudgets,
             operation: {
               id: projection.operationKey,
               kind: projection.phase,
