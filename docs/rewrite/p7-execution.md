@@ -12,6 +12,10 @@ shared requirements do not pull later CI/maintenance/cleanup implementation here
 1. Separate persistent observation from the serialized project writer. Retain
    deduplicated arrivals while execution is blocked; observations cannot mutate the
    task branch or start a second writer. Use revision and owner-generation checks.
+   Observation retention can checkpoint independently of dispatch policy: the side
+   observer stores immutable snapshots without changing the writer projection.
+   Arrival consumption, priority and prerequisites remain a separate complete task;
+   snapshot retention alone does not satisfy the coordinated scheduling criteria.
 2. Persist queue descriptors/order: human corrections before CI before maintenance,
    with explicit necessary prerequisites. Keep arrivals across restart. Maintenance
    execution itself belongs to P8.

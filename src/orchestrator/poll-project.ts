@@ -26,6 +26,7 @@ import { WorkflowError } from "./workflow-error.js";
 import type { TrelloCard, TrelloClient } from "../trello/trello-client.js";
 import type { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 import { reconcileWorkflowMutations } from "./reconcile-workflow-mutations.js";
+import { withActivePrObservation } from "./active-pr-observation.js";
 
 export type PollingProject = ProjectConfig & {
   contextRoot?: string;
@@ -159,7 +160,25 @@ export async function pollProject(
       });
     });
   try {
-    if (authority) await authority.run(execute);
+    if (authority)
+      await authority.run(() =>
+        withActivePrObservation(
+          {
+            project,
+            github,
+            authority,
+            intervalMs: retryIntervalMs ?? 15_000,
+            signal,
+            onError: () =>
+              logger
+                .child({ projectId: project.id })
+                .warn(
+                  "Active PR observation deferred after an external read failure; retained arrivals and writer state are unchanged",
+                ),
+          },
+          execute,
+        ),
+      );
     else await execute();
   } catch (error) {
     if (error instanceof NotificationPreparationError) {

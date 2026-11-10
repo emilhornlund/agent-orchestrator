@@ -19,7 +19,19 @@
   `yarn test tests/run-orchestrator.test.ts tests/card-start-eligibility.test.ts`
   also passed **49 tests**; changed-file/guide Prettier and `git diff --check` passed.
   P7 guide and roadmap scope/dependencies remain accurate and unchanged.
-- Remaining P7 order: durable observation/priority queue (T2), durable fair global AI
+- P7-T2a implements the production side observer during a long `pollProject` writer.
+  It retains content-deduplicated PR/feedback/CI snapshots in artifact-backed,
+  owner-generation-checked attempt storage without updating the writer's task
+  checkpoint or acquiring its mutation queue. It serializes its own reads, backs
+  off after failures, and drains its last read before returning ownership. Missing
+  prior inbox state is compatible. Mixed remote-head/terminal snapshots are rejected.
+  This is observation retention, **not yet scheduling/consumption of arrivals**.
+- T2a checks: `yarn test tests/active-pr-observation.test.ts tests/task-session-dispatch.test.ts tests/observe-task-session-review-cards.test.ts`
+  passed **38 tests in three files**; `yarn typecheck` and changed-file ESLint passed.
+  Self-review inspected the new source/tests, `pollProject` wiring, authority writes,
+  timer lifetime and read races. Added final PR/head verification and insulated
+  diagnostics from writer completion. No known observer-task defect remains.
+- Remaining P7 order: arrival consumption/priority/prerequisites (T2b), durable fair global AI
   capacity (T3), current semantic feedback/history (T4), same-PR correction and list
   recovery (T5), truthful replies/managed description (T6), active terminal precedence
   (T7), combined checks and final `yarn validate` (T8). These are not complete.
