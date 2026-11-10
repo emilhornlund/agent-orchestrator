@@ -74,6 +74,13 @@ reorganized; current configuration names, states, commands, and safety boundarie
   GitHub authentication such as a PAT in `GH_TOKEN` or `GITHUB_TOKEN`, while App-backed projects use their configured
   installation token
 - OpenCode
+- Linux with Bubblewrap (`bwrap`) and permission to create user/mount/PID namespaces,
+  including inside container deployments. Writable agent dispatches fail closed when
+  isolation is unavailable. Only the owned worktree content and OpenCode's dedicated
+  session/cache directories are writable; Git metadata is read-only and the
+  orchestrator owns commits. Install execution tools in standard system directories
+  or explicit absolute `PATH` directories, and keep OpenCode configuration/auth in
+  its dedicated directories rather than requiring access to the whole home directory.
 - Trello API credentials
 - An SMTP server when email notifications are enabled
 

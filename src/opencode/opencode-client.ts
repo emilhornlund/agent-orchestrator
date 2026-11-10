@@ -18,6 +18,7 @@ import {
   appendSessionSection,
 } from "../logging/session-log.js";
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
+import { isolatedOpenCodeDispatch } from "./isolated-dispatch.js";
 import {
   beginProcessEvidence,
   drainProcessGroup,
@@ -505,31 +506,43 @@ const defaultRunOpenCode: RunOpenCode = async ({
         throw error;
       }
 
-      const child = spawn(
-        "opencode",
-        buildOpenCodeArguments({
-          cwd,
-          ...(model === undefined ? {} : { model }),
-          ...(variant === undefined ? {} : { variant }),
-          prompt: redactSecrets(prompt, secretValues),
-          ...(sessionId === undefined ? {} : { sessionId }),
-          ...(captureSessionId === undefined ? {} : { captureSessionId }),
-        }),
-        {
-          cwd,
-          stdio: ["inherit", "pipe", "pipe"],
-          detached: process.platform !== "win32",
-          env: {
-            ...buildChildEnvironment(
-              "opencode",
-              environment,
-              process.env,
-              effectiveProvider,
-            ),
-            OPENCODE_CONFIG_CONTENT: buildOpenCodeConfigContent(readOnly),
-          },
-        },
-      );
+      const childEnvironment = {
+        ...buildChildEnvironment(
+          "opencode",
+          environment,
+          process.env,
+          effectiveProvider,
+        ),
+        OPENCODE_CONFIG_CONTENT: buildOpenCodeConfigContent(readOnly),
+      };
+      const arguments_ = buildOpenCodeArguments({
+        cwd,
+        ...(model === undefined ? {} : { model }),
+        ...(variant === undefined ? {} : { variant }),
+        prompt: redactSecrets(prompt, secretValues),
+        ...(sessionId === undefined ? {} : { sessionId }),
+        ...(captureSessionId === undefined ? {} : { captureSessionId }),
+      });
+      const authority = ProjectRunAuthority.currentProjectId();
+      let dispatch = { command: "opencode", args: arguments_ };
+      try {
+        if (authority !== undefined && readOnly !== true)
+          dispatch = isolatedOpenCodeDispatch(
+            ProjectRunAuthority.current(authority)!,
+            cwd,
+            childEnvironment,
+            arguments_,
+          );
+      } catch (error) {
+        execution.finish("not-dispatched");
+        throw error;
+      }
+      const child = spawn(dispatch.command, dispatch.args, {
+        cwd,
+        stdio: ["inherit", "pipe", "pipe"],
+        detached: process.platform !== "win32",
+        env: childEnvironment,
+      });
 
       let output = "";
       let errorOutput = "";
