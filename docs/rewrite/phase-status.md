@@ -2,6 +2,30 @@
 
 ## Current checkpoint
 
+- **P7 in progress on the current branch, based on `7fafed1` (integrated P6).**
+  The starting index and working tree were clean. This session authorizes small
+  local P7 task/correction commits only; no push, PR, branch change or P8 work.
+- P7-T1 implements current eligible Ready ordering rather than historical queue
+  timestamps, across feature/improvement/bug/refinement cards. Canonical creation
+  rereads order before claim. Dispatch rechecks order, type and start date before
+  setup or card movement; an unstarted ineligible claim is requeued, while missing
+  cards retain verified orphan retirement and interrupted writers retain recovery.
+- T1 checks: `yarn test tests/task-session-dispatch.test.ts tests/task-session-refinement-scheduling.test.ts tests/task-session-terminal-pr.test.ts tests/preparing-attempt-resume.integration.test.ts`
+  passed **28 tests in four files**; `yarn typecheck` and changed-file ESLint passed.
+  Prettier formatted the changed files. An initial extra pre-claim read invalidated
+  the existing after-claim disappearance fixture; the redundant read was removed,
+  preserving the real post-claim retirement regression. Self-review inspected both
+  production claim routes, queue recovery, mixed types and final eligibility checks.
+  `yarn test tests/run-orchestrator.test.ts tests/card-start-eligibility.test.ts`
+  also passed **49 tests**; changed-file/guide Prettier and `git diff --check` passed.
+  P7 guide and roadmap scope/dependencies remain accurate and unchanged.
+- Remaining P7 order: durable observation/priority queue (T2), durable fair global AI
+  capacity (T3), current semantic feedback/history (T4), same-PR correction and list
+  recovery (T5), truthful replies/managed description (T6), active terminal precedence
+  (T7), combined checks and final `yarn validate` (T8). These are not complete.
+
+## Inherited P6 checkpoint
+
 - **P6 implementation complete; distinguish local checks from PR CI.** The original
   local `yarn validate` passed lint, formatting, typecheck and **2,076 tests across
   160 files**. PR #219's first CI run (`42883831283`) instead failed one command-crash
@@ -12,7 +36,7 @@
   Focused checks passed all 42 adapter tests locally and all seven command/shell
   cases in a disposable Debian Node 24/Dash container, plus typecheck, ESLint and
   Prettier. Final local and current-head CI results are reported in the PR/session;
-  a local pass alone does not establish CI success. P7 has not started.
+  a local pass alone does not establish CI success. P6 is now integrated at `7fafed1`.
 - Resume-session checkpoints: `faf726f` current-evidence same-PR promotion,
   `33e325f` isolation startup integration, `24c1d76` notification disclosure and
   product guidance, `cb9d511` integrated recovery/draft fixture coverage.
@@ -33,8 +57,8 @@
   and validate once. No evidence reports or full-suite runs per task.
 - Preserve existing working changes and staging when resuming.
 - Local reviewed-task commits require explicit session authorization. The current
-  session authorizes publishing this branch to PR #219 and correcting its failed CI.
-  No merge, deployment or P7 is authorized.
+  P6 session authorized publishing PR #219 and correcting its failed CI. That
+  historical authorization does not authorize new remote Git actions here.
 
 ## P6 publication checkpoints and remaining work
 
@@ -82,7 +106,7 @@ requirements/specification sections and meaningful regression tests:
   passed all 70 tests; typecheck, changed-file ESLint and Prettier passed. The
   corrected integrated tree then passed full `yarn validate` as recorded above.
 
-No P6 implementation work remains. P7–P10 have not started; P11 covers
+No P6 implementation work remains. P7 is in progress; P8–P10 have not started. P11 covers
 remaining integration/regression gaps, with broader qualification only if requested.
 
 ## Known carryovers

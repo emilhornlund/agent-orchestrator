@@ -766,7 +766,7 @@ async function runProjectWorkerInner(
           "Could not inspect Ready cards before canonical attempt selection",
           signal,
         );
-        const selected = readyCards.find(
+        let selected = readyCards.find(
           (card) =>
             isCardStartDateReached(card, Date.now()) &&
             getWorkflowKind(card, project) !== null,
@@ -775,6 +775,21 @@ async function runProjectWorkerInner(
           await sleep(pollIntervalMilliseconds, signal);
           continue;
         }
+        // Discovery may have waited on external I/O. Claim from the current
+        // ordered list, not a cached descriptor or a prior queue timestamp.
+        const currentReady = await getCardsForDiscovery(
+          trello,
+          project.id,
+          project.trello.readyListId,
+          "Could not revalidate Ready order before canonical claim",
+          signal,
+        );
+        selected = currentReady.find(
+          (card) =>
+            isCardStartDateReached(card, Date.now()) &&
+            getWorkflowKind(card, project) !== null,
+        );
+        if (!selected || signal.aborted) continue;
         const taskKind = getWorkflowKind(selected, project);
         if (taskKind === null) continue;
         runContext.projectLease.assertHeld();

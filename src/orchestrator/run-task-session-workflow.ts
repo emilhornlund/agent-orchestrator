@@ -4119,6 +4119,7 @@ export async function runTaskSessionWorkflow(
         .event("Retired verified orphaned Ready mutation");
     }
     let readyRecoveryEvent: TaskMutationEvent | null = null;
+    let firstEligibleEvent: TaskMutationEvent | null = null;
     for (const [readyIndex, card] of eligibleCards.entries()) {
       if (taskStore.read(card.id) !== null) {
         throw new Error(
@@ -4248,6 +4249,7 @@ export async function runTaskSessionWorkflow(
         });
       }
       const activeEvent = queue.getActive();
+      firstEligibleEvent ??= queuedEvent;
       if (
         activeEvent !== null &&
         activeEvent.cardId === card.id &&
@@ -4268,9 +4270,9 @@ export async function runTaskSessionWorkflow(
     }
     mutation =
       readyRecoveryEvent === null
-        ? eligibleCards.length === 0
+        ? firstEligibleEvent === null
           ? null
-          : queue.claimNext()
+          : queue.claimForRecovery(firstEligibleEvent.eventId)
         : queue.claimForRecovery(readyRecoveryEvent.eventId);
     if (mutation === null) return;
     selectedCard =
@@ -4296,7 +4298,7 @@ export async function runTaskSessionWorkflow(
     }
   }
   if (mutation === null || selectedCard === null) return;
-  const card = selectedCard;
+  let card = selectedCard;
   const cardLog = logger.child({ projectId: project.id, cardId: card.id });
   try {
     // The discovery snapshot can become stale while another poller or a user
@@ -4322,6 +4324,19 @@ export async function runTaskSessionWorkflow(
         mutationBlockStore.resolve(`orphan:${mutation.eventId}`);
         return;
       }
+      const firstEligible = currentlyReady.find(
+        (candidate) =>
+          isCardStartDateReached(candidate, Date.now()) &&
+          getWorkflowKind(candidate, project) !== null,
+      );
+      if (
+        firstEligible?.id !== card.id ||
+        getWorkflowKind(firstEligible, project) !== mutation.kind
+      ) {
+        queue.requeueAfterVerifiedRecovery(mutation.eventId);
+        return;
+      }
+      card = firstEligible;
     }
     if (recoveryRecord !== null) {
       cardLog.event(

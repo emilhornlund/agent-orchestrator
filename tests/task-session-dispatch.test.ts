@@ -95,6 +95,90 @@ function createCard(): TrelloCard {
 }
 
 describe("task-session production dispatch", () => {
+  it.each(["feature", "improvement", "bug", "refinement"])(
+    "uses current Ready order ahead of an older queued claim for %s",
+    async (label) => {
+      const { project } = projectFixture();
+      const older = { ...createCard(), id: "older" };
+      const current = { ...createCard(), id: "current", idLabels: [label] };
+      const future = {
+        ...createCard(),
+        id: "future",
+        start: new Date(Date.now() + 60_000).toISOString(),
+      };
+      const queue = new TaskMutationQueue(project.contextRoot, project);
+      const digest = createHash("sha256")
+        .update(`${older.name}\0${older.desc}\0${older.idLabels.join(",")}`)
+        .digest("hex")
+        .slice(0, 16);
+      queue.enqueue({
+        eventId: `implementation:older:${digest}`,
+        projectId: project.id,
+        cardId: older.id,
+        kind: "implementation",
+        operationKey: `task-session:older:${digest}`,
+        enqueuedAt: "2020-01-01T00:00:00.000Z",
+      });
+      const trello = {
+        getCards: vi.fn(async (list: string) =>
+          list === "ready" ? [future, current, older] : [],
+        ),
+      } as unknown as TrelloClient;
+      // Stop at the first repository operation, after production selection.
+      await expect(
+        pollProject(
+          trello,
+          {} as GitClient,
+          {} as GitHubClient,
+          new OpenCodeClient(vi.fn<RunOpenCode>()),
+          new CommandRunner(vi.fn<RunCommand>()),
+          project,
+          new AbortController().signal,
+        ),
+      ).rejects.toThrow();
+      expect(queue.getActive()).toMatchObject({
+        cardId: current.id,
+        kind: label === "refinement" ? "refinement" : "implementation",
+        status: "failed",
+      });
+      expect(
+        queue.list().find((entry) => entry.cardId === older.id)?.status,
+      ).toBe("queued");
+    },
+  );
+
+  it("requeues an unstarted claim when its start date changes during selection", async () => {
+    const { project } = projectFixture();
+    const card = createCard();
+    let readyReads = 0;
+    const trello = {
+      getCards: vi.fn(async (list: string) => {
+        if (list !== "ready") return [];
+        readyReads++;
+        return [
+          readyReads >= 2
+            ? { ...card, start: new Date(Date.now() + 60_000).toISOString() }
+            : card,
+        ];
+      }),
+    } as unknown as TrelloClient;
+    await pollProject(
+      trello,
+      {} as GitClient,
+      {} as GitHubClient,
+      new OpenCodeClient(vi.fn<RunOpenCode>()),
+      new CommandRunner(vi.fn<RunCommand>()),
+      project,
+      new AbortController().signal,
+    );
+    const queue = new TaskMutationQueue(project.contextRoot, project);
+    expect(queue.getActive()).toBeNull();
+    expect(queue.list()).toMatchObject([{ cardId: card.id, status: "queued" }]);
+    expect(
+      new TaskExecutionStore(project.contextRoot, project).read(card.id),
+    ).toBeNull();
+  });
+
   it.each(["reachable", "confirmed-lost"] as const)(
     "reconciles the production feedback checkpoint with a %s session and resumes the persisted operation",
     async (validationSessionState) => {
