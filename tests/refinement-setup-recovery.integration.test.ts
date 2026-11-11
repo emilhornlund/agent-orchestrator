@@ -18,6 +18,7 @@ import { runRefinementCardWorkflow } from "../src/refinement/run-refinement-card
 import { getRefinementResultPath } from "../src/refinement/refinement-result.js";
 import { refinementResultRelativePath } from "../src/refinement/refinement-result.js";
 import { runRefinementSetup } from "../src/refinement/run-refinement-setup.js";
+import { runRefinement } from "../src/refinement/run-refinement.js";
 import { ProjectRunAuthority } from "../src/task-session/project-run-authority.js";
 import type { RunRecord } from "../src/task-session/run-record.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
@@ -183,6 +184,57 @@ function stateFor(authority: ProjectRunAuthority, cardId: string) {
 }
 
 describe("refinement setup recovery (canonical authority, real Git and processes)", () => {
+  it("retains bounded corrections and validated output across reconstructed authority", async () => {
+    const f = await fixture("true");
+    const baseline = await f.authority.run(() =>
+      runRefinementSetup({
+        commands: new CommandRunner(),
+        git: f.git,
+        project: f.project,
+        cardId: f.card.id,
+        worktreePath: f.worktreePath,
+        signal: new AbortController().signal,
+        cardLog: logger,
+      }),
+    );
+    const run = vi.fn(async () => {
+      fs.writeFileSync(
+        getRefinementResultPath(f.worktreePath),
+        run.mock.calls.length === 1
+          ? "{}"
+          : JSON.stringify({
+              title: "Grounded",
+              description: "Scoped work",
+              type: "bug",
+            }),
+      );
+      return { exitCode: 0, output: "", errorOutput: "" };
+    });
+    const execute = (authority: ProjectRunAuthority) =>
+      authority.run(() =>
+        runRefinement(
+          f.git,
+          new OpenCodeClient(run),
+          f.project,
+          f.card,
+          f.worktreePath,
+          new AbortController().signal,
+          undefined,
+          baseline,
+        ),
+      );
+    await expect(execute(f.authority)).resolves.toMatchObject({ type: "bug" });
+    const resumed = new ProjectRunAuthority(
+      f.project.id,
+      f.authority.store,
+      f.authority.ownerGeneration,
+    );
+    await expect(execute(resumed)).resolves.toMatchObject({ type: "bug" });
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(
+      f.authority.read("refinement-analysis-v1", (value) => value),
+    ).toMatchObject({ attempts: 2, status: "complete" });
+  });
   it("confines refinement and descendants to external results while preserving setup files, index and refs", async () => {
     const f = await fixture("printf generated > setup-file");
     const bin = path.join(root, "bin");
@@ -499,7 +551,9 @@ fs.writeFileSync(${JSON.stringify(resultPath)}, JSON.stringify({title:'Grounded 
             prepareAttachmentContext: async () => undefined,
           }),
         ),
-      ).rejects.toThrow("OpenCode refinement exited with code 7");
+      ).rejects.toThrow(
+        "Refinement execution did not establish a stopped child",
+      );
       expect(openCode).toHaveBeenCalledOnce();
       expect(setupExecutions).toBe(1);
     },
@@ -601,7 +655,7 @@ fs.writeFileSync(${JSON.stringify(resultPath)}, JSON.stringify({title:'Grounded 
           prepareAttachmentContext: async () => undefined,
         }),
       ),
-    ).rejects.toThrow("OpenCode refinement exited with code 7");
+    ).rejects.toThrow("Refinement execution did not establish a stopped child");
     expect(secondAgent).toHaveBeenCalledOnce();
     expect(setupExecutions).toBe(1);
   });
@@ -818,7 +872,7 @@ fs.writeFileSync(${JSON.stringify(resultPath)}, JSON.stringify({title:'Grounded 
           prepareAttachmentContext: async () => undefined,
         }),
       ),
-    ).rejects.toThrow("OpenCode refinement exited with code 7");
+    ).rejects.toThrow("Refinement execution did not establish a stopped child");
     expect(noDispatch).not.toHaveBeenCalled();
     expect(resumedOpenCode).toHaveBeenCalledOnce();
     expect(stateFor(resumed, f.card.id)).toMatchObject({ status: "passed" });

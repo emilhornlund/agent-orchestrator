@@ -123,6 +123,62 @@ afterEach(() => {
 });
 
 describe("runRefinement", () => {
+  it("corrects the complete invalid result within a bounded allowance and refreshes attachments", async () => {
+    const worktreePath = createWorktree();
+    let attempts = 0;
+    const refresh = vi.fn(async () => undefined);
+    const opencode = new OpenCodeClient(async (options) => {
+      attempts++;
+      const resultPath = getRefinementResultPath(options.cwd);
+      fs.mkdirSync(path.dirname(resultPath), { recursive: true });
+      if (attempts === 1)
+        fs.writeFileSync(
+          resultPath,
+          JSON.stringify({ title: "valid title", type: "feature" }),
+        );
+      else {
+        expect(options.prompt).toContain("previous output failed");
+        writeResult(options.cwd);
+      }
+      return { exitCode: 0, output: "", errorOutput: "" };
+    });
+    const git = new GitClient(async () => "");
+    await expect(
+      runRefinement(
+        git,
+        opencode,
+        createProject(),
+        createCard(),
+        worktreePath,
+        new AbortController().signal,
+        undefined,
+        undefined,
+        refresh,
+      ),
+    ).resolves.toMatchObject({ type: "feature" });
+    expect(attempts).toBe(2);
+    expect(refresh).toHaveBeenCalledOnce();
+  });
+
+  it("stops invalid complete-result correction after three analyses without card mutation", async () => {
+    const worktreePath = createWorktree();
+    const run = vi.fn(async () => ({
+      exitCode: 0,
+      output: "",
+      errorOutput: "",
+    }));
+    await expect(
+      runRefinement(
+        new GitClient(async () => ""),
+        new OpenCodeClient(run),
+        createProject(),
+        createCard(),
+        worktreePath,
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow("Refinement result file not found");
+    expect(run).toHaveBeenCalledTimes(3);
+  });
   it("runs the configured refinement model and returns the validated result", async () => {
     const worktreePath = createWorktree();
 

@@ -31,7 +31,11 @@ const refinementResultSchemaFields = {
   [field in keyof typeof refinementResultContract]: z.ZodType;
 };
 
-const refinementResultSchema = z.strictObject(refinementResultSchemaFields);
+export const refinementResultSchema = z.strictObject(
+  refinementResultSchemaFields,
+);
+
+export class InvalidRefinementResultError extends Error {}
 
 export type RefinementResult = z.infer<typeof refinementResultSchema>;
 
@@ -76,6 +80,10 @@ export function clearRefinementResult(worktreePath: string): void {
   // deleting evidence or accepting it as a new agent result.
   fs.mkdirSync(path.dirname(resultPath), { recursive: true, mode: 0o700 });
   if (fs.existsSync(resultPath)) {
+    if (!fs.lstatSync(resultPath).isFile())
+      throw new Error(
+        "Refinement output is not an owned regular result file; preserving unknown artifact",
+      );
     const preserved = `${path.dirname(resultPath)}-preserved`;
     fs.mkdirSync(preserved, { recursive: true, mode: 0o700 });
     fs.renameSync(resultPath, path.join(preserved, randomUUID()));
@@ -91,22 +99,27 @@ export function readRefinementResult(worktreePath: string): RefinementResult {
     stat = fs.lstatSync(resultPath);
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-      throw new Error(`Refinement result file not found: ${resultPath}`, {
-        cause: error,
-      });
+      throw new InvalidRefinementResultError(
+        `Refinement result file not found: ${resultPath}`,
+        {
+          cause: error,
+        },
+      );
     }
 
     throw error;
   }
 
   if (stat.isSymbolicLink()) {
-    throw new Error(
+    throw new InvalidRefinementResultError(
       `Refinement result must not be a symbolic link: ${resultPath}`,
     );
   }
 
   if (!stat.isFile()) {
-    throw new Error(`Refinement result must be a regular file: ${resultPath}`);
+    throw new InvalidRefinementResultError(
+      `Refinement result must be a regular file: ${resultPath}`,
+    );
   }
 
   let parsed: unknown;
@@ -114,9 +127,12 @@ export function readRefinementResult(worktreePath: string): RefinementResult {
   try {
     parsed = JSON.parse(fs.readFileSync(resultPath, "utf8"));
   } catch (error) {
-    throw new Error(`Invalid refinement result JSON: ${resultPath}`, {
-      cause: error,
-    });
+    throw new InvalidRefinementResultError(
+      `Invalid refinement result JSON: ${resultPath}`,
+      {
+        cause: error,
+      },
+    );
   }
 
   const result = refinementResultSchema.safeParse(parsed);
@@ -127,7 +143,9 @@ export function readRefinementResult(worktreePath: string): RefinementResult {
       return `${location}: ${issue.message}`;
     });
 
-    throw new Error(`Invalid refinement result:\n${messages.join("\n")}`);
+    throw new InvalidRefinementResultError(
+      `Invalid refinement result:\n${messages.join("\n")}`,
+    );
   }
 
   return result.data;

@@ -118,7 +118,6 @@ export async function runRefinementCardWorkflow(options: {
         );
       }
     }
-    clearRefinementResult(worktree.path);
     cardContextPreparationFailed = true;
     const attachmentContext = await options.prepareAttachmentContext(
       card,
@@ -139,6 +138,11 @@ export async function runRefinementCardWorkflow(options: {
         : { repositoryBaseline: postSetupBaseline }),
       signal,
       cardLog,
+      refreshAttachments: async () =>
+        options.prepareAttachmentContext(
+          await trello.getCard(card.id),
+          cardLog,
+        ),
       ...(attachmentContext === undefined ? {} : { attachmentContext }),
       ...(options.emailNotifier === undefined
         ? {}

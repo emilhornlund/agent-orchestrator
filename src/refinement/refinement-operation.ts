@@ -32,6 +32,7 @@ export async function runRefinementOperation(input: {
   signal: AbortSignal;
   cardLog: Logger;
   attachmentContext?: CardAttachmentPromptContext;
+  refreshAttachments?: () => Promise<CardAttachmentPromptContext | undefined>;
   emailNotifier?: EmailNotifier;
 }): Promise<void> {
   const snapshot = ProjectRunAuthority.current(input.project.id)?.read(
@@ -49,6 +50,7 @@ export async function runRefinementOperation(input: {
       input.signal,
       input.attachmentContext,
       input.repositoryBaseline,
+      input.refreshAttachments,
     ));
 
   input.cardLog.event(

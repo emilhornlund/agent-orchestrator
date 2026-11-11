@@ -72,7 +72,7 @@ describe("refinement result", () => {
     expect(() => clearRefinementResult(worktreePath)).not.toThrow();
   });
 
-  it("removes a stale refinement result symbolic link without deleting its target", () => {
+  it("preserves an unknown result symbolic link and its target", () => {
     const worktreePath = createWorktree();
     const targetPath = path.join(worktreePath, "stale-target.json");
     const resultPath = getRefinementResultPath(worktreePath);
@@ -82,9 +82,11 @@ describe("refinement result", () => {
     fs.mkdirSync(path.dirname(resultPath), { recursive: true });
     fs.symlinkSync(targetPath, resultPath);
 
-    clearRefinementResult(worktreePath);
+    expect(() => clearRefinementResult(worktreePath)).toThrow(
+      "preserving unknown artifact",
+    );
 
-    expect(fs.existsSync(resultPath)).toBe(false);
+    expect(fs.lstatSync(resultPath).isSymbolicLink()).toBe(true);
     expect(fs.readFileSync(targetPath, "utf8")).toBe("stale");
   });
 

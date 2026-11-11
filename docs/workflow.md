@@ -144,6 +144,11 @@ only while claiming cards from `Ready for Agent`; it does not reorder cards or a
 
 ## Refinement
 
+Invalid structured refinement results receive at most three complete analyses.
+The allowance and validated output survive restart; an unknown child execution is
+reconciled before another analysis. Corrections refresh attachments and cannot
+mutate card content until the entire title, description and classification validate.
+
 When a refinement card is claimed:
 
 1. The orchestrator prepares `<worktreeRoot>/<trello-card-id>` on `agent/<trello-card-id>` before moving the card to

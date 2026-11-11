@@ -38,8 +38,9 @@ dispatch, with a read-only task worktree/Git metadata and a separately writable
 external result directory. Setup-free new attempts persist an inventory too;
 older setup-free records lacking that inventory are fenced rather than rebased
 onto potentially agent-modified files. Repository-local legacy results remain
-preserved and are not reused. Remaining work is bounded complete-result correction,
-history-aware field reconciliation and verified completion/release.
+preserved and are not reused. T2 persists bounded complete-result correction and
+validated output, refreshing attachments for correction and fencing unknown children.
+Remaining work is history-aware field reconciliation and verified completion/release.
 
 Inspect `src/refinement/run-refinement-card.ts`, `run-refinement.ts`,
 `run-refinement-setup.ts`, `refinement-operation.ts`, `refinement-result.ts`,

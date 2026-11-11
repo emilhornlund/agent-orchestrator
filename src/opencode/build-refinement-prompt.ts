@@ -126,6 +126,8 @@ export function buildRefinementPrompt(
     "Use repository evidence together with the original Trello task to clarify the intended work.",
     "Preserve the original intent and keep the task focused.",
     "Do not expand the task into unrelated work or speculative improvements.",
+    "Identify larger dependencies separately without silently including them in scope.",
+    "For oversized work, recommend smaller tasks but still refine this original card. Do not create or split cards.",
     "Do not invent requirements that are unsupported by either the original task or repository evidence.",
     "",
     "Classify the task as exactly one of:",

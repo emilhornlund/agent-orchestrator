@@ -24,6 +24,19 @@
   filesystem enforcement. Typecheck and changed-file ESLint passed. Documentation
   formatting initially found one wrap issue, corrected before checkpoint. Final
   affected checks are rerun before commit. T2–T4 remain; no full validation claimed.
+- T1 checkpoint: `282159f`. T2 adds three bounded complete-result analyses,
+  durable invalid/active/validated checkpoints, verified stopped-child recovery,
+  validated-output reuse and refreshed correction attachments. The existing distinct
+  templates remain; prompts now explicitly identify dependencies and recommend
+  splitting without creating cards. Semantic grounding remains the agent's job.
+- T2 self-review inspected result parsing, workflow callers, restart persistence,
+  execution evidence and attachment refresh. Fixed checkpoint-write/unknown-child
+  errors that could otherwise enter terminal failure, and preserved unknown result
+  directories/symlinks rather than moving them. Existing setup-only fixtures had no
+  child-stop evidence; their assertions now require the explicit retained fence.
+  Final five-suite focused run passed 46 tests; typecheck and changed-file ESLint
+  passed. One final assertion wrap was formatted after lint caught it; ESLint and
+  whitespace checks passed afterward. T3/T4 remain; full validation is not yet run.
 
 ## Inherited P8 checkpoint
 
