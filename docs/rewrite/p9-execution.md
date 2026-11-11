@@ -31,7 +31,13 @@ and P10 historical cleanup/retry are outside this scope.
    type/duration comment and optional nonblocking notification; do not duplicate
    description content or release on assumed external success.
 
-## Starting points and checks
+## Implementation checkpoint and checks
+
+P9 is implemented and locally validated. Combined verification covers REF-001–005,
+ENV-002, CTX-001/003 and refinement's workflow/ownership contributions. Integrated
+`yarn validate` passed ESLint, Prettier, TypeScript and 2,220 tests across 168 files.
+The progress summary records the individual tasks/corrections and original failed
+validation honestly. No live-service qualification is claimed. Stop before P10.
 
 Current implementation: T1 confines refinement through the existing Bubblewrap
 dispatch, with a read-only task worktree/Git metadata and a separately writable
@@ -48,8 +54,8 @@ T4a verifies unchanged originals and the Failed outcome after bounded analysis
 failure, preserving unknown state/human changes instead of terminally releasing.
 T4b recovers Backlog completion with immutable comment text/identity and verifies
 complete fields/history/comment/own move before release. Started refinement queue
-events cannot be mistaken for orphaned Ready claims. Only T5 combined validation
-remains. Historical cleanup and fresh-attempt retry remain in P10.
+events cannot be mistaken for orphaned Ready claims. Historical cleanup and
+fresh-attempt retry remain in P10.
 
 T5a correction: after three conclusively rejected field sends, persist restoration
 mode and stop replaying that rejected identity. Restore only current attributable
@@ -59,8 +65,8 @@ human/unknown state and rejected restoration keep ownership for reconciliation.
 T5b closes the legacy result-path inventory exemption and explicitly reads the
 actual OpenCode task-scoped process-evidence layout for stopped-child recovery.
 Legacy artifacts/baselines and unknown directory symlinks are preserved/fenced,
-not treated as setup or new output. Combined scoped criteria have been inspected;
-only final integrated validation/completion remains.
+not treated as setup or new output. Combined scoped criteria and integrated
+validation are complete as recorded above.
 
 Final integration correction wires failure notifications through every bounded
 failure caller and gates delivery on the verified canonical refinement outcome.

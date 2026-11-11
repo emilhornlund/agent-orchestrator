@@ -2,11 +2,18 @@
 
 ## Current checkpoint
 
-- **P9 in progress on `refactor/p9-recoverable-refinement`, based on `190bb3c`.**
+- **P9 implemented and locally validated on `refactor/p9-recoverable-refinement`, based on `190bb3c`.**
   Initial index/worktree clean; P8 is integrated. Only small local P9 commits are
   authorized, without remote actions or P10 expansion.
-- Implementation/correction tasks are checkpointed through `2c0df08`; combined
-  scoped integration checking is complete. Final integrated `yarn validate` is next.
+- Implementation/correction tasks are checkpointed through `64ee2fe`; combined
+  scoped integration checking is complete. Integrated `yarn validate` passed
+  repository ESLint, Prettier, TypeScript and **2,220 tests across 168 files**.
+  No known scoped defect or P9 implementation work remains. This completion
+  documentation is included in the final validation/checkpoint. No live-service
+  qualification is claimed. Stop before P10; P11 temporary-guidance removal is
+  not part of this phase.
+- Local checkpoints: `282159f`, `b252038`, `f0726fe`, `67c8ae9`, `5bddab4`,
+  `1693be3`, `2c0df08`, `64ee2fe`.
 - Initial inspection: setup attribution and P4 content/label intents existed, but
   refinement results are still repository-local, no bounded invalid-result correction
   exists, and finalization lacks full-field/history conflict reconciliation.
@@ -137,6 +144,12 @@
   Six focused suites passed 66 tests; typecheck and changed-file ESLint passed
   after removing an unused fixture import. Full integrated validation is rerun
   after this correction; no full pass is yet claimed.
+- T5c correction checkpoint: `64ee2fe`. The corrected integrated implementation
+  passed full `yarn validate`: lint, formatting, typecheck and all **2,220 tests in
+  168 files**. Required recovery, attribution, source protection, notification and
+  cross-task regression paths passed together. No skipped/live semantic evidence
+  is represented as passing. Final completion guidance is validated before its
+  documentation-only checkpoint; no P10 work is started.
 
 ## Inherited P8 checkpoint
 
@@ -603,8 +616,8 @@ requirements/specification sections and meaningful regression tests:
   passed all 70 tests; typecheck, changed-file ESLint and Prettier passed. The
   corrected integrated tree then passed full `yarn validate` as recorded above.
 
-No P6–P8 implementation work remains. P9 implementation is checkpointed above;
-final validation remains. P10 has not started. P11 covers
+No P6–P9 implementation work remains. P9 is implemented and locally validated
+as recorded above. P10 has not started. P11 covers
 remaining integration/regression gaps, with broader qualification only if requested.
 
 ## Known carryovers
