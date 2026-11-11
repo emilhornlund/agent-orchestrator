@@ -475,7 +475,11 @@ describe("task-session refinement scheduling", () => {
       expect(openCodeRun).toHaveBeenCalledOnce();
       expect(
         fs.readFileSync(
-          path.join(worktreeRoot, failureCard.id, ".setup-failure-marker"),
+          path.join(
+            worktreeRoot,
+            `${failureCard.id}--${failureAuthority.store.attemptId}`,
+            ".setup-failure-marker",
+          ),
           "utf8",
         ),
       ).toBe("setup-preserved");

@@ -69,6 +69,26 @@
   preparing suites passed 25 tests, and both no-quality/capacity lifecycle scenarios
   passed (30 unrelated scenarios filtered). Typecheck, changed-code ESLint and
   formatting passed after the correction. No known T3 defect remains.
+- T3 checkpoint: `ffc7bc3`. T4 combined criteria inspection reused task reviews
+  for TR-001–003, GIT-003–006, SCH-001, terminal PR-008/REF-005, deliberate retry
+  CTX-002/IMP-005, NOT-001/002 and touched REC-005. Checked canonical worker release
+  and fresh Ready discovery, failure comments/readback, refinement release, terminal
+  cancellation and pending mutations, resource isolation, latest-default preparation,
+  context refresh and retained attempt/session/log separation. No additional scoped
+  implementation gap is currently known. Final integrated `yarn validate` is next;
+  no successful full run is yet claimed. P11 guidance removal is not in scope.
+- First integrated `yarn validate` passed lint/format/typecheck, but failed 5 of
+  2,237 tests (167 files passed). T4 correction restores the refinement cleanup
+  production caller using accepted default history as preservation proof, never the
+  current potentially setup-created local commit. Missing history preserves work.
+  Fixtures now bind their actually created resources, supply the required closure
+  comment adapter, and inspect the new failure attempt's suffixed worktree path.
+- Correction self-review inspected the actual refinement cleanup/finalization,
+  shared ancestry/status checks, fixture creation order and unknown-ownership fence.
+  No guard was weakened. Three affected refinement/legacy suites passed 25 tests;
+  both initial-publication closure regressions passed (77 unrelated cases filtered).
+  Typecheck, changed-file ESLint, formatting and whitespace checks passed. Final
+  integrated validation is rerun after this correction; no full pass claimed yet.
 
 ## Inherited P9 checkpoint
 

@@ -179,12 +179,25 @@ export async function runRefinementCardWorkflow(options: {
 
     cardLog.info("Cleaning up refinement worktree...");
     try {
+      const preservedHeadSha = authority
+        ? await git.getRefSha(
+            project.repository.path,
+            `refs/remotes/origin/${project.repository.defaultBranch}`,
+          )
+        : null;
+      if (authority && !preservedHeadSha)
+        throw new Error(
+          "Accepted default history is unavailable; preserving refinement artifacts",
+        );
       await cleanupWorktree({
         git,
         project,
         worktreePath: worktree.path,
         branch: worktree.branch,
         preserveRecoveryState: true,
+        // Refinement has no published task commit. Only history retained on
+        // the accepted default is disposable; setup-created local commits stay.
+        ...(preservedHeadSha ? { preservedHeadSha } : {}),
         signal,
       });
     } catch (error) {
