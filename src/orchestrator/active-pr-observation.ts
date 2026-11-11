@@ -1,3 +1,4 @@
+import { ciRepairEventId } from "../task-session/ci-repair-event-id.js";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { ProjectConfig } from "../config/config.js";
@@ -221,12 +222,17 @@ export async function observeActivePullRequest(options: {
     });
     if (
       ci.status === "failed" &&
-      !["exhausted", "stopped"].includes(task.ciRepair?.status ?? "")
+      !["exhausted", "stopped"].includes(task.ciRepair?.status ?? "") &&
+      !queue
+        .list()
+        .some(
+          (entry) => entry.eventId === ciRepairEventId(task, pr.headRefOid!),
+        )
     )
       queue.enqueue({
         projectId: project.id,
         cardId: task.cardId,
-        eventId: `ci-repair:${task.cardId}:${pr.headRefOid}`,
+        eventId: ciRepairEventId(task, pr.headRefOid),
         operationKey: `${task.operationKey}:ci:${pr.headRefOid}`,
         kind: "ci-repair",
         enqueuedAt: observedAt,

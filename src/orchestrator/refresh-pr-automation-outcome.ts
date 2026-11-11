@@ -49,7 +49,7 @@ export async function refreshPrAutomationOutcome(options: {
     "These are the latest observed results; older validation summaries describe earlier snapshots.",
     ...options.facts.map(
       (fact) =>
-        `- ${fact.replaceAll(START, "[outcome start]").replaceAll(END, "[outcome end]")}`,
+        `- ${fact.replaceAll("<!-- agent-orchestrator-", "[managed marker: ")}`,
     ),
     `Trello: ${options.card.url}`,
     END,

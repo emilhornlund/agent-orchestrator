@@ -958,6 +958,14 @@ describe("task lifecycle through pollProject", () => {
             )
           ) {
             expect(options.readOnly).toBe(true);
+            expect(prs.get("agent/first")?.body).toMatch(
+              /^<!-- agent-orchestrator-status:start -->/u,
+            );
+            expect(prs.get("agent/first")?.body).toContain(
+              "advisory validation",
+            );
+            prs.get("agent/first")!.body +=
+              "\nHuman note added during maintenance review.\n";
             return {
               exitCode: 0,
               errorOutput: "",
@@ -1278,6 +1286,12 @@ describe("task lifecycle through pollProject", () => {
             ciReviewHandoffs &&
             options.prompt.startsWith("Repair the required GitHub CI failures")
           ) {
+            expect(prs.get("agent/first")?.body).toMatch(
+              /^<!-- agent-orchestrator-status:start -->/u,
+            );
+            expect(prs.get("agent/first")?.body).toContain(
+              "addressing observed CI failures",
+            );
             ciPrimaryCorrections += 1;
             fs.writeFileSync(
               path.join(options.cwd, "app.js"),
@@ -1880,6 +1894,12 @@ describe("task lifecycle through pollProject", () => {
         const ciTask = store.read("first");
         const ciRun = authorities.get("first")?.store.read();
         expect(ciTask?.phase).toBe("human-feedback");
+        expect(prs.get("agent/first")?.body).not.toContain(
+          "Agent Orchestrator status:",
+        );
+        expect(prs.get("agent/first")?.body).toContain(
+          "Observed CI for this revision",
+        );
         expect(
           ciPrimaryCorrections,
           JSON.stringify({
@@ -1963,6 +1983,10 @@ describe("task lifecycle through pollProject", () => {
           "Human release instructions: retain this text.",
         );
         expect(firstPr!.body).toContain("Current automation outcome");
+        expect(firstPr!.body).toContain(
+          "Human note added during maintenance review.",
+        );
+        expect(firstPr!.body).not.toContain("Agent Orchestrator status:");
         expect(firstPr!.isDraft).toBe(true);
         expect(lists.get("first")).toBe("review");
         expect(lists.get("next")).toBe("ready");

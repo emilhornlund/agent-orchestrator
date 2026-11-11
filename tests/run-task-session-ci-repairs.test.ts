@@ -6,6 +6,7 @@ import type { ProjectConfig } from "../src/config/config.js";
 import type { CiCheckEvaluation } from "../src/github/evaluate-ci-checks.js";
 import { runTaskSessionCiRepairs } from "../src/task-session/run-task-session-ci-repairs.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
+import { ciRepairEventId } from "../src/task-session/ci-repair-event-id.js";
 
 let root: string;
 afterEach(() => {
@@ -80,6 +81,43 @@ function fixture() {
 }
 
 describe("runTaskSessionCiRepairs", () => {
+  it("gives a verified same-head human retry a new queue identity and episode without changing its primary session", async () => {
+    const f = fixture();
+    const record = f.store.read("card")!;
+    const originalEvent = ciRepairEventId(record, f.sha);
+    f.store.compareAndSwap("card", record.revision, {
+      ...record,
+      feedbackRemediation: {
+        operationId: "feedback:explicit-retry:revision:2",
+        status: "no-op",
+        headSha: f.sha,
+        ledgerRevision: 1,
+      },
+      revision: record.revision + 1,
+    });
+    const retry = f.store.read("card")!;
+    expect(ciRepairEventId(retry, f.sha)).not.toBe(originalEvent);
+    await runTaskSessionCiRepairs({
+      ...f.base,
+      maxAttempts: 1,
+      observeChecks: async (sha) =>
+        f.evaluation(sha, sha === f.sha ? "failed" : "passed"),
+    });
+    const completed = f.store.read("card")!;
+    expect(completed.ciRepair).toMatchObject({
+      initiatingEventId: "feedback:explicit-retry:revision:2",
+      cycleId: "operation:ci:feedback:explicit-retry:revision:2",
+    });
+    expect(ciRepairEventId(completed, f.sha)).toBe(
+      ciRepairEventId(retry, f.sha),
+    );
+    expect(f.base.repairPrimarySession).toHaveBeenCalledWith(
+      [],
+      1,
+      "session",
+      expect.stringContaining("explicit-retry"),
+    );
+  });
   it("ends unchanged correction without quality reruns, artificial commits or another pass", async () => {
     const f = fixture();
     const result = await runTaskSessionCiRepairs({

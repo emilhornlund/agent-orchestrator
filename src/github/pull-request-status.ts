@@ -5,6 +5,10 @@ export const AGENT_ORCHESTRATOR_STATUS_END =
 
 export type ManagedPullRequestStatus =
   | "rebasing"
+  | "synchronizing-target"
+  | "repairing-ci"
+  | "validating-pr-changes"
+  | "automation-recovery"
   | "resolving-conflicts"
   | "updating-remote"
   | "addressing-review-feedback"
@@ -69,6 +73,14 @@ function statusMessage(
   defaultBranch: string,
 ): string {
   switch (status) {
+    case "automation-recovery":
+      return "Agent Orchestrator status: PR automation requires recovery. Work and ownership are preserved; do not assume the operation finished.";
+    case "synchronizing-target":
+      return `Agent Orchestrator status: merging the latest target branch (${defaultBranch}) additively; published commits are preserved.`;
+    case "repairing-ci":
+      return "Agent Orchestrator status: addressing observed CI failures within the current repair episode.";
+    case "validating-pr-changes":
+      return "Agent Orchestrator status: running advisory validation and independent review for the current PR changes.";
     case "rebasing":
       return `Agent Orchestrator status: rebasing onto the latest configured default branch (${defaultBranch}).`;
     case "resolving-conflicts":

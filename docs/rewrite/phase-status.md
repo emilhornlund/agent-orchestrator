@@ -5,7 +5,7 @@
 - **P8 in progress on `b7fff4a` (integrated P7); starting index/worktree clean.**
   Authorized actions are small local task/correction commits only. No remote Git
   action, branch change, deployment or P9 work is authorized.
-- Remaining ordered work: T1 current-revision expected CI discovery and durable
+- Original ordered work: T1 current-revision expected CI discovery and durable
   bounded observation; T2 verified-trigger repair episodes, configured budgets and
   advisory same-session correction publication; T3 queued additive target merges,
   provenance/preservation and interrupted/conflicted Git recovery; T4 maintenance
@@ -95,6 +95,33 @@
   passed **182 tests**. The real `pollProject` approved-PR target-merge scenario
   passed (30 unrelated scenarios filtered); typecheck and changed-code ESLint passed.
   No known T3 defect remains; T4–T5 remain and full validation is not yet claimed.
+- P8-T4 completes top activity transitions for CI editing, target synchronization,
+  conflict assistance, advisory checks and push. Verified completion/no-op/bounded
+  conflict outcomes clear activity; unresolved execution retains explicit recovery
+  status. Current CI results, expired observation uncertainty, episode usage and
+  no-op evidence refresh independently of another writer, retaining human text.
+  Known unresolved quality remains draft even after green CI. Controlled external
+  diagnostic markers cannot create managed description/activity sections.
+- T4 integration corrected two queue edge cases: verified same-head human retry
+  needs a distinct episode queue identity; a temporarily pending evaluation must
+  retain a nondispatchable queued observation rather than permanently complete its
+  identity or monopolize maintenance. Producer/recovery/dispatch callers now share
+  those identities and eligibility, preserving legacy episode identity. Reporting
+  failure releases only writer execution ownership for recovery; it never repeats
+  the primary correction just to present a result.
+- T4 self-review inspected new files and actual polling/repair/merge/reporting
+  callers, P4 body preconditions, quality dispositions, terminal status clearing,
+  queue recovery and compatibility. Corrected per-pass CI activity refresh after
+  lifecycle assertions exposed the second pass's stale publication status. An
+  error-cause lint failure was fixed while preserving both original/status errors.
+  Ten focused suites passed **179 tests**; all **31 real-Git lifecycle scenarios**
+  passed, including CI advice failures, approved-PR maintenance, concurrent human
+  body notes, terminal races and unknown writers. Typecheck and changed-code ESLint
+  passed. Guide/roadmap scope remains accurate after T3's integration adjustment.
+  Only T5 combined integration/specification checking and final `yarn validate`
+  remain; no full validation or live-service qualification is yet claimed.
+
+## Inherited P7 checkpoint
 
 - **P7 implemented and locally validated on the current branch, based on `7fafed1` (integrated P6).**
   The starting index and working tree were clean. This session authorizes small

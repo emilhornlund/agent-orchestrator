@@ -8,6 +8,10 @@ import { PrMaintenanceStore } from "../src/task-session/pr-maintenance-store.js"
 import { TaskMutationQueue } from "../src/task-session/task-mutation-queue.js";
 import { CommandRunner } from "../src/process/command-runner.js";
 import {
+  reconcileManagedPullRequestStatus,
+  type ManagedPullRequestStatus,
+} from "../src/github/pull-request-status.js";
+import {
   maintainOutdatedPr,
   reconcileInterruptedPrMaintenance,
   type MaintainOutdatedPrOptions,
@@ -101,6 +105,12 @@ async function publishedTask(conflict = false) {
   let terminal: "OPEN" | "CLOSED" = "OPEN";
   let body = "Human summary\n\nOriginal task implementation";
   const github = {
+    updatePullRequestDescriptionStatus: vi.fn(
+      async ({ status }: { status: ManagedPullRequestStatus | null }) => {
+        body = reconcileManagedPullRequestStatus(body, status, "main");
+        return true;
+      },
+    ),
     ensurePullRequestDraft: vi.fn(async () => undefined),
     getPullRequestDescription: vi.fn(async () => body),
     editPullRequestDescription: vi.fn(
@@ -341,6 +351,16 @@ describe("additive published PR maintenance", () => {
       targetBaseHead: f.base,
       publication: { status: "verified" },
     });
+    expect(
+      f.github.updatePullRequestDescriptionStatus.mock.calls.map(
+        ([request]) => request.status,
+      ),
+    ).toEqual([
+      "synchronizing-target",
+      "validating-pr-changes",
+      "updating-remote",
+      null,
+    ]);
   });
 
   it.each(["merge", "push"] as const)(
@@ -428,6 +448,9 @@ describe("additive published PR maintenance", () => {
     expect(await maintainOutdatedPr(f.options)).toBe("blocked");
     expect(await maintainOutdatedPr(f.options)).toBe("blocked");
     expect(repair).not.toHaveBeenCalled();
+    expect(await f.github.getPullRequestDescription()).not.toContain(
+      "Agent Orchestrator status:",
+    );
     expect(git(f.worktree, "rev-parse", "HEAD")).toBe(f.published);
     expect(git(f.worktree, "rev-parse", "MERGE_HEAD")).toBe(f.base);
   });
@@ -503,6 +526,9 @@ describe("additive published PR maintenance", () => {
     };
     expect(await maintainOutdatedPr(f.options)).toBe("terminal");
     expect(push).not.toHaveBeenCalled();
+    expect(await f.github.getPullRequestDescription()).not.toContain(
+      "Agent Orchestrator status:",
+    );
     expect(git(f.source, "ls-remote", "origin", "refs/heads/agent/card")).toBe(
       "",
     );

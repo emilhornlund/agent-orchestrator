@@ -16,6 +16,7 @@ import { recordTerminalPrFence } from "../task-session/terminal-pr-fence.js";
 import { getSessionLogPath } from "../logging/session-log.js";
 import { presentExternalDiagnostic } from "../security/bounded-diagnostic.js";
 import { refreshPrAutomationOutcome } from "./refresh-pr-automation-outcome.js";
+import type { ManagedPullRequestStatus } from "../github/pull-request-status.js";
 import type { GitHubClient } from "../github/github-client.js";
 import type { TrelloCard } from "../trello/trello-client.js";
 import type { ImplementationReviewResult } from "../task-session/implementation-review-result.js";
@@ -41,6 +42,7 @@ export interface MaintainOutdatedPrOptions {
     | "ensurePullRequestDraft"
     | "getPullRequestDescription"
     | "editPullRequestDescription"
+    | "updatePullRequestDescriptionStatus"
   >;
   commands: CommandRunner;
   mutationQueue: TaskMutationQueue;
@@ -70,6 +72,39 @@ export interface MaintainOutdatedPrOptions {
 }
 
 type MaintenanceResult = "deferred" | "completed" | "blocked" | "terminal";
+
+async function activity(
+  options: MaintainOutdatedPrOptions,
+  status: ManagedPullRequestStatus | null,
+): Promise<void> {
+  await options.github.updatePullRequestDescriptionStatus({
+    cwd: options.project.repository.path,
+    repository: options.project.repository.github,
+    pullRequestUrl: options.task.pullRequest!.url,
+    project: options.project,
+    status,
+  });
+}
+
+async function reportBlocked(
+  options: MaintainOutdatedPrOptions,
+  diagnostic: string,
+): Promise<"blocked"> {
+  await refreshPrAutomationOutcome({
+    github: options.github,
+    project: options.project,
+    card: options.card,
+    pullRequestUrl: options.task.pullRequest!.url,
+    headSha: options.task.pullRequest!.headSha!,
+    draft: true,
+    facts: [
+      diagnostic,
+      "Published history, unshipped commits, merge state and dirty output are preserved; no safe update is claimed.",
+    ],
+  });
+  await activity(options, null);
+  return "blocked";
+}
 
 async function inventory(
   options: MaintainOutdatedPrOptions,
@@ -170,6 +205,7 @@ async function observeOpen(
         true,
         options.project.repository.defaultBranch,
       );
+    await activity(options, null);
     return false;
   }
   if (
@@ -396,7 +432,11 @@ export async function maintainOutdatedPr(
     throw new Error(
       "Maintenance requires the owned isolated task worktree and branch",
     );
-  if (await git.getRebaseState(worktreePath)) return "blocked";
+  if (await git.getRebaseState(worktreePath))
+    return reportBlocked(
+      options,
+      "An existing rebase prevents additive maintenance; legacy state is not rewritten or discarded.",
+    );
   let operation = existing;
   const eventId = `pr-maintenance:${card.id}:${existing?.expectedRemoteHead ?? expected}`;
   queue.enqueue({
@@ -418,6 +458,7 @@ export async function maintainOutdatedPr(
       ]))
     )
       return "terminal";
+    await activity(options, "synchronizing-target");
     if (!operation) {
       const local = await git.getHeadSha(worktreePath);
       if (
@@ -425,8 +466,12 @@ export async function maintainOutdatedPr(
         (await git.getMergeHead(worktreePath)) !== null ||
         (await git.getDiff(worktreePath, true)).trim()
       ) {
+        const result = await reportBlocked(
+          options,
+          "Unattributed local commits, staged output or an existing merge prevent safe automatic publication.",
+        );
         queue.complete(eventId);
-        return "blocked";
+        return result;
       }
       const target = await options.github.getBaseBranchHeadSha({
         cwd: worktreePath,
@@ -581,10 +626,14 @@ export async function maintainOutdatedPr(
               operation,
             );
             queue.releaseForRecovery(eventId);
-            return "blocked";
+            return reportBlocked(
+              options,
+              "Automatic conflict assistance ended at its bound or made no useful changes. Conflicts remain unresolved for recovery.",
+            );
           }
           if (!(await observeOpen(options, [operation.expectedRemoteHead])))
             return "terminal";
+          await activity(options, "resolving-conflicts");
           if (!operation.localPreparation!.conflictOperationId) {
             const baseline = options.taskStore.writePrimaryResultArtifact(
               `${operation.operationId}:conflict-baseline`,
@@ -616,7 +665,10 @@ export async function maintainOutdatedPr(
           });
           if (!(await checkConflictPreservation(options, operation))) {
             progress({ conflictStopped: true });
-            return "blocked";
+            return reportBlocked(
+              options,
+              "Conflict assistance made no repository changes; unchanged conflict markers were not staged or published.",
+            );
           }
           if (
             (await git.getHeadSha(worktreePath)) !==
@@ -674,6 +726,7 @@ export async function maintainOutdatedPr(
       progress({ status: "prepared", resultingHead });
     }
     await checkPreserved(options, operation);
+    await activity(options, "validating-pr-changes");
     await verifyQuality(options, operation);
     operation = store.inspect(operation.operationId)!;
     const resultingHead = operation.localPreparation!.resultingHead!;
@@ -705,6 +758,7 @@ export async function maintainOutdatedPr(
         pullRequestUrl: operation.pullRequest.url,
         project,
       });
+      await activity(options, "updating-remote");
       if (!(await observeOpen(options, [operation.expectedRemoteHead])))
         return "terminal";
       operation = store.recordPublication(
@@ -787,6 +841,7 @@ export async function maintainOutdatedPr(
           Math.max(Date.now(), Date.parse(task.updatedAt) + 1),
         ).toISOString(),
       });
+    await activity(options, null);
     store.advance(operation.operationId, "active", "completed", operation);
     queue.complete(eventId);
     return "completed";
@@ -794,6 +849,21 @@ export async function maintainOutdatedPr(
     if (operation && store.inspect(operation.operationId)?.status === "active")
       store.advance(operation.operationId, "active", "uncertain", operation);
     if (queue.ownsActive(eventId)) queue.releaseForRecovery(eventId);
+    const unresolved = Object.values(
+      options.taskStore.read(card.id)?.primaryOperations ?? {},
+    ).some(
+      (entry) =>
+        entry && ["intent", "dispatched", "ambiguous"].includes(entry.status),
+    );
+    try {
+      await activity(options, unresolved ? "automation-recovery" : null);
+    } catch (statusError) {
+      throw new AggregateError(
+        [error, statusError],
+        "Maintenance failed and activity reconciliation remains pending",
+        { cause: statusError },
+      );
+    }
     throw error;
   } finally {
     if (operation && store.inspect(operation.operationId)?.status === "active")

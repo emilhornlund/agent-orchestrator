@@ -5,6 +5,7 @@ import type {
 import type { CiCheckEvaluation } from "../github/evaluate-ci-checks.js";
 import type { TaskExecutionRecord } from "./task-execution-record.js";
 import { canResumeCiReviewRepair } from "./can-resume-ci-review-repair.js";
+import { ciRepairEventId } from "./ci-repair-event-id.js";
 import { TaskExecutionStore } from "./task-execution-store.js";
 
 export const MAX_CI_REPAIR_ATTEMPTS = 2;
@@ -115,7 +116,7 @@ export async function runTaskSessionCiRepairs(
     !canResumeCiReviewRepair(record, {
       projectId: record.projectId,
       cardId: record.cardId,
-      eventId: `ci-repair:${record.cardId}:${options.headSha}`,
+      eventId: ciRepairEventId(record, options.headSha),
       operationKey: `${record.operationKey}:ci:${options.headSha}`,
       kind: "ci-repair",
       status: "active",
@@ -144,9 +145,11 @@ export async function runTaskSessionCiRepairs(
     cycleId,
     maxAttempts,
     initiatingEventId:
-      record.ciRepair?.initiatingEventId ??
-      record.feedbackRemediation?.operationId ??
-      `${options.operationKey}:initial-publication`,
+      record.ciRepair === undefined
+        ? (record.feedbackRemediation?.operationId ??
+          `${options.operationKey}:initial-publication`)
+        : (record.ciRepair.initiatingEventId ??
+          `${options.operationKey}:initial-publication`),
   };
   if (record.ciRepair?.cycleId !== cycleId) {
     record = updateRecord(options.store, record, {

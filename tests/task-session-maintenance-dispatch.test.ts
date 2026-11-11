@@ -8,6 +8,7 @@ import { runTaskSessionFeedbackCycle } from "../src/orchestrator/run-task-sessio
 import { observeTaskSessionReviewCards } from "../src/orchestrator/observe-task-session-review-cards.js";
 import { maintainOutdatedPr } from "../src/orchestrator/maintain-outdated-pr.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
+import { TaskMutationQueue } from "../src/task-session/task-mutation-queue.js";
 import { TaskPlanStore } from "../src/task-session/task-plan-store.js";
 import { PrMaintenanceStore } from "../src/task-session/pr-maintenance-store.js";
 import { runTaskSessionCiRepairs } from "../src/task-session/run-task-session-ci-repairs.js";
@@ -33,7 +34,11 @@ vi.mock(
   }),
 );
 vi.mock("../src/task-session/run-task-session-ci-repairs.js", () => ({
-  runTaskSessionCiRepairs: vi.fn(async () => ({ status: "idle" })),
+  runTaskSessionCiRepairs: vi.fn(async () => ({
+    status: "passed",
+    attempts: 0,
+    headSha: "a".repeat(40),
+  })),
 }));
 vi.mock("../src/orchestrator/publish-card.js", () => ({
   publishCard: vi.fn(),
@@ -85,6 +90,7 @@ async function pollReview(
   openCodeRun: ReturnType<typeof vi.fn>;
   project: ProjectConfig & { contextRoot: string };
   taskRecord: ReturnType<TaskExecutionStore["read"]>;
+  poll: () => Promise<void>;
 }> {
   root = fs.mkdtempSync(path.join(os.tmpdir(), "pr-maintenance-dispatch-"));
   const worktreePath = path.join(root, "worktrees", "card");
@@ -269,41 +275,44 @@ async function pollReview(
     isAncestor: vi.fn(async () => false),
   };
   const openCode = { run: vi.fn() };
-  await runTaskSessionWorkflow({
-    project,
-    trello: trello as never,
-    git: git as never,
-    github: {
-      findPullRequestState: vi.fn(async () => ({
-        url: "https://github.com/owner/repo/pull/42",
-        state: "OPEN" as const,
-        isDraft: false,
-        reviewDecision: null,
-        mergedAt: null,
-        headRefOid: sha,
-        baseRefName: "main",
-        headRefName: "agent/card",
-        headRepository: { name: "repo" },
-        headRepositoryOwner: { login: "owner" },
-      })),
-      getCiObservations: vi.fn(async () => ({
-        headSha: sha,
-        checks: [],
-        expectationSources: [],
-      })),
-    } as never,
-    openCode: openCode as never,
-    commands: {
-      run: vi.fn(async ({ cwd }: { cwd: string }) => ({
-        exitCode: 0,
-        output: JSON.stringify([{ id: "session", directory: cwd }]),
-      })),
-    } as never,
-    signal: new AbortController().signal,
-    prepareAttachmentContext: async () => undefined,
-    ...(emailNotifier === undefined ? {} : { emailNotifier }),
-  });
+  const poll = () =>
+    runTaskSessionWorkflow({
+      project,
+      trello: trello as never,
+      git: git as never,
+      github: {
+        findPullRequestState: vi.fn(async () => ({
+          url: "https://github.com/owner/repo/pull/42",
+          state: "OPEN" as const,
+          isDraft: false,
+          reviewDecision: null,
+          mergedAt: null,
+          headRefOid: sha,
+          baseRefName: "main",
+          headRefName: "agent/card",
+          headRepository: { name: "repo" },
+          headRepositoryOwner: { login: "owner" },
+        })),
+        getCiObservations: vi.fn(async () => ({
+          headSha: sha,
+          checks: [],
+          expectationSources: [],
+        })),
+      } as never,
+      openCode: openCode as never,
+      commands: {
+        run: vi.fn(async ({ cwd }: { cwd: string }) => ({
+          exitCode: 0,
+          output: JSON.stringify([{ id: "session", directory: cwd }]),
+        })),
+      } as never,
+      signal: new AbortController().signal,
+      prepareAttachmentContext: async () => undefined,
+      ...(emailNotifier === undefined ? {} : { emailNotifier }),
+    });
+  await poll();
   return {
+    poll,
     git,
     project,
     openCodeRun: openCode.run,
@@ -314,6 +323,43 @@ async function pollReview(
 }
 
 describe("opt-in maintenance in the production Human Review polling path", () => {
+  it("retains a same-head CI observation across a transient pending result and dispatches it when failed checks return", async () => {
+    vi.mocked(runTaskSessionCiRepairs).mockResolvedValueOnce({
+      status: "waiting",
+      attempts: 0,
+      headSha: sha,
+      evaluation: {
+        status: "waiting",
+        expectedHeadSha: sha,
+        pendingChecks: ["Build"],
+        missingChecks: [],
+        diagnostic: "rerunning",
+      },
+    });
+    const f = await pollReview(
+      "current",
+      undefined,
+      true,
+      [],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "ci",
+      "failed",
+    );
+    let queue = new TaskMutationQueue(f.project.contextRoot, f.project);
+    expect(queue.getActive()).toBeNull();
+    expect(
+      queue.list().find((event) => event.kind === "ci-repair"),
+    ).toMatchObject({ status: "queued", dispatchReady: false });
+    await f.poll();
+    queue = new TaskMutationQueue(f.project.contextRoot, f.project);
+    expect(runTaskSessionCiRepairs).toHaveBeenCalledTimes(2);
+    expect(
+      queue.list().find((event) => event.kind === "ci-repair")?.status,
+    ).toBe("completed");
+  });
   it("reobserves after maintenance rather than consuming feedback against its stale pre-merge head", async () => {
     vi.mocked(maintainOutdatedPr).mockResolvedValueOnce("completed");
     await pollReview("behind", { enabled: true });

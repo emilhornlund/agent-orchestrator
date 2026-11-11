@@ -237,8 +237,15 @@ configured source checkout is not used for these operations.
 
 An existing open pull request is reused; a new one is created only when none exists. After publication, every exact-head CI check
 run and commit status is collected and evaluated against the complete expectation set. The card remains in `Human Review` while
-checks are pending or the expected set is uncertain. A complete failure set starts at most two CI repair rounds in the existing
-primary session; each correction reruns local validation/coverage and independent review, publishes to the same PR, and invalidates
+checks are pending or the expected set is uncertain. Observation has a persisted
+30-minute bound per revision, starting at its first observation; restart does not
+restart the clock. Expiration ends the CI phase with uncertainty disclosed on the
+draft PR, without claiming success or failing the task. Polling still observes
+later results. A complete failure set starts a repair episode with its own
+`ciMaxPasses` maximum (default two) in the existing primary session. Own commits,
+reruns, polling, restart and routine target merges do not renew that budget. A
+verified substantive human request, including an explicit retry on the same head,
+can establish a distinct episode. Each correction offers advisory local validation/coverage and independent review, publishes available safe changes to the same PR, and invalidates
 all prior-head CI evidence. A successful complete CI result leaves the open PR in Human Review; approval and passing checks do not
 merge or complete it. Only an independently observed human merge permits the card to move to `Done` with `dueComplete: true`; a
 human unmerged closure routes it to `Backlog`. A publication or card-transition failure does not produce a successful completion.
@@ -351,6 +358,15 @@ Pending or uncertain CI retains the PR in `Human Review` without consuming a rep
 CI repair operation containing all failed checks; a published new head invalidates every previous check observation. Automatic
 merging is prohibited. An unknown expected-check set, missing check, stale head,
 or incomplete GitHub response never counts as green.
+
+CI repair and target synchronization display their current activity at the top of
+the existing description, progressing through editing/conflict resolution,
+advisory validation and publication. Verified completion, no-op and exhausted
+assistance clear the temporary status, retaining current outcomes and diagnostics
+in a separate managed section. Human introduction, task description and notes
+outside owned sections are preserved. A detected concurrent edit leaves reporting
+pending for reconciliation rather than overwriting human content. An unknown
+writer retains its attention state and ownership; it is never declared stopped.
 
 Open PRs, including approved PRs, automatically receive queued additive target
 merges when needed. Published commits are never rewritten. Conflict assistance

@@ -180,6 +180,8 @@ import { reconcileUnobservedTerminalPrEvents } from "./reconcile-unobserved-term
 import { verifyMergedTaskPrHeadContinuity } from "./verify-merged-task-pr-head-continuity.js";
 import { TaskMutationBlockStore } from "./task-mutation-block-store.js";
 import { updateMaintenanceStatus } from "./maintenance-status.js";
+import { refreshTaskSessionCiOutcome } from "./refresh-task-session-ci-outcome.js";
+import { ciRepairEventId as getCiRepairEventId } from "../task-session/ci-repair-event-id.js";
 import {
   reconcilePendingFeedbackCardMove,
   ensureFeedbackCardLocation,
@@ -2291,6 +2293,48 @@ export async function runTaskSessionWorkflow(
     if (
       record &&
       ["ci", "human-feedback"].includes(record.phase) &&
+      record.ciRepair?.activePrimaryOperation === undefined &&
+      (queue.getActive() === null || queue.getActive()?.kind === "ci-repair")
+    ) {
+      const card = humanReviewCards.find(
+        (candidate) => candidate.id === observation.cardId,
+      )!;
+      await refreshTaskSessionCiOutcome({
+        project,
+        card,
+        github,
+        record,
+        maintenanceStore,
+        evaluation: observation.ciEvaluation,
+      });
+      await updateMaintenanceStatus(
+        github,
+        project,
+        card,
+        observation.pullRequestUrl,
+        null,
+        "CI observation completed",
+        logger.child({ projectId: project.id, cardId: card.id }),
+      );
+      const active = queue.getActive();
+      if (
+        active?.kind === "ci-repair" &&
+        record.ciRepair &&
+        queue.claimForRecovery(active.eventId)
+      ) {
+        if (record.ciRepair.status !== "active") queue.complete(active.eventId);
+        else {
+          queue.requeueAfterVerifiedRecovery(active.eventId);
+          queue.setQueuedCiEligibility(
+            active.eventId,
+            observation.ciEvaluation.status === "failed",
+          );
+        }
+      }
+    }
+    if (
+      record &&
+      ["ci", "human-feedback"].includes(record.phase) &&
       !hasUnresolvedLegacyMaintenance &&
       queue.getActive()?.kind !== "feedback"
     ) {
@@ -2335,13 +2379,19 @@ export async function runTaskSessionWorkflow(
       const replyEventId = repliesPending
         ? feedbackReplyOperationId(observation.headSha, currentFeedback)
         : null;
-      const ciEventId = `ci-repair:${card.id}:${observation.headSha}`;
+      const ciEventId = getCiRepairEventId(record, observation.headSha);
       const maintenanceEventId = `pr-maintenance:${card.id}:${observation.headSha}`;
       const maintenanceNeeded =
         project.maintenance?.enabled !== false &&
         ["behind", "diverged"].includes(observation.baseRelation);
       for (const queued of queue.list()) {
         if (queued.cardId !== card.id || queued.status !== "queued") continue;
+        if (queued.kind === "ci-repair" && queued.eventId === ciEventId)
+          queue.setQueuedCiEligibility(
+            queued.eventId,
+            observation.ciEvaluation.status === "failed" &&
+              !["exhausted", "stopped"].includes(record.ciRepair?.status ?? ""),
+          );
         if (
           (queued.kind === "feedback" &&
             queued.eventId !== selectedFeedbackId &&
@@ -2507,7 +2557,10 @@ export async function runTaskSessionWorkflow(
       continue;
     }
     if (observation.ciEvaluation.status === "failed" || resumingCiReview) {
-      const ciEventId = `ci-repair:${observation.cardId}:${observation.headSha}`;
+      const ciEventId =
+        queue.getActive()?.kind === "ci-repair"
+          ? queue.getActive()!.eventId
+          : getCiRepairEventId(record, observation.headSha);
       queue.enqueue({
         projectId: project.id,
         cardId: observation.cardId,
@@ -2549,6 +2602,15 @@ export async function runTaskSessionWorkflow(
         record = recovered.record;
         if (record === null || record.primarySessionId === undefined) continue;
         const ciRecord = record;
+        await updateMaintenanceStatus(
+          github,
+          project,
+          card,
+          observation.pullRequestUrl,
+          "repairing-ci",
+          "CI correction",
+          logger.child({ projectId: project.id, cardId: card.id }),
+        );
         const ciSessionId = ciRecord.primarySessionId;
         if (ciSessionId === undefined) continue;
         const expectedBranch = `agent/${card.id}`;
@@ -2869,6 +2931,15 @@ export async function runTaskSessionWorkflow(
             sessionId,
             operationId,
           ) => {
+            await updateMaintenanceStatus(
+              github,
+              project,
+              card,
+              observation.pullRequestUrl,
+              "repairing-ci",
+              "CI correction pass",
+              logger.child({ projectId: project.id, cardId: card.id }),
+            );
             const latestOperation = taskStore.read(card.id);
             if (
               latestOperation?.reviewRepair?.activePrimaryOperation !==
@@ -3094,6 +3165,15 @@ export async function runTaskSessionWorkflow(
             return { finishEarly };
           },
           rerunLocalGatesAndReview: async () => {
+            await updateMaintenanceStatus(
+              github,
+              project,
+              card,
+              observation.pullRequestUrl,
+              "validating-pr-changes",
+              "CI quality",
+              logger.child({ projectId: project.id, cardId: card.id }),
+            );
             try {
               await rerunQualityAndReview();
             } catch (error) {
@@ -3160,6 +3240,15 @@ export async function runTaskSessionWorkflow(
             }
           },
           publishSamePullRequest: async () => {
+            await updateMaintenanceStatus(
+              github,
+              project,
+              card,
+              observation.pullRequestUrl,
+              "updating-remote",
+              "CI publication",
+              logger.child({ projectId: project.id, cardId: card.id }),
+            );
             if (quality === undefined)
               throw new Error("CI publication lacks current quality evidence");
             let latest = taskStore.read(card.id);
@@ -3405,13 +3494,89 @@ export async function runTaskSessionWorkflow(
           ) {
             if (queue.ownsActive(ciEventId))
               queue.releaseForRecovery(ciEventId);
+            await updateMaintenanceStatus(
+              github,
+              project,
+              card!,
+              observation.pullRequestUrl,
+              "automation-recovery",
+              "CI recovery",
+              logger.child({
+                projectId: project.id,
+                cardId: observation.cardId,
+              }),
+            );
             continue;
           }
         }
         if (queue.ownsActive(ciEventId)) queue.fail(ciEventId);
+        if (card) {
+          try {
+            await updateMaintenanceStatus(
+              github,
+              project,
+              card,
+              observation.pullRequestUrl,
+              "automation-recovery",
+              "CI recovery",
+              logger.child({ projectId: project.id, cardId: card.id }),
+            );
+          } catch (statusError) {
+            throw new AggregateError(
+              [error, statusError],
+              "CI correction and status reconciliation require recovery",
+              { cause: statusError },
+            );
+          }
+        }
         throw error;
       }
-      queue.complete(ciEventId);
+      try {
+        const finished = taskStore.read(card.id)!;
+        const finalEvaluation =
+          ciResult.status === "passed"
+            ? {
+                status: "passed" as const,
+                expectedHeadSha: ciResult.headSha,
+                expectedCheckNames: observation.expectedCheckNames,
+              }
+            : ciResult.status === "waiting"
+              ? ciResult.evaluation
+              : ciResult.headSha === observation.headSha
+                ? observation.ciEvaluation
+                : {
+                    status: "uncertain" as const,
+                    expectedHeadSha: ciResult.headSha,
+                    observedHeadSha: ciResult.headSha,
+                    expectedCheckNames: observation.expectedCheckNames,
+                    diagnostic:
+                      "Published correction awaits current-revision CI results",
+                  };
+        await refreshTaskSessionCiOutcome({
+          project,
+          card,
+          github,
+          record: finished,
+          maintenanceStore,
+          evaluation: finalEvaluation,
+        });
+        await updateMaintenanceStatus(
+          github,
+          project,
+          card,
+          observation.pullRequestUrl,
+          null,
+          "CI correction finished",
+          logger.child({ projectId: project.id, cardId: card.id }),
+        );
+        if (ciResult.status === "waiting") {
+          queue.requeueAfterVerifiedRecovery(ciEventId);
+          queue.setQueuedCiEligibility(ciEventId, false);
+        } else queue.complete(ciEventId);
+      } catch (error) {
+        if (queue.ownsActive(ciEventId)) queue.releaseForRecovery(ciEventId);
+        throw error;
+      }
       logger
         .child({ projectId: project.id, cardId: observation.cardId })
         .event(

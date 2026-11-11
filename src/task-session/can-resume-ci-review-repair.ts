@@ -1,5 +1,6 @@
 import type { TaskExecutionRecord } from "./task-execution-record.js";
 import type { TaskMutationEvent } from "./task-mutation-queue.js";
+import { ciRepairEventId } from "./ci-repair-event-id.js";
 
 /** Route local review of an already completed CI correction back to its owner. */
 export function canResumeCiReviewRepair(
@@ -17,8 +18,7 @@ export function canResumeCiReviewRepair(
     event.kind !== "ci-repair" ||
     !["active", "failed"].includes(event.status) ||
     record.pullRequest?.headSha === undefined ||
-    event.eventId !==
-      `ci-repair:${record.cardId}:${record.pullRequest.headSha}` ||
+    event.eventId !== ciRepairEventId(record, record.pullRequest.headSha) ||
     event.operationKey !==
       `${record.operationKey}:ci:${record.pullRequest.headSha}` ||
     record.ciRepair?.status !== "active" ||
