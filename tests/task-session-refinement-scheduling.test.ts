@@ -237,7 +237,11 @@ describe("task-session refinement scheduling", () => {
         }
         return readyCards
           .filter((card) => cardLists.get(card.id) === listId)
-          .map((card) => ({ ...card, idList: listId }));
+          .map((card) => ({
+            ...card,
+            idList: listId,
+            idLabels: [...cardLabels.get(card.id)!],
+          }));
       }),
       getCard: vi.fn(async (cardId: string) => {
         const card = readyCards.find((candidate) => candidate.id === cardId)!;

@@ -46,8 +46,10 @@ missing legacy attribution retain ownership; partial accepted effects can comple
 without replay. There is no blind rollback or atomic compare-and-write claim.
 T4a verifies unchanged originals and the Failed outcome after bounded analysis
 failure, preserving unknown state/human changes instead of terminally releasing.
-Remaining work is T4b recoverable completion/comment/full-field release and T5
-combined validation. Historical cleanup and fresh-attempt retry remain in P10.
+T4b recovers Backlog completion with immutable comment text/identity and verifies
+complete fields/history/comment/own move before release. Started refinement queue
+events cannot be mistaken for orphaned Ready claims. Only T5 combined validation
+remains. Historical cleanup and fresh-attempt retry remain in P10.
 
 Inspect `src/refinement/run-refinement-card.ts`, `run-refinement.ts`,
 `run-refinement-setup.ts`, `refinement-operation.ts`, `refinement-result.ts`,

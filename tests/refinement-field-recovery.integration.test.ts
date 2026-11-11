@@ -218,3 +218,74 @@ it("does not terminally fail over human field changes discovered after invalid a
   expect(f.card.idList).toBe(f.project.trello.workingListId);
   expect(f.authority.store.read()!.lifecycle).toBe("refinement");
 });
+
+it("recovers a lost completion-comment acknowledgement in Backlog without duplicate effects", async () => {
+  const f = await fixture();
+  let lost = false;
+  vi.stubGlobal("fetch", async (url: URL, init?: RequestInit) => {
+    const result = await f.fetch(url, init);
+    if (!lost && init?.method === "POST" && url.pathname.endsWith("comments")) {
+      lost = true;
+      throw new TypeError("lost comment acknowledgement");
+    }
+    return result;
+  });
+  await f.poll();
+  expect(lost).toBe(true);
+  expect(f.card.idList).toBe(f.project.trello.backlogListId);
+  expect(f.authority.store.read()!.lifecycle).toBe("refinement");
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(Date.now() + 60000);
+  await f.poll();
+  await f.poll();
+  expect(f.authority.store.read()!.lifecycle).toBe("refined");
+  expect(f.engineer).toHaveBeenCalledOnce();
+  expect(
+    f.requests.filter((r) => r.startsWith("POST:") && r.endsWith("comments")),
+  ).toHaveLength(1);
+});
+
+it("resumes only completion after successful cleanup and a final Backlog-read outage", async () => {
+  const f = await fixture();
+  const readCards = f.trello.getCards.bind(f.trello);
+  let failed = false;
+  vi.spyOn(f.trello, "getCards").mockImplementation(async (listId) => {
+    if (!failed && listId === f.project.trello.backlogListId) {
+      failed = true;
+      throw new Error("completion read outage");
+    }
+    return readCards(listId);
+  });
+  await expect(f.poll()).rejects.toThrow("completion read outage");
+  expect(
+    fs.existsSync(path.join(f.project.repository.worktreeRoot, f.card.id)),
+  ).toBe(false);
+  await f.poll();
+  expect(f.authority.store.read()!.lifecycle).toBe("refined");
+  expect(f.engineer).toHaveBeenCalledOnce();
+  expect(
+    f.requests.filter((r) => r.startsWith("POST:") && r.endsWith("comments")),
+  ).toHaveLength(1);
+});
+
+it("does not release completion when human fields change during final Backlog readback", async () => {
+  const f = await fixture();
+  const readCards = f.trello.getCards.bind(f.trello);
+  vi.spyOn(f.trello, "getCards").mockImplementation(async (listId) => {
+    if (listId === f.project.trello.backlogListId) {
+      const old = { desc: f.card.desc };
+      f.card.desc = "Human final revision";
+      f.record(
+        {
+          type: "updateCard",
+          data: { old, card: { id: f.card.id, desc: f.card.desc } },
+        },
+        "human",
+      );
+    }
+    return readCards(listId);
+  });
+  await expect(f.poll()).rejects.toThrow("completion is not verified");
+  expect(f.authority.store.read()!.lifecycle).toBe("refinement");
+  expect(f.card.desc).toBe("Human final revision");
+});

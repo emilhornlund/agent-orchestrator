@@ -168,7 +168,7 @@ When a refinement card is claimed:
 1. The orchestrator prepares `<worktreeRoot>/<trello-card-id>` on `agent/<trello-card-id>` before moving the card to
    `Working`.
 2. The orchestrator reconciles the current Trello attachments into the card context immediately before the refinement
-   session. OpenCode may inspect repository code, tests, documentation, and architecture. It must not modify repository
+   session. OpenCode may inspect repository code, tests, documentation, and architecture. It must not modify
    repository files. The child and its descendants receive a read-only worktree
    and Git metadata, including the index and refs. Its result artifact is outside
    the repository in the owned attempt's runtime storage. Setup effects are
@@ -183,13 +183,19 @@ When a refinement card is claimed:
 5. After the move succeeds, it attempts the optional refinement-completion email and adds one concise Trello comment containing
    the classification, refined title, and, when reliable transition history is available, elapsed workflow time. The comment
    does not repeat the refined task description.
-6. The successful refinement result artifact is cleared and the refinement worktree is cleaned up on a best-effort basis. A
+6. Successful result artifacts are preserved outside the repository, and the refinement worktree is cleaned up on a best-effort basis. A
    failure identifies the project, card, operation, and artifact in a warning and preserves the artifact when it cannot be
    removed; it does not change the confirmed `Backlog` result.
 
-Email and comment failures are logged independently and do not undo the successful `Backlog` transition. If refinement
-fails, produces an invalid result, or modifies unauthorized repository files, the card is sent through normal failure
-handling to `Failed`. Its deliberate retry action is to move it to `Ready for Agent`; see [Recovery](recovery.md).
+Email failures are nonblocking. The completion comment has a persisted identity and
+text (including any available duration); uncertain acceptance is reconciled rather
+than resent. Before release, full intended fields, the orchestrator's Backlog move
+and completion comment must all be verified. An interrupted Backlog completion
+resumes without setup, analysis or even a worktree that has already been cleaned up.
+Unexpected manual moves never count as successful refinement. Bounded analysis
+failure uses the verified Failed protocol above; unsafe/unknown repository or card
+state stays preserved for reconciliation. A deliberate retry starts by moving a
+confirmed Failed card to `Ready for Agent`; see [Recovery](recovery.md).
 
 ## Implementation and quality gates
 

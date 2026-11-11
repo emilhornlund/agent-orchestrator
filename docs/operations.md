@@ -216,7 +216,7 @@ Implementation worktrees remain available while their owned PR is under CI monit
 repairs can reuse the task branch. After an authoritative terminal PR transition, cleanup is limited to the expected
 `<worktreeRoot>/<card-id>` and `agent/<card-id>` artifacts. The terminal mutation remains durable until required cleanup has been
 verified; a failure preserves the queue event and task state for restart recovery without repeating a merge or duplicating the
-terminal Trello transition. Refinement clears its result and attempts local worktree cleanup after moving the card to `Backlog`.
+terminal Trello transition. Refinement preserves its external result artifacts and attempts local worktree cleanup after moving the card to `Backlog` and verifying the completion comment.
 Result-file and refinement cleanup are housekeeping; failures are warning-level diagnostics with project, card, operation, and
 affected path, and do not undo a confirmed `Backlog` transition. Failed or unsafe removals preserve the remaining artifact.
 

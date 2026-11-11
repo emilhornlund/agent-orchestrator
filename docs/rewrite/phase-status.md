@@ -70,6 +70,22 @@
   Final five focused suites passed 41 tests, plus typecheck, changed-file ESLint
   and whitespace checks, including the generic-error preservation correction.
   T4b and T5 remain; no full validation claimed.
+- T4a checkpoint: `67c8ae9`. T4b persists immutable completion-comment text and
+  verified acceptance; unknown comment delivery blocks release, not Backlog
+  preservation. Backlog recovery uses the existing move journal and retained
+  full-field snapshot without rerunning setup/analysis or requiring a cleaned
+  worktree. Final release checks full list/readback/history, comment and own move.
+- The new recovery regressions initially exposed earlier orphan retirement of a
+  started refinement (which has no implementation projection). Started canonical
+  refinement now retains its queue obligation through Backlog/Failed/manual moves;
+  queued/failed recovery uses a unique retained event, not arbitrary Ready selection.
+  Self-review traced those earlier callers, completion persistence, both release
+  routes and tests. Fixed missing legacy snapshot fencing before completion-only
+  dispatch and a late-human-edit gap in final Backlog readback. Old guidance about
+  ignoring comment failures/deleting results was corrected.
+- Final five focused suites passed 58 tests, plus typecheck, changed-file ESLint
+  and whitespace checks, including provenance-fence/unique-event corrections.
+  Only combined P9 integration/specification checks and final validation remain.
 
 ## Inherited P8 checkpoint
 
