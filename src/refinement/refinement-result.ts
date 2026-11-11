@@ -1,5 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
+import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 
 import { z } from "zod";
 
@@ -49,15 +51,35 @@ export function buildRefinementResultContractPromptLines(): string[] {
 }
 
 export function getRefinementResultPath(worktreePath: string): string {
+  const projectId = ProjectRunAuthority.currentProjectId();
+  const run = projectId && ProjectRunAuthority.current(projectId)?.store.read();
+  if (run) {
+    if (
+      path.resolve(worktreePath) !==
+      path.join(run.pinned.worktreeRoot, run.cardId)
+    )
+      throw new Error("Refinement result worktree differs from owned attempt");
+    return path.join(
+      run.pinned.storageRoot,
+      "refinement-results",
+      run.attemptId,
+      "result.json",
+    );
+  }
   return path.join(worktreePath, refinementResultRelativePath);
 }
 
 export function clearRefinementResult(worktreePath: string): void {
   const resultPath = getRefinementResultPath(worktreePath);
 
-  fs.rmSync(resultPath, {
-    force: true,
-  });
+  // Preserve prior output, including interrupted/invalid output, rather than
+  // deleting evidence or accepting it as a new agent result.
+  fs.mkdirSync(path.dirname(resultPath), { recursive: true, mode: 0o700 });
+  if (fs.existsSync(resultPath)) {
+    const preserved = `${path.dirname(resultPath)}-preserved`;
+    fs.mkdirSync(preserved, { recursive: true, mode: 0o700 });
+    fs.renameSync(resultPath, path.join(preserved, randomUUID()));
+  }
 }
 
 export function readRefinementResult(worktreePath: string): RefinementResult {

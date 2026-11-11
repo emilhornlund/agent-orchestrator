@@ -183,6 +183,75 @@ function stateFor(authority: ProjectRunAuthority, cardId: string) {
 }
 
 describe("refinement setup recovery (canonical authority, real Git and processes)", () => {
+  it("confines refinement and descendants to external results while preserving setup files, index and refs", async () => {
+    const f = await fixture("printf generated > setup-file");
+    const bin = path.join(root, "bin");
+    const home = path.join(root, "home");
+    fs.mkdirSync(bin);
+    fs.mkdirSync(home);
+    await f.authority.run(async () => {
+      await runRefinementSetup({
+        commands: new CommandRunner(),
+        git: f.git,
+        project: f.project,
+        cardId: f.card.id,
+        worktreePath: f.worktreePath,
+        signal: new AbortController().signal,
+        cardLog: logger,
+      });
+      const resultPath = getRefinementResultPath(f.worktreePath);
+      fs.mkdirSync(path.dirname(resultPath), { recursive: true });
+      const metadata = path.resolve(
+        f.worktreePath,
+        fs
+          .readFileSync(path.join(f.worktreePath, ".git"), "utf8")
+          .trim()
+          .slice(8),
+      );
+      const protectedPaths = [
+        "README.md",
+        "setup-file",
+        "new-file",
+        ".git",
+        path.join(metadata, "index"),
+        path.join(metadata, "HEAD"),
+        path.join(f.project.repository.path, ".git/refs/heads/intrusion"),
+      ];
+      fs.writeFileSync(
+        path.join(bin, "opencode"),
+        `#!${process.execPath}
+const fs = require('node:fs'); const {spawnSync} = require('node:child_process');
+for (const p of ${JSON.stringify(protectedPaths)}) { try { fs.writeFileSync(p, 'unsafe'); process.exit(31); } catch {} }
+const child = spawnSync(${JSON.stringify(process.execPath)}, ['-e', "try {require('node:fs').writeFileSync('README.md', 'unsafe'); process.exit(32)} catch {}"]);
+if (child.status !== 0) process.exit(33);
+fs.writeFileSync(${JSON.stringify(resultPath)}, JSON.stringify({title:'Grounded task', description:'Refined objective', type:'feature'}));
+`,
+        { mode: 0o700 },
+      );
+      const result = await new OpenCodeClient().run({
+        cwd: f.worktreePath,
+        model: "openai/test",
+        prompt: "refine",
+        refinementResultDirectory: path.dirname(resultPath),
+        environment: {
+          PATH: `${bin}:${path.dirname(process.execPath)}:/usr/bin:/bin`,
+          HOME: home,
+        },
+        timeoutMilliseconds: 10000,
+        signal: new AbortController().signal,
+      });
+      expect(result.exitCode, result.errorOutput).toBe(0);
+      expect(JSON.parse(fs.readFileSync(resultPath, "utf8"))).toMatchObject({
+        type: "feature",
+      });
+      expect(
+        fs.readFileSync(path.join(f.worktreePath, "setup-file"), "utf8"),
+      ).toBe("generated");
+      expect(
+        fs.readFileSync(path.join(f.worktreePath, "README.md"), "utf8"),
+      ).toBe("initial\n");
+    });
+  });
   it.each([
     ["nonzero", "printf preserved > setup-effect; exit 9", undefined],
     ["timeout", "printf preserved > setup-effect; sleep 5", 40],
@@ -405,7 +474,8 @@ describe("refinement setup recovery (canonical authority, real Git and processes
         coordinationRoot: path.join(root, "coordination"),
       });
       const openCode = vi.fn(async () => {
-        expect(fs.existsSync(resultPath)).toBe(false);
+        expect(fs.existsSync(resultPath)).toBe(true);
+        expect(getRefinementResultPath(f.worktreePath)).not.toBe(resultPath);
         return {
           exitCode: 7,
           output: "expected nonzero after setup skip",

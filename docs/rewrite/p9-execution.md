@@ -33,6 +33,14 @@ and P10 historical cleanup/retry are outside this scope.
 
 ## Starting points and checks
 
+Current implementation: T1 confines refinement through the existing Bubblewrap
+dispatch, with a read-only task worktree/Git metadata and a separately writable
+external result directory. Setup-free new attempts persist an inventory too;
+older setup-free records lacking that inventory are fenced rather than rebased
+onto potentially agent-modified files. Repository-local legacy results remain
+preserved and are not reused. Remaining work is bounded complete-result correction,
+history-aware field reconciliation and verified completion/release.
+
 Inspect `src/refinement/run-refinement-card.ts`, `run-refinement.ts`,
 `run-refinement-setup.ts`, `refinement-operation.ts`, `refinement-result.ts`,
 `refinement-mutation-snapshot.ts`, `finalize-refinement.ts`, prompts and workflow

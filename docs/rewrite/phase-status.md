@@ -2,6 +2,31 @@
 
 ## Current checkpoint
 
+- **P9 in progress on `refactor/p9-recoverable-refinement`, based on `190bb3c`.**
+  Initial index/worktree clean; P8 is integrated. Only small local P9 commits are
+  authorized, without remote actions or P10 expansion.
+- Current inspection: setup attribution and P4 content/label intents exist, but
+  refinement results are still repository-local, no bounded invalid-result correction
+  exists, and finalization lacks full-field/history conflict reconciliation.
+- Ordered remaining work: T1 read-only dispatch/external results and conservative
+  baseline recovery; T2 complete-result bounded correction and grounded prompts;
+  T3 durable conflict-aware field finalization/restart; T4 verified full Backlog
+  outcome/comment/release and combined checks, followed by `yarn validate`.
+- T1 implements read-only worktree/Git-metadata mounts with external attempt results,
+  preserved prior output outside the writable artifact directory, and durable
+  setup-free baselines. Legacy repository-local artifacts are preserved, not reused;
+  missing prior setup-free baseline provenance blocks redispatch. Self-review
+  inspected production polling/workflow dispatch, setup restart and result paths,
+  mount validation and new real-child tests. Fixed writable access to preserved
+  results by moving them outside the result mount. Two old test expectations were
+  corrected to require preservation instead of deletion of legacy results.
+- T1 focused five-suite run passed 28 tests, including actual child/descendant
+  filesystem enforcement. Typecheck and changed-file ESLint passed. Documentation
+  formatting initially found one wrap issue, corrected before checkpoint. Final
+  affected checks are rerun before commit. T2–T4 remain; no full validation claimed.
+
+## Inherited P8 checkpoint
+
 - **P8 implemented and locally validated, based on `b7fff4a` (integrated P7).**
   The starting index/worktree were clean.
   Authorized actions are small local task/correction commits only. No remote Git

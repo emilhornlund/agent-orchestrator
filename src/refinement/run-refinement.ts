@@ -1,4 +1,5 @@
 import type { ProjectConfig } from "../config/config.js";
+import path from "node:path";
 import type { CardAttachmentPromptContext } from "../context/card-attachment-prompt.js";
 import type { GitClient } from "../git/git-client.js";
 import { getSessionLogPath } from "../logging/session-log.js";
@@ -10,6 +11,7 @@ import { captureSetupEffects } from "../process/run-setup.js";
 
 import {
   clearRefinementResult,
+  getRefinementResultPath,
   readRefinementResult,
   refinementResultRelativePath,
   type RefinementResult,
@@ -59,7 +61,14 @@ export async function runRefinement(
     model: project.opencode.refinement.model,
     variant: project.opencode.refinement.variant,
     timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
-    prompt: buildRefinementPrompt(card, attachmentContext),
+    prompt: buildRefinementPrompt(
+      card,
+      attachmentContext,
+      getRefinementResultPath(worktreePath),
+    ),
+    refinementResultDirectory: path.dirname(
+      getRefinementResultPath(worktreePath),
+    ),
     signal,
     sessionLogPath,
     sessionLabel: "OpenCode refinement",

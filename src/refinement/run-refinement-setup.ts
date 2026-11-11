@@ -1,4 +1,6 @@
 import { z } from "zod";
+import fs from "node:fs";
+import path from "node:path";
 import type { ProjectConfig } from "../config/config.js";
 import type { GitClient } from "../git/git-client.js";
 import type { Logger } from "../logging/logger.js";
@@ -192,6 +194,18 @@ export async function runRefinementSetup(options: {
         );
         return baseline;
       }
+      if (
+        previous !== null ||
+        fs.existsSync(path.join(worktreePath, refinementResultRelativePath))
+      )
+        throw new RefinementSetupAmbiguousError(
+          "Interrupted refinement has no attributable post-setup baseline; preserving repository and result artifacts",
+        );
+      const baseline = await captureSetupEffects(git, worktreePath, signal);
+      initial.baseline = authority.store.writeArtifact(
+        baseline,
+        "application/json",
+      ).id;
       authority.mutate(
         key,
         initial,
@@ -201,7 +215,7 @@ export async function runRefinementSetup(options: {
         }),
         (value) => setupStateSchema.parse(value),
       );
-      return undefined;
+      return baseline;
     }
     cardLog.event("Repository setup skipped: no setup command is configured");
     return undefined;

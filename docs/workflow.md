@@ -150,7 +150,12 @@ When a refinement card is claimed:
    `Working`.
 2. The orchestrator reconciles the current Trello attachments into the card context immediately before the refinement
    session. OpenCode may inspect repository code, tests, documentation, and architecture. It must not modify repository
-   implementation files; its only permitted write is the dedicated structured refinement result artifact.
+   repository files. The child and its descendants receive a read-only worktree
+   and Git metadata, including the index and refs. Its result artifact is outside
+   the repository in the owned attempt's runtime storage. Setup effects are
+   attributed separately and preserved. Interrupted output is preserved rather
+   than silently deleted or accepted as a fresh result; missing baseline
+   provenance blocks redispatch for reconciliation.
    The artifact must be a strict JSON object containing only non-blank `title` and `description` strings and a `type` set to
    exactly `feature`, `improvement`, or `bug`.
 3. The orchestrator validates the structured result and rejects unauthorized repository changes.
