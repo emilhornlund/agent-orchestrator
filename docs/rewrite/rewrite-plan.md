@@ -271,6 +271,9 @@ Archive/release/new-attempt handoff must recover across interruption. See the
 Retain terminal attempt records in place as history rather than moving
 authority into a second archive. Subsequent attempts own distinct suffixed resource
 names; supported older active attempts retain their original persisted identities.
+This contribution is implemented and locally validated; [current progress](phase-status.md)
+records the integrated result. P11 final integration/temporary-guidance removal
+remains separate and has not started.
 
 ### P11 — Final integration, supported migration and removal of scaffolding
 

@@ -2,10 +2,15 @@
 
 ## Current checkpoint
 
-- **P10 in progress on `refactor/p10-terminal-outcomes-and-retries`, based on
+- **P10 implemented and locally validated on `refactor/p10-terminal-outcomes-and-retries`, based on
   `96292f3` (integrated P9).** Initial index/worktree clean. Small local task commits
   authorized; no remote actions, branch changes or P11 cleanup.
-- Ordered remaining work: T1 verified terminal effects/comments/release and
+- Implementation/correction checkpoints: `6ae222c`, `8a18789`, `ffc7bc3`,
+  `1598430`. Final integrated `yarn validate` passed ESLint, Prettier, TypeScript
+  and **2,237 tests across 171 files**. No known scoped defect or implementation
+  requirement remains. This completion documentation is checked on the final tree.
+  No live-service qualification is claimed. Stop before P11.
+- Original ordered work: T1 verified terminal effects/comments/release and
   notification recovery; T2 canonical owned idempotent cleanup, preservation and
   closed-PR history; T3 recoverable fresh-attempt handoff with isolated old artifacts,
   new identities and latest default/card/context; T4 combined criteria/recovery
@@ -89,6 +94,12 @@
   both initial-publication closure regressions passed (77 unrelated cases filtered).
   Typecheck, changed-file ESLint, formatting and whitespace checks passed. Final
   integrated validation is rerun after this correction; no full pass claimed yet.
+- T4 correction checkpoint: `1598430`. The corrected integrated tree passed full
+  `yarn validate` (lint, formatting, typecheck, all 2,237 tests in 171 files),
+  including initial publication terminal races, refinement cleanup/recovery,
+  preserved failures, distinct retry resources, mutation and notification recovery.
+  Final documentation records actual completion; no P10 work remains. P11 retains
+  final temporary-guidance removal, and is not started here.
 
 ## Inherited P9 checkpoint
 
@@ -707,7 +718,7 @@ requirements/specification sections and meaningful regression tests:
   corrected integrated tree then passed full `yarn validate` as recorded above.
 
 No P6–P9 implementation work remains. P9 is implemented and locally validated
-as recorded above. P10 is in progress at the current checkpoint. P11 covers
+as recorded above. P10 is implemented and locally validated at the current checkpoint. P11 covers
 remaining integration/regression gaps, with broader qualification only if requested.
 
 ## Known carryovers

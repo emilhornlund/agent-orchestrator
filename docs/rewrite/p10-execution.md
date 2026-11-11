@@ -1,5 +1,9 @@
 # P10 — terminal outcomes, safe cleanup and deliberate retries
 
+Implemented and locally validated; [current progress](phase-status.md) records
+task/correction checkpoints and integrated check results. No P10 implementation
+work remains. P11 temporary-guidance removal is separate.
+
 Temporary implementation guide. Follow [delivery workflow](phase-execution.md).
 Read REQ-TR-001–003, REQ-GIT-003–006, REQ-SCH-001, terminal REQ-PR-008/REF-005,
 retry REQ-CTX-002/IMP-005, REQ-NOT-001/002 and the touched REQ-REC-005 upgrade
