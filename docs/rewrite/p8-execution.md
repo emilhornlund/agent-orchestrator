@@ -6,6 +6,10 @@ workflow's contributions to REQ-HR-006, REQ-PR-008, REQ-IMP-004 and REQ-CTX-001/
 Plan small complete tasks, not isolated helpers. Keep P6 advisory policy and P7 writer/queue/capacity
 contracts. P9 refinement and P10 terminal cleanup/retry are outside this scope.
 
+This phase is implemented and locally validated. The existing
+[progress summary](phase-status.md) records its actual checks and checkpoints.
+Do not automatically begin P9 or reopen completed tasks without a concrete defect.
+
 ## Implementation order and contracts
 
 1. Discover expected checks and current-revision results from supported sources.

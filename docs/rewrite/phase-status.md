@@ -2,9 +2,22 @@
 
 ## Current checkpoint
 
-- **P8 in progress on `b7fff4a` (integrated P7); starting index/worktree clean.**
+- **P8 implemented and locally validated, based on `b7fff4a` (integrated P7).**
+  The starting index/worktree were clean.
   Authorized actions are small local task/correction commits only. No remote Git
   action, branch change, deployment or P9 work is authorized.
+- **All scoped implementation tasks are checkpointed through `37174a8`.** The
+  combined inspection reused task reviews and checked CI-001/002, MNT-001–004,
+  GIT-001/002, PR-007/008 and the active-PR queue/session/context contributions to
+  HR-006, IMP-004 and CTX-001/003. The concrete integration gaps found are corrected
+  below; no known scoped implementation requirement remains unfinished.
+  Integrated `yarn validate` passed repository ESLint, Prettier, TypeScript and
+  **2,195 tests across 167 files**. The completion documentation is included in the
+  final validated checkpoint. No live-service qualification is claimed, and
+  P9/terminal-cleanup expansion remain outside this phase. No P8 work remains;
+  stop before another phase.
+- Local implementation/correction checkpoints: `f58cd2b`, `e0f32c8`, `e261ba3`,
+  `3ab7e1d`, `3121ed7`, `f5380d7`, `576d64f`, `498685e`, `37174a8`.
 - Original ordered work: T1 current-revision expected CI discovery and durable
   bounded observation; T2 verified-trigger repair episodes, configured budgets and
   advisory same-session correction publication; T3 queued additive target merges,
@@ -452,7 +465,7 @@ requirements/specification sections and meaningful regression tests:
   passed all 70 tests; typecheck, changed-file ESLint and Prettier passed. The
   corrected integrated tree then passed full `yarn validate` as recorded above.
 
-No P6/P7 implementation work remains. P8 is in progress; P9–P10 have not started. P11 covers
+No P6–P8 implementation work remains. P9–P10 have not started. P11 covers
 remaining integration/regression gaps, with broader qualification only if requested.
 
 ## Known carryovers

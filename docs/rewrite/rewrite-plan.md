@@ -241,6 +241,8 @@ records without it remain fenced. Default automatic discovery retains the
 per-project opt-out. Safe merge publication includes advisory quality and truthful
 draft/outcome reporting in the same behavior, rather than enabling an incomplete
 writer before its quality/publication integration exists.
+This contribution is implemented and locally validated; [current progress](phase-status.md)
+records the integration corrections and final checks. P9/P10 work remains separate.
 
 ### P9 — Recoverable, read-only refinement
 
