@@ -3,6 +3,7 @@ import { StringDecoder } from "node:string_decoder";
 import { createHash } from "node:crypto";
 import { buildChildEnvironment } from "../process/child-environment.js";
 import fs from "node:fs";
+import { ObservedPrTerminalError } from "../task-session/terminal-pr-fence.js";
 import os from "node:os";
 import path from "node:path";
 
@@ -669,7 +670,11 @@ export class GitClient {
 
         return redactSecrets(output, credential.secretValues);
       } catch (error) {
-        if (error instanceof ProcessExecutionError) throw error;
+        if (
+          error instanceof ProcessExecutionError ||
+          error instanceof ObservedPrTerminalError
+        )
+          throw error;
         const safeError = redactError(error, credential.secretValues);
 
         if (

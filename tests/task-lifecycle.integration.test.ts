@@ -41,6 +41,9 @@ import {
   reconcileManagedPullRequestStatus,
   type ManagedPullRequestStatus,
 } from "../src/github/pull-request-status.js";
+import { readTerminalPrFence } from "../src/task-session/terminal-pr-fence.js";
+import { AiExecutionCapacity } from "../src/orchestrator/ai-execution-capacity.js";
+import { notificationAuthorityFixture } from "./support/notification-authority-fixture.js";
 
 const execFile = promisify(nodeExecFile);
 let roots: string[] = [];
@@ -56,6 +59,7 @@ interface LifecycleScenario {
   terminalReadRaceAt?: number;
   correctionFailure?: boolean;
   feedbackQuality?: "validation" | "unavailable" | "no-op";
+  terminalDuringFeedback?: "active" | "unknown" | "capacity" | "push-rejected";
   preparedReview?: "material" | "unavailable";
   ciReviewHandoffs?: boolean;
   feedbackReviewRecovery?:
@@ -79,6 +83,39 @@ afterEach(async () => {
 
 describe("task lifecycle through pollProject", () => {
   it.each<LifecycleScenario>([
+    ...(["merged", "closed"] as const).map((terminal) => ({
+      draft: false,
+      terminal,
+      destination:
+        terminal === "merged" ? ("done" as const) : ("backlog" as const),
+      ackLoss: false,
+      quality: "both" as const,
+      terminalDuringFeedback: "active" as const,
+    })),
+    {
+      draft: false,
+      terminal: "merged",
+      destination: "done",
+      ackLoss: false,
+      quality: "both",
+      terminalDuringFeedback: "unknown",
+    },
+    {
+      draft: false,
+      terminal: "closed",
+      destination: "backlog",
+      ackLoss: false,
+      quality: "both",
+      terminalDuringFeedback: "capacity",
+    },
+    {
+      draft: false,
+      terminal: "closed",
+      destination: "backlog",
+      ackLoss: false,
+      quality: "both",
+      terminalDuringFeedback: "push-rejected",
+    },
     ...(["validation", "unavailable", "no-op"] as const).map(
       (feedbackQuality) => ({
         draft: false,
@@ -189,7 +226,7 @@ describe("task lifecycle through pollProject", () => {
       ciReviewRecovery,
     })),
   ] as const)(
-    "preserves the owned lifecycle (quality=$quality, draft=$draft, terminal=$terminal, ackLoss=$ackLoss, correctionFailure=$correctionFailure, feedbackQuality=$feedbackQuality, preparedReview=$preparedReview, ciReviewHandoffs=$ciReviewHandoffs, feedbackReviewRecovery=$feedbackReviewRecovery, ciReviewRecovery=$ciReviewRecovery)",
+    "preserves the owned lifecycle (quality=$quality, draft=$draft, terminal=$terminal, ackLoss=$ackLoss, correctionFailure=$correctionFailure, feedbackQuality=$feedbackQuality, terminalDuringFeedback=$terminalDuringFeedback, preparedReview=$preparedReview, ciReviewHandoffs=$ciReviewHandoffs, feedbackReviewRecovery=$feedbackReviewRecovery, ciReviewRecovery=$ciReviewRecovery)",
     async ({
       draft,
       terminal,
@@ -198,6 +235,7 @@ describe("task lifecycle through pollProject", () => {
       terminalReadRaceAt = 2,
       correctionFailure = false,
       feedbackQuality,
+      terminalDuringFeedback,
       quality,
       preparedReview,
       ciReviewHandoffs = false,
@@ -447,7 +485,11 @@ describe("task lifecycle through pollProject", () => {
       let blockTerminalDestinationRead = false;
       const trello = {
         getCards: async (listId: string) => {
-          if (blockTerminalDestinationRead && listId === destination) {
+          if (
+            blockTerminalDestinationRead &&
+            listId === destination &&
+            lists.get("first") === destination
+          ) {
             ledger.push({
               service: "trello",
               action: `read-cards:${listId}:unavailable`,
@@ -556,6 +598,7 @@ describe("task lifecycle through pollProject", () => {
       let loseFeedbackWorkingAck = feedbackQuality === "validation";
       let feedbackBody = "Please handle the empty result.";
       let feedbackPrimaryCorrections = 0;
+      let feedbackClassifications = 0;
       const feedbackReplyBodies: string[] = [];
       const feedbackReviewDispatches: {
         operationId: string;
@@ -700,6 +743,17 @@ describe("task lifecycle through pollProject", () => {
             body: input.body,
           };
           prs.set(input.headBranch, pr);
+          await execFile(
+            "git",
+            [
+              "--git-dir",
+              remote,
+              "update-ref",
+              `refs/pull/${number}/head`,
+              sha,
+            ],
+            { env },
+          );
           accepted.push(url);
           ledger.push({
             service: "github",
@@ -820,14 +874,16 @@ describe("task lifecycle through pollProject", () => {
       const openCodeCards: string[] = [];
       const realRunner = new OpenCodeClient();
       const originalPath = process.env.PATH;
-      if (correctionFailure) {
+      if (correctionFailure || terminalDuringFeedback === "active") {
         originalProcessPath = originalPath;
         const runnerDirectory = path.join(root, "scripted-bin");
         fs.mkdirSync(runnerDirectory);
         fs.copyFileSync(
           path.join(
             process.cwd(),
-            "tests/fixtures/scripted-opencode-primary-outage.mjs",
+            terminalDuringFeedback === "active"
+              ? "tests/fixtures/scripted-opencode-review-writer.mjs"
+              : "tests/fixtures/scripted-opencode-primary-outage.mjs",
           ),
           path.join(runnerDirectory, "opencode"),
         );
@@ -852,17 +908,20 @@ describe("task lifecycle through pollProject", () => {
       }
       const openCode = new OpenCodeClient(
         async (options: OpenCodeRunOptions) => {
-          if (options.sessionLabel === "Human feedback classification")
+          if (options.sessionLabel === "Human feedback classification") {
+            feedbackClassifications++;
             return {
               exitCode: 0,
               output: actionableFeedbackResponse(options.prompt),
               errorOutput: "",
             };
+          }
           const cardId = path.basename(options.cwd);
           openCodeCards.push(cardId);
           if (
             (feedbackReviewRecovery !== undefined ||
-              feedbackQuality !== undefined) &&
+              feedbackQuality !== undefined ||
+              terminalDuringFeedback !== undefined) &&
             correctionFeedback
           ) {
             if (
@@ -871,6 +930,12 @@ describe("task lifecycle through pollProject", () => {
               )
             ) {
               feedbackPrimaryCorrections += 1;
+              if (terminalDuringFeedback === "active")
+                return realRunner.run(options);
+              if (terminalDuringFeedback === "unknown")
+                throw new Error(
+                  "Primary supervisor outcome is unknown and no process identity is available",
+                );
               expect(lists.get("first")).toBe("working");
               expect(
                 prs
@@ -1421,7 +1486,8 @@ describe("task lifecycle through pollProject", () => {
           };
         }
       });
-      const signal = new AbortController().signal;
+      const lifecycleController = new AbortController();
+      const signal = lifecycleController.signal;
       let activeAuthority: ProjectRunAuthority | undefined;
       vi.useFakeTimers({ toFake: ["Date"] });
       const poll = async () => {
@@ -1851,6 +1917,273 @@ describe("task lifecycle through pollProject", () => {
       expect(requests).toEqual(["agent/first"]);
       expect(accepted).toEqual([firstPr?.url]);
       expect(lists.get("first")).toBe("review");
+      if (terminalDuringFeedback !== undefined) {
+        const owned = activeAuthority!;
+        const worktree = path.join(worktrees, "first");
+        const originalHead = store.read("first")!.pullRequest!.headSha!;
+        const beforePrimary = new Set(
+          Object.keys(store.read("first")!.primaryOperations ?? {}),
+        );
+        const push = vi.spyOn(git, "push");
+        const humanOutcome = async () => {
+          if (terminal === "merged") {
+            const main = (
+              await execFile(
+                "git",
+                ["--git-dir", remote, "rev-parse", "refs/heads/main"],
+                { env },
+              )
+            ).stdout.trim();
+            await execFile(
+              "git",
+              [
+                "--git-dir",
+                remote,
+                "merge-base",
+                "--is-ancestor",
+                main,
+                originalHead,
+              ],
+              { env },
+            );
+            await execFile(
+              "git",
+              [
+                "--git-dir",
+                remote,
+                "update-ref",
+                "refs/heads/main",
+                originalHead,
+                main,
+              ],
+              { env },
+            );
+          }
+          await execFile(
+            "git",
+            [
+              "--git-dir",
+              remote,
+              "update-ref",
+              "-d",
+              "refs/heads/agent/first",
+              originalHead,
+            ],
+            { env },
+          );
+          firstPr!.state = terminal === "merged" ? "MERGED" : "CLOSED";
+          ledger.push({
+            service: "github",
+            action: `human:${terminal}`,
+            actor: "human",
+            id: "41",
+          });
+        };
+        const reconcileOutcome = async () => {
+          for (
+            let pass = 0;
+            pass < 8 &&
+            !["done", "cancelled"].includes(owned.store.read()!.lifecycle);
+            pass++
+          )
+            await poll();
+          expect(owned.store.read()).toMatchObject({
+            lifecycle: terminal === "merged" ? "done" : "cancelled",
+            terminalSync: "verified",
+          });
+          expect(lists.get("first")).toBe(destination);
+          expect(readTerminalPrFence(owned)?.stoppedAt).toBeDefined();
+          expect(lists.get("next")).toBe("ready");
+          expect(store.read("next")).toBeNull();
+          expect(requests).toEqual(["agent/first"]);
+          expect(prs.size).toBe(1);
+          expect(push).toHaveBeenCalledTimes(
+            terminalDuringFeedback === "push-rejected" ? 1 : 0,
+          );
+          expect(firstPr?.body).not.toContain(
+            "<!-- agent-orchestrator-status:start -->",
+          );
+          expect(
+            await git.getRemoteBranchSha(
+              source,
+              "origin",
+              "agent/first",
+              project,
+            ),
+          ).toBeNull();
+        };
+        correctionFeedback = true;
+        if (terminalDuringFeedback === "capacity") {
+          const other = await notificationAuthorityFixture(
+            root,
+            "capacity-peer",
+          );
+          leases.push(other.lease);
+          let release!: () => void;
+          const hold = new Promise<void>((resolve) => {
+            release = resolve;
+          });
+          let started!: () => void;
+          const entered = new Promise<void>((resolve) => {
+            started = resolve;
+          });
+          const busy = new OpenCodeClient(async () => {
+            started();
+            await hold;
+            return { exitCode: 0, output: "done", errorOutput: "" };
+          });
+          await new AiExecutionCapacity(
+            1,
+            [owned, other.authority],
+            25,
+          ).runInScope(signal, async () => {
+            const otherWork = other.authority.run(() =>
+              busy.run({
+                cwd: other.project.repository.path,
+                prompt: "hold",
+                readOnly: true,
+                timeoutMilliseconds: 30_000,
+                signal,
+              }),
+            );
+            await entered;
+            const waiting = poll();
+            try {
+              await vi.waitFor(() =>
+                expect(
+                  owned.read("ai-execution-capacity", (value) => value),
+                ).toMatchObject({ state: "queued" }),
+              );
+              const boundary = ledger.length;
+              await humanOutcome();
+              await waiting;
+              expect(feedbackClassifications).toBe(0);
+              expect(feedbackPrimaryCorrections).toBe(0);
+              expect(
+                Object.keys(store.read("first")!.primaryOperations ?? {}),
+              ).toEqual([...beforePrimary]);
+              await reconcileOutcome();
+              expect(
+                ledger
+                  .slice(boundary)
+                  .some((entry) => entry.action === "move:review"),
+              ).toBe(false);
+              expect(
+                other.authority.read("ai-execution-capacity", (value) => value),
+              ).toMatchObject({ state: "active" });
+            } finally {
+              lifecycleController.abort();
+              release();
+              await Promise.allSettled([waiting, otherWork]);
+            }
+          });
+        } else if (terminalDuringFeedback === "unknown") {
+          await poll();
+          expect(feedbackPrimaryCorrections).toBe(1);
+          const operation = Object.values(
+            store.read("first")!.primaryOperations ?? {},
+          ).find((entry) => entry.activity === "feedback-remediation")!;
+          expect(operation).toMatchObject({
+            status: "ambiguous",
+            failureExecutions: 0,
+          });
+          expect(operation.processExecutionId).toBeUndefined();
+          await humanOutcome();
+          for (let pass = 0; pass < 4; pass++) await poll();
+          expect(readTerminalPrFence(owned)).toMatchObject({ state: "MERGED" });
+          expect(readTerminalPrFence(owned)?.stoppedAt).toBeUndefined();
+          expect(owned.store.read()!.terminalSync).not.toBe("verified");
+          expect(lists.get("first")).toBe("working");
+          expect(lists.get("next")).toBe("ready");
+          expect(feedbackPrimaryCorrections).toBe(1);
+          expect(fs.existsSync(worktree)).toBe(true);
+          expect(push).not.toHaveBeenCalled();
+          await expect(owned.releaseVerifiedTerminal()).rejects.toThrow(
+            "stopped task writers",
+          );
+        } else if (terminalDuringFeedback === "push-rejected") {
+          let boundary = 0;
+          push.mockImplementationOnce(async () => {
+            boundary = ledger.length;
+            await humanOutcome();
+            throw new Error(
+              "Remote rejected the correction push after human closure",
+            );
+          });
+          await poll();
+          await reconcileOutcome();
+          expect(feedbackPrimaryCorrections).toBe(1);
+          const unshipped = await git.getHeadSha(worktree);
+          expect(unshipped).not.toBe(originalHead);
+          expect(await git.isAncestor(worktree, originalHead, unshipped)).toBe(
+            true,
+          );
+          expect(
+            ledger
+              .slice(boundary)
+              .some((entry) => entry.action === "move:review"),
+          ).toBe(false);
+          expect(readTerminalPrFence(owned)?.preserveArtifacts).toBe(true);
+        } else {
+          const running = poll();
+          try {
+            await vi.waitFor(
+              () =>
+                expect(
+                  fs.existsSync(path.join(worktree, "writer-started")),
+                ).toBe(true),
+              { timeout: 10_000 },
+            );
+            const boundary = ledger.length;
+            await humanOutcome();
+            await running;
+            await reconcileOutcome();
+            expect(feedbackPrimaryCorrections).toBe(1);
+            expect(
+              fs.readFileSync(
+                path.join(worktree, "unshipped-review.txt"),
+                "utf8",
+              ),
+            ).toContain("not published");
+            expect(
+              ledger
+                .slice(boundary)
+                .some((entry) => entry.action === "move:review"),
+            ).toBe(false);
+            const operation = Object.values(
+              store.read("first")!.primaryOperations ?? {},
+            ).find((entry) => entry.activity === "feedback-remediation")!;
+            expect(operation).toMatchObject({
+              status: "cancelled",
+              executions: 1,
+              failureExecutions: 0,
+              cancellationEvidence: { source: "stopped-after-dispatch" },
+            });
+            const execution = JSON.parse(
+              fs.readFileSync(operation.processMetadataPath!, "utf8"),
+            ) as { treeStopped?: boolean };
+            expect(execution.treeStopped).toBe(true);
+            expect(() =>
+              process.kill(
+                Number(
+                  fs.readFileSync(
+                    path.join(worktree, "writer-child.pid"),
+                    "utf8",
+                  ),
+                ),
+                0,
+              ),
+            ).toThrow();
+          } finally {
+            lifecycleController.abort();
+            await Promise.allSettled([running]);
+          }
+        }
+        expect(fs.readFileSync(path.join(source, "app.js"), "utf8")).toBe(
+          "module.exports = 'base';\n",
+        );
+        return;
+      }
       if (feedbackQuality !== undefined) {
         const originalHead = store.read("first")!.pullRequest!.headSha!;
         firstPr!.body += "\n\nHuman-only deployment note.";
@@ -2562,7 +2895,11 @@ describe("task lifecycle through pollProject", () => {
           new TaskMutationQueue(contextRoot, project, activeAuthority!)
             .list()
             .find((entry) => entry.eventId === exhaustedOperationId),
-        ).toMatchObject({ kind: "feedback", status: "completed" });
+        ).toMatchObject({
+          kind: "feedback",
+          status: "retired",
+          retirementReason: "human-pr-terminal",
+        });
         await expect(poll()).rejects.toThrow(
           "simulated terminal Trello destination read outage",
         );
@@ -2590,11 +2927,19 @@ describe("task lifecycle through pollProject", () => {
         await poll();
       }
       expect(terminalRaceReads).toBe(terminalReadRaceAt);
-      if (!correctionFailure)
-        expect(terminalTaskStore.read("first")).toMatchObject({
-          phase: "human-feedback",
-          recoveryWait: { resumePhase: "human-feedback" },
-        });
+      // A terminal outcome discovered at the final observation read now bypasses
+      // the future dependency wait immediately, rather than requiring another poll.
+      if (!correctionFailure) {
+        if (terminalReadRaceAt === 3)
+          expect(terminalTaskStore.read("first")).toMatchObject({
+            phase: "human-feedback",
+            recoveryWait: { resumePhase: "human-feedback" },
+          });
+        else {
+          expect(terminalTaskStore.read("first")?.phase).toBe("done");
+          expect(terminalTaskStore.read("first")?.recoveryWait).toBeUndefined();
+        }
+      }
       expect(["review", "working", destination]).toContain(lists.get("first"));
       expect(openCodeCards).toHaveLength(openCodeCountBeforeRace);
       for (

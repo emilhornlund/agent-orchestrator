@@ -3,6 +3,7 @@ import type { GitHubClient } from "../github/github-client.js";
 import type { TrelloClient } from "../trello/trello-client.js";
 import type { TaskExecutionStore } from "../task-session/task-execution-store.js";
 import { expectedTaskTrelloList } from "../task-session/reconcile-task-session.js";
+import { verifyExistingPrOpen } from "./verify-existing-pr-open.js";
 
 export interface FeedbackCardLocationOptions {
   project: ProjectConfig;
@@ -84,17 +85,13 @@ export async function reconcilePendingFeedbackCardMove(
     throw new Error(
       "Pending feedback card transition has invalid list identities",
     );
-  const pr = await options.github.findPullRequestState({
-    cwd: options.project.repository.path,
-    repository: options.project.repository.github,
-    headBranch: record.expectedBranch ?? `agent/${record.cardId}`,
-    baseBranch: options.project.repository.defaultBranch,
+  await verifyExistingPrOpen({
     project: options.project,
+    github: options.github,
+    cardId: record.cardId,
+    branch: record.expectedBranch ?? `agent/${record.cardId}`,
+    pullRequestUrl: record.pullRequest.url,
   });
-  if (!pr || pr.url !== record.pullRequest.url || pr.state !== "OPEN")
-    throw new Error(
-      "Feedback card transition deferred to authoritative PR outcome reconciliation",
-    );
   const card = await options.trello.getCard(record.cardId);
   if (card.id !== record.cardId)
     throw new Error("Feedback card lookup has a mismatched identity");

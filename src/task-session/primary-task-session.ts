@@ -19,6 +19,8 @@ import { reconcilePendingPrimaryExecution } from "./primary-operation-ledger.js"
 import { bindPrimaryExecutionEvidence } from "./primary-operation-ledger.js";
 import { sanitizePrimarySessionContextBundle } from "./build-primary-session-context.js";
 import { withAiExecutionCapacity } from "../orchestrator/ai-execution-capacity.js";
+import { ProjectRunAuthority } from "./project-run-authority.js";
+import { assertNoTerminalPr } from "./terminal-pr-fence.js";
 
 export class PrimaryTaskSessionError extends Error {
   constructor(message: string, options?: ErrorOptions) {
@@ -105,8 +107,9 @@ export async function runWithPrimaryTaskSession(
   recovery: PrimarySessionRecoveryOptions = {},
   execution: PrimaryExecutionIdentity,
 ): Promise<OpenCodeRunResult> {
-  return withAiExecutionCapacity(runOptions.signal, () =>
-    runWithPrimaryTaskSessionOwned(
+  return withAiExecutionCapacity(runOptions.signal, () => {
+    assertNoTerminalPr(ProjectRunAuthority.current(projectId), true);
+    return runWithPrimaryTaskSessionOwned(
       store,
       openCode,
       projectId,
@@ -114,8 +117,8 @@ export async function runWithPrimaryTaskSession(
       runOptions,
       recovery,
       execution,
-    ),
-  );
+    );
+  });
 }
 
 async function runWithPrimaryTaskSessionOwned(

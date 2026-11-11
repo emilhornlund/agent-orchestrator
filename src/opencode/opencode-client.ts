@@ -20,6 +20,10 @@ import {
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 import { isolatedOpenCodeDispatch } from "./isolated-dispatch.js";
 import {
+  assertNoTerminalPr,
+  withTaskExecutionActivity,
+} from "../task-session/terminal-pr-fence.js";
+import {
   withAiExecutionCapacity,
   hasAiExecutionCapacity,
   bindAiCapacityExecution,
@@ -888,30 +892,43 @@ export class OpenCodeClient {
 
   async run(options: OpenCodeRunOptions): Promise<OpenCodeRunResult> {
     const projectId = ProjectRunAuthority.currentProjectId();
-    return withAiExecutionCapacity(options.signal, () => {
-      const dispatchOptions = hasAiExecutionCapacity()
-        ? {
-            ...options,
-            onExecutionPrepared: async (evidence: {
-              executionId: string;
-              metadataPath: string;
-              artifactRoot: string;
-            }) => {
-              bindAiCapacityExecution(
-                evidence,
-                options.cwd,
-                `opencode run${options.model === undefined ? "" : ` --model ${options.model}`}${options.variant === undefined ? "" : ` --variant ${options.variant}`}`,
+    const authority =
+      projectId === undefined
+        ? undefined
+        : ProjectRunAuthority.current(projectId);
+    assertNoTerminalPr(authority, true);
+    return withTaskExecutionActivity(authority, () =>
+      withAiExecutionCapacity(options.signal, async () => {
+        assertNoTerminalPr(authority, true);
+        const dispatchOptions =
+          hasAiExecutionCapacity() || authority !== undefined
+            ? {
+                ...options,
+                onExecutionPrepared: async (evidence: {
+                  executionId: string;
+                  metadataPath: string;
+                  artifactRoot: string;
+                }) => {
+                  assertNoTerminalPr(authority, true);
+                  bindAiCapacityExecution(
+                    evidence,
+                    options.cwd,
+                    `opencode run${options.model === undefined ? "" : ` --model ${options.model}`}${options.variant === undefined ? "" : ` --variant ${options.variant}`}`,
+                  );
+                  await options.onExecutionPrepared?.(evidence);
+                },
+              }
+            : options;
+        const result =
+          projectId === undefined
+            ? await this.runOwned(dispatchOptions)
+            : await ProjectRunAuthority.dispatch(projectId, () =>
+                this.runOwned(dispatchOptions),
               );
-              await options.onExecutionPrepared?.(evidence);
-            },
-          }
-        : options;
-      return projectId === undefined
-        ? this.runOwned(dispatchOptions)
-        : ProjectRunAuthority.dispatch(projectId, () =>
-            this.runOwned(dispatchOptions),
-          );
-    });
+        assertNoTerminalPr(authority);
+        return result;
+      }),
+    );
   }
 
   private async runOwned(

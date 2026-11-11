@@ -1,5 +1,12 @@
 import fs from "node:fs";
 import { z } from "zod";
+import {
+  terminalPrFenceFromRun,
+  terminalMutationAllowed,
+  ObservedPrTerminalError,
+} from "../task-session/terminal-pr-fence.js";
+import { isConclusiveOperationResolution } from "../task-session/run-record.js";
+import type { MutationEvent } from "../task-session/durable-mutation.js";
 import type { ProjectConfig } from "../config/config.js";
 import type { TrelloClient } from "../trello/trello-client.js";
 import type { GitHubClient } from "../github/github-client.js";
@@ -103,12 +110,23 @@ export async function reconcileWorkflowMutations(options: {
 }): Promise<boolean> {
   const authority = ProjectRunAuthority.current(options.project.id);
   if (!authority) return false;
+  const initialWaiting = await reconcileTerminalInitialEffects(
+    authority,
+    options.trello,
+    options.github,
+    options.project,
+  );
+  const initial = authority.store.read()!;
   const pending = authority.store
     .read()!
     .pendingOperations.filter(
       (entry) =>
         entry.id.startsWith("workflow:") &&
-        !["completed", "cancelled"].includes(entry.status),
+        !["completed", "cancelled"].includes(entry.status) &&
+        !(
+          terminalPrFenceFromRun(initial) &&
+          isConclusiveOperationResolution(entry)
+        ),
     );
   for (const entry of pending) {
     if (
@@ -117,24 +135,39 @@ export async function reconcileWorkflowMutations(options: {
     )
       continue;
     const run = authority.store.read()!;
+    const reference = run.artifacts.find(
+      (artifact) => artifact.id === entry.mutation?.intent.payloadId,
+    );
+    if (!reference)
+      throw new Error(
+        "Workflow mutation payload is missing; preserving ownership",
+      );
+    const request = z
+      .union([requestSchema, gitMutationRequestSchema])
+      .parse(JSON.parse(fs.readFileSync(reference.path, "utf8")));
+    const terminal = terminalPrFenceFromRun(run);
+    const terminalSuperseded =
+      terminal !== null && !terminalMutationAllowed(run, request);
     if (
       entry.mutation?.dispatches.length === 0 &&
-      (["done", "refined", "failed", "cancelled"].includes(run.lifecycle) ||
+      (terminalSuperseded ||
+        ["done", "refined", "failed", "cancelled"].includes(run.lifecycle) ||
         entry.mutation.executionFence.id !== run.operation.id ||
         entry.mutation.executionFence.generation !== run.operation.generation)
     ) {
       const now = new Date().toISOString();
-      const reason = ["done", "refined", "failed", "cancelled"].includes(
-        run.lifecycle,
-      )
-        ? "terminal-observed"
-        : "execution-superseded";
+      const reason =
+        terminalSuperseded ||
+        ["done", "refined", "failed", "cancelled"].includes(run.lifecycle)
+          ? "terminal-observed"
+          : "execution-superseded";
       const evidence = authority.store.writeArtifact(
         Buffer.from(
           JSON.stringify({
             reason,
             operation: run.operation,
             terminalEvidence: run.terminalEvidence,
+            terminalPrObservation: terminal,
           }),
         ),
         "application/json",
@@ -162,16 +195,6 @@ export async function reconcileWorkflowMutations(options: {
       );
       continue;
     }
-    const reference = run.artifacts.find(
-      (artifact) => artifact.id === entry.mutation?.intent.payloadId,
-    );
-    if (!reference)
-      throw new Error(
-        "Workflow mutation payload is missing; preserving ownership",
-      );
-    const request = z
-      .union([requestSchema, gitMutationRequestSchema])
-      .parse(JSON.parse(fs.readFileSync(reference.path, "utf8")));
     const { trello, github, project } = options;
     try {
       await withMutationReconciliation(entry.id, async () => {
@@ -220,8 +243,135 @@ export async function reconcileWorkflowMutations(options: {
         }
       });
     } catch (error) {
-      if (!(error instanceof WorkflowMutationWaitingError)) throw error;
+      if (
+        !(error instanceof WorkflowMutationWaitingError) &&
+        !(error instanceof ObservedPrTerminalError)
+      )
+        throw error;
     }
   }
-  return pending.length > 0;
+  return initialWaiting || pending.length > 0;
+}
+
+/** Initial publication uses its original immutable payloads, not workflow-route
+ * payloads. After a human outcome only reconcile dispatched effects; never replay. */
+async function reconcileTerminalInitialEffects(
+  authority: ProjectRunAuthority,
+  trello: TrelloClient,
+  github: GitHubClient,
+  project: ProjectConfig,
+): Promise<boolean> {
+  const snapshot = authority.store.read()!;
+  const fence = terminalPrFenceFromRun(snapshot);
+  if (!fence) return false;
+  for (const entry of snapshot.pendingOperations.filter(
+    (entry) =>
+      entry.id.startsWith("initial:") &&
+      !isConclusiveOperationResolution(entry),
+  )) {
+    if (!entry.mutation)
+      throw new Error(
+        "Initial publication effect has no dispatch evidence; preserve ownership",
+      );
+    if (
+      entry.mutation.nextRecheckAt &&
+      Date.now() < Date.parse(entry.mutation.nextRecheckAt)
+    )
+      continue;
+    const raw: unknown = JSON.parse(
+      authority.store
+        .readArtifact(entry.mutation.intent.payloadId)
+        .toString("utf8"),
+    );
+    let actual: { id: string; fields: unknown } | null = null;
+    if (entry.mutation.dispatches.length > 0) {
+      if (entry.kind === "trello-move") {
+        const payload = z
+          .strictObject({ listId: z.string().min(1) })
+          .parse(raw);
+        const card = await trello.getCard(snapshot.cardId);
+        if (card.id !== snapshot.cardId)
+          throw new Error("Initial move readback returned another card");
+        if (card.idList === payload.listId)
+          actual = { id: card.id, fields: card };
+      } else if (entry.kind === "trello-comment") {
+        const payload = z.strictObject({ text: z.string() }).parse(raw);
+        const matches = (await trello.getCardComments(snapshot.cardId)).filter(
+          (comment) => comment.text === payload.text,
+        );
+        if (matches.length > 1)
+          throw new Error("Initial comment acceptance is ambiguous");
+        if (matches[0]) actual = { id: matches[0].id, fields: matches[0] };
+      } else if (entry.kind === "github-pr-create") {
+        const payload = z
+          .object({ body: z.string(), title: z.string() })
+          .parse(raw);
+        const fields = await github.getPullRequestPublicationFields({
+          cwd: project.repository.path,
+          repository: project.repository.github,
+          pullRequestUrl: fence.url,
+          project,
+        });
+        if (fields.body === payload.body && fields.title === payload.title)
+          actual = {
+            id: fence.url,
+            fields: { ...fields, state: fence.state, headSha: fence.headSha },
+          };
+      }
+    }
+    const now = new Date().toISOString();
+    const proof = authority.store.writeArtifact(
+      Buffer.from(
+        JSON.stringify({ terminal: fence, actual, originalEffect: entry.id }),
+      ),
+      "application/json",
+    );
+    authority.store.referenceMutationArtifact(
+      authority.store.read()!.revision,
+      authority.ownerGeneration,
+      proof,
+    );
+    const outcome: MutationEvent =
+      entry.mutation.dispatches.length === 0
+        ? {
+            type: "cancel",
+            reason: "terminal-observed",
+            evidence: {
+              observationId: `terminal:${entry.id}`,
+              observedAt: now,
+              artifactId: proof.id,
+            },
+          }
+        : {
+            type: "observe",
+            outcome: actual ? "verified" : "uncertain",
+            attentionRequired: !actual,
+            ...(actual ? { resourceId: actual.id } : {}),
+            evidence: {
+              observationId: `terminal:${entry.id}:${now}`,
+              observedAt: now,
+              artifactId: proof.id,
+            },
+            ...(actual
+              ? {}
+              : {
+                  nextRecheckAt: new Date(Date.now() + 15_000).toISOString(),
+                }),
+          };
+    authority.store.recordMutationEvent(
+      authority.store.read()!.revision,
+      authority.ownerGeneration,
+      entry.id,
+      entry.generation,
+      outcome,
+      now,
+    );
+  }
+  return authority.store
+    .read()!
+    .pendingOperations.some(
+      (entry) =>
+        entry.id.startsWith("initial:") &&
+        !isConclusiveOperationResolution(entry),
+    );
 }

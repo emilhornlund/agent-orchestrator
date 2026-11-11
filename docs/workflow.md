@@ -249,6 +249,24 @@ human unmerged closure routes it to `Backlog`. A publication or card-transition 
 Human review takes place on GitHub. The orchestrator never merges a pull request. Approval is an observation, not a terminal event;
 every open normal or draft PR remains active and blocks the project's next task.
 
+Human merge or closure takes precedence over active or queued corrections, CI repair
+and maintenance. PR observation continues during execution, capacity waits and future
+dependency rechecks. A verified terminal observation durably fences new automated
+mutations and cancels the active writer's process tree where possible. Publication
+checks the original PR before pushing and before returning the card to Human Review;
+a rejected push triggers authoritative outcome reconciliation, not branch recreation.
+Even a newly created PR closed before its local publication binding is reconciled as
+the original PR rather than replaced.
+
+Already-dispatched effects must be reconciled before terminal release: an uncertain
+Review move or reply is never blindly resent or assumed cancelled. Unknown execution
+retains project ownership; missing PID/process group is not stopped proof. Once writers
+are verified stopped, superseded queued work is retired, the temporary owned activity
+block is removed without replacing human content, and terminal Trello state is verified.
+Unshipped commits, dirty worktrees and ambiguous artifact ownership are preserved rather
+than cleaned up. Interrupted primary work is recorded as cancelled, not as a fabricated
+implementation crash or a successfully published correction.
+
 | GitHub state                                                 | Trello result                                                     |
 | ------------------------------------------------------------ | ----------------------------------------------------------------- |
 | Pull request merged                                          | Move the card to `Done` and mark it complete                      |

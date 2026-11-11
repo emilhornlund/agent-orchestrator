@@ -7,6 +7,13 @@ import { redactSecrets } from "../security/redact-secrets.js";
 
 let runtimeRoot: string | undefined;
 let lifecycleSignal: AbortSignal | undefined;
+const operationSignal = new AsyncLocalStorage<AbortSignal>();
+export function withProcessCancellationSignal<T>(
+  signal: AbortSignal,
+  operation: () => T,
+): T {
+  return operationSignal.run(signal, operation);
+}
 let secretValues: readonly string[] = [];
 const registeredSecrets = new Set<string>();
 let operationTimeoutMilliseconds = 2 * 60 * 1_000;
@@ -218,11 +225,12 @@ export function getProcessRuntime(): {
   secretValues: readonly string[];
   operationTimeoutMilliseconds: number;
 } {
+  const signal = operationSignal.getStore() ?? lifecycleSignal;
   return {
     artifactRoot:
       runtimeRoot ??
       path.join(os.tmpdir(), "agent-orchestrator-process-artifacts"),
-    ...(lifecycleSignal === undefined ? {} : { signal: lifecycleSignal }),
+    ...(signal === undefined ? {} : { signal }),
     secretValues: [...new Set([...secretValues, ...registeredSecrets])],
     operationTimeoutMilliseconds,
   };

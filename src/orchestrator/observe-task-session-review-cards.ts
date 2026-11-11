@@ -17,6 +17,10 @@ import type { TrelloCard } from "../trello/trello-client.js";
 import { TaskExecutionStore } from "../task-session/task-execution-store.js";
 import { logger } from "../logging/logger.js";
 import { verifyMergedTaskPrHeadContinuity } from "./verify-merged-task-pr-head-continuity.js";
+import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
+import { TaskMutationQueue } from "../task-session/task-mutation-queue.js";
+import { recordTerminalPrFence } from "../task-session/terminal-pr-fence.js";
+import type { TaskExecutionRecord } from "../task-session/task-execution-record.js";
 
 const reportedOutdatedPullRequests = new Map<string, string>();
 
@@ -56,6 +60,62 @@ export interface ObserveTaskSessionReviewCardsOptions {
 
 function nextTimestamp(previous: string): string {
   return new Date(Math.max(Date.now(), Date.parse(previous) + 1)).toISOString();
+}
+
+async function terminalObservation(
+  options: ObserveTaskSessionReviewCardsOptions,
+  record: TaskExecutionRecord,
+  pr: PullRequestState,
+): Promise<ObservedTerminalTaskSessionPullRequest> {
+  const { project, github } = options;
+  const [owner, repository] = project.repository.github.split("/");
+  if (
+    !record.pullRequest?.headSha ||
+    pr.state === "OPEN" ||
+    pr.url !== record.pullRequest.url ||
+    !pr.headRefOid ||
+    pr.baseRefName !== project.repository.defaultBranch ||
+    pr.headRefName !== `agent/${record.cardId}` ||
+    pr.headRepository?.name.toLowerCase() !== repository?.toLowerCase() ||
+    pr.headRepositoryOwner?.login.toLowerCase() !== owner?.toLowerCase() ||
+    (pr.state === "MERGED") !== (pr.mergedAt !== null)
+  )
+    throw new Error(
+      `Terminal pull request metadata or ownership is ambiguous for Human Review card ${record.cardId}`,
+    );
+  const authority = ProjectRunAuthority.current(project.id);
+  const active = authority
+    ? new TaskMutationQueue(
+        authority.store.storageRoot,
+        project,
+        authority,
+      ).getActive()
+    : null;
+  const fence = authority
+    ? recordTerminalPrFence(
+        authority,
+        record,
+        pr,
+        active !== null && active.kind !== "terminal-pr",
+        project.repository.defaultBranch,
+      )
+    : null;
+  if (pr.state === "MERGED" && !fence?.preserveArtifacts)
+    await verifyMergedTaskPrHeadContinuity({
+      github,
+      project,
+      cwd: options.cwd ?? project.repository.path,
+      pullRequestNumber: record.pullRequest.number,
+      recordedHeadSha: record.pullRequest.headSha,
+      mergedHeadSha: pr.headRefOid,
+    });
+  return {
+    state: pr.state,
+    cardId: record.cardId,
+    pullRequestUrl: pr.url,
+    headSha: pr.headRefOid,
+    pullRequest: pr,
+  };
 }
 
 export async function observeTaskSessionReviewCards(
@@ -116,41 +176,7 @@ export async function observeTaskSessionReviewCards(
       );
     }
     if (pullRequest.state !== "OPEN") {
-      const [owner, repository] = project.repository.github.split("/");
-      if (
-        pullRequest.baseRefName !== project.repository.defaultBranch ||
-        pullRequest.headRefName !== `agent/${card.id}` ||
-        pullRequest.headRefOid === undefined ||
-        pullRequest.headRepository?.name !== repository ||
-        pullRequest.headRepositoryOwner?.login !== owner ||
-        (pullRequest.state === "MERGED" && pullRequest.mergedAt === null) ||
-        (pullRequest.state === "CLOSED" && pullRequest.mergedAt !== null)
-      ) {
-        throw new Error(
-          `Terminal pull request metadata or ownership is ambiguous for Human Review card ${card.id}`,
-        );
-      }
-      if (pullRequest.state === "MERGED") {
-        await verifyMergedTaskPrHeadContinuity({
-          github,
-          project,
-          cwd: lookup.cwd,
-          pullRequestNumber: record.pullRequest.number,
-          recordedHeadSha: headSha,
-          mergedHeadSha: pullRequest.headRefOid,
-        });
-      } else if (pullRequest.headRefOid !== headSha) {
-        throw new Error(
-          `Closed pull request head changed for Human Review card ${card.id}`,
-        );
-      }
-      observed.push({
-        state: pullRequest.state,
-        cardId: card.id,
-        pullRequestUrl: pullRequest.url,
-        headSha: pullRequest.headRefOid ?? null,
-        pullRequest,
-      });
+      observed.push(await terminalObservation(options, record, pullRequest));
       continue;
     }
     if (
@@ -180,8 +206,10 @@ export async function observeTaskSessionReviewCards(
       hasVerifiedOpenIdentity &&
       (pullRequest.baseRefName !== project.repository.defaultBranch ||
         pullRequest.headRefName !== `agent/${card.id}` ||
-        pullRequest.headRepository?.name !== repository ||
-        pullRequest.headRepositoryOwner?.login !== owner)
+        pullRequest.headRepository?.name.toLowerCase() !==
+          repository?.toLowerCase() ||
+        pullRequest.headRepositoryOwner?.login.toLowerCase() !==
+          owner?.toLowerCase())
     ) {
       throw new Error(
         `Open pull request metadata or ownership is ambiguous for Human Review card ${card.id}`,
@@ -248,6 +276,12 @@ export async function observeTaskSessionReviewCards(
       checks: ciObservation.checks,
     });
     const finalPullRequest = await github.findPullRequestState(lookup);
+    if (finalPullRequest && finalPullRequest.state !== "OPEN") {
+      observed.push(
+        await terminalObservation(options, record, finalPullRequest),
+      );
+      continue;
+    }
     if (
       (requestedChanges !== null && requestedChanges.headSha !== headSha) ||
       finalPullRequest === null ||

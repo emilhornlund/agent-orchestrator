@@ -1035,6 +1035,11 @@ describe("publishCard", () => {
         url: "https://github.com/example/repository/pull/142",
       }),
       getPullRequestDescription: vi.fn().mockResolvedValue(currentBody),
+      findPullRequestState: vi.fn().mockResolvedValue({
+        url: "https://github.com/example/repository/pull/142",
+        state: "OPEN",
+        mergedAt: null,
+      }),
       editPullRequestDescription,
       createPullRequest: vi.fn(),
     } as unknown as GitHubClient;
@@ -1606,6 +1611,9 @@ describe("publishCard", () => {
     });
     const github = {
       findPullRequest: vi.fn().mockResolvedValue({ url }),
+      findPullRequestState: vi
+        .fn()
+        .mockResolvedValue({ url, state: "OPEN", mergedAt: null }),
       createPullRequest: vi.fn(),
     } as unknown as GitHubClient;
     const trello = {

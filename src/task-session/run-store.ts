@@ -12,6 +12,7 @@ import {
   terminalEvidenceSchema,
 } from "./run-record.js";
 import { taskExecutionEventTypes } from "./task-execution-record.js";
+import { terminalPrFenceFromRun } from "./terminal-pr-fence.js";
 import {
   applyMutationEvent,
   mutationEventSchema,
@@ -397,9 +398,10 @@ export class RunStore {
         "Superseded execution cannot dispatch or complete a mutation; reconcile its effect",
       );
     if (event.type === "cancel") {
-      const terminal = ["done", "refined", "failed", "cancelled"].includes(
-        current.lifecycle,
-      );
+      const terminal =
+        ["done", "refined", "failed", "cancelled"].includes(
+          current.lifecycle,
+        ) || terminalPrFenceFromRun(current) !== null;
       const superseded =
         entry.mutation.executionFence.id !== current.operation.id ||
         entry.mutation.executionFence.generation !==

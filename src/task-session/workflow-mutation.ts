@@ -7,6 +7,12 @@ import { ProjectRunAuthority } from "./project-run-authority.js";
 import type { MutationEvent, MutationIntent } from "./durable-mutation.js";
 import { mutationProvenNotDelivered } from "./durable-mutation.js";
 import type { RunRecord } from "./run-record.js";
+import {
+  terminalPrFenceFromRun,
+  terminalMutationAllowed,
+  ObservedPrTerminalError,
+  readTerminalPrFence,
+} from "./terminal-pr-fence.js";
 
 function canonicalJson(value: unknown): string {
   return JSON.stringify(value, (_key, item: unknown) =>
@@ -253,6 +259,12 @@ export async function withJournaledDispatch<T>(
   ]);
   if (issuedDispatches.has(activation))
     throw new Error("Journal dispatch capability was already issued");
+  const terminal = terminalPrFenceFromRun(run);
+  if (terminal && !terminalMutationAllowed(run, expected))
+    throw new ObservedPrTerminalError(terminal, true, {
+      operationId,
+      generation: dispatch.generation,
+    });
   issuedDispatches.add(activation);
   const capability: DispatchCapability = {
     authority,
@@ -353,7 +365,16 @@ export function rejectJournaledDispatch(): void {
  * after scope exit, terminal observation, or a response/owner fence change. */
 export function assertJournaledTransport(): void {
   const capability = dispatchContext.getStore();
-  if (!capability) return;
+  if (!capability) {
+    const projectId = ProjectRunAuthority.currentProjectId();
+    const fence = readTerminalPrFence(
+      projectId === undefined
+        ? undefined
+        : ProjectRunAuthority.current(projectId),
+    );
+    if (fence) throw new ObservedPrTerminalError(fence, true);
+    return;
+  }
   const { authority } = capability;
   if (
     !capability.active ||
@@ -377,6 +398,12 @@ export function assertJournaledTransport(): void {
     entry.mutation.executionFence.generation !== run.operation.generation
   )
     throw new Error("Stale journal transport capability");
+  const fence = terminalPrFenceFromRun(run);
+  if (fence && !terminalMutationAllowed(run, capability.expected))
+    throw new ObservedPrTerminalError(fence, true, {
+      operationId: capability.operationId,
+      generation: capability.dispatchGeneration,
+    });
   capability.transported = true;
 }
 
@@ -493,6 +520,10 @@ export async function workflowMutation<T>(options: {
       options.observedStateChanged,
     );
   const existing = run.pendingOperations.find((entry) => entry.id === id);
+  const terminal = terminalPrFenceFromRun(run);
+  const permitted = terminalMutationAllowed(run, options.request);
+  if (terminal && !permitted && !existing)
+    throw new ObservedPrTerminalError(terminal, true);
   if (
     !reconciliationContext.getStore() &&
     run.pendingOperations.some(
@@ -570,6 +601,20 @@ export async function workflowMutation<T>(options: {
     );
   }
   const operation = entry();
+  if (
+    terminal &&
+    !permitted &&
+    (operation.mutation!.dispatches.length === 0 ||
+      mutationProvenNotDelivered(operation.mutation!))
+  ) {
+    if (operation.mutation!.dispatches.length === 0)
+      event({
+        type: "cancel",
+        reason: "terminal-observed",
+        evidence: evidence({ terminal }),
+      });
+    throw new ObservedPrTerminalError(terminal, true);
+  }
   if (operation.status === "cancelled")
     throw new WorkflowMutationWaitingError();
   if (operation.status === "completed") {
@@ -622,14 +667,22 @@ export async function workflowMutation<T>(options: {
     } catch (error) {
       authority.assertHeld();
       const rejection = options.rejected?.(error);
+      const notSent =
+        error instanceof ObservedPrTerminalError &&
+        error.transport?.operationId === id &&
+        error.transport.generation ===
+          entry().mutation!.dispatches.at(-1)?.generation;
       event({
         type: "response",
-        outcome: rejection ? "not-delivered" : "unknown",
+        outcome: rejection || notSent ? "not-delivered" : "unknown",
         evidence: {
           ...evidence({
             response: "unknown; process diagnostics retained separately",
             ...(rejection ? { rejection } : {}),
           }),
+          ...(notSent
+            ? { nonDeliveryProof: "transport-proven-not-sent" as const }
+            : {}),
           ...(rejection
             ? {
                 nonDeliveryProof:

@@ -49,6 +49,12 @@ shared requirements do not pull later CI/maintenance/cleanup implementation here
    safely cancel and reconcile in-flight effects. No new push, branch resurrection
    or stale Human Review move. Preserve unshipped work; missing PID/group does not
    prove the writer stopped. Final cleanup/fresh attempts belong to P10.
+   Terminal observation also runs behind future dependency rechecks. Reconcile the
+   original initial-publication intent if a human closes a newly created PR before
+   binding; dispatched Trello effects require readback, never replay. Live observer,
+   cancellation and capacity identities include project/storage scope, not just an
+   attempt identifier. Terminal consistency effects require durable stopped proof;
+   preserve unknown execution and unshipped artifacts before releasing ownership.
 
 ## Starting points and checks
 

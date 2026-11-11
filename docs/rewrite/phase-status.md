@@ -141,8 +141,38 @@
   recovery regression. Typecheck, changed-file ESLint, docs Prettier and
   `git diff --check` passed. No known T6 defect remains; terminal-race handling below
   is still unfinished. No live-service qualification or full validation is claimed.
-- Remaining P7 order: active terminal precedence
-  (T7), combined checks and final `yarn validate` (T8). These are not complete.
+- P7-T7 implements terminal precedence (REQ-HR-006, REQ-PR-008, with PR-007,
+  SCH-001/002 and WF-003 integration). Durable terminal observation fences stale
+  execution/transport callbacks, cancels active process trees and capacity waits,
+  and remains active behind future dependency rechecks. Existing-PR publication
+  checks the authoritative outcome before push/Review and after rejected push.
+  Initial creation interrupted by human closure binds/reconciles the original PR,
+  including a deleted branch, without replacement publication. Dispatched initial
+  Review/comment effects retain immutable readback reconciliation rather than replay.
+  Terminal consistency requires verified stopped writers and conclusive dispatched
+  effects. Unknown execution retains ownership; unshipped changes and diagnostics
+  are preserved. Cancelled primary operations do not consume genuine-crash budget;
+  superseded queue descriptors retire explicitly. Terminal activity clearing retains
+  human content, and live capacity/cancellation/observer keys include storage/project.
+- T7 checks: six observer/capacity/GitHub/terminal/mutation suites passed **71 tests**;
+  seven lifecycle/publication/publisher/location/primary/process suites initially
+  passed **221 tests** with six lifecycle expectation failures. Those failures
+  reflected earlier terminal discovery and explicit retirement; the destination-read
+  outage fixture now fails only after the intended move. The next lifecycle/capacity
+  run passed **37 tests** with one remaining race-timing expectation failure; its
+  third-read deferred case was corrected, then all **four validation lifecycle cases**
+  passed (24 other scenarios filtered). The new identical-local-attempt-ID capacity
+  isolation regression passed in that capacity run. Typecheck, all changed-code
+  ESLint and formatting passed. Final
+  `yarn test tests/task-lifecycle.integration.test.ts tests/ai-execution-capacity.test.ts`
+  passed **38 tests**, including all 28 lifecycle scenarios; typecheck, changed-code
+  ESLint, documentation/code Prettier and `git diff --check` passed again.
+  Self-review inspected actual production observer/worker/publish/recovery paths,
+  terminal stop proof, journal/transport guards, queue ownership, primary counters,
+  artifact preservation, new files and real-process regressions. Corrected scoped
+  in-memory identities and preserved uncertainty across late initial Trello effects.
+  No known T7 defect remains; full integrated validation is not yet claimed.
+- Remaining P7: combined criteria/integration checks and final `yarn validate` (T8).
 
 ## Inherited P6 checkpoint
 

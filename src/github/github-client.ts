@@ -1102,7 +1102,7 @@ function getPullRequestNumberForRepository(
   if (
     owner === undefined ||
     name === undefined ||
-    `${owner}/${name}` !== repository ||
+    `${owner}/${name}`.toLowerCase() !== repository.toLowerCase() ||
     number === undefined ||
     !/^\d+$/u.test(number)
   ) {
@@ -2013,7 +2013,8 @@ export class GitHubClient {
     if (
       owner === undefined ||
       repository === undefined ||
-      `${owner}/${repository}` !== options.repository ||
+      `${owner}/${repository}`.toLowerCase() !==
+        options.repository.toLowerCase() ||
       number === undefined ||
       !/^\d+$/u.test(number)
     ) {
@@ -2601,7 +2602,29 @@ export class GitHubClient {
           },
         },
         preflight: async () => {
-          await this.assertMutationOpen(options);
+          const current = authority.store.read()!;
+          const terminal = terminalPrFenceFromRun(current);
+          if (
+            terminal &&
+            terminalMutationAllowed(current, {
+              route: "github-pr-body",
+              args: options,
+            })
+          ) {
+            const pr = await this.getPullRequestStateByNumber({
+              cwd: options.cwd,
+              repository: options.repository,
+              pullRequestNumber: getPullRequestNumberForRepository(
+                options.pullRequestUrl,
+                options.repository,
+              ),
+              ...(options.project ? { project: options.project } : {}),
+            });
+            if (!pr || pr.url !== terminal.url || pr.state !== terminal.state)
+              throw new Error(
+                "PR outcome changed during terminal activity reconciliation",
+              );
+          } else await this.assertMutationOpen(options);
           await assertCurrentBody();
         },
         send: async () => {
@@ -3674,3 +3697,7 @@ import {
   workflowMutation,
   WorkflowMutationPreconditionChangedError,
 } from "../task-session/workflow-mutation.js";
+import {
+  terminalPrFenceFromRun,
+  terminalMutationAllowed,
+} from "../task-session/terminal-pr-fence.js";

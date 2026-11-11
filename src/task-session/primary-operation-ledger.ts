@@ -118,7 +118,11 @@ export function beginPrimaryExecution(
     throw new PrimaryOperationBlockedError(
       `Primary operation ${operationId} has unresolved dispatch state`,
     );
-  if (prior?.status === "completed" || prior?.status === "exhausted")
+  if (
+    prior?.status === "completed" ||
+    prior?.status === "exhausted" ||
+    prior?.status === "cancelled"
+  )
     throw new PrimaryOperationBlockedError(
       `Primary operation ${operationId} is terminal (${prior.status})`,
     );

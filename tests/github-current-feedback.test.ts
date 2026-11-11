@@ -146,7 +146,7 @@ it("retains Bot actor identity at the REST comment boundary", async () => {
   ).getPullRequestConversationComments({
     cwd: "/repo",
     repository: "owner/repo",
-    pullRequestUrl: "https://github.com/owner/repo/pull/1",
+    pullRequestUrl: "https://github.com/Owner/Repo/pull/1",
   });
   expect(comments[0]).toMatchObject({
     author: "service[bot]",

@@ -131,12 +131,12 @@ export class AiExecutionCapacity {
     if (!Number.isSafeInteger(limit) || limit < 1)
       throw new Error("AI concurrency limit must be a positive safe integer");
     for (const authority of authorities) {
-      this.known.set(authority.store.attemptId, authority);
+      this.known.set(authority.attemptScopeKey, authority);
       let record: CapacityRecord | null;
       try {
         record = read(authority);
       } catch {
-        this.active.set(authority.store.attemptId, authority);
+        this.active.set(authority.attemptScopeKey, authority);
         logger
           .child({ projectId: authority.projectId })
           .warn(
@@ -149,7 +149,7 @@ export class AiExecutionCapacity {
       if (record.state === "active") {
         if (stopped(authority, record))
           write(authority, { ...record, state: "idle", executions: undefined });
-        else this.active.set(authority.store.attemptId, authority);
+        else this.active.set(authority.attemptScopeKey, authority);
       }
     }
   }
@@ -174,7 +174,7 @@ export class AiExecutionCapacity {
     shutdown: AbortSignal,
     operation: () => Promise<T>,
   ): Promise<T> {
-    const attemptId = authority.store.attemptId;
+    const attemptId = authority.attemptScopeKey;
     this.known.set(attemptId, authority);
     if (signal.aborted || shutdown.aborted)
       throw new AiCapacityCancelledError();
@@ -277,7 +277,7 @@ export class AiExecutionCapacity {
     if (
       !record ||
       record.state !== "active" ||
-      !this.active.has(authority.store.attemptId)
+      !this.active.has(authority.attemptScopeKey)
     )
       throw new Error(
         "AI process cannot dispatch without its project execution slot",
@@ -323,7 +323,7 @@ export class AiExecutionCapacity {
           if (
             !record ||
             record.state !== "queued" ||
-            (waiting && !this.waiters.has(authority.store.attemptId))
+            (waiting && !this.waiters.has(authority.attemptScopeKey))
           )
             return [];
           return [{ authority, record }];
@@ -332,15 +332,15 @@ export class AiExecutionCapacity {
           (a, b) =>
             a.record.sequence - b.record.sequence ||
             a.record.requestedAt.localeCompare(b.record.requestedAt) ||
-            a.authority.store.attemptId.localeCompare(
-              b.authority.store.attemptId,
+            a.authority.attemptScopeKey.localeCompare(
+              b.authority.attemptScopeKey,
             ),
         );
       const first = candidates[0];
       if (!first) return;
-      const next = this.waiters.get(first.authority.store.attemptId);
+      const next = this.waiters.get(first.authority.attemptScopeKey);
       if (!next) return; // A restored earlier ticket is still reconciling.
-      this.waiters.delete(next.authority.store.attemptId);
+      this.waiters.delete(next.authority.attemptScopeKey);
       next.cleanup();
       try {
         write(next.authority, {
@@ -348,8 +348,8 @@ export class AiExecutionCapacity {
           state: "active",
           executions: undefined,
         });
-        this.active.set(next.authority.store.attemptId, next.authority);
-        this.liveTokens.set(next.authority.store.attemptId, Symbol("ai-slot"));
+        this.active.set(next.authority.attemptScopeKey, next.authority);
+        this.liveTokens.set(next.authority.attemptScopeKey, Symbol("ai-slot"));
         next.resolve();
       } catch (error) {
         next.reject(

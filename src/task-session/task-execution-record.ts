@@ -248,6 +248,7 @@ export const primaryOperationSchema = z.strictObject({
     "ambiguous",
     "failed",
     "exhausted",
+    "cancelled",
   ]),
   lastSessionId: nonBlankIdentifier.optional(),
   processExecutionId: nonBlankIdentifier.optional(),
@@ -277,6 +278,14 @@ export const primaryOperationSchema = z.strictObject({
     .optional(),
   retrySafe: z.boolean().optional(),
   diagnostic: z.string().max(2_000).optional(),
+  cancellationEvidence: z
+    .strictObject({
+      source: z.enum(["never-dispatched", "stopped-after-dispatch"]),
+      observedAt: z.string().datetime(),
+      pullRequestUrl: z.url(),
+      proofArtifact: z.string().optional(),
+    })
+    .optional(),
   commitMessageResult: z
     .strictObject({
       intentIdentity: taskSessionContentIdentity,
@@ -288,6 +297,15 @@ const primaryOperationsSchema = z
   .record(nonBlankIdentifier, primaryOperationSchema)
   .superRefine((operations, ctx) => {
     for (const [key, operation] of Object.entries(operations)) {
+      if (
+        operation.status === "cancelled" &&
+        operation.cancellationEvidence === undefined
+      )
+        ctx.addIssue({
+          code: "custom",
+          path: [key, "cancellationEvidence"],
+          message: "Cancelled primary work requires terminal stop evidence",
+        });
       if (key !== operation.id)
         ctx.addIssue({
           code: "custom",

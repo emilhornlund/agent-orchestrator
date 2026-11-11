@@ -162,6 +162,8 @@ import {
   AiExecutionCapacity,
   AiCapacityCancelledError,
 } from "./ai-execution-capacity.js";
+import { withActivePrObservation } from "./active-pr-observation.js";
+import { terminalPrFenceFromRun } from "../task-session/terminal-pr-fence.js";
 
 function sleep(milliseconds: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -472,6 +474,52 @@ async function hasPreparedConflictRecovery(
 }
 
 async function runProjectWorkerInner(
+  trello: TrelloClient,
+  git: GitClient,
+  github: GitHubClient,
+  opencode: OpenCodeClient,
+  commands: CommandRunner,
+  project: PollingProject,
+  pollIntervalMilliseconds: number,
+  signal: AbortSignal,
+  emailNotifier?: EmailNotifier,
+  deferredTrelloValidation?: typeof validateProjectTrello,
+  runContext?: ProjectRunWorkerContext,
+): Promise<"authority-released" | undefined> {
+  const execute = () =>
+    runProjectWorkerLoop(
+      trello,
+      git,
+      github,
+      opencode,
+      commands,
+      project,
+      pollIntervalMilliseconds,
+      signal,
+      emailNotifier,
+      deferredTrelloValidation,
+      runContext,
+    );
+  if (!runContext?.authority) return execute();
+  return withActivePrObservation(
+    {
+      project,
+      github,
+      authority: runContext.authority,
+      intervalMs: pollIntervalMilliseconds,
+      signal,
+      onError: () =>
+        logger
+          .child({ projectId: project.id })
+          .warn(
+            "Active PR observation deferred; project state and retained arrivals are unchanged",
+          ),
+    },
+    execute,
+  );
+}
+
+async function runProjectWorkerLoop(
   trello: TrelloClient,
   git: GitClient,
   github: GitHubClient,
@@ -868,6 +916,7 @@ async function runProjectWorkerInner(
         runContext?.authority &&
         (!authorityRecord ||
           (authorityRecord.lifecycle === "waiting" &&
+            !terminalPrFenceFromRun(authorityRecord) &&
             !resumableLegacyAttempt &&
             !recoverableTaskWaitDue))
       ) {
@@ -885,6 +934,7 @@ async function runProjectWorkerInner(
       // of resuming this same checkpoint when the service recovers.
       if (
         runContext?.authority &&
+        !terminalPrFenceFromRun(runContext.authority.store.read()!) &&
         (await resumeInitialPublication({
           project,
           trello,

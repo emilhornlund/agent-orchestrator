@@ -4,6 +4,10 @@ import path from "node:path";
 import { z } from "zod";
 import type { ProjectConfig } from "../config/config.js";
 import { ProjectRunAuthority } from "./project-run-authority.js";
+import {
+  readTerminalPrFence,
+  otherTaskWriterIsActive,
+} from "./terminal-pr-fence.js";
 
 const eventSchema = z.strictObject({
   eventId: z
@@ -34,6 +38,7 @@ const eventSchema = z.strictObject({
       "card-left-ready",
       "operator-confirmed-never-started",
       "superseded-observation",
+      "human-pr-terminal",
     ])
     .optional(),
 });
@@ -589,6 +594,102 @@ export class TaskMutationQueue {
           ),
         },
         result: undefined,
+      };
+    });
+  }
+
+  cancelAfterTerminal(cardId: string): void {
+    const fence = readTerminalPrFence(this.authority);
+    if (
+      !this.authority ||
+      !fence?.stoppedAt ||
+      !fence.proofArtifact ||
+      fence.cardId !== cardId ||
+      otherTaskWriterIsActive(this.authority)
+    )
+      throw new TaskMutationQueueConflictError(
+        "Terminal queue cancellation requires verified stopped writers",
+      );
+    this.update((queue) => {
+      const terminalId = `terminal-pr:${cardId}:${fence.state}:${fence.headSha}`;
+      const cancelled = new Set(
+        queue.events
+          .filter(
+            (event) =>
+              event.cardId === cardId &&
+              event.eventId !== terminalId &&
+              ["queued", "active", "failed"].includes(event.status),
+          )
+          .map((event) => event.eventId),
+      );
+      const events = queue.events.map((event) => {
+        if (!cancelled.has(event.eventId)) return event;
+        if (event.ownerToken) liveMutationOwners.delete(event.ownerToken);
+        return {
+          ...event,
+          status: "retired" as const,
+          ownerToken: undefined,
+          ownerPid: undefined,
+          retiredAt: new Date().toISOString(),
+          retirementReason: "human-pr-terminal" as const,
+        };
+      });
+      return {
+        queue: {
+          ...queue,
+          events,
+          activeEventId:
+            queue.activeEventId && cancelled.has(queue.activeEventId)
+              ? null
+              : queue.activeEventId,
+        },
+        result: undefined,
+      };
+    });
+  }
+
+  claimTerminalForReconciliation(eventId: string): TaskMutationEvent | null {
+    const fence = readTerminalPrFence(this.authority);
+    if (
+      !this.authority ||
+      !fence?.stoppedAt ||
+      !fence.proofArtifact ||
+      otherTaskWriterIsActive(this.authority)
+    )
+      return this.claimForRecovery(eventId);
+    if (
+      eventId !== `terminal-pr:${fence.cardId}:${fence.state}:${fence.headSha}`
+    )
+      throw new TaskMutationQueueConflictError(
+        "Terminal event differs from the authoritative outcome",
+      );
+    return this.update((queue) => {
+      if (queue.activeEventId !== null && queue.activeEventId !== eventId)
+        return { queue, result: null };
+      const target = queue.events.find((event) => event.eventId === eventId);
+      if (
+        !target ||
+        target.kind !== "terminal-pr" ||
+        !["queued", "active", "failed"].includes(target.status)
+      )
+        return { queue, result: null };
+      if (target.ownerToken) liveMutationOwners.delete(target.ownerToken);
+      const claimed = {
+        ...target,
+        status: "active" as const,
+        ownerToken: this.ownerToken,
+        ownerPid: process.pid,
+      };
+      liveMutationOwners.add(this.ownerToken);
+      return {
+        queue: {
+          ...queue,
+          activeEventId: eventId,
+          events: queue.events.map((event) =>
+            event.eventId === eventId ? claimed : event,
+          ),
+        },
+        result: claimed,
       };
     });
   }

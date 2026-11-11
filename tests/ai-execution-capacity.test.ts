@@ -12,6 +12,13 @@ import {
   persistEssentialDependencyWait,
 } from "../src/orchestrator/run-orchestrator.js";
 import { pollProject } from "../src/orchestrator/poll-project.js";
+import { transitionTaskExecutionRecord } from "../src/task-session/task-execution-transition.js";
+import type { TaskExecutionEvent } from "../src/task-session/task-execution-transition.js";
+import {
+  readTerminalPrFence,
+  withTaskExecutionActivity,
+  otherTaskWriterIsActive,
+} from "../src/task-session/terminal-pr-fence.js";
 vi.mock("../src/orchestrator/poll-project.js", () => ({
   pollProject: vi.fn(),
 }));
@@ -34,6 +41,7 @@ function barrier() {
 async function fixture(
   id: string,
   taskKind: "implementation" | "refinement" = "refinement",
+  attemptId?: string,
 ): Promise<Fixture> {
   if (fixtures.length === 0)
     root = fs.mkdtempSync(path.join(os.tmpdir(), "ai-capacity-"));
@@ -43,6 +51,7 @@ async function fixture(
     undefined,
     false,
     taskKind,
+    attemptId,
   );
   fixtures.push(f);
   return f;
@@ -63,6 +72,37 @@ function dispatch(
     }),
   );
 }
+
+it("isolates live execution and capacity for identical local attempt IDs in different projects", async () => {
+  const a = await fixture("a", "refinement", "attempt");
+  const b = await fixture("b", "refinement", "attempt");
+  const capacity = new AiExecutionCapacity(2, [a.authority, b.authority]);
+  const signal = new AbortController().signal;
+  const started = barrier();
+  const release = barrier();
+  const first = capacity.run(a.authority, signal, signal, () =>
+    withTaskExecutionActivity(a.authority, async () => {
+      started.resolve();
+      await release.promise;
+    }),
+  );
+  try {
+    await started.promise;
+    expect(otherTaskWriterIsActive(a.authority)).toBe(true);
+    expect(otherTaskWriterIsActive(b.authority)).toBe(false);
+    await capacity.run(b.authority, signal, signal, async () => {
+      expect(
+        a.authority.read("ai-execution-capacity", (value) => value),
+      ).toMatchObject({ state: "active" });
+      expect(
+        b.authority.read("ai-execution-capacity", (value) => value),
+      ).toMatchObject({ state: "active" });
+    });
+  } finally {
+    release.resolve();
+    await first;
+  }
+});
 
 it("allocates slots FCFS across projects and sends a busy project behind an existing waiter", async () => {
   const a = await fixture("a");
@@ -419,4 +459,106 @@ it("applies configured capacity through the production project workers and OpenC
   await running;
   expect(order).toEqual(["a", "b"]);
   vi.mocked(pollProject).mockReset();
+});
+
+it("observes human closure while the production worker is behind a future dependency recheck", async () => {
+  const f = await fixture("waiting", "implementation");
+  const tasks = new TaskExecutionStore(
+    f.project.contextRoot,
+    f.project,
+    f.authority,
+  );
+  tasks.create({
+    version: 1,
+    projectId: f.project.id,
+    cardId: f.card.id,
+    phase: "planning",
+    primarySessionId: "ses_primary",
+    sessionCreationStatus: "bound",
+    expectedBranch: `agent/${f.card.id}`,
+    operationKey: "task",
+    revision: 1,
+    retryCounters: { validation: 0, review: 0, ci: 0, humanFeedback: 0 },
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+  const url = `https://github.com/${f.project.repository.github}/pull/1`;
+  const head = "a".repeat(40);
+  for (const type of [
+    "plan-approved",
+    "implementation-completed",
+    "validation-reviewed",
+    "review-unavailable",
+    "publication-completed",
+    "ci-passed-awaiting-human",
+  ] as const) {
+    const current = tasks.read(f.card.id)!;
+    const event = {
+      type,
+      projectId: f.project.id,
+      cardId: f.card.id,
+      operationKey: "task",
+      eventId: type,
+      occurredAt: new Date(Date.parse(current.updatedAt) + 1).toISOString(),
+      ...(type === "publication-completed"
+        ? { pullRequest: { number: 1, url, headSha: head } }
+        : {}),
+    } as TaskExecutionEvent;
+    tasks.compareAndSwap(
+      f.card.id,
+      current.revision,
+      transitionTaskExecutionRecord(current, event),
+    );
+  }
+  f.card.idList = f.project.trello.reviewListId;
+  f.saveCard();
+  persistEssentialDependencyWait(f.authority, f.card.id, 60_000, "opencode");
+  const retryAt = tasks.read(f.card.id)!.recoveryWait!.retryAt;
+  const [owner, repository] = f.project.repository.github.split("/");
+  const github = {
+    findPullRequestState: vi.fn(async () => ({
+      url,
+      state: "CLOSED",
+      mergedAt: null,
+      headRefOid: head,
+      headRefName: `agent/${f.card.id}`,
+      baseRefName: "main",
+      headRepository: { name: repository },
+      headRepositoryOwner: { login: owner },
+    })),
+  };
+  const shutdown = new AbortController();
+  vi.mocked(pollProject).mockImplementation(async () => {
+    expect(readTerminalPrFence(f.authority)?.state).toBe("CLOSED");
+    shutdown.abort();
+  });
+  vi.useFakeTimers();
+  let running: Promise<void> | undefined;
+  try {
+    running = runOrchestrator(
+      f.trello,
+      f.git,
+      github as never,
+      f.openCode,
+      f.commands,
+      {
+        ...f.config,
+        workflow: { ...f.config.workflow, pollIntervalSeconds: 1 },
+      },
+      shutdown.signal,
+      undefined,
+      undefined,
+      new Map([[f.project.id, f.context]]),
+    );
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(pollProject).toHaveBeenCalledOnce();
+    await running;
+    expect(tasks.read(f.card.id)?.recoveryWait?.retryAt).toBe(retryAt);
+    expect(readTerminalPrFence(f.authority)?.state).toBe("CLOSED");
+  } finally {
+    shutdown.abort();
+    if (running) await Promise.allSettled([running]);
+    vi.useRealTimers();
+    vi.mocked(pollProject).mockReset();
+  }
 });

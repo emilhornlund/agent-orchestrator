@@ -165,6 +165,11 @@ import {
   recoverPendingTaskCommit,
 } from "./trusted-commit-state.js";
 import { logger } from "../logging/logger.js";
+import {
+  readTerminalPrFence,
+  recordTerminalPrFence,
+} from "../task-session/terminal-pr-fence.js";
+import { prepareTerminalTaskSession } from "./prepare-terminal-task-session.js";
 import { PrMaintenanceStore } from "../task-session/pr-maintenance-store.js";
 import { maintainOutdatedPr } from "./maintain-outdated-pr.js";
 import { reconcileUnobservedTerminalPrEvents } from "./reconcile-unobserved-terminal-pr.js";
@@ -412,20 +417,40 @@ async function completeMergedTaskSession(options: {
     pullRequest.mergedAt === null ||
     pullRequest.baseRefName !== project.repository.defaultBranch ||
     pullRequest.headRefName !== `agent/${card.id}` ||
-    pullRequest.headRepository?.name !== repository ||
-    pullRequest.headRepositoryOwner?.login !== owner
+    pullRequest.headRepository?.name.toLowerCase() !==
+      repository?.toLowerCase() ||
+    pullRequest.headRepositoryOwner?.login.toLowerCase() !==
+      owner?.toLowerCase()
   ) {
     throw new Error(`Merged pull request identity is ambiguous for ${card.id}`);
   }
-  await verifyMergedTaskPrHeadContinuity({
-    github: options.github,
-    project,
-    cwd: project.repository.path,
-    pullRequestNumber: record.pullRequest.number,
-    recordedHeadSha: record.pullRequest.headSha!,
-    mergedHeadSha: headSha,
-  });
-  releaseFailedPublishedFeedbackMutation(queue, record, card.id);
+  const authority = ProjectRunAuthority.current(project.id);
+  if (authority)
+    recordTerminalPrFence(
+      authority,
+      record,
+      pullRequest,
+      queue.getActive()?.kind !== "terminal-pr" && queue.getActive() !== null,
+      project.repository.defaultBranch,
+    );
+  let headContinuityVerified = false;
+  try {
+    await verifyMergedTaskPrHeadContinuity({
+      github: options.github,
+      project,
+      cwd: project.repository.path,
+      pullRequestNumber: record.pullRequest.number,
+      recordedHeadSha: record.pullRequest.headSha!,
+      mergedHeadSha: headSha,
+    });
+    headContinuityVerified = true;
+  } catch {
+    logger
+      .child({ projectId: project.id, cardId: card.id })
+      .info(
+        "Merged-head continuity is unavailable; cleanup requires independent local publication evidence",
+      );
+  }
   const terminalEvent = queue.enqueue({
     projectId: project.id,
     cardId: card.id,
@@ -434,6 +459,31 @@ async function completeMergedTaskSession(options: {
     kind: "terminal-pr",
     enqueuedAt: record.updatedAt,
   });
+  const terminalPreparation = await prepareTerminalTaskSession({
+    project,
+    git,
+    taskStore,
+    queue,
+    cardId: card.id,
+    pullRequest,
+    headContinuityVerified,
+  });
+  if (!terminalPreparation.ready) {
+    const blocker = queue.getActive();
+    if (
+      options.mutationBlockStore.report(
+        `terminal:${terminalEventId}`,
+        `${terminalEventId}|${blocker?.eventId ?? "unknown"}|${blocker?.status ?? "unknown"}|execution-stop`,
+        "Terminal release waits for verified stopped execution",
+      )
+    )
+      logger
+        .child({ projectId: project.id, cardId: card.id })
+        .warn(
+          "Deferred merged PR cleanup; execution stop or queue owner still requires reconciliation",
+        );
+    return "deferred";
+  }
   if (terminalEvent.status === "completed" && record.phase === "done") {
     options.mutationBlockStore.resolve(`terminal:${terminalEventId}`);
     const evidence = await readRunTerminalEvidence({
@@ -463,13 +513,23 @@ async function completeMergedTaskSession(options: {
     return "completed";
   }
   if (options.releaseMutationEventId !== undefined) {
-    if (queue.getActive()?.eventId !== options.releaseMutationEventId) {
+    if (
+      queue.getActive()?.eventId !== options.releaseMutationEventId &&
+      !queue
+        .list()
+        .some(
+          (event) =>
+            event.eventId === options.releaseMutationEventId &&
+            ["retired", "completed"].includes(event.status),
+        )
+    ) {
       throw new Error("Merged PR cannot release a mutation it does not own");
     }
-    queue.complete(options.releaseMutationEventId);
+    if (queue.ownsActive(options.releaseMutationEventId))
+      queue.complete(options.releaseMutationEventId);
     options.onMutationReleased?.();
   }
-  const mutation = queue.claimForRecovery(terminalEventId);
+  const mutation = queue.claimTerminalForReconciliation(terminalEventId);
   if (mutation === null || mutation.eventId !== terminalEventId) {
     const blocker = queue.getActive();
     const diagnostic = `Deferred merged PR cleanup; blocking mutation ${blocker?.eventId ?? "unknown"} (${blocker?.kind ?? "unknown"}, ${blocker?.status ?? "unknown"}) retains project queue ownership`;
@@ -488,6 +548,7 @@ async function completeMergedTaskSession(options: {
     await completeMergedTaskSessionPullRequest({
       trello,
       git,
+      github: options.github,
       project,
       card,
       pullRequest,
@@ -498,7 +559,8 @@ async function completeMergedTaskSession(options: {
         ? {}
         : { emailNotifier: options.emailNotifier }),
       signal,
-      ...(options.preserveLegacyMaintenanceArtifacts ||
+      ...(terminalPreparation.preserveArtifacts ||
+      options.preserveLegacyMaintenanceArtifacts ||
       hasExhaustedPublishedFeedbackCorrection(record)
         ? { preserveWorktree: true }
         : {}),
@@ -566,27 +628,6 @@ async function completeMergedTaskSession(options: {
   }
 }
 
-/** A verified human PR outcome supersedes only that task's stopped feedback owner. */
-function releaseFailedPublishedFeedbackMutation(
-  queue: TaskMutationQueue,
-  record: TaskExecutionRecord,
-  cardId: string,
-): void {
-  const active = queue.getActive();
-  if (
-    active === null ||
-    (active.status !== "failed" &&
-      !(active.status === "active" && active.ownerToken === undefined)) ||
-    active.kind !== "feedback" ||
-    active.cardId !== cardId ||
-    record.feedbackRemediation?.operationId !== active.eventId
-  )
-    return;
-  const claimed = queue.claimForRecovery(active.eventId);
-  if (claimed === null) return;
-  queue.complete(claimed.eventId);
-}
-
 function hasExhaustedPublishedFeedbackCorrection(
   record: TaskExecutionRecord,
 ): boolean {
@@ -638,6 +679,7 @@ async function persistClosedRunTerminal(
   project: ProjectConfig,
   card: TrelloCard,
   record: TaskExecutionRecord,
+  observedHeadSha: string,
 ): Promise<void> {
   if (!ProjectRunAuthority.current(project.id) || !record.pullRequest?.headSha)
     return;
@@ -646,7 +688,7 @@ async function persistClosedRunTerminal(
     project,
     card,
     pullRequestNumber: record.pullRequest.number,
-    headSha: record.pullRequest.headSha,
+    headSha: observedHeadSha,
     outcome: "closed-unmerged",
   });
   const latest = taskStore.read(card.id);
@@ -1173,7 +1215,8 @@ export async function runTaskSessionWorkflow(
   // is still publication; neither absence from Working nor an outage may claim
   // new work or turn this into an absorbing attention-required operation.
   if (
-    await resumeInitialPublication({
+    !readTerminalPrFence(ProjectRunAuthority.current(project.id)) &&
+    (await resumeInitialPublication({
       project,
       trello,
       git,
@@ -1181,7 +1224,7 @@ export async function runTaskSessionWorkflow(
       signal,
       opencode: openCode,
       ...(emailNotifier === undefined ? {} : { emailNotifier }),
-    })
+    }))
   )
     return;
   const validationCommand = project.repository.validationCommand ?? "";
@@ -1955,6 +1998,29 @@ export async function runTaskSessionWorkflow(
     const expectedEventId = `terminal-pr:${cardId}:${expectedState}:${terminalHead}`;
     const expectedOperationKey = `${record.operationKey}:${expectedState}:${terminalHead}`;
     if (
+      authoritative &&
+      authoritative.state !== "OPEN" &&
+      authoritative.url === record.pullRequest.url &&
+      (authoritative.state !== expectedState ||
+        pendingTerminalMutation.eventId !== expectedEventId)
+    ) {
+      const outcome = await prepareTerminalTaskSession({
+        project,
+        git,
+        taskStore,
+        queue,
+        cardId,
+        pullRequest: authoritative,
+      });
+      if (outcome.ready)
+        logger
+          .child({ projectId: project.id, cardId })
+          .info(
+            "A newer human PR outcome superseded the old terminal descriptor",
+          );
+      return;
+    }
+    if (
       authoritative === null ||
       authoritative.state !== expectedState ||
       authoritative.url !== record.pullRequest.url ||
@@ -1968,7 +2034,12 @@ export async function runTaskSessionWorkflow(
         `Persisted terminal PR mutation no longer matches authoritative PR state for ${cardId}`,
       );
     }
-    if (isMerged) {
+    if (
+      isMerged &&
+      authoritative.headRefOid === record.pullRequest.headSha &&
+      !readTerminalPrFence(ProjectRunAuthority.current(project.id))
+        ?.preserveArtifacts
+    ) {
       await verifyMergedTaskPrHeadContinuity({
         github,
         project,
@@ -1977,11 +2048,17 @@ export async function runTaskSessionWorkflow(
         recordedHeadSha: record.pullRequest.headSha!,
         mergedHeadSha: authoritative.headRefOid,
       });
-    } else if (authoritative.headRefOid !== record.pullRequest.headSha) {
-      throw new Error(`Persisted closed PR head changed for ${cardId}`);
     }
-    releaseFailedPublishedFeedbackMutation(queue, record, cardId);
-    const recoveredTerminalMutation = queue.claimForRecovery(
+    const terminalPreparation = await prepareTerminalTaskSession({
+      project,
+      git,
+      taskStore,
+      queue,
+      cardId,
+      pullRequest: authoritative,
+    });
+    if (!terminalPreparation.ready) return;
+    const recoveredTerminalMutation = queue.claimTerminalForReconciliation(
       pendingTerminalMutation.eventId,
     );
     if (recoveredTerminalMutation !== null) {
@@ -2007,10 +2084,12 @@ export async function runTaskSessionWorkflow(
           await returnClosedTaskSessionPullRequestToBacklog({
             trello,
             git,
+            github,
             project,
             card,
             pullRequest: authoritative,
             preserveWorktree:
+              terminalPreparation.preserveArtifacts ||
               shouldPreserveTerminalMaintenanceArtifacts(cardId) ||
               hasExhaustedPublishedFeedbackCorrection(record),
             signal,
@@ -2026,6 +2105,7 @@ export async function runTaskSessionWorkflow(
               project,
               card,
               record,
+              authoritative.headRefOid,
             );
             queue.complete(recoveredTerminalMutation.eventId);
           }
@@ -2083,7 +2163,6 @@ export async function runTaskSessionWorkflow(
         kind: "terminal-pr",
         enqueuedAt: record.updatedAt,
       });
-      releaseFailedPublishedFeedbackMutation(queue, record, observation.cardId);
       if (observation.state === "MERGED") {
         const outcome = await completeMergedTaskSession({
           github,
@@ -2106,16 +2185,28 @@ export async function runTaskSessionWorkflow(
         // completed Trello transition.
         return;
       }
-      const terminalMutation = queue.claimForRecovery(terminalEventId);
+      const terminalPreparation = await prepareTerminalTaskSession({
+        project,
+        git,
+        taskStore,
+        queue,
+        cardId: observation.cardId,
+        pullRequest: observation.pullRequest,
+      });
+      if (!terminalPreparation.ready) return;
+      const terminalMutation =
+        queue.claimTerminalForReconciliation(terminalEventId);
       if (terminalMutation === null) continue;
       try {
         await returnClosedTaskSessionPullRequestToBacklog({
           trello,
           git,
+          github,
           project,
           card,
           pullRequest: observation.pullRequest,
           preserveWorktree:
+            terminalPreparation.preserveArtifacts ||
             shouldPreserveTerminalMaintenanceArtifacts(card.id) ||
             hasExhaustedPublishedFeedbackCorrection(record),
           signal,
@@ -2129,6 +2220,7 @@ export async function runTaskSessionWorkflow(
             project,
             card,
             record,
+            observation.pullRequest.headRefOid!,
           );
           queue.complete(terminalMutation.eventId);
         }
@@ -2138,6 +2230,7 @@ export async function runTaskSessionWorkflow(
       }
       return;
     }
+    if (readTerminalPrFence(ProjectRunAuthority.current(project.id))) continue;
     if (taskStore.read(observation.cardId)?.feedbackCardMove) {
       await reconcilePendingFeedbackCardMove({
         project,
@@ -3185,7 +3278,11 @@ export async function runTaskSessionWorkflow(
     );
     // Passing CI and local quality evidence never authorizes an orchestrator merge.
   }
-  if (executionRecoveryBlocked) return;
+  if (
+    executionRecoveryBlocked ||
+    readTerminalPrFence(ProjectRunAuthority.current(project.id))
+  )
+    return;
   if (
     executionRecoveryCard !== undefined &&
     canonicalCardId !== undefined &&

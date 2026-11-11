@@ -22,6 +22,11 @@ import type { ProjectConfig } from "../src/config/config.js";
 import { finalizeRefinement } from "../src/refinement/finalize-refinement.js";
 import { GitHubCredentialProvider } from "../src/github/github-credential-provider.js";
 import { registerProcessSecrets } from "../src/process/process-runtime.js";
+import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
+import { TaskMutationQueue } from "../src/task-session/task-mutation-queue.js";
+import { recordTerminalPrFence } from "../src/task-session/terminal-pr-fence.js";
+import { prepareTerminalTaskSession } from "../src/orchestrator/prepare-terminal-task-session.js";
+import { reconcileManagedPullRequestStatus } from "../src/github/pull-request-status.js";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -308,6 +313,118 @@ function realGit(f: ReturnType<typeof fixture>) {
 }
 
 describe("production workflow client journal", () => {
+  it("allows only terminal consistency and exact owned-status removal after verified writer stop", async () => {
+    const f = fixture();
+    const url = f.url.replace("owner/repo", "Owner/Repo");
+    const authority = new ProjectRunAuthority(
+      "p",
+      f.store,
+      1,
+      undefined,
+      undefined,
+      "card",
+    );
+    const tasks = new TaskExecutionStore(
+      f.pinned.storageRoot,
+      f.project,
+      authority,
+    );
+    const head = "a".repeat(40);
+    tasks.create({
+      version: 1,
+      projectId: "p",
+      cardId: "card",
+      phase: "human-feedback",
+      primarySessionId: "primary",
+      sessionCreationStatus: "bound",
+      expectedBranch: "agent/card",
+      pullRequest: { number: 1, url, headSha: head },
+      operationKey: "task",
+      revision: 1,
+      retryCounters: { validation: 0, review: 0, ci: 0, humanFeedback: 0 },
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    const pr = {
+      url,
+      state: "CLOSED" as const,
+      mergedAt: null,
+      headRefOid: head,
+      headRefName: "agent/card",
+      baseRefName: "main",
+      headRepository: { name: "Repo" },
+      headRepositoryOwner: { login: "Owner" },
+    };
+    let body = reconcileManagedPullRequestStatus(
+      "Human description",
+      "addressing-review-feedback",
+      "main",
+    );
+    let edits = 0;
+    const github = new GitHubClient(async (_cwd, args) => {
+      if (
+        args[0] === "pr" &&
+        args[1] === "view" &&
+        args[args.indexOf("--json") + 1] === "body"
+      )
+        return JSON.stringify({ body });
+      if (args[0] === "pr" && args[1] === "edit") {
+        edits++;
+        body = args[args.indexOf("--body") + 1]!;
+        return "";
+      }
+      throw new Error("Unexpected terminal body fixture command");
+    });
+    vi.spyOn(github, "getPullRequestStateByNumber").mockResolvedValue(pr);
+    const request = {
+      cwd: f.pinned.repositoryPath,
+      repository: "owner/repo",
+      pullRequestUrl: url,
+      project: f.project,
+    };
+    await authority.run(async () => {
+      recordTerminalPrFence(authority, tasks.read("card")!, pr, false, "main");
+      await expect(
+        github.updatePullRequestDescriptionStatus({ ...request, status: null }),
+      ).rejects.toThrow("supersedes automated work");
+      expect(edits).toBe(0);
+      const queue = new TaskMutationQueue(
+        f.pinned.storageRoot,
+        f.project,
+        authority,
+      );
+      const ready = await prepareTerminalTaskSession({
+        project: f.project,
+        taskStore: tasks,
+        queue,
+        cardId: "card",
+        pullRequest: pr,
+        git: { branchExists: vi.fn(async () => false) } as never,
+      });
+      expect(ready.ready).toBe(true);
+      await github.updatePullRequestDescriptionStatus({
+        ...request,
+        status: null,
+      });
+      expect(body).toContain("Human description");
+      expect(body).not.toContain("agent-orchestrator-status:");
+      expect(edits).toBe(1);
+      await expect(
+        github.editPullRequestDescription({
+          ...request,
+          body: "Overwrite human content",
+          expectedBody: body,
+        }),
+      ).rejects.toThrow("supersedes automated work");
+      await expect(f.trello.moveCard("card", "review")).rejects.toThrow(
+        "supersedes automated work",
+      );
+      await f.trello.moveCard("card", "backlog");
+      expect(f.card.idList).toBe("backlog");
+      expect(edits).toBe(1);
+    });
+  });
+
   it("cancels a never-dispatched managed body update after a human edit and refreshes safely after restart", async () => {
     const f = fixture();
     let body = "Human original";

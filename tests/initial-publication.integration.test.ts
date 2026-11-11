@@ -13,6 +13,7 @@ import { WorkflowMutationWaitingError } from "../src/task-session/workflow-mutat
 import { registerProcessSecrets } from "../src/process/process-runtime.js";
 import { ProcessExecutionError } from "../src/process/process-runtime.js";
 import { ProjectRunAuthority } from "../src/task-session/project-run-authority.js";
+import { readTerminalPrFence } from "../src/task-session/terminal-pr-fence.js";
 import { publishCard } from "../src/orchestrator/publish-card.js";
 import {
   writePendingCommitState,
@@ -1110,6 +1111,151 @@ function payload(
 }
 
 describe("initial publication production checkpoint with independent simulated services", () => {
+  it("reconciles a late dispatched Review move before terminal Backlog and never sends it twice", async () => {
+    const f = fixture();
+    f.authority = new ProjectRunAuthority(
+      f.project.id,
+      f.store,
+      f.store.read()!.owner.generation,
+      undefined,
+      undefined,
+      "card",
+    );
+    const lookup = f.services.github.findPullRequestState;
+    let closed = false;
+    vi.spyOn(f.services.github, "findPullRequestState").mockImplementation(
+      async (options) => {
+        const pr = await lookup(options);
+        return pr && closed ? { ...pr, state: "CLOSED", mergedAt: null } : pr;
+      },
+    );
+    f.services.change({ delayMove: true, secondReady: true });
+    await begin(f);
+    for (
+      let pass = 0;
+      pass < 8 && !f.services.read().pendingMoves?.length;
+      pass++
+    )
+      await poll(f);
+    expect(f.services.read().pendingMoves).toEqual([
+      { cardId: "card", listId: "review" },
+    ]);
+    expect(operation(f, "move")?.mutation?.dispatches).toHaveLength(1);
+    closed = true;
+    for (let pass = 0; pass < 3; pass++) await poll(f);
+    expect(readTerminalPrFence(f.authority)?.state).toBe("CLOSED");
+    expect(f.services.read().list).toBe("working");
+    expect(f.store.read()!.terminalSync).not.toBe("verified");
+    expect(
+      f.services.entries().filter((entry) => entry.type === "move-request"),
+    ).toHaveLength(1);
+    f.services.acceptLateMoves();
+    expect(f.services.read().list).toBe("review");
+    for (
+      let pass = 0;
+      pass < 8 && f.store.read()!.lifecycle !== "cancelled";
+      pass++
+    )
+      await poll(f);
+    expect(
+      operation(f, "move")?.status,
+      JSON.stringify({
+        providerList: f.services.read().list,
+        terminal: readTerminalPrFence(f.authority),
+        move: operation(f, "move"),
+        effects: f.services.entries().slice(-12),
+      }),
+    ).toBe("completed");
+    expect(operation(f, "move")?.mutation?.dispatches).toHaveLength(1);
+    expect(f.services.read().list).toBe("backlog");
+    expect(f.store.read()).toMatchObject({
+      lifecycle: "cancelled",
+      terminalSync: "verified",
+    });
+    expect(
+      f.services.entries().filter((entry) => entry.type === "move-request"),
+    ).toHaveLength(2); // original Review + terminal Backlog
+    expect(f.services.read().requests).toHaveLength(1);
+  });
+
+  it("binds a human-closed newly created PR and reconciles Backlog without a stale Review move or replacement push", async () => {
+    const f = fixture();
+    f.authority = new ProjectRunAuthority(
+      f.project.id,
+      f.store,
+      f.store.read()!.owner.generation,
+      undefined,
+      undefined,
+      "card",
+    );
+    const lookup = f.services.github.findPullRequestState;
+    const create = f.services.github.createPullRequest;
+    let closed = false;
+    vi.spyOn(f.services.github, "findPullRequestState").mockImplementation(
+      async (options) => {
+        const pr = await lookup(options);
+        return pr && closed ? { ...pr, state: "CLOSED", mergedAt: null } : pr;
+      },
+    );
+    vi.spyOn(f.services.github, "createPullRequest").mockImplementation(
+      async (options) => {
+        const result = await create(options);
+        closed = true;
+        f.isolated.git(
+          f.root,
+          "--git-dir",
+          path.join(f.root, "remote.git"),
+          "update-ref",
+          "-d",
+          "refs/heads/agent/card",
+        );
+        return result;
+      },
+    );
+    const move = vi.spyOn(f.services.trello, "moveCard");
+    const push = vi.spyOn(f.git, "push");
+    const agent = {
+      run: vi.fn(async () => {
+        throw new Error("Terminal publication must not invoke AI");
+      }),
+    };
+    await begin(f);
+    for (
+      let pass = 0;
+      pass < 8 && f.store.read()!.lifecycle !== "cancelled";
+      pass++
+    )
+      await poll(f, true, agent);
+    expect(
+      task(f)?.pullRequest?.url,
+      JSON.stringify({
+        task: task(f),
+        checkpoint: f.store.read()!.compatibility["initial-publication-v1"],
+        creation: operation(f, "pr"),
+      }),
+    ).toBe(f.services.read().prs[0]?.url);
+    expect(f.store.read()).toMatchObject({
+      lifecycle: "cancelled",
+      publicationState: "closed-unmerged",
+      terminalSync: "verified",
+    });
+    expect(f.services.read().list).toBe("backlog");
+    expect(move.mock.calls.some(([, list]) => list === "review")).toBe(false);
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(f.services.read().requests).toHaveLength(1);
+    expect(readTerminalPrFence(f.authority)?.stoppedAt).toBeDefined();
+    expect(agent.run).not.toHaveBeenCalled();
+    expect(fs.existsSync(f.worktreePath)).toBe(true); // Unregistered legacy fixture artifacts are preserved.
+    expect(
+      await f.git.getRemoteBranchSha(
+        f.worktreePath,
+        "origin",
+        "agent/card",
+        f.project,
+      ),
+    ).toBeNull();
+  });
+
   it("rechecks the destination at the transport boundary and proves non-dispatch if config changes after the dispatch checkpoint", async () => {
     const f = fixture();
     await begin(f);

@@ -8,6 +8,10 @@ import { sanitizeControlledText } from "../security/redact-secrets.js";
 import { TaskMutationQueue } from "../task-session/task-mutation-queue.js";
 import { evaluateCiChecks } from "../github/evaluate-ci-checks.js";
 import { establishCiCheckExpectations } from "../github/ci-check-expectations.js";
+import {
+  readTerminalPrFence,
+  recordTerminalPrFence,
+} from "../task-session/terminal-pr-fence.js";
 
 const arrivalSchema = z.strictObject({
   id: z.string().regex(/^[0-9a-f]{64}$/u),
@@ -41,6 +45,7 @@ export async function observeActivePullRequest(options: {
   project: ProjectConfig & { contextRoot?: string };
   github: GitHubClient;
   authority: ProjectRunAuthority;
+  terminalOnly?: boolean;
 }): Promise<void> {
   const { project, github, authority } = options;
   authority.assertHeld();
@@ -60,12 +65,13 @@ export async function observeActivePullRequest(options: {
     throw new Error(
       "Active PR observation could not verify the owned PR identity",
     );
+  if (options.terminalOnly && pr.state === "OPEN") return;
   const [owner, repository] = project.repository.github.split("/");
   if (
     pr.headRefName !== lookup.headBranch ||
     pr.baseRefName !== lookup.baseBranch ||
-    pr.headRepositoryOwner?.login !== owner ||
-    pr.headRepository?.name !== repository ||
+    pr.headRepositoryOwner?.login.toLowerCase() !== owner?.toLowerCase() ||
+    pr.headRepository?.name.toLowerCase() !== repository?.toLowerCase() ||
     (pr.state === "MERGED") !== (pr.mergedAt !== null)
   )
     throw new Error(
@@ -114,10 +120,25 @@ export async function observeActivePullRequest(options: {
   // not the writer's completion; the next paced observation reads the new head.
   if (
     latest?.pullRequest?.url !== task.pullRequest.url ||
-    latest.pullRequest.headSha !== task.pullRequest.headSha
+    (current !== null &&
+      latest.pullRequest.headSha !== task.pullRequest.headSha)
   )
     return;
   authority.assertHeld();
+  if (pr.state !== "OPEN") {
+    const active = new TaskMutationQueue(
+      project.contextRoot,
+      project,
+      authority,
+    ).getActive();
+    recordTerminalPrFence(
+      authority,
+      latest,
+      pr,
+      active !== null && active.kind !== "terminal-pr",
+      project.repository.defaultBranch,
+    );
+  }
   const content = sanitizeControlledText(
     JSON.stringify({ pullRequest: pr, current, baseRelation }),
   );
@@ -156,7 +177,22 @@ export async function observeActivePullRequest(options: {
     },
     (value) => inboxSchema.parse(value),
   );
-  if (current !== null) {
+  if (current === null) {
+    const queue = new TaskMutationQueue(
+      project.contextRoot,
+      project,
+      authority,
+    );
+    const eventId = `terminal-pr:${task.cardId}:${pr.state}:${pr.headRefOid}`;
+    queue.enqueue({
+      projectId: project.id,
+      cardId: task.cardId,
+      eventId,
+      operationKey: `${task.operationKey}:${pr.state}:${pr.headRefOid}`,
+      kind: "terminal-pr",
+      enqueuedAt: existing?.observedAt ?? new Date().toISOString(),
+    });
+  } else {
     const queue = new TaskMutationQueue(
       project.contextRoot,
       project,
@@ -219,12 +255,20 @@ export async function withActivePrObservation<T>(
   },
   operation: () => Promise<T>,
 ): Promise<T> {
+  const id = options.authority.attemptScopeKey;
+  if (observing.has(id)) return operation();
+  observing.add(id);
   let stopped = false;
   let failures = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let pending: Promise<void> = Promise.resolve();
   const schedule = () => {
-    if (stopped || options.signal.aborted) return;
+    if (
+      stopped ||
+      options.signal.aborted ||
+      readTerminalPrFence(options.authority)
+    )
+      return;
     timer = setTimeout(
       () => {
         pending = options.authority.run(async () => {
@@ -252,6 +296,11 @@ export async function withActivePrObservation<T>(
   } finally {
     stopped = true;
     clearTimeout(timer);
-    await pending;
+    try {
+      await pending;
+    } finally {
+      observing.delete(id);
+    }
   }
 }
+const observing = new Set<string>();

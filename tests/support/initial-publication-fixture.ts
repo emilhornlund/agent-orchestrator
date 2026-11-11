@@ -35,6 +35,8 @@ interface ServiceState {
   rejectMove: boolean;
   secondReady?: boolean;
   loseCommentResponse?: boolean;
+  delayMove?: boolean;
+  pendingMoves?: { cardId: string; listId: string }[];
   requests: {
     url: string;
     title: string;
@@ -95,6 +97,18 @@ export class PublicationServices {
     state.prs = [...state.requests];
     this.save(state);
     this.ledger("pr-accept-late");
+  }
+  acceptLateMoves() {
+    const state = this.read();
+    for (const move of state.pendingMoves ?? []) {
+      if (move.cardId !== "card")
+        throw new Error("Unexpected pending card move");
+      state.list = move.listId;
+      this.ledger("move-accept-late");
+    }
+    state.pendingMoves = [];
+    state.delayMove = false;
+    this.save(state);
   }
   card(list = this.read().list): TrelloCard {
     return {
@@ -203,6 +217,16 @@ export class PublicationServices {
           "fixture authorization rejection",
           { status: 401 },
         );
+      if (state.delayMove) {
+        state.pendingMoves = [
+          ...(state.pendingMoves ?? []),
+          { cardId: _card, listId: list },
+        ];
+        this.save(state);
+        throw new Error(
+          "Move acceptance is still in flight after response loss",
+        );
+      }
       if (!state.wrongMove) {
         state.list = list;
         this.save(state);

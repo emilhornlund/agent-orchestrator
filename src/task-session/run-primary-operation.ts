@@ -14,6 +14,7 @@ import {
   withAiExecutionCapacity,
   AiCapacityCancelledError,
 } from "../orchestrator/ai-execution-capacity.js";
+import { ObservedPrTerminalError } from "./terminal-pr-fence.js";
 export type PrimaryOperationEntry = NonNullable<
   NonNullable<TaskExecutionRecord["primaryOperations"]>[string]
 >;
@@ -69,6 +70,10 @@ async function runPrimaryOperationOwned(
 ): Promise<OpenCodeRunResult> {
   const { store, cardId, operationId, activity } = options;
   const entry = store.read(cardId)?.primaryOperations?.[operationId];
+  if (entry?.status === "cancelled")
+    throw new PrimaryOperationBlockedError(
+      "Human PR outcome cancelled this primary operation",
+    );
   if (entry && entry.activity !== activity)
     throw new PrimaryOperationBlockedError(
       "Primary operation ID is assigned to another activity",
@@ -179,7 +184,9 @@ async function runPrimaryOperationOwned(
       result = await options.execute();
     } catch (error) {
       if (
-        error instanceof AiCapacityCancelledError &&
+        (error instanceof AiCapacityCancelledError ||
+          (error instanceof ObservedPrTerminalError &&
+            error.beforeTransport)) &&
         store.read(cardId)?.primaryOperations?.[operationId]
           ?.processExecutionId === undefined
       ) {

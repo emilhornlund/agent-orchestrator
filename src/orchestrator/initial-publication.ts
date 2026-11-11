@@ -49,6 +49,11 @@ import { getTaskSessionSourceSnapshotIdentity } from "../task-session/source-sna
 import { assertOwnedTaskWorktreePath } from "../task-session/run-task-session-implementation.js";
 import { logger } from "../logging/logger.js";
 import {
+  assertNoTerminalPr,
+  recordTerminalPrFence,
+  ObservedPrTerminalError,
+} from "../task-session/terminal-pr-fence.js";
+import {
   notifyAttentionRequired,
   notifyHumanReview,
   enqueueNotification,
@@ -561,6 +566,7 @@ export async function resumeInitialPublication(options: {
   const next = () =>
     new Date(Date.now() + PUBLICATION_RECHECK_MS).toISOString();
   const assertExecution = () => {
+    assertNoTerminalPr(authority, true);
     const current = authority.store.assertCurrentLease(
       authority.ownerGeneration,
     );
@@ -612,6 +618,7 @@ export async function resumeInitialPublication(options: {
     send: () => Promise<unknown>,
   ): Promise<void> => {
     const id = `initial:${name}`;
+    assertNoTerminalPr(authority, true);
     const payloadId = artifact(payload);
     authority.store.persistMutationIntent(
       authority.store.read()!.revision,
@@ -634,6 +641,7 @@ export async function resumeInitialPublication(options: {
     try {
       actual = await observe();
     } catch (error) {
+      if (error instanceof ObservedPrTerminalError) throw error;
       if (
         operation.mutation.dispatches.length &&
         !mutationProvenNotDelivered(operation.mutation)
@@ -659,6 +667,7 @@ export async function resumeInitialPublication(options: {
         throw new PublicationSafetyError(
           `Unjournaled existing ${name}; provenance requires reconciliation`,
         );
+      assertNoTerminalPr(authority, true);
       event(id, { type: "dispatch", nextRecheckAt: next() });
       try {
         await authority.dispatch(() =>
@@ -673,6 +682,10 @@ export async function resumeInitialPublication(options: {
         authority.assertHeld();
         const proof =
           error instanceof PublicationNotSentError ||
+          (error instanceof ObservedPrTerminalError &&
+            error.transport?.operationId === id &&
+            error.transport.generation ===
+              entry(id)?.mutation?.dispatches.at(-1)?.generation) ||
           (error instanceof ProcessExecutionError &&
             error.classification === "spawn-failure")
             ? ("transport-proven-not-sent" as const)
@@ -1056,8 +1069,7 @@ export async function resumeInitialPublication(options: {
         number < 1 ||
         pr.url.toLowerCase() !==
           `https://github.com/${run.pinned.repository}/pull/${number}` ||
-        pr.state !== "OPEN" ||
-        pr.headRefOid !== sha ||
+        (pr.state === "OPEN" && pr.headRefOid !== sha) ||
         pr.headRefName !== checkpoint!.branch ||
         pr.baseRefName !== project.repository.defaultBranch ||
         pr.headRepository?.name.toLowerCase() !== repository ||
@@ -1066,8 +1078,65 @@ export async function resumeInitialPublication(options: {
         throw new PublicationSafetyError(
           "PR discovery identity/outcome conflicts with publication",
         );
+      if (pr.state !== "OPEN") {
+        const creation = entry("initial:pr");
+        if (!creation?.mutation?.dispatches.length || !pr.headRefOid)
+          throw new PublicationSafetyError(
+            "Terminal PR has no dispatched creation provenance",
+          );
+        if (creation.status !== "completed") {
+          const fields = await github.getPullRequestPublicationFields({
+            ...request,
+            pullRequestUrl: pr.url,
+          });
+          if (
+            !fields.body.includes(
+              `<!-- agent-orchestrator-publication:${run.attemptId} -->`,
+            )
+          )
+            throw new PublicationSafetyError(
+              "Terminal PR creation correlation cannot be verified",
+            );
+          event("initial:pr", {
+            type: "observe",
+            outcome: "verified",
+            resourceId: pr.url,
+            attentionRequired: false,
+            evidence: evidence("initial:pr", {
+              ...fields,
+              url: pr.url,
+              state: pr.state,
+              head: pr.headRefOid,
+            }),
+          });
+        }
+        const tasks = new TaskExecutionStore(run.pinned.storageRoot, project);
+        let task = tasks.read(checkpoint!.cardId);
+        if (!task)
+          throw new PublicationSafetyError(
+            "Terminal PR lost its task checkpoint",
+          );
+        if (!task.pullRequest)
+          task = tasks.compareAndSwap(task.cardId, task.revision, {
+            ...task,
+            pullRequest: { number, url: pr.url, headSha: sha },
+            revision: task.revision + 1,
+            updatedAt: now(),
+          });
+        const fence = recordTerminalPrFence(
+          authority,
+          task,
+          pr,
+          true,
+          project.repository.defaultBranch,
+        );
+        throw new ObservedPrTerminalError(fence);
+      }
       return pr;
     };
+    // A human may close/merge and delete the branch while creation acceptance
+    // awaits readback. Reconcile that original PR before interpreting ref loss.
+    if (entry("initial:pr")?.mutation?.dispatches.length) await find();
     if (!entry("initial:push")?.mutation?.dispatches.length && (await find()))
       throw new PublicationSafetyError(
         "Unjournaled PR exists; refusing branch mutation",

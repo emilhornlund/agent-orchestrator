@@ -43,6 +43,7 @@ import { decideValidatedHumanReviewPublication } from "../task-session/verified-
 import { getTaskSessionSourceSnapshotIdentity } from "../task-session/source-snapshot.js";
 import { FeedbackLedgerStore } from "../task-session/feedback-ledger-store.js";
 import { updateMaintenanceStatus } from "./maintenance-status.js";
+import { verifyExistingPrOpen } from "./verify-existing-pr-open.js";
 
 import { toFailureError } from "./failure-diagnostic.js";
 import { PublishedCardStateError } from "./published-card-state-error.js";
@@ -569,6 +570,16 @@ export async function publishCard({
   let finalPullRequestDescription = pullRequestDescription;
   let verifiedDescriptionFacts: readonly string[] =
     verifiedDescriptionFactsOption?.() ?? [];
+  const verifyExisting = async () => {
+    if (expectedExistingPullRequestUrl)
+      await verifyExistingPrOpen({
+        project,
+        github,
+        cardId: card.id,
+        branch,
+        pullRequestUrl: expectedExistingPullRequestUrl,
+      });
+  };
 
   try {
     if (signal?.aborted) {
@@ -745,11 +756,26 @@ export async function publishCard({
           cardLog,
         );
 
-      await git.push(worktreePath, "origin", branch, project);
+      await verifyExisting();
+      try {
+        await git.push(worktreePath, "origin", branch, project);
+      } catch (error) {
+        try {
+          await verifyExisting();
+        } catch (outcomeError) {
+          throw new AggregateError(
+            [error, outcomeError],
+            "Existing PR push outcome requires authoritative reconciliation",
+            { cause: outcomeError },
+          );
+        }
+        throw error;
+      }
 
       cardLog.event("Branch pushed");
     }
 
+    await verifyExisting();
     cardLog.info("Checking for existing pull request...");
 
     if (signal?.aborted) {
@@ -1015,6 +1041,7 @@ export async function publishCard({
     );
 
   try {
+    await verifyExisting();
     await beforeHumanReviewTransition?.();
     await trello.moveCard(card.id, project.trello.reviewListId);
     await afterHumanReviewTransition?.();
