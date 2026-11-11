@@ -51,6 +51,45 @@ it("completes the actual refinement workflow with full attributed fields", async
   expect(f.authority.store.read()!.lifecycle).toBe("refined");
 });
 
+it("preserves a legacy interrupted field snapshot without inventing write/history attribution", async () => {
+  const f = await fixture();
+  const legacy = {
+    cardId: f.card.id,
+    original: {
+      title: "Task",
+      description: "Original",
+      labels: [f.project.trello.refinementLabelId],
+    },
+    intended: {
+      title: "Refined task",
+      description: "Complete intended fields",
+      type: "feature",
+      labels: [f.project.trello.featureLabelId],
+    },
+  };
+  f.authority.mutate(
+    refinementMutationSnapshotKey,
+    legacy,
+    () => ({ value: legacy, result: undefined }),
+    refinementMutationSnapshotSchema.parse,
+  );
+  await f.poll();
+  expect(f.engineer).not.toHaveBeenCalled();
+  expect(f.card).toMatchObject({
+    name: "Task",
+    desc: "Original",
+    idLabels: [f.project.trello.refinementLabelId],
+    idList: f.project.trello.workingListId,
+  });
+  expect(
+    f.authority.read(
+      refinementMutationSnapshotKey,
+      refinementMutationSnapshotSchema.parse,
+    ),
+  ).toEqual(legacy);
+  expect(f.authority.store.read()!.lifecycle).toBe("refinement");
+});
+
 it.each(["different-actor", "same-actor"])(
   "preserves a %s human edit accepted between final read and write",
   async (actor) => {

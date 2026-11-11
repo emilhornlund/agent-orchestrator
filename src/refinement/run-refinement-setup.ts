@@ -108,46 +108,9 @@ export async function assertRefinementSetupBaselineUnchanged(options: {
     options.worktreePath,
     options.signal,
   );
-  const parse = (bytes: Buffer) =>
-    JSON.parse(bytes.toString("utf8")) as {
-      branch: string;
-      head: string;
-      status: string;
-      tracked: string[];
-      committable: string[];
-      untracked: string[];
-      ignored: string[];
-      files: { path: string }[];
-      [key: string]: unknown;
-    };
-  const normalize = (bytes: Buffer) => {
-    const inventory = parse(bytes);
-    return {
-      ...inventory,
-      status: inventory.status
-        .split("\n")
-        .filter((line) => line.slice(3) !== refinementResultRelativePath)
-        .join("\n"),
-      tracked: inventory.tracked.filter(
-        (file) => file !== refinementResultRelativePath,
-      ),
-      committable: inventory.committable.filter(
-        (file) => file !== refinementResultRelativePath,
-      ),
-      untracked: inventory.untracked.filter(
-        (file) => file !== refinementResultRelativePath,
-      ),
-      ignored: inventory.ignored.filter(
-        (file) => file !== refinementResultRelativePath,
-      ),
-      files: inventory.files.filter(
-        (file) => file.path !== refinementResultRelativePath,
-      ),
-    };
-  };
   if (
-    JSON.stringify(normalize(options.baseline)) !==
-    JSON.stringify(normalize(current))
+    JSON.stringify(JSON.parse(options.baseline.toString("utf8"))) !==
+    JSON.stringify(JSON.parse(current.toString("utf8")))
   )
     throw new RefinementSetupAmbiguousError(
       "Refinement worktree no longer matches the persisted post-setup baseline; preserving it and blocking agent redispatch",

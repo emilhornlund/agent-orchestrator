@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
+import { sanitizeControlledText } from "../security/redact-secrets.js";
 
 import { z } from "zod";
 
@@ -73,25 +74,44 @@ export function getRefinementResultPath(worktreePath: string): string {
   return path.join(worktreePath, refinementResultRelativePath);
 }
 
+function assertArtifactDirectory(directory: string, create: boolean): void {
+  let current = path.parse(directory).root;
+  for (const component of path.relative(current, directory).split(path.sep)) {
+    current = path.join(current, component);
+    let stat = fs.lstatSync(current, { throwIfNoEntry: false });
+    if (!stat) {
+      if (!create) return;
+      fs.mkdirSync(current, { mode: 0o700 });
+      stat = fs.lstatSync(current);
+    }
+    if (stat.isSymbolicLink() || !stat.isDirectory())
+      throw new Error(
+        "Unsafe refinement artifact directory; preserving unknown paths",
+      );
+  }
+}
+
 export function clearRefinementResult(worktreePath: string): void {
   const resultPath = getRefinementResultPath(worktreePath);
 
   // Preserve prior output, including interrupted/invalid output, rather than
   // deleting evidence or accepting it as a new agent result.
-  fs.mkdirSync(path.dirname(resultPath), { recursive: true, mode: 0o700 });
-  if (fs.existsSync(resultPath)) {
-    if (!fs.lstatSync(resultPath).isFile())
+  assertArtifactDirectory(path.dirname(resultPath), true);
+  const stat = fs.lstatSync(resultPath, { throwIfNoEntry: false });
+  if (stat) {
+    if (!stat.isFile())
       throw new Error(
         "Refinement output is not an owned regular result file; preserving unknown artifact",
       );
     const preserved = `${path.dirname(resultPath)}-preserved`;
-    fs.mkdirSync(preserved, { recursive: true, mode: 0o700 });
+    assertArtifactDirectory(preserved, true);
     fs.renameSync(resultPath, path.join(preserved, randomUUID()));
   }
 }
 
 export function readRefinementResult(worktreePath: string): RefinementResult {
   const resultPath = getRefinementResultPath(worktreePath);
+  assertArtifactDirectory(path.dirname(resultPath), false);
 
   let stat: fs.Stats;
 
@@ -135,7 +155,10 @@ export function readRefinementResult(worktreePath: string): RefinementResult {
     );
   }
 
-  const result = refinementResultSchema.safeParse(parsed);
+  const controlled: unknown = JSON.parse(
+    sanitizeControlledText(JSON.stringify(parsed)),
+  );
+  const result = refinementResultSchema.safeParse(controlled);
 
   if (!result.success) {
     const messages = result.error.issues.map((issue) => {

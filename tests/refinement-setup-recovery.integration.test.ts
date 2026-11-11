@@ -12,12 +12,19 @@ import {
 import { verifyAndPinProjects } from "../src/coordination/project-registry.js";
 import { GitClient } from "../src/git/git-client.js";
 import { logger } from "../src/logging/logger.js";
-import { OpenCodeClient } from "../src/opencode/opencode-client.js";
+import {
+  OpenCodeClient,
+  type OpenCodeRunOptions,
+} from "../src/opencode/opencode-client.js";
 import { CommandRunner } from "../src/process/command-runner.js";
 import { runRefinementCardWorkflow } from "../src/refinement/run-refinement-card.js";
 import { getRefinementResultPath } from "../src/refinement/refinement-result.js";
+import { clearRefinementResult } from "../src/refinement/refinement-result.js";
 import { refinementResultRelativePath } from "../src/refinement/refinement-result.js";
-import { runRefinementSetup } from "../src/refinement/run-refinement-setup.js";
+import {
+  runRefinementSetup,
+  assertRefinementSetupBaselineUnchanged,
+} from "../src/refinement/run-refinement-setup.js";
 import { runRefinement } from "../src/refinement/run-refinement.js";
 import { ProjectRunAuthority } from "../src/task-session/project-run-authority.js";
 import type { RunRecord } from "../src/task-session/run-record.js";
@@ -184,6 +191,160 @@ function stateFor(authority: ProjectRunAuthority, cardId: string) {
 }
 
 describe("refinement setup recovery (canonical authority, real Git and processes)", () => {
+  it("does not rotate a source-checkout file through an unknown external-artifact symlink", async () => {
+    const f = await fixture("true");
+    await f.authority.run(async () => {
+      const resultPath = getRefinementResultPath(f.worktreePath);
+      fs.mkdirSync(path.dirname(path.dirname(resultPath)), { recursive: true });
+      fs.symlinkSync(f.project.repository.path, path.dirname(resultPath));
+      const protectedFile = path.join(f.project.repository.path, "result.json");
+      fs.writeFileSync(protectedFile, "preserve source content");
+      expect(() => clearRefinementResult(f.worktreePath)).toThrow(
+        "Unsafe refinement artifact directory",
+      );
+      expect(fs.readFileSync(protectedFile, "utf8")).toBe(
+        "preserve source content",
+      );
+    });
+  });
+  it("recovers a verified nonzero refinement child before accepting a complete result", async () => {
+    const f = await fixture("true");
+    f.project.opencode.refinement.model = "openai/test";
+    const bin = path.join(root, "bin");
+    const home = path.join(root, "home");
+    fs.mkdirSync(bin);
+    fs.mkdirSync(home);
+    await f.authority.run(async () => {
+      const baseline = await runRefinementSetup({
+        commands: new CommandRunner(),
+        git: f.git,
+        project: f.project,
+        cardId: f.card.id,
+        worktreePath: f.worktreePath,
+        signal: new AbortController().signal,
+        cardLog: logger,
+      });
+      const resultPath = getRefinementResultPath(f.worktreePath);
+      fs.writeFileSync(
+        path.join(bin, "opencode"),
+        `#!${process.execPath}
+const fs=require('node:fs'); const counter=process.env.HOME+'/.local/share/opencode/refinement-count';
+if (!fs.existsSync(counter)) {fs.writeFileSync(counter,'first');process.exit(7);}
+fs.writeFileSync(${JSON.stringify(resultPath)},JSON.stringify({title:'Grounded result',description:'Scoped objective',type:'improvement'}));
+`,
+        { mode: 0o700 },
+      );
+      const real = new OpenCodeClient();
+      const dispatch = vi.fn(async (options: OpenCodeRunOptions) => {
+        const result = await real.run({
+          ...options,
+          environment: {
+            PATH: `${bin}:${path.dirname(process.execPath)}:/usr/bin:/bin`,
+            HOME: home,
+          },
+        });
+        const state = f.authority.read(
+          "refinement-analysis-v1",
+          (value) => value,
+        ) as { executionId: string; command: string };
+        const evidence = new TaskExecutionStore(
+          f.pinned.storageRoot,
+          f.project,
+          f.authority,
+        ).readProcessExecution(
+          f.card.id,
+          state.executionId,
+          "process-executions",
+        );
+        expect(evidence).toMatchObject({
+          executionId: state.executionId,
+          command: state.command,
+          cwd: f.worktreePath,
+          treeStopped: true,
+        });
+        return result;
+      });
+      await expect(
+        runRefinement(
+          f.git,
+          new OpenCodeClient(dispatch),
+          f.project,
+          f.card,
+          f.worktreePath,
+          new AbortController().signal,
+          undefined,
+          baseline,
+        ),
+      ).resolves.toMatchObject({ type: "improvement" });
+      expect(dispatch).toHaveBeenCalledTimes(2);
+    });
+  });
+  it("does not invent a baseline for an interrupted setup-free refinement", async () => {
+    const f = await fixture("true");
+    delete f.project.repository.setupCommand;
+    const legacy = {
+      command: null,
+      worktreePath: f.worktreePath,
+      status: "not-required",
+      attempts: [],
+    };
+    f.authority.mutate(
+      `refinement-setup-${f.card.id}`,
+      legacy,
+      () => ({ value: legacy, result: undefined }),
+      (value) => value,
+    );
+    await expect(
+      f.authority.run(() =>
+        runRefinementSetup({
+          commands: new CommandRunner(),
+          git: f.git,
+          project: f.project,
+          cardId: f.card.id,
+          worktreePath: f.worktreePath,
+          signal: new AbortController().signal,
+          cardLog: logger,
+        }),
+      ),
+    ).rejects.toThrow("no attributable post-setup baseline");
+    expect(stateFor(f.authority, f.card.id)).toEqual(legacy);
+  });
+  it("protects setup-created repository content at the legacy result path even when Git status is unchanged", async () => {
+    const f = await fixture(
+      "mkdir -p .agent-orchestrator; printf initial > .agent-orchestrator/refinement-result.json",
+    );
+    await f.authority.run(async () => {
+      const baseline = await runRefinementSetup({
+        commands: new CommandRunner(),
+        git: f.git,
+        project: f.project,
+        cardId: f.card.id,
+        worktreePath: f.worktreePath,
+        signal: new AbortController().signal,
+        cardLog: logger,
+      });
+      const before = await f.git.getStatus(f.worktreePath);
+      fs.writeFileSync(
+        path.join(f.worktreePath, refinementResultRelativePath),
+        "changed",
+      );
+      expect(await f.git.getStatus(f.worktreePath)).toBe(before);
+      await expect(
+        assertRefinementSetupBaselineUnchanged({
+          git: f.git,
+          worktreePath: f.worktreePath,
+          baseline: baseline!,
+          signal: new AbortController().signal,
+        }),
+      ).rejects.toThrow("no longer matches");
+      expect(
+        fs.readFileSync(
+          path.join(f.worktreePath, refinementResultRelativePath),
+          "utf8",
+        ),
+      ).toBe("changed");
+    });
+  });
   it("retains bounded corrections and validated output across reconstructed authority", async () => {
     const f = await fixture("true");
     const baseline = await f.authority.run(() =>
@@ -460,7 +621,7 @@ fs.writeFileSync(${JSON.stringify(resultPath)}, JSON.stringify({title:'Grounded 
   });
 
   it.each(["untracked", "ignored"] as const)(
-    "allows a result-only restart when the refinement result is %s",
+    "preserves and fences a legacy repository result introduced after setup when it is %s",
     async (classification) => {
       const f = await fixture("printf setup-ready > generated-lockfile");
       let setupExecutions = 0;
@@ -552,9 +713,10 @@ fs.writeFileSync(${JSON.stringify(resultPath)}, JSON.stringify({title:'Grounded 
           }),
         ),
       ).rejects.toThrow(
-        "Refinement execution did not establish a stopped child",
+        "Refinement worktree no longer matches the persisted post-setup baseline",
       );
-      expect(openCode).toHaveBeenCalledOnce();
+      expect(openCode).not.toHaveBeenCalled();
+      expect(fs.existsSync(resultPath)).toBe(true);
       expect(setupExecutions).toBe(1);
     },
   );

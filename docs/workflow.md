@@ -182,6 +182,8 @@ When a refinement card is claimed:
    attributed separately and preserved. Interrupted output is preserved rather
    than silently deleted or accepted as a fresh result; missing baseline
    provenance blocks redispatch for reconciliation.
+   Legacy repository-local results are not exempt from content comparison, and
+   unknown result-directory symlinks are never followed for artifact rotation.
    The artifact must be a strict JSON object containing only non-blank `title` and `description` strings and a `type` set to
    exactly `feature`, `improvement`, or `bug`.
 3. The orchestrator validates the structured result and rejects unauthorized repository changes.

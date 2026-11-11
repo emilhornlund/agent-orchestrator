@@ -265,7 +265,9 @@ export async function notificationAuthorityFixture(
       },
     ),
     getStatus: vi.fn(async (directory: string) =>
-      fs.existsSync(getRefinementResultPath(directory))
+      fs.existsSync(
+        path.join(directory, ".agent-orchestrator/refinement-result.json"),
+      )
         ? "?? .agent-orchestrator/refinement-result.json"
         : "",
     ),

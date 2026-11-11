@@ -583,7 +583,11 @@ export class TaskExecutionStore {
     }
   }
 
-  readProcessExecution(cardId: string, executionId: string): unknown | null {
+  readProcessExecution(
+    cardId: string,
+    executionId: string,
+    layout: "direct" | "process-executions" = "direct",
+  ): unknown | null {
     assertSafePathComponent(executionId, "process execution ID");
     if (this.authority === undefined) return null;
     const run = this.authority.store.read();
@@ -599,6 +603,7 @@ export class TaskExecutionStore {
       encodeURIComponent(run.pinned.projectId),
       encodeURIComponent(run.cardId),
       encodeURIComponent(run.attemptId),
+      ...(layout === "process-executions" ? ["process-executions"] : []),
       executionId,
     );
     const metadataPath = path.join(directory, "execution.json");

@@ -279,7 +279,9 @@ describe("task-session refinement scheduling", () => {
         },
       ),
       getStatus: vi.fn(async (worktreePath: string) =>
-        fs.existsSync(getRefinementResultPath(worktreePath))
+        fs.existsSync(
+          path.join(worktreePath, ".agent-orchestrator/refinement-result.json"),
+        )
           ? "?? .agent-orchestrator/refinement-result.json"
           : "",
       ),

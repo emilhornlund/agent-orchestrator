@@ -102,6 +102,23 @@
   occurs at the actual last label operation so it exercises real partial labels.
   Five focused suites passed 68 tests; typecheck and changed-file ESLint passed.
   Remaining: tighten the legacy baseline exemption, final combined check/validation.
+- T5a checkpoint: `1693be3`. T5b removes the legacy-result path exemption from
+  both persisted restart and post-analysis inventory comparison. Legacy artifacts
+  introduced after setup remain preserved and fenced; setup-created content at that
+  path is protected even when Git status stays identical. Known-secret forms are
+  redacted before validated output enters new recovery state/public fields, and
+  unknown artifact-directory symlinks cannot redirect rotation into the source.
+- Combined criteria verification reused task reviews for REF-001–005, ENV-002,
+  CTX-001/003 and refinement WF/SCH integration: grounded current read-only context,
+  distinct scoped templates, bounded complete results, original/intended/own writes,
+  history races, restart/compensation, comment and full-field Backlog/Failed release.
+  An added actual nonzero-child recovery regression exposed the OpenCode evidence
+  layout mismatch: refinement now reads its exact task-scoped `process-executions`
+  layout, while setup's existing direct layout is unchanged. No stopped proof is
+  invented. New legacy-state, known-secret and source-symlink regressions cover the
+  corrected boundaries. Six focused suites passed 69 tests; typecheck,
+  changed-file ESLint, formatting and whitespace checks passed. Final full
+  validation remains and no live-service qualification is claimed.
 
 ## Inherited P8 checkpoint
 

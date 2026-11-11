@@ -125,36 +125,11 @@ async function runRefinementOnce(
   const status = await git.getStatus(worktreePath);
   let repositoryChanged = hasForbiddenRepositoryChanges(status);
   if (repositoryBaseline !== undefined) {
-    const before = JSON.parse(repositoryBaseline.toString("utf8")) as {
-      files: {
-        path: string;
-        kind: string;
-        sha256?: string;
-        bytes?: number;
-        target?: string;
-      }[];
-      head: string;
-      branch: string;
-      status: string;
-    };
-    const after = JSON.parse(
+    const before: unknown = JSON.parse(repositoryBaseline.toString("utf8"));
+    const after: unknown = JSON.parse(
       (await captureSetupEffects(git, worktreePath, signal)).toString("utf8"),
-    ) as typeof before;
-    const relevantFiles = (files: typeof before.files) =>
-      files.filter((file) => file.path !== refinementResultRelativePath);
-    repositoryChanged =
-      before.head !== after.head ||
-      before.branch !== after.branch ||
-      before.status
-        .split("\n")
-        .filter((line) => line.slice(3) !== refinementResultRelativePath)
-        .join("\n") !==
-        after.status
-          .split("\n")
-          .filter((line) => line.slice(3) !== refinementResultRelativePath)
-          .join("\n") ||
-      JSON.stringify(relevantFiles(before.files)) !==
-        JSON.stringify(relevantFiles(after.files));
+    );
+    repositoryChanged = JSON.stringify(before) !== JSON.stringify(after);
   }
 
   if (repositoryChanged) {
@@ -211,7 +186,11 @@ export async function runRefinement(
       project,
       authority,
     );
-    const evidence = store.readProcessExecution(card.id, state.executionId);
+    const evidence = store.readProcessExecution(
+      card.id,
+      state.executionId,
+      "process-executions",
+    );
     const expected = {
       executionId: state.executionId,
       command: state.command,
@@ -267,7 +246,11 @@ export async function runRefinement(
               authority.store.read()!.pinned.storageRoot,
               project,
               authority,
-            ).readProcessExecution(card.id, state.executionId)
+            ).readProcessExecution(
+              card.id,
+              state.executionId,
+              "process-executions",
+            )
           : null;
         if (
           !state.executionId ||

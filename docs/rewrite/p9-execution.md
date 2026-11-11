@@ -56,6 +56,12 @@ mode and stop replaying that rejected identity. Restore only current attributabl
 own fields through the same read/history guards. Verify originals before Failed;
 human/unknown state and rejected restoration keep ownership for reconciliation.
 
+T5b closes the legacy result-path inventory exemption and explicitly reads the
+actual OpenCode task-scoped process-evidence layout for stopped-child recovery.
+Legacy artifacts/baselines and unknown directory symlinks are preserved/fenced,
+not treated as setup or new output. Combined scoped criteria have been inspected;
+only final integrated validation/completion remains.
+
 Inspect `src/refinement/run-refinement-card.ts`, `run-refinement.ts`,
 `run-refinement-setup.ts`, `refinement-operation.ts`, `refinement-result.ts`,
 `refinement-mutation-snapshot.ts`, `finalize-refinement.ts`, prompts and workflow
