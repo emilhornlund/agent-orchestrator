@@ -2175,14 +2175,14 @@ describe("task-session production dispatch", () => {
       project,
     ).read(card.id);
     expect(exhaustedRecord).toMatchObject({
-      phase: "attention-required",
+      phase: "human-feedback",
       retryCounters: { ci: 2 },
       ciRepair: { status: "exhausted" },
     });
     expect(git.commit).toHaveBeenCalledTimes(5);
     expect(
       new TaskMutationQueue(project.contextRoot, project).list().at(-1)?.status,
-    ).toBe("failed");
+    ).toBe("completed");
     const finalLedger = feedbackLedger.read(card.id);
     expect(finalLedger?.entries).toContainEqual(
       expect.objectContaining({
@@ -2195,6 +2195,11 @@ describe("task-session production dispatch", () => {
     );
     await pollProject(trello, git, github, openCode, commands, project, signal);
     expect(reviewReplyMutationCount).toBe(2);
+    expect(git.commit).toHaveBeenCalledTimes(5);
+    expect(
+      new TaskExecutionStore(project.contextRoot, project).read(card.id)
+        ?.ciRepair,
+    ).toMatchObject({ status: "exhausted", maxAttempts: 2 });
   });
 
   it("refuses an unowned Working card without a task-session record", async () => {

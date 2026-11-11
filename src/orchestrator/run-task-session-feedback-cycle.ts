@@ -440,6 +440,15 @@ export async function runTaskSessionFeedbackCycle(
       throw new Error(
         "Original no-op feedback context cannot be established; preserve the ledger and primary operation for reconciliation",
       );
+    if (
+      current.ciRepair !== undefined &&
+      current.ciRepair.initiatingEventId !== correction.operationId
+    ) {
+      updateRecord(taskStore, current, {
+        ciRepair: undefined,
+        retryCounters: { ...current.retryCounters, ci: 0 },
+      });
+    }
     if (attempted.some((entry) => entry.status === "pending"))
       ledgerStore.compareAndSwap(card.id, ledger.revision, {
         ...ledger,
@@ -1011,6 +1020,7 @@ export async function runTaskSessionFeedbackCycle(
             );
           current = updateRecord(taskStore, current, {
             ciRepair: undefined,
+            retryCounters: { ...current.retryCounters, ci: 0 },
             reviewObservation: undefined,
             publicationQuality: undefined,
             reviewRepair: undefined,

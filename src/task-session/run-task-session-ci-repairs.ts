@@ -25,6 +25,7 @@ export type TaskSessionCiRepairResult =
     };
 
 export interface RunTaskSessionCiRepairsOptions {
+  maxAttempts?: number;
   /** The caller verified a CI-owned local review checkpoint before dispatch. */
   resumeReviewRepair?: boolean;
   store: TaskExecutionStore;
@@ -119,11 +120,31 @@ export async function runTaskSessionCiRepairs(
     );
   // An episode belongs to the durable task operation, not a mutable commit SHA.
   // Publishing a repair changes headSha but must not reset its correction budget.
-  const cycleId = record.ciRepair?.cycleId ?? `${options.operationKey}:ci`;
+  const cycleId =
+    record.ciRepair?.cycleId ??
+    (record.feedbackRemediation === undefined
+      ? `${options.operationKey}:ci`
+      : `${options.operationKey}:ci:${record.feedbackRemediation.operationId}`);
+  const maxAttempts =
+    record.ciRepair === undefined
+      ? (options.maxAttempts ?? MAX_CI_REPAIR_ATTEMPTS)
+      : (record.ciRepair.maxAttempts ?? MAX_CI_REPAIR_ATTEMPTS);
+  if (!Number.isSafeInteger(maxAttempts) || maxAttempts < 0)
+    throw new TaskSessionCiRepairError(
+      "CI correction limit must be a nonnegative safe integer",
+    );
+  const episode = {
+    cycleId,
+    maxAttempts,
+    initiatingEventId:
+      record.ciRepair?.initiatingEventId ??
+      record.feedbackRemediation?.operationId ??
+      `${options.operationKey}:initial-publication`,
+  };
   if (record.ciRepair?.cycleId !== cycleId) {
     record = updateRecord(options.store, record, {
       retryCounters: { ...record.retryCounters, ci: 0 },
-      ciRepair: { cycleId, headSha, status: "active" },
+      ciRepair: { ...episode, headSha, status: "active" },
     });
   }
 
@@ -177,7 +198,7 @@ export async function runTaskSessionCiRepairs(
       if (evaluation.status === "passed") {
         record = ownerRecord(options, record.pullRequest?.headSha);
         updateRecord(options.store, record, {
-          ciRepair: { cycleId, headSha, status: "passed" },
+          ciRepair: { ...episode, headSha, status: "passed" },
         });
         return { status: "passed", attempts: record.retryCounters.ci, headSha };
       }
@@ -193,10 +214,10 @@ export async function runTaskSessionCiRepairs(
         throw new TaskSessionCiRepairError(
           "Failed CI evaluation did not include any terminal check failures",
         );
-      if (active === undefined && completedAttempts >= MAX_CI_REPAIR_ATTEMPTS) {
+      if (active === undefined && completedAttempts >= maxAttempts) {
         updateRecord(options.store, record, {
-          phase: "attention-required",
-          ciRepair: { cycleId, headSha, status: "exhausted" },
+          phase: "human-feedback",
+          ciRepair: { ...episode, headSha, status: "exhausted" },
         });
         return {
           status: "exhausted",
@@ -216,7 +237,7 @@ export async function runTaskSessionCiRepairs(
       record = updateRecord(options.store, record, {
         retryCounters: { ...record.retryCounters, ci: attempt },
         ciRepair: {
-          cycleId,
+          ...episode,
           headSha,
           status: "active",
           activePrimaryOperation: {
@@ -267,7 +288,7 @@ export async function runTaskSessionCiRepairs(
         record = ownerRecord(options, latest.pullRequest?.headSha);
         record = updateRecord(options.store, record, {
           pullRequest: { ...record.pullRequest!, headSha },
-          ciRepair: { cycleId, headSha, status: "active" },
+          ciRepair: { ...episode, headSha, status: "active" },
           reviewObservation: undefined,
         });
       }
@@ -278,7 +299,7 @@ export async function runTaskSessionCiRepairs(
       ) {
         record = updateRecord(options.store, afterCheckpoint, {
           ciRepair: {
-            cycleId,
+            ...episode,
             headSha,
             status: "active",
           },

@@ -30,6 +30,23 @@
   `yarn typecheck`, changed-code ESLint and Prettier passed. The earlier four-suite
   check also passed 62 tests. T2–T5 remain; visible draft/description integration
   for CI and maintenance is included in T4. Guide/roadmap scope remains accurate.
+- P8-T2a implements optional `opencode.remediation.ciMaxPasses` (default two),
+  persisted per episode before correction dispatch. Existing episodes without a
+  recorded limit retain their historical two-pass limit; restart configuration
+  cannot enlarge it. Charges survive reruns, own commits and changing heads.
+  Verified substantive human correction/no-op handling renews the episode with a
+  distinct human operation identity; routine observation/maintenance cannot renew
+  it. Exhaustion finishes the queue operation in Human Review rather than parking
+  a failed writer or terminating the task. Both arrival producers avoid requeuing
+  exhausted work. No independent-external-change classifier is inferred from SHA.
+- T2a self-review traced primary reservations, both observation producers, review
+  cycle identity, feedback/no-op handling and legacy schemas. Fixed legacy budget
+  pinning and obsolete failed-queue completion. Seven focused suites passed
+  **187 tests**, with one initial obsolete attention/failed expectation corrected
+  to enforce the specified Human Review/completed outcome and no subsequent commit.
+  Typecheck and changed-code ESLint passed; final legacy-limit correction is
+  rechecked before checkpoint. T2b still must remove production quality gates and
+  implement CI no-op/early finish; T3–T5 remain. No full validation claimed.
 
 - **P7 implemented and locally validated on the current branch, based on `7fafed1` (integrated P6).**
   The starting index and working tree were clean. This session authorizes small

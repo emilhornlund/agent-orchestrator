@@ -210,7 +210,66 @@ describe("runTaskSessionCiRepairs", () => {
     expect(result.status).toBe("exhausted");
     expect(f.base.repairPrimarySession).toHaveBeenCalledTimes(2);
     expect(publishSamePullRequest).toHaveBeenCalledTimes(2);
-    expect(f.store.read("card")?.phase).toBe("attention-required");
+    expect(f.store.read("card")?.phase).toBe("human-feedback");
     expect(f.store.read("card")?.pullRequest?.headSha).toBe("c".repeat(40));
+  });
+
+  it("pins a configured episode budget before dispatch and retains it across restart, SHA changes and configuration changes", async () => {
+    const f = fixture();
+    const heads = ["b".repeat(40), "c".repeat(40), "d".repeat(40)];
+    const repair = vi.fn(async () => {
+      const record = f.store.read("card")!;
+      expect(record.ciRepair).toMatchObject({
+        maxAttempts: 3,
+        initiatingEventId: "operation:initial-publication",
+      });
+      expect(record.retryCounters.ci).toBe(repair.mock.calls.length);
+    });
+    const first = await runTaskSessionCiRepairs({
+      ...f.base,
+      maxAttempts: 3,
+      repairPrimarySession: repair,
+      publishSamePullRequest: async () => heads.shift()!,
+      observeChecks: async (sha) =>
+        sha === f.sha
+          ? f.evaluation(sha, "failed")
+          : {
+              status: "waiting",
+              expectedHeadSha: sha,
+              missingChecks: ["Build"],
+              pendingChecks: [],
+              diagnostic: "not registered",
+            },
+    });
+    expect(first.status).toBe("waiting");
+    const result = await runTaskSessionCiRepairs({
+      ...f.base,
+      store: new TaskExecutionStore(path.join(root, "state"), {
+        id: "project",
+        repository: {
+          path: path.join(root, "repo"),
+          worktreeRoot: path.join(root, "worktrees"),
+        },
+      } as ProjectConfig),
+      headSha: "b".repeat(40),
+      maxAttempts: 10,
+      repairPrimarySession: repair,
+      publishSamePullRequest: async () => heads.shift()!,
+      observeChecks: async (sha) => f.evaluation(sha, "failed"),
+    });
+    expect(result).toMatchObject({ status: "exhausted", attempts: 3 });
+    expect(repair).toHaveBeenCalledTimes(3);
+  });
+
+  it("supports disabling CI corrections without disabling observation", async () => {
+    const f = fixture();
+    const result = await runTaskSessionCiRepairs({
+      ...f.base,
+      maxAttempts: 0,
+      observeChecks: async (sha) => f.evaluation(sha, "failed"),
+    });
+    expect(result).toMatchObject({ status: "exhausted", attempts: 0 });
+    expect(f.base.repairPrimarySession).not.toHaveBeenCalled();
+    expect(f.store.read("card")?.phase).toBe("human-feedback");
   });
 });

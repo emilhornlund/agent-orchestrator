@@ -619,6 +619,8 @@ const reviewRepairSchema = z.strictObject({
 
 const ciRepairSchema = z.strictObject({
   cycleId: nonBlankIdentifier,
+  maxAttempts: z.number().int().nonnegative().safe().optional(),
+  initiatingEventId: nonBlankIdentifier.optional(),
   headSha: gitSha,
   status: z.enum(["active", "passed", "exhausted"]),
   activePrimaryOperation: z
@@ -1115,21 +1117,21 @@ const taskExecutionRecordSchema = z
             "Completed CI repair state must remain in CI or attention-required",
         });
       }
-      if (record.retryCounters.ci > 2) {
+      if (record.retryCounters.ci > (record.ciRepair.maxAttempts ?? 2)) {
         ctx.addIssue({
           code: "custom",
           path: ["retryCounters", "ci"],
-          message: "CI repair attempts cannot exceed two per failure cycle",
+          message: "CI repair attempts cannot exceed the episode limit",
         });
       }
       if (
         record.ciRepair.status === "exhausted" &&
-        record.retryCounters.ci !== 2
+        record.retryCounters.ci !== (record.ciRepair.maxAttempts ?? 2)
       ) {
         ctx.addIssue({
           code: "custom",
           path: ["ciRepair", "status"],
-          message: "Exhausted CI repair requires two attempts",
+          message: "Exhausted CI repair requires the episode attempt limit",
         });
       }
     }

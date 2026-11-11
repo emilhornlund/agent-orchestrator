@@ -2340,7 +2340,10 @@ export async function runTaskSessionWorkflow(
         )
           queue.retireSupersededObservation(queued.eventId);
       }
-      if (observation.ciEvaluation.status === "failed")
+      if (
+        observation.ciEvaluation.status === "failed" &&
+        record.ciRepair?.status !== "exhausted"
+      )
         queue.enqueue({
           projectId: project.id,
           cardId: card.id,
@@ -2445,7 +2448,8 @@ export async function runTaskSessionWorkflow(
     if (
       record !== null &&
       record.phase === "human-feedback" &&
-      observation.ciEvaluation.status === "failed"
+      observation.ciEvaluation.status === "failed" &&
+      record.ciRepair?.status !== "exhausted"
     ) {
       taskStore.compareAndSwap(
         record.cardId,
@@ -2538,7 +2542,10 @@ export async function runTaskSessionWorkflow(
         const expectedBranch = `agent/${card.id}`;
         const operationKey = record.operationKey;
         const ciRepairCycleId =
-          ciRecord.ciRepair?.cycleId ?? `${operationKey}:ci`;
+          ciRecord.ciRepair?.cycleId ??
+          (ciRecord.feedbackRemediation === undefined
+            ? `${operationKey}:ci`
+            : `${operationKey}:ci:${ciRecord.feedbackRemediation.operationId}`);
         const ciReviewCycleId = `${operationKey}:ci-review:${ciRepairCycleId}`;
         const plan = planStore.read(card.id);
         const validationOptions = {
@@ -2807,6 +2814,7 @@ export async function runTaskSessionWorkflow(
           );
         };
         ciResult = await runTaskSessionCiRepairs({
+          maxAttempts: project.opencode.remediation.ciMaxPasses ?? 2,
           resumeReviewRepair: resumingCiReview,
           store: taskStore,
           projectId: project.id,
@@ -2973,7 +2981,10 @@ export async function runTaskSessionWorkflow(
                 ...(plan === null ? {} : { approvedPlan: plan.plan }),
                 headSha: failedHeadSha,
                 attempt,
-                maxAttempts: 2,
+                maxAttempts:
+                  latest.ciRepair?.maxAttempts ??
+                  project.opencode.remediation.ciMaxPasses ??
+                  2,
                 diagnostics,
                 ...(attachmentContext === undefined
                   ? {}
@@ -3261,8 +3272,7 @@ export async function runTaskSessionWorkflow(
         if (queue.ownsActive(ciEventId)) queue.fail(ciEventId);
         throw error;
       }
-      if (ciResult.status === "exhausted") queue.fail(ciEventId);
-      else queue.complete(ciEventId);
+      queue.complete(ciEventId);
       logger
         .child({ projectId: project.id, cardId: observation.cardId })
         .event(
