@@ -2,6 +2,157 @@
 
 ## Current checkpoint
 
+- **P9 implemented and locally validated on `refactor/p9-recoverable-refinement`, based on `190bb3c`.**
+  Initial index/worktree clean; P8 is integrated. Only small local P9 commits are
+  authorized, without remote actions or P10 expansion.
+- Implementation/correction tasks are checkpointed through `64ee2fe`; combined
+  scoped integration checking is complete. Integrated `yarn validate` passed
+  repository ESLint, Prettier, TypeScript and **2,220 tests across 168 files**.
+  No known scoped defect or P9 implementation work remains. This completion
+  documentation is included in the final validation/checkpoint. No live-service
+  qualification is claimed. Stop before P10; P11 temporary-guidance removal is
+  not part of this phase.
+- Local checkpoints: `282159f`, `b252038`, `f0726fe`, `67c8ae9`, `5bddab4`,
+  `1693be3`, `2c0df08`, `64ee2fe`.
+- Initial inspection: setup attribution and P4 content/label intents existed, but
+  refinement results are still repository-local, no bounded invalid-result correction
+  exists, and finalization lacks full-field/history conflict reconciliation.
+- Original ordered work: T1 read-only dispatch/external results and conservative
+  baseline recovery; T2 complete-result bounded correction and grounded prompts;
+  T3 durable conflict-aware field finalization/restart; T4 verified full Backlog
+  outcome/comment/release and combined checks, followed by `yarn validate`.
+- T1 implements read-only worktree/Git-metadata mounts with external attempt results,
+  preserved prior output outside the writable artifact directory, and durable
+  setup-free baselines. Legacy repository-local artifacts are preserved, not reused;
+  missing prior setup-free baseline provenance blocks redispatch. Self-review
+  inspected production polling/workflow dispatch, setup restart and result paths,
+  mount validation and new real-child tests. Fixed writable access to preserved
+  results by moving them outside the result mount. Two old test expectations were
+  corrected to require preservation instead of deletion of legacy results.
+- T1 focused five-suite run passed 28 tests, including actual child/descendant
+  filesystem enforcement. Typecheck and changed-file ESLint passed. Documentation
+  formatting initially found one wrap issue, corrected before checkpoint. Final
+  affected checks are rerun before commit. T2–T4 remain; no full validation claimed.
+- T1 checkpoint: `282159f`. T2 adds three bounded complete-result analyses,
+  durable invalid/active/validated checkpoints, verified stopped-child recovery,
+  validated-output reuse and refreshed correction attachments. The existing distinct
+  templates remain; prompts now explicitly identify dependencies and recommend
+  splitting without creating cards. Semantic grounding remains the agent's job.
+- T2 self-review inspected result parsing, workflow callers, restart persistence,
+  execution evidence and attachment refresh. Fixed checkpoint-write/unknown-child
+  errors that could otherwise enter terminal failure, and preserved unknown result
+  directories/symlinks rather than moving them. Existing setup-only fixtures had no
+  child-stop evidence; their assertions now require the explicit retained fence.
+  Final five-suite focused run passed 46 tests; typecheck and changed-file ESLint
+  passed. One final assertion wrap was formatted after lint caught it; ESLint and
+  whitespace checks passed afterward. T3/T4 remain; full validation is not yet run.
+- T2 checkpoint: `b252038`. T3 journals original/intended/verified full fields,
+  pending own writes and a Trello Free history cursor/actor before dispatch.
+  Concrete content/label adapters inspect current fields and history before writing
+  and during readback/restart. Own transitions require matching old/new values and
+  attribution; detected races (including same-actor edits) retain sanitized human
+  history and stop writes. Missing legacy provenance or history continuity is not
+  treated as absence of edits. Three proven rejected sends pause for reconciliation.
+- Partial accepted writes complete from verified state without replaying analysis
+  or accepted effects. Conflicting/unknown outcomes retain ownership rather than
+  blindly restoring over human edits or declaring Failed. Self-review inspected
+  the new guard/tests, concrete adapters, journal restart, snapshot schema and
+  polling/finalization callers. Fixed internal intended-label projection into the
+  strict result schema, preserved notification-preparation recovery, and retained
+  unknown artifacts. Stateful fixture history now models actual accepted changes;
+  desired fields without history no longer count as proof of own acceptance.
+- Final five focused suites passed 115 tests, including partial-update/human-edit
+  recovery, with typecheck, changed-file ESLint and whitespace checks passing.
+  T4 final outcome/comment/release and combined validation remain.
+- T3 checkpoint: `f0726fe`. Production outcome tracing split T4 into T4a verified
+  failure and T4b recoverable Backlog completion, followed by T5 combined checks.
+  T4a persists original input before analysis, retains its intent across restarts,
+  and turns bounded invalid/stopped-failure exhaustion into the existing verified
+  Failed/comment/release protocol. Original full fields are checked before and
+  after the move; human differences retain ownership instead. Unknown state and
+  transient outages cannot fall through to unverified terminal failure.
+- T4a self-review inspected the new input record, analysis dispatch/recovery,
+  scheduler failure/release routes and production regressions. Fixed generic
+  canonical errors that could otherwise call legacy `failCard`. Updated the older
+  scheduler fixture to exercise the concrete field/move adapters and history;
+  malformed output now correctly exercises three analyses rather than one.
+  Final five focused suites passed 41 tests, plus typecheck, changed-file ESLint
+  and whitespace checks, including the generic-error preservation correction.
+  T4b and T5 remain; no full validation claimed.
+- T4a checkpoint: `67c8ae9`. T4b persists immutable completion-comment text and
+  verified acceptance; unknown comment delivery blocks release, not Backlog
+  preservation. Backlog recovery uses the existing move journal and retained
+  full-field snapshot without rerunning setup/analysis or requiring a cleaned
+  worktree. Final release checks full list/readback/history, comment and own move.
+- The new recovery regressions initially exposed earlier orphan retirement of a
+  started refinement (which has no implementation projection). Started canonical
+  refinement now retains its queue obligation through Backlog/Failed/manual moves;
+  queued/failed recovery uses a unique retained event, not arbitrary Ready selection.
+  Self-review traced those earlier callers, completion persistence, both release
+  routes and tests. Fixed missing legacy snapshot fencing before completion-only
+  dispatch and a late-human-edit gap in final Backlog readback. Old guidance about
+  ignoring comment failures/deleting results was corrected.
+- Final five focused suites passed 58 tests, plus typecheck, changed-file ESLint
+  and whitespace checks, including provenance-fence/unique-event corrections.
+  Only combined P9 integration/specification checks and final validation remain.
+- T4b checkpoint: `5bddab4`. Combined REF-004 checking found that bounded proven
+  field rejection needed safe compensation, not an unconditional partial-state
+  pause. T5a now records restoration mode and the exact conclusively rejected
+  mutation identity, preserving its failed dispatch/evidence history rather than
+  replaying it. Current verified own fields can be restored to originals through
+  the same history guards; only verified complete restoration permits Failed.
+  Unknown acceptance, human edits and rejected restoration retain ownership.
+- T5a self-review covered the actual reconciliation filter, adapter dispatch and
+  readback, restoration-mode compatibility and terminal failure integration.
+  The stateful regressions exercise accepted title/description/classification
+  writes before rejection, complete restoration, human changes before/during
+  compensation and repeated negative reads with unknown acceptance. Initial test
+  ordering assumed classification removal preceded insertion; the failure now
+  occurs at the actual last label operation so it exercises real partial labels.
+  Five focused suites passed 68 tests; typecheck and changed-file ESLint passed.
+  Remaining: tighten the legacy baseline exemption, final combined check/validation.
+- T5a checkpoint: `1693be3`. T5b removes the legacy-result path exemption from
+  both persisted restart and post-analysis inventory comparison. Legacy artifacts
+  introduced after setup remain preserved and fenced; setup-created content at that
+  path is protected even when Git status stays identical. Known-secret forms are
+  redacted before validated output enters new recovery state/public fields, and
+  unknown artifact-directory symlinks cannot redirect rotation into the source.
+- Combined criteria verification reused task reviews for REF-001–005, ENV-002,
+  CTX-001/003 and refinement WF/SCH integration: grounded current read-only context,
+  distinct scoped templates, bounded complete results, original/intended/own writes,
+  history races, restart/compensation, comment and full-field Backlog/Failed release.
+  An added actual nonzero-child recovery regression exposed the OpenCode evidence
+  layout mismatch: refinement now reads its exact task-scoped `process-executions`
+  layout, while setup's existing direct layout is unchanged. No stopped proof is
+  invented. New legacy-state, known-secret and source-symlink regressions cover the
+  corrected boundaries. Six focused suites passed 69 tests; typecheck,
+  changed-file ESLint, formatting and whitespace checks passed. Final full
+  validation remains and no live-service qualification is claimed.
+- T5b checkpoint: `2c0df08`. Initial integrated `yarn validate` passed lint,
+  formatting and typecheck but failed 3 of 2,219 tests (166 other files passed).
+  Two SMTP cases bypassed durable child evidence and expected the old unbounded
+  failure/stranded queue; the preparing-attempt case used no-op field/history
+  substitutes. Fixtures now execute real stopped-child failure and concrete
+  field/move/comment adapters, retaining restart and SMTP rejection/uncertainty
+  assertions. The SMTP assertions decode their actual transfer encoding.
+- T5c correction also wires durable nonblocking failure notification preparation
+  into all refinement failure callers and retains the sanitized actual failure
+  reason. Self-review traced those callers, terminal release, email binding and
+  new regressions; corrected an early-email gap by requiring verified canonical
+  refinement failure before delivery, not merely a completed Failed move. A human
+  edit during failure readback now retains ownership and cannot authorize email.
+  Six focused suites passed 66 tests; typecheck and changed-file ESLint passed
+  after removing an unused fixture import. Full integrated validation is rerun
+  after this correction; no full pass is yet claimed.
+- T5c correction checkpoint: `64ee2fe`. The corrected integrated implementation
+  passed full `yarn validate`: lint, formatting, typecheck and all **2,220 tests in
+  168 files**. Required recovery, attribution, source protection, notification and
+  cross-task regression paths passed together. No skipped/live semantic evidence
+  is represented as passing. Final completion guidance is validated before its
+  documentation-only checkpoint; no P10 work is started.
+
+## Inherited P8 checkpoint
+
 - **P8 implemented and locally validated, based on `b7fff4a` (integrated P7).**
   The starting index/worktree were clean.
   Authorized actions are small local task/correction commits only. No remote Git
@@ -465,7 +616,8 @@ requirements/specification sections and meaningful regression tests:
   passed all 70 tests; typecheck, changed-file ESLint and Prettier passed. The
   corrected integrated tree then passed full `yarn validate` as recorded above.
 
-No P6–P8 implementation work remains. P9–P10 have not started. P11 covers
+No P6–P9 implementation work remains. P9 is implemented and locally validated
+as recorded above. P10 has not started. P11 covers
 remaining integration/regression gaps, with broader qualification only if requested.
 
 ## Known carryovers

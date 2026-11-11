@@ -55,6 +55,12 @@ export function notificationTriggerObserver(
       run.pinned.boardId !== trigger.boardId
     )
       return false;
+    if (
+      run.taskKind === "refinement" &&
+      trigger.listId === run.pinned.lists.failed &&
+      (run.lifecycle !== "failed" || run.terminalSync !== "verified")
+    )
+      return false;
     const op = run.pendingOperations.find(
       (entry) => entry.id === trigger.binding!.operationId,
     );

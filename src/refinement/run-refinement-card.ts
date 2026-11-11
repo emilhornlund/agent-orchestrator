@@ -13,6 +13,7 @@ import { CommandRunAbortedError } from "../process/command-runner.js";
 import {
   clearRefinementResult,
   getRefinementResultPath,
+  InvalidRefinementResultError,
 } from "./refinement-result.js";
 import { runRefinementOperation } from "./refinement-operation.js";
 import {
@@ -29,6 +30,11 @@ import {
   assertRefinementSetupBaselineUnchanged,
   runRefinementSetup,
 } from "./run-refinement-setup.js";
+import {
+  refinementInput,
+  recordRefinementAnalysisFailure,
+} from "./refinement-input.js";
+import { RefinementAnalysisFailedError } from "./run-refinement.js";
 
 export type RefinementProject = ProjectConfig & {
   contextRoot?: string;
@@ -86,6 +92,8 @@ export async function runRefinementCardWorkflow(options: {
   cardLog.event(`Claimed refinement card: ${card.name}`);
   let worktree: { path: string; branch: string } | undefined;
   let cardContextPreparationFailed = false;
+  const authority = ProjectRunAuthority.current(project.id);
+  const input = authority ? refinementInput(authority, card) : undefined;
 
   try {
     worktree =
@@ -118,7 +126,6 @@ export async function runRefinementCardWorkflow(options: {
         );
       }
     }
-    clearRefinementResult(worktree.path);
     cardContextPreparationFailed = true;
     const attachmentContext = await options.prepareAttachmentContext(
       card,
@@ -132,13 +139,25 @@ export async function runRefinementCardWorkflow(options: {
       git,
       opencode: openCode,
       project,
-      card,
+      card: input
+        ? {
+            ...card,
+            name: input.original.title,
+            desc: input.original.description,
+            idLabels: input.original.labels,
+          }
+        : card,
       worktreePath: worktree.path,
       ...(postSetupBaseline === undefined
         ? {}
         : { repositoryBaseline: postSetupBaseline }),
       signal,
       cardLog,
+      refreshAttachments: async () =>
+        options.prepareAttachmentContext(
+          await trello.getCard(card.id),
+          cardLog,
+        ),
       ...(attachmentContext === undefined ? {} : { attachmentContext }),
       ...(options.emailNotifier === undefined
         ? {}
@@ -178,6 +197,25 @@ export async function runRefinementCardWorkflow(options: {
       );
     }
   } catch (error) {
+    if (
+      authority &&
+      (error instanceof InvalidRefinementResultError ||
+        error instanceof RefinementAnalysisFailedError)
+    ) {
+      const failure =
+        error instanceof RefinementAnalysisFailedError &&
+        error.cause instanceof Error
+          ? error.cause
+          : error;
+      recordRefinementAnalysisFailure(
+        authority,
+        `Refinement did not complete after bounded analysis/correction: ${failure.message.slice(0, 1000)}; original card fields and diagnostics are preserved`,
+      );
+      throw new RefinementSetupFailedError(
+        "Refinement analysis exhausted its bounded correction allowance",
+        { cause: error },
+      );
+    }
     if (error instanceof NotificationPreparationError) throw error;
     if (
       error instanceof RefinementSetupAmbiguousError ||
@@ -198,6 +236,11 @@ export async function runRefinementCardWorkflow(options: {
       cardLog.event("Refinement workflow interrupted by orchestrator shutdown");
       return;
     }
+    if (authority)
+      throw new RefinementSetupAmbiguousError(
+        "Refinement has no verified terminal outcome; preserve current card/worktree state and reconcile before further work",
+        { cause: error },
+      );
 
     if (worktree !== undefined && !cardContextPreparationFailed) {
       try {

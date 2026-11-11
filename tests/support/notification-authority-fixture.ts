@@ -16,9 +16,13 @@ import type { RunRecord } from "../../src/task-session/run-record.js";
 import { TrelloClient } from "../../src/trello/trello-client.js";
 import { GitClient } from "../../src/git/git-client.js";
 import { GitHubClient } from "../../src/github/github-client.js";
-import { OpenCodeClient } from "../../src/opencode/opencode-client.js";
+import {
+  OpenCodeClient,
+  type OpenCodeRunOptions,
+} from "../../src/opencode/opencode-client.js";
 import { CommandRunner } from "../../src/process/command-runner.js";
 import { getRefinementResultPath } from "../../src/refinement/refinement-result.js";
+import type { RefinementHistoryAction } from "../../src/refinement/refinement-mutation-snapshot.js";
 import { pollProject } from "../../src/orchestrator/poll-project.js";
 import {
   NotificationOutbox,
@@ -153,10 +157,23 @@ export async function notificationAuthorityFixture(
   saveCard();
   const comments: { id: string; text: string }[] = [];
   const requests: string[] = [];
+  const history: RefinementHistoryAction[] = [];
+  const record = (
+    action: Omit<RefinementHistoryAction, "id" | "idMemberCreator">,
+    actor = "orchestrator",
+  ) => {
+    history.unshift({
+      ...action,
+      id: `action-${history.length}`,
+      idMemberCreator: actor,
+    });
+  };
   const fetch = async (url: URL, init?: RequestInit) => {
     const method = init?.method ?? "GET";
     const parts = url.pathname.split("/");
     requests.push(`${method}:${url.pathname}`);
+    if (method === "GET" && parts[2] === "members")
+      return Response.json({ id: "orchestrator" });
     if (method === "GET" && parts[2] === "lists")
       return Response.json(card.idList === parts[3] ? [card] : []);
     if (method === "GET" && parts[2] === "boards")
@@ -177,23 +194,53 @@ export async function notificationAuthorityFixture(
               type: "commentCard",
               data: { text: comment.text },
             }))
-          : [],
+          : url.searchParams.get("filter")?.includes("updateCard:name")
+            ? history
+            : [],
       );
     if (method === "GET" && parts[2] === "cards") return Response.json(card);
     if (method === "PUT") {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      const old = {
+        ...(typeof body.name === "string" && body.name !== card.name
+          ? { name: card.name }
+          : {}),
+        ...(typeof body.desc === "string" && body.desc !== card.desc
+          ? { desc: card.desc }
+          : {}),
+      };
       if (typeof body.name === "string") card.name = body.name;
       if (typeof body.desc === "string") card.desc = body.desc;
+      if (Object.keys(old).length)
+        record({
+          type: "updateCard",
+          data: {
+            old,
+            card: { id: card.id, name: card.name, desc: card.desc },
+          },
+        });
       if (typeof body.idList === "string") card.idList = body.idList;
       saveCard();
       return Response.json(card);
     }
     if (method === "DELETE" && parts[4] === "idLabels") {
+      if (card.idLabels.includes(parts[5]!))
+        record({
+          type: "removeLabelFromCard",
+          data: { card: { id: card.id }, label: { id: parts[5]! } },
+        });
       card.idLabels = card.idLabels.filter((label) => label !== parts[5]);
       saveCard();
       return Response.json({});
     }
     if (method === "POST" && parts[4] === "idLabels") {
+      record({
+        type: "addLabelToCard",
+        data: {
+          card: { id: card.id },
+          label: { id: url.searchParams.get("value")! },
+        },
+      });
       card.idLabels.push(url.searchParams.get("value")!);
       saveCard();
       return Response.json({});
@@ -221,13 +268,20 @@ export async function notificationAuthorityFixture(
       },
     ),
     getStatus: vi.fn(async (directory: string) =>
-      fs.existsSync(getRefinementResultPath(directory))
+      fs.existsSync(
+        path.join(directory, ".agent-orchestrator/refinement-result.json"),
+      )
         ? "?? .agent-orchestrator/refinement-result.json"
         : "",
     ),
     getCurrentBranch: vi.fn(
       async (directory: string) => `agent/${path.basename(directory)}`,
     ),
+    getHeadSha: vi.fn(async () => "a".repeat(40)),
+    getHeadTrackedFiles: vi.fn(async () => []),
+    getCommittableChangedPaths: vi.fn(async () => []),
+    getUntrackedFiles: vi.fn(async () => []),
+    getIgnoredFiles: vi.fn(async () => []),
     getRebaseState: vi.fn(async () => null),
     getConflictedPaths: vi.fn(async () => []),
     removeWorktree: vi.fn(async (_repo: string, directory: string) => {
@@ -274,7 +328,7 @@ export async function notificationAuthorityFixture(
     );
   }
   const github = new GitHubClient(vi.fn());
-  const engineer = vi.fn(async ({ cwd }: { cwd: string }) => {
+  const engineer = vi.fn(async ({ cwd }: OpenCodeRunOptions) => {
     const file = getRefinementResultPath(cwd);
     fs.mkdirSync(path.dirname(file), { recursive: true });
     if (actualGit) {
@@ -363,5 +417,7 @@ export async function notificationAuthorityFixture(
     poll,
     context,
     requests,
+    history,
+    record,
   };
 }

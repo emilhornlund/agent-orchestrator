@@ -30,11 +30,13 @@ import { pollProject } from "../src/orchestrator/poll-project.js";
 import { TaskMutationQueue } from "../src/task-session/task-mutation-queue.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
 import { runRefinementSetup } from "../src/refinement/run-refinement-setup.js";
-import type { TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
+import { TrelloClient, type TrelloCard } from "../src/trello/trello-client.js";
+import type { RefinementHistoryAction } from "../src/refinement/refinement-mutation-snapshot.js";
 
 let root: string;
 const leases: ProjectOwnershipLease[] = [];
 afterEach(async () => {
+  vi.unstubAllGlobals();
   await Promise.all(leases.splice(0).map((lease) => lease.release()));
   if (root !== undefined) fs.rmSync(root, { recursive: true, force: true });
 });
@@ -157,7 +159,73 @@ describe("task-session refinement scheduling", () => {
     let failedListReadInjected = false;
     let failedListMoveInjected = false;
     const acceptedFailureComments = new Set<string>();
+    const history: RefinementHistoryAction[] = [];
+    const actual = new TrelloClient({ apiKey: "key", token: "token" });
+    vi.stubGlobal("fetch", async (input: URL, init?: RequestInit) => {
+      const url = new URL(input);
+      const parts = url.pathname.split("/");
+      if (parts[2] === "members") return Response.json({ id: "orchestrator" });
+      if (parts[2] === "boards")
+        return Response.json(
+          ["feature", "improvement", "bug", "refinement"].map((id) => ({
+            id,
+            name: id,
+            color: null,
+          })),
+        );
+      if (parts[4] === "actions") return Response.json(history);
+      const card = readyCards.find((candidate) => candidate.id === parts[3])!;
+      const record = (
+        type: RefinementHistoryAction["type"],
+        data: RefinementHistoryAction["data"],
+      ) =>
+        history.unshift({
+          id: `action-${history.length}`,
+          idMemberCreator: "orchestrator",
+          type,
+          data,
+        });
+      if (init?.method === "PUT") {
+        const body = JSON.parse(String(init.body)) as {
+          name?: string;
+          desc?: string;
+          idList?: string;
+        };
+        if (body.name !== undefined) {
+          const old = { name: card.name, desc: card.desc };
+          card.name = body.name;
+          card.desc = body.desc!;
+          record("updateCard", {
+            old,
+            card: { id: card.id, name: card.name, desc: card.desc },
+          });
+        }
+        if (body.idList) cardLists.set(card.id, body.idList);
+      }
+      if (init?.method === "POST" && parts[4] === "idLabels") {
+        const label = url.searchParams.get("value")!;
+        cardLabels.get(card.id)!.add(label);
+        record("addLabelToCard", {
+          card: { id: card.id },
+          label: { id: label },
+        });
+      }
+      if (init?.method === "DELETE") {
+        cardLabels.get(card.id)!.delete(parts[5]!);
+        record("removeLabelFromCard", {
+          card: { id: card.id },
+          label: { id: parts[5]! },
+        });
+      }
+      return Response.json({
+        ...card,
+        idBoard: project.trello.boardId,
+        idList: cardLists.get(card.id),
+        idLabels: [...cardLabels.get(card.id)!],
+      });
+    });
     const trello = {
+      getRefinementHistory: actual.getRefinementHistory.bind(actual),
       getCards: vi.fn(async (listId: string) => {
         if (
           setupFailureMode === "read" &&
@@ -169,11 +237,19 @@ describe("task-session refinement scheduling", () => {
         }
         return readyCards
           .filter((card) => cardLists.get(card.id) === listId)
-          .map((card) => ({ ...card, idList: listId }));
+          .map((card) => ({
+            ...card,
+            idList: listId,
+            idLabels: [...cardLabels.get(card.id)!],
+          }));
       }),
       getCard: vi.fn(async (cardId: string) => {
         const card = readyCards.find((candidate) => candidate.id === cardId)!;
-        return { ...card, idList: cardLists.get(cardId)! };
+        return {
+          ...card,
+          idList: cardLists.get(cardId)!,
+          idLabels: [...cardLabels.get(cardId)!],
+        };
       }),
       getCardAttachments: vi.fn(async () => []),
       moveCard: vi.fn(async (cardId: string, listId: string) => {
@@ -185,20 +261,11 @@ describe("task-session refinement scheduling", () => {
           failedListMoveInjected = true;
           throw new Error("injected Failed transition outage");
         }
-        cardLists.set(cardId, listId);
-        return {
-          ...readyCards.find((card) => card.id === cardId)!,
-          idList: listId,
-          idLabels: [...cardLabels.get(cardId)!],
-        };
+        return actual.moveCard(cardId, listId);
       }),
-      updateCardContent: vi.fn(async () => undefined),
-      addLabel: vi.fn(async (cardId: string, labelId: string) => {
-        cardLabels.get(cardId)!.add(labelId);
-      }),
-      removeLabel: vi.fn(async (cardId: string, labelId: string) => {
-        cardLabels.get(cardId)!.delete(labelId);
-      }),
+      updateCardContent: vi.fn(actual.updateCardContent.bind(actual)),
+      addLabel: vi.fn(actual.addLabel.bind(actual)),
+      removeLabel: vi.fn(actual.removeLabel.bind(actual)),
       addComment: vi.fn(async (_cardId: string, text: string) => {
         acceptedFailureComments.add(`${_cardId}:${text}`);
       }),
@@ -212,7 +279,9 @@ describe("task-session refinement scheduling", () => {
         },
       ),
       getStatus: vi.fn(async (worktreePath: string) =>
-        fs.existsSync(getRefinementResultPath(worktreePath))
+        fs.existsSync(
+          path.join(worktreePath, ".agent-orchestrator/refinement-result.json"),
+        )
           ? "?? .agent-orchestrator/refinement-result.json"
           : "",
       ),
@@ -690,6 +759,11 @@ describe("task-session refinement scheduling", () => {
       let listId = project.trello.readyListId;
       const labels = new Set(card.idLabels);
       const trello = {
+        getCard: vi.fn(async () => ({
+          ...card,
+          idList: listId,
+          idLabels: [...labels],
+        })),
         getCards: vi.fn(async (requestedList: string) =>
           requestedList === listId ? [{ ...card, idList: listId }] : [],
         ),
@@ -776,7 +850,9 @@ describe("task-session refinement scheduling", () => {
       }
 
       expect(githubRun).not.toHaveBeenCalled();
-      expect(openCodeRun).toHaveBeenCalledOnce();
+      expect(openCodeRun).toHaveBeenCalledTimes(
+        mode === "malformed-result" ? 3 : 1,
+      );
       if (mode === "malformed-result") {
         expect(listId).toBe(project.trello.failedListId);
         expect(git.resetHard).not.toHaveBeenCalled();

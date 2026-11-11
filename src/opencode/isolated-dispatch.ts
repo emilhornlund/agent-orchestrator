@@ -9,6 +9,7 @@ export function isolatedOpenCodeDispatch(
   cwd: string,
   environment: Record<string, string>,
   arguments_: string[],
+  refinementResultDirectory?: string,
 ): { command: string; args: string[] } {
   if (process.platform !== "linux")
     throw new Error("Isolated OpenCode execution requires Linux Bubblewrap");
@@ -119,8 +120,24 @@ export function isolatedOpenCodeDispatch(
     args.push("--bind", real, directory);
   }
   read(path.join(home, ".local/share/opencode/auth.json"));
+  if (refinementResultDirectory !== undefined) {
+    const resultRoot = path.join(
+      run.pinned.storageRoot,
+      "refinement-results",
+      run.attemptId,
+    );
+    if (
+      refinementResultDirectory !== resultRoot ||
+      fs.realpathSync(resultRoot) !== resultRoot ||
+      run.taskKind !== "refinement"
+    )
+      throw new Error(
+        "Refinement result directory differs from owned external artifact",
+      );
+    args.push("--bind", resultRoot, resultRoot);
+  }
   args.push(
-    "--bind",
+    refinementResultDirectory === undefined ? "--bind" : "--ro-bind",
     cwd,
     cwd,
     "--ro-bind",

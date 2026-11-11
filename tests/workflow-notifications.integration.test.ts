@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { OpenCodeClient } from "../src/opencode/opencode-client.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { smtpSink } from "./support/smtp-sink.js";
 import {
@@ -378,20 +378,28 @@ describe("actual Git/process workflow events -> durable obligation -> outbox -> 
           return result;
         },
       );
-      if (event === "failure")
-        a.engineer.mockImplementation(async ({ cwd }) => {
-          let exitCode = 0;
-          try {
-            execFileSync(process.execPath, ["-e", "process.exit(7)"], { cwd });
-          } catch (error) {
-            exitCode = (error as { status: number }).status;
-          }
-          return {
-            exitCode,
-            output: "",
-            errorOutput: "Primary refinement process exited with failure",
-          };
-        });
+      if (event === "failure") {
+        a.project.opencode.refinement.model = "openai/test";
+        const bin = path.join(root, "failure-bin");
+        const home = path.join(root, "failure-home");
+        fs.mkdirSync(bin);
+        fs.mkdirSync(home);
+        fs.writeFileSync(
+          path.join(bin, "opencode"),
+          `#!${process.execPath}\nprocess.exit(7);\n`,
+          { mode: 0o700 },
+        );
+        const real = new OpenCodeClient();
+        a.engineer.mockImplementation((options) =>
+          real.run({
+            ...options,
+            environment: {
+              PATH: `${bin}:${path.dirname(process.execPath)}:/usr/bin:/bin`,
+              HOME: home,
+            },
+          }),
+        );
+      }
       const mail = tracked(sink.notifier);
       const poll = (f: typeof a, notifier = mail.sender) =>
         pollProject(
@@ -431,40 +439,28 @@ describe("actual Git/process workflow events -> durable obligation -> outbox -> 
       ).toBeNull();
       // Resume A from durable claim/owned real-worktree proof, without a new task.
       hideClaim = false;
-      let observedFailure = false;
       for (
         let pass = 0;
-        pass < 8 && a.authority.store.read()!.lifecycle !== "refined";
+        pass < 8 &&
+        a.authority.store.read()!.lifecycle !==
+          (event === "failure" ? "failed" : "refined");
         pass++
       ) {
         tick();
-        if (event === "failure") {
-          try {
-            await poll(a);
-            await mail.idle();
-          } catch (error) {
-            expect(error).toMatchObject({
-              name: "WorkflowError",
-              message: "OpenCode refinement exited with code 7",
-            });
-            observedFailure = true;
-            break;
-          }
-        } else {
-          await poll(a);
-          await mail.idle();
-        }
+        await poll(a);
+        await mail.idle();
       }
       if (event === "failure") {
-        expect(observedFailure).toBe(true);
+        expect(a.engineer).toHaveBeenCalledTimes(3);
+        expect(a.authority.store.read()!.lifecycle).toBe("failed");
         expect(a.card.idList).toBe("a-failed");
-        // Current genuine failure boundary preserves the failed queue/worktree;
-        // A failed refinement must retain its terminal-release obligations.
+        // Verified originals/Failed/comment release the queue while preserving
+        // the failed worktree and process diagnostics.
         expect(
           a.authority.run(() =>
             new TaskMutationQueue(a.pinned.storageRoot, a.project).getActive(),
-          )?.status,
-        ).toBe("failed");
+          ),
+        ).toBeNull();
       } else {
         expect(a.authority.store.read()!.lifecycle).toBe("refined");
         expect(
@@ -513,7 +509,7 @@ describe("actual Git/process workflow events -> durable obligation -> outbox -> 
         );
       }
       expect(sink.messages).toHaveLength(2);
-      const observed = sink.messages.join("\n");
+      const observed = sink.messages.map(decodeSmtpMessage).join("\n");
       expect(observed).toContain("Project: a");
       expect(observed).toContain("https://trello.com/c/a-card");
       expect(observed).toContain(

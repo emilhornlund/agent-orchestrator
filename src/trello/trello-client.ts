@@ -11,6 +11,8 @@ import {
   refinementMutationSnapshotKey,
   refinementMutationSnapshotSchema,
 } from "../refinement/refinement-mutation-snapshot.js";
+import { refinementHistoryActionSchema } from "../refinement/refinement-mutation-snapshot.js";
+import { guardRefinementFields } from "../refinement/refinement-card-guard.js";
 
 export interface TrelloClientOptions {
   apiKey: string;
@@ -745,6 +747,10 @@ export class TrelloClient {
           args: { cardId, title, description },
         },
         preflight: async () => {
+          await guardRefinementFields(this, authority, "before", {
+            title,
+            description,
+          });
           const current = await this.observeMutationCard(authority);
           const snapshot = authority.read(
             refinementMutationSnapshotKey,
@@ -752,12 +758,18 @@ export class TrelloClient {
           );
           if (
             !snapshot ||
-            snapshot.intended.title !== title ||
-            snapshot.intended.description !== description ||
+            (snapshot.reconciliation?.mode === "restoring"
+              ? snapshot.original.title
+              : snapshot.intended.title) !== title ||
+            (snapshot.reconciliation?.mode === "restoring"
+              ? snapshot.original.description
+              : snapshot.intended.description) !== description ||
             !(
               (current.name === snapshot.original.title &&
                 current.desc === snapshot.original.description) ||
-              (current.name === title && current.desc === description)
+              (current.name === title && current.desc === description) ||
+              (current.name === snapshot.reconciliation?.verified.title &&
+                current.desc === snapshot.reconciliation.verified.description)
             )
           )
             throw new Error(
@@ -766,6 +778,8 @@ export class TrelloClient {
         },
         send: () => this.updateCardContent(cardId, title, description),
         observe: async () => {
+          if (!(await guardRefinementFields(this, authority, "after")))
+            return null;
           const card = await this.observeMutationCard(authority);
           return card.name === title && card.desc === description
             ? { id: card.id, fields: card, result: card }
@@ -895,6 +909,10 @@ export class TrelloClient {
       target: `trello:${authority.store.read()!.pinned.boardId}:${cardId}:${labelId}`,
       request: { route: "trello-labels", args: { cardId, labelId, present } },
       preflight: async () => {
+        await guardRefinementFields(this, authority, "before", {
+          labelId,
+          present,
+        });
         await this.observeMutationCard(authority);
         const snapshot = authority.read(
           refinementMutationSnapshotKey,
@@ -902,7 +920,10 @@ export class TrelloClient {
         );
         if (
           !snapshot ||
-          snapshot.intended.labels.includes(labelId) !== present ||
+          (snapshot.reconciliation?.mode === "restoring"
+            ? snapshot.original.labels
+            : snapshot.intended.labels
+          ).includes(labelId) !== present ||
           !(await this.getLabels(authority.store.read()!.pinned.boardId)).some(
             (label) => label.id === labelId,
           )
@@ -916,6 +937,8 @@ export class TrelloClient {
           ? this.addLabel(cardId, labelId)
           : this.removeLabel(cardId, labelId),
       observe: async () => {
+        if (!(await guardRefinementFields(this, authority, "after")))
+          return null;
         const card = await this.observeMutationCard(authority);
         return card.idLabels.includes(labelId) === present
           ? { id: card.id, fields: card, result: true }
@@ -923,6 +946,24 @@ export class TrelloClient {
       },
     });
     return true;
+  }
+
+  async getRefinementHistory(cardId: string) {
+    const actor = await this.get(
+      "/members/me",
+      z.object({ id: z.string().min(1) }),
+    );
+    const actions = await this.get(
+      `/cards/${cardId}/actions`,
+      z.array(refinementHistoryActionSchema),
+      {
+        filter:
+          "updateCard:name,updateCard:desc,addLabelToCard,removeLabelFromCard",
+        limit: "1000",
+      },
+      "card action lookup",
+    );
+    return { actorId: actor.id, actions };
   }
 
   private async get<T>(

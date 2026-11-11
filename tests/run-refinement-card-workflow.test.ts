@@ -68,6 +68,11 @@ function fixture() {
   let cardList = project.trello.workingListId;
   let labels = [...card.idLabels];
   const trello = {
+    getCard: vi.fn(async () => ({
+      ...card,
+      idList: cardList,
+      idLabels: [...labels],
+    })),
     updateCardContent: vi.fn(async () => undefined),
     addLabel: vi.fn(async (_id: string, labelId: string) => {
       labels = [...labels, labelId];
@@ -149,7 +154,7 @@ describe("runRefinementCardWorkflow", () => {
       "malformed result",
       "Invalid refinement result JSON",
       async (f: ReturnType<typeof fixture>) => {
-        vi.mocked(f.runOpenCode).mockImplementationOnce(async (options) => {
+        vi.mocked(f.runOpenCode).mockImplementation(async (options) => {
           const resultPath = getRefinementResultPath(options.cwd);
           fs.mkdirSync(path.dirname(resultPath), { recursive: true });
           fs.writeFileSync(resultPath, "not-json");

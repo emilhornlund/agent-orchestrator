@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
+import { registerProcessSecrets } from "../src/process/process-runtime.js";
 
 import {
   clearRefinementResult,
@@ -42,6 +43,21 @@ afterEach(() => {
 });
 
 describe("refinement result", () => {
+  it("redacts known secrets before validated output can enter recovery state or public fields", () => {
+    const secret = "refinement-result-sensitive-credential-58391";
+    registerProcessSecrets([secret]);
+    const worktreePath = createWorktree();
+    writeResult(worktreePath, {
+      title: `Grounded ${secret}`,
+      description: `Scoped ${secret}`,
+      type: "bug",
+    });
+    expect(readRefinementResult(worktreePath)).toEqual({
+      title: "Grounded [REDACTED]",
+      description: "Scoped [REDACTED]",
+      type: "bug",
+    });
+  });
   it("uses the dedicated refinement result path", () => {
     const worktreePath = "/tmp/worktree";
 
@@ -72,7 +88,7 @@ describe("refinement result", () => {
     expect(() => clearRefinementResult(worktreePath)).not.toThrow();
   });
 
-  it("removes a stale refinement result symbolic link without deleting its target", () => {
+  it("preserves an unknown result symbolic link and its target", () => {
     const worktreePath = createWorktree();
     const targetPath = path.join(worktreePath, "stale-target.json");
     const resultPath = getRefinementResultPath(worktreePath);
@@ -82,9 +98,11 @@ describe("refinement result", () => {
     fs.mkdirSync(path.dirname(resultPath), { recursive: true });
     fs.symlinkSync(targetPath, resultPath);
 
-    clearRefinementResult(worktreePath);
+    expect(() => clearRefinementResult(worktreePath)).toThrow(
+      "preserving unknown artifact",
+    );
 
-    expect(fs.existsSync(resultPath)).toBe(false);
+    expect(fs.lstatSync(resultPath).isSymbolicLink()).toBe(true);
     expect(fs.readFileSync(targetPath, "utf8")).toBe("stale");
   });
 

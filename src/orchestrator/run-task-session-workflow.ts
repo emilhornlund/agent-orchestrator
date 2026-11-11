@@ -24,6 +24,7 @@ import {
   enqueueNotification,
   notifyAttentionRequired,
   prepareAttentionNotification,
+  notifyFailed,
 } from "../notifications/email-notifier.js";
 import type { OpenCodeClient } from "../opencode/opencode-client.js";
 import { runBoundedCiReview } from "../task-session/run-bounded-ci-review.js";
@@ -160,6 +161,25 @@ import {
   RefinementSetupFailedError,
 } from "../refinement/run-refinement-setup.js";
 import {
+  refinementAnalysisFailure,
+  refinementInputKey,
+  refinementInputSchema,
+} from "../refinement/refinement-input.js";
+import {
+  refinementCardFields,
+  sameRefinementFields,
+  guardRefinementFields,
+} from "../refinement/refinement-card-guard.js";
+import {
+  refinementMutationSnapshotKey,
+  refinementMutationSnapshotSchema,
+} from "../refinement/refinement-mutation-snapshot.js";
+import {
+  refinementCompletionKey,
+  refinementCompletionSchema,
+} from "../refinement/refinement-completion.js";
+import { runRefinementOperation } from "../refinement/refinement-operation.js";
+import {
   readRejectedCommitState,
   readTrustedCommitState,
   readPendingCommitState,
@@ -235,6 +255,32 @@ function timestamp(record: TaskExecutionRecord): string {
   ).toISOString();
 }
 
+function recoverableRefinementMutation(
+  queue: TaskMutationQueue,
+  authority: ProjectRunAuthority | undefined,
+): TaskMutationEvent | null {
+  const run = authority?.store.read();
+  if (
+    !authority ||
+    run?.taskKind !== "refinement" ||
+    !authority.read(refinementInputKey, refinementInputSchema.parse)
+  )
+    return null;
+  const events = queue
+    .list()
+    .filter(
+      (event) =>
+        event.kind === "refinement" &&
+        event.cardId === run.cardId &&
+        ["queued", "active", "failed"].includes(event.status),
+    );
+  if (events.length > 1)
+    throw new RefinementSetupAmbiguousError(
+      "Multiple refinement recovery identities require reconciliation; no event was selected",
+    );
+  return events[0] ?? null;
+}
+
 async function completeRefinementAuthority(
   authority: ProjectRunAuthority | undefined,
   trello: TrelloClient,
@@ -242,12 +288,41 @@ async function completeRefinementAuthority(
   cardId: string,
 ): Promise<void> {
   if (!authority) return;
+  await guardRefinementFields(trello, authority, "verify");
+  const snapshot = authority.read(
+    refinementMutationSnapshotKey,
+    refinementMutationSnapshotSchema.parse,
+  );
+  const completion = authority.read(
+    refinementCompletionKey,
+    refinementCompletionSchema.parse,
+  );
+  if (
+    !snapshot?.reconciliation ||
+    !sameRefinementFields(
+      snapshot.reconciliation.verified,
+      snapshot.intended,
+    ) ||
+    !completion?.verified ||
+    !hasVerifiedWorkflowMove(authority, project.trello.backlogListId)
+  )
+    throw new RefinementSetupAmbiguousError(
+      "Refinement full fields, completion comment and own Backlog move must be verified before release",
+    );
   const observedAt = new Date().toISOString();
   const backlog = await trello.getCards(project.trello.backlogListId);
-  if (!backlog.some((card) => card.id === cardId))
+  const completedCard = backlog.find((card) => card.id === cardId);
+  if (
+    !completedCard ||
+    !sameRefinementFields(
+      refinementCardFields(completedCard),
+      snapshot.intended,
+    )
+  )
     throw new Error(
       `Refinement completion is not verified: ${cardId} was not observed in Backlog`,
     );
+  await guardRefinementFields(trello, authority, "verify");
   await authority.completeRefinement({
     observationId: `refinement:${cardId}:${observedAt}`,
     observedAt,
@@ -265,6 +340,7 @@ async function finalizeRefinementSetupFailure(options: {
   card: TrelloCard;
   reason: string;
   signal: AbortSignal;
+  emailNotifier?: EmailNotifier;
 }): Promise<void> {
   const { authority, queue, queueEventId, trello, project, card, signal } =
     options;
@@ -293,9 +369,27 @@ async function finalizeRefinementSetupFailure(options: {
   }
   if (
     current.lifecycle !== "refinement" ||
-    !hasExhaustedRefinementSetup(authority, card.id)
+    (!hasExhaustedRefinementSetup(authority, card.id) &&
+      !refinementAnalysisFailure(authority))
   )
     throw new Error("Refinement setup failure is not durably exhausted");
+  const analysisFailure = refinementAnalysisFailure(authority);
+  const verifyOriginalFields = async () => {
+    if (!analysisFailure) return;
+    const input = authority.read(
+      refinementInputKey,
+      refinementInputSchema.parse,
+    );
+    const actual = await trello.getCard(card.id);
+    if (
+      !input ||
+      !sameRefinementFields(input.original, refinementCardFields(actual))
+    )
+      throw new RefinementSetupAmbiguousError(
+        "Refinement failure has conflicting current fields; preserve human values and retain ownership",
+      );
+  };
+  await verifyOriginalFields();
   const failed = await getCardsForDiscovery(
     trello,
     project.id,
@@ -304,14 +398,38 @@ async function finalizeRefinementSetupFailure(options: {
     signal,
   );
   const comment = [
-    "Agent Orchestrator failed during repository setup for refinement.",
+    analysisFailure
+      ? "Agent Orchestrator could not complete refinement."
+      : "Agent Orchestrator failed during repository setup for refinement.",
     "",
-    "Category: repository setup",
-    `Reason: ${options.reason.slice(0, 1_000)}`,
-    "Setup-produced worktree changes and process diagnostics have been preserved.",
+    analysisFailure ? "Category: refinement" : "Category: repository setup",
+    `Reason: ${(analysisFailure ?? options.reason).slice(0, 1_000)}`,
+    "Worktree changes and process diagnostics have been preserved.",
     "To retry deliberately, move this card to Ready for Agent.",
   ].join("\n");
   await trello.addComment(card.id, comment);
+  const notification = {
+    project,
+    card,
+    category: analysisFailure ? "Refinement" : "Setup",
+    reason: analysisFailure ?? options.reason,
+  };
+  if (
+    options.emailNotifier &&
+    (options.emailNotifier.isEventEnabled?.("failed") ?? true)
+  )
+    enqueueNotification(
+      options.emailNotifier,
+      project.id,
+      "failed",
+      card.url,
+      buildFailedEmail(notification),
+      {
+        cardId: card.id,
+        listId: project.trello.failedListId,
+        boardId: project.trello.boardId,
+      },
+    );
   if (!failed.some((candidate) => candidate.id === card.id)) {
     const working = await getCardsForDiscovery(
       trello,
@@ -338,12 +456,18 @@ async function finalizeRefinementSetupFailure(options: {
       "Trello did not confirm refinement setup failure in Failed",
     );
   const observedAt = new Date().toISOString();
+  await verifyOriginalFields();
   await authority.failRefinement({
     observationId: `refinement-setup-failed:${card.id}:${current.attemptId}`,
     observedAt,
     trelloObservationId: `trello-failed-readback:${card.id}:${observedAt}`,
     trelloVerifiedAt: observedAt,
   });
+  await notifyFailed(
+    options.emailNotifier,
+    notification,
+    logger.child({ projectId: project.id, cardId: card.id }),
+  );
   queue.complete(queueEventId);
   await authority.releaseVerifiedTerminal();
 }
@@ -1787,6 +1911,8 @@ export async function runTaskSessionWorkflow(
     preflightWorkingCards.map((card) => card.id),
   );
   let orphanRecoveryBlocked = false;
+  const ownedRefinementAuthority = ProjectRunAuthority.current(project.id);
+  const ownedRefinementRun = ownedRefinementAuthority?.store.read();
   for (const queued of queue.list()) {
     if (
       (queued.kind !== "implementation" && queued.kind !== "refinement") ||
@@ -1794,6 +1920,25 @@ export async function runTaskSessionWorkflow(
     )
       continue;
     const orphanScope = `orphan:${queued.eventId}`;
+    if (
+      queued.kind === "refinement" &&
+      ownedRefinementRun?.taskKind === "refinement" &&
+      ownedRefinementRun.cardId === queued.cardId &&
+      ownedRefinementRun.lifecycle === "refinement" &&
+      (ownedRefinementAuthority!.read(
+        refinementInputKey,
+        refinementInputSchema.parse,
+      ) !== null ||
+        hasVerifiedWorkflowMove(
+          ownedRefinementAuthority!,
+          project.trello.workingListId,
+        ))
+    ) {
+      // A started refinement intentionally has no implementation projection.
+      // Its Backlog/Failed obligations and unexpected moves retain this owner.
+      mutationBlockStore.resolve(orphanScope);
+      continue;
+    }
     if (queued.status === "completed") {
       if (
         preflightReadyIds.has(queued.cardId) &&
@@ -4073,14 +4218,17 @@ export async function runTaskSessionWorkflow(
     await refinementAuthority.releaseVerifiedTerminal();
     return;
   }
-  const pendingRefinementFailure = queue.getActive();
+  const pendingRefinementFailure =
+    queue.getActive() ??
+    recoverableRefinementMutation(queue, refinementAuthority);
   if (
     refinementAuthority &&
     pendingRefinementFailure?.kind === "refinement" &&
-    hasExhaustedRefinementSetup(
+    (hasExhaustedRefinementSetup(
       refinementAuthority,
       pendingRefinementFailure.cardId,
-    )
+    ) ||
+      refinementAnalysisFailure(refinementAuthority))
   ) {
     const owner = queue.claimForRecovery(pendingRefinementFailure.eventId);
     if (owner === null)
@@ -4090,6 +4238,7 @@ export async function runTaskSessionWorkflow(
     try {
       const failureCard = await trello.getCard(owner.cardId);
       await finalizeRefinementSetupFailure({
+        ...(emailNotifier ? { emailNotifier } : {}),
         authority: refinementAuthority,
         queue,
         queueEventId: owner.eventId,
@@ -4304,7 +4453,88 @@ export async function runTaskSessionWorkflow(
   // maintenance may represent a branch effect for any card, including an
   // archived or manually moved card. Do not resume Working/refinement writers.
   if (hasUnresolvedLegacyMaintenance) return;
-  const activeMutation = queue.getActive();
+  const activeMutation =
+    queue.getActive() ??
+    recoverableRefinementMutation(queue, refinementAuthority);
+  if (
+    refinementAuthority &&
+    canonicalRun?.taskKind === "refinement" &&
+    canonicalRun.lifecycle === "refinement" &&
+    activeMutation?.kind === "refinement" &&
+    activeMutation.cardId === canonicalRun.cardId
+  ) {
+    const currentCard = await trello.getCard(canonicalRun.cardId);
+    if (currentCard.idList === project.trello.backlogListId) {
+      if (
+        !hasVerifiedWorkflowMove(
+          refinementAuthority,
+          project.trello.backlogListId,
+        )
+      )
+        throw new RefinementSetupAmbiguousError(
+          "Manual Backlog movement is not verified refinement completion; preserve ownership",
+        );
+      const recovered = queue.claimForRecovery(activeMutation.eventId);
+      if (!recovered)
+        throw new RefinementSetupAmbiguousError(
+          "Refinement completion queue ownership could not be recovered",
+        );
+      try {
+        const retained = refinementAuthority.read(
+          refinementMutationSnapshotKey,
+          refinementMutationSnapshotSchema.parse,
+        );
+        if (
+          !retained?.reconciliation ||
+          !sameRefinementFields(
+            retained.reconciliation.verified,
+            retained.intended,
+          )
+        )
+          throw new RefinementSetupAmbiguousError(
+            "Backlog refinement lacks trustworthy complete field provenance; preserve legacy state without redispatch",
+          );
+        await guardRefinementFields(trello, refinementAuthority, "verify");
+        // Completion must not depend on a worktree already safely cleaned up, or
+        // redispatch setup/analysis after an accepted Backlog move.
+        await runRefinementOperation({
+          trello,
+          git,
+          opencode: openCode,
+          project,
+          card: currentCard,
+          worktreePath: path.join(
+            project.repository.worktreeRoot,
+            currentCard.id,
+          ),
+          signal,
+          cardLog: logger.child({
+            projectId: project.id,
+            cardId: currentCard.id,
+          }),
+          ...(options.emailNotifier
+            ? { emailNotifier: options.emailNotifier }
+            : {}),
+        });
+        await completeRefinementAuthority(
+          refinementAuthority,
+          trello,
+          project,
+          currentCard.id,
+        );
+        queue.complete(recovered.eventId);
+      } catch (error) {
+        if (queue.ownsActive(recovered.eventId))
+          queue.releaseForRecovery(recovered.eventId);
+        throw error;
+      }
+      return;
+    }
+    if (currentCard.idList !== project.trello.workingListId)
+      throw new RefinementSetupAmbiguousError(
+        "Active refinement was moved unexpectedly; preserve state and pause writes",
+      );
+  }
   // A claim move can be accepted before its local task projection is created.
   // Bind that verified original effect rather than treating the owned Working
   // card as a fresh task (or sending the move again).
@@ -4402,6 +4632,7 @@ export async function runTaskSessionWorkflow(
               cause: error,
             });
           await finalizeRefinementSetupFailure({
+            ...(emailNotifier ? { emailNotifier } : {}),
             authority,
             queue,
             queueEventId: recovered.eventId,
@@ -5137,6 +5368,7 @@ export async function runTaskSessionWorkflow(
                 cause: error,
               });
             await finalizeRefinementSetupFailure({
+              ...(emailNotifier ? { emailNotifier } : {}),
               authority,
               queue,
               queueEventId: mutation.eventId,

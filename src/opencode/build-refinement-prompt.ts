@@ -108,6 +108,7 @@ platforms, data, or workflows>.
 export function buildRefinementPrompt(
   card: TrelloCard,
   attachmentContext?: CardAttachmentPromptContext,
+  resultPath = refinementResultRelativePath,
 ): string {
   const description = card.desc.trim();
 
@@ -125,6 +126,8 @@ export function buildRefinementPrompt(
     "Use repository evidence together with the original Trello task to clarify the intended work.",
     "Preserve the original intent and keep the task focused.",
     "Do not expand the task into unrelated work or speculative improvements.",
+    "Identify larger dependencies separately without silently including them in scope.",
+    "For oversized work, recommend smaller tasks but still refine this original card. Do not create or split cards.",
     "Do not invent requirements that are unsupported by either the original task or repository evidence.",
     "",
     "Classify the task as exactly one of:",
@@ -149,8 +152,8 @@ export function buildRefinementPrompt(
     "Do not push anything.",
     "Do not create or modify pull requests.",
     "",
-    "Your only permitted repository write is the refinement result file:",
-    refinementResultRelativePath,
+    "Do not write repository content. Your only permitted result write is this artifact:",
+    resultPath,
     "",
     "Create any parent directory required for that result file.",
     "",
@@ -168,7 +171,7 @@ export function buildRefinementPrompt(
     "The file must contain valid JSON, not a Markdown code fence.",
     "The description value must contain the complete selected Markdown task template after refinement.",
     "Do not use the agent response text as the refinement result.",
-    `The refinement is complete only when ${refinementResultRelativePath} has been written successfully.`,
+    `The refinement is complete only when ${resultPath} has been written successfully.`,
     "",
     "Feature template:",
     "",

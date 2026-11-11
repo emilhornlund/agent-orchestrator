@@ -31,7 +31,47 @@ and P10 historical cleanup/retry are outside this scope.
    type/duration comment and optional nonblocking notification; do not duplicate
    description content or release on assumed external success.
 
-## Starting points and checks
+## Implementation checkpoint and checks
+
+P9 is implemented and locally validated. Combined verification covers REF-001–005,
+ENV-002, CTX-001/003 and refinement's workflow/ownership contributions. Integrated
+`yarn validate` passed ESLint, Prettier, TypeScript and 2,220 tests across 168 files.
+The progress summary records the individual tasks/corrections and original failed
+validation honestly. No live-service qualification is claimed. Stop before P10.
+
+Current implementation: T1 confines refinement through the existing Bubblewrap
+dispatch, with a read-only task worktree/Git metadata and a separately writable
+external result directory. Setup-free new attempts persist an inventory too;
+older setup-free records lacking that inventory are fenced rather than rebased
+onto potentially agent-modified files. Repository-local legacy results remain
+preserved and are not reused. T2 persists bounded complete-result correction and
+validated output, refreshing attachments for correction and fencing unknown children.
+T3 persists verified full fields, pending writes and supported Free change history
+in the concrete Trello adapters, including restart reconciliation. Conflicts and
+missing legacy attribution retain ownership; partial accepted effects can complete
+without replay. There is no blind rollback or atomic compare-and-write claim.
+T4a verifies unchanged originals and the Failed outcome after bounded analysis
+failure, preserving unknown state/human changes instead of terminally releasing.
+T4b recovers Backlog completion with immutable comment text/identity and verifies
+complete fields/history/comment/own move before release. Started refinement queue
+events cannot be mistaken for orphaned Ready claims. Historical cleanup and
+fresh-attempt retry remain in P10.
+
+T5a correction: after three conclusively rejected field sends, persist restoration
+mode and stop replaying that rejected identity. Restore only current attributable
+own fields through the same read/history guards. Verify originals before Failed;
+human/unknown state and rejected restoration keep ownership for reconciliation.
+
+T5b closes the legacy result-path inventory exemption and explicitly reads the
+actual OpenCode task-scoped process-evidence layout for stopped-child recovery.
+Legacy artifacts/baselines and unknown directory symlinks are preserved/fenced,
+not treated as setup or new output. Combined scoped criteria and integrated
+validation are complete as recorded above.
+
+Final integration correction wires failure notifications through every bounded
+failure caller and gates delivery on the verified canonical refinement outcome.
+SMTP fixtures use actual recorded child failures, and preparing-attempt recovery
+uses concrete field/history/comment adapters rather than no-op mutation stubs.
 
 Inspect `src/refinement/run-refinement-card.ts`, `run-refinement.ts`,
 `run-refinement-setup.ts`, `refinement-operation.ts`, `refinement-result.ts`,

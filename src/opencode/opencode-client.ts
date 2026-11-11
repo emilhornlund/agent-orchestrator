@@ -56,6 +56,7 @@ export interface OpenCodeRunOptions {
   sessionId?: string;
   captureSessionId?: boolean;
   readOnly?: boolean;
+  refinementResultDirectory?: string;
   environment?: Record<string, string>;
   sessionLogPath?: string;
   sessionLabel?: string;
@@ -442,6 +443,7 @@ const defaultRunOpenCode: RunOpenCode = async ({
   sessionId,
   captureSessionId,
   readOnly,
+  refinementResultDirectory,
   environment,
   sessionLogPath,
   sessionLabel,
@@ -535,12 +537,16 @@ const defaultRunOpenCode: RunOpenCode = async ({
       const authority = ProjectRunAuthority.currentProjectId();
       let dispatch = { command: "opencode", args: arguments_ };
       try {
-        if (authority !== undefined && readOnly !== true)
+        if (
+          authority !== undefined &&
+          (readOnly !== true || refinementResultDirectory !== undefined)
+        )
           dispatch = isolatedOpenCodeDispatch(
             ProjectRunAuthority.current(authority)!,
             cwd,
             childEnvironment,
             arguments_,
+            refinementResultDirectory,
           );
       } catch (error) {
         execution.finish("not-dispatched");
