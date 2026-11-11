@@ -71,6 +71,10 @@ export interface RunTaskSessionValidationRepairsOptions {
   card: TrelloCard;
   expectedPrimarySessionId: string;
   attachmentContext?: CardAttachmentPromptContext;
+  prepareContext?: () => Promise<{
+    card: TrelloCard;
+    attachmentContext?: CardAttachmentPromptContext;
+  }>;
   repairRunOptions: Omit<
     OpenCodeRunOptions,
     "cwd" | "prompt" | "sessionId" | "captureSessionId"
@@ -420,10 +424,24 @@ export async function runTaskSessionValidationWithRepairs(
     }
   }
 
+  const prepareRepairContext = async () => {
+    const context = await options.prepareContext?.();
+    const repairCard = context?.card ?? card;
+    if (repairCard.id !== cardId)
+      throw new Error(
+        "Refreshed validation repair context belongs to another task",
+      );
+    const attachmentContext =
+      context === undefined
+        ? options.attachmentContext
+        : context.attachmentContext;
+    return { card: repairCard, attachmentContext };
+  };
   while (true) {
     const reservedOperation =
       currentRecord.validationRepair?.activePrimaryOperation;
     if (reservedOperation !== undefined) {
+      await prepareRepairContext();
       if (reservedOperation.promptArtifact === undefined)
         throw new TaskSessionValidationRepairError(
           "Reserved validation repair lacks its persisted prompt; preserving the reservation",
@@ -717,17 +735,18 @@ export async function runTaskSessionValidationWithRepairs(
       );
     }
 
+    const context = await prepareRepairContext();
     const prompt = buildTaskSessionValidationRepairPrompt({
       projectId: project.id,
-      card,
+      card: context.card,
       ...(plan === null ? {} : { approvedPlan: plan.plan }),
       validation: validationResult,
       coverage: coverageResult,
       attempt: attempts + 1,
       maxAttempts,
-      ...(options.attachmentContext === undefined
+      ...(context.attachmentContext === undefined
         ? {}
-        : { attachmentContext: options.attachmentContext }),
+        : { attachmentContext: context.attachmentContext }),
     });
 
     const repairAttempt = attempts + 1;

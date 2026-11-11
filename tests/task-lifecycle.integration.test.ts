@@ -504,6 +504,7 @@ describe("task lifecycle through pollProject", () => {
       }> = [];
       let trapNextClaim = false;
       let blockTerminalDestinationRead = false;
+      let ciAttachmentVersion = 0;
       const trello = {
         getCards: async (listId: string) => {
           if (
@@ -588,7 +589,19 @@ describe("task lifecycle through pollProject", () => {
               id: `comment-${index}`,
               text: entry.detail!,
             })),
-        getCardAttachments: async () => [],
+        getCardAttachments: async () =>
+          ciAttachmentVersion === 0
+            ? []
+            : [
+                {
+                  id: "current-ci-context",
+                  name: "Current CI evidence",
+                  mimeType: null,
+                  bytes: null,
+                  isUpload: false,
+                  url: `https://context.test/revision-${ciAttachmentVersion}`,
+                },
+              ],
       } as unknown as TrelloClient;
       type PullRequestFixture = {
         number: number;
@@ -952,6 +965,22 @@ describe("task lifecycle through pollProject", () => {
           const cardId = path.basename(options.cwd);
           openCodeCards.push(cardId);
           if (
+            ciQuality === "validation" &&
+            options.prompt.startsWith("Repair the failing local quality gate")
+          ) {
+            expect(options.prompt).toContain(
+              `https://context.test/revision-${10 + ciPrimaryCorrections}`,
+            );
+            return {
+              exitCode: 0,
+              ...(options.sessionId === undefined
+                ? {}
+                : { sessionId: options.sessionId }),
+              output: "No useful local correction",
+              errorOutput: "",
+            };
+          }
+          if (
             targetMerge &&
             options.prompt.startsWith(
               "Independently review the prepared implementation after target synchronization",
@@ -1144,6 +1173,7 @@ describe("task lifecycle through pollProject", () => {
               authorities.get(cardId),
             ).read(cardId);
             const ciPass = record?.ciRepair?.activePrimaryOperation?.pass ?? 0;
+            ciAttachmentVersion = ciPass;
             const reviewRepairCount = record?.retryCounters.review ?? 0;
             const verdict =
               ciPass === 0 || reviewRepairCount >= ciPass ? "pass" : "fail";
@@ -1320,6 +1350,9 @@ describe("task lifecycle through pollProject", () => {
             if (review === undefined || pending === undefined)
               throw new Error("CI review repair lacks its durable reservation");
             ciReviewRepairOperationIds.push(pending.operationId);
+            expect(options.prompt).toContain(
+              `https://context.test/revision-${ciPrimaryCorrections}`,
+            );
             ciReviewRepairDispatches.push({
               operationId: pending.operationId,
               prompt: options.prompt,
@@ -1522,7 +1555,9 @@ describe("task lifecycle through pollProject", () => {
           ((feedbackQuality === "validation" && correctionFeedback) ||
             (ciQuality === "validation" && ciPrimaryCorrections > 0)) &&
           options.command === project.repository.validationCommand
-        )
+        ) {
+          if (ciQuality === "validation")
+            ciAttachmentVersion = 10 + ciPrimaryCorrections;
           return {
             exitCode: 1,
             output: "Observed correction test failure",
@@ -1530,6 +1565,7 @@ describe("task lifecycle through pollProject", () => {
             timedOut: false,
             aborted: false,
           };
+        }
         if (options.command.startsWith("opencode session list"))
           return {
             exitCode: 0,

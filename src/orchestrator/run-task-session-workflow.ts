@@ -2622,6 +2622,19 @@ export async function runTaskSessionWorkflow(
             : `${operationKey}:ci:${ciRecord.feedbackRemediation.operationId}`);
         const ciReviewCycleId = `${operationKey}:ci-review:${ciRepairCycleId}`;
         const plan = planStore.read(card.id);
+        let ciCard = card;
+        let ciAttachments: CardAttachmentPromptContext | undefined;
+        const refreshCiContext = async () => {
+          ciCard = await trello.getCard(card.id);
+          ciAttachments = await options.prepareAttachmentContext(ciCard);
+          buildCardAttachmentPromptLines(ciAttachments);
+          return {
+            card: ciCard,
+            ...(ciAttachments === undefined
+              ? {}
+              : { attachmentContext: ciAttachments }),
+          };
+        };
         const validationOptions = {
           project,
           cardId: card.id,
@@ -2640,6 +2653,7 @@ export async function runTaskSessionWorkflow(
         let latestReview: ImplementationReviewResult | null = null;
         const refreshQuality = async () => {
           quality = await runTaskSessionValidationWithRepairs({
+            prepareContext: refreshCiContext,
             validation: validationOptions,
             openCode,
             planStore,
@@ -2681,13 +2695,17 @@ export async function runTaskSessionWorkflow(
               NonNullable<TaskExecutionRecord["reviewRepair"]>["findings"]
             >[number][],
           ) => {
+            await refreshCiContext();
             if (quality === undefined)
               throw new Error(
                 "CI review recovery lacks current quality evidence",
               );
             return runBoundedCiReview({
               project,
-              card,
+              card: ciCard,
+              ...(ciAttachments === undefined
+                ? {}
+                : { attachmentContext: ciAttachments }),
               expectedBranch,
               operationKey,
               worktreePath,
@@ -2741,6 +2759,7 @@ export async function runTaskSessionWorkflow(
             operationId: string,
             persistedPrompt?: string,
           ) => {
+            await refreshCiContext();
             let latest = taskStore.read(card.id);
             if (latest === null)
               throw new Error("Task state disappeared during CI review repair");
@@ -2771,7 +2790,10 @@ export async function runTaskSessionWorkflow(
               persistedPrompt ??
               buildTaskSessionReviewRepairPrompt({
                 projectId: project.id,
-                card,
+                card: ciCard,
+                ...(ciAttachments === undefined
+                  ? {}
+                  : { attachmentContext: ciAttachments }),
                 ...(plan === null ? {} : { approvedPlan: plan.plan }),
                 review,
                 attempt,
@@ -2851,15 +2873,20 @@ export async function runTaskSessionWorkflow(
             expectedPrimarySessionId: ciSessionId,
             runReview: reviewRoundRunner,
             repair: repairReview,
-            buildRepairPrompt: (review, attempt) =>
-              buildTaskSessionReviewRepairPrompt({
+            buildRepairPrompt: async (review, attempt) => {
+              await refreshCiContext();
+              return buildTaskSessionReviewRepairPrompt({
                 projectId: project.id,
-                card,
+                card: ciCard,
+                ...(ciAttachments === undefined
+                  ? {}
+                  : { attachmentContext: ciAttachments }),
                 ...(plan === null ? {} : { approvedPlan: plan.plan }),
                 review,
                 attempt,
                 maxAttempts: project.opencode.remediation.maxPasses,
-              }),
+              });
+            },
             rerunQuality: refreshQuality,
             getCurrentContentIdentity: () =>
               getTaskSessionSourceSnapshotIdentity(git, worktreePath),
@@ -3360,6 +3387,7 @@ export async function runTaskSessionWorkflow(
                   )) === gateInput.currentContentIdentity
                 )
                   return gateInput;
+                await refreshCiContext();
                 const validationNow =
                   await runTaskSessionValidation(validationOptions);
                 const coverageNow =
@@ -3376,7 +3404,10 @@ export async function runTaskSessionWorkflow(
                   reviewNow = (
                     await runBoundedCiReview({
                       project,
-                      card,
+                      card: ciCard,
+                      ...(ciAttachments === undefined
+                        ? {}
+                        : { attachmentContext: ciAttachments }),
                       expectedBranch,
                       operationKey,
                       worktreePath,

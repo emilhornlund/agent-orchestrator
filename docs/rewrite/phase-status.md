@@ -137,6 +137,22 @@
   checkpoint. Permanent CI guidance now describes the actual discovery policy.
   Remaining: refresh context on nested CI quality-repair dispatch, then final
   combined checks/documentation and `yarn validate`. No full pass claimed yet.
+- T5b completes the CI contribution to CTX-001/IMP-004: nested validation and
+  review corrections refresh the current card/attachments at dispatch, including
+  reserved-operation recovery. Review prompt preparation can await that context
+  before reservation; validation refresh happens after observing failure and
+  immediately before its writer, not before a potentially long command. Existing
+  reserved prompts/operation IDs remain immutable and the primary session is reused.
+- T5b self-review inspected both quality-repair coordinators, all changed CI callers
+  and the actual prompt/recovery paths. A production lifecycle regression changes
+  attachment URLs during review and validation and requires those latest URLs in
+  the next primary prompt. It initially exposed too-early validation refresh;
+  refresh was moved to dispatch. Wrong-task/unavailable context prevents reservation
+  and dispatch without charging a new improvement pass. Four focused suites passed
+  **70 tests** and all **eight CI lifecycle scenarios** passed (23 unrelated cases
+  filtered). Typecheck and changed-code ESLint passed. Guide/roadmap and permanent
+  context guidance remain accurate. Only final integrated verification/validation
+  and its completion checkpoint remain.
 
 ## Inherited P7 checkpoint
 
