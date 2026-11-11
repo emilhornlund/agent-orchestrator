@@ -19,7 +19,10 @@ import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 import { runRefinement } from "../refinement/run-refinement.js";
 import type { TrelloCard, TrelloClient } from "../trello/trello-client.js";
 import { getElapsedRefinementWorkflowTime } from "../orchestrator/workflow-duration.js";
-import { RefinementSetupAmbiguousError } from "./run-refinement-setup.js";
+import {
+  RefinementSetupAmbiguousError,
+  RefinementSetupFailedError,
+} from "./run-refinement-setup.js";
 import { NotificationPreparationError } from "../notifications/notification-outbox.js";
 
 /** Executes the refinement action and its Trello completion side effects. */
@@ -99,6 +102,7 @@ export async function runRefinementOperation(input: {
     );
   } catch (error) {
     if (error instanceof NotificationPreparationError) throw error;
+    if (error instanceof RefinementSetupFailedError) throw error;
     if (!ProjectRunAuthority.current(input.project.id)) throw error;
     throw new RefinementSetupAmbiguousError(
       "Refinement field completion is pending verified reconciliation; ownership and original/intended values retained",

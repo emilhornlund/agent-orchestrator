@@ -289,3 +289,141 @@ it("does not release completion when human fields change during final Backlog re
   expect(f.authority.store.read()!.lifecycle).toBe("refinement");
   expect(f.card.desc).toBe("Human final revision");
 });
+
+it("restores attributable title, description and classification after bounded conclusive field rejection before Failed", async () => {
+  const f = await fixture();
+  f.card.idLabels.push(f.project.trello.bugLabelId);
+  f.saveCard();
+  let rejected = 0;
+  vi.stubGlobal("fetch", async (url: URL, init?: RequestInit) => {
+    if (
+      init?.method === "DELETE" &&
+      url.pathname.endsWith(`/idLabels/${f.project.trello.refinementLabelId}`)
+    ) {
+      rejected++;
+      return Response.json({ message: "invalid label" }, { status: 400 });
+    }
+    return f.fetch(url, init);
+  });
+  await f.poll();
+  expect(f.card.name).toBe("Refined task");
+  expect(f.card.idLabels).not.toContain(f.project.trello.bugLabelId);
+  vi.useFakeTimers({ toFake: ["Date"] });
+  for (let pass = 0; pass < 5; pass++) {
+    vi.setSystemTime(Date.now() + 60000);
+    await f.poll();
+  }
+  expect(rejected).toBe(3);
+  expect(f.card).toMatchObject({
+    name: "Task",
+    desc: "Original",
+    idList: f.project.trello.failedListId,
+  });
+  expect(new Set(f.card.idLabels)).toEqual(
+    new Set([f.project.trello.refinementLabelId, f.project.trello.bugLabelId]),
+  );
+  expect(f.authority.store.read()!.lifecycle).toBe("failed");
+  expect(
+    f.authority.read(
+      refinementMutationSnapshotKey,
+      refinementMutationSnapshotSchema.parse,
+    )?.reconciliation?.mode,
+  ).toBe("restored");
+});
+
+it("does not restore rejected partial writes over a detected human revision", async () => {
+  const f = await fixture();
+  let rejected = 0;
+  vi.stubGlobal("fetch", async (url: URL, init?: RequestInit) => {
+    if (init?.method === "POST" && url.pathname.endsWith("idLabels")) {
+      rejected++;
+      if (rejected === 3) {
+        const old = { desc: f.card.desc };
+        f.card.desc = "Human content after rejection";
+        f.record(
+          {
+            type: "updateCard",
+            data: { old, card: { id: f.card.id, desc: f.card.desc } },
+          },
+          "human",
+        );
+      }
+      return Response.json({ message: "invalid label" }, { status: 400 });
+    }
+    return f.fetch(url, init);
+  });
+  await f.poll();
+  vi.useFakeTimers({ toFake: ["Date"] });
+  for (let pass = 0; pass < 4; pass++) {
+    vi.setSystemTime(Date.now() + 60000);
+    await f.poll();
+  }
+  expect(rejected).toBe(3);
+  expect(f.card.desc).toBe("Human content after rejection");
+  expect(f.card.idList).toBe(f.project.trello.workingListId);
+  expect(f.authority.store.read()!.lifecycle).toBe("refinement");
+});
+
+it("retains uncertain partial acceptance without replay or restoration based on negative reads", async () => {
+  const f = await fixture();
+  let dispatched = 0;
+  vi.stubGlobal("fetch", async (url: URL, init?: RequestInit) => {
+    if (init?.method === "POST" && url.pathname.endsWith("idLabels")) {
+      dispatched++;
+      throw new TypeError("unknown acceptance");
+    }
+    return f.fetch(url, init);
+  });
+  await f.poll();
+  vi.useFakeTimers({ toFake: ["Date"] });
+  for (let pass = 0; pass < 5; pass++) {
+    vi.setSystemTime(Date.now() + 60000);
+    await f.poll();
+  }
+  expect(dispatched).toBe(1);
+  expect(f.card.name).toBe("Refined task");
+  expect(f.card.idList).toBe(f.project.trello.workingListId);
+  expect(
+    f.authority.read(
+      refinementMutationSnapshotKey,
+      refinementMutationSnapshotSchema.parse,
+    )?.reconciliation?.mode,
+  ).toBeUndefined();
+});
+
+it("detects human edits racing with compensation and preserves history instead of confirming restoration", async () => {
+  const f = await fixture();
+  let raced = false;
+  vi.stubGlobal("fetch", async (url: URL, init?: RequestInit) => {
+    if (init?.method === "POST" && url.pathname.endsWith("idLabels"))
+      return Response.json({ message: "invalid label" }, { status: 400 });
+    if (init?.method === "PUT" && String(init.body).includes('"name":"Task"')) {
+      raced = true;
+      const old = { desc: f.card.desc };
+      f.card.desc = "Human restoration race";
+      f.record(
+        {
+          type: "updateCard",
+          data: { old, card: { id: f.card.id, desc: f.card.desc } },
+        },
+        "human",
+      );
+    }
+    return f.fetch(url, init);
+  });
+  await f.poll();
+  vi.useFakeTimers({ toFake: ["Date"] });
+  for (let pass = 0; pass < 5; pass++) {
+    vi.setSystemTime(Date.now() + 60000);
+    await f.poll();
+  }
+  expect(raced).toBe(true);
+  const state = f.authority.read(
+    refinementMutationSnapshotKey,
+    refinementMutationSnapshotSchema.parse,
+  )!.reconciliation!;
+  expect(state.conflict).toBeDefined();
+  expect(JSON.stringify(state.evidence)).toContain("Human restoration race");
+  expect(state.mode).toBe("restoring");
+  expect(f.card.idList).toBe(f.project.trello.workingListId);
+});

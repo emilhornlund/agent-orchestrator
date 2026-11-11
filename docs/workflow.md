@@ -158,6 +158,13 @@ human edits retain project ownership for reconciliation; recoverable human histo
 is preserved. Restoration must never overwrite detected human edits. Read/write
 checks are conservative conflict detection, not an atomic Trello transaction.
 
+Three conclusively rejected field sends end that update's automatic retries. When
+current fields and history still establish the accepted own changes, refinement
+restores the original title, description and classification through the same guards,
+then verifies them before Failed. It never restores based on negative readback of
+an uncertain write. Conflicts or rejected restoration require explicit reconciliation
+with ownership and evidence retained.
+
 After bounded analysis failure, original fields must still be verified before and
 after the Failed transition and explanatory comment. Human field differences or
 unknown execution/acceptance retain ownership instead of claiming a completed

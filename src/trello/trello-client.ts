@@ -758,12 +758,18 @@ export class TrelloClient {
           );
           if (
             !snapshot ||
-            snapshot.intended.title !== title ||
-            snapshot.intended.description !== description ||
+            (snapshot.reconciliation?.mode === "restoring"
+              ? snapshot.original.title
+              : snapshot.intended.title) !== title ||
+            (snapshot.reconciliation?.mode === "restoring"
+              ? snapshot.original.description
+              : snapshot.intended.description) !== description ||
             !(
               (current.name === snapshot.original.title &&
                 current.desc === snapshot.original.description) ||
-              (current.name === title && current.desc === description)
+              (current.name === title && current.desc === description) ||
+              (current.name === snapshot.reconciliation?.verified.title &&
+                current.desc === snapshot.reconciliation.verified.description)
             )
           )
             throw new Error(
@@ -914,7 +920,10 @@ export class TrelloClient {
         );
         if (
           !snapshot ||
-          snapshot.intended.labels.includes(labelId) !== present ||
+          (snapshot.reconciliation?.mode === "restoring"
+            ? snapshot.original.labels
+            : snapshot.intended.labels
+          ).includes(labelId) !== present ||
           !(await this.getLabels(authority.store.read()!.pinned.boardId)).some(
             (label) => label.id === labelId,
           )

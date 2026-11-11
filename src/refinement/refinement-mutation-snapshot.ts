@@ -46,6 +46,8 @@ export const refinementMutationSnapshotSchema = z.strictObject({
       pending: refinementFieldsSchema.optional(),
       conflict: z.string().optional(),
       evidence: z.unknown().optional(),
+      mode: z.enum(["applying", "restoring", "restored"]).optional(),
+      abandonedMutationIds: z.array(z.string()).optional(),
     })
     .optional(),
 });

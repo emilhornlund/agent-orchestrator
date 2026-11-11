@@ -51,6 +51,11 @@ complete fields/history/comment/own move before release. Started refinement queu
 events cannot be mistaken for orphaned Ready claims. Only T5 combined validation
 remains. Historical cleanup and fresh-attempt retry remain in P10.
 
+T5a correction: after three conclusively rejected field sends, persist restoration
+mode and stop replaying that rejected identity. Restore only current attributable
+own fields through the same read/history guards. Verify originals before Failed;
+human/unknown state and rejected restoration keep ownership for reconciliation.
+
 Inspect `src/refinement/run-refinement-card.ts`, `run-refinement.ts`,
 `run-refinement-setup.ts`, `refinement-operation.ts`, `refinement-result.ts`,
 `refinement-mutation-snapshot.ts`, `finalize-refinement.ts`, prompts and workflow

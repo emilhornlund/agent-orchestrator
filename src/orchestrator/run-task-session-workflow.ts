@@ -397,14 +397,12 @@ async function finalizeRefinementSetupFailure(options: {
   );
   const comment = [
     analysisFailure
-      ? "Agent Orchestrator could not complete refinement analysis."
+      ? "Agent Orchestrator could not complete refinement."
       : "Agent Orchestrator failed during repository setup for refinement.",
     "",
-    analysisFailure
-      ? "Category: refinement result"
-      : "Category: repository setup",
+    analysisFailure ? "Category: refinement" : "Category: repository setup",
     `Reason: ${(analysisFailure ?? options.reason).slice(0, 1_000)}`,
-    "Setup-produced worktree changes and process diagnostics have been preserved.",
+    "Worktree changes and process diagnostics have been preserved.",
     "To retry deliberately, move this card to Ready for Agent.",
   ].join("\n");
   await trello.addComment(card.id, comment);

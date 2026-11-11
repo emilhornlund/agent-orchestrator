@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import { z } from "zod";
+import { isAbandonedRefinementWrite } from "../refinement/refinement-card-guard.js";
 import {
   terminalPrFenceFromRun,
   terminalMutationAllowed,
@@ -123,6 +124,7 @@ export async function reconcileWorkflowMutations(options: {
       (entry) =>
         entry.id.startsWith("workflow:") &&
         !["completed", "cancelled"].includes(entry.status) &&
+        !isAbandonedRefinementWrite(authority, entry) &&
         !(
           terminalPrFenceFromRun(initial) &&
           isConclusiveOperationResolution(entry)

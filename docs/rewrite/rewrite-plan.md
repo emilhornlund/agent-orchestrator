@@ -252,6 +252,9 @@ mutation, journal original/intended/verified fields, detect supported human-edit
 races and complete or compensate only attributable writes. No atomic Trello update
 claim, blind rollback, automatic split or artificial implementation. Verified full
 Backlog outcome releases the attempt. See the [P9 guide](p9-execution.md).
+Conclusive bounded field rejection retains its original journal evidence and
+switches to verified own-write compensation. Human or unknown acceptance cannot
+authorize compensation, and restoration must itself be verified before failure.
 
 ### P10 — Terminal obligations, artifact preservation and fresh retries
 

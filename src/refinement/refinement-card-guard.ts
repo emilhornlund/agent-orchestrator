@@ -7,9 +7,31 @@ import {
   type RefinementHistoryAction,
 } from "./refinement-mutation-snapshot.js";
 import { RefinementSetupAmbiguousError } from "./run-refinement-setup.js";
+import { mutationProvenNotDelivered } from "../task-session/durable-mutation.js";
+import type { RunRecord } from "../task-session/run-record.js";
 
 type Snapshot = ReturnType<typeof refinementMutationSnapshotSchema.parse>;
 type Fields = Snapshot["original"];
+export function isAbandonedRefinementWrite(
+  authority: ProjectRunAuthority,
+  entry: RunRecord["pendingOperations"][number],
+): boolean {
+  if (
+    !["trello-content", "trello-labels"].includes(entry.kind) ||
+    entry.status !== "failed" ||
+    !entry.mutation ||
+    !mutationProvenNotDelivered(entry.mutation)
+  )
+    return false;
+  return (
+    authority
+      .read(
+        refinementMutationSnapshotKey,
+        refinementMutationSnapshotSchema.parse,
+      )
+      ?.reconciliation?.abandonedMutationIds?.includes(entry.id) ?? false
+  );
+}
 export const refinementCardFields = (card: TrelloCard): Fields => ({
   title: card.name,
   description: card.desc,
@@ -77,23 +99,44 @@ export async function guardRefinementFields(
     );
   const actions = history.actions.slice(0, boundary).reverse();
   if (stage === "before" || stage === "verify") {
-    if (
-      stage === "before" &&
-      authority.store
-        .read()!
-        .pendingOperations.some(
-          (entry) =>
-            ["trello-content", "trello-labels"].includes(entry.kind) &&
-            !["completed", "cancelled"].includes(entry.status) &&
-            (entry.mutation?.dispatches.filter(
-              (dispatch) => dispatch.response?.outcome === "not-delivered",
-            ).length ?? 0) >= 3,
-        )
-    )
-      return fail(
-        "Refinement field write was rejected three times; preserve attributable partial fields and request operator reconciliation",
-        { history, card },
+    const exhausted =
+      stage === "before"
+        ? authority.store
+            .read()!
+            .pendingOperations.find(
+              (entry) =>
+                ["trello-content", "trello-labels"].includes(entry.kind) &&
+                entry.status === "failed" &&
+                !isAbandonedRefinementWrite(authority, entry) &&
+                entry.mutation &&
+                mutationProvenNotDelivered(entry.mutation) &&
+                entry.mutation.dispatches.filter(
+                  (dispatch) => dispatch.response?.outcome === "not-delivered",
+                ).length >= 3,
+            )
+        : undefined;
+    if (exhausted) {
+      if (actions.length || !sameRefinementFields(fields, state.verified))
+        return fail(
+          "Rejected refinement write conflicts with current human fields/history; restoration is paused",
+          { history, card },
+        );
+      if (state.mode === "restoring")
+        return fail(
+          "Refinement restoration was rejected three times; preserve verified partial fields for operator reconciliation",
+          { history, card },
+        );
+      state.mode = "restoring";
+      state.abandonedMutationIds = [
+        ...(state.abandonedMutationIds ?? []),
+        exhausted.id,
+      ];
+      delete state.pending;
+      writeRefinementSnapshot(authority, snapshot);
+      throw new RefinementSetupAmbiguousError(
+        "Bounded field rejection is verified; restoring only attributable own changes on the next recovery pass",
       );
+    }
     if (
       (stage === "verify" && state.pending) ||
       actions.length ||

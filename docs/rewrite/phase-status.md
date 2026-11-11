@@ -86,6 +86,22 @@
 - Final five focused suites passed 58 tests, plus typecheck, changed-file ESLint
   and whitespace checks, including provenance-fence/unique-event corrections.
   Only combined P9 integration/specification checks and final validation remain.
+- T4b checkpoint: `5bddab4`. Combined REF-004 checking found that bounded proven
+  field rejection needed safe compensation, not an unconditional partial-state
+  pause. T5a now records restoration mode and the exact conclusively rejected
+  mutation identity, preserving its failed dispatch/evidence history rather than
+  replaying it. Current verified own fields can be restored to originals through
+  the same history guards; only verified complete restoration permits Failed.
+  Unknown acceptance, human edits and rejected restoration retain ownership.
+- T5a self-review covered the actual reconciliation filter, adapter dispatch and
+  readback, restoration-mode compatibility and terminal failure integration.
+  The stateful regressions exercise accepted title/description/classification
+  writes before rejection, complete restoration, human changes before/during
+  compensation and repeated negative reads with unknown acceptance. Initial test
+  ordering assumed classification removal preceded insertion; the failure now
+  occurs at the actual last label operation so it exercises real partial labels.
+  Five focused suites passed 68 tests; typecheck and changed-file ESLint passed.
+  Remaining: tighten the legacy baseline exemption, final combined check/validation.
 
 ## Inherited P8 checkpoint
 

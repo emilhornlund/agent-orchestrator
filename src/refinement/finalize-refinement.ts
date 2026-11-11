@@ -17,7 +17,11 @@ import {
   sameRefinementFields,
   writeRefinementSnapshot,
 } from "./refinement-card-guard.js";
-import { RefinementSetupAmbiguousError } from "./run-refinement-setup.js";
+import {
+  RefinementSetupAmbiguousError,
+  RefinementSetupFailedError,
+} from "./run-refinement-setup.js";
+import { recordRefinementAnalysisFailure } from "./refinement-input.js";
 
 import {
   refinementMutationSnapshotSchema,
@@ -126,28 +130,50 @@ export async function finalizeRefinement(
         refinementMutationSnapshotKey,
         refinementMutationSnapshotSchema.parse,
       )!;
+    const restoring = ["restoring", "restored"].includes(
+      read().reconciliation!.mode ?? "applying",
+    );
+    const desired = restoring ? read().original : read().intended;
     if (
-      read().reconciliation!.verified.title !== result.title ||
-      read().reconciliation!.verified.description !== result.description
+      read().reconciliation!.verified.title !== desired.title ||
+      read().reconciliation!.verified.description !== desired.description
     )
-      await trello.updateCardContent(card.id, result.title, result.description);
-    for (const labelId of [
+      await trello.updateCardContent(
+        card.id,
+        desired.title,
+        desired.description,
+      );
+    for (const labelId of new Set([
       ...classificationLabelIds,
       project.trello.refinementLabelId,
-    ]) {
+      ...read().reconciliation!.verified.labels,
+      ...desired.labels,
+    ])) {
       signal?.throwIfAborted();
       const state = read();
-      const present = state.intended.labels.includes(labelId);
+      const present = desired.labels.includes(labelId);
       if (state.reconciliation!.verified.labels.includes(labelId) !== present) {
         if (present) await trello.addLabel(card.id, labelId);
         else await trello.removeLabel(card.id, labelId);
       }
     }
     await guardRefinementFields(trello, authority, "verify");
-    if (!sameRefinementFields(read().reconciliation!.verified, read().intended))
+    if (!sameRefinementFields(read().reconciliation!.verified, desired))
       throw new RefinementSetupAmbiguousError(
         "Complete refinement fields are not verified; retain ownership",
       );
+    if (restoring) {
+      const restored = read();
+      restored.reconciliation!.mode = "restored";
+      writeRefinementSnapshot(authority, restored);
+      recordRefinementAnalysisFailure(
+        authority,
+        "Refinement field update was conclusively rejected after bounded attempts; original title, description and classification were restored and verified without overwriting human edits",
+      );
+      throw new RefinementSetupFailedError(
+        "Refinement could not complete; original fields are restored and verified",
+      );
+    }
     signal?.throwIfAborted();
     beforeFinalMove?.();
     await trello.moveCard(card.id, project.trello.backlogListId);
