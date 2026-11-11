@@ -35,6 +35,8 @@ const analysisSchema = z.strictObject({
   result: refinementResultSchema.optional(),
 });
 const analysisKey = "refinement-analysis-v1";
+export class RefinementAnalysisFailedError extends Error {}
+class RefinementDependencyUnavailableError extends Error {}
 
 function hasOpenCodePermissionDenial(
   output: string,
@@ -101,6 +103,10 @@ async function runRefinementOnce(
   });
 
   if (refinement.exitCode !== 0) {
+    if (refinement.failureClassification === "dependency-outage")
+      throw new RefinementDependencyUnavailableError(
+        "Refinement dependency is temporarily unavailable",
+      );
     if (
       hasOpenCodePermissionDenial(refinement.output, refinement.errorOutput)
     ) {
@@ -277,7 +283,23 @@ export async function runRefinement(
             { cause: error },
           );
         save({ ...state, status: "invalid" });
-        throw error;
+        if (error instanceof RefinementDependencyUnavailableError) {
+          save({ ...state, attempts: state.attempts - 1, status: "pending" });
+          throw new RefinementSetupAmbiguousError(
+            "Refinement dependency is unavailable; retain context and retry on a controlled recheck",
+            { cause: error },
+          );
+        }
+        if (signal.aborted)
+          throw new RefinementSetupAmbiguousError(
+            "Refinement interrupted; stopped execution and work are preserved",
+            { cause: error },
+          );
+        if (state.attempts < 3) continue;
+        throw new RefinementAnalysisFailedError(
+          "Refinement execution failed after three verified stopped failures",
+          { cause: error },
+        );
       }
       save({ ...state, status: "invalid" });
       if (state.attempts === 3) throw error;

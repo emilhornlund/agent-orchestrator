@@ -160,6 +160,15 @@ import {
   RefinementSetupFailedError,
 } from "../refinement/run-refinement-setup.js";
 import {
+  refinementAnalysisFailure,
+  refinementInputKey,
+  refinementInputSchema,
+} from "../refinement/refinement-input.js";
+import {
+  refinementCardFields,
+  sameRefinementFields,
+} from "../refinement/refinement-card-guard.js";
+import {
   readRejectedCommitState,
   readTrustedCommitState,
   readPendingCommitState,
@@ -293,9 +302,27 @@ async function finalizeRefinementSetupFailure(options: {
   }
   if (
     current.lifecycle !== "refinement" ||
-    !hasExhaustedRefinementSetup(authority, card.id)
+    (!hasExhaustedRefinementSetup(authority, card.id) &&
+      !refinementAnalysisFailure(authority))
   )
     throw new Error("Refinement setup failure is not durably exhausted");
+  const analysisFailure = refinementAnalysisFailure(authority);
+  const verifyOriginalFields = async () => {
+    if (!analysisFailure) return;
+    const input = authority.read(
+      refinementInputKey,
+      refinementInputSchema.parse,
+    );
+    const actual = await trello.getCard(card.id);
+    if (
+      !input ||
+      !sameRefinementFields(input.original, refinementCardFields(actual))
+    )
+      throw new RefinementSetupAmbiguousError(
+        "Refinement failure has conflicting current fields; preserve human values and retain ownership",
+      );
+  };
+  await verifyOriginalFields();
   const failed = await getCardsForDiscovery(
     trello,
     project.id,
@@ -304,10 +331,14 @@ async function finalizeRefinementSetupFailure(options: {
     signal,
   );
   const comment = [
-    "Agent Orchestrator failed during repository setup for refinement.",
+    analysisFailure
+      ? "Agent Orchestrator could not complete refinement analysis."
+      : "Agent Orchestrator failed during repository setup for refinement.",
     "",
-    "Category: repository setup",
-    `Reason: ${options.reason.slice(0, 1_000)}`,
+    analysisFailure
+      ? "Category: refinement result"
+      : "Category: repository setup",
+    `Reason: ${(analysisFailure ?? options.reason).slice(0, 1_000)}`,
     "Setup-produced worktree changes and process diagnostics have been preserved.",
     "To retry deliberately, move this card to Ready for Agent.",
   ].join("\n");
@@ -338,6 +369,7 @@ async function finalizeRefinementSetupFailure(options: {
       "Trello did not confirm refinement setup failure in Failed",
     );
   const observedAt = new Date().toISOString();
+  await verifyOriginalFields();
   await authority.failRefinement({
     observationId: `refinement-setup-failed:${card.id}:${current.attemptId}`,
     observedAt,
@@ -4077,10 +4109,11 @@ export async function runTaskSessionWorkflow(
   if (
     refinementAuthority &&
     pendingRefinementFailure?.kind === "refinement" &&
-    hasExhaustedRefinementSetup(
+    (hasExhaustedRefinementSetup(
       refinementAuthority,
       pendingRefinementFailure.cardId,
-    )
+    ) ||
+      refinementAnalysisFailure(refinementAuthority))
   ) {
     const owner = queue.claimForRecovery(pendingRefinementFailure.eventId);
     if (owner === null)

@@ -44,7 +44,10 @@ T3 persists verified full fields, pending writes and supported Free change histo
 in the concrete Trello adapters, including restart reconciliation. Conflicts and
 missing legacy attribution retain ownership; partial accepted effects can complete
 without replay. There is no blind rollback or atomic compare-and-write claim.
-Remaining work is verified completion/comment/release and combined validation.
+T4a verifies unchanged originals and the Failed outcome after bounded analysis
+failure, preserving unknown state/human changes instead of terminally releasing.
+Remaining work is T4b recoverable completion/comment/full-field release and T5
+combined validation. Historical cleanup and fresh-attempt retry remain in P10.
 
 Inspect `src/refinement/run-refinement-card.ts`, `run-refinement.ts`,
 `run-refinement-setup.ts`, `refinement-operation.ts`, `refinement-result.ts`,

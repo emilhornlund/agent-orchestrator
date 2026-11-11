@@ -55,6 +55,21 @@
 - Final five focused suites passed 115 tests, including partial-update/human-edit
   recovery, with typecheck, changed-file ESLint and whitespace checks passing.
   T4 final outcome/comment/release and combined validation remain.
+- T3 checkpoint: `f0726fe`. Production outcome tracing split T4 into T4a verified
+  failure and T4b recoverable Backlog completion, followed by T5 combined checks.
+  T4a persists original input before analysis, retains its intent across restarts,
+  and turns bounded invalid/stopped-failure exhaustion into the existing verified
+  Failed/comment/release protocol. Original full fields are checked before and
+  after the move; human differences retain ownership instead. Unknown state and
+  transient outages cannot fall through to unverified terminal failure.
+- T4a self-review inspected the new input record, analysis dispatch/recovery,
+  scheduler failure/release routes and production regressions. Fixed generic
+  canonical errors that could otherwise call legacy `failCard`. Updated the older
+  scheduler fixture to exercise the concrete field/move adapters and history;
+  malformed output now correctly exercises three analyses rather than one.
+  Final five focused suites passed 41 tests, plus typecheck, changed-file ESLint
+  and whitespace checks, including the generic-error preservation correction.
+  T4b and T5 remain; no full validation claimed.
 
 ## Inherited P8 checkpoint
 

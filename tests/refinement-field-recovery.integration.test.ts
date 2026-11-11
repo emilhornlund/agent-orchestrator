@@ -174,3 +174,47 @@ it("retains human content encountered while reconciling a partial update", async
     )?.reconciliation?.conflict,
   ).toBeDefined();
 });
+
+it("fails exhausted invalid analysis only after verifying untouched original fields and the Failed transition", async () => {
+  const f = await fixture();
+  f.engineer.mockImplementation(async ({ cwd }) => {
+    const { getRefinementResultPath } =
+      await import("../src/refinement/refinement-result.js");
+    fs.mkdirSync(path.dirname(getRefinementResultPath(cwd)), {
+      recursive: true,
+    });
+    fs.writeFileSync(getRefinementResultPath(cwd), "{}");
+    return { exitCode: 0, output: "", errorOutput: "" };
+  });
+  await f.poll();
+  expect(f.engineer).toHaveBeenCalledTimes(3);
+  expect(f.card).toMatchObject({
+    name: "Task",
+    desc: "Original",
+    idLabels: [f.project.trello.refinementLabelId],
+    idList: f.project.trello.failedListId,
+  });
+  expect(f.authority.store.read()!.lifecycle).toBe("failed");
+  expect(
+    f.requests.filter((r) => r.startsWith("POST:") && r.endsWith("comments")),
+  ).toHaveLength(1);
+});
+
+it("does not terminally fail over human field changes discovered after invalid analysis", async () => {
+  const f = await fixture();
+  f.engineer.mockImplementation(async ({ cwd }) => {
+    const { getRefinementResultPath } =
+      await import("../src/refinement/refinement-result.js");
+    fs.mkdirSync(path.dirname(getRefinementResultPath(cwd)), {
+      recursive: true,
+    });
+    fs.writeFileSync(getRefinementResultPath(cwd), "{}");
+    f.card.desc = "Human clarification";
+    return { exitCode: 0, output: "", errorOutput: "" };
+  });
+  await expect(f.poll()).rejects.toThrow("conflicting current fields");
+  expect(f.engineer).toHaveBeenCalledTimes(3);
+  expect(f.card.desc).toBe("Human clarification");
+  expect(f.card.idList).toBe(f.project.trello.workingListId);
+  expect(f.authority.store.read()!.lifecycle).toBe("refinement");
+});

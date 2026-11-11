@@ -158,6 +158,11 @@ human edits retain project ownership for reconciliation; recoverable human histo
 is preserved. Restoration must never overwrite detected human edits. Read/write
 checks are conservative conflict detection, not an atomic Trello transaction.
 
+After bounded analysis failure, original fields must still be verified before and
+after the Failed transition and explanatory comment. Human field differences or
+unknown execution/acceptance retain ownership instead of claiming a completed
+failure. Recognized temporary dependency outages preserve context for rechecks.
+
 When a refinement card is claimed:
 
 1. The orchestrator prepares `<worktreeRoot>/<trello-card-id>` on `agent/<trello-card-id>` before moving the card to
