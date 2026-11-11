@@ -40,7 +40,11 @@ older setup-free records lacking that inventory are fenced rather than rebased
 onto potentially agent-modified files. Repository-local legacy results remain
 preserved and are not reused. T2 persists bounded complete-result correction and
 validated output, refreshing attachments for correction and fencing unknown children.
-Remaining work is history-aware field reconciliation and verified completion/release.
+T3 persists verified full fields, pending writes and supported Free change history
+in the concrete Trello adapters, including restart reconciliation. Conflicts and
+missing legacy attribution retain ownership; partial accepted effects can complete
+without replay. There is no blind rollback or atomic compare-and-write claim.
+Remaining work is verified completion/comment/release and combined validation.
 
 Inspect `src/refinement/run-refinement-card.ts`, `run-refinement.ts`,
 `run-refinement-setup.ts`, `refinement-operation.ts`, `refinement-result.ts`,

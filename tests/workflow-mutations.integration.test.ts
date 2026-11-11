@@ -152,6 +152,14 @@ function fixture(refinement = false) {
     const url = new URL(input);
     const method = init?.method ?? "GET";
     ledger.push(`${method}:${url.pathname}`);
+    if (method === "GET" && url.pathname === "/1/members/me")
+      return Response.json({ id: "orchestrator" });
+    if (
+      method === "GET" &&
+      url.pathname.endsWith("/actions") &&
+      url.searchParams.get("filter")?.includes("updateCard:name")
+    )
+      return Response.json([]);
     if (method === "GET" && url.pathname === "/1/cards/card")
       return Response.json(card);
     if (method === "GET" && url.pathname === "/1/boards/board/labels")
@@ -1649,7 +1657,8 @@ describe("production workflow client journal", () => {
     f.restart();
     f.tick();
     await f.reconcile();
-    expect(f.store.read()!.pendingOperations[0]!.status).toBe("completed");
+    // Desired values without attributable provider history are not own-write proof.
+    expect(f.store.read()!.pendingOperations[0]!.status).not.toBe("completed");
   });
 
   it("fails closed for missing authority in single and multi-project lease scopes", async () => {

@@ -149,6 +149,15 @@ The allowance and validated output survive restart; an unknown child execution i
 reconciled before another analysis. Corrections refresh attachments and cannot
 mutate card content until the entire title, description and classification validate.
 
+Before card writes, refinement saves original and intended complete fields and a
+supported Trello Free change-history baseline. Each content/label write compares
+the current fields with verified own writes, then checks readback and history,
+including edits racing with the write. Partial accepted updates resume without
+replaying accepted effects. Missing history, unknown acceptance or conflicting
+human edits retain project ownership for reconciliation; recoverable human history
+is preserved. Restoration must never overwrite detected human edits. Read/write
+checks are conservative conflict detection, not an atomic Trello transaction.
+
 When a refinement card is claimed:
 
 1. The orchestrator prepares `<worktreeRoot>/<trello-card-id>` on `agent/<trello-card-id>` before moving the card to

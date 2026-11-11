@@ -47,6 +47,8 @@ const setup = async (ids: string[], sharedRoot = false) => {
   }
   vi.stubGlobal("fetch", (input: URL | string, init?: RequestInit) => {
     const url = new URL(input);
+    if (url.pathname === "/1/members/me")
+      return Promise.resolve(Response.json({ id: "orchestrator" }));
     const f = fixtures.find((item) =>
       url.pathname.includes(`/${item.project.id}-`),
     );

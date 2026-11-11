@@ -37,6 +37,24 @@
   Final five-suite focused run passed 46 tests; typecheck and changed-file ESLint
   passed. One final assertion wrap was formatted after lint caught it; ESLint and
   whitespace checks passed afterward. T3/T4 remain; full validation is not yet run.
+- T2 checkpoint: `b252038`. T3 journals original/intended/verified full fields,
+  pending own writes and a Trello Free history cursor/actor before dispatch.
+  Concrete content/label adapters inspect current fields and history before writing
+  and during readback/restart. Own transitions require matching old/new values and
+  attribution; detected races (including same-actor edits) retain sanitized human
+  history and stop writes. Missing legacy provenance or history continuity is not
+  treated as absence of edits. Three proven rejected sends pause for reconciliation.
+- Partial accepted writes complete from verified state without replaying analysis
+  or accepted effects. Conflicting/unknown outcomes retain ownership rather than
+  blindly restoring over human edits or declaring Failed. Self-review inspected
+  the new guard/tests, concrete adapters, journal restart, snapshot schema and
+  polling/finalization callers. Fixed internal intended-label projection into the
+  strict result schema, preserved notification-preparation recovery, and retained
+  unknown artifacts. Stateful fixture history now models actual accepted changes;
+  desired fields without history no longer count as proof of own acceptance.
+- Final five focused suites passed 115 tests, including partial-update/human-edit
+  recovery, with typecheck, changed-file ESLint and whitespace checks passing.
+  T4 final outcome/comment/release and combined validation remain.
 
 ## Inherited P8 checkpoint
 

@@ -7,7 +7,17 @@ import {
   type TrelloClient,
 } from "../trello/trello-client.js";
 
-import type { RefinementResult } from "./refinement-result.js";
+import {
+  refinementResultSchema,
+  type RefinementResult,
+} from "./refinement-result.js";
+import {
+  guardRefinementFields,
+  refinementCardFields,
+  sameRefinementFields,
+  writeRefinementSnapshot,
+} from "./refinement-card-guard.js";
+import { RefinementSetupAmbiguousError } from "./run-refinement-setup.js";
 
 import {
   refinementMutationSnapshotSchema,
@@ -42,6 +52,7 @@ export async function finalizeRefinement(
   signal?: AbortSignal,
   beforeFinalMove?: () => void,
 ): Promise<void> {
+  refinementResultSchema.parse(result);
   const classificationLabelId = getClassificationLabelId(project, result.type);
 
   const classificationLabelIds = [
@@ -85,13 +96,63 @@ export async function finalizeRefinement(
       throw new Error(
         "Refinement intended result changed; preserve original fields for reconciliation",
       );
-    if (!prior)
-      authority.mutate(
+    if (!prior) {
+      const history = await trello.getRefinementHistory(card.id);
+      const current = await trello.getCard(card.id);
+      const after = await trello.getRefinementHistory(card.id);
+      if (
+        !sameRefinementFields(
+          refinementCardFields(current),
+          snapshot.original,
+        ) ||
+        history.actorId !== after.actorId ||
+        JSON.stringify(history.actions) !== JSON.stringify(after.actions)
+      )
+        throw new RefinementSetupAmbiguousError(
+          "Card changed before refinement field baseline; preserve current human values",
+        );
+      snapshot.reconciliation = {
+        actorId: history.actorId,
+        cursor: history.actions[0]?.id ?? null,
+        verified: snapshot.original,
+      };
+      writeRefinementSnapshot(authority, snapshot);
+    }
+    // Legacy snapshots have no trustworthy history/verified-own-write baseline.
+    // The guard preserves them, including partially updated cards, without guessing.
+    await guardRefinementFields(trello, authority, "verify");
+    const read = () =>
+      authority.read(
         refinementMutationSnapshotKey,
-        null,
-        () => ({ value: snapshot, result: undefined }),
         refinementMutationSnapshotSchema.parse,
+      )!;
+    if (
+      read().reconciliation!.verified.title !== result.title ||
+      read().reconciliation!.verified.description !== result.description
+    )
+      await trello.updateCardContent(card.id, result.title, result.description);
+    for (const labelId of [
+      ...classificationLabelIds,
+      project.trello.refinementLabelId,
+    ]) {
+      signal?.throwIfAborted();
+      const state = read();
+      const present = state.intended.labels.includes(labelId);
+      if (state.reconciliation!.verified.labels.includes(labelId) !== present) {
+        if (present) await trello.addLabel(card.id, labelId);
+        else await trello.removeLabel(card.id, labelId);
+      }
+    }
+    await guardRefinementFields(trello, authority, "verify");
+    if (!sameRefinementFields(read().reconciliation!.verified, read().intended))
+      throw new RefinementSetupAmbiguousError(
+        "Complete refinement fields are not verified; retain ownership",
       );
+    signal?.throwIfAborted();
+    beforeFinalMove?.();
+    await trello.moveCard(card.id, project.trello.backlogListId);
+    await guardRefinementFields(trello, authority, "verify");
+    return;
   }
 
   if (signal?.aborted) {

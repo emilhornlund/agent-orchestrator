@@ -19,6 +19,8 @@ import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 import { runRefinement } from "../refinement/run-refinement.js";
 import type { TrelloCard, TrelloClient } from "../trello/trello-client.js";
 import { getElapsedRefinementWorkflowTime } from "../orchestrator/workflow-duration.js";
+import { RefinementSetupAmbiguousError } from "./run-refinement-setup.js";
+import { NotificationPreparationError } from "../notifications/notification-outbox.js";
 
 /** Executes the refinement action and its Trello completion side effects. */
 export async function runRefinementOperation(input: {
@@ -40,7 +42,13 @@ export async function runRefinementOperation(input: {
     refinementMutationSnapshotSchema.parse,
   );
   const result =
-    snapshot?.intended ??
+    (snapshot
+      ? {
+          title: snapshot.intended.title,
+          description: snapshot.intended.description,
+          type: snapshot.intended.type,
+        }
+      : undefined) ??
     (await runRefinement(
       input.git,
       input.opencode,
@@ -80,14 +88,23 @@ export async function runRefinementOperation(input: {
       );
   };
 
-  await finalizeRefinement(
-    input.trello,
-    input.project,
-    input.card,
-    result,
-    input.signal,
-    prepareCompletion,
-  );
+  try {
+    await finalizeRefinement(
+      input.trello,
+      input.project,
+      input.card,
+      result,
+      input.signal,
+      prepareCompletion,
+    );
+  } catch (error) {
+    if (error instanceof NotificationPreparationError) throw error;
+    if (!ProjectRunAuthority.current(input.project.id)) throw error;
+    throw new RefinementSetupAmbiguousError(
+      "Refinement field completion is pending verified reconciliation; ownership and original/intended values retained",
+      { cause: error },
+    );
+  }
 
   input.cardLog.event("Refined card returned to Backlog");
 
