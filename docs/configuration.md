@@ -260,25 +260,28 @@ it; approval, passing CI, and local quality evidence do not complete the task. T
 
 ### `projects[].maintenance`
 
-Optional legacy per-project toggle for routine maintenance of outdated pull requests in `Human Review`:
+Optional per-project toggle for automatic maintenance of outdated pull requests in `Human Review`:
 
 ```yaml
 maintenance:
   enabled: true
 ```
 
-`enabled` defaults to `false`. Published-PR maintenance is temporarily deferred in this release, even when enabled. The legacy
-setting is retained for compatibility but does not enable a published rebase or push. Existing prepared maintenance and any
-associated worktree, backup refs, rewritten objects, pending push intent, and remote history must be preserved for operator
-reconciliation. Do not manually retry a legacy push or reset/discard its worktree.
-There is currently no orchestrator force-push or rebase support: this release disables published and pre-publication rebase, including
-prepared-conflict continuation. An ordinary no-sync-needed initial publication remains available; a non-fast-forward publication
-is safely deferred with its worktree and evidence preserved.
+Maintenance runs automatically when this block is omitted; `enabled` defaults to
+`true`. Explicit `false` disables new routine maintenance, not reconciliation of an
+already-started operation. Approved but still-open PRs remain eligible. Human work
+and CI repairs have priority over routine maintenance in the project queue.
 
-Additive target-branch merge and ordinary fast-forward-safe push for maintenance are
-not implemented or promised by this release. Existing unresolved prepared, failed, or push-intended operations block project
-writers until safely reconciled; they are not automatically retried, cancelled, or reported successful. Maintenance does not
-enable auto-merge or remove the `Human Review` step.
+Published branches incorporate target changes with additive merge commits and
+ordinary pushes. Existing published commit identities are retained. Conflict
+assistance reuses the primary task session and the bounded remediation maximum;
+validation and independent review remain advisory. Available safe updates publish
+to the same PR as draft with current diagnostics and pending CI disclosed.
+Dirty unstaged setup/untracked output is retained and excluded; staged unrelated
+output or unknown local-only commits block automatic inclusion without discarding
+anything. Legacy rebase/prepared-conflict records and uncertain pushes are not
+reinterpreted as merge permission. Preserve their refs, objects and worktrees for
+reconciliation. No rebase, force-push, reset or automatic PR merge is enabled.
 
 ### CI expectation discovery
 
@@ -429,7 +432,7 @@ information, and known validation or test results. The description result is str
 non-critical description-generation failure and falls back to the deterministic body containing the Trello card URL followed by
 the configured attribution footer `Implemented automatically by <projects[].repository.gitIdentity.name>.`; it does not block branch publication, pull-request creation, reuse, or card
 transitions. A valid empty `validation` array is allowed and does not claim that validation or tests passed. The result is
-generated after publication rebasing. A standalone deterministic renderer defines the Markdown contract: fixed `Summary`,
+generated after publication preparation. A standalone deterministic renderer defines the Markdown contract: fixed `Summary`,
 `Changes`, `Validation`, and `Task` sections, an application-owned Trello card link and the same configured attribution footer, and one reserved
 status-marker pair. Publication wiring uses this renderer for newly created pull requests; configuring the `commit` model does not
 allow it to choose headings, links, footer text, or status markers. Existing open pull requests are reused without description
@@ -439,10 +442,11 @@ updates.
 
 The `remediation` stage also accepts the optional `maxPasses` setting:
 
-| Key                   | Meaning and validation                                                                                       |
-| --------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `maxPasses`           | Non-negative integer maximum number of implementation-review repair passes; defaults to `1` when omitted     |
-| `validationMaxPasses` | Non-negative integer maximum number of local validation/coverage repair passes; defaults to `2` when omitted |
+| Key                   | Meaning and validation                                                                                            |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `maxPasses`           | Non-negative integer maximum number of implementation-review repair passes; defaults to `1` when omitted          |
+| `validationMaxPasses` | Non-negative integer maximum number of local validation/coverage repair passes; defaults to `2` when omitted      |
+| `ciMaxPasses`         | Non-negative safe integer maximum number of CI correction passes per repair episode; defaults to `2` when omitted |
 
 The initial implementation review is not counted. A value of `0` runs the initial review with no
 repair; `1` permits one repair followed by one final review; `2` permits two repairs
@@ -450,7 +454,8 @@ followed by a final review. If review still fails when the limit is reached, the
 latest verified implementation proceeds to PR publication for **Human Review only**:
 unresolved findings are recorded in the task execution state and disclosed in
 the PR description, without sending an Attention Required notification.
-Local validation and configured coverage must still pass on the current content.
+Failed or unavailable local validation and coverage are disclosed in a draft PR,
+not used as publication gates.
 An unresolved review never changes human ownership of the pull request outcome. Automatic merging is not supported.
 The attempt count and final reviewed snapshot are persisted outside the Git
 worktree for crash-safe resumption.
@@ -461,6 +466,14 @@ source-content change ends the cycle without rerunning unchanged quality command
 the primary session may also explicitly finish early when no further repair is
 useful. Failing quality results remain advisory and are retained for accurate draft
 publication.
+
+CI correction has a separate `ciMaxPasses` maximum (`0` observes without correcting).
+The episode limit and charges are durable: polling, restart, reruns, the agent's
+commits and routine target merges do not renew it. A verified new actionable human
+request, including a request to retry, can establish a fresh episode; incidental
+edits and unchanged exhausted requests cannot. Exhaustion returns to Human Review
+with the existing PR and failure diagnostics retained, not task failure. Changing
+configuration on restart does not change an already established episode's limit.
 
 ## Validation rules
 

@@ -619,12 +619,20 @@ const reviewRepairSchema = z.strictObject({
 
 const ciRepairSchema = z.strictObject({
   cycleId: nonBlankIdentifier,
+  maxAttempts: z.number().int().nonnegative().safe().optional(),
+  initiatingEventId: nonBlankIdentifier.optional(),
   headSha: gitSha,
-  status: z.enum(["active", "passed", "exhausted"]),
+  status: z.enum(["active", "passed", "exhausted", "stopped"]),
+  stopReason: z.enum(["no-change", "finished-early"]).optional(),
+  reviewSourceAttempts: z
+    .record(taskSessionContentIdentity, z.number().int().nonnegative().max(3))
+    .optional(),
   activePrimaryOperation: z
     .strictObject({
       operationId: nonBlankIdentifier,
       pass: z.number().int().positive().safe(),
+      sourceIdentity: taskSessionContentIdentity.optional(),
+      finishEarly: z.boolean().optional(),
       promptArtifact: z
         .strictObject({
           reference: z.string().regex(/^sha256:[0-9a-f]{64}$/u),
@@ -711,6 +719,14 @@ const taskExecutionRecordSchema = z
     projectId: ownerId,
     cardId: ownerId,
     phase: z.enum(taskExecutionPhases),
+    ciObservationWindow: z
+      .strictObject({
+        headSha: gitSha,
+        startedAt: z.string().datetime(),
+        deadline: z.string().datetime(),
+        timedOut: z.boolean(),
+      })
+      .optional(),
     recoveryWait: recoveryWaitSchema.optional(),
     primarySessionId: nonBlankIdentifier.optional(),
     sessionCreationStatus: sessionCreationStatus.optional(),
@@ -1107,21 +1123,21 @@ const taskExecutionRecordSchema = z
             "Completed CI repair state must remain in CI or attention-required",
         });
       }
-      if (record.retryCounters.ci > 2) {
+      if (record.retryCounters.ci > (record.ciRepair.maxAttempts ?? 2)) {
         ctx.addIssue({
           code: "custom",
           path: ["retryCounters", "ci"],
-          message: "CI repair attempts cannot exceed two per failure cycle",
+          message: "CI repair attempts cannot exceed the episode limit",
         });
       }
       if (
         record.ciRepair.status === "exhausted" &&
-        record.retryCounters.ci !== 2
+        record.retryCounters.ci !== (record.ciRepair.maxAttempts ?? 2)
       ) {
         ctx.addIssue({
           code: "custom",
           path: ["ciRepair", "status"],
-          message: "Exhausted CI repair requires two attempts",
+          message: "Exhausted CI repair requires the episode attempt limit",
         });
       }
     }

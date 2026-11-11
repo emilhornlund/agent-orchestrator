@@ -2,6 +2,201 @@
 
 ## Current checkpoint
 
+- **P8 implemented and locally validated, based on `b7fff4a` (integrated P7).**
+  The starting index/worktree were clean.
+  Authorized actions are small local task/correction commits only. No remote Git
+  action, branch change, deployment or P9 work is authorized.
+- **All scoped implementation tasks are checkpointed through `37174a8`.** The
+  combined inspection reused task reviews and checked CI-001/002, MNT-001–004,
+  GIT-001/002, PR-007/008 and the active-PR queue/session/context contributions to
+  HR-006, IMP-004 and CTX-001/003. The concrete integration gaps found are corrected
+  below; no known scoped implementation requirement remains unfinished.
+  Integrated `yarn validate` passed repository ESLint, Prettier, TypeScript and
+  **2,195 tests across 167 files**. The completion documentation is included in the
+  final validated checkpoint. No live-service qualification is claimed, and
+  P9/terminal-cleanup expansion remain outside this phase. No P8 work remains;
+  stop before another phase.
+- Local implementation/correction checkpoints: `f58cd2b`, `e0f32c8`, `e261ba3`,
+  `3ab7e1d`, `3121ed7`, `f5380d7`, `576d64f`, `498685e`, `37174a8`.
+- Original ordered work: T1 current-revision expected CI discovery and durable
+  bounded observation; T2 verified-trigger repair episodes, configured budgets and
+  advisory same-session correction publication; T3 queued additive target merges,
+  provenance/preservation and interrupted/conflicted Git recovery; T4 maintenance
+  quality/publication, descriptions/activity and terminal boundaries; T5 combined
+  criteria/integration verification and final `yarn validate`.
+- Inspection confirms existing exact-head expectation evaluation and CI reservation
+  persistence, but no durable observation deadline. Maintenance execution is still
+  deliberately disabled; its legacy rebase records must remain fenced. Existing
+  P7 checks below describe the inherited baseline, not P8 completion.
+- P8-T1 adds a persisted 30-minute per-revision CI observation window. Polls and
+  store reconstruction retain its deadline; supported older records initialize it
+  on first observation. Missing registration, queued checks and incomplete discovery
+  remain inconclusive. Expiration ends the CI phase in Human Review using the
+  existing non-success transition, without repair, push or task failure. Later
+  observations can still discover actionable failures or actual success.
+- T1 reuses the current exact-head checks/statuses and repository-rule/workflow
+  expectation discovery; incomplete/absent contracts and stale successes never
+  pass. Self-review inspected those clients/evaluator, observation readback and
+  persistence, production wait/transition callers and the new tests. Added a
+  production dispatch regression as well as controlled-clock restart coverage.
+  Six focused CI/client/observation/dispatch suites passed **149 tests**;
+  `yarn typecheck`, changed-code ESLint and Prettier passed. The earlier four-suite
+  check also passed 62 tests. T2–T5 remain; visible draft/description integration
+  for CI and maintenance is included in T4. Guide/roadmap scope remains accurate.
+- P8-T2a implements optional `opencode.remediation.ciMaxPasses` (default two),
+  persisted per episode before correction dispatch. Existing episodes without a
+  recorded limit retain their historical two-pass limit; restart configuration
+  cannot enlarge it. Charges survive reruns, own commits and changing heads.
+  Verified substantive human correction/no-op handling renews the episode with a
+  distinct human operation identity; routine observation/maintenance cannot renew
+  it. Exhaustion finishes the queue operation in Human Review rather than parking
+  a failed writer or terminating the task. Both arrival producers avoid requeuing
+  exhausted work. No independent-external-change classifier is inferred from SHA.
+- T2a self-review traced primary reservations, both observation producers, review
+  cycle identity, feedback/no-op handling and legacy schemas. Fixed legacy budget
+  pinning and obsolete failed-queue completion. Seven focused suites passed
+  **187 tests**, with one initial obsolete attention/failed expectation corrected
+  to enforce the specified Human Review/completed outcome and no subsequent commit.
+  Typecheck and changed-code ESLint passed; final legacy-limit correction is
+  rechecked before checkpoint. T2b still must remove production quality gates and
+  implement CI no-op/early finish; T3–T5 remain. No full validation claimed.
+- P8-T2b completes advisory same-session CI correction publication: negative local
+  checks/review and bounded unavailable independent review publish available safe
+  corrections on the same PR, preserving current failure/uncertainty evidence.
+  Review allowance is source-specific and persisted, including prepared-content
+  verification. Known unchanged source reuses its evidence; bounded unavailable
+  commit-message advice uses a deterministic message without bypassing unknown
+  execution. Exact-source no-op stops before quality reruns/commit; explicit early
+  finish publishes once then stops the episode. Both arrival producers retain that
+  stop until verified new human work. Original primary IDs/session recovery remain.
+- T2b self-review inspected the actual CI writer, quality/review and prepared-source
+  publisher, durable reservations/stops, new bounded-review source and tests. Fixed
+  optional-marker parse failures, active-review state at unavailable publication
+  and missing current publication evidence. A legacy fixture had implicitly relied
+  on negative advice blocking publication; it now injects a real persisted-checkpoint
+  interruption instead. Six focused suites passed **51 tests**; all **eight CI
+  real-Git lifecycle cases** passed (22 unrelated cases filtered), including failed
+  validation, unavailable review, interrupted review recovery and unknown-writer
+  fencing. Typecheck and changed-code ESLint passed. T3–T5 remain; T4 owns final CI
+  activity/description outcome reporting. No full validation claimed.
+- P8-T3 restores automatic target maintenance (explicit opt-out retained), including
+  approved open PRs. The queue preserves human/CI priority; after a merge, polling
+  reobserves before another writer. New `strategy: merge` records preserve pinned
+  published/target/local provenance, backup refs, expected merge trees and parents.
+  Legacy records remain fenced. Ordinary pushes reconcile exact accepted heads;
+  absent/changed remote refs never authorize resurrection/overwrite. Interrupted
+  publication binds its verified head before strict observation on restart.
+- Dirty unstaged setup/untracked output remains byte-identical and excluded from
+  merge commits. Unknown local-only commits and unrelated staged output are retained
+  rather than shipped. Conflict assistance uses the primary operation/session with
+  refreshed card/attachments, a persisted maximum, atomic reservation and durable
+  preservation baseline. No-op/exhaustion stops; unknown writers stay fenced.
+  Interrupted post-staging recovery rechecks non-conflict files/index before commit.
+- The complete maintenance writer also includes bounded advisory quality and safe
+  same-PR draft publication, with exact-source evidence and a human-text-preserving
+  current-outcome section. Missing advisory plans use current task purpose rather
+  than vetoing maintenance. This necessary production integration was moved from
+  T4 into T3; guide/roadmap and product guidance now describe that implementation.
+  T4 retains activity transitions, final CI outcome refresh and terminal integration.
+- T3 self-review covered the full new production writer, polling/recovery callers,
+  new body helper, schemas/store ownership and new tests. Corrected pseudoref lookup
+  (MERGE_HEAD/FETCH_HEAD are not ordinary refs), stale observation after publication,
+  conflict reservation atomicity, no-op conflict staging and post-staging unrelated
+  index absorption. Initial fixtures also needed the now-default comparison source
+  and non-recursive acknowledgement-loss spies. Final eight maintenance/legacy/
+  observation suites passed **75 tests**; earlier six config/maintenance suites
+  passed **182 tests**. The real `pollProject` approved-PR target-merge scenario
+  passed (30 unrelated scenarios filtered); typecheck and changed-code ESLint passed.
+  No known T3 defect remains; T4–T5 remain and full validation is not yet claimed.
+- P8-T4 completes top activity transitions for CI editing, target synchronization,
+  conflict assistance, advisory checks and push. Verified completion/no-op/bounded
+  conflict outcomes clear activity; unresolved execution retains explicit recovery
+  status. Current CI results, expired observation uncertainty, episode usage and
+  no-op evidence refresh independently of another writer, retaining human text.
+  Known unresolved quality remains draft even after green CI. Controlled external
+  diagnostic markers cannot create managed description/activity sections.
+- T4 integration corrected two queue edge cases: verified same-head human retry
+  needs a distinct episode queue identity; a temporarily pending evaluation must
+  retain a nondispatchable queued observation rather than permanently complete its
+  identity or monopolize maintenance. Producer/recovery/dispatch callers now share
+  those identities and eligibility, preserving legacy episode identity. Reporting
+  failure releases only writer execution ownership for recovery; it never repeats
+  the primary correction just to present a result.
+- T4 self-review inspected new files and actual polling/repair/merge/reporting
+  callers, P4 body preconditions, quality dispositions, terminal status clearing,
+  queue recovery and compatibility. Corrected per-pass CI activity refresh after
+  lifecycle assertions exposed the second pass's stale publication status. An
+  error-cause lint failure was fixed while preserving both original/status errors.
+  Ten focused suites passed **179 tests**; all **31 real-Git lifecycle scenarios**
+  passed, including CI advice failures, approved-PR maintenance, concurrent human
+  body notes, terminal races and unknown writers. Typecheck and changed-code ESLint
+  passed. Guide/roadmap scope remains accurate after T3's integration adjustment.
+  Only T5 combined integration/specification checking and final `yarn validate`
+  remain; no full validation or live-service qualification is yet claimed.
+- Combined P8 criteria inspection found a concrete CI-001 discovery gap, corrected
+  in T5a: expected workflow documents now come from the exact PR revision through
+  the non-paid GitHub contents API, not stale source-checkout files. Runtime jobs
+  resolve only their verified workflow path/head/PR/trigger, leaving another
+  never-started workflow uncertain. Latest applicable runs supersede older runs;
+  observed additional checks cannot be ignored, and newest same-head commit
+  statuses supersede historical success/failure without renewing episode budgets.
+- T5a self-review inspected the changed clients, pure document parser/evaluator and
+  production observation callers, including malformed/absent discovery, skipped
+  conditional jobs and reruns. Seven focused suites passed **165 tests** after the
+  production dispatch fixture gained its explicit contents-discovery response.
+  Previously that missing response correctly made its expected set uncertain,
+  rather than fabricating green CI. Typecheck passed; a formatting-only lint issue
+  in the new contents fixture was corrected and the final checks are rerun before
+  checkpoint. Permanent CI guidance now describes the actual discovery policy.
+  Remaining: refresh context on nested CI quality-repair dispatch, then final
+  combined checks/documentation and `yarn validate`. No full pass claimed yet.
+- T5b completes the CI contribution to CTX-001/IMP-004: nested validation and
+  review corrections refresh the current card/attachments at dispatch, including
+  reserved-operation recovery. Review prompt preparation can await that context
+  before reservation; validation refresh happens after observing failure and
+  immediately before its writer, not before a potentially long command. Existing
+  reserved prompts/operation IDs remain immutable and the primary session is reused.
+- T5b self-review inspected both quality-repair coordinators, all changed CI callers
+  and the actual prompt/recovery paths. A production lifecycle regression changes
+  attachment URLs during review and validation and requires those latest URLs in
+  the next primary prompt. It initially exposed too-early validation refresh;
+  refresh was moved to dispatch. Wrong-task/unavailable context prevents reservation
+  and dispatch without charging a new improvement pass. Four focused suites passed
+  **70 tests** and all **eight CI lifecycle scenarios** passed (23 unrelated cases
+  filtered). Typecheck and changed-code ESLint passed. Guide/roadmap and permanent
+  context guidance remain accurate. Only final integrated verification/validation
+  and its completion checkpoint remain.
+- T5c corrects canonical CI budget projection: the authoritative attempt now
+  receives the episode's pinned limit, trigger, ID and actual charges in the same
+  fenced write as the task checkpoint, preserving legacy initial episodes and
+  refusing a same-episode charge regression. Previously a configured third CI pass
+  could exceed the canonical record's old two-pass limit despite a valid task record.
+  The real `pollProject` regression now executes three CI corrections on the same
+  PR and verifies authoritative limit/usage/episode identity. It passed (31 unrelated
+  lifecycle cases filtered), plus **15 tests in four focused authority/CI suites**,
+  typecheck, changed-code ESLint and whitespace checks. Self-review traced initial
+  authority creation, projection writes, episode renewal and the production third
+  dispatch. No known T5c defect remains. Final integrated validation is next.
+- T5d closes the maintenance recovery edges found in the combined check. Initial
+  dirty/staged-state refusal retains its queue recovery identity, so verified safe
+  unstaging can resume on the same PR/head rather than being blocked by a completed
+  descriptor. Pre-dispatch merge file/index baselines and target-changed paths now
+  fence unrelated changes even if interruption precedes the conflict checkpoint.
+  A conflict baseline is retained before assistance eligibility is evaluated, so
+  manually resolving a zero-budget/no-op merge does not permit unrelated staging.
+  Active merge preparation without the necessary baseline stays explicitly fenced.
+- T5d self-review inspected the new baseline fields/artifact readers, preparation
+  order, dirty-state queue release/reclaim, manual conflict recovery and actual
+  additive publication caller. Recovery guidance's stale globally-disabled claim
+  was corrected while retaining the legacy rewrite fence. Three focused suites
+  passed **52 tests**, including recovery after safe unstaging and refusal of
+  unrelated changes before/after conflict checkpoints; the production target-merge
+  lifecycle scenario passed again (31 unrelated cases filtered). Typecheck,
+  changed-code ESLint and whitespace checks passed. No known scoped implementation
+  defect remains. Only the final combined validation/completion checkpoint remains.
+
+## Inherited P7 checkpoint
+
 - **P7 implemented and locally validated on the current branch, based on `7fafed1` (integrated P6).**
   The starting index and working tree were clean. This session authorizes small
   local P7 task/correction commits only; no push, PR, branch change or P8 work.
@@ -270,7 +465,7 @@ requirements/specification sections and meaningful regression tests:
   passed all 70 tests; typecheck, changed-file ESLint and Prettier passed. The
   corrected integrated tree then passed full `yarn validate` as recorded above.
 
-No P6/P7 implementation work remains. P8–P10 have not started. P11 covers
+No P6–P8 implementation work remains. P9–P10 have not started. P11 covers
 remaining integration/regression gaps, with broader qualification only if requested.
 
 ## Known carryovers

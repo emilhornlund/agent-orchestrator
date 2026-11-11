@@ -521,6 +521,21 @@ describe("parseConfig", () => {
     ).toBe(validationMaxPasses);
   });
 
+  it.each([0, 4, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])(
+    "validates ciMaxPasses: %s",
+    (limit) => {
+      const raw = validConfig.replace(
+        '        variant: "xhigh"\n      commit:',
+        `        variant: "xhigh"\n        ciMaxPasses: ${limit}\n      commit:`,
+      );
+      if (Number.isSafeInteger(limit) && limit >= 0)
+        expect(
+          parseConfig(raw).projects[0]?.opencode.remediation.ciMaxPasses,
+        ).toBe(limit);
+      else expect(() => parseConfig(raw)).toThrow("ciMaxPasses");
+    },
+  );
+
   it.each(["-1", "1.5", '"many"'])(
     "rejects invalid validationMaxPasses: %s",
     (validationMaxPasses) => {

@@ -85,7 +85,7 @@ export interface RunTaskSessionReviewRepairsOptions {
   buildRepairPrompt?: (
     review: ImplementationReviewResult,
     attempt: number,
-  ) => string;
+  ) => string | Promise<string>;
   rerunQuality: () => Promise<void>;
   getCurrentContentIdentity: () => Promise<string>;
   maxAttempts: number;
@@ -909,7 +909,7 @@ export async function runTaskSessionReviewWithRepairs(
     const repairAttempt = attempts + 1;
     const operationId = `${options.operationKey}:review:${cycleId}:pass:${repairAttempt}`;
     const prompt =
-      options.buildRepairPrompt?.(ledger.review, repairAttempt) ??
+      (await options.buildRepairPrompt?.(ledger.review, repairAttempt)) ??
       JSON.stringify({ review: ledger.review, attempt: repairAttempt });
     const promptArtifact = options.store.writePrimaryResultArtifact(
       `${operationId}:prompt`,

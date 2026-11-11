@@ -332,9 +332,14 @@ See [Recovery](recovery.md).
 
 The service exposes no `pushWithLease` capability and disables all automatic rebases, including pre-publication and conflict continuation.
 No force-push or rebase-based publication is promised. Published history, remote refs, maintenance intents, conflict handoffs,
-worktrees, local-only commits, and dirty changes are retained when safe continuation is unavailable. Automatic additive target
-merging is not supported by this release; operators must not manually retry an uncertain operation or reset/discard
-its worktree. Ordinary initial publication requiring no synchronization remains supported.
+worktrees, local-only commits, and dirty changes are retained when safe continuation is unavailable.
+Automatic target synchronization uses additive merges and ordinary pushes on the
+existing PR, with persisted original/local/target provenance and bounded conflict
+assistance. Accepted merge/push effects are reconciled after interruption rather
+than repeated. Unknown local-only commits, staged unrelated output, unresolved
+conflicts and ambiguous remote effects remain preserved recovery conditions.
+Legacy rebase intents are still fenced. Do not manually retry an uncertain push
+or reset/discard its worktree. Ordinary initial publication remains supported.
 
 ## Elapsed workflow time
 
@@ -459,7 +464,9 @@ timestamp level context message
 They are written under `<workflow.contextRoot>/orchestrator-logs/orchestrator-YYYY-MM-DD.log`; test runs use the `test-orchestrator-YYYY-MM-DD.log` prefix. Raw
 OpenCode and command output is written to per-card session logs or forwarded to process standard streams, so it is not
 timestamped by the shared logger. Configured repository validation is captured in the relevant OpenCode card session log. Clean
-Human Review branch maintenance does not run the configured validation command. Session logs are stored below
+Human Review branch maintenance runs configured validation and coverage and offers
+independent advisory review against the prepared source. Failed, skipped or
+unavailable checks are disclosed on the same draft PR, not used as publication gates. Session logs are stored below
 `<pinned-storage-root>/history/sessions/<sanitized-project-id>/<sanitized-card-id>-<attempt-id>.log`; path components are sanitized for filesystem use. Child stdout/stderr is stored under the pinned attempt's `artifacts/<project>/<card>/<attempt>/process-executions/` tree. Validation
 failures reported by an agent are concise diagnostics with a session-log reference; the complete redacted stdout and stderr remain
 in that per-card log instead of being dumped to the service log.

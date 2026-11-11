@@ -62,6 +62,9 @@ interface LifecycleScenario {
   terminalDuringFeedback?: "active" | "unknown" | "capacity" | "push-rejected";
   preparedReview?: "material" | "unavailable";
   ciReviewHandoffs?: boolean;
+  ciQuality?: "validation" | "unavailable";
+  ciBudget?: number;
+  targetMerge?: boolean;
   feedbackReviewRecovery?:
     "reserved" | "completed" | "validation" | "reviewed" | "unknown";
   ciReviewRecovery?:
@@ -204,6 +207,32 @@ describe("task lifecycle through pollProject", () => {
       quality: "both",
       ciReviewHandoffs: true,
     },
+    {
+      draft: false,
+      terminal: "merged",
+      destination: "done",
+      ackLoss: false,
+      quality: "both",
+      ciReviewHandoffs: true,
+      ciBudget: 3,
+    },
+    {
+      draft: false,
+      terminal: "merged",
+      destination: "done",
+      ackLoss: false,
+      quality: "both",
+      targetMerge: true,
+    },
+    ...(["validation", "unavailable"] as const).map((ciQuality) => ({
+      draft: false,
+      terminal: "merged" as const,
+      destination: "done" as const,
+      ackLoss: false,
+      quality: "both" as const,
+      ciReviewHandoffs: true,
+      ciQuality,
+    })),
     ...(
       ["reserved", "completed", "validation", "reviewed", "unknown"] as const
     ).map((feedbackReviewRecovery) => ({
@@ -226,7 +255,7 @@ describe("task lifecycle through pollProject", () => {
       ciReviewRecovery,
     })),
   ] as const)(
-    "preserves the owned lifecycle (quality=$quality, draft=$draft, terminal=$terminal, ackLoss=$ackLoss, correctionFailure=$correctionFailure, feedbackQuality=$feedbackQuality, terminalDuringFeedback=$terminalDuringFeedback, preparedReview=$preparedReview, ciReviewHandoffs=$ciReviewHandoffs, feedbackReviewRecovery=$feedbackReviewRecovery, ciReviewRecovery=$ciReviewRecovery)",
+    "preserves the owned lifecycle (quality=$quality, draft=$draft, terminal=$terminal, ackLoss=$ackLoss, correctionFailure=$correctionFailure, feedbackQuality=$feedbackQuality, terminalDuringFeedback=$terminalDuringFeedback, preparedReview=$preparedReview, ciReviewHandoffs=$ciReviewHandoffs, feedbackReviewRecovery=$feedbackReviewRecovery, ciReviewRecovery=$ciReviewRecovery, ciQuality=$ciQuality, targetMerge=$targetMerge, ciBudget=$ciBudget)",
     async ({
       draft,
       terminal,
@@ -241,6 +270,9 @@ describe("task lifecycle through pollProject", () => {
       ciReviewHandoffs = false,
       feedbackReviewRecovery,
       ciReviewRecovery,
+      ciQuality,
+      targetMerge,
+      ciBudget,
     }) => {
       // Restore the inherited environment even in scenarios without a scripted child.
       originalProcessPath = process.env.PATH;
@@ -402,6 +434,8 @@ describe("task lifecycle through pollProject", () => {
         },
       };
       if (ciReviewHandoffs) project.opencode.remediation.maxPasses = 2;
+      if (ciBudget !== undefined)
+        project.opencode.remediation.ciMaxPasses = ciBudget;
       const coordinationRoot = path.join(root, "coordination");
       fs.mkdirSync(coordinationRoot);
       provisionCoordinationNamespace(coordinationRoot, "lifecycle-test");
@@ -483,6 +517,7 @@ describe("task lifecycle through pollProject", () => {
       }> = [];
       let trapNextClaim = false;
       let blockTerminalDestinationRead = false;
+      let ciAttachmentVersion = 0;
       const trello = {
         getCards: async (listId: string) => {
           if (
@@ -567,7 +602,19 @@ describe("task lifecycle through pollProject", () => {
               id: `comment-${index}`,
               text: entry.detail!,
             })),
-        getCardAttachments: async () => [],
+        getCardAttachments: async () =>
+          ciAttachmentVersion === 0
+            ? []
+            : [
+                {
+                  id: "current-ci-context",
+                  name: "Current CI evidence",
+                  mimeType: null,
+                  bytes: null,
+                  isUpload: false,
+                  url: `https://context.test/revision-${ciAttachmentVersion}`,
+                },
+              ],
       } as unknown as TrelloClient;
       type PullRequestFixture = {
         number: number;
@@ -609,7 +656,19 @@ describe("task lifecycle through pollProject", () => {
       let terminalRaceTarget: "MERGED" | "CLOSED" | null = null;
       let terminalRaceReads = 0;
       let terminalRaceReadAt = 2;
+      let maintenanceBase: string | undefined;
       let github = {
+        getBaseBranchHeadSha: async () =>
+          (await git.getRemoteBranchSha(source, "origin", "main", project))!,
+        comparePullRequestHeadToBase: async ({
+          headSha,
+        }: {
+          headSha: string;
+        }) =>
+          !maintenanceBase ||
+          (await git.isAncestor(remote, maintenanceBase, headSha))
+            ? ("current" as const)
+            : ("diverged" as const),
         findPullRequest: async (input: { headBranch: string }) => {
           const pr = prs.get(input.headBranch);
           return pr ? { number: pr.number, url: pr.url } : null;
@@ -780,7 +839,7 @@ describe("task lifecycle through pollProject", () => {
             ciReviewHandoffs &&
             prs.has("agent/first") &&
             (currentPhase === "ci" || currentPhase === "human-feedback") &&
-            ciPrimaryCorrections < 2;
+            ciPrimaryCorrections < (ciBudget ?? 2);
           return {
             headSha,
             checks: [
@@ -918,6 +977,59 @@ describe("task lifecycle through pollProject", () => {
           }
           const cardId = path.basename(options.cwd);
           openCodeCards.push(cardId);
+          if (
+            ciQuality === "validation" &&
+            options.prompt.startsWith("Repair the failing local quality gate")
+          ) {
+            expect(options.prompt).toContain(
+              `https://context.test/revision-${10 + ciPrimaryCorrections}`,
+            );
+            return {
+              exitCode: 0,
+              ...(options.sessionId === undefined
+                ? {}
+                : { sessionId: options.sessionId }),
+              output: "No useful local correction",
+              errorOutput: "",
+            };
+          }
+          if (
+            targetMerge &&
+            options.prompt.startsWith(
+              "Independently review the prepared implementation after target synchronization",
+            )
+          ) {
+            expect(options.readOnly).toBe(true);
+            expect(prs.get("agent/first")?.body).toMatch(
+              /^<!-- agent-orchestrator-status:start -->/u,
+            );
+            expect(prs.get("agent/first")?.body).toContain(
+              "advisory validation",
+            );
+            prs.get("agent/first")!.body +=
+              "\nHuman note added during maintenance review.\n";
+            return {
+              exitCode: 0,
+              errorOutput: "",
+              output: JSON.stringify({
+                version: 1,
+                projectId: project.id,
+                cardId,
+                reviewedContentIdentity:
+                  await getTaskSessionSourceSnapshotIdentity(git, options.cwd),
+                verdict: "pass",
+                blockingFindings: [],
+                requirementAssessments: [
+                  {
+                    requirementId: "REQ-1",
+                    status: "satisfied",
+                    details: "Task preserved after target merge",
+                    evidence: ["app.js"],
+                  },
+                ],
+              }),
+            };
+          }
           if (
             (feedbackReviewRecovery !== undefined ||
               feedbackQuality !== undefined ||
@@ -1062,12 +1174,19 @@ describe("task lifecycle through pollProject", () => {
             )?.[1];
             if (identity === undefined)
               throw new Error("CI review prompt omitted source identity");
+            if (ciQuality === "unavailable")
+              return {
+                exitCode: 1,
+                output: "",
+                errorOutput: "Provider unavailable",
+              };
             const record = new TaskExecutionStore(
               contextRoot,
               project,
               authorities.get(cardId),
             ).read(cardId);
             const ciPass = record?.ciRepair?.activePrimaryOperation?.pass ?? 0;
+            ciAttachmentVersion = ciPass;
             const reviewRepairCount = record?.retryCounters.review ?? 0;
             const verdict =
               ciPass === 0 || reviewRepairCount >= ciPass ? "pass" : "fail";
@@ -1210,6 +1329,12 @@ describe("task lifecycle through pollProject", () => {
             ciReviewHandoffs &&
             options.prompt.startsWith("Repair the required GitHub CI failures")
           ) {
+            expect(prs.get("agent/first")?.body).toMatch(
+              /^<!-- agent-orchestrator-status:start -->/u,
+            );
+            expect(prs.get("agent/first")?.body).toContain(
+              "addressing observed CI failures",
+            );
             ciPrimaryCorrections += 1;
             fs.writeFileSync(
               path.join(options.cwd, "app.js"),
@@ -1238,6 +1363,9 @@ describe("task lifecycle through pollProject", () => {
             if (review === undefined || pending === undefined)
               throw new Error("CI review repair lacks its durable reservation");
             ciReviewRepairOperationIds.push(pending.operationId);
+            expect(options.prompt).toContain(
+              `https://context.test/revision-${ciPrimaryCorrections}`,
+            );
             ciReviewRepairDispatches.push({
               operationId: pending.operationId,
               prompt: options.prompt,
@@ -1437,10 +1565,12 @@ describe("task lifecycle through pollProject", () => {
       const commandOutcomes: string[] = [];
       const commands = new CommandRunner(async (options: CommandRunOptions) => {
         if (
-          feedbackQuality === "validation" &&
-          correctionFeedback &&
+          ((feedbackQuality === "validation" && correctionFeedback) ||
+            (ciQuality === "validation" && ciPrimaryCorrections > 0)) &&
           options.command === project.repository.validationCommand
-        )
+        ) {
+          if (ciQuality === "validation")
+            ciAttachmentVersion = 10 + ciPrimaryCorrections;
           return {
             exitCode: 1,
             output: "Observed correction test failure",
@@ -1448,6 +1578,7 @@ describe("task lifecycle through pollProject", () => {
             timedOut: false,
             aborted: false,
           };
+        }
         if (options.command.startsWith("opencode session list"))
           return {
             exitCode: 0,
@@ -1807,11 +1938,21 @@ describe("task lifecycle through pollProject", () => {
             return;
           }
         }
-        for (let pass = 0; pass < 20 && ciPrimaryCorrections < 2; pass += 1)
+        for (
+          let pass = 0;
+          pass < 20 && ciPrimaryCorrections < (ciBudget ?? 2);
+          pass += 1
+        )
           await poll();
         const ciTask = store.read("first");
         const ciRun = authorities.get("first")?.store.read();
         expect(ciTask?.phase).toBe("human-feedback");
+        expect(prs.get("agent/first")?.body).not.toContain(
+          "Agent Orchestrator status:",
+        );
+        expect(prs.get("agent/first")?.body).toContain(
+          "Observed CI for this revision",
+        );
         expect(
           ciPrimaryCorrections,
           JSON.stringify({
@@ -1819,7 +1960,38 @@ describe("task lifecycle through pollProject", () => {
             task: store.read("first"),
             run: authorities.get("first")?.store.read(),
           }),
-        ).toBe(2);
+        ).toBe(ciBudget ?? 2);
+        if (ciBudget !== undefined) {
+          expect(ciTask?.retryCounters.ci).toBe(ciBudget);
+          expect(ciRun?.budgets.ci).toMatchObject({
+            limit: ciBudget,
+            used: ciBudget,
+            episodeId: ciTask?.ciRepair?.cycleId,
+          });
+          expect(prs.size).toBe(1);
+          expect(lists.get("first")).toBe("review");
+          return;
+        }
+        if (ciQuality !== undefined) {
+          expect(prs.size).toBe(1);
+          expect(prs.get("agent/first")?.isDraft).toBe(true);
+          expect(lists.get("first")).toBe("review");
+          expect(
+            await git.getRemoteBranchSha(
+              source,
+              "origin",
+              "agent/first",
+              project,
+            ),
+          ).toBe(ciTask?.pullRequest?.headSha);
+          expect(ciTask?.ciRepair?.status).toBe("passed");
+          expect(
+            ciQuality === "validation"
+              ? ciTask?.publicationQuality?.validation.status
+              : ciTask?.reviewUnavailable,
+          ).toBeTruthy();
+          return;
+        }
         expect(ciReviewRepairOperationIds).toHaveLength(2);
         expect(ciReviewRepairOperationIds[0]).toMatch(/:pass:1$/u);
         expect(ciReviewRepairOperationIds[1]).toMatch(/:pass:2$/u);
@@ -1849,6 +2021,46 @@ describe("task lifecycle through pollProject", () => {
       expect(record?.phase).toBe("human-feedback");
       const firstPr = prs.get("agent/first");
       expect(firstPr).toBeDefined();
+      if (targetMerge) {
+        const published = record!.pullRequest!.headSha!;
+        firstPr!.reviewDecision = "APPROVED";
+        firstPr!.body += "\nHuman release instructions: retain this text.\n";
+        const upstream = path.join(root, "upstream");
+        await gitRun(root, "clone", remote, upstream);
+        await gitRun(upstream, "config", "user.name", "Human");
+        await gitRun(upstream, "config", "user.email", "human@example.test");
+        fs.writeFileSync(
+          path.join(upstream, "upstream.txt"),
+          "independent target work\n",
+        );
+        await gitRun(upstream, "add", ".");
+        await gitRun(upstream, "commit", "-m", "advance target");
+        await gitRun(upstream, "push", "origin", "main");
+        maintenanceBase = await git.getHeadSha(upstream);
+        await poll();
+        const maintained = store.read("first")!;
+        expect(maintained.pullRequest!.headSha).not.toBe(published);
+        expect(
+          await git.getCommitParentShas(path.join(worktrees, "first")),
+        ).toEqual([published, maintenanceBase]);
+        expect(firstPr!.body).toContain(
+          "Human release instructions: retain this text.",
+        );
+        expect(firstPr!.body).toContain("Current automation outcome");
+        expect(firstPr!.body).toContain(
+          "Human note added during maintenance review.",
+        );
+        expect(firstPr!.body).not.toContain("Agent Orchestrator status:");
+        expect(firstPr!.isDraft).toBe(true);
+        expect(lists.get("first")).toBe("review");
+        expect(lists.get("next")).toBe("ready");
+        expect(prs.size).toBe(1);
+        await poll();
+        expect(store.read("first")!.pullRequest!.headSha).toBe(
+          maintained.pullRequest!.headSha,
+        );
+        return;
+      }
       expect(firstPr?.isDraft).toBe(
         draft || ackLoss || quality !== "both" || preparedReview !== undefined,
       );

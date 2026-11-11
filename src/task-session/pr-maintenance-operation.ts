@@ -19,6 +19,11 @@ const id = z
     "Must be a safe non-blank identifier",
   );
 const gitSha = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i);
+const baselineArtifact = z.strictObject({
+  reference: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+  bytes: z.number().int().nonnegative(),
+  path: z.string().optional(),
+});
 const maintenanceQualityEvidenceSchema = z.strictObject({
   status: z.enum(["running", "failed", "uncertain", "passed"]),
   preparedHead: gitSha,
@@ -29,6 +34,7 @@ const maintenanceQualityEvidenceSchema = z.strictObject({
   coverage: z.unknown().nullable().optional(),
   review: z.unknown().optional(),
   diagnostic: z.string().optional(),
+  attempts: z.number().int().nonnegative().max(3).optional(),
 });
 export const localPreparationSchema = z.strictObject({
   status: z.enum([
@@ -36,6 +42,7 @@ export const localPreparationSchema = z.strictObject({
     "base-fetched",
     "backing-up",
     "rebasing",
+    "merging",
     "conflicted",
     "prepared",
   ]),
@@ -44,12 +51,24 @@ export const localPreparationSchema = z.strictObject({
   backupRef: z.string().min(1).optional(),
   resultingHead: gitSha.optional(),
   conflictedPaths: z.array(z.string().min(1)).optional(),
+  preservedFiles: z
+    .array(
+      z.strictObject({ path: z.string().min(1), identity: z.string().min(1) }),
+    )
+    .optional(),
+  mergeTree: gitSha.optional(),
+  conflictOperationId: z.string().min(1).optional(),
+  conflictStopped: z.boolean().optional(),
+  conflictBaseline: baselineArtifact.optional(),
+  mergeBaseline: baselineArtifact.optional(),
+  mergeAllowedPaths: z.array(z.string().min(1)).optional(),
   updatedAt: z.string().datetime(),
 });
 
 export const prMaintenanceOperationSchema = z
   .strictObject({
     version: z.literal(1),
+    strategy: z.literal("merge").optional(),
     projectId: id,
     cardId: id,
     pullRequest: z.strictObject({
@@ -77,6 +96,7 @@ export const prMaintenanceOperationSchema = z
       .nonnegative()
       .safe()
       .optional(),
+    conflictMaxAttempts: z.number().int().nonnegative().safe().optional(),
     qualityVerification: maintenanceQualityEvidenceSchema.optional(),
     publication: z
       .strictObject({

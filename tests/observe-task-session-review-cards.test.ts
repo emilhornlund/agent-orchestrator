@@ -12,6 +12,7 @@ import { logger } from "../src/logging/logger.js";
 
 let root: string;
 afterEach(() => {
+  vi.useRealTimers();
   if (root !== undefined) fs.rmSync(root, { recursive: true, force: true });
 });
 
@@ -149,6 +150,65 @@ function fixture() {
 }
 
 describe("observeTaskSessionReviewCards", () => {
+  it.each(["missing", "queued", "discovery unavailable"])(
+    "retains the observation deadline across polling and restart for %s CI",
+    async (kind) => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-11-01T10:00:00Z"));
+      const f = fixture();
+      vi.mocked(f.github.getCiObservations).mockResolvedValue({
+        headSha: "a".repeat(40),
+        checks:
+          kind === "queued"
+            ? [
+                {
+                  source: "check-run",
+                  id: 1,
+                  name: "Build",
+                  headSha: "a".repeat(40),
+                  status: "queued",
+                  conclusion: null,
+                  url: null,
+                },
+              ]
+            : [],
+        expectationSources: [
+          {
+            kind: "workflow-contract",
+            sourceId: "workflow",
+            complete: kind !== "discovery unavailable",
+            checkNames: ["Build"],
+          },
+        ],
+      });
+      const observe = (store = f.store) =>
+        observeTaskSessionReviewCards({
+          project: f.project,
+          cards: [f.cards[0]!],
+          taskRecordStore: store,
+          github: f.github,
+        });
+      await observe();
+      const window = f.store.read("card-one")!.ciObservationWindow!;
+      expect(window.timedOut).toBe(false);
+      vi.setSystemTime(new Date("2026-11-01T10:29:00Z"));
+      await observe();
+      expect(f.store.read("card-one")!.ciObservationWindow).toEqual(window);
+      vi.setSystemTime(new Date("2026-11-01T10:30:00Z"));
+      const restarted = new TaskExecutionStore(
+        path.join(root, "state"),
+        f.project,
+      );
+      await observe(restarted);
+      expect(restarted.read("card-one")!.ciObservationWindow).toEqual({
+        ...window,
+        timedOut: true,
+      });
+      expect(
+        restarted.read("card-one")!.reviewObservation!.ciEvaluation.status,
+      ).not.toBe("passed");
+    },
+  );
   it.each(["MERGED", "CLOSED"] as const)(
     "prioritizes a human %s outcome received while feedback and CI are being collected",
     async (state) => {

@@ -183,8 +183,12 @@ function runRepairs(
   fixture: ReturnType<typeof createFixture>,
   expectedSessionId = primarySessionId,
   repairOperationKey = operationKey,
+  prepareContext?: Parameters<
+    typeof runTaskSessionValidationWithRepairs
+  >[0]["prepareContext"],
 ) {
   return runTaskSessionValidationWithRepairs({
+    ...(prepareContext === undefined ? {} : { prepareContext }),
     validation: {
       project: fixture.project,
       cardId: card.id,
@@ -211,6 +215,32 @@ function runRepairs(
 }
 
 describe("runTaskSessionValidationWithRepairs", () => {
+  it.each(["wrong-task", "unavailable"])(
+    "does not reserve or dispatch a validation writer with %s refreshed context",
+    async (kind) => {
+      const fixture = createFixture();
+      fixture.runCommand.mockResolvedValue({
+        exitCode: 1,
+        output: "Known validation failure",
+        errorOutput: "",
+      });
+      await expect(
+        runRepairs(fixture, primarySessionId, operationKey, async () => {
+          if (kind === "unavailable")
+            throw new Error("Current attachment access unavailable");
+          return { card: { ...card, id: "another-card" } };
+        }),
+      ).rejects.toThrow(
+        kind === "unavailable"
+          ? "Current attachment access unavailable"
+          : "another task",
+      );
+      expect(fixture.runOpenCode).not.toHaveBeenCalled();
+      expect(
+        fixture.executionStore.read(card.id)?.retryCounters.validation,
+      ).toBe(0);
+    },
+  );
   it("replays a reserved repair and recognizes its unchanged source without rerunning quality", async () => {
     const fixture = createFixture();
     const contentIdentity = await getTaskSessionSourceSnapshotIdentity(

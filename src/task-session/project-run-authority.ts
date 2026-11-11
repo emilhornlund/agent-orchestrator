@@ -801,6 +801,29 @@ export class ProjectRunAuthority {
             trigger: previous?.trigger ?? "initial-implementation",
           };
         }
+        const ciRepair = projection.ciRepair;
+        if (ciRepair !== undefined) {
+          const previous = current.budgets.ci;
+          const sameEpisode =
+            previous?.episodeId === ciRepair.cycleId ||
+            previous?.episodeId === `${projection.cardId}:ci`;
+          if (sameEpisode && previous.used > projection.retryCounters.ci)
+            throw new RunStoreConflictError(
+              "CI task projection would discard an authoritative episode charge",
+            );
+          projectedBudgets.ci = {
+            limit: Math.max(
+              ciRepair.maxAttempts ?? 2,
+              projection.retryCounters.ci,
+            ),
+            used: projection.retryCounters.ci,
+            episodeId: ciRepair.cycleId,
+            trigger:
+              ciRepair.initiatingEventId ??
+              previous?.trigger ??
+              "initial-publication",
+          };
+        }
         return {
           ...(lifecycleTransition === undefined ? {} : { lifecycleTransition }),
           runState: {

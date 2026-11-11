@@ -334,6 +334,32 @@ export class TaskMutationQueue {
     });
   }
 
+  /** A stopped CI observation may wait without occupying the writer or blocking maintenance. */
+  setQueuedCiEligibility(eventId: string, eligible: boolean): void {
+    this.update((queue) => {
+      const current = queue.events.find((event) => event.eventId === eventId);
+      if (
+        !current ||
+        current.kind !== "ci-repair" ||
+        current.status !== "queued"
+      )
+        throw new TaskMutationQueueConflictError(
+          "Only a queued CI observation can change dispatch eligibility",
+        );
+      return {
+        queue: {
+          ...queue,
+          events: queue.events.map((event) =>
+            event.eventId === eventId
+              ? { ...event, dispatchReady: eligible ? undefined : false }
+              : event,
+          ),
+        },
+        result: current,
+      };
+    });
+  }
+
   list(): TaskMutationEvent[] {
     return this.readQueue().events;
   }

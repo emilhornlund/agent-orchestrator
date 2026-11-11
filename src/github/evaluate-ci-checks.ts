@@ -147,7 +147,61 @@ export function evaluateCiChecks(input: {
     };
   }
 
+  // Registration is additional current-revision evidence, not permission to
+  // ignore a new failing/pending check absent from a static contract.
+  for (const check of input.checks) {
+    if (
+      !(check.source === "check-run" && check.conclusion === "skipped") &&
+      !expectedNames.includes(checkName(check))
+    )
+      expectedNames.push(checkName(check));
+  }
+  expectedNames.sort((a, b) => a.localeCompare(b));
+  const latestStatuses = new Map<
+    string,
+    Extract<CiCheckObservation, { source: "commit-status" }>
+  >();
+  for (const check of input.checks) {
+    if (check.source !== "commit-status") continue;
+    if (
+      !Number.isFinite(Date.parse(check.createdAt)) ||
+      !Number.isSafeInteger(check.id) ||
+      check.id < 1
+    )
+      return {
+        status: "uncertain",
+        expectedHeadSha: input.expectedHeadSha,
+        observedHeadSha: input.observedHeadSha,
+        expectedCheckNames: expectedNames,
+        diagnostic: "Commit status ordering is malformed",
+      };
+    const previous = latestStatuses.get(check.context);
+    if (
+      previous?.id === check.id &&
+      JSON.stringify(previous) !== JSON.stringify(check)
+    )
+      return {
+        status: "uncertain",
+        expectedHeadSha: input.expectedHeadSha,
+        observedHeadSha: input.observedHeadSha,
+        expectedCheckNames: expectedNames,
+        diagnostic: "Commit status identity has conflicting observations",
+      };
+    if (
+      !previous ||
+      Date.parse(check.createdAt) > Date.parse(previous.createdAt) ||
+      (Date.parse(check.createdAt) === Date.parse(previous.createdAt) &&
+        check.id > previous.id)
+    )
+      latestStatuses.set(check.context, check);
+  }
+
   const dispositions = input.checks
+    .filter(
+      (check) =>
+        check.source !== "commit-status" ||
+        latestStatuses.get(check.context) === check,
+    )
     .filter(
       (check) =>
         !(

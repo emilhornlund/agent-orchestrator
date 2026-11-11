@@ -6,6 +6,7 @@ import type { ProjectConfig } from "../src/config/config.js";
 import type { CiCheckEvaluation } from "../src/github/evaluate-ci-checks.js";
 import { runTaskSessionCiRepairs } from "../src/task-session/run-task-session-ci-repairs.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
+import { ciRepairEventId } from "../src/task-session/ci-repair-event-id.js";
 
 let root: string;
 afterEach(() => {
@@ -80,6 +81,78 @@ function fixture() {
 }
 
 describe("runTaskSessionCiRepairs", () => {
+  it("gives a verified same-head human retry a new queue identity and episode without changing its primary session", async () => {
+    const f = fixture();
+    const record = f.store.read("card")!;
+    const originalEvent = ciRepairEventId(record, f.sha);
+    f.store.compareAndSwap("card", record.revision, {
+      ...record,
+      feedbackRemediation: {
+        operationId: "feedback:explicit-retry:revision:2",
+        status: "no-op",
+        headSha: f.sha,
+        ledgerRevision: 1,
+      },
+      revision: record.revision + 1,
+    });
+    const retry = f.store.read("card")!;
+    expect(ciRepairEventId(retry, f.sha)).not.toBe(originalEvent);
+    await runTaskSessionCiRepairs({
+      ...f.base,
+      maxAttempts: 1,
+      observeChecks: async (sha) =>
+        f.evaluation(sha, sha === f.sha ? "failed" : "passed"),
+    });
+    const completed = f.store.read("card")!;
+    expect(completed.ciRepair).toMatchObject({
+      initiatingEventId: "feedback:explicit-retry:revision:2",
+      cycleId: "operation:ci:feedback:explicit-retry:revision:2",
+    });
+    expect(ciRepairEventId(completed, f.sha)).toBe(
+      ciRepairEventId(retry, f.sha),
+    );
+    expect(f.base.repairPrimarySession).toHaveBeenCalledWith(
+      [],
+      1,
+      "session",
+      expect.stringContaining("explicit-retry"),
+    );
+  });
+  it("ends unchanged correction without quality reruns, artificial commits or another pass", async () => {
+    const f = fixture();
+    const result = await runTaskSessionCiRepairs({
+      ...f.base,
+      getSourceIdentity: async () => `sha256:${"a".repeat(64)}`,
+      observeChecks: async (sha) => f.evaluation(sha, "failed"),
+    });
+    expect(result).toMatchObject({
+      status: "stopped",
+      reason: "no-change",
+      attempts: 1,
+    });
+    expect(f.base.rerunLocalGatesAndReview).not.toHaveBeenCalled();
+    expect(f.base.publishSamePullRequest).not.toHaveBeenCalled();
+    expect(f.store.read("card")).toMatchObject({
+      phase: "human-feedback",
+      ciRepair: { status: "stopped", stopReason: "no-change" },
+    });
+  });
+
+  it("publishes available early-finish output once without spending the remaining episode", async () => {
+    const f = fixture();
+    const result = await runTaskSessionCiRepairs({
+      ...f.base,
+      repairPrimarySession: async () => ({ finishEarly: true }),
+      observeChecks: async (sha) => f.evaluation(sha, "failed"),
+    });
+    expect(result).toMatchObject({
+      status: "stopped",
+      reason: "finished-early",
+      attempts: 1,
+      headSha: "b".repeat(40),
+    });
+    expect(f.base.publishSamePullRequest).toHaveBeenCalledOnce();
+  });
   it("resumes an active final-pass CI repair with its exact durable ID and pass", async () => {
     const f = fixture();
     const operationId = "operation:ci:pass:2";
@@ -210,7 +283,66 @@ describe("runTaskSessionCiRepairs", () => {
     expect(result.status).toBe("exhausted");
     expect(f.base.repairPrimarySession).toHaveBeenCalledTimes(2);
     expect(publishSamePullRequest).toHaveBeenCalledTimes(2);
-    expect(f.store.read("card")?.phase).toBe("attention-required");
+    expect(f.store.read("card")?.phase).toBe("human-feedback");
     expect(f.store.read("card")?.pullRequest?.headSha).toBe("c".repeat(40));
+  });
+
+  it("pins a configured episode budget before dispatch and retains it across restart, SHA changes and configuration changes", async () => {
+    const f = fixture();
+    const heads = ["b".repeat(40), "c".repeat(40), "d".repeat(40)];
+    const repair = vi.fn(async () => {
+      const record = f.store.read("card")!;
+      expect(record.ciRepair).toMatchObject({
+        maxAttempts: 3,
+        initiatingEventId: "operation:initial-publication",
+      });
+      expect(record.retryCounters.ci).toBe(repair.mock.calls.length);
+    });
+    const first = await runTaskSessionCiRepairs({
+      ...f.base,
+      maxAttempts: 3,
+      repairPrimarySession: repair,
+      publishSamePullRequest: async () => heads.shift()!,
+      observeChecks: async (sha) =>
+        sha === f.sha
+          ? f.evaluation(sha, "failed")
+          : {
+              status: "waiting",
+              expectedHeadSha: sha,
+              missingChecks: ["Build"],
+              pendingChecks: [],
+              diagnostic: "not registered",
+            },
+    });
+    expect(first.status).toBe("waiting");
+    const result = await runTaskSessionCiRepairs({
+      ...f.base,
+      store: new TaskExecutionStore(path.join(root, "state"), {
+        id: "project",
+        repository: {
+          path: path.join(root, "repo"),
+          worktreeRoot: path.join(root, "worktrees"),
+        },
+      } as ProjectConfig),
+      headSha: "b".repeat(40),
+      maxAttempts: 10,
+      repairPrimarySession: repair,
+      publishSamePullRequest: async () => heads.shift()!,
+      observeChecks: async (sha) => f.evaluation(sha, "failed"),
+    });
+    expect(result).toMatchObject({ status: "exhausted", attempts: 3 });
+    expect(repair).toHaveBeenCalledTimes(3);
+  });
+
+  it("supports disabling CI corrections without disabling observation", async () => {
+    const f = fixture();
+    const result = await runTaskSessionCiRepairs({
+      ...f.base,
+      maxAttempts: 0,
+      observeChecks: async (sha) => f.evaluation(sha, "failed"),
+    });
+    expect(result).toMatchObject({ status: "exhausted", attempts: 0 });
+    expect(f.base.repairPrimarySession).not.toHaveBeenCalled();
+    expect(f.store.read("card")?.phase).toBe("human-feedback");
   });
 });

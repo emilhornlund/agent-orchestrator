@@ -6,6 +6,10 @@ workflow's contributions to REQ-HR-006, REQ-PR-008, REQ-IMP-004 and REQ-CTX-001/
 Plan small complete tasks, not isolated helpers. Keep P6 advisory policy and P7 writer/queue/capacity
 contracts. P9 refinement and P10 terminal cleanup/retry are outside this scope.
 
+This phase is implemented and locally validated. The existing
+[progress summary](phase-status.md) records its actual checks and checkpoints.
+Do not automatically begin P9 or reopen completed tasks without a concrete defect.
+
 ## Implementation order and contracts
 
 1. Discover expected checks and current-revision results from supported sources.
@@ -32,6 +36,12 @@ contracts. P9 refinement and P10 terminal cleanup/retry are outside this scope.
    at edit/prepush/in-flight boundaries; no branch resurrection after closure.
 
 ## Starting points and checks
+
+Maintenance runs by default (explicit opt-out remains supported). New operations
+carry `strategy: merge`; absent strategy retains the legacy rewrite fence. The
+complete merge task includes advisory quality and draft/outcome publication so it
+cannot temporarily activate a quality-gated or falsely ready production writer.
+Activity reporting and final CI outcome refresh follow as a separate behavior.
 
 Inspect task-session CI-repair modules, `pr-maintenance-operation.ts`,
 `pr-maintenance-store.ts`, `verify-prepared-pr-maintenance.ts`, workflow dispatch,

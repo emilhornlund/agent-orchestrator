@@ -47,6 +47,7 @@ export function buildTaskSessionCiRepairPrompt(input: {
     JSON.stringify(input.diagnostics, null, 2),
     ...taskSessionRepositoryGuidance,
     "Fix only the failures while preserving the original task scope. Treat any plan as advisory. Leave changes in the worktree for orchestrator-owned validation, coverage, and independent review.",
+    "You may disregard advisory recommendations and finish early when further correction is not useful. To end this CI episode after publishing available changes, include a standalone line CI_REPAIR_FINISHED_EARLY. No implementation changes also ends the episode without repeated review of unchanged code.",
     "Do not run Git commands or invoke GitHub tools. Do not commit, change branches, push, or create another pull request; the orchestrator owns publication and reuses the existing PR.",
   ].join("\n");
 }

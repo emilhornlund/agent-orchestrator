@@ -7,7 +7,7 @@ import {
   type ProjectConfig,
 } from "../config/config.js";
 import type { CiCheckExpectationSource } from "./ci-check-expectations.js";
-import { collectCiWorkflowExpectationSources } from "./ci-workflow-contract.js";
+import { collectCiWorkflowDocumentExpectationSources } from "./ci-workflow-contract.js";
 import { presentExternalDiagnostic } from "../security/bounded-diagnostic.js";
 import {
   containsSecret,
@@ -1544,7 +1544,7 @@ export class GitHubClient {
     }
 
     const credential = await this.resolveCredential(options.project);
-    const checkRunsPath = `repos/${options.repository}/commits/${options.headSha}/check-runs?per_page=100`;
+    const checkRunsPath = `repos/${options.repository}/commits/${options.headSha}/check-runs?per_page=100&filter=latest`;
     const statusesPath = `repos/${options.repository}/commits/${options.headSha}/statuses?per_page=100`;
     const branchRulesPath = `repos/${options.repository}/branches/${encodeURIComponent(options.defaultBranch)}/protection/required_status_checks`;
     const [checkRunsResult, statusesResult, branchRulesResult] =
@@ -1717,9 +1717,9 @@ export class GitHubClient {
     }
 
     try {
-      const workflowSources = collectCiWorkflowExpectationSources(
-        options.cwd,
-        options.baseBranch ?? options.defaultBranch,
+      const workflowSources = await this.getRevisionWorkflowContracts(
+        options,
+        credential,
       );
       const incompleteWorkflows = workflowSources.filter(
         (source) => !source.complete,
@@ -1734,10 +1734,13 @@ export class GitHubClient {
           pullRequestNumber: options.pullRequestNumber,
           headSha: options.headSha,
           credential,
+          workflowPaths: incompleteWorkflows.map(({ sourceId }) =>
+            sourceId.slice("workflow:".length),
+          ),
         });
         if (runtime.discovered) {
           const resolvedIds = new Set(
-            incompleteWorkflows.map(({ sourceId }) => sourceId),
+            runtime.coveredWorkflowPaths.map((path) => `workflow:${path}`),
           );
           expectationSources.push(
             ...workflowSources.filter(
@@ -1780,16 +1783,96 @@ export class GitHubClient {
     };
   }
 
+  private async getRevisionWorkflowContracts(
+    options: CiObservationsOptions,
+    credential: GitHubCredential,
+  ): Promise<CiCheckExpectationSource[]> {
+    const endpoint = `repos/${options.repository}/contents/.github/workflows?ref=${options.headSha}`;
+    let listing: unknown;
+    try {
+      const result = await this.runWithOrigin(
+        options.cwd,
+        ["api", endpoint],
+        credential,
+      );
+      listing = parseGitHubJson(result.output, result.origin);
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        /(?:\b404\b|not found)/iu.test(error.message)
+      )
+        return [];
+      throw error;
+    }
+    if (!Array.isArray(listing) || listing.length >= 1000)
+      throw new Error("Workflow directory discovery is incomplete");
+    const documents: { path: string; content: string | null }[] = [];
+    for (const entry of listing) {
+      if (
+        !isRecord(entry) ||
+        typeof entry.name !== "string" ||
+        typeof entry.path !== "string" ||
+        typeof entry.type !== "string"
+      )
+        throw new Error("Malformed workflow directory entry");
+      if (!/\.ya?ml$/iu.test(entry.name)) continue;
+      if (
+        entry.name.includes("/") ||
+        entry.path !== `.github/workflows/${entry.name}`
+      )
+        throw new Error("Unexpected workflow file path");
+      let content: string | null = null;
+      if (entry.type === "file") {
+        try {
+          const result = await this.runWithOrigin(
+            options.cwd,
+            [
+              "api",
+              `repos/${options.repository}/contents/${entry.path.split("/").map(encodeURIComponent).join("/")}?ref=${options.headSha}`,
+            ],
+            credential,
+          );
+          const file: unknown = parseGitHubJson(result.output, result.origin);
+          if (
+            isRecord(file) &&
+            file.encoding === "base64" &&
+            typeof file.content === "string"
+          ) {
+            const encoded = file.content.replace(/\s/gu, "");
+            if (
+              /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(
+                encoded,
+              )
+            ) {
+              const decoded = Buffer.from(encoded, "base64");
+              if (decoded.byteLength <= 1024 * 1024)
+                content = decoded.toString("utf8");
+            }
+          }
+        } catch {
+          /* An unreadable current-revision file remains an incomplete contract. */
+        }
+      }
+      documents.push({ path: entry.path, content });
+    }
+    return collectCiWorkflowDocumentExpectationSources(
+      documents,
+      options.baseBranch ?? options.defaultBranch,
+    );
+  }
+
   private async getWorkflowRunJobs(options: {
     cwd: string;
     repository: string;
     pullRequestNumber: number;
     headSha: string;
     credential: GitHubCredential;
+    workflowPaths: readonly string[];
   }): Promise<{
     discovered: boolean;
     complete: boolean;
     expectedNames: string[];
+    coveredWorkflowPaths: string[];
     uncertainty?: string;
   }> {
     const query = new URLSearchParams({
@@ -1812,8 +1895,7 @@ export class GitHubClient {
       "workflow_runs",
       runResult.origin,
     );
-    const runs: Record<string, unknown>[] = [];
-    let allRunsCompleted = true;
+    const latestByPath = new Map<string, Record<string, unknown>>();
     for (const run of workflowRuns) {
       if (
         !isRecord(run) ||
@@ -1830,16 +1912,25 @@ export class GitHubClient {
       const associated = run.pull_requests.some(
         (pr) => isRecord(pr) && Number(pr.number) === options.pullRequestNumber,
       );
-      if (associated) {
-        runs.push(run);
-        if (run.status !== "completed") allRunsCompleted = false;
+      if (
+        associated &&
+        typeof run.path === "string" &&
+        options.workflowPaths.includes(run.path) &&
+        (run.event === "pull_request" || run.event === "pull_request_target")
+      ) {
+        const previous = latestByPath.get(run.path);
+        if (!previous || Number(previous.id) < run.id)
+          latestByPath.set(run.path, run);
       }
     }
+    const runs = [...latestByPath.values()];
+    const allRunsCompleted = runs.every((run) => run.status === "completed");
     if (runs.length === 0)
       return {
         discovered: false,
         complete: false,
         expectedNames: [],
+        coveredWorkflowPaths: [],
       };
 
     const expectedNames = new Set<string>();
@@ -1896,6 +1987,7 @@ export class GitHubClient {
           discovered: false,
           complete: false,
           expectedNames: [],
+          coveredWorkflowPaths: [],
         };
     }
     const complete =
@@ -1904,6 +1996,7 @@ export class GitHubClient {
       discovered: true,
       complete,
       expectedNames: [...expectedNames],
+      coveredWorkflowPaths: [...latestByPath.keys()],
       ...(complete
         ? {}
         : {

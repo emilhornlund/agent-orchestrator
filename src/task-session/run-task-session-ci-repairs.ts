@@ -5,11 +5,18 @@ import type {
 import type { CiCheckEvaluation } from "../github/evaluate-ci-checks.js";
 import type { TaskExecutionRecord } from "./task-execution-record.js";
 import { canResumeCiReviewRepair } from "./can-resume-ci-review-repair.js";
+import { ciRepairEventId } from "./ci-repair-event-id.js";
 import { TaskExecutionStore } from "./task-execution-store.js";
 
 export const MAX_CI_REPAIR_ATTEMPTS = 2;
 
 export type TaskSessionCiRepairResult =
+  | {
+      status: "stopped";
+      attempts: number;
+      headSha: string;
+      reason: "no-change" | "finished-early";
+    }
   | { status: "passed"; attempts: number; headSha: string }
   | {
       status: "waiting";
@@ -25,6 +32,8 @@ export type TaskSessionCiRepairResult =
     };
 
 export interface RunTaskSessionCiRepairsOptions {
+  maxAttempts?: number;
+  getSourceIdentity?: () => Promise<string>;
   /** The caller verified a CI-owned local review checkpoint before dispatch. */
   resumeReviewRepair?: boolean;
   store: TaskExecutionStore;
@@ -43,7 +52,7 @@ export interface RunTaskSessionCiRepairsOptions {
     attempt: number,
     primarySessionId: string,
     operationId: string,
-  ) => Promise<void>;
+  ) => Promise<void | { finishEarly: boolean }>;
   rerunLocalGatesAndReview: () => Promise<void>;
   publishSamePullRequest: () => Promise<string>;
 }
@@ -107,7 +116,7 @@ export async function runTaskSessionCiRepairs(
     !canResumeCiReviewRepair(record, {
       projectId: record.projectId,
       cardId: record.cardId,
-      eventId: `ci-repair:${record.cardId}:${options.headSha}`,
+      eventId: ciRepairEventId(record, options.headSha),
       operationKey: `${record.operationKey}:ci:${options.headSha}`,
       kind: "ci-repair",
       status: "active",
@@ -119,11 +128,33 @@ export async function runTaskSessionCiRepairs(
     );
   // An episode belongs to the durable task operation, not a mutable commit SHA.
   // Publishing a repair changes headSha but must not reset its correction budget.
-  const cycleId = record.ciRepair?.cycleId ?? `${options.operationKey}:ci`;
+  const cycleId =
+    record.ciRepair?.cycleId ??
+    (record.feedbackRemediation === undefined
+      ? `${options.operationKey}:ci`
+      : `${options.operationKey}:ci:${record.feedbackRemediation.operationId}`);
+  const maxAttempts =
+    record.ciRepair === undefined
+      ? (options.maxAttempts ?? MAX_CI_REPAIR_ATTEMPTS)
+      : (record.ciRepair.maxAttempts ?? MAX_CI_REPAIR_ATTEMPTS);
+  if (!Number.isSafeInteger(maxAttempts) || maxAttempts < 0)
+    throw new TaskSessionCiRepairError(
+      "CI correction limit must be a nonnegative safe integer",
+    );
+  const episode = {
+    cycleId,
+    maxAttempts,
+    initiatingEventId:
+      record.ciRepair === undefined
+        ? (record.feedbackRemediation?.operationId ??
+          `${options.operationKey}:initial-publication`)
+        : (record.ciRepair.initiatingEventId ??
+          `${options.operationKey}:initial-publication`),
+  };
   if (record.ciRepair?.cycleId !== cycleId) {
     record = updateRecord(options.store, record, {
       retryCounters: { ...record.retryCounters, ci: 0 },
-      ciRepair: { cycleId, headSha, status: "active" },
+      ciRepair: { ...episode, headSha, status: "active" },
     });
   }
 
@@ -177,7 +208,7 @@ export async function runTaskSessionCiRepairs(
       if (evaluation.status === "passed") {
         record = ownerRecord(options, record.pullRequest?.headSha);
         updateRecord(options.store, record, {
-          ciRepair: { cycleId, headSha, status: "passed" },
+          ciRepair: { ...episode, headSha, status: "passed" },
         });
         return { status: "passed", attempts: record.retryCounters.ci, headSha };
       }
@@ -193,10 +224,10 @@ export async function runTaskSessionCiRepairs(
         throw new TaskSessionCiRepairError(
           "Failed CI evaluation did not include any terminal check failures",
         );
-      if (active === undefined && completedAttempts >= MAX_CI_REPAIR_ATTEMPTS) {
+      if (active === undefined && completedAttempts >= maxAttempts) {
         updateRecord(options.store, record, {
-          phase: "attention-required",
-          ciRepair: { cycleId, headSha, status: "exhausted" },
+          phase: "human-feedback",
+          ciRepair: { ...episode, headSha, status: "exhausted" },
         });
         return {
           status: "exhausted",
@@ -216,25 +247,66 @@ export async function runTaskSessionCiRepairs(
       record = updateRecord(options.store, record, {
         retryCounters: { ...record.retryCounters, ci: attempt },
         ciRepair: {
-          cycleId,
+          ...episode,
           headSha,
           status: "active",
           activePrimaryOperation: {
             operationId,
             pass: attempt,
             diagnosticsArtifact,
+            ...(options.getSourceIdentity === undefined
+              ? {}
+              : { sourceIdentity: await options.getSourceIdentity() }),
           },
         },
       });
     }
     try {
-      if (!resumeReviewRepair)
-        await options.repairPrimarySession(
+      let finishEarly = active?.finishEarly === true;
+      if (!resumeReviewRepair) {
+        const outcome = await options.repairPrimarySession(
           diagnostics,
           attempt,
           options.expectedPrimarySessionId,
           operationId,
         );
+        finishEarly ||= outcome?.finishEarly === true;
+      }
+      const afterPrimary = options.store.read(options.cardId);
+      const reservation = afterPrimary?.ciRepair?.activePrimaryOperation;
+      if (!afterPrimary || reservation?.operationId !== operationId)
+        throw new TaskSessionCiRepairError(
+          "CI primary reservation changed after correction",
+        );
+      const noChange =
+        reservation.sourceIdentity !== undefined &&
+        options.getSourceIdentity !== undefined &&
+        reservation.sourceIdentity === (await options.getSourceIdentity());
+      if (noChange) {
+        updateRecord(options.store, afterPrimary, {
+          phase: "human-feedback",
+          reviewRepair: undefined,
+          ciRepair: {
+            ...episode,
+            headSha,
+            status: "stopped",
+            stopReason: "no-change",
+          },
+        });
+        return {
+          status: "stopped",
+          attempts: afterPrimary.retryCounters.ci,
+          headSha,
+          reason: "no-change",
+        };
+      }
+      if (finishEarly && !reservation.finishEarly)
+        updateRecord(options.store, afterPrimary, {
+          ciRepair: {
+            ...afterPrimary.ciRepair!,
+            activePrimaryOperation: { ...reservation, finishEarly: true },
+          },
+        });
       resumeReviewRepair = false;
       await options.rerunLocalGatesAndReview();
       headSha = await options.publishSamePullRequest();
@@ -267,7 +339,7 @@ export async function runTaskSessionCiRepairs(
         record = ownerRecord(options, latest.pullRequest?.headSha);
         record = updateRecord(options.store, record, {
           pullRequest: { ...record.pullRequest!, headSha },
-          ciRepair: { cycleId, headSha, status: "active" },
+          ciRepair: { ...episode, headSha, status: "active" },
           reviewObservation: undefined,
         });
       }
@@ -278,11 +350,29 @@ export async function runTaskSessionCiRepairs(
       ) {
         record = updateRecord(options.store, afterCheckpoint, {
           ciRepair: {
-            cycleId,
+            ...episode,
             headSha,
             status: "active",
           },
         });
+      }
+      if (finishEarly) {
+        const latest = options.store.read(options.cardId)!;
+        updateRecord(options.store, latest, {
+          phase: "human-feedback",
+          ciRepair: {
+            ...episode,
+            headSha,
+            status: "stopped",
+            stopReason: "finished-early",
+          },
+        });
+        return {
+          status: "stopped",
+          attempts: latest.retryCounters.ci,
+          headSha,
+          reason: "finished-early",
+        };
       }
     } catch (error) {
       throw new TaskSessionCiRepairError(

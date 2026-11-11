@@ -24,6 +24,9 @@ import type { TaskExecutionRecord } from "../task-session/task-execution-record.
 
 const reportedOutdatedPullRequests = new Map<string, string>();
 
+/** Observation is advisory and never holds a published PR indefinitely. */
+export const CI_OBSERVATION_TIMEOUT_MS = 30 * 60_000;
+
 export interface ObservedTaskSessionReviewCard {
   state: "OPEN";
   cardId: string;
@@ -344,6 +347,28 @@ export async function observeTaskSessionReviewCards(
     }
     taskRecordStore.compareAndSwap(card.id, latest.revision, {
       ...latest,
+      ciObservationWindow: (() => {
+        const previous = latest.ciObservationWindow;
+        const startedAt =
+          previous?.headSha === headSha
+            ? previous.startedAt
+            : new Date().toISOString();
+        const deadline =
+          previous?.headSha === headSha
+            ? previous.deadline
+            : new Date(
+                Date.parse(startedAt) + CI_OBSERVATION_TIMEOUT_MS,
+              ).toISOString();
+        return {
+          headSha,
+          startedAt,
+          deadline,
+          timedOut:
+            (ciEvaluation.status === "waiting" ||
+              ciEvaluation.status === "uncertain") &&
+            Date.now() >= Date.parse(deadline),
+        };
+      })(),
       reviewObservation: {
         headSha,
         observedAt: nextTimestamp(latest.updatedAt),

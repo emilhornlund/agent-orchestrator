@@ -104,20 +104,29 @@ The expected remote branch is deleted only for a verified merged PR and only aft
 local worktree cleanup is restricted to the expected path and branch and refuses symlinks, dirty trees, active rebases, conflicts,
 or unknown paths. A cleanup failure preserves the terminal event so the operation can be retried without losing ownership.
 
-## Temporarily deferred published-PR maintenance
+## Additive maintenance and legacy rewrite fences
 
-**PR maintenance and every rebase/continue path are disabled in this release.** The orchestrator does not resume prepared rebases,
-including apparently unpublished conflicts, force-with-lease pushes, or retry uncertain maintenance publication. Preserve the maintenance record, worktree, backup refs,
-rewritten local objects, dirty/unshipped changes, and remote history. If remote acceptance is ambiguous, do not retry or retire
-the operation as successful; require operator reconciliation. All automatic rebasing
-and conflict continuation, including pre-publication rebase, are temporarily disabled. Ordinary publication remains supported when
-it requires no history rewrite.
+Current maintenance merges the pinned target commit into the existing published
+task branch, retaining previous commits and the same PR. Persisted provenance,
+pre-dispatch file/index baselines, expected merge parents/tree and exact remote
+head establish recovery. An accepted merge or push is observed rather than
+repeated. Unknown execution or remote acceptance retains ownership and explicit
+reconciliation; an absent branch never authorizes recreation after human closure.
 
-This release disables all automatic rebase and continuation paths, including
-pre-publication synchronization. Ordinary initial publication that needs no
-sync remains supported. A required history rewrite or conflict recovery is
-deferred safely. Do not manually retry uncertain
-pushes or reset, abort, clean, or discard the worktree.
+Unrelated staged output and unknown local-only commits are not automatically
+included. Refusal retains the queue's recovery identity so safe maintenance can
+resume after the blocker is resolved. Unstaged excluded setup output is retained
+byte-identically. Conflict assistance is bounded and uses the primary task
+session; no-op or exhaustion preserves the unresolved merge rather than staging
+unchanged markers. Manual resolution does not authorize shipping unrelated index
+changes: preserved non-conflict and pre-merge baselines are rechecked on recovery.
+
+Legacy rebase/continue and force-with-lease paths remain disabled, including
+apparently unpublished conflicts. Preserve their maintenance records, worktrees,
+backup refs, rewritten objects, dirty/unshipped changes and remote history for
+operator reconciliation. Ordinary initial publication requiring no history
+rewrite remains supported. Do not blindly retry uncertain pushes or reset,
+abort, clean or discard preserved work.
 
 A legacy `attention-required` record without a persisted `terminalFailure`
 cannot be automatically moved to Failed or discarded. Polling now logs the
@@ -158,8 +167,8 @@ A legacy active conflicted rebase may have a persisted handoff below the configu
 ```
 
 The handoff and conflict worktree are preserved without abort, reset, cleanup, removal, recreation, or OpenCode continuation. No
-automatic publication or recovery is attempted. The affected task remains blocked until an operator reconciles history or later
-additive conflict handling is implemented. A malformed handoff, missing remote branch, or apparent completed rebase is not proof
+automatic publication or recovery of that legacy rewrite is attempted. The affected task remains blocked until an operator reconciles history.
+A malformed handoff, missing remote branch, or apparent completed rebase is not proof
 that automatic continuation is safe.
 
 ## Deliberate retry and operator actions

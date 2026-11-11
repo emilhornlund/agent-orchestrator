@@ -128,17 +128,41 @@ export function collectCiWorkflowExpectationSources(
     .filter((entry) => entry.isFile() && /\.ya?ml$/iu.test(entry.name))
     .map((entry) => entry.name)
     .sort((left, right) => left.localeCompare(right));
-  const sources: CiCheckExpectationSource[] = [];
+  return collectCiWorkflowDocumentExpectationSources(
+    entries.map((filename) => {
+      const filepath = path.join(workflowsDirectory, filename);
+      let content: string | null = null;
+      try {
+        if (!fs.lstatSync(filepath).isSymbolicLink())
+          content = fs.readFileSync(filepath, "utf8");
+      } catch {
+        /* Preserve unreadable discovery as uncertainty. */
+      }
+      return { path: `.github/workflows/${filename}`, content };
+    }),
+    baseBranch,
+  );
+}
 
-  for (const filename of entries) {
-    const filepath = path.join(workflowsDirectory, filename);
-    const id = sourceId(path.join(".github", "workflows", filename));
+/** Parse documents already read from a verified revision without checking out that revision. */
+export function collectCiWorkflowDocumentExpectationSources(
+  documents: readonly { path: string; content: string | null }[],
+  baseBranch?: string,
+): CiCheckExpectationSource[] {
+  const sources: CiCheckExpectationSource[] = [];
+  for (const document of documents) {
+    const id = sourceId(document.path);
     try {
-      if (fs.lstatSync(filepath).isSymbolicLink()) {
-        sources.push(uncertainWorkflow(id, "workflow file is a symbolic link"));
+      if (document.content === null) {
+        sources.push(
+          uncertainWorkflow(
+            id,
+            "workflow file is unreadable or not a regular file",
+          ),
+        );
         continue;
       }
-      const workflow: unknown = YAML.parse(fs.readFileSync(filepath, "utf8"));
+      const workflow: unknown = YAML.parse(document.content);
       if (!isRecord(workflow)) {
         sources.push(uncertainWorkflow(id, "workflow document is malformed"));
         continue;
