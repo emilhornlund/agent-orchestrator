@@ -854,6 +854,66 @@ export class GitClient {
     );
   }
 
+  /** Prepare an additive merge only; the caller persists provenance before dispatch. */
+  async mergeTarget(
+    repositoryPath: string,
+    targetSha: string,
+    identity: GitIdentity,
+  ): Promise<void> {
+    rejectJournaledDispatch();
+    if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu.test(targetSha))
+      throw new Error("Invalid merge target");
+    await this.runGit(
+      repositoryPath,
+      [
+        "-c",
+        "merge.autoStash=false",
+        "-c",
+        "rerere.enabled=false",
+        "merge",
+        "--no-ff",
+        "--no-commit",
+        "--no-overwrite-ignore",
+        "--",
+        targetSha,
+      ],
+      getGitIdentityEnvironment(identity),
+    );
+  }
+
+  async completeTargetMerge(
+    repositoryPath: string,
+    identity: GitIdentity,
+  ): Promise<void> {
+    rejectJournaledDispatch();
+    if ((await this.getMergeHead(repositoryPath)) === null)
+      throw new Error("No active merge to complete");
+    await this.runGit(
+      repositoryPath,
+      ["commit", "-m", "chore: merge latest target branch"],
+      getGitIdentityEnvironment(identity),
+    );
+  }
+
+  async stagePaths(
+    repositoryPath: string,
+    paths: readonly string[],
+  ): Promise<void> {
+    rejectJournaledDispatch();
+    if (paths.length > 0)
+      await this.runGit(repositoryPath, ["add", "--", ...paths]);
+  }
+
+  async getMergeHead(repositoryPath: string): Promise<string | null> {
+    const mergePath = await this.runGit(repositoryPath, [
+      "rev-parse",
+      "--git-path",
+      "MERGE_HEAD",
+    ]);
+    if (!fs.existsSync(path.resolve(repositoryPath, mergePath))) return null;
+    return this.resolveCommitSha(repositoryPath, "MERGE_HEAD");
+  }
+
   async getConflictedPaths(repositoryPath: string): Promise<string[]> {
     const output = await this.runGit(repositoryPath, [
       "diff",

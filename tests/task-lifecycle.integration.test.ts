@@ -63,6 +63,7 @@ interface LifecycleScenario {
   preparedReview?: "material" | "unavailable";
   ciReviewHandoffs?: boolean;
   ciQuality?: "validation" | "unavailable";
+  targetMerge?: boolean;
   feedbackReviewRecovery?:
     "reserved" | "completed" | "validation" | "reviewed" | "unknown";
   ciReviewRecovery?:
@@ -205,6 +206,14 @@ describe("task lifecycle through pollProject", () => {
       quality: "both",
       ciReviewHandoffs: true,
     },
+    {
+      draft: false,
+      terminal: "merged",
+      destination: "done",
+      ackLoss: false,
+      quality: "both",
+      targetMerge: true,
+    },
     ...(["validation", "unavailable"] as const).map((ciQuality) => ({
       draft: false,
       terminal: "merged" as const,
@@ -236,7 +245,7 @@ describe("task lifecycle through pollProject", () => {
       ciReviewRecovery,
     })),
   ] as const)(
-    "preserves the owned lifecycle (quality=$quality, draft=$draft, terminal=$terminal, ackLoss=$ackLoss, correctionFailure=$correctionFailure, feedbackQuality=$feedbackQuality, terminalDuringFeedback=$terminalDuringFeedback, preparedReview=$preparedReview, ciReviewHandoffs=$ciReviewHandoffs, feedbackReviewRecovery=$feedbackReviewRecovery, ciReviewRecovery=$ciReviewRecovery, ciQuality=$ciQuality)",
+    "preserves the owned lifecycle (quality=$quality, draft=$draft, terminal=$terminal, ackLoss=$ackLoss, correctionFailure=$correctionFailure, feedbackQuality=$feedbackQuality, terminalDuringFeedback=$terminalDuringFeedback, preparedReview=$preparedReview, ciReviewHandoffs=$ciReviewHandoffs, feedbackReviewRecovery=$feedbackReviewRecovery, ciReviewRecovery=$ciReviewRecovery, ciQuality=$ciQuality, targetMerge=$targetMerge)",
     async ({
       draft,
       terminal,
@@ -252,6 +261,7 @@ describe("task lifecycle through pollProject", () => {
       feedbackReviewRecovery,
       ciReviewRecovery,
       ciQuality,
+      targetMerge,
     }) => {
       // Restore the inherited environment even in scenarios without a scripted child.
       originalProcessPath = process.env.PATH;
@@ -620,7 +630,19 @@ describe("task lifecycle through pollProject", () => {
       let terminalRaceTarget: "MERGED" | "CLOSED" | null = null;
       let terminalRaceReads = 0;
       let terminalRaceReadAt = 2;
+      let maintenanceBase: string | undefined;
       let github = {
+        getBaseBranchHeadSha: async () =>
+          (await git.getRemoteBranchSha(source, "origin", "main", project))!,
+        comparePullRequestHeadToBase: async ({
+          headSha,
+        }: {
+          headSha: string;
+        }) =>
+          !maintenanceBase ||
+          (await git.isAncestor(remote, maintenanceBase, headSha))
+            ? ("current" as const)
+            : ("diverged" as const),
         findPullRequest: async (input: { headBranch: string }) => {
           const pr = prs.get(input.headBranch);
           return pr ? { number: pr.number, url: pr.url } : null;
@@ -929,6 +951,35 @@ describe("task lifecycle through pollProject", () => {
           }
           const cardId = path.basename(options.cwd);
           openCodeCards.push(cardId);
+          if (
+            targetMerge &&
+            options.prompt.startsWith(
+              "Independently review the prepared implementation after target synchronization",
+            )
+          ) {
+            expect(options.readOnly).toBe(true);
+            return {
+              exitCode: 0,
+              errorOutput: "",
+              output: JSON.stringify({
+                version: 1,
+                projectId: project.id,
+                cardId,
+                reviewedContentIdentity:
+                  await getTaskSessionSourceSnapshotIdentity(git, options.cwd),
+                verdict: "pass",
+                blockingFindings: [],
+                requirementAssessments: [
+                  {
+                    requirementId: "REQ-1",
+                    status: "satisfied",
+                    details: "Task preserved after target merge",
+                    evidence: ["app.js"],
+                  },
+                ],
+              }),
+            };
+          }
           if (
             (feedbackReviewRecovery !== undefined ||
               feedbackQuality !== undefined ||
@@ -1886,6 +1937,42 @@ describe("task lifecycle through pollProject", () => {
       expect(record?.phase).toBe("human-feedback");
       const firstPr = prs.get("agent/first");
       expect(firstPr).toBeDefined();
+      if (targetMerge) {
+        const published = record!.pullRequest!.headSha!;
+        firstPr!.reviewDecision = "APPROVED";
+        firstPr!.body += "\nHuman release instructions: retain this text.\n";
+        const upstream = path.join(root, "upstream");
+        await gitRun(root, "clone", remote, upstream);
+        await gitRun(upstream, "config", "user.name", "Human");
+        await gitRun(upstream, "config", "user.email", "human@example.test");
+        fs.writeFileSync(
+          path.join(upstream, "upstream.txt"),
+          "independent target work\n",
+        );
+        await gitRun(upstream, "add", ".");
+        await gitRun(upstream, "commit", "-m", "advance target");
+        await gitRun(upstream, "push", "origin", "main");
+        maintenanceBase = await git.getHeadSha(upstream);
+        await poll();
+        const maintained = store.read("first")!;
+        expect(maintained.pullRequest!.headSha).not.toBe(published);
+        expect(
+          await git.getCommitParentShas(path.join(worktrees, "first")),
+        ).toEqual([published, maintenanceBase]);
+        expect(firstPr!.body).toContain(
+          "Human release instructions: retain this text.",
+        );
+        expect(firstPr!.body).toContain("Current automation outcome");
+        expect(firstPr!.isDraft).toBe(true);
+        expect(lists.get("first")).toBe("review");
+        expect(lists.get("next")).toBe("ready");
+        expect(prs.size).toBe(1);
+        await poll();
+        expect(store.read("first")!.pullRequest!.headSha).toBe(
+          maintained.pullRequest!.headSha,
+        );
+        return;
+      }
       expect(firstPr?.isDraft).toBe(
         draft || ackLoss || quality !== "both" || preparedReview !== undefined,
       );

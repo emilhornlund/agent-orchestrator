@@ -66,6 +66,35 @@
   validation, unavailable review, interrupted review recovery and unknown-writer
   fencing. Typecheck and changed-code ESLint passed. T3–T5 remain; T4 owns final CI
   activity/description outcome reporting. No full validation claimed.
+- P8-T3 restores automatic target maintenance (explicit opt-out retained), including
+  approved open PRs. The queue preserves human/CI priority; after a merge, polling
+  reobserves before another writer. New `strategy: merge` records preserve pinned
+  published/target/local provenance, backup refs, expected merge trees and parents.
+  Legacy records remain fenced. Ordinary pushes reconcile exact accepted heads;
+  absent/changed remote refs never authorize resurrection/overwrite. Interrupted
+  publication binds its verified head before strict observation on restart.
+- Dirty unstaged setup/untracked output remains byte-identical and excluded from
+  merge commits. Unknown local-only commits and unrelated staged output are retained
+  rather than shipped. Conflict assistance uses the primary operation/session with
+  refreshed card/attachments, a persisted maximum, atomic reservation and durable
+  preservation baseline. No-op/exhaustion stops; unknown writers stay fenced.
+  Interrupted post-staging recovery rechecks non-conflict files/index before commit.
+- The complete maintenance writer also includes bounded advisory quality and safe
+  same-PR draft publication, with exact-source evidence and a human-text-preserving
+  current-outcome section. Missing advisory plans use current task purpose rather
+  than vetoing maintenance. This necessary production integration was moved from
+  T4 into T3; guide/roadmap and product guidance now describe that implementation.
+  T4 retains activity transitions, final CI outcome refresh and terminal integration.
+- T3 self-review covered the full new production writer, polling/recovery callers,
+  new body helper, schemas/store ownership and new tests. Corrected pseudoref lookup
+  (MERGE_HEAD/FETCH_HEAD are not ordinary refs), stale observation after publication,
+  conflict reservation atomicity, no-op conflict staging and post-staging unrelated
+  index absorption. Initial fixtures also needed the now-default comparison source
+  and non-recursive acknowledgement-loss spies. Final eight maintenance/legacy/
+  observation suites passed **75 tests**; earlier six config/maintenance suites
+  passed **182 tests**. The real `pollProject` approved-PR target-merge scenario
+  passed (30 unrelated scenarios filtered); typecheck and changed-code ESLint passed.
+  No known T3 defect remains; T4–T5 remain and full validation is not yet claimed.
 
 - **P7 implemented and locally validated on the current branch, based on `7fafed1` (integrated P6).**
   The starting index and working tree were clean. This session authorizes small

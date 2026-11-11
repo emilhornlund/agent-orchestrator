@@ -260,25 +260,28 @@ it; approval, passing CI, and local quality evidence do not complete the task. T
 
 ### `projects[].maintenance`
 
-Optional legacy per-project toggle for routine maintenance of outdated pull requests in `Human Review`:
+Optional per-project toggle for automatic maintenance of outdated pull requests in `Human Review`:
 
 ```yaml
 maintenance:
   enabled: true
 ```
 
-`enabled` defaults to `false`. Published-PR maintenance is temporarily deferred in this release, even when enabled. The legacy
-setting is retained for compatibility but does not enable a published rebase or push. Existing prepared maintenance and any
-associated worktree, backup refs, rewritten objects, pending push intent, and remote history must be preserved for operator
-reconciliation. Do not manually retry a legacy push or reset/discard its worktree.
-There is currently no orchestrator force-push or rebase support: this release disables published and pre-publication rebase, including
-prepared-conflict continuation. An ordinary no-sync-needed initial publication remains available; a non-fast-forward publication
-is safely deferred with its worktree and evidence preserved.
+Maintenance runs automatically when this block is omitted; `enabled` defaults to
+`true`. Explicit `false` disables new routine maintenance, not reconciliation of an
+already-started operation. Approved but still-open PRs remain eligible. Human work
+and CI repairs have priority over routine maintenance in the project queue.
 
-Additive target-branch merge and ordinary fast-forward-safe push for maintenance are
-not implemented or promised by this release. Existing unresolved prepared, failed, or push-intended operations block project
-writers until safely reconciled; they are not automatically retried, cancelled, or reported successful. Maintenance does not
-enable auto-merge or remove the `Human Review` step.
+Published branches incorporate target changes with additive merge commits and
+ordinary pushes. Existing published commit identities are retained. Conflict
+assistance reuses the primary task session and the bounded remediation maximum;
+validation and independent review remain advisory. Available safe updates publish
+to the same PR as draft with current diagnostics and pending CI disclosed.
+Dirty unstaged setup/untracked output is retained and excluded; staged unrelated
+output or unknown local-only commits block automatic inclusion without discarding
+anything. Legacy rebase/prepared-conflict records and uncertain pushes are not
+reinterpreted as merge permission. Preserve their refs, objects and worktrees for
+reconciliation. No rebase, force-push, reset or automatic PR merge is enabled.
 
 ### CI expectation discovery
 

@@ -172,7 +172,10 @@ import {
 } from "../task-session/terminal-pr-fence.js";
 import { prepareTerminalTaskSession } from "./prepare-terminal-task-session.js";
 import { PrMaintenanceStore } from "../task-session/pr-maintenance-store.js";
-import { maintainOutdatedPr } from "./maintain-outdated-pr.js";
+import {
+  maintainOutdatedPr,
+  reconcileInterruptedPrMaintenance,
+} from "./maintain-outdated-pr.js";
 import { reconcileUnobservedTerminalPrEvents } from "./reconcile-unobserved-terminal-pr.js";
 import { verifyMergedTaskPrHeadContinuity } from "./verify-merged-task-pr-head-continuity.js";
 import { TaskMutationBlockStore } from "./task-mutation-block-store.js";
@@ -1724,6 +1727,7 @@ export async function runTaskSessionWorkflow(
   const unresolvedLegacyMaintenance = maintenanceStore
     .inspect()
     .filter((operation) => {
+      if (operation.strategy === "merge") return false;
       if (!["completed", "cancelled"].includes(operation.status)) return true;
       if (operation.publication?.status === "push-intended") return true;
       const locallyPreparedHead = operation.localPreparation?.resultingHead;
@@ -1734,6 +1738,13 @@ export async function runTaskSessionWorkflow(
       );
     });
   const hasUnresolvedLegacyMaintenance = unresolvedLegacyMaintenance.length > 0;
+  await reconcileInterruptedPrMaintenance({
+    project,
+    taskStore,
+    maintenanceStore,
+    mutationQueue: queue,
+    github,
+  });
   const shouldPreserveTerminalMaintenanceArtifacts = (
     cardId: string,
   ): boolean =>
@@ -2327,7 +2338,7 @@ export async function runTaskSessionWorkflow(
       const ciEventId = `ci-repair:${card.id}:${observation.headSha}`;
       const maintenanceEventId = `pr-maintenance:${card.id}:${observation.headSha}`;
       const maintenanceNeeded =
-        project.maintenance?.enabled === true &&
+        project.maintenance?.enabled !== false &&
         ["behind", "diverged"].includes(observation.baseRelation);
       for (const queued of queue.list()) {
         if (queued.cardId !== card.id || queued.status !== "queued") continue;
@@ -3546,12 +3557,29 @@ export async function runTaskSessionWorkflow(
     );
     if (recovery === null || recovery.status !== "resume") return;
   }
-  if (project.maintenance?.enabled === true) {
+  if (
+    project.maintenance?.enabled !== false ||
+    maintenanceStore
+      .inspect()
+      .some(
+        (operation) =>
+          operation.strategy === "merge" &&
+          !["completed", "cancelled"].includes(operation.status),
+      )
+  ) {
     for (const observation of latestObservations) {
       if (
         observation.state !== "OPEN" ||
         (observation.baseRelation !== "behind" &&
-          observation.baseRelation !== "diverged")
+          observation.baseRelation !== "diverged" &&
+          !maintenanceStore
+            .inspect()
+            .some(
+              (operation) =>
+                operation.strategy === "merge" &&
+                operation.cardId === observation.cardId &&
+                !["completed", "cancelled"].includes(operation.status),
+            ))
       )
         continue;
       const task = taskStore.read(observation.cardId);
@@ -3566,12 +3594,20 @@ export async function runTaskSessionWorkflow(
           logger
             .child({ projectId: project.id, cardId: observation.cardId })
             .warn(
-              "PR maintenance skipped: approved task plan is missing from context storage; cannot verify original requirements safely",
+              "PR maintenance has no advisory plan; reviewing against the current task purpose instead",
             );
           reportedMissingMaintenancePlans.add(diagnosticKey);
         }
-        continue;
       }
+      const pendingHuman =
+        feedbackLedgerStore
+          .read(card.id)
+          ?.entries.some(
+            (entry) =>
+              entry.isCurrent !== false &&
+              entry.actionability === "actionable" &&
+              entry.status === "pending",
+          ) ?? false;
       const maintenanceResult = await maintainOutdatedPr({
         project,
         card,
@@ -3587,9 +3623,9 @@ export async function runTaskSessionWorkflow(
         eligible:
           observation.baseRelation === "behind" ||
           observation.baseRelation === "diverged",
-        hasRequestedChanges: observation.requestedChanges !== null,
-        hasUnresolvedFeedback: observation.feedbackIds.length > 0,
-        requirementIds: storedPlan.plan.requirements.map(
+        hasRequestedChanges: pendingHuman,
+        hasUnresolvedFeedback: pendingHuman,
+        requirementIds: (storedPlan?.plan.requirements ?? [{ id: "TASK" }]).map(
           (requirement) => requirement.id,
         ),
         review: async ({
@@ -3606,7 +3642,14 @@ export async function runTaskSessionWorkflow(
             project,
             card,
             worktreePath: path.join(project.repository.worktreeRoot, card.id),
-            approvedRequirements: storedPlan.plan.requirements,
+            approvedRequirements: storedPlan?.plan.requirements ?? [
+              {
+                id: "TASK",
+                text: `${card.name}\n${card.desc}`,
+                verification:
+                  "Inspect the actual task implementation and available quality evidence",
+              },
+            ],
             changedFiles: await git.getChangedFiles(
               path.join(project.repository.worktreeRoot, card.id),
               baseHead,
@@ -3620,7 +3663,8 @@ export async function runTaskSessionWorkflow(
           }),
         remediateConflict: async ({
           conflictedPaths,
-          rebase,
+          merge,
+          operationId: conflictOperationId,
           attempt,
           signal: remediationSignal,
         }) => {
@@ -3628,29 +3672,54 @@ export async function runTaskSessionWorkflow(
             throw new Error(
               "PR maintenance conflict remediation requires the primary task session",
             );
-          const result = await openCode.run({
-            cwd: path.join(project.repository.worktreeRoot, card.id),
-            model: project.opencode.remediation.model,
-            variant: project.opencode.remediation.variant,
-            timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
-            signal: remediationSignal,
-            sessionId: task.primarySessionId,
-            sessionLogPath: getSessionLogPath(project.id, card.id),
-            sessionLabel: `PR maintenance conflict remediation pass ${attempt}`,
-            prompt: [
-              "Resolve only the active conflicts in this existing published task branch rebase.",
-              `Task: ${card.name}`,
-              `Task description: ${card.desc.trim() || "(No task description was provided.)"}`,
-              `Task branch: agent/${card.id}`,
-              `Rebase target commit: ${rebase.onto}`,
-              `Original task head: ${rebase.originalHead}`,
-              `Rebase progress: ${rebase.currentStep ?? "unknown"} of ${rebase.totalSteps ?? "unknown"}`,
-              `Attempt: ${attempt} of ${project.opencode.remediation.maxPasses}`,
-              `Exact currently conflicted paths:\n${conflictedPaths.map((file) => `- ${file}`).join("\n")}`,
-              "Preserve both the task's intended changes and compatible changes from upstream; never discard either side automatically. Inspect current repository and Git state, resolve and stage only the active conflicts, then continue the rebase. Re-inspect paths at each subsequent rebase stop and continue until complete.",
-              "Run the configured validation command if applicable. Do not push, create or modify pull requests, or perform unrelated work.",
-            ].join("\n\n"),
-          });
+          const currentCard = await trello.getCard(card.id);
+          const attachmentContext =
+            await options.prepareAttachmentContext(currentCard);
+          const result = await runWithPrimaryTaskSession(
+            taskStore,
+            openCode,
+            project.id,
+            card.id,
+            {
+              cwd: path.join(project.repository.worktreeRoot, card.id),
+              model: project.opencode.remediation.model,
+              variant: project.opencode.remediation.variant,
+              timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
+              signal: remediationSignal,
+              sessionLogPath: getSessionLogPath(project.id, card.id),
+              sessionLabel: `PR maintenance conflict remediation pass ${attempt}`,
+              prompt: [
+                "Resolve only the active conflicts in this additive target merge on the existing published task branch.",
+                `Task: ${currentCard.name}`,
+                `Task description: ${currentCard.desc.trim() || "(No task description was provided.)"}`,
+                ...buildCardAttachmentPromptLines(attachmentContext),
+                `Task branch: agent/${card.id}`,
+                `Merge target commit: ${merge.targetHead}`,
+                `Original task head: ${merge.originalHead}`,
+                `Attempt: ${attempt} of ${project.opencode.remediation.maxPasses}`,
+                `Exact currently conflicted paths:\n${conflictedPaths.map((file) => `- ${file}`).join("\n")}`,
+                "Preserve both the task's intended changes and compatible changes from upstream. Edit only the exact conflicted paths; never discard either side automatically. Do not run Git commands, stage, commit or complete the merge. The orchestrator owns staging, merge completion, validation and publication.",
+                "Do not push, create or modify pull requests, or perform unrelated work.",
+              ].join("\n\n"),
+            },
+            {
+              inspect: inspectSessionForWorktree(
+                path.join(project.repository.worktreeRoot, card.id),
+              ),
+            },
+            {
+              role: "primary",
+              operationId: conflictOperationId,
+              activity: "merge-conflict-correction",
+              inspectPending: (entry) =>
+                inspectPrimaryOperationEvidence(taskStore, card.id, entry.id, {
+                  trustedRoot:
+                    ProjectRunAuthority.current(project.id)?.store
+                      .storageRoot ?? getProcessRuntime().artifactRoot,
+                  cwd: path.join(project.repository.worktreeRoot, card.id),
+                }),
+            },
+          );
           if (result.exitCode !== 0)
             throw new Error(
               `PR maintenance conflict remediation exited with code ${result.exitCode}`,
@@ -3670,7 +3739,7 @@ export async function runTaskSessionWorkflow(
         // Avoid repeatedly dispatching routine maintenance this poll. Do not
         // claim the unresolved legacy-operation block: ordinary maintenance
         // deferral alone does not block unrelated safe writers.
-      }
+      } else return; // Reobserve the published head or retained merge before any later writer.
     }
   }
   let feedbackNeedsAttention = false;

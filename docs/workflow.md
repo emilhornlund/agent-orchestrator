@@ -352,12 +352,20 @@ CI repair operation containing all failed checks; a published new head invalidat
 merging is prohibited. An unknown expected-check set, missing check, stale head,
 or incomplete GitHub response never counts as green.
 
-This release disables rebase and conflict continuation across initial publication, published maintenance, and prepared-conflict recovery.
-Existing handoffs and maintenance records remain diagnostic artifacts; their presence or apparent local completion does not
+Open PRs, including approved PRs, automatically receive queued additive target
+merges when needed. Published commits are never rewritten. Conflict assistance
+uses the original primary session and current attachments; its operation identity
+and maximum survive restart. Validation and independent review are advisory, and
+safe available changes publish to the same draft PR with current diagnostics and
+pending CI disclosed. Dirty excluded output and unshipped commits are preserved;
+unrelated staged output or unknown local-only commits are not automatically shipped.
+
+Rebase and legacy prepared-conflict continuation remain disabled.
+Existing legacy handoffs and maintenance records remain diagnostic artifacts; their presence or apparent local completion does not
 authorize continuation. The task branch, PR, local commits, remote refs/objects, dirty or unshipped work, intent, and handoff are
 preserved. The worker may continue read-only PR observation and verified terminal reconciliation, but it does not run branch
 writers or start a new task for an affected card. Operator guidance is in [Recovery](recovery.md).
-There is no automatic retry, rebase, force-push, reset, abort, or silent success.
+There is no automatic replay of legacy intents, rebase, force-push, reset, abort, or silent success.
 
 Trello and GitHub operations used by discovery, reconciliation, transition-history checks, card moves, content and label
 updates, comments, and attachment context are retryable when the service returns HTTP 500, 502, 503, or 504, a rate limit, a

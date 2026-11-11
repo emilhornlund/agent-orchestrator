@@ -94,7 +94,7 @@ export async function observeActivePullRequest(options: {
         }
       : null;
   const baseRelation =
-    current !== null && project.maintenance?.enabled === true
+    current !== null && project.maintenance?.enabled !== false
       ? await github
           .comparePullRequestHeadToBase({
             ...lookup,

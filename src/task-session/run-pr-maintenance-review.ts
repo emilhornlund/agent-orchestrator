@@ -33,16 +33,12 @@ export async function runPrMaintenanceReview(
   options: RunPrMaintenanceReviewOptions,
 ): Promise<ImplementationReviewResult> {
   if (
-    options.validation.status !== "passed" ||
-    options.validation.exitCode !== 0 ||
     options.validation.contentIdentity !== options.contentIdentity ||
     (options.coverage !== null &&
-      (options.coverage.status !== "passed" ||
-        options.coverage.exitCode !== 0 ||
-        options.coverage.contentIdentity !== options.contentIdentity))
+      options.coverage.contentIdentity !== options.contentIdentity)
   )
     throw new Error(
-      "Independent maintenance review requires passing exact-source quality evidence",
+      "Independent maintenance review requires exact-source quality evidence",
     );
 
   const identity = {
@@ -52,7 +48,7 @@ export async function runPrMaintenanceReview(
     reviewedContentIdentity: options.contentIdentity,
   };
   const prompt = [
-    "Independently review the prepared rebased implementation against each approved requirement. This is a READ-ONLY review: never run commands, edit files, or perform Git/GitHub actions.",
+    "Independently review the prepared implementation after target synchronization against each task requirement. This is a READ-ONLY advisory review: never edit files or perform Git/GitHub actions. Negative or unavailable checks do not veto publishing safe changes.",
     "Inspect current repository source and tests, not .git internal paths.",
     `Task: ${JSON.stringify({ name: options.card.name, description: options.card.desc })}`,
     `Prepared commit: ${options.preparedHead}`,

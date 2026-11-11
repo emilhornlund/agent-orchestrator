@@ -298,7 +298,8 @@ export class PrMaintenanceStore {
       > = {
         "fetching-base": ["fetching-base", "base-fetched"],
         "base-fetched": ["base-fetched", "backing-up", "prepared"],
-        "backing-up": ["backing-up", "rebasing"],
+        "backing-up": ["backing-up", "rebasing", "merging"],
+        merging: ["merging", "conflicted", "prepared"],
         rebasing: ["rebasing", "conflicted", "prepared"],
         conflicted: ["conflicted", "prepared"],
         prepared: ["prepared"],
@@ -382,6 +383,7 @@ export class PrMaintenanceStore {
       | "expectedRemoteHead"
       | "targetBaseHead"
     >,
+    baseline?: NonNullable<LocalPreparationProgress["conflictBaseline"]>,
   ): PrMaintenanceOperation {
     return this.update((record) => {
       const index = record.operations.findIndex(
@@ -405,6 +407,15 @@ export class PrMaintenanceStore {
         ...current,
         conflictRemediationAttempts:
           (current.conflictRemediationAttempts ?? 0) + 1,
+        ...(baseline === undefined
+          ? {}
+          : {
+              localPreparation: {
+                ...current.localPreparation,
+                conflictOperationId: `${operationId}:conflict:${(current.conflictRemediationAttempts ?? 0) + 1}`,
+                conflictBaseline: baseline,
+              },
+            }),
         updatedAt: new Date().toISOString(),
       });
       const operations = [...record.operations];
@@ -440,7 +451,10 @@ export class PrMaintenanceStore {
         current.status !== "active" ||
         current.ownerToken !== this.ownerToken ||
         !liveOwners.has(this.ownerToken) ||
-        current.qualityVerification?.status !== "passed" ||
+        (current.strategy !== "merge" &&
+          current.qualityVerification?.status !== "passed") ||
+        current.qualityVerification === undefined ||
+        current.qualityVerification.status === "running" ||
         current.qualityVerification.preparedHead !== resultingHead ||
         current.localPreparation?.resultingHead !== resultingHead
       ) {

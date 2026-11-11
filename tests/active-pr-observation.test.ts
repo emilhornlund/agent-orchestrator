@@ -118,6 +118,7 @@ function fixture() {
   });
   let body = "first request";
   const github = {
+    comparePullRequestHeadToBase: vi.fn(async () => "current" as const),
     findPullRequestState: vi.fn(async () => pr),
     findChangesRequestedPullRequest: vi.fn(async () => null),
     getPullRequestConversationComments: vi.fn(async () => [

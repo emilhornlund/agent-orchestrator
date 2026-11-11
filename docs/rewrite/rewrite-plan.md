@@ -236,6 +236,11 @@ automatic target synchronization using additive merge plus ordinary push, includ
 conflict assistance, while preserving published objects, setup exclusions, unshipped
 work and terminal precedence. Do not resurrect legacy rebase/leased-push paths.
 See the [P8 guide](p8-execution.md).
+New maintenance operations explicitly identify additive merge provenance; legacy
+records without it remain fenced. Default automatic discovery retains the
+per-project opt-out. Safe merge publication includes advisory quality and truthful
+draft/outcome reporting in the same behavior, rather than enabling an incomplete
+writer before its quality/publication integration exists.
 
 ### P9 — Recoverable, read-only refinement
 

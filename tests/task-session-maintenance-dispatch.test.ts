@@ -314,6 +314,12 @@ async function pollReview(
 }
 
 describe("opt-in maintenance in the production Human Review polling path", () => {
+  it("reobserves after maintenance rather than consuming feedback against its stale pre-merge head", async () => {
+    vi.mocked(maintainOutdatedPr).mockResolvedValueOnce("completed");
+    await pollReview("behind", { enabled: true });
+    expect(maintainOutdatedPr).toHaveBeenCalledOnce();
+    expect(runTaskSessionFeedbackCycle).not.toHaveBeenCalled();
+  });
   it.each(["waiting", "uncertain"] as const)(
     "ends expired %s CI observation in Human Review without claiming success or repairing",
     async (status) => {
@@ -451,14 +457,17 @@ describe("opt-in maintenance in the production Human Review polling path", () =>
     },
   );
 
-  it("does not dispatch when maintenance is omitted", async () => {
+  it("automatically dispatches when maintenance is omitted", async () => {
     await pollReview("diverged");
-    expect(maintainOutdatedPr).not.toHaveBeenCalled();
+    expect(maintainOutdatedPr).toHaveBeenCalledOnce();
   });
 
-  it("does not schedule maintenance when the approved plan is missing", async () => {
+  it("reviews against task purpose when an advisory plan is missing", async () => {
     await pollReview("diverged", { enabled: true }, false);
-    expect(maintainOutdatedPr).not.toHaveBeenCalled();
+    expect(maintainOutdatedPr).toHaveBeenCalledOnce();
+    expect(
+      vi.mocked(maintainOutdatedPr).mock.calls[0]?.[0].requirementIds,
+    ).toEqual(["TASK"]);
   });
 
   it("safely defers maintenance without treating it as publication", async () => {

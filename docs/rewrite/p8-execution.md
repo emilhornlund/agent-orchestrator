@@ -33,6 +33,12 @@ contracts. P9 refinement and P10 terminal cleanup/retry are outside this scope.
 
 ## Starting points and checks
 
+Maintenance runs by default (explicit opt-out remains supported). New operations
+carry `strategy: merge`; absent strategy retains the legacy rewrite fence. The
+complete merge task includes advisory quality and draft/outcome publication so it
+cannot temporarily activate a quality-gated or falsely ready production writer.
+Activity reporting and final CI outcome refresh follow as a separate behavior.
+
 Inspect task-session CI-repair modules, `pr-maintenance-operation.ts`,
 `pr-maintenance-store.ts`, `verify-prepared-pr-maintenance.ts`, workflow dispatch,
 Git client and managed status/body consumers. Inventory existing active record
