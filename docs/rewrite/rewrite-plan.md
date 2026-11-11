@@ -224,6 +224,9 @@ automation and unchanged exhausted requests cannot monopolize the queue.
 Correct on the same PR/session, with truthful partial replies and current
 managed status. Human merge/closure fences stale work and reconciles dispatched
 effects; final cleanup/retry belongs to P10. See the [P7 guide](p7-execution.md).
+This contribution is implemented and locally validated; [current progress](phase-status.md)
+records its integrated checks. P8 execution and P10 cleanup/retry expansion have not
+been pulled into this phase.
 
 ### P8 — Durable CI episodes and additive maintenance
 

@@ -1,6 +1,9 @@
 # P7 — observation, scheduling and human feedback
 
 Temporary implementation guide. Follow [delivery workflow](phase-execution.md).
+P7 is implemented and locally validated; [current progress](phase-status.md) records
+the task checkpoints and integrated checks. The contracts below remain scoped guidance,
+not instructions to restart completed tasks or begin P8 automatically.
 Prepare small ordered tasks covering the scope, implement/review them sequentially,
 then check combined integration. Read REQ-HR-001–006, REQ-SCH-002–004, REQ-TR-004,
 REQ-WF-003, REQ-PR-003/007/008, and this workflow's contributions to REQ-REC-002,

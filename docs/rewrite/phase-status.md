@@ -2,7 +2,7 @@
 
 ## Current checkpoint
 
-- **P7 in progress on the current branch, based on `7fafed1` (integrated P6).**
+- **P7 implemented and locally validated on the current branch, based on `7fafed1` (integrated P6).**
   The starting index and working tree were clean. This session authorizes small
   local P7 task/correction commits only; no push, PR, branch change or P8 work.
 - P7-T1 implements current eligible Ready ordering rather than historical queue
@@ -172,7 +172,21 @@
   artifact preservation, new files and real-process regressions. Corrected scoped
   in-memory identities and preserved uncertainty across late initial Trello effects.
   No known T7 defect remains; full integrated validation is not yet claimed.
-- Remaining P7: combined criteria/integration checks and final `yarn validate` (T8).
+- T7 checkpoint: `3a04855`. T8 combined integration inspection reused the completed
+  task reviews and checked all P7 criteria: current Ready eligibility/order; durable
+  arrivals and serialized prioritized dispatch; current semantic feedback/history;
+  original-session additive correction with refreshed attachments; truthful partial
+  replies/draft/activity; fair optional AI capacity; expected-list/manual-move recovery;
+  and human terminal precedence with pending-effect/unknown-writer preservation.
+  Existing production regressions cover these paths. P8 CI episode/maintenance
+  execution and P10 fresh-attempt/cleanup expansion remain out of scope. Product
+  guidance's stale separate-session/approval-gate and missing-PR outcome claims were
+  corrected to match the integrated behavior. No new implementation gap was found.
+- T8 integrated `yarn validate` passed ESLint, full Prettier checking, TypeScript
+  and **2,142 tests across 166 files**. All P7 contributions are implemented with no
+  known unresolved scoped defect. The final documentation/results checkpoint is
+  revalidated before commit. No live Trello/GitHub/OpenCode qualification is claimed.
+  No P7 implementation work remains; stop before P8.
 
 ## Inherited P6 checkpoint
 
@@ -256,7 +270,7 @@ requirements/specification sections and meaningful regression tests:
   passed all 70 tests; typecheck, changed-file ESLint and Prettier passed. The
   corrected integrated tree then passed full `yarn validate` as recorded above.
 
-No P6 implementation work remains. P7 is in progress; P8–P10 have not started. P11 covers
+No P6/P7 implementation work remains. P8–P10 have not started. P11 covers
 remaining integration/regression gaps, with broader qualification only if requested.
 
 ## Known carryovers

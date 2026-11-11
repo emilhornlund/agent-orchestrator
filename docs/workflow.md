@@ -171,25 +171,23 @@ handling to `Failed`. Its deliberate retry action is to move it to `Ready for Ag
 
 An implementation card is claimed only from `Ready for Agent`. The project mutation queue serializes implementation, refinement,
 CI repair, and feedback remediation; an owned worktree and a persisted primary session are tied to the task record. The coordinator
-runs optional `setupCommand`, reconciles current Trello attachment context, creates a structured plan, and requires independent
-plan verification before code changes begin.
+runs optional `setupCommand`, reconciles current Trello attachment context, and attempts structured planning and independent
+plan review as bounded advice before implementation.
 
-The primary session implements the approved plan. The orchestrator—not the agent—runs any
+The primary session implements the task using the available plan and advisory feedback. The orchestrator—not the agent—runs any
 configured `validationCommand` and `coverageCommand`, binding each result to the exact
 source content. These commands are independently optional: an absent command is recorded
 as skipped, never passed. An independent reviewer uses a separate session to assess the
 plan's requirements. Validation, coverage, and review repairs are bounded; after the last
 correction the relevant configured checks run again.
 
-A passing final review with current passing validation and coverage permits normal
-initial publication; skipped checks are disclosed on a draft PR. If implementation
-review still fails after the configured remediation limit, passing or skipped command
-outcomes can still permit draft publication to Human Review. Failed findings remain
-disclosed; this review-exhaustion outcome is not a workflow error and sends no Attention
-Required notification. Neither review nor CI evidence authorizes automatic merging.
-Some legacy routes still block on failed configured checks, missing required evidence,
-stale snapshots, or ambiguous publication. Those quality-gate limitations differ from
-the intended advisory policy in the [requirements](requirements.md).
+Current passing checks and no known material unresolved issues permit normal
+publication; failed, skipped or uncertain checks and material outstanding findings
+are disclosed on a draft PR. Bounded advisory validation and review can improve the
+result but cannot veto safe publication of meaningful work. Exhausted quality advice
+is not a primary-process crash. Missing safety evidence, stale source snapshots or
+ambiguous external acceptance still require reconciliation, not an assumed success.
+Neither review nor CI evidence authorizes automatic merging.
 
 The orchestrator then creates one trusted commit with the configured Git identity and publishes or reuses the same task PR through
 fetch and ordinary fast-forward-safe push. This release disables automatic rebasing and prepared-conflict continuation,
@@ -211,9 +209,10 @@ neither claims success. Generated values are rendered as single-line content so 
 markers. The rendered result is passed to pull-request creation. An existing open pull request is reused without rewriting its
 description.
 
-Implementation, each review, each remediation pass, commit, and description generation use separate OpenCode sessions. Each session can be found in
-the card's session log while it is retained. The pass counter is transient to this automated workflow execution; it is not
-inferred from or persisted to Trello card data.
+Implementation and later primary corrections retain the task's primary OpenCode session.
+Independent planning and implementation reviews use separate sessions. Sessions are
+traceable in retained task logs; operation budgets and recovery identities are durable
+runtime state, not counters inferred from or written into Trello card content.
 
 ## Publication
 
@@ -267,13 +266,13 @@ Unshipped commits, dirty worktrees and ambiguous artifact ownership are preserve
 than cleaned up. Interrupted primary work is recorded as cancelled, not as a fabricated
 implementation crash or a successfully published correction.
 
-| GitHub state                                                 | Trello result                                                     |
-| ------------------------------------------------------------ | ----------------------------------------------------------------- |
-| Pull request merged                                          | Move the card to `Done` and mark it complete                      |
-| Pull request closed without merge                            | Move the card to `Backlog` and add the closed-PR comment          |
-| Open pull request with changes requested on its current head | Move the card to `Working` and pass the feedback to OpenCode      |
-| Open pull request without actionable requested changes       | Leave the card in `Human Review` and observe complete CI evidence |
-| No expected pull request                                     | Reconcile the card to `Backlog`                                   |
+| GitHub state                                                 | Trello result                                                      |
+| ------------------------------------------------------------ | ------------------------------------------------------------------ |
+| Pull request merged                                          | Move the card to `Done` and mark it complete                       |
+| Pull request closed without merge                            | Move the card to `Backlog` and add the closed-PR comment           |
+| Open pull request with changes requested on its current head | Move the card to `Working` and pass the feedback to OpenCode       |
+| Open pull request without actionable requested changes       | Leave the card in `Human Review` and observe complete CI evidence  |
+| Expected pull request unavailable or identity uncertain      | Preserve ownership and reconcile; do not assume a terminal outcome |
 
 After an owned pull request reaches either terminal state, reconciliation attempts to remove only the dedicated
 `<worktreeRoot>/<trello-card-id>` worktree and its local `agent/<trello-card-id>` branch. For a merged pull request this
