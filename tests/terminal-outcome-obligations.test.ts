@@ -3,9 +3,37 @@ import type { ProjectConfig } from "../src/config/config.js";
 import type { GitClient } from "../src/git/git-client.js";
 import type { PullRequestState } from "../src/github/github-client.js";
 import type { TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
-import { returnClosedTaskSessionPullRequestToBacklog } from "../src/orchestrator/reconcile-terminal-task-session-pr.js";
+import {
+  returnClosedTaskSessionPullRequestToBacklog,
+  completeMergedTaskSessionPullRequest,
+} from "../src/orchestrator/reconcile-terminal-task-session-pr.js";
 
 describe("closed PR terminal obligations", () => {
+  it("does not delete a remote branch changed after the human merge", async () => {
+    const git = {
+      getRemoteBranchSha: vi.fn().mockResolvedValue("b".repeat(40)),
+      deleteRemoteBranch: vi.fn(),
+    };
+    await expect(
+      completeMergedTaskSessionPullRequest({
+        project: {
+          id: "project",
+          repository: { path: "/repo", worktreeRoot: "/worktrees" },
+        } as ProjectConfig,
+        git: git as unknown as GitClient,
+        trello: {} as TrelloClient,
+        card: { id: "card" } as TrelloCard,
+        pullRequest: {
+          state: "MERGED",
+          mergedAt: "now",
+          headRefOid: "a".repeat(40),
+          url: "https://github.com/owner/repo/pull/1",
+        } as PullRequestState,
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("differs from the verified PR head");
+    expect(git.deleteRemoteBranch).not.toHaveBeenCalled();
+  });
   it.each(["review", "backlog"])(
     "retains the terminal obligation when its required comment fails in %s",
     async (idList) => {

@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
-import path from "node:path";
+import { runTaskResources } from "./task-resources.js";
 import { sanitizeControlledText } from "../security/redact-secrets.js";
 import { ProjectRunAuthority } from "./project-run-authority.js";
 import type { MutationEvent, MutationIntent } from "./durable-mutation.js";
@@ -87,7 +87,7 @@ export async function withJournaledDispatch<T>(
     expected = payload as WorkflowMutationRequest;
   else {
     const value = payload as Record<string, unknown>;
-    const cwd = path.join(run.pinned.worktreeRoot, run.cardId);
+    const cwd = runTaskResources(run).path;
     switch (entry.mutation.intent.kind) {
       case "trello-move":
         expected = {
@@ -124,7 +124,7 @@ export async function withJournaledDispatch<T>(
           route: "git-commit",
           args: {
             cwd,
-            branch: `agent/${run.cardId}`,
+            branch: runTaskResources(run).branch,
             parent: value.parent,
             tree: value.tree,
             message: value.message,
@@ -193,7 +193,7 @@ export async function withJournaledDispatch<T>(
     if (args.repository !== run.pinned.repository)
       throw new Error("Dispatch repository differs from attempt");
     if (expected.route === "github-pr-create") {
-      if (!initial || args.headBranch !== `agent/${run.cardId}`)
+      if (!initial || args.headBranch !== runTaskResources(run).branch)
         throw new Error("PR creation requires its original publication intent");
       target = run.pinned.repository;
     } else {
@@ -208,8 +208,7 @@ export async function withJournaledDispatch<T>(
       target = `${String(args.pullRequestUrl)}${expected.route === "github-thread-reply" ? `:${String(args.threadId)}` : ""}`;
     }
   } else {
-    const branch = `agent/${run.cardId}`;
-    const cwd = path.join(run.pinned.worktreeRoot, run.cardId);
+    const { branch, path: cwd } = runTaskResources(run);
     if (expected.route === "git-cleanup") {
       if (
         args.cwd !== run.pinned.repositoryPath ||

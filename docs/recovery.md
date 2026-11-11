@@ -173,6 +173,16 @@ that automatic continuation is safe.
 
 ## Deliberate retry and operator actions
 
+For a reconciled failed task, move the card to `Ready for Agent` to request a fresh attempt. No internal-file edits are needed.
+The new attempt uses the latest fetched default branch, current card and attachments, and fresh session/progress state.
+Earlier unfinished code, worktrees, execution records and logs remain isolated under their old attempt identities; they are
+not automatically incorporated. A deliberately requeued closed PR follows the same rule: rejected code is historical context,
+not accepted implementation. Cards left in `Failed` do not automatically retry.
+
+Read resource paths from the attempt record when inspecting newer attempts. Card-only path examples below describe older
+attempts; subsequent attempts use `<card-id>--<attempt-id>` in the worktree and branch names. Keep the original resource
+identities when recovering an existing attempt rather than guessing or renaming them.
+
 Automated failures move a card to `Failed` only after that Trello transition succeeds. Failure comments provide the category,
 reason, and deliberate retry instruction. Move a card from `Failed` to `Ready for Agent` only when intentionally requesting a
 new pass. Normal polling never retries `Failed` cards automatically.

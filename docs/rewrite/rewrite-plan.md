@@ -268,6 +268,9 @@ closure retains accessible implementation. Explicit requeue creates distinct cle
 resources from current default/card/context, never implicitly inherits rejected code.
 Archive/release/new-attempt handoff must recover across interruption. See the
 [P10 guide](p10-execution.md).
+Retain terminal attempt records in place as history rather than moving
+authority into a second archive. Subsequent attempts own distinct suffixed resource
+names; supported older active attempts retain their original persisted identities.
 
 ### P11 — Final integration, supported migration and removal of scaffolding
 

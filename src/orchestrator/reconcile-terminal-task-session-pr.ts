@@ -1,4 +1,5 @@
-import path from "node:path";
+import { taskResources } from "../task-session/task-resources.js";
+import { assertTerminalArtifactIsolation } from "../git/terminal-artifact-isolation.js";
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 import { throwIfWorkflowMutationPending } from "../task-session/workflow-mutation.js";
 import { closedPrComment } from "../task-session/terminal-pr-fence.js";
@@ -75,8 +76,7 @@ async function cleanupTerminalWorktree(
   preservedHeadSha: string,
 ): Promise<void> {
   if (signal.aborted) return;
-  const worktreePath = path.join(project.repository.worktreeRoot, card.id);
-  const branch = `agent/${card.id}`;
+  const { path: worktreePath, branch } = taskResources(project, card.id);
   try {
     await cleanupWorktree({
       git,
@@ -95,7 +95,11 @@ async function cleanupTerminalWorktree(
     cardLog.warn(
       `Terminal task cleanup was not completed for ${worktreePath} and ${branch}: ${message(error)}`,
     );
-    throw error;
+    // A dispatched cleanup still needs its journal outcome reconciled. Otherwise
+    // preserve known resources; future attempts use distinct names, not this path.
+    if (!ProjectRunAuthority.current(project.id)) throw error;
+    throwIfWorkflowMutationPending(project.id);
+    await assertTerminalArtifactIsolation(project, git);
   }
 }
 
@@ -117,7 +121,7 @@ export async function completeMergedTaskSessionPullRequest(options: {
   if (signal.aborted) return;
   if (pullRequest.state !== "MERGED" || pullRequest.mergedAt === null)
     throw new Error("Completion requires a verified merged pull request");
-  const branch = `agent/${card.id}`;
+  const branch = taskResources(project, card.id).branch;
   await clearTerminalActivity(
     options.github,
     project,
@@ -125,20 +129,25 @@ export async function completeMergedTaskSessionPullRequest(options: {
     cardLog,
   );
   if (!options.preserveWorktree) {
-    const remoteBranchExists = await git.remoteBranchExists(
+    const remoteHead = await git.getRemoteBranchSha(
       project.repository.path,
       "origin",
       branch,
       project,
     );
     if (signal.aborted) return;
-    if (remoteBranchExists) {
+    if (remoteHead !== null) {
+      if (remoteHead !== pullRequest.headRefOid)
+        throw new Error(
+          "Terminal remote branch differs from the verified PR head; preserving it",
+        );
       try {
         await git.deleteRemoteBranch(
           project.repository.path,
           "origin",
           branch,
           project,
+          remoteHead,
         );
       } catch (error) {
         if (!isMissingBranchDeletionError(error)) throw error;
@@ -291,16 +300,27 @@ export async function returnClosedTaskSessionPullRequestToBacklog(options: {
     // equals the terminal head. An unavailable API is not preservation proof.
     if (!options.github || !pullRequest.headRefOid)
       throw new Error("Closed PR history is unavailable; preserving artifacts");
-    const commits = await options.github.getPullRequestCommitShas({
-      cwd: project.repository.path,
-      repository: project.repository.github,
-      pullRequestNumber: Number(
-        new URL(pullRequest.url).pathname.split("/").at(-1),
-      ),
-      project,
-    });
-    if (commits.at(-1) !== pullRequest.headRefOid)
-      throw new Error("Closed PR history does not preserve the implementation");
+    let commits: string[];
+    try {
+      commits = await options.github.getPullRequestCommitShas({
+        cwd: project.repository.path,
+        repository: project.repository.github,
+        pullRequestNumber: Number(
+          new URL(pullRequest.url).pathname.split("/").at(-1),
+        ),
+        project,
+      });
+      if (commits.at(-1) !== pullRequest.headRefOid)
+        throw new Error(
+          "Closed PR history does not preserve the implementation",
+        );
+    } catch {
+      await assertTerminalArtifactIsolation(project, git);
+      cardLog.warn(
+        "Closed PR history is unavailable; isolated local implementation remains preserved",
+      );
+      return;
+    }
     await cleanupTerminalWorktree(
       git,
       project,

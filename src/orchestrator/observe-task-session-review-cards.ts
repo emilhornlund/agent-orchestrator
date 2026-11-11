@@ -1,4 +1,5 @@
 import type { ProjectConfig } from "../config/config.js";
+import { taskResources } from "../task-session/task-resources.js";
 import type {
   ChangesRequestedPullRequest,
   GitHubClient,
@@ -78,7 +79,7 @@ async function terminalObservation(
     pr.url !== record.pullRequest.url ||
     !pr.headRefOid ||
     pr.baseRefName !== project.repository.defaultBranch ||
-    pr.headRefName !== `agent/${record.cardId}` ||
+    pr.headRefName !== taskResources(options.project, record.cardId).branch ||
     pr.headRepository?.name.toLowerCase() !== repository?.toLowerCase() ||
     pr.headRepositoryOwner?.login.toLowerCase() !== owner?.toLowerCase() ||
     (pr.state === "MERGED") !== (pr.mergedAt !== null)
@@ -152,7 +153,7 @@ export async function observeTaskSessionReviewCards(
     if (
       record.projectId !== project.id ||
       record.cardId !== card.id ||
-      record.expectedBranch !== `agent/${card.id}` ||
+      record.expectedBranch !== taskResources(project, card.id).branch ||
       record.pullRequest === undefined
     ) {
       throw new Error(
@@ -168,7 +169,7 @@ export async function observeTaskSessionReviewCards(
     const lookup = {
       cwd: options.cwd ?? project.repository.path,
       repository: project.repository.github,
-      headBranch: `agent/${card.id}`,
+      headBranch: taskResources(project, card.id).branch,
       baseBranch: project.repository.defaultBranch,
       project,
     };
@@ -208,7 +209,7 @@ export async function observeTaskSessionReviewCards(
     if (
       hasVerifiedOpenIdentity &&
       (pullRequest.baseRefName !== project.repository.defaultBranch ||
-        pullRequest.headRefName !== `agent/${card.id}` ||
+        pullRequest.headRefName !== taskResources(project, card.id).branch ||
         pullRequest.headRepository?.name.toLowerCase() !==
           repository?.toLowerCase() ||
         pullRequest.headRepositoryOwner?.login.toLowerCase() !==

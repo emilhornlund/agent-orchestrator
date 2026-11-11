@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { taskResources } from "../task-session/task-resources.js";
 import path from "node:path";
 
 import type { ProjectConfig } from "../config/config.js";
@@ -7,7 +8,7 @@ import type { GitClient } from "./git-client.js";
 import type { PreparedWorktree } from "./prepare-worktree.js";
 
 function getReviewWorktreePath(project: ProjectConfig, cardId: string): string {
-  const worktreePath = path.join(project.repository.worktreeRoot, cardId);
+  const worktreePath = taskResources(project, cardId).path;
   const resolvedWorktreeRoot = path.resolve(project.repository.worktreeRoot);
   const resolvedWorktreePath = path.resolve(worktreePath);
 
@@ -29,9 +30,9 @@ export async function prepareReviewWorktree(
   const repositoryPath = project.repository.path;
   const worktreeRoot = project.repository.worktreeRoot;
 
-  const branch = `agent/${cardId}`;
+  const branch = taskResources(project, cardId).branch;
   const remoteBranch = `origin/${branch}`;
-  const worktreePath = path.join(worktreeRoot, cardId);
+  const worktreePath = taskResources(project, cardId).path;
   const resolvedWorktreeRoot = path.resolve(worktreeRoot);
   const resolvedWorktreePath = path.resolve(worktreePath);
 
@@ -127,7 +128,7 @@ export async function prepareReviewMaintenanceWorktree(
 ): Promise<PreparedWorktree & { created: boolean }> {
   const repositoryPath = project.repository.path;
   const worktreeRoot = project.repository.worktreeRoot;
-  const branch = `agent/${cardId}`;
+  const branch = taskResources(project, cardId).branch;
   const remoteBranch = `origin/${branch}`;
   const worktreePath = getReviewWorktreePath(project, cardId);
 

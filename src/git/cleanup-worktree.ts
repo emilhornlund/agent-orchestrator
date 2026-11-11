@@ -6,6 +6,7 @@ import { readPreparedConflict } from "../orchestrator/prepared-conflict-state.js
 
 import type { GitClient } from "./git-client.js";
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
+import { assertTaskResourceProvenance } from "../task-session/task-resources.js";
 
 export interface CleanupWorktreeOptions {
   git: GitClient;
@@ -100,6 +101,7 @@ export async function cleanupWorktree({
   const worktreeStat = fs.lstatSync(worktreePath, { throwIfNoEntry: false });
 
   if (worktreeStat !== undefined) {
+    if (authority) assertTaskResourceProvenance(authority.store.read()!);
     if (worktreeStat.isSymbolicLink()) {
       throw new Error(
         `Refusing to clean symbolic-link worktree ${worktreePath}`,

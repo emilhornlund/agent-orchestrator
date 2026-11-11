@@ -1,4 +1,6 @@
 import fs from "node:fs";
+import { assertTerminalArtifactIsolation } from "../git/terminal-artifact-isolation.js";
+import { taskResources } from "../task-session/task-resources.js";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import type { ProjectConfig } from "../config/config.js";
@@ -75,6 +77,7 @@ export async function prepareTerminalTaskSession(options: {
     | "getCurrentBranch"
     | "isAncestor"
     | "branchExists"
+    | "getCommonGitDirectory"
   >;
   headContinuityVerified?: boolean;
   cardId: string;
@@ -111,7 +114,7 @@ export async function prepareTerminalTaskSession(options: {
     task.phase === "publication";
   const inspectArtifacts = async () => {
     try {
-      const worktree = path.join(project.repository.worktreeRoot, cardId);
+      const worktree = taskResources(project, cardId).path;
       const owner = ProjectRunAuthority.current(project.id);
       if (owner) {
         const resources = owner.store.read()!.resources;
@@ -184,6 +187,7 @@ export async function prepareTerminalTaskSession(options: {
   )
     return waiting();
   if (authority && terminalStopProofValid(authority)) {
+    await assertTerminalArtifactIsolation(project, options.git);
     const preserveArtifacts = await inspectArtifacts();
     if (fence!.preserveArtifacts !== preserveArtifacts)
       markTerminalWritersStopped(
@@ -246,7 +250,7 @@ export async function prepareTerminalTaskSession(options: {
     if (
       !value ||
       value.executionId !== operation.processExecutionId ||
-      value.cwd !== path.join(project.repository.worktreeRoot, cardId) ||
+      value.cwd !== taskResources(project, cardId).path ||
       typeof value.command !== "string" ||
       !value.command.startsWith("opencode run") ||
       !stopped(value)
@@ -259,6 +263,7 @@ export async function prepareTerminalTaskSession(options: {
     });
   }
   const preserveArtifacts = await inspectArtifacts();
+  if (authority) await assertTerminalArtifactIsolation(project, options.git);
   const proof = authority?.store.writeArtifact(
     Buffer.from(
       JSON.stringify({

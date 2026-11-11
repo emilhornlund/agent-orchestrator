@@ -36,6 +36,39 @@
   capacity/closure scenario passed (31 unrelated cases filtered). An earlier combined
   run timed out at 120 seconds and is not a pass. T3 must make preserved resources
   noninterfering and permit safe cleanup deferral; T4 includes final integrated checks.
+- T2 checkpoint: `8a18789`. T3 resolves persisted attempt resources throughout
+  worktree preparation, primary isolation, publication/journal dispatch, trusted
+  commits, feedback/CI/maintenance, refinement baselines and terminal recovery.
+  Existing attempts retain their original identities. Subsequent attempts get
+  distinct `<card-id>--<attempt-id>` worktrees/branches, empty sessions/projections
+  and fresh default-branch preparation. Earlier records/artifacts remain in place
+  as history; no second mutable archive or old-code inheritance is introduced.
+- Marked canonical creation interrupted before the candidate write is safely
+  retired without treating a lost/unmarked legacy record as absence. Existing
+  candidate/pointer restart reconciliation recovers the same attempt. Known owned
+  isolated resources can now defer cleanup without blocking terminal release;
+  unknown repository/branch identity and unresolved mutations remain fenced.
+- T3 self-review traced all changed production resource callers and later writes,
+  startup/registry handoff and supported old shapes, plus new real-Git tests.
+  Corrected remaining publication/maintenance hardcodes, a baseline task-identity
+  check and remote deletion accepting a changed PR branch. Remote cleanup now pins
+  its observed expected SHA through the journal; absent local/remote branches are
+  safe sender outcomes. Test fixture corrections supplied context-root/task-kind
+  setup and updated the subsequent-attempt path expectation; lint found unused
+  imports/parameter and those were fixed. Eight focused suites passed 94 tests;
+  seven authority/Git/mutation/retry suites passed 78 tests, with typecheck and
+  changed-code ESLint passing. The final interrupted-retry tests are rerun before
+  checkpoint: all 15 tests in the three retry/terminal suites passed, including
+  creation interruptions after a prior failed attempt. All 32 real-Git lifecycle
+  scenarios passed on the integrated T3 implementation. T4 combined integration/
+  specification coverage and full validation remain; no full pass or live-service
+  qualification is claimed.
+- Final T3 correction distinguishes a planned resource name from verified creation
+  provenance. Existing unknown matching worktrees cannot be adopted or removed;
+  supported imported provenance is retained. The three affected fresh/cleanup/
+  preparing suites passed 25 tests, and both no-quality/capacity lifecycle scenarios
+  passed (30 unrelated scenarios filtered). Typecheck, changed-code ESLint and
+  formatting passed after the correction. No known T3 defect remains.
 
 ## Inherited P9 checkpoint
 
@@ -654,7 +687,7 @@ requirements/specification sections and meaningful regression tests:
   corrected integrated tree then passed full `yarn validate` as recorded above.
 
 No P6–P9 implementation work remains. P9 is implemented and locally validated
-as recorded above. P10 has not started. P11 covers
+as recorded above. P10 is in progress at the current checkpoint. P11 covers
 remaining integration/regression gaps, with broader qualification only if requested.
 
 ## Known carryovers

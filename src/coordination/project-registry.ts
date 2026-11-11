@@ -34,6 +34,7 @@ export interface HostProjectPin {
   readonly pendingAttempt?: {
     readonly attemptId: string;
     readonly storageRoot: string;
+    readonly creation?: "preparing";
   } | null;
 }
 
@@ -403,7 +404,7 @@ export async function prepareProjectAttempt(
   coordinationRoot: string,
   projectId: string,
   lease: ProjectOwnershipLease,
-  candidate: NonNullable<HostProjectPin["activeAttempt"]>,
+  candidate: NonNullable<HostProjectPin["pendingAttempt"]>,
 ): Promise<void> {
   lease.assertHeld();
   await withProjectRegistryLock(coordinationRoot, () => {

@@ -1,5 +1,9 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import {
+  taskResources,
+  runTaskResources,
+} from "../task-session/task-resources.js";
 import path from "node:path";
 import type { ProjectConfig } from "../config/config.js";
 import {
@@ -546,7 +550,7 @@ async function completeMergedTaskSession(options: {
     pullRequest.state !== "MERGED" ||
     pullRequest.mergedAt === null ||
     pullRequest.baseRefName !== project.repository.defaultBranch ||
-    pullRequest.headRefName !== `agent/${card.id}` ||
+    pullRequest.headRefName !== taskResources(project, card.id).branch ||
     pullRequest.headRepository?.name.toLowerCase() !==
       repository?.toLowerCase() ||
     pullRequest.headRepositoryOwner?.login.toLowerCase() !==
@@ -1492,7 +1496,7 @@ export async function runTaskSessionWorkflow(
             expectedBranch:
               expectedBranch ??
               current.expectedBranch ??
-              `agent/${sourceCard.id}`,
+              taskResources(project, sourceCard.id).branch,
             operationKey: current.operationKey,
             worktreePath: sourceWorktree,
             taskRecordStore: taskStore,
@@ -1811,7 +1815,7 @@ export async function runTaskSessionWorkflow(
       reconcileTaskSession({
         project,
         cardId: card.id,
-        expectedBranch: `agent/${card.id}`,
+        expectedBranch: taskResources(project, card.id).branch,
         operationKey: ownedRecord.operationKey,
         worktreePath,
         taskRecordStore: taskStore,
@@ -2148,7 +2152,7 @@ export async function runTaskSessionWorkflow(
     const authoritative = await github.findPullRequestState({
       cwd: project.repository.path,
       repository: project.repository.github,
-      headBranch: `agent/${cardId}`,
+      headBranch: taskResources(project, cardId).branch,
       baseBranch: project.repository.defaultBranch,
       project,
     });
@@ -2184,7 +2188,7 @@ export async function runTaskSessionWorkflow(
       authoritative.state !== expectedState ||
       authoritative.url !== record.pullRequest.url ||
       authoritative.baseRefName !== project.repository.defaultBranch ||
-      authoritative.headRefName !== `agent/${cardId}` ||
+      authoritative.headRefName !== taskResources(project, cardId).branch ||
       authoritative.headRefOid === undefined ||
       pendingTerminalMutation.eventId !== expectedEventId ||
       pendingTerminalMutation.operationKey !== expectedOperationKey
@@ -2486,7 +2490,7 @@ export async function runTaskSessionWorkflow(
       const card = humanReviewCards.find(
         (candidate) => candidate.id === observation.cardId,
       )!;
-      const worktreePath = path.join(project.repository.worktreeRoot, card.id);
+      const worktreePath = taskResources(project, card.id).path;
       const noOpReportPending =
         record.feedbackRemediation?.status === "no-op" &&
         record.feedbackRemediation.outcomeReported !== true;
@@ -2758,7 +2762,7 @@ export async function runTaskSessionWorkflow(
         );
         const ciSessionId = ciRecord.primarySessionId;
         if (ciSessionId === undefined) continue;
-        const expectedBranch = `agent/${card.id}`;
+        const expectedBranch = taskResources(project, card.id).branch;
         const operationKey = record.operationKey;
         const ciRepairCycleId =
           ciRecord.ciRepair?.cycleId ??
@@ -3953,7 +3957,7 @@ export async function runTaskSessionWorkflow(
         project,
         card,
         task,
-        worktreePath: path.join(project.repository.worktreeRoot, card.id),
+        worktreePath: taskResources(project, card.id).path,
         git,
         github,
         commands,
@@ -3982,7 +3986,7 @@ export async function runTaskSessionWorkflow(
             openCode,
             project,
             card,
-            worktreePath: path.join(project.repository.worktreeRoot, card.id),
+            worktreePath: taskResources(project, card.id).path,
             approvedRequirements: storedPlan?.plan.requirements ?? [
               {
                 id: "TASK",
@@ -3992,7 +3996,7 @@ export async function runTaskSessionWorkflow(
               },
             ],
             changedFiles: await git.getChangedFiles(
-              path.join(project.repository.worktreeRoot, card.id),
+              taskResources(project, card.id).path,
               baseHead,
             ),
             requirementIds,
@@ -4022,7 +4026,7 @@ export async function runTaskSessionWorkflow(
             project.id,
             card.id,
             {
-              cwd: path.join(project.repository.worktreeRoot, card.id),
+              cwd: taskResources(project, card.id).path,
               model: project.opencode.remediation.model,
               variant: project.opencode.remediation.variant,
               timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
@@ -4034,7 +4038,7 @@ export async function runTaskSessionWorkflow(
                 `Task: ${currentCard.name}`,
                 `Task description: ${currentCard.desc.trim() || "(No task description was provided.)"}`,
                 ...buildCardAttachmentPromptLines(attachmentContext),
-                `Task branch: agent/${card.id}`,
+                `Task branch: ${taskResources(project, card.id).branch}`,
                 `Merge target commit: ${merge.targetHead}`,
                 `Original task head: ${merge.originalHead}`,
                 `Attempt: ${attempt} of ${project.opencode.remediation.maxPasses}`,
@@ -4045,7 +4049,7 @@ export async function runTaskSessionWorkflow(
             },
             {
               inspect: inspectSessionForWorktree(
-                path.join(project.repository.worktreeRoot, card.id),
+                taskResources(project, card.id).path,
               ),
             },
             {
@@ -4057,7 +4061,7 @@ export async function runTaskSessionWorkflow(
                   trustedRoot:
                     ProjectRunAuthority.current(project.id)?.store
                       .storageRoot ?? getProcessRuntime().artifactRoot,
-                  cwd: path.join(project.repository.worktreeRoot, card.id),
+                  cwd: taskResources(project, card.id).path,
                 }),
             },
           );
@@ -4126,7 +4130,7 @@ export async function runTaskSessionWorkflow(
       : await reconcileOwnedTaskForResume(
           card,
           initialRecord,
-          path.join(project.repository.worktreeRoot, card.id),
+          taskResources(project, card.id).path,
         );
     if (!idleHumanReview && (recovery === null || recovery.status !== "resume"))
       continue;
@@ -4155,7 +4159,7 @@ export async function runTaskSessionWorkflow(
       github,
       openCode,
       commands,
-      worktreePath: path.join(project.repository.worktreeRoot, card.id),
+      worktreePath: taskResources(project, card.id).path,
       prepareAttachmentContext: () => options.prepareAttachmentContext(card),
       ...(emailNotifier === undefined ? {} : { emailNotifier }),
       signal,
@@ -4269,7 +4273,8 @@ export async function runTaskSessionWorkflow(
     if (
       strandedRecord.projectId !== project.id ||
       strandedRecord.operationKey !== strandedMutation.operationKey ||
-      strandedRecord.expectedBranch !== `agent/${strandedMutation.cardId}`
+      strandedRecord.expectedBranch !==
+        taskResources(project, strandedMutation.cardId).branch
     )
       throw new Error(
         "Terminal failure record and queue identity do not match",
@@ -4351,7 +4356,8 @@ export async function runTaskSessionWorkflow(
     if (
       currentRecord === null ||
       currentRecord.operationKey !== strandedMutation.operationKey ||
-      currentRecord.expectedBranch !== `agent/${strandedMutation.cardId}`
+      currentRecord.expectedBranch !==
+        taskResources(project, strandedMutation.cardId).branch
     )
       throw new Error(
         "Terminal failure identity changed during reconciliation",
@@ -4548,9 +4554,10 @@ export async function runTaskSessionWorkflow(
     activeMutation.cardId === claimRun.cardId &&
     hasVerifiedWorkflowMove(claimAuthority!, claimRun.pinned.lists.working)
   ) {
-    const ownedPath = path.join(claimRun.pinned.worktreeRoot, claimRun.cardId);
+    const ownedPath = runTaskResources(claimRun).path;
     if (
-      (await git.getCurrentBranch(ownedPath)) !== `agent/${claimRun.cardId}` ||
+      (await git.getCurrentBranch(ownedPath)) !==
+        runTaskResources(claimRun).branch ||
       (await git.getCommonGitDirectory(ownedPath)) !==
         (await git.getCommonGitDirectory(claimRun.pinned.repositoryPath))
     )
@@ -4560,7 +4567,7 @@ export async function runTaskSessionWorkflow(
       projectId: project.id,
       cardId: claimRun.cardId,
       phase: "planning",
-      expectedBranch: `agent/${claimRun.cardId}`,
+      expectedBranch: runTaskResources(claimRun).branch,
       operationKey: activeMutation.operationKey,
       setup: {
         command: project.repository.setupCommand ?? null,
@@ -4584,7 +4591,7 @@ export async function runTaskSessionWorkflow(
     activeMutation.projectId === project.id
   ) {
     const card = workingCards[0]!;
-    const worktreePath = path.join(project.repository.worktreeRoot, card.id);
+    const worktreePath = taskResources(project, card.id).path;
     const matchingEvents = queue
       .list()
       .filter(
@@ -4598,7 +4605,8 @@ export async function runTaskSessionWorkflow(
     if (
       matchingEvents.length !== 1 ||
       taskStore.read(card.id) !== null ||
-      (await git.getCurrentBranch(worktreePath)) !== `agent/${card.id}`
+      (await git.getCurrentBranch(worktreePath)) !==
+        taskResources(project, card.id).branch
     ) {
       throw new Error(
         `Refinement restart ownership is ambiguous for Working card ${card.id}`,
@@ -4612,7 +4620,7 @@ export async function runTaskSessionWorkflow(
     try {
       await options.processRefinement(card, {
         path: worktreePath,
-        branch: `agent/${card.id}`,
+        branch: taskResources(project, card.id).branch,
       });
       await completeRefinementAuthority(
         ProjectRunAuthority.current(project.id),
@@ -4691,7 +4699,7 @@ export async function runTaskSessionWorkflow(
       record.publicationQuality !== undefined
     ) {
       const trusted = readTrustedCommitState(project, card.id);
-      const ownedPath = path.join(project.repository.worktreeRoot, card.id);
+      const ownedPath = taskResources(project, card.id).path;
       if (
         trusted !== null &&
         (await git.getCurrentBranch(ownedPath)) === trusted.taskBranch &&
@@ -4830,7 +4838,7 @@ export async function runTaskSessionWorkflow(
       queue.complete(owner.eventId);
       return;
     }
-    const worktreePath = path.join(project.repository.worktreeRoot, card.id);
+    const worktreePath = taskResources(project, card.id).path;
     const hasReservedPrimaryRepair =
       record.validationRepair?.activePrimaryOperation !== undefined ||
       record.reviewRepair?.activePrimaryOperation !== undefined;
@@ -4858,7 +4866,7 @@ export async function runTaskSessionWorkflow(
         !["implementation", "validation", "review", "publication"].includes(
           record.phase,
         ) ||
-        record.expectedBranch !== `agent/${card.id}` ||
+        record.expectedBranch !== taskResources(project, card.id).branch ||
         record.primarySessionId === undefined ||
         failure.cycleId !== record.operationKey ||
         validation?.status !== "passed" ||

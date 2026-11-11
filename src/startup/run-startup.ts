@@ -243,6 +243,38 @@ export async function reconcilePinnedProjectAttempt(options: {
       runLease,
     );
     let candidate = candidateStore.read();
+    if (!candidate && pin.pendingAttempt.creation === "preparing") {
+      // A canonical creation cannot dispatch any task effect until its durable
+      // record and both pointers exist. A missing record at this exact boundary
+      // is a never-started claim, not a lost execution. Older unmarked handoffs
+      // retain their conservative recovery behavior.
+      const pointer = registry.reconcile();
+      const prior = pointer
+        ? RunStore.openWithPersistedIdentity(
+            pin.storageRoot,
+            pointer.attemptId,
+            runLease,
+          )?.read()
+        : null;
+      if (
+        prior &&
+        (!["done", "refined", "failed", "cancelled"].includes(
+          prior.lifecycle,
+        ) ||
+          prior.terminalSync !== "verified" ||
+          !prior.pendingOperations.every(isConclusiveOperationResolution))
+      )
+        throw new Error(
+          "Interrupted creation has a still-active prior attempt",
+        );
+      await updateProjectActiveAttempt(
+        config.workflow.coordinationRoot!,
+        project.id,
+        lease,
+        null,
+      );
+      return prior ?? null;
+    }
     // A durable canonical candidate is authoritative provenance. In particular,
     // ordinary legacy files retained after an earlier import must not be used
     // to identify a newly-created (random-ID) handoff.

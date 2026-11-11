@@ -3,6 +3,7 @@ import { StringDecoder } from "node:string_decoder";
 import { createHash } from "node:crypto";
 import { buildChildEnvironment } from "../process/child-environment.js";
 import fs from "node:fs";
+import { runTaskResources } from "../task-session/task-resources.js";
 import { ObservedPrTerminalError } from "../task-session/terminal-pr-fence.js";
 import os from "node:os";
 import path from "node:path";
@@ -311,8 +312,7 @@ export class GitClient {
       throw new Error("Git reconciliation requires attempt authority");
     const run = authority.store.read()!;
     const args = request.args;
-    const branch = `agent/${run.cardId}`;
-    const worktree = path.join(run.pinned.worktreeRoot, run.cardId);
+    const { branch, path: worktree } = runTaskResources(run);
     if (request.route === "git-worktree") {
       const value = request.args;
       if (
@@ -531,12 +531,12 @@ export class GitClient {
               throw new Error("Unsafe worktree cleanup");
             await this.removeWorktree(value.cwd, value.resource);
           } else if (value.kind === "branch") {
-            if (
-              (await this.getRefSha(
-                value.cwd,
-                `refs/heads/${value.resource}`,
-              )) !== value.sha
-            )
+            const actual = await this.getRefSha(
+              value.cwd,
+              `refs/heads/${value.resource}`,
+            );
+            if (actual === null) return;
+            if (actual !== value.sha)
               throw new Error("Cleanup branch changed after intent");
             if (value.sha !== null)
               await this.deleteBranch(value.cwd, value.resource);
@@ -544,14 +544,14 @@ export class GitClient {
             if (!value.destination)
               throw new Error("Remote cleanup destination missing");
             await verifyDestination(value.destination);
-            if (
-              (await this.getRemoteBranchSha(
-                value.cwd,
-                value.destination,
-                value.resource,
-                project,
-              )) !== value.sha
-            )
+            const actual = await this.getRemoteBranchSha(
+              value.cwd,
+              value.destination,
+              value.resource,
+              project,
+            );
+            if (actual === null) return;
+            if (actual !== value.sha)
               throw new Error("Remote cleanup ref changed after intent");
             if (value.sha !== null)
               await this.deleteRemoteBranch(
@@ -559,6 +559,7 @@ export class GitClient {
                 value.destination,
                 value.resource,
                 project,
+                value.sha ?? undefined,
               );
           }
         },
@@ -1882,6 +1883,7 @@ export class GitClient {
     remote: string,
     branch: string,
     project?: ProjectConfig,
+    expectedHead?: string,
   ): Promise<void> {
     const authority = mutationAuthority(project?.id);
     if (authority) {
@@ -1897,12 +1899,14 @@ export class GitClient {
           cwd: repositoryPath,
           resource: branch,
           kind: "remote-branch",
-          sha: await this.getRemoteBranchSha(
-            repositoryPath,
-            destinations.push,
-            branch,
-            project,
-          ),
+          sha:
+            expectedHead ??
+            (await this.getRemoteBranchSha(
+              repositoryPath,
+              destinations.push,
+              branch,
+              project,
+            )),
           destination: destinations.push,
         },
       };
@@ -1910,6 +1914,17 @@ export class GitClient {
         await this.reconcileMutation(request, project);
         return;
       }
+    }
+    if (expectedHead !== undefined) {
+      const actual = await this.getRemoteBranchSha(
+        repositoryPath,
+        remote,
+        branch,
+        project,
+      );
+      if (actual === null) return;
+      if (actual !== expectedHead)
+        throw new Error("Remote cleanup ref changed before deletion");
     }
     await this.runAuthenticated(
       repositoryPath,

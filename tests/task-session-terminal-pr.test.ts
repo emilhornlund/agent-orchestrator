@@ -307,7 +307,7 @@ describe("task-session terminal PR reconciliation", () => {
       }),
     } as unknown as GitHubClient;
     const git = {
-      remoteBranchExists: vi.fn(async () => false),
+      getRemoteBranchSha: vi.fn(async () => null),
       pruneWorktrees: vi.fn(async () => undefined),
       branchExists: vi.fn(async () => false),
     } as unknown as GitClient;
@@ -472,7 +472,7 @@ describe("task-session terminal PR reconciliation", () => {
       }),
     } as unknown as GitHubClient;
     const git = {
-      remoteBranchExists: vi.fn(async () => false),
+      getRemoteBranchSha: vi.fn(async () => null),
       pruneWorktrees: vi.fn(async () => undefined),
       branchExists: vi.fn(async () => false),
     } as unknown as GitClient;
@@ -638,7 +638,7 @@ describe("task-session terminal PR reconciliation", () => {
         }),
       } as unknown as GitHubClient;
       const git = {
-        remoteBranchExists: vi.fn(async () => false),
+        getRemoteBranchSha: vi.fn(async () => null),
         branchExists: vi.fn(async () => {
           if (failCleanupOnce && currentList === project.trello.doneListId) {
             failCleanupOnce = false;

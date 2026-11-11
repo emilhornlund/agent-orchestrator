@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { runTaskResources } from "../task-session/task-resources.js";
 import type { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 
 /** Mount only execution dependencies and the owned worktree, never the host root.
@@ -14,7 +15,7 @@ export function isolatedOpenCodeDispatch(
   if (process.platform !== "linux")
     throw new Error("Isolated OpenCode execution requires Linux Bubblewrap");
   const run = authority.store.assertCurrentLease(authority.ownerGeneration);
-  const expected = path.join(run.pinned.worktreeRoot, run.cardId);
+  const expected = runTaskResources(run).path;
   if (cwd !== expected || fs.realpathSync(cwd) !== expected)
     throw new Error("OpenCode dispatch does not match the owned task worktree");
   const gitFile = path.join(cwd, ".git");
