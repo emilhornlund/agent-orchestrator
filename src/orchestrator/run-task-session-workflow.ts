@@ -2470,6 +2470,24 @@ export async function runTaskSessionWorkflow(
       (observation.ciEvaluation.status === "waiting" ||
         observation.ciEvaluation.status === "uncertain")
     ) {
+      if (
+        record.ciObservationWindow?.headSha === observation.headSha &&
+        record.ciObservationWindow.timedOut
+      ) {
+        taskStore.compareAndSwap(
+          record.cardId,
+          record.revision,
+          transitionTaskExecutionRecord(
+            record,
+            event(record, "human-feedback-pending"),
+          ),
+        );
+        logger
+          .child({ projectId: project.id, cardId: record.cardId })
+          .warn(
+            `CI observation deadline reached; results remain uncertain for ${observation.headSha}: ${observation.ciEvaluation.diagnostic}`,
+          );
+      }
       continue;
     }
     if (observation.ciEvaluation.status === "failed" || resumingCiReview) {

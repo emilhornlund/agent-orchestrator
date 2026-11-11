@@ -2,6 +2,35 @@
 
 ## Current checkpoint
 
+- **P8 in progress on `b7fff4a` (integrated P7); starting index/worktree clean.**
+  Authorized actions are small local task/correction commits only. No remote Git
+  action, branch change, deployment or P9 work is authorized.
+- Remaining ordered work: T1 current-revision expected CI discovery and durable
+  bounded observation; T2 verified-trigger repair episodes, configured budgets and
+  advisory same-session correction publication; T3 queued additive target merges,
+  provenance/preservation and interrupted/conflicted Git recovery; T4 maintenance
+  quality/publication, descriptions/activity and terminal boundaries; T5 combined
+  criteria/integration verification and final `yarn validate`.
+- Inspection confirms existing exact-head expectation evaluation and CI reservation
+  persistence, but no durable observation deadline. Maintenance execution is still
+  deliberately disabled; its legacy rebase records must remain fenced. Existing
+  P7 checks below describe the inherited baseline, not P8 completion.
+- P8-T1 adds a persisted 30-minute per-revision CI observation window. Polls and
+  store reconstruction retain its deadline; supported older records initialize it
+  on first observation. Missing registration, queued checks and incomplete discovery
+  remain inconclusive. Expiration ends the CI phase in Human Review using the
+  existing non-success transition, without repair, push or task failure. Later
+  observations can still discover actionable failures or actual success.
+- T1 reuses the current exact-head checks/statuses and repository-rule/workflow
+  expectation discovery; incomplete/absent contracts and stale successes never
+  pass. Self-review inspected those clients/evaluator, observation readback and
+  persistence, production wait/transition callers and the new tests. Added a
+  production dispatch regression as well as controlled-clock restart coverage.
+  Six focused CI/client/observation/dispatch suites passed **149 tests**;
+  `yarn typecheck`, changed-code ESLint and Prettier passed. The earlier four-suite
+  check also passed 62 tests. T2–T5 remain; visible draft/description integration
+  for CI and maintenance is included in T4. Guide/roadmap scope remains accurate.
+
 - **P7 implemented and locally validated on the current branch, based on `7fafed1` (integrated P6).**
   The starting index and working tree were clean. This session authorizes small
   local P7 task/correction commits only; no push, PR, branch change or P8 work.
@@ -270,7 +299,7 @@ requirements/specification sections and meaningful regression tests:
   passed all 70 tests; typecheck, changed-file ESLint and Prettier passed. The
   corrected integrated tree then passed full `yarn validate` as recorded above.
 
-No P6/P7 implementation work remains. P8–P10 have not started. P11 covers
+No P6/P7 implementation work remains. P8 is in progress; P9–P10 have not started. P11 covers
 remaining integration/regression gaps, with broader qualification only if requested.
 
 ## Known carryovers

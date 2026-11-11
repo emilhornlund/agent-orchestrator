@@ -74,7 +74,7 @@ async function pollReview(
     url: string;
   },
   taskPhase: "human-feedback" | "ci" | "implementation" = "human-feedback",
-  ciStatus: "passed" | "failed" = "passed",
+  ciStatus: "passed" | "failed" | "waiting" | "uncertain" = "passed",
 ): Promise<{
   git: {
     addWorktreeWithNewBranch: ReturnType<typeof vi.fn>;
@@ -138,6 +138,16 @@ async function pollReview(
     projectId: project.id,
     cardId: card.id,
     phase: taskPhase,
+    ...(["waiting", "uncertain"].includes(ciStatus)
+      ? {
+          ciObservationWindow: {
+            headSha: sha,
+            startedAt: "2026-10-24T09:00:00.000Z",
+            deadline: "2026-10-24T09:30:00.000Z",
+            timedOut: true,
+          },
+        }
+      : {}),
     primarySessionId: "session",
     sessionCreationStatus: "bound",
     expectedBranch: "agent/card",
@@ -224,6 +234,8 @@ async function pollReview(
       baseRelation: relation,
       ciEvaluation: {
         status: ciStatus,
+        expectedHeadSha: sha,
+        diagnostic: "CI remains inconclusive",
         ...(ciStatus === "failed" ? { failures: [] } : {}),
       },
       feedbackIds,
@@ -302,6 +314,30 @@ async function pollReview(
 }
 
 describe("opt-in maintenance in the production Human Review polling path", () => {
+  it.each(["waiting", "uncertain"] as const)(
+    "ends expired %s CI observation in Human Review without claiming success or repairing",
+    async (status) => {
+      const result = await pollReview(
+        "current",
+        undefined,
+        true,
+        [],
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        "ci",
+        status,
+      );
+      expect(result.taskRecord).toMatchObject({
+        phase: "human-feedback",
+        lastEvent: { type: "human-feedback-pending" },
+        ciObservationWindow: { timedOut: true },
+      });
+      expect(runTaskSessionCiRepairs).not.toHaveBeenCalled();
+      expect(result.git.push).not.toHaveBeenCalled();
+    },
+  );
   it.each(["behind", "diverged"] as const)(
     "dispatches %s owned PRs when maintenance is explicitly enabled",
     async (relation) => {

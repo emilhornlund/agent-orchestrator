@@ -711,6 +711,14 @@ const taskExecutionRecordSchema = z
     projectId: ownerId,
     cardId: ownerId,
     phase: z.enum(taskExecutionPhases),
+    ciObservationWindow: z
+      .strictObject({
+        headSha: gitSha,
+        startedAt: z.string().datetime(),
+        deadline: z.string().datetime(),
+        timedOut: z.boolean(),
+      })
+      .optional(),
     recoveryWait: recoveryWaitSchema.optional(),
     primarySessionId: nonBlankIdentifier.optional(),
     sessionCreationStatus: sessionCreationStatus.optional(),
