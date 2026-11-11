@@ -138,10 +138,17 @@ async function checkPreserved(
 async function checkConflictPreservation(
   options: MaintainOutdatedPrOptions,
   operation: PrMaintenanceOperation,
+  kind: "merge" | "conflict" = "conflict",
 ): Promise<boolean> {
-  const baseline = operation.localPreparation?.conflictBaseline;
+  const baseline =
+    kind === "merge"
+      ? operation.localPreparation?.mergeBaseline
+      : operation.localPreparation?.conflictBaseline;
   if (!baseline) return false;
-  const allowed = operation.localPreparation?.conflictedPaths ?? [];
+  const allowed =
+    (kind === "merge"
+      ? operation.localPreparation?.mergeAllowedPaths
+      : operation.localPreparation?.conflictedPaths) ?? [];
   const saved = z
     .strictObject({
       files: z.array(z.tuple([z.string(), z.string()])),
@@ -470,7 +477,6 @@ export async function maintainOutdatedPr(
           options,
           "Unattributed local commits, staged output or an existing merge prevent safe automatic publication.",
         );
-        queue.complete(eventId);
         return result;
       }
       const target = await options.github.getBaseBranchHeadSha({
@@ -538,11 +544,27 @@ export async function maintainOutdatedPr(
         operation.targetBaseHead
       )
         throw new Error("Pinned target commit is not available after fetch");
+      if ((await git.getDiff(worktreePath, true)).trim())
+        throw new Error(
+          "Unattributed staged work appeared before merge preparation; preserving it for recovery",
+        );
       const current = await inventory(options);
       const currentFiles = files(current);
+      const mergeBaseline = options.taskStore.writePrimaryResultArtifact(
+        `${operation.operationId}:merge-baseline`,
+        {
+          files: [...currentFiles],
+          index: await git.getIndexEntries(worktreePath),
+        },
+      );
       progress({
         status: "base-fetched",
         baseHead: operation.targetBaseHead,
+        mergeBaseline,
+        mergeAllowedPaths: await git.getTargetMergePaths(
+          worktreePath,
+          operation.targetBaseHead,
+        ),
         preservedFiles: current.committable.map((file) => ({
           path: file,
           identity: currentFiles.get(file) ?? "absent",
@@ -570,6 +592,14 @@ export async function maintainOutdatedPr(
     if (
       ["merging", "conflicted"].includes(operation.localPreparation!.status)
     ) {
+      if (
+        !operation.localPreparation!.mergeBaseline ||
+        operation.localPreparation!.mergeAllowedPaths === undefined
+      )
+        throw new Error(
+          "Interrupted merge lacks its pre-dispatch preservation baseline; retain work for reconciliation",
+        );
+      await checkConflictPreservation(options, operation, "merge");
       await checkPreserved(options, operation);
       const head = await git.getHeadSha(worktreePath);
       let mergeHead = await git.getMergeHead(worktreePath);
@@ -606,10 +636,20 @@ export async function maintainOutdatedPr(
           throw new Error("Interrupted merge provenance changed");
         let conflicts = await git.getConflictedPaths(worktreePath);
         if (conflicts.length > 0) {
+          const baseline =
+            operation.localPreparation!.conflictBaseline ??
+            options.taskStore.writePrimaryResultArtifact(
+              `${operation.operationId}:conflict-baseline`,
+              {
+                files: [...files(await inventory(options))],
+                index: await git.getIndexEntries(worktreePath),
+              },
+            );
           progress({
             status: "conflicted",
             conflictedPaths:
               operation.localPreparation!.conflictedPaths ?? conflicts,
+            conflictBaseline: baseline,
           });
           if (
             !options.remediateConflict ||
@@ -635,24 +675,12 @@ export async function maintainOutdatedPr(
             return "terminal";
           await activity(options, "resolving-conflicts");
           if (!operation.localPreparation!.conflictOperationId) {
-            const baseline = options.taskStore.writePrimaryResultArtifact(
-              `${operation.operationId}:conflict-baseline`,
-              {
-                files: [...files(await inventory(options))],
-                index: await git.getIndexEntries(worktreePath),
-              },
-            );
             operation = store.recordConflictRemediationAttempt(
               operation.operationId,
               operation,
               baseline,
             );
           }
-          const baseline = operation.localPreparation!.conflictBaseline;
-          if (!baseline)
-            throw new Error(
-              "Conflict assistance lacks its durable preservation baseline",
-            );
           await options.remediateConflict({
             conflictedPaths: conflicts,
             merge: {
@@ -685,6 +713,7 @@ export async function maintainOutdatedPr(
         }
         await checkPreserved(options, operation);
         await checkConflictPreservation(options, operation);
+        await checkConflictPreservation(options, operation, "merge");
         if (!(await observeOpen(options, [operation.expectedRemoteHead])))
           return "terminal";
         progress({ mergeTree: await git.getIndexTreeSha(worktreePath) });

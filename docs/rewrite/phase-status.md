@@ -164,6 +164,23 @@
   typecheck, changed-code ESLint and whitespace checks. Self-review traced initial
   authority creation, projection writes, episode renewal and the production third
   dispatch. No known T5c defect remains. Final integrated validation is next.
+- T5d closes the maintenance recovery edges found in the combined check. Initial
+  dirty/staged-state refusal retains its queue recovery identity, so verified safe
+  unstaging can resume on the same PR/head rather than being blocked by a completed
+  descriptor. Pre-dispatch merge file/index baselines and target-changed paths now
+  fence unrelated changes even if interruption precedes the conflict checkpoint.
+  A conflict baseline is retained before assistance eligibility is evaluated, so
+  manually resolving a zero-budget/no-op merge does not permit unrelated staging.
+  Active merge preparation without the necessary baseline stays explicitly fenced.
+- T5d self-review inspected the new baseline fields/artifact readers, preparation
+  order, dirty-state queue release/reclaim, manual conflict recovery and actual
+  additive publication caller. Recovery guidance's stale globally-disabled claim
+  was corrected while retaining the legacy rewrite fence. Three focused suites
+  passed **52 tests**, including recovery after safe unstaging and refusal of
+  unrelated changes before/after conflict checkpoints; the production target-merge
+  lifecycle scenario passed again (31 unrelated cases filtered). Typecheck,
+  changed-code ESLint and whitespace checks passed. No known scoped implementation
+  defect remains. Only the final combined validation/completion checkpoint remains.
 
 ## Inherited P7 checkpoint
 

@@ -19,6 +19,11 @@ const id = z
     "Must be a safe non-blank identifier",
   );
 const gitSha = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i);
+const baselineArtifact = z.strictObject({
+  reference: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+  bytes: z.number().int().nonnegative(),
+  path: z.string().optional(),
+});
 const maintenanceQualityEvidenceSchema = z.strictObject({
   status: z.enum(["running", "failed", "uncertain", "passed"]),
   preparedHead: gitSha,
@@ -54,13 +59,9 @@ export const localPreparationSchema = z.strictObject({
   mergeTree: gitSha.optional(),
   conflictOperationId: z.string().min(1).optional(),
   conflictStopped: z.boolean().optional(),
-  conflictBaseline: z
-    .strictObject({
-      reference: z.string().regex(/^sha256:[0-9a-f]{64}$/),
-      bytes: z.number().int().nonnegative(),
-      path: z.string().optional(),
-    })
-    .optional(),
+  conflictBaseline: baselineArtifact.optional(),
+  mergeBaseline: baselineArtifact.optional(),
+  mergeAllowedPaths: z.array(z.string().min(1)).optional(),
   updatedAt: z.string().datetime(),
 });
 

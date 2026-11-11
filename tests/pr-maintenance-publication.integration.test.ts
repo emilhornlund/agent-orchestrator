@@ -264,6 +264,12 @@ describe("additive published PR maintenance", () => {
     expect(await maintainOutdatedPr(f.options)).toBe("blocked");
     expect(git(f.worktree, "write-tree")).toBe(index);
     expect(git(f.worktree, "rev-parse", "HEAD")).toBe(f.published);
+    git(f.worktree, "restore", "--staged", "setup.txt");
+    expect(await maintainOutdatedPr(f.options)).toBe("completed");
+    expect(fs.readFileSync(path.join(f.worktree, "setup.txt"), "utf8")).toBe(
+      "unrelated staged output\n",
+    );
+    expect(git(f.worktree, "show", "HEAD:setup.txt")).toBe("clean setup");
   });
 
   it("retains an unexpected remote advance without overwriting it", async () => {
@@ -451,6 +457,55 @@ describe("additive published PR maintenance", () => {
     expect(await f.github.getPullRequestDescription()).not.toContain(
       "Agent Orchestrator status:",
     );
+    expect(git(f.worktree, "rev-parse", "HEAD")).toBe(f.published);
+    expect(git(f.worktree, "rev-parse", "MERGE_HEAD")).toBe(f.base);
+  });
+
+  it("does not absorb unrelated staged output when a bounded conflict is manually resolved", async () => {
+    const f = await publishedTask(true);
+    f.options.project.opencode.remediation.maxPasses = 0;
+    expect(await maintainOutdatedPr(f.options)).toBe("blocked");
+    fs.writeFileSync(path.join(f.worktree, "base.txt"), "human resolution\n");
+    fs.writeFileSync(
+      path.join(f.worktree, "unrelated.txt"),
+      "retain unrelated work\n",
+    );
+    git(f.worktree, "add", "base.txt", "unrelated.txt");
+    await expect(maintainOutdatedPr(f.options)).rejects.toThrow("non-conflict");
+    expect(git(f.worktree, "rev-parse", "HEAD")).toBe(f.published);
+    expect(
+      fs.readFileSync(path.join(f.worktree, "unrelated.txt"), "utf8"),
+    ).toBe("retain unrelated work\n");
+  });
+
+  it("fences unrelated changes after an interrupted merge before its conflict checkpoint", async () => {
+    const f = await publishedTask(true);
+    const record = f.options.maintenanceStore.recordLocalPreparation.bind(
+      f.options.maintenanceStore,
+    );
+    let interrupted = false;
+    vi.spyOn(
+      f.options.maintenanceStore,
+      "recordLocalPreparation",
+    ).mockImplementation((id, identity, progress) => {
+      if (progress.status === "conflicted" && !interrupted) {
+        interrupted = true;
+        throw new Error("Interrupted before conflict checkpoint");
+      }
+      return record(id, identity, progress);
+    });
+    await expect(maintainOutdatedPr(f.options)).rejects.toThrow(
+      "Interrupted before conflict checkpoint",
+    );
+    fs.writeFileSync(
+      path.join(f.worktree, "unrelated.txt"),
+      "preserve new unrelated work\n",
+    );
+    git(f.worktree, "add", "unrelated.txt");
+    const repair = vi.fn();
+    f.options.remediateConflict = repair;
+    await expect(maintainOutdatedPr(f.options)).rejects.toThrow("non-conflict");
+    expect(repair).not.toHaveBeenCalled();
     expect(git(f.worktree, "rev-parse", "HEAD")).toBe(f.published);
     expect(git(f.worktree, "rev-parse", "MERGE_HEAD")).toBe(f.base);
   });

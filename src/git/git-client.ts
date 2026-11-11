@@ -914,6 +914,19 @@ export class GitClient {
     return this.resolveCommitSha(repositoryPath, "MERGE_HEAD");
   }
 
+  async getTargetMergePaths(
+    repositoryPath: string,
+    target: string,
+  ): Promise<string[]> {
+    const output = await this.runGit(repositoryPath, [
+      "diff",
+      "--name-only",
+      "-z",
+      `HEAD...${target}`,
+    ]);
+    return output.split("\0").filter(Boolean);
+  }
+
   async getConflictedPaths(repositoryPath: string): Promise<string[]> {
     const output = await this.runGit(repositoryPath, [
       "diff",
