@@ -811,6 +811,7 @@ describe("GitHubClient", () => {
     const runGitHubCommand = vi
       .fn<RunGitHubCommand>()
       .mockResolvedValueOnce(JSON.stringify({ body: "Human description" }))
+      .mockResolvedValueOnce(JSON.stringify({ body: "Human description" }))
       .mockResolvedValueOnce("");
     const github = new GitHubClient(runGitHubCommand);
 
@@ -832,7 +833,7 @@ describe("GitHubClient", () => {
       "--json",
       "body",
     ]);
-    expect(runGitHubCommand).toHaveBeenNthCalledWith(2, "/tmp/repository", [
+    expect(runGitHubCommand).toHaveBeenNthCalledWith(3, "/tmp/repository", [
       "pr",
       "edit",
       "https://github.com/example/repository/pull/123",
@@ -840,11 +841,11 @@ describe("GitHubClient", () => {
       "example/repository",
       "--body",
       [
-        "Human description",
-        "",
         AGENT_ORCHESTRATOR_STATUS_START,
         "Agent Orchestrator status: resolving merge conflicts; human attention may be required if automatic remediation cannot complete.",
         AGENT_ORCHESTRATOR_STATUS_END,
+        "",
+        "Human description",
       ].join("\n"),
     ]);
   });

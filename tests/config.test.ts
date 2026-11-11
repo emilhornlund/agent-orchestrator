@@ -102,6 +102,39 @@ workflow:`,
   );
 }
 
+it("defaults to 15-second polling and unlimited cross-project AI execution", () => {
+  const config = parseConfig(
+    validConfig.replace("pollIntervalSeconds: 15", "{}"),
+  );
+  expect(config.workflow.pollIntervalSeconds).toBe(15);
+  expect(config.workflow.maxConcurrentAiProjects).toBeUndefined();
+});
+
+it.each([0, -1, 1.5, "many"])(
+  "rejects invalid global AI concurrency %s",
+  (value) => {
+    expect(() =>
+      parseConfig(
+        validConfig.replace(
+          "pollIntervalSeconds: 15",
+          `pollIntervalSeconds: 15\n  maxConcurrentAiProjects: ${value}`,
+        ),
+      ),
+    ).toThrow();
+  },
+);
+
+it("accepts the optional global project AI limit", () => {
+  expect(
+    parseConfig(
+      validConfig.replace(
+        "pollIntervalSeconds: 15",
+        "maxConcurrentAiProjects: 2",
+      ),
+    ).workflow,
+  ).toMatchObject({ pollIntervalSeconds: 15, maxConcurrentAiProjects: 2 });
+});
+
 function configWithProjectIds(projectIds: readonly string[]): string {
   const firstProjectId = projectIds[0];
 

@@ -18,6 +18,10 @@ import {
   presentExternalDiagnostic,
 } from "../security/bounded-diagnostic.js";
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
+import {
+  withTaskExecutionActivity,
+  assertNoTerminalPr,
+} from "../task-session/terminal-pr-fence.js";
 import { getGitHubOperationProject } from "../github/github-operation-context.js";
 import {
   PROCESS_CAPTURE_MAX_BYTES,
@@ -520,10 +524,20 @@ export class CommandRunner {
         ? options
         : { ...options, signal: lifecycleSignal };
     const projectId = ProjectRunAuthority.currentProjectId();
-    return projectId === undefined
-      ? this.runCommand(effectiveOptions)
-      : ProjectRunAuthority.dispatch(projectId, () =>
-          this.runCommand(effectiveOptions),
-        );
+    const authority =
+      projectId === undefined
+        ? undefined
+        : ProjectRunAuthority.current(projectId);
+    return withTaskExecutionActivity(authority, async () => {
+      assertNoTerminalPr(authority, true);
+      const result =
+        projectId === undefined
+          ? await this.runCommand(effectiveOptions)
+          : await ProjectRunAuthority.dispatch(projectId, () =>
+              this.runCommand(effectiveOptions),
+            );
+      assertNoTerminalPr(authority);
+      return result;
+    });
   }
 }

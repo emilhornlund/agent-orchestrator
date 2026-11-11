@@ -98,7 +98,12 @@ import {
   TaskSessionReviewRepairError,
 } from "../task-session/run-task-session-review-repairs.js";
 import { runTaskSessionCiRepairs } from "../task-session/run-task-session-ci-repairs.js";
-import { runTaskSessionFeedbackCycle } from "./run-task-session-feedback-cycle.js";
+import {
+  runTaskSessionFeedbackCycle,
+  refreshCurrentTaskFeedback,
+  feedbackOperationId,
+  feedbackReplyOperationId,
+} from "./run-task-session-feedback-cycle.js";
 import { inspectPrimaryOperationEvidence } from "../task-session/inspect-primary-operation.js";
 import { FeedbackLedgerStore } from "../task-session/feedback-ledger-store.js";
 import {
@@ -119,6 +124,7 @@ import {
 } from "../task-session/task-mutation-queue.js";
 import {
   reconcileTaskSession,
+  expectedTaskTrelloList,
   persistTaskSessionContextWait,
   type TaskSessionRecoverySnapshot,
 } from "../task-session/reconcile-task-session.js";
@@ -159,11 +165,22 @@ import {
   recoverPendingTaskCommit,
 } from "./trusted-commit-state.js";
 import { logger } from "../logging/logger.js";
+import {
+  readTerminalPrFence,
+  recordTerminalPrFence,
+} from "../task-session/terminal-pr-fence.js";
+import { prepareTerminalTaskSession } from "./prepare-terminal-task-session.js";
 import { PrMaintenanceStore } from "../task-session/pr-maintenance-store.js";
 import { maintainOutdatedPr } from "./maintain-outdated-pr.js";
 import { reconcileUnobservedTerminalPrEvents } from "./reconcile-unobserved-terminal-pr.js";
 import { verifyMergedTaskPrHeadContinuity } from "./verify-merged-task-pr-head-continuity.js";
 import { TaskMutationBlockStore } from "./task-mutation-block-store.js";
+import { updateMaintenanceStatus } from "./maintenance-status.js";
+import {
+  reconcilePendingFeedbackCardMove,
+  ensureFeedbackCardLocation,
+  prepareFeedbackCardMove,
+} from "./feedback-card-location.js";
 import {
   findPrimaryRecoveryError,
   persistPrimaryOperationRecovery,
@@ -400,20 +417,40 @@ async function completeMergedTaskSession(options: {
     pullRequest.mergedAt === null ||
     pullRequest.baseRefName !== project.repository.defaultBranch ||
     pullRequest.headRefName !== `agent/${card.id}` ||
-    pullRequest.headRepository?.name !== repository ||
-    pullRequest.headRepositoryOwner?.login !== owner
+    pullRequest.headRepository?.name.toLowerCase() !==
+      repository?.toLowerCase() ||
+    pullRequest.headRepositoryOwner?.login.toLowerCase() !==
+      owner?.toLowerCase()
   ) {
     throw new Error(`Merged pull request identity is ambiguous for ${card.id}`);
   }
-  await verifyMergedTaskPrHeadContinuity({
-    github: options.github,
-    project,
-    cwd: project.repository.path,
-    pullRequestNumber: record.pullRequest.number,
-    recordedHeadSha: record.pullRequest.headSha!,
-    mergedHeadSha: headSha,
-  });
-  releaseFailedPublishedFeedbackMutation(queue, record, card.id);
+  const authority = ProjectRunAuthority.current(project.id);
+  if (authority)
+    recordTerminalPrFence(
+      authority,
+      record,
+      pullRequest,
+      queue.getActive()?.kind !== "terminal-pr" && queue.getActive() !== null,
+      project.repository.defaultBranch,
+    );
+  let headContinuityVerified = false;
+  try {
+    await verifyMergedTaskPrHeadContinuity({
+      github: options.github,
+      project,
+      cwd: project.repository.path,
+      pullRequestNumber: record.pullRequest.number,
+      recordedHeadSha: record.pullRequest.headSha!,
+      mergedHeadSha: headSha,
+    });
+    headContinuityVerified = true;
+  } catch {
+    logger
+      .child({ projectId: project.id, cardId: card.id })
+      .info(
+        "Merged-head continuity is unavailable; cleanup requires independent local publication evidence",
+      );
+  }
   const terminalEvent = queue.enqueue({
     projectId: project.id,
     cardId: card.id,
@@ -422,6 +459,31 @@ async function completeMergedTaskSession(options: {
     kind: "terminal-pr",
     enqueuedAt: record.updatedAt,
   });
+  const terminalPreparation = await prepareTerminalTaskSession({
+    project,
+    git,
+    taskStore,
+    queue,
+    cardId: card.id,
+    pullRequest,
+    headContinuityVerified,
+  });
+  if (!terminalPreparation.ready) {
+    const blocker = queue.getActive();
+    if (
+      options.mutationBlockStore.report(
+        `terminal:${terminalEventId}`,
+        `${terminalEventId}|${blocker?.eventId ?? "unknown"}|${blocker?.status ?? "unknown"}|execution-stop`,
+        "Terminal release waits for verified stopped execution",
+      )
+    )
+      logger
+        .child({ projectId: project.id, cardId: card.id })
+        .warn(
+          "Deferred merged PR cleanup; execution stop or queue owner still requires reconciliation",
+        );
+    return "deferred";
+  }
   if (terminalEvent.status === "completed" && record.phase === "done") {
     options.mutationBlockStore.resolve(`terminal:${terminalEventId}`);
     const evidence = await readRunTerminalEvidence({
@@ -451,13 +513,23 @@ async function completeMergedTaskSession(options: {
     return "completed";
   }
   if (options.releaseMutationEventId !== undefined) {
-    if (queue.getActive()?.eventId !== options.releaseMutationEventId) {
+    if (
+      queue.getActive()?.eventId !== options.releaseMutationEventId &&
+      !queue
+        .list()
+        .some(
+          (event) =>
+            event.eventId === options.releaseMutationEventId &&
+            ["retired", "completed"].includes(event.status),
+        )
+    ) {
       throw new Error("Merged PR cannot release a mutation it does not own");
     }
-    queue.complete(options.releaseMutationEventId);
+    if (queue.ownsActive(options.releaseMutationEventId))
+      queue.complete(options.releaseMutationEventId);
     options.onMutationReleased?.();
   }
-  const mutation = queue.claimForRecovery(terminalEventId);
+  const mutation = queue.claimTerminalForReconciliation(terminalEventId);
   if (mutation === null || mutation.eventId !== terminalEventId) {
     const blocker = queue.getActive();
     const diagnostic = `Deferred merged PR cleanup; blocking mutation ${blocker?.eventId ?? "unknown"} (${blocker?.kind ?? "unknown"}, ${blocker?.status ?? "unknown"}) retains project queue ownership`;
@@ -476,6 +548,7 @@ async function completeMergedTaskSession(options: {
     await completeMergedTaskSessionPullRequest({
       trello,
       git,
+      github: options.github,
       project,
       card,
       pullRequest,
@@ -486,7 +559,8 @@ async function completeMergedTaskSession(options: {
         ? {}
         : { emailNotifier: options.emailNotifier }),
       signal,
-      ...(options.preserveLegacyMaintenanceArtifacts ||
+      ...(terminalPreparation.preserveArtifacts ||
+      options.preserveLegacyMaintenanceArtifacts ||
       hasExhaustedPublishedFeedbackCorrection(record)
         ? { preserveWorktree: true }
         : {}),
@@ -554,27 +628,6 @@ async function completeMergedTaskSession(options: {
   }
 }
 
-/** A verified human PR outcome supersedes only that task's stopped feedback owner. */
-function releaseFailedPublishedFeedbackMutation(
-  queue: TaskMutationQueue,
-  record: TaskExecutionRecord,
-  cardId: string,
-): void {
-  const active = queue.getActive();
-  if (
-    active === null ||
-    (active.status !== "failed" &&
-      !(active.status === "active" && active.ownerToken === undefined)) ||
-    active.kind !== "feedback" ||
-    active.cardId !== cardId ||
-    record.feedbackRemediation?.operationId !== active.eventId
-  )
-    return;
-  const claimed = queue.claimForRecovery(active.eventId);
-  if (claimed === null) return;
-  queue.complete(claimed.eventId);
-}
-
 function hasExhaustedPublishedFeedbackCorrection(
   record: TaskExecutionRecord,
 ): boolean {
@@ -626,6 +679,7 @@ async function persistClosedRunTerminal(
   project: ProjectConfig,
   card: TrelloCard,
   record: TaskExecutionRecord,
+  observedHeadSha: string,
 ): Promise<void> {
   if (!ProjectRunAuthority.current(project.id) || !record.pullRequest?.headSha)
     return;
@@ -634,7 +688,7 @@ async function persistClosedRunTerminal(
     project,
     card,
     pullRequestNumber: record.pullRequest.number,
-    headSha: record.pullRequest.headSha,
+    headSha: observedHeadSha,
     outcome: "closed-unmerged",
   });
   const latest = taskStore.read(card.id);
@@ -1161,7 +1215,8 @@ export async function runTaskSessionWorkflow(
   // is still publication; neither absence from Working nor an outage may claim
   // new work or turn this into an absorbing attention-required operation.
   if (
-    await resumeInitialPublication({
+    !readTerminalPrFence(ProjectRunAuthority.current(project.id)) &&
+    (await resumeInitialPublication({
       project,
       trello,
       git,
@@ -1169,7 +1224,7 @@ export async function runTaskSessionWorkflow(
       signal,
       opencode: openCode,
       ...(emailNotifier === undefined ? {} : { emailNotifier }),
-    })
+    }))
   )
     return;
   const validationCommand = project.repository.validationCommand ?? "";
@@ -1179,6 +1234,28 @@ export async function runTaskSessionWorkflow(
       "Task-session workflow requires a configured external context root",
     );
   const taskStore = new TaskExecutionStore(root, project);
+  const correctionPublicationLocation = (
+    source: TaskExecutionRecord | null,
+  ) => {
+    if (!source?.pullRequest || !source.feedbackRemediation) return {};
+    const location = {
+      project,
+      cardId: source.cardId,
+      taskStore,
+      trello,
+      github,
+    };
+    return {
+      beforeHumanReviewTransition: () =>
+        prepareFeedbackCardMove(
+          location,
+          project.trello.reviewListId,
+          `${source.feedbackRemediation!.operationId}:review`,
+        ),
+      afterHumanReviewTransition: () =>
+        reconcilePendingFeedbackCardMove(location),
+    };
+  };
   const planStore = new TaskPlanStore(root, project);
   const inspectSessionForWorktree = (cwd: string) => (sessionId: string) =>
     inspectPrimaryOpenCodeSession({
@@ -1853,6 +1930,7 @@ export async function runTaskSessionWorkflow(
       humanReviewCards.push(currentCard);
     if (
       canonicalTask.recoveryWait !== undefined ||
+      canonicalTask.feedbackCardMove !== undefined ||
       currentCard.idList !== project.trello.reviewListId
     )
       executionRecoveryCard = currentCard;
@@ -1920,6 +1998,29 @@ export async function runTaskSessionWorkflow(
     const expectedEventId = `terminal-pr:${cardId}:${expectedState}:${terminalHead}`;
     const expectedOperationKey = `${record.operationKey}:${expectedState}:${terminalHead}`;
     if (
+      authoritative &&
+      authoritative.state !== "OPEN" &&
+      authoritative.url === record.pullRequest.url &&
+      (authoritative.state !== expectedState ||
+        pendingTerminalMutation.eventId !== expectedEventId)
+    ) {
+      const outcome = await prepareTerminalTaskSession({
+        project,
+        git,
+        taskStore,
+        queue,
+        cardId,
+        pullRequest: authoritative,
+      });
+      if (outcome.ready)
+        logger
+          .child({ projectId: project.id, cardId })
+          .info(
+            "A newer human PR outcome superseded the old terminal descriptor",
+          );
+      return;
+    }
+    if (
       authoritative === null ||
       authoritative.state !== expectedState ||
       authoritative.url !== record.pullRequest.url ||
@@ -1933,7 +2034,12 @@ export async function runTaskSessionWorkflow(
         `Persisted terminal PR mutation no longer matches authoritative PR state for ${cardId}`,
       );
     }
-    if (isMerged) {
+    if (
+      isMerged &&
+      authoritative.headRefOid === record.pullRequest.headSha &&
+      !readTerminalPrFence(ProjectRunAuthority.current(project.id))
+        ?.preserveArtifacts
+    ) {
       await verifyMergedTaskPrHeadContinuity({
         github,
         project,
@@ -1942,11 +2048,17 @@ export async function runTaskSessionWorkflow(
         recordedHeadSha: record.pullRequest.headSha!,
         mergedHeadSha: authoritative.headRefOid,
       });
-    } else if (authoritative.headRefOid !== record.pullRequest.headSha) {
-      throw new Error(`Persisted closed PR head changed for ${cardId}`);
     }
-    releaseFailedPublishedFeedbackMutation(queue, record, cardId);
-    const recoveredTerminalMutation = queue.claimForRecovery(
+    const terminalPreparation = await prepareTerminalTaskSession({
+      project,
+      git,
+      taskStore,
+      queue,
+      cardId,
+      pullRequest: authoritative,
+    });
+    if (!terminalPreparation.ready) return;
+    const recoveredTerminalMutation = queue.claimTerminalForReconciliation(
       pendingTerminalMutation.eventId,
     );
     if (recoveredTerminalMutation !== null) {
@@ -1972,10 +2084,12 @@ export async function runTaskSessionWorkflow(
           await returnClosedTaskSessionPullRequestToBacklog({
             trello,
             git,
+            github,
             project,
             card,
             pullRequest: authoritative,
             preserveWorktree:
+              terminalPreparation.preserveArtifacts ||
               shouldPreserveTerminalMaintenanceArtifacts(cardId) ||
               hasExhaustedPublishedFeedbackCorrection(record),
             signal,
@@ -1991,6 +2105,7 @@ export async function runTaskSessionWorkflow(
               project,
               card,
               record,
+              authoritative.headRefOid,
             );
             queue.complete(recoveredTerminalMutation.eventId);
           }
@@ -2048,7 +2163,6 @@ export async function runTaskSessionWorkflow(
         kind: "terminal-pr",
         enqueuedAt: record.updatedAt,
       });
-      releaseFailedPublishedFeedbackMutation(queue, record, observation.cardId);
       if (observation.state === "MERGED") {
         const outcome = await completeMergedTaskSession({
           github,
@@ -2071,16 +2185,28 @@ export async function runTaskSessionWorkflow(
         // completed Trello transition.
         return;
       }
-      const terminalMutation = queue.claimForRecovery(terminalEventId);
+      const terminalPreparation = await prepareTerminalTaskSession({
+        project,
+        git,
+        taskStore,
+        queue,
+        cardId: observation.cardId,
+        pullRequest: observation.pullRequest,
+      });
+      if (!terminalPreparation.ready) return;
+      const terminalMutation =
+        queue.claimTerminalForReconciliation(terminalEventId);
       if (terminalMutation === null) continue;
       try {
         await returnClosedTaskSessionPullRequestToBacklog({
           trello,
           git,
+          github,
           project,
           card,
           pullRequest: observation.pullRequest,
           preserveWorktree:
+            terminalPreparation.preserveArtifacts ||
             shouldPreserveTerminalMaintenanceArtifacts(card.id) ||
             hasExhaustedPublishedFeedbackCorrection(record),
           signal,
@@ -2094,6 +2220,7 @@ export async function runTaskSessionWorkflow(
             project,
             card,
             record,
+            observation.pullRequest.headRefOid!,
           );
           queue.complete(terminalMutation.eventId);
         }
@@ -2102,6 +2229,21 @@ export async function runTaskSessionWorkflow(
         throw error;
       }
       return;
+    }
+    if (readTerminalPrFence(ProjectRunAuthority.current(project.id))) continue;
+    if (taskStore.read(observation.cardId)?.feedbackCardMove) {
+      await reconcilePendingFeedbackCardMove({
+        project,
+        cardId: observation.cardId,
+        taskStore,
+        trello,
+        github,
+      });
+      const currentCard = await trello.getCard(observation.cardId);
+      const index = humanReviewCards.findIndex(
+        (candidate) => candidate.id === currentCard.id,
+      );
+      if (index >= 0) humanReviewCards[index] = currentCard;
     }
     const executionCard = humanReviewCards.find(
       (candidate) => candidate.id === observation.cardId,
@@ -2134,6 +2276,156 @@ export async function runTaskSessionWorkflow(
     }
     if (executionRecoveryBlocked) continue;
     let record = taskStore.read(observation.cardId);
+    if (
+      record &&
+      ["ci", "human-feedback"].includes(record.phase) &&
+      !hasUnresolvedLegacyMaintenance &&
+      queue.getActive()?.kind !== "feedback"
+    ) {
+      const card = humanReviewCards.find(
+        (candidate) => candidate.id === observation.cardId,
+      )!;
+      const worktreePath = path.join(project.repository.worktreeRoot, card.id);
+      const noOpReportPending =
+        record.feedbackRemediation?.status === "no-op" &&
+        record.feedbackRemediation.outcomeReported !== true;
+      if (!noOpReportPending)
+        await refreshCurrentTaskFeedback({
+          project,
+          cardId: card.id,
+          observation,
+          ledgerStore: feedbackLedgerStore,
+          openCode,
+          worktreePath,
+          signal,
+        });
+      const pending =
+        feedbackLedgerStore
+          .read(card.id)
+          ?.entries.filter(
+            (entry) =>
+              entry.isCurrent !== false &&
+              entry.status === "pending" &&
+              entry.actionability === "actionable",
+          ) ?? [];
+      const selectedFeedbackId =
+        pending.length === 0
+          ? null
+          : feedbackOperationId(observation.headSha, pending);
+      const currentFeedback = feedbackLedgerStore.read(card.id)?.entries ?? [];
+      const repliesPending = currentFeedback.some(
+        (entry) =>
+          entry.isCurrent !== false &&
+          entry.actionability === "actionable" &&
+          ["verified", "escalated"].includes(entry.status) &&
+          entry.remediationCommitSha === observation.headSha,
+      );
+      const replyEventId = repliesPending
+        ? feedbackReplyOperationId(observation.headSha, currentFeedback)
+        : null;
+      const ciEventId = `ci-repair:${card.id}:${observation.headSha}`;
+      const maintenanceEventId = `pr-maintenance:${card.id}:${observation.headSha}`;
+      const maintenanceNeeded =
+        project.maintenance?.enabled === true &&
+        ["behind", "diverged"].includes(observation.baseRelation);
+      for (const queued of queue.list()) {
+        if (queued.cardId !== card.id || queued.status !== "queued") continue;
+        if (
+          (queued.kind === "feedback" &&
+            queued.eventId !== selectedFeedbackId &&
+            queued.eventId !== replyEventId) ||
+          (queued.kind === "ci-repair" && queued.eventId !== ciEventId) ||
+          (queued.kind === "pr-maintenance" &&
+            (!maintenanceNeeded || queued.eventId !== maintenanceEventId))
+        )
+          queue.retireSupersededObservation(queued.eventId);
+      }
+      if (observation.ciEvaluation.status === "failed")
+        queue.enqueue({
+          projectId: project.id,
+          cardId: card.id,
+          eventId: ciEventId,
+          operationKey: `${record.operationKey}:ci:${observation.headSha}`,
+          kind: "ci-repair",
+          enqueuedAt: record.updatedAt,
+        });
+      if (maintenanceNeeded)
+        queue.enqueue({
+          projectId: project.id,
+          cardId: card.id,
+          eventId: maintenanceEventId,
+          operationKey: maintenanceEventId,
+          kind: "pr-maintenance",
+          enqueuedAt: record.updatedAt,
+        });
+      if (selectedFeedbackId !== null)
+        queue.enqueue({
+          projectId: project.id,
+          cardId: card.id,
+          eventId: selectedFeedbackId,
+          operationKey: selectedFeedbackId,
+          kind: "feedback",
+          enqueuedAt: new Date().toISOString(),
+        });
+      if (replyEventId !== null)
+        queue.enqueue({
+          projectId: project.id,
+          cardId: card.id,
+          eventId: replyEventId,
+          operationKey: replyEventId,
+          kind: "feedback",
+          enqueuedAt: record.createdAt,
+        });
+      if (
+        selectedFeedbackId !== null ||
+        replyEventId !== null ||
+        noOpReportPending
+      ) {
+        const operationId =
+          replyEventId ??
+          selectedFeedbackId ??
+          `feedback-report:${record.feedbackRemediation!.operationId}`;
+        if (queue.getActive() === null) {
+          if (record.phase === "ci") {
+            record = taskStore.compareAndSwap(
+              card.id,
+              record.revision,
+              transitionTaskExecutionRecord(record, {
+                type: "human-feedback-pending",
+                eventId: `${operationId}:pending`,
+                projectId: project.id,
+                cardId: card.id,
+                operationKey: record.operationKey,
+                occurredAt: timestamp(record),
+              }),
+            );
+          }
+          const result = await runTaskSessionFeedbackCycle({
+            project,
+            card,
+            observation,
+            taskStore,
+            planStore,
+            ledgerStore: feedbackLedgerStore,
+            mutationQueue: queue,
+            trello,
+            git,
+            github,
+            openCode,
+            commands,
+            worktreePath,
+            prepareAttachmentContext: () =>
+              options.prepareAttachmentContext(card),
+            signal,
+            ...(emailNotifier === undefined ? {} : { emailNotifier }),
+            ...(options.retryIntervalMs === undefined
+              ? {}
+              : { retryIntervalMs: options.retryIntervalMs }),
+          });
+          if (result !== "idle") return;
+        }
+      }
+    }
     const ciStateKey = `${project.id}/${observation.cardId}/${observation.headSha}`;
     const ciState = observation.ciEvaluation.status;
     if (lastLoggedCiState.get(ciStateKey) !== ciState) {
@@ -2986,12 +3278,26 @@ export async function runTaskSessionWorkflow(
     );
     // Passing CI and local quality evidence never authorizes an orchestrator merge.
   }
-  if (executionRecoveryBlocked) return;
+  if (
+    executionRecoveryBlocked ||
+    readTerminalPrFence(ProjectRunAuthority.current(project.id))
+  )
+    return;
   if (
     executionRecoveryCard !== undefined &&
     canonicalCardId !== undefined &&
     !recoveryCheckedThisPoll.has(canonicalCardId)
   ) {
+    if (taskStore.read(executionRecoveryCard.id)?.feedbackCardMove) {
+      await reconcilePendingFeedbackCardMove({
+        project,
+        cardId: executionRecoveryCard.id,
+        taskStore,
+        trello,
+        github,
+      });
+      executionRecoveryCard = await trello.getCard(executionRecoveryCard.id);
+    }
     const recoveryRecord = taskStore.read(executionRecoveryCard.id);
     if (recoveryRecord === null)
       throw new Error(
@@ -4119,6 +4425,7 @@ export async function runTaskSessionWorkflow(
         .event("Retired verified orphaned Ready mutation");
     }
     let readyRecoveryEvent: TaskMutationEvent | null = null;
+    let firstEligibleEvent: TaskMutationEvent | null = null;
     for (const [readyIndex, card] of eligibleCards.entries()) {
       if (taskStore.read(card.id) !== null) {
         throw new Error(
@@ -4248,6 +4555,7 @@ export async function runTaskSessionWorkflow(
         });
       }
       const activeEvent = queue.getActive();
+      firstEligibleEvent ??= queuedEvent;
       if (
         activeEvent !== null &&
         activeEvent.cardId === card.id &&
@@ -4268,9 +4576,9 @@ export async function runTaskSessionWorkflow(
     }
     mutation =
       readyRecoveryEvent === null
-        ? eligibleCards.length === 0
+        ? firstEligibleEvent === null
           ? null
-          : queue.claimNext()
+          : queue.claimForRecovery(firstEligibleEvent.eventId)
         : queue.claimForRecovery(readyRecoveryEvent.eventId);
     if (mutation === null) return;
     selectedCard =
@@ -4296,7 +4604,7 @@ export async function runTaskSessionWorkflow(
     }
   }
   if (mutation === null || selectedCard === null) return;
-  const card = selectedCard;
+  let card = selectedCard;
   const cardLog = logger.child({ projectId: project.id, cardId: card.id });
   try {
     // The discovery snapshot can become stale while another poller or a user
@@ -4322,11 +4630,52 @@ export async function runTaskSessionWorkflow(
         mutationBlockStore.resolve(`orphan:${mutation.eventId}`);
         return;
       }
+      const firstEligible = currentlyReady.find(
+        (candidate) =>
+          isCardStartDateReached(candidate, Date.now()) &&
+          getWorkflowKind(candidate, project) !== null,
+      );
+      if (
+        firstEligible?.id !== card.id ||
+        getWorkflowKind(firstEligible, project) !== mutation.kind
+      ) {
+        queue.requeueAfterVerifiedRecovery(mutation.eventId);
+        return;
+      }
+      card = firstEligible;
     }
     if (recoveryRecord !== null) {
       cardLog.event(
         `Recovering existing task in ${recoveryRecord.phase} phase`,
       );
+      if (
+        mutation.kind === "feedback" &&
+        recoveryRecord.pullRequest !== undefined &&
+        !(
+          recoveryRecord.phase === "publication" &&
+          expectedTaskTrelloList(project, recoveryRecord) ===
+            project.trello.reviewListId
+        )
+      ) {
+        await ensureFeedbackCardLocation(
+          { project, cardId: card.id, taskStore, trello, github },
+          project.trello.workingListId,
+          `${mutation.eventId}:working`,
+        );
+        recoveryRecord = taskStore.read(card.id)!;
+        card = await trello.getCard(card.id);
+        await updateMaintenanceStatus(
+          github,
+          project,
+          card,
+          recoveryRecord.pullRequest!.url,
+          recoveryRecord.phase === "publication"
+            ? "publishing-review-changes"
+            : "validating-review-changes",
+          "feedback recovery",
+          cardLog,
+        );
+      }
     }
     if (mutation.kind === "refinement") {
       if (recoveryRecord !== null) {
@@ -5728,6 +6077,7 @@ export async function runTaskSessionWorkflow(
             : {
                 expectedExistingPullRequestUrl: recoveryRecord.pullRequest.url,
               }),
+          ...correctionPublicationLocation(recoveryRecord),
         });
         publishedSha = await git.getHeadSha(worktreePath);
       } else {
@@ -6765,6 +7115,7 @@ export async function runTaskSessionWorkflow(
         ...(recoveryRecord?.pullRequest?.url === undefined
           ? {}
           : { expectedExistingPullRequestUrl: recoveryRecord.pullRequest.url }),
+        ...correctionPublicationLocation(recoveryRecord),
         beforePushVerification: async () => {
           preparedEvidence = await verifyPreparedContent();
           const reviewDisclosure =

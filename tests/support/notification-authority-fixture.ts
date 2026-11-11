@@ -34,6 +34,8 @@ export async function notificationAuthorityFixture(
     otherProjects: { project: ProjectConfig; lease: ProjectOwnershipLease }[];
   },
   actualGit = false,
+  taskKind: "refinement" | "implementation" = "refinement",
+  attemptId?: string,
 ) {
   const base = path.join(root, id);
   fs.mkdirSync(base, { recursive: true });
@@ -299,9 +301,10 @@ export async function notificationAuthorityFixture(
   const openCode = new OpenCodeClient(engineer);
   const commands = new CommandRunner(vi.fn());
   const authority = await ProjectRunAuthority.createPreparingAttempt({
+    ...(attemptId === undefined ? {} : { attemptId }),
     projectId: id,
     cardId: card.id,
-    taskKind: "refinement",
+    taskKind,
     pinned,
     projectLease: lease,
     coordinationRoot,

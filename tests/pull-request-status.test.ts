@@ -21,7 +21,7 @@ describe("reconcileManagedPullRequestStatus", () => {
     const result = reconcileManagedPullRequestStatus(body, "rebasing", "main");
 
     expect(result).toBe(
-      `${body}\n\n${block("Agent Orchestrator status: rebasing onto the latest configured default branch (main).")}`,
+      `${block("Agent Orchestrator status: rebasing onto the latest configured default branch (main).")}\n\n${body}`,
     );
   });
 
@@ -37,7 +37,7 @@ describe("reconcileManagedPullRequestStatus", () => {
     );
 
     expect(result).toBe(
-      `${before}${block("Agent Orchestrator status: resolving merge conflicts; human attention may be required if automatic remediation cannot complete.")}${after}`,
+      `${block("Agent Orchestrator status: resolving merge conflicts; human attention may be required if automatic remediation cannot complete.")}\n\n${before}${after}`,
     );
   });
 

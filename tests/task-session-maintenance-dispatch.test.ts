@@ -22,9 +22,16 @@ vi.mock("../src/orchestrator/maintain-outdated-pr.js", () => ({
   retireFailedUnpublishedPrMaintenance: vi.fn(),
   requeueInterruptedPreparedPrMaintenance: vi.fn(() => false),
 }));
-vi.mock("../src/orchestrator/run-task-session-feedback-cycle.js", () => ({
-  runTaskSessionFeedbackCycle: vi.fn(async () => "idle"),
-}));
+vi.mock(
+  "../src/orchestrator/run-task-session-feedback-cycle.js",
+  async (importOriginal) => ({
+    ...(await importOriginal<
+      typeof import("../src/orchestrator/run-task-session-feedback-cycle.js")
+    >()),
+    refreshCurrentTaskFeedback: vi.fn(async () => undefined),
+    runTaskSessionFeedbackCycle: vi.fn(async () => "idle"),
+  }),
+);
 vi.mock("../src/task-session/run-task-session-ci-repairs.js", () => ({
   runTaskSessionCiRepairs: vi.fn(async () => ({ status: "idle" })),
 }));

@@ -268,7 +268,7 @@ describe("runTaskSessionFeedbackVerification", () => {
     expect(run.mock.calls[0]?.[0].prompt).toContain("Original task:");
   });
 
-  it("does not invoke an independent verifier when local gates are stale or failed", async () => {
+  it("does not invoke an independent verifier with stale source evidence", async () => {
     const f = fixture();
     const identity = await getTaskSessionSourceSnapshotIdentity(
       f.git,
@@ -287,7 +287,12 @@ describe("runTaskSessionFeedbackVerification", () => {
         qualityEvidence: {
           currentContentIdentity: identity,
           validationCommand: "yarn validate",
-          validation: null,
+          validation: {
+            ...skippedQuality(`sha256:${"b".repeat(64)}`),
+            command: "yarn validate",
+            status: "failed",
+            exitCode: 1,
+          },
           coverage: skippedQuality(identity),
           review: null,
         },
@@ -303,73 +308,76 @@ describe("runTaskSessionFeedbackVerification", () => {
     ).rejects.toThrow("quality gates failed");
     expect(run).not.toHaveBeenCalled();
   });
-  it("runs verification with failed advisory AI review", async () => {
-    const f = fixture();
-    const identity = await getTaskSessionSourceSnapshotIdentity(
-      f.git,
-      f.worktreePath,
-    );
-    const run = vi.fn<RunOpenCode>().mockResolvedValue({
-      exitCode: 0,
-      output: JSON.stringify({
-        version: 1,
-        projectId: "project",
-        cardId: "card",
-        headSha: f.headSha,
-        contentIdentity: identity,
-        dispositions: [
-          {
-            feedbackId: "inline-comment:comment-1",
-            status: "unresolved",
-            reason: "Not verified",
-          },
-        ],
-      }),
-      errorOutput: "",
-    });
-    const result = await runTaskSessionFeedbackVerification({
-      project: f.project,
-      card: f.card,
-      expectedBranch: "agent/card",
-      expectedHeadSha: f.headSha,
-      worktreePath: f.worktreePath,
-      approvedPlan: f.plan,
-      actionableFeedback: f.feedback,
-      qualityEvidence: {
-        currentContentIdentity: identity,
-        validationCommand: "yarn validate",
-        validation: {
-          command: "yarn validate",
-          startedAt: "2026-10-24T09:00:00.000Z",
-          completedAt: "2026-10-24T09:01:00.000Z",
-          exitCode: 0,
-          status: "passed",
-          timedOut: false,
-          aborted: false,
-          diagnostic: "ok",
+  it.each([false, true])(
+    "runs verification with failed advisory AI review and validation failure=%s",
+    async (failed) => {
+      const f = fixture();
+      const identity = await getTaskSessionSourceSnapshotIdentity(
+        f.git,
+        f.worktreePath,
+      );
+      const run = vi.fn<RunOpenCode>().mockResolvedValue({
+        exitCode: 0,
+        output: JSON.stringify({
+          version: 1,
+          projectId: "project",
+          cardId: "card",
+          headSha: f.headSha,
           contentIdentity: identity,
+          dispositions: [
+            {
+              feedbackId: "inline-comment:comment-1",
+              status: "unresolved",
+              reason: "Not verified",
+            },
+          ],
+        }),
+        errorOutput: "",
+      });
+      const result = await runTaskSessionFeedbackVerification({
+        project: f.project,
+        card: f.card,
+        expectedBranch: "agent/card",
+        expectedHeadSha: f.headSha,
+        worktreePath: f.worktreePath,
+        approvedPlan: f.plan,
+        actionableFeedback: f.feedback,
+        qualityEvidence: {
+          currentContentIdentity: identity,
+          validationCommand: "yarn validate",
+          validation: {
+            command: "yarn validate",
+            startedAt: "2026-10-24T09:00:00.000Z",
+            completedAt: "2026-10-24T09:01:00.000Z",
+            exitCode: failed ? 1 : 0,
+            status: failed ? "failed" : "passed",
+            timedOut: false,
+            aborted: false,
+            diagnostic: "ok",
+            contentIdentity: identity,
+          },
+          coverage: skippedQuality(identity),
+          review: {
+            ...f.reviewResult,
+            verdict: "fail",
+            reviewedContentIdentity: identity,
+          },
         },
-        coverage: skippedQuality(identity),
-        review: {
-          ...f.reviewResult,
-          verdict: "fail",
-          reviewedContentIdentity: identity,
+        git: f.git,
+        openCode: new OpenCodeClient(run),
+        runOptions: {
+          model: "reviewer",
+          variant: "high",
+          timeoutMilliseconds: 60000,
+          signal: new AbortController().signal,
         },
-      },
-      git: f.git,
-      openCode: new OpenCodeClient(run),
-      runOptions: {
-        model: "reviewer",
-        variant: "high",
-        timeoutMilliseconds: 60000,
-        signal: new AbortController().signal,
-      },
-    });
-    expect(result.dispositions[0]?.status).toBe("unresolved");
-  });
+      });
+      expect(result.dispositions[0]?.status).toBe("unresolved");
+    },
+  );
 
   it.each(["malformed", "nonzero", "execution"] as const)(
-    "preserves unresolved feedback when AI verification is %s",
+    "reports uncertain feedback when AI verification is %s",
     async (failure) => {
       const f = fixture();
       const identity = await getTaskSessionSourceSnapshotIdentity(
@@ -421,7 +429,7 @@ describe("runTaskSessionFeedbackVerification", () => {
       expect(result.dispositions).toMatchObject([
         {
           feedbackId: "inline-comment:comment-1",
-          status: "unresolved",
+          status: "uncertain",
         },
       ]);
     },
@@ -475,7 +483,7 @@ describe("runTaskSessionFeedbackVerification", () => {
     ).rejects.toThrow("source or PR head changed");
   });
 
-  it("preserves unresolved feedback on an invalid AI disposition", async () => {
+  it("reports uncertain feedback on an invalid AI disposition", async () => {
     const f = fixture();
     const identity = await getTaskSessionSourceSnapshotIdentity(
       f.git,
@@ -536,7 +544,7 @@ describe("runTaskSessionFeedbackVerification", () => {
     expect(result.dispositions).toEqual([
       {
         feedbackId: "inline-comment:comment-1",
-        status: "unresolved",
+        status: "uncertain",
         reason: expect.stringContaining("inconclusive"),
       },
     ]);

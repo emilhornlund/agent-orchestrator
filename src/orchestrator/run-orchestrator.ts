@@ -158,6 +158,12 @@ import { getCardsForDiscovery } from "./trello-list-discovery.js";
 import { getWorkflowKind } from "./workflow-kind.js";
 import { isCardStartDateReached } from "./card-start-eligibility.js";
 import { MAX_VALIDATION_REPAIR_ATTEMPTS } from "../task-session/run-task-session-validation-repairs.js";
+import {
+  AiExecutionCapacity,
+  AiCapacityCancelledError,
+} from "./ai-execution-capacity.js";
+import { withActivePrObservation } from "./active-pr-observation.js";
+import { terminalPrFenceFromRun } from "../task-session/terminal-pr-fence.js";
 
 function sleep(milliseconds: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -193,6 +199,7 @@ function isShutdownCancellation(error: unknown, signal: AbortSignal): boolean {
 
     if (
       current instanceof OpenCodeRunAbortedError ||
+      current instanceof AiCapacityCancelledError ||
       current instanceof CommandRunAbortedError ||
       current instanceof TrelloRequestAbortedError
     ) {
@@ -467,6 +474,52 @@ async function hasPreparedConflictRecovery(
 }
 
 async function runProjectWorkerInner(
+  trello: TrelloClient,
+  git: GitClient,
+  github: GitHubClient,
+  opencode: OpenCodeClient,
+  commands: CommandRunner,
+  project: PollingProject,
+  pollIntervalMilliseconds: number,
+  signal: AbortSignal,
+  emailNotifier?: EmailNotifier,
+  deferredTrelloValidation?: typeof validateProjectTrello,
+  runContext?: ProjectRunWorkerContext,
+): Promise<"authority-released" | undefined> {
+  const execute = () =>
+    runProjectWorkerLoop(
+      trello,
+      git,
+      github,
+      opencode,
+      commands,
+      project,
+      pollIntervalMilliseconds,
+      signal,
+      emailNotifier,
+      deferredTrelloValidation,
+      runContext,
+    );
+  if (!runContext?.authority) return execute();
+  return withActivePrObservation(
+    {
+      project,
+      github,
+      authority: runContext.authority,
+      intervalMs: pollIntervalMilliseconds,
+      signal,
+      onError: () =>
+        logger
+          .child({ projectId: project.id })
+          .warn(
+            "Active PR observation deferred; project state and retained arrivals are unchanged",
+          ),
+    },
+    execute,
+  );
+}
+
+async function runProjectWorkerLoop(
   trello: TrelloClient,
   git: GitClient,
   github: GitHubClient,
@@ -766,7 +819,7 @@ async function runProjectWorkerInner(
           "Could not inspect Ready cards before canonical attempt selection",
           signal,
         );
-        const selected = readyCards.find(
+        let selected = readyCards.find(
           (card) =>
             isCardStartDateReached(card, Date.now()) &&
             getWorkflowKind(card, project) !== null,
@@ -775,6 +828,21 @@ async function runProjectWorkerInner(
           await sleep(pollIntervalMilliseconds, signal);
           continue;
         }
+        // Discovery may have waited on external I/O. Claim from the current
+        // ordered list, not a cached descriptor or a prior queue timestamp.
+        const currentReady = await getCardsForDiscovery(
+          trello,
+          project.id,
+          project.trello.readyListId,
+          "Could not revalidate Ready order before canonical claim",
+          signal,
+        );
+        selected = currentReady.find(
+          (card) =>
+            isCardStartDateReached(card, Date.now()) &&
+            getWorkflowKind(card, project) !== null,
+        );
+        if (!selected || signal.aborted) continue;
         const taskKind = getWorkflowKind(selected, project);
         if (taskKind === null) continue;
         runContext.projectLease.assertHeld();
@@ -848,6 +916,7 @@ async function runProjectWorkerInner(
         runContext?.authority &&
         (!authorityRecord ||
           (authorityRecord.lifecycle === "waiting" &&
+            !terminalPrFenceFromRun(authorityRecord) &&
             !resumableLegacyAttempt &&
             !recoverableTaskWaitDue))
       ) {
@@ -865,6 +934,7 @@ async function runProjectWorkerInner(
       // of resuming this same checkpoint when the service recovers.
       if (
         runContext?.authority &&
+        !terminalPrFenceFromRun(runContext.authority.store.read()!) &&
         (await resumeInitialPublication({
           project,
           trello,
@@ -1662,37 +1732,49 @@ export async function runOrchestrator(
   );
 
   try {
-    await Promise.all(
-      config.projects.map((project) =>
-        runProjectWorker(
-          trello,
-          git,
-          github,
-          opencode,
-          commands,
-          {
-            ...project,
-            contextRoot:
-              projectRunContexts?.get(project.id)?.pinned?.storageRoot ??
-              config.workflow.contextRoot,
-            ...(config.workflow.maxAttachmentBytes === undefined
-              ? {}
-              : { maxAttachmentBytes: config.workflow.maxAttachmentBytes }),
-            ...(config.workflow.maxTotalAttachmentBytes === undefined
-              ? {}
-              : {
-                  maxTotalAttachmentBytes:
-                    config.workflow.maxTotalAttachmentBytes,
-                }),
-          } satisfies PollingProject,
-          pollIntervalMilliseconds,
-          signal,
-          emailNotifier,
-          deferredTrelloValidation,
-          projectRunContexts?.get(project.id),
+    const execute = () =>
+      Promise.all(
+        config.projects.map((project) =>
+          runProjectWorker(
+            trello,
+            git,
+            github,
+            opencode,
+            commands,
+            {
+              ...project,
+              contextRoot:
+                projectRunContexts?.get(project.id)?.pinned?.storageRoot ??
+                config.workflow.contextRoot,
+              ...(config.workflow.maxAttachmentBytes === undefined
+                ? {}
+                : { maxAttachmentBytes: config.workflow.maxAttachmentBytes }),
+              ...(config.workflow.maxTotalAttachmentBytes === undefined
+                ? {}
+                : {
+                    maxTotalAttachmentBytes:
+                      config.workflow.maxTotalAttachmentBytes,
+                  }),
+            } satisfies PollingProject,
+            pollIntervalMilliseconds,
+            signal,
+            emailNotifier,
+            deferredTrelloValidation,
+            projectRunContexts?.get(project.id),
+          ),
         ),
-      ),
-    );
+      );
+    if (config.workflow.maxConcurrentAiProjects === undefined) await execute();
+    else {
+      const capacity = new AiExecutionCapacity(
+        config.workflow.maxConcurrentAiProjects,
+        [...(projectRunContexts?.values() ?? [])].flatMap((context) =>
+          context.authority ? [context.authority] : [],
+        ),
+        pollIntervalMilliseconds,
+      );
+      await capacity.runInScope(signal, execute);
+    }
   } finally {
     clearInterval(retentionTimer);
   }

@@ -150,6 +150,42 @@ function fixture() {
 
 describe("observeTaskSessionReviewCards", () => {
   it.each(["MERGED", "CLOSED"] as const)(
+    "prioritizes a human %s outcome received while feedback and CI are being collected",
+    async (state) => {
+      const f = fixture();
+      const current = f.store.read("card-one")!;
+      const pr = {
+        url: current.pullRequest!.url,
+        state: "OPEN" as const,
+        mergedAt: null,
+        headRefOid: current.pullRequest!.headSha!,
+        baseRefName: "main",
+        headRefName: "agent/card-one",
+        headRepository: { name: "Repo" },
+        headRepositoryOwner: { login: "Owner" },
+      };
+      vi.mocked(f.github.findPullRequestState)
+        .mockResolvedValueOnce(pr)
+        .mockResolvedValueOnce({
+          ...pr,
+          state,
+          mergedAt: state === "MERGED" ? "2026-10-24T09:01:00.000Z" : null,
+        });
+      const result = await observeTaskSessionReviewCards({
+        project: f.project,
+        cards: [f.cards[0]!],
+        taskRecordStore: f.store,
+        github: f.github,
+      });
+      expect(result).toMatchObject([
+        { state, cardId: "card-one", pullRequestUrl: pr.url },
+      ]);
+      expect(f.store.read("card-one")?.revision).toBe(current.revision);
+      expect(f.store.read("card-one")?.reviewObservation).toBeUndefined();
+    },
+  );
+
+  it.each(["MERGED", "CLOSED"] as const)(
     "observes a published %s outcome during a non-review correction checkpoint",
     async (state) => {
       const f = fixture();

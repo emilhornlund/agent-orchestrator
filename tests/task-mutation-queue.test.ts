@@ -50,6 +50,80 @@ const legacyProductionRetirements = [
 ];
 
 describe("TaskMutationQueue", () => {
+  it("persists human/CI/maintenance priority and prevents specific-claim callers bypassing it", () => {
+    const queue = queueFor("project-a");
+    queue.enqueue({
+      ...task("project-a", "maintenance", "card", "2026-10-24T09:00:00.000Z"),
+      kind: "pr-maintenance",
+    });
+    queue.enqueue({
+      ...task("project-a", "ci", "card", "2026-10-24T09:01:00.000Z"),
+      kind: "ci-repair",
+    });
+    queue.enqueue(
+      task("project-a", "human", "card", "2026-10-24T09:02:00.000Z"),
+    );
+    const restarted = queueFor("project-a");
+    expect(restarted.claimForRecovery("maintenance")).toBeNull();
+    expect(restarted.claimForRecovery("ci")).toBeNull();
+    expect(restarted.claimForRecovery("human")?.eventId).toBe("human");
+    restarted.complete("human");
+    expect(restarted.claimNext()?.eventId).toBe("ci");
+    restarted.complete("ci");
+    expect(restarted.claimNext()?.eventId).toBe("maintenance");
+  });
+
+  it("runs an explicit necessary prerequisite ahead of human work without preempting an active writer", () => {
+    const queue = queueFor("project-a");
+    queue.enqueue({
+      ...task("project-a", "ci", "card", "2026-10-24T09:00:00.000Z"),
+      kind: "ci-repair",
+    });
+    queue.claimNext();
+    queue.enqueue({
+      ...task("project-a", "sync", "card", "2026-10-24T09:01:00.000Z"),
+      kind: "pr-maintenance",
+    });
+    queue.enqueue({
+      ...task("project-a", "human", "card", "2026-10-24T09:02:00.000Z"),
+      prerequisites: ["sync"],
+    });
+    expect(queue.claimForRecovery("human")).toBeNull();
+    queue.complete("ci");
+    expect(queue.claimForRecovery("human")).toBeNull();
+    expect(queue.claimNext()?.eventId).toBe("sync");
+    queue.complete("sync");
+    expect(queue.claimNext()?.eventId).toBe("human");
+  });
+
+  it("preserves descriptors when invalid prerequisites or unsafe retirement are refused", () => {
+    const queue = queueFor("project-a");
+    queue.enqueue(
+      task("project-a", "human", "card", "2026-10-24T09:00:00.000Z"),
+    );
+    expect(() =>
+      queue.enqueue({
+        ...task("project-a", "invalid", "card", "2026-10-24T09:01:00.000Z"),
+        prerequisites: ["missing"],
+      }),
+    ).toThrow();
+    expect(queue.list()).toHaveLength(1);
+    queue.claimNext();
+    expect(() => queue.retireSupersededObservation("human")).toThrow(
+      "never-started",
+    );
+    queue.complete("human");
+    queue.enqueue({
+      ...task("project-a", "old-ci", "card", "2026-10-24T09:02:00.000Z"),
+      kind: "ci-repair",
+    });
+    queue.retireSupersededObservation("old-ci");
+    expect(queueFor("project-a").list().at(-1)).toMatchObject({
+      status: "retired",
+      retirementReason: "superseded-observation",
+    });
+  });
+
   it("deduplicates events and claims at most one deterministic project mutation", () => {
     const queue = queueFor("project-a");
     queue.enqueue(

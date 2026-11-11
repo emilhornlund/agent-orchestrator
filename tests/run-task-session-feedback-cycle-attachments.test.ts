@@ -12,6 +12,8 @@ import { TaskExecutionStore } from "../src/task-session/task-execution-store.js"
 import { TaskMutationQueue } from "../src/task-session/task-mutation-queue.js";
 import { TaskPlanStore } from "../src/task-session/task-plan-store.js";
 import type { TrelloCard } from "../src/trello/trello-client.js";
+import { OpenCodeClient } from "../src/opencode/opencode-client.js";
+import { actionableFeedbackResponse } from "./support/feedback-classification-response.js";
 
 let root: string;
 
@@ -23,6 +25,7 @@ function fixture() {
   root = fs.mkdtempSync(path.join(os.tmpdir(), "feedback-cycle-attachments-"));
   const project = {
     id: "project",
+    trello: { reviewListId: "review", workingListId: "working" },
     repository: {
       path: path.join(root, "repo"),
       github: "owner/repo",
@@ -30,7 +33,7 @@ function fixture() {
       worktreeRoot: path.join(root, "worktrees"),
       validationCommand: "yarn validate",
     },
-    opencode: { timeoutMinutes: 1 },
+    opencode: { timeoutMinutes: 1, review: {} },
   } as ProjectConfig;
   const stateRoot = path.join(root, "state");
   const card: TrelloCard = {
@@ -98,8 +101,12 @@ function fixture() {
     mutationQueue: new TaskMutationQueue(stateRoot, project),
     trello: {} as never,
     git: {} as never,
-    github: {} as never,
-    openCode: {} as never,
+    github: { ensurePullRequestDraft: vi.fn(async () => undefined) } as never,
+    openCode: new OpenCodeClient(async ({ prompt }) => ({
+      exitCode: 0,
+      output: actionableFeedbackResponse(prompt),
+      errorOutput: "",
+    })),
     commands: {} as never,
     worktreePath: path.join(root, "worktrees", card.id),
     signal: new AbortController().signal,
@@ -119,6 +126,122 @@ function fixture() {
 }
 
 describe("Human Review attachment preparation", () => {
+  it("preserves both operation and cleanup failures when managed activity cannot be reconciled", async () => {
+    const f = fixture();
+    const startFailure = new Error("status start unavailable");
+    const clearFailure = new Error("status clear unavailable");
+    const updateStatus = vi
+      .fn()
+      .mockRejectedValueOnce(startFailure)
+      .mockRejectedValueOnce(clearFailure);
+    const result = runTaskSessionFeedbackCycle({
+      ...f.common,
+      github: {
+        ensurePullRequestDraft: vi.fn(async () => undefined),
+        updatePullRequestDescriptionStatus: updateStatus,
+      } as never,
+      observation: {
+        ...f.observation,
+        conversationComments: [
+          {
+            id: 10,
+            author: "human",
+            body: "Please fix this",
+            createdAt: "2026-10-24T09:00:00.000Z",
+            updatedAt: null,
+          },
+        ],
+      } as never,
+    });
+    await expect(result).rejects.toMatchObject({
+      errors: [{ cause: startFailure }, { cause: clearFailure }],
+      cause: { cause: clearFailure },
+    });
+    expect(f.common.mutationQueue.getActive()?.status).toBe("failed");
+    expect(f.common.taskStore.read("card")?.phase).toBe("human-feedback");
+  });
+
+  it("does not trigger classification or correction from self, bot, or managed-status comments", async () => {
+    const f = fixture();
+    const classify = vi.spyOn(f.common.openCode, "run");
+    const prepareAttachmentContext = vi.fn(async () => undefined);
+    const comments = [
+      { id: 1, author: "automation", body: "Fix something" },
+      {
+        id: 2,
+        author: "other-bot",
+        authorIsBot: true,
+        body: "Fix something else",
+      },
+      {
+        id: 3,
+        author: "human",
+        body: "<!-- agent-orchestrator-feedback:status --> work complete",
+      },
+    ].map((item) => ({
+      ...item,
+      createdAt: "2026-10-24T09:00:00.000Z",
+      updatedAt: null,
+    }));
+    await expect(
+      runTaskSessionFeedbackCycle({
+        ...f.common,
+        observation: {
+          ...f.observation,
+          automationActor: "automation",
+          conversationComments: comments,
+        } as never,
+        prepareAttachmentContext,
+      }),
+    ).resolves.toBe("idle");
+    expect(classify).not.toHaveBeenCalled();
+    expect(prepareAttachmentContext).not.toHaveBeenCalled();
+    expect(f.common.mutationQueue.list()).toEqual([]);
+  });
+
+  it("persists semantic discussion classification instead of parking a general PR comment for attention", async () => {
+    const f = fixture();
+    vi.spyOn(f.common.openCode, "run").mockImplementation(
+      async ({ prompt }) => ({
+        exitCode: 0,
+        errorOutput: "",
+        output: actionableFeedbackResponse(prompt).replaceAll(
+          '"actionable"',
+          '"discussion"',
+        ),
+      }),
+    );
+    const observation = {
+      ...f.observation,
+      conversationComments: [
+        {
+          id: 1,
+          author: "human",
+          body: "Why was this approach chosen?",
+          createdAt: "2026-10-24T09:00:00.000Z",
+          updatedAt: null,
+        },
+      ],
+    };
+    await expect(
+      runTaskSessionFeedbackCycle({
+        ...f.common,
+        observation: observation as never,
+      }),
+    ).resolves.toBe("idle");
+    await expect(
+      runTaskSessionFeedbackCycle({
+        ...f.common,
+        observation: observation as never,
+      }),
+    ).resolves.toBe("idle");
+    expect(f.common.openCode.run).toHaveBeenCalledOnce();
+    expect(f.common.ledgerStore.read("card")?.entries).toMatchObject([
+      { actionability: "discussion" },
+    ]);
+    expect(f.common.taskStore.read("card")?.phase).toBe("human-feedback");
+  });
+
   it("preserves a higher validation budget and used attempts when feedback publication stores fresh evidence", () => {
     const f = fixture();
     const current = f.common.taskStore.read(f.common.card.id);

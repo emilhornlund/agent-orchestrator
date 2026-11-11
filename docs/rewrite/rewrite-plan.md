@@ -95,6 +95,10 @@ Comments, replies and email may have ambiguous non-idempotent acceptance: correl
 and discover where supported, otherwise retain uncertainty instead of blind resend.
 Local generation fencing does not make a remote check-and-write atomic, and the
 application must not promise unconditional exactly-once external delivery.
+For managed PR body fields, retain the observed-body precondition: detected human
+edits cancel only a never-dispatched intent before refresh. Observed later field
+drift requires a new repeatable intent, not a cached historical success; this never
+authorizes resending an uncertain comment/reply or overwriting detected human text.
 
 ## Implementation boundaries
 
@@ -215,9 +219,14 @@ records the completion checkpoint. Later active-PR workflow changes remain in P7
 Persist arrivals while a single writer executes, separate project occupancy from
 AI slots, and schedule human work before CI/maintenance. Keep current feedback
 separate from immutable handling history; semantic actionability belongs to
-OpenCode. Correct on the same PR/session, with truthful partial replies and current
+OpenCode. Current semantic feedback refresh precedes arrival dispatch/priority so
+automation and unchanged exhausted requests cannot monopolize the queue.
+Correct on the same PR/session, with truthful partial replies and current
 managed status. Human merge/closure fences stale work and reconciles dispatched
 effects; final cleanup/retry belongs to P10. See the [P7 guide](p7-execution.md).
+This contribution is implemented and locally validated; [current progress](phase-status.md)
+records its integrated checks. P8 execution and P10 cleanup/retry expansion have not
+been pulled into this phase.
 
 ### P8 — Durable CI episodes and additive maintenance
 

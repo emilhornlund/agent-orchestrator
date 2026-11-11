@@ -34,6 +34,7 @@ import { writeTrustedCommitState } from "../src/orchestrator/trusted-commit-stat
 import { transitionTaskExecutionRecord } from "../src/task-session/task-execution-transition.js";
 import { getTaskSessionSourceSnapshotIdentity } from "../src/task-session/source-snapshot.js";
 import type { TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
+import { actionableFeedbackResponse } from "./support/feedback-classification-response.js";
 
 let root: string;
 afterEach(() => {
@@ -95,6 +96,90 @@ function createCard(): TrelloCard {
 }
 
 describe("task-session production dispatch", () => {
+  it.each(["feature", "improvement", "bug", "refinement"])(
+    "uses current Ready order ahead of an older queued claim for %s",
+    async (label) => {
+      const { project } = projectFixture();
+      const older = { ...createCard(), id: "older" };
+      const current = { ...createCard(), id: "current", idLabels: [label] };
+      const future = {
+        ...createCard(),
+        id: "future",
+        start: new Date(Date.now() + 60_000).toISOString(),
+      };
+      const queue = new TaskMutationQueue(project.contextRoot, project);
+      const digest = createHash("sha256")
+        .update(`${older.name}\0${older.desc}\0${older.idLabels.join(",")}`)
+        .digest("hex")
+        .slice(0, 16);
+      queue.enqueue({
+        eventId: `implementation:older:${digest}`,
+        projectId: project.id,
+        cardId: older.id,
+        kind: "implementation",
+        operationKey: `task-session:older:${digest}`,
+        enqueuedAt: "2020-01-01T00:00:00.000Z",
+      });
+      const trello = {
+        getCards: vi.fn(async (list: string) =>
+          list === "ready" ? [future, current, older] : [],
+        ),
+      } as unknown as TrelloClient;
+      // Stop at the first repository operation, after production selection.
+      await expect(
+        pollProject(
+          trello,
+          {} as GitClient,
+          {} as GitHubClient,
+          new OpenCodeClient(vi.fn<RunOpenCode>()),
+          new CommandRunner(vi.fn<RunCommand>()),
+          project,
+          new AbortController().signal,
+        ),
+      ).rejects.toThrow();
+      expect(queue.getActive()).toMatchObject({
+        cardId: current.id,
+        kind: label === "refinement" ? "refinement" : "implementation",
+        status: "failed",
+      });
+      expect(
+        queue.list().find((entry) => entry.cardId === older.id)?.status,
+      ).toBe("queued");
+    },
+  );
+
+  it("requeues an unstarted claim when its start date changes during selection", async () => {
+    const { project } = projectFixture();
+    const card = createCard();
+    let readyReads = 0;
+    const trello = {
+      getCards: vi.fn(async (list: string) => {
+        if (list !== "ready") return [];
+        readyReads++;
+        return [
+          readyReads >= 2
+            ? { ...card, start: new Date(Date.now() + 60_000).toISOString() }
+            : card,
+        ];
+      }),
+    } as unknown as TrelloClient;
+    await pollProject(
+      trello,
+      {} as GitClient,
+      {} as GitHubClient,
+      new OpenCodeClient(vi.fn<RunOpenCode>()),
+      new CommandRunner(vi.fn<RunCommand>()),
+      project,
+      new AbortController().signal,
+    );
+    const queue = new TaskMutationQueue(project.contextRoot, project);
+    expect(queue.getActive()).toBeNull();
+    expect(queue.list()).toMatchObject([{ cardId: card.id, status: "queued" }]);
+    expect(
+      new TaskExecutionStore(project.contextRoot, project).read(card.id),
+    ).toBeNull();
+  });
+
   it.each(["reachable", "confirmed-lost"] as const)(
     "reconciles the production feedback checkpoint with a %s session and resumes the persisted operation",
     async (validationSessionState) => {
@@ -103,7 +188,7 @@ describe("task-session production dispatch", () => {
         ...createCard(),
         idList: project.trello.reviewListId,
       };
-      const cardListId = project.trello.reviewListId;
+      let cardListId = project.trello.reviewListId;
       const headSha = "a".repeat(40);
       const worktreePath = path.join(worktreeRoot, card.id);
       fs.mkdirSync(worktreePath, { recursive: true });
@@ -301,10 +386,11 @@ describe("task-session production dispatch", () => {
           listId === cardListId ? [card] : [],
         ),
         getCard: vi.fn(async () => card),
-        moveCard: vi.fn(async (_cardId: string, listId: string) => ({
-          ...card,
-          idList: listId,
-        })),
+        moveCard: vi.fn(async (_cardId: string, listId: string) => {
+          cardListId = listId;
+          card.idList = listId;
+          return { ...card };
+        }),
         getCardAttachments: vi.fn(async () => []),
       } as unknown as TrelloClient;
       const git = {
@@ -413,6 +499,12 @@ describe("task-session production dispatch", () => {
       let abortAtValidation = false;
       const validationRestartController = new AbortController();
       const run = vi.fn<RunOpenCode>(async (options) => {
+        if (options.sessionLabel === "Human feedback classification")
+          return {
+            exitCode: 0,
+            output: actionableFeedbackResponse(options.prompt),
+            errorOutput: "",
+          };
         if (options.prompt.includes("Reconstruct")) {
           listedSessionId = replacementSessionId;
           return {
@@ -1046,8 +1138,8 @@ describe("task-session production dispatch", () => {
       expect(afterValidationRestart?.operationKey).toBe(
         "original-task-operation",
       );
-      expect(cardListId).toBe(project.trello.reviewListId);
-      expect(card.idList).toBe(project.trello.reviewListId);
+      expect(cardListId).toBe(project.trello.workingListId);
+      expect(card.idList).toBe(project.trello.workingListId);
       expect(feedbackQueue.getActive()).toMatchObject({
         eventId: checkpointOperationId,
         kind: "feedback",
@@ -1150,6 +1242,7 @@ describe("task-session production dispatch", () => {
     let failFirstClaimMove = true;
     let pullRequestCreated = false;
     let pullRequestDraft = false;
+    let pullRequestBody = "Human description";
     let feedbackActive = false;
     let lateFeedback = false;
     let failAllChecks = false;
@@ -1224,6 +1317,28 @@ describe("task-session production dispatch", () => {
       addComment: vi.fn(async () => undefined),
     } as unknown as TrelloClient;
     const githubRun = vi.fn<RunGitHubCommand>(async (_cwd, args) => {
+      if (args[0] === "api" && args[1] === "user")
+        return JSON.stringify({ login: "automation" });
+      if (
+        args[0] === "pr" &&
+        args[1] === "view" &&
+        args[args.indexOf("--json") + 1] === "body"
+      )
+        return JSON.stringify({ body: pullRequestBody });
+      if (
+        args[0] === "pr" &&
+        args[1] === "view" &&
+        args[args.indexOf("--json") + 1] === "title,body,isDraft"
+      )
+        return JSON.stringify({
+          title: card.name,
+          body: pullRequestBody,
+          isDraft: pullRequestDraft,
+        });
+      if (args[0] === "pr" && args[1] === "edit") {
+        pullRequestBody = args[args.indexOf("--body") + 1]!;
+        return "";
+      }
       if (args[0] === "pr" && args[1] === "list") {
         const requestedFields =
           args.find((argument) => argument.includes("headRefOid")) ?? "";
@@ -1260,6 +1375,7 @@ describe("task-session production dispatch", () => {
         return pullRequestCreated ? "https://github.com/owner/repo/pull/9" : "";
       }
       if (args[0] === "pr" && args[1] === "create") {
+        pullRequestBody = args[args.indexOf("--body") + 1]!;
         pullRequestDraft = args.includes("--draft");
         pullRequestCreated = true;
         return "https://github.com/owner/repo/pull/9";
@@ -1579,6 +1695,12 @@ describe("task-session production dispatch", () => {
     const openCodeRun = vi
       .fn<RunOpenCode>()
       .mockImplementation(async (run: OpenCodeRunOptions) => {
+        if (run.sessionLabel === "Human feedback classification")
+          return {
+            exitCode: 0,
+            output: actionableFeedbackResponse(run.prompt),
+            errorOutput: "",
+          };
         let processEvidence:
           | {
               executionId: string;
@@ -1903,7 +2025,9 @@ describe("task-session production dispatch", () => {
     ]);
     feedbackActive = true;
     await pollProject(trello, git, github, openCode, commands, project, signal);
-    expect(git.commit).toHaveBeenCalledTimes(3);
+    // Human corrections take priority; their new head supersedes the old failed
+    // checks before a CI repair starts. No obsolete CI commit is manufactured.
+    expect(git.commit).toHaveBeenCalledTimes(2);
     expect(pullRequestCreated).toBe(true);
     expect(
       githubRun.mock.calls.filter(
@@ -1919,14 +2043,14 @@ describe("task-session production dispatch", () => {
           options.prompt.includes("Security") &&
           options.sessionId === "ses_primary-task",
       ),
-    ).toBe(true);
+    ).toBe(false);
     const record = new TaskExecutionStore(project.contextRoot, project).read(
       card.id,
     );
     expect(record).toMatchObject({
       phase: "ci",
-      retryCounters: { ci: 1 },
-      pullRequest: { headSha: "d".repeat(40) },
+      retryCounters: { ci: 0 },
+      pullRequest: { headSha: "c".repeat(40) },
       publicationQuality: {
         validation: { status: "passed", exitCode: 0 },
         coverageEvidence: { status: "skipped", exitCode: null, command: "" },
@@ -1936,7 +2060,7 @@ describe("task-session production dispatch", () => {
       new TaskMutationQueue(project.contextRoot, project)
         .list()
         .map(({ status }) => status),
-    ).toEqual(["completed", "completed", "completed"]);
+    ).toEqual(["completed", "queued", "completed"]);
     expect(trello.getCards).toHaveBeenCalled();
     expect(fs.existsSync(path.join(worktreeRoot, card.id))).toBe(true);
     expect(fs.existsSync(repositoryPath)).toBe(true);
@@ -1946,13 +2070,21 @@ describe("task-session production dispatch", () => {
     ).rejects.toThrow("outcome is uncertain");
     expect(reviewReplyMutationCount).toBe(1);
     expect(conversationReplyCount).toBe(1);
+    expect(
+      new TaskMutationQueue(project.contextRoot, project)
+        .list()
+        .find((entry) => entry.kind === "ci-repair"),
+    ).toMatchObject({
+      status: "retired",
+      retirementReason: "superseded-observation",
+    });
     const afterUncertainReply = new TaskExecutionStore(
       project.contextRoot,
       project,
     ).read(card.id);
     expect(afterUncertainReply).toMatchObject({
       phase: "human-feedback",
-      pullRequest: { headSha: "d".repeat(40) },
+      pullRequest: { headSha: "c".repeat(40) },
     });
     expect(afterUncertainReply?.publicationQuality).toBeDefined();
     expect(feedbackLedger.read(card.id)?.entries).toContainEqual(
@@ -1995,7 +2127,7 @@ describe("task-session production dispatch", () => {
       project,
     ).read(card.id);
     expect(recoveredRecord?.reviewObservation).toMatchObject({
-      headSha: "d".repeat(40),
+      headSha: "c".repeat(40),
       ciEvaluation: {
         status: "passed",
         expectedCheckNames: ["Build", "Security", "Tests"],
@@ -2008,7 +2140,7 @@ describe("task-session production dispatch", () => {
         id: "501",
         status: "published",
         replyId: "900",
-        remediationCommitSha: "d".repeat(40),
+        remediationCommitSha: "c".repeat(40),
       }),
     );
     expect(recoveredRecord?.phase).toBe("ci");
@@ -2018,13 +2150,13 @@ describe("task-session production dispatch", () => {
         id: "601",
         status: "published",
         replyId: "910",
-        remediationCommitSha: "d".repeat(40),
+        remediationCommitSha: "c".repeat(40),
       }),
     );
 
     // The late request is preserved and starts a second remediation round.
     await pollProject(trello, git, github, openCode, commands, project, signal);
-    expect(git.commit).toHaveBeenCalledTimes(4);
+    expect(git.commit).toHaveBeenCalledTimes(3);
     expect(reviewReplyMutationCount).toBe(1);
     const secondRoundRecord = new TaskExecutionStore(
       project.contextRoot,
@@ -2032,7 +2164,7 @@ describe("task-session production dispatch", () => {
     ).read(card.id);
     expect(secondRoundRecord).toMatchObject({
       phase: "ci",
-      pullRequest: { headSha: "e".repeat(40) },
+      pullRequest: { headSha: "d".repeat(40) },
     });
     await pollProject(trello, git, github, openCode, commands, project, signal);
     expect(reviewReplyMutationCount).toBe(2);
@@ -2047,7 +2179,7 @@ describe("task-session production dispatch", () => {
       retryCounters: { ci: 2 },
       ciRepair: { status: "exhausted" },
     });
-    expect(git.commit).toHaveBeenCalledTimes(6);
+    expect(git.commit).toHaveBeenCalledTimes(5);
     expect(
       new TaskMutationQueue(project.contextRoot, project).list().at(-1)?.status,
     ).toBe("failed");
@@ -2058,7 +2190,7 @@ describe("task-session production dispatch", () => {
         id: "502",
         status: "published",
         replyId: "901",
-        remediationCommitSha: "e".repeat(40),
+        remediationCommitSha: "d".repeat(40),
       }),
     );
     await pollProject(trello, git, github, openCode, commands, project, signal);

@@ -38,6 +38,53 @@ const entry = (id: string, body = "Please fix this"): FeedbackLedgerEntry => ({
 });
 
 describe("FeedbackLedgerStore", () => {
+  it("renews only a semantically changed request and does not undo classification on later merges", () => {
+    const { store } = fixture();
+    store.create("card", [
+      {
+        ...entry("id"),
+        actionability: "actionable",
+        status: "escalated",
+        unresolvedReason: "Attempted",
+        requestRevision: 1,
+      },
+    ]);
+    const incidental = store.mergeIncoming("card", [
+      {
+        ...entry("id", "Please fix this!"),
+        actionability: "actionable",
+        requestRevision: 1,
+        sourceRevision: "a".repeat(64),
+      },
+    ]);
+    expect(incidental.entries[0]).toMatchObject({
+      status: "escalated",
+      requestRevision: 1,
+    });
+    const changed = store.mergeIncoming("card", [
+      {
+        ...entry("id", "Please fix a new issue"),
+        actionability: "actionable",
+        requestRevision: 2,
+        sourceRevision: "b".repeat(64),
+      },
+    ]);
+    expect(changed.entries[0]).toMatchObject({
+      status: "pending",
+      requestRevision: 2,
+    });
+    expect(changed.entries[0]?.unresolvedReason).toBeUndefined();
+    const refreshed = store.mergeIncoming("card", [
+      entry("id", "Please fix a new issue"),
+    ]);
+    expect(refreshed.entries[0]).toMatchObject({
+      actionability: "actionable",
+      requestRevision: 2,
+      sourceRevision: "b".repeat(64),
+    });
+    expect(refreshed.history).toHaveLength(2);
+  });
+
   it("merges and deduplicates new feedback while retaining earlier unresolved records", () => {
     const { store } = fixture();
     const first = store.mergeIncoming("card", [entry("comment-1")]);

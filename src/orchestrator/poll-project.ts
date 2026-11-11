@@ -26,6 +26,15 @@ import { WorkflowError } from "./workflow-error.js";
 import type { TrelloCard, TrelloClient } from "../trello/trello-client.js";
 import type { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 import { reconcileWorkflowMutations } from "./reconcile-workflow-mutations.js";
+import {
+  withActivePrObservation,
+  observeActivePullRequest,
+} from "./active-pr-observation.js";
+import {
+  readTerminalPrFence,
+  withTerminalWriterCancellation,
+  isTerminalPrInterruption,
+} from "../task-session/terminal-pr-fence.js";
 
 export type PollingProject = ProjectConfig & {
   contextRoot?: string;
@@ -88,20 +97,29 @@ export async function pollProject(
   opencode: OpenCodeClient,
   commands: CommandRunner,
   project: PollingProject,
-  signal: AbortSignal,
+  rootSignal: AbortSignal,
   emailNotifier?: EmailNotifier,
   onHumanReviewCardsObserved?: (cardIds: string[]) => void,
   onHumanReviewCardLeft?: (cardId: string) => void,
   authority?: ProjectRunAuthority,
   retryIntervalMs?: number,
 ): Promise<void> {
-  if (signal.aborted) return;
+  if (rootSignal.aborted) return;
+  let executionSignal = rootSignal;
 
-  const execute = () =>
+  const execute = (signal: AbortSignal = rootSignal) =>
     withActiveProjectContext(project.id, async () => {
       drainNotifications(project.id, emailNotifier, (message) =>
         logger.child({ projectId: project.id }).warn(message),
       );
+      if (authority)
+        await observeActivePullRequest({
+          project,
+          github,
+          authority,
+          terminalOnly: true,
+        });
+      if (signal.aborted) return;
       if (await reconcileWorkflowMutations({ project, trello, github, git }))
         return;
       if (!notificationPreparationDue(project.id)) return;
@@ -159,9 +177,41 @@ export async function pollProject(
       });
     });
   try {
-    if (authority) await authority.run(execute);
+    if (authority)
+      await authority.run(() =>
+        withTerminalWriterCancellation(authority, rootSignal, (signal) => {
+          executionSignal = signal;
+          return withActivePrObservation(
+            {
+              project,
+              github,
+              authority,
+              intervalMs: retryIntervalMs ?? 15_000,
+              signal: rootSignal,
+              onError: () =>
+                logger
+                  .child({ projectId: project.id })
+                  .warn(
+                    "Active PR observation deferred after an external read failure; retained arrivals and writer state are unchanged",
+                  ),
+            },
+            () => execute(signal),
+          );
+        }),
+      );
     else await execute();
   } catch (error) {
+    if (
+      readTerminalPrFence(authority) &&
+      (executionSignal.aborted || isTerminalPrInterruption(error))
+    ) {
+      logger
+        .child({ projectId: project.id })
+        .info(
+          "Human PR outcome fenced automated work; preserving execution state for terminal reconciliation",
+        );
+      return;
+    }
     if (error instanceof NotificationPreparationError) {
       const defer = () =>
         deferNotificationPreparation(project.id, (message) =>

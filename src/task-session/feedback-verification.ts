@@ -11,6 +11,11 @@ const dispositionSchema = z.discriminatedUnion("status", [
     status: z.literal("unresolved"),
     reason: z.string().min(1),
   }),
+  z.strictObject({
+    feedbackId: z.string().min(1),
+    status: z.literal("uncertain"),
+    reason: z.string().min(1),
+  }),
 ]);
 
 const feedbackVerificationSchema = z.strictObject({

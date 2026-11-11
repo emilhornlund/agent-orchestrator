@@ -58,7 +58,11 @@ const evidence = z.strictObject({
 export const mutationEventSchema = z.discriminatedUnion("type", [
   z.strictObject({
     type: z.literal("cancel"),
-    reason: z.enum(["terminal-observed", "execution-superseded"]),
+    reason: z.enum([
+      "terminal-observed",
+      "execution-superseded",
+      "precondition-changed",
+    ]),
     evidence,
   }),
   z.strictObject({ type: z.literal("dispatch"), nextRecheckAt: date }),
@@ -113,7 +117,11 @@ export const durableMutationSchema = z
     attentionRequired: z.boolean(),
     cancellation: z
       .strictObject({
-        reason: z.enum(["terminal-observed", "execution-superseded"]),
+        reason: z.enum([
+          "terminal-observed",
+          "execution-superseded",
+          "precondition-changed",
+        ]),
         evidence,
         ownerGeneration: z.number().int().positive().safe(),
         recordedAt: date,

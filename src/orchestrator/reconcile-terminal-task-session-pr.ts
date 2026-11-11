@@ -1,11 +1,14 @@
 import path from "node:path";
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 import { throwIfWorkflowMutationPending } from "../task-session/workflow-mutation.js";
+import { closedPrComment } from "../task-session/terminal-pr-fence.js";
 
 import type { ProjectConfig } from "../config/config.js";
 import { cleanupWorktree } from "../git/cleanup-worktree.js";
 import type { GitClient } from "../git/git-client.js";
 import type { PullRequestState } from "../github/github-client.js";
+import { MalformedManagedPullRequestStatusError } from "../github/pull-request-status.js";
+import type { GitHubClient } from "../github/github-client.js";
 import { logger, type Logger } from "../logging/logger.js";
 import {
   notifyCompletion,
@@ -97,6 +100,7 @@ async function cleanupTerminalWorktree(
 export async function completeMergedTaskSessionPullRequest(options: {
   trello: TrelloClient;
   git: GitClient;
+  github?: GitHubClient;
   project: ProjectConfig;
   card: TrelloCard;
   pullRequest: PullRequestState;
@@ -110,6 +114,12 @@ export async function completeMergedTaskSessionPullRequest(options: {
   const cardLog = logger.child({ projectId: project.id, cardId: card.id });
   if (signal.aborted) return;
   const branch = `agent/${card.id}`;
+  await clearTerminalActivity(
+    options.github,
+    project,
+    pullRequest.url,
+    cardLog,
+  );
   if (!options.preserveWorktree) {
     const remoteBranchExists = await git.remoteBranchExists(
       project.repository.path,
@@ -205,7 +215,7 @@ export async function completeMergedTaskSessionPullRequest(options: {
   }
   if (options.preserveWorktree) {
     cardLog.warn(
-      "Legacy PR-maintenance artifacts preserved after merged PR; status is not proof that local rewritten work was shipped",
+      "Task artifacts preserved after human merge; interrupted or unshipped work remains available for recovery",
     );
   } else {
     await cleanupTerminalWorktree(git, project, card, cardLog, signal);
@@ -215,6 +225,7 @@ export async function completeMergedTaskSessionPullRequest(options: {
 export async function returnClosedTaskSessionPullRequestToBacklog(options: {
   trello: TrelloClient;
   git: GitClient;
+  github?: GitHubClient;
   project: ProjectConfig;
   card: TrelloCard;
   pullRequest: PullRequestState;
@@ -225,7 +236,14 @@ export async function returnClosedTaskSessionPullRequestToBacklog(options: {
   const { trello, git, project, card, pullRequest, signal } = options;
   const cardLog = logger.child({ projectId: project.id, cardId: card.id });
   if (signal.aborted) return;
-  clearTerminalConflict(project, card, options.preparedConflict, cardLog);
+  await clearTerminalActivity(
+    options.github,
+    project,
+    pullRequest.url,
+    cardLog,
+  );
+  if (!options.preserveWorktree)
+    clearTerminalConflict(project, card, options.preparedConflict, cardLog);
   const alreadyBacklog = card.idList === project.trello.backlogListId;
   if (!alreadyBacklog) {
     try {
@@ -246,14 +264,7 @@ export async function returnClosedTaskSessionPullRequestToBacklog(options: {
   }
   if (!alreadyBacklog || ProjectRunAuthority.current(project.id)) {
     try {
-      await trello.addComment(
-        card.id,
-        [
-          "Pull request was closed without being merged.",
-          "",
-          `Pull request: ${pullRequest.url}`,
-        ].join("\n"),
-      );
+      await trello.addComment(card.id, closedPrComment(pullRequest.url));
     } catch (error) {
       throwIfWorkflowMutationPending(project.id);
       cardLog.error(`Could not add closed PR note: ${message(error)}`);
@@ -261,9 +272,32 @@ export async function returnClosedTaskSessionPullRequestToBacklog(options: {
   }
   if (options.preserveWorktree) {
     cardLog.warn(
-      "Unpublished prepared PR-maintenance worktree preserved after closed PR; manual cleanup required",
+      "Task artifacts preserved after human PR closure; interrupted or unshipped work remains available for recovery",
     );
   } else {
     await cleanupTerminalWorktree(git, project, card, cardLog, signal);
+  }
+}
+
+async function clearTerminalActivity(
+  github: GitHubClient | undefined,
+  project: ProjectConfig,
+  pullRequestUrl: string,
+  cardLog: Logger,
+): Promise<void> {
+  if (typeof github?.updatePullRequestDescriptionStatus !== "function") return;
+  try {
+    await github.updatePullRequestDescriptionStatus({
+      cwd: project.repository.path,
+      repository: project.repository.github,
+      pullRequestUrl,
+      status: null,
+      project,
+    });
+  } catch (error) {
+    if (!(error instanceof MalformedManagedPullRequestStatusError)) throw error;
+    cardLog.warn(
+      "Human-edited status markers are ambiguous; terminal outcome preserves the PR body instead of overwriting it",
+    );
   }
 }

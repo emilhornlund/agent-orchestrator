@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { verifyExistingPrOpen } from "./verify-existing-pr-open.js";
 import os from "node:os";
 import path from "node:path";
 
@@ -254,6 +255,14 @@ export async function publishTaskSessionCard(
     throw new Error(
       "Setup commit disposition is unavailable; initial task publication blocked",
     );
+  if (options.expectedExistingPullRequestUrl !== undefined)
+    await verifyExistingPrOpen({
+      project: options.project,
+      github: options.github,
+      cardId: options.card.id,
+      branch: options.branch,
+      pullRequestUrl: options.expectedExistingPullRequestUrl,
+    });
   if (
     ProjectRunAuthority.current(options.project.id) &&
     (await resumeInitialPublication(options))

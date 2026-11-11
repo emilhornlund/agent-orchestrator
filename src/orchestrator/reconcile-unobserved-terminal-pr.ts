@@ -28,7 +28,7 @@ export async function reconcileUnobservedTerminalPrEvents(options: {
   for (const mutation of queue.list()) {
     if (
       mutation.kind !== "terminal-pr" ||
-      mutation.status === "completed" ||
+      ["completed", "retired"].includes(mutation.status) ||
       reviewed.has(mutation.cardId)
     )
       continue;

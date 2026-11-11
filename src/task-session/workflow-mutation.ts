@@ -7,6 +7,12 @@ import { ProjectRunAuthority } from "./project-run-authority.js";
 import type { MutationEvent, MutationIntent } from "./durable-mutation.js";
 import { mutationProvenNotDelivered } from "./durable-mutation.js";
 import type { RunRecord } from "./run-record.js";
+import {
+  terminalPrFenceFromRun,
+  terminalMutationAllowed,
+  ObservedPrTerminalError,
+  readTerminalPrFence,
+} from "./terminal-pr-fence.js";
 
 function canonicalJson(value: unknown): string {
   return JSON.stringify(value, (_key, item: unknown) =>
@@ -253,6 +259,12 @@ export async function withJournaledDispatch<T>(
   ]);
   if (issuedDispatches.has(activation))
     throw new Error("Journal dispatch capability was already issued");
+  const terminal = terminalPrFenceFromRun(run);
+  if (terminal && !terminalMutationAllowed(run, expected))
+    throw new ObservedPrTerminalError(terminal, true, {
+      operationId,
+      generation: dispatch.generation,
+    });
   issuedDispatches.add(activation);
   const capability: DispatchCapability = {
     authority,
@@ -353,7 +365,16 @@ export function rejectJournaledDispatch(): void {
  * after scope exit, terminal observation, or a response/owner fence change. */
 export function assertJournaledTransport(): void {
   const capability = dispatchContext.getStore();
-  if (!capability) return;
+  if (!capability) {
+    const projectId = ProjectRunAuthority.currentProjectId();
+    const fence = readTerminalPrFence(
+      projectId === undefined
+        ? undefined
+        : ProjectRunAuthority.current(projectId),
+    );
+    if (fence) throw new ObservedPrTerminalError(fence, true);
+    return;
+  }
   const { authority } = capability;
   if (
     !capability.active ||
@@ -377,6 +398,12 @@ export function assertJournaledTransport(): void {
     entry.mutation.executionFence.generation !== run.operation.generation
   )
     throw new Error("Stale journal transport capability");
+  const fence = terminalPrFenceFromRun(run);
+  if (fence && !terminalMutationAllowed(run, capability.expected))
+    throw new ObservedPrTerminalError(fence, true, {
+      operationId: capability.operationId,
+      generation: capability.dispatchGeneration,
+    });
   capability.transported = true;
 }
 
@@ -421,12 +448,22 @@ export interface WorkflowMutationRequest {
   args: unknown;
 }
 
+export class WorkflowMutationPreconditionChangedError extends Error {
+  constructor(readonly observed: unknown) {
+    super(
+      "External fields changed before dispatch; preserve current human content and refresh the intended update",
+    );
+    this.name = "WorkflowMutationPreconditionChangedError";
+  }
+}
+
 /** Deterministic identity used both by dispatch and by pre-dispatch event obligations. */
 export function workflowMutationIdentity(
   run: RunRecord,
   kind: MutationIntent["kind"],
   target: string,
   request: WorkflowMutationRequest,
+  observedStateChanged = false,
 ): string {
   const hash = createHash("sha256")
     .update(sanitizeControlledText(JSON.stringify(request)))
@@ -441,7 +478,9 @@ export function workflowMutationIdentity(
         entry.mutation.executionFence.generation === run.operation.generation,
     )
     .at(-1);
-  return previous?.id.startsWith(`${prefix}:`)
+  return previous?.id.startsWith(`${prefix}:`) &&
+    previous.status !== "cancelled" &&
+    !(observedStateChanged && previous.status === "completed")
     ? previous.id
     : `${prefix}:${run.pendingOperations.length}`;
 }
@@ -453,6 +492,9 @@ export async function workflowMutation<T>(options: {
   kind: MutationIntent["kind"];
   target: string;
   request: WorkflowMutationRequest;
+  /** Repeatable field-setting only: a fresh read established that an earlier
+   * completed intent no longer describes the provider's current fields. */
+  observedStateChanged?: boolean;
   send: (marker: string) => Promise<unknown>;
   preflight?: () => Promise<void>;
   rejected?: (
@@ -463,6 +505,10 @@ export async function workflowMutation<T>(options: {
   ) => Promise<{ id: string; fields: unknown; result: T } | null>;
 }): Promise<T> {
   const { authority } = options;
+  if (options.observedStateChanged && options.kind !== "github-pr-body")
+    throw new Error(
+      "Observed body drift cannot authorize repeating a non-idempotent mutation",
+    );
   const run = authority.store.assertCurrentLease(authority.ownerGeneration);
   const id =
     reconciliationContext.getStore() ??
@@ -471,8 +517,13 @@ export async function workflowMutation<T>(options: {
       options.kind,
       options.target,
       options.request,
+      options.observedStateChanged,
     );
   const existing = run.pendingOperations.find((entry) => entry.id === id);
+  const terminal = terminalPrFenceFromRun(run);
+  const permitted = terminalMutationAllowed(run, options.request);
+  if (terminal && !permitted && !existing)
+    throw new ObservedPrTerminalError(terminal, true);
   if (
     !reconciliationContext.getStore() &&
     run.pendingOperations.some(
@@ -550,6 +601,20 @@ export async function workflowMutation<T>(options: {
     );
   }
   const operation = entry();
+  if (
+    terminal &&
+    !permitted &&
+    (operation.mutation!.dispatches.length === 0 ||
+      mutationProvenNotDelivered(operation.mutation!))
+  ) {
+    if (operation.mutation!.dispatches.length === 0)
+      event({
+        type: "cancel",
+        reason: "terminal-observed",
+        evidence: evidence({ terminal }),
+      });
+    throw new ObservedPrTerminalError(terminal, true);
+  }
   if (operation.status === "cancelled")
     throw new WorkflowMutationWaitingError();
   if (operation.status === "completed") {
@@ -573,7 +638,20 @@ export async function workflowMutation<T>(options: {
     !operation.mutation!.dispatches.length ||
     mutationProvenNotDelivered(operation.mutation!)
   ) {
-    await options.preflight?.();
+    try {
+      await options.preflight?.();
+    } catch (error) {
+      if (
+        error instanceof WorkflowMutationPreconditionChangedError &&
+        !operation.mutation!.dispatches.length
+      )
+        event({
+          type: "cancel",
+          reason: "precondition-changed",
+          evidence: evidence({ observed: error.observed }),
+        });
+      throw error;
+    }
     event({ type: "dispatch", nextRecheckAt: next() });
     try {
       await authority.dispatch(() =>
@@ -589,14 +667,22 @@ export async function workflowMutation<T>(options: {
     } catch (error) {
       authority.assertHeld();
       const rejection = options.rejected?.(error);
+      const notSent =
+        error instanceof ObservedPrTerminalError &&
+        error.transport?.operationId === id &&
+        error.transport.generation ===
+          entry().mutation!.dispatches.at(-1)?.generation;
       event({
         type: "response",
-        outcome: rejection ? "not-delivered" : "unknown",
+        outcome: rejection || notSent ? "not-delivered" : "unknown",
         evidence: {
           ...evidence({
             response: "unknown; process diagnostics retained separately",
             ...(rejection ? { rejection } : {}),
           }),
+          ...(notSent
+            ? { nonDeliveryProof: "transport-proven-not-sent" as const }
+            : {}),
           ...(rejection
             ? {
                 nonDeliveryProof:

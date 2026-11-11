@@ -18,6 +18,9 @@ import type { PendingPrimaryInspection } from "./run-primary-operation.js";
 import { reconcilePendingPrimaryExecution } from "./primary-operation-ledger.js";
 import { bindPrimaryExecutionEvidence } from "./primary-operation-ledger.js";
 import { sanitizePrimarySessionContextBundle } from "./build-primary-session-context.js";
+import { withAiExecutionCapacity } from "../orchestrator/ai-execution-capacity.js";
+import { ProjectRunAuthority } from "./project-run-authority.js";
+import { assertNoTerminalPr } from "./terminal-pr-fence.js";
 
 export class PrimaryTaskSessionError extends Error {
   constructor(message: string, options?: ErrorOptions) {
@@ -102,6 +105,29 @@ export async function runWithPrimaryTaskSession(
   cardId: string,
   runOptions: Omit<OpenCodeRunOptions, "sessionId" | "captureSessionId">,
   recovery: PrimarySessionRecoveryOptions = {},
+  execution: PrimaryExecutionIdentity,
+): Promise<OpenCodeRunResult> {
+  return withAiExecutionCapacity(runOptions.signal, () => {
+    assertNoTerminalPr(ProjectRunAuthority.current(projectId), true);
+    return runWithPrimaryTaskSessionOwned(
+      store,
+      openCode,
+      projectId,
+      cardId,
+      runOptions,
+      recovery,
+      execution,
+    );
+  });
+}
+
+async function runWithPrimaryTaskSessionOwned(
+  store: TaskExecutionStore,
+  openCode: OpenCodeClient,
+  projectId: string,
+  cardId: string,
+  runOptions: Omit<OpenCodeRunOptions, "sessionId" | "captureSessionId">,
+  recovery: PrimarySessionRecoveryOptions,
   execution: PrimaryExecutionIdentity,
 ): Promise<OpenCodeRunResult> {
   runOptions = {
@@ -369,6 +395,7 @@ export async function runWithPrimaryTaskSession(
       }
       if (execution.role === "advisory")
         return runPrimaryOperation({
+          signal: runOptions.signal,
           store,
           cardId,
           operationId: execution.operationId,
@@ -474,6 +501,7 @@ export async function runWithPrimaryTaskSession(
           }
         }
         return runPrimaryOperation({
+          signal: runOptions.signal,
           store,
           cardId,
           operationId: execution.operationId,
@@ -508,6 +536,7 @@ export async function runWithPrimaryTaskSession(
         });
       }
       return runPrimaryOperation({
+        signal: runOptions.signal,
         store,
         cardId,
         operationId: execution.operationId,

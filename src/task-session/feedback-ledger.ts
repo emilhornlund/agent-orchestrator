@@ -15,9 +15,17 @@ const feedbackEntrySchema = z.strictObject({
   headSha: sha.optional(),
   path: z.string().min(1).optional(),
   line: z.number().int().positive().optional(),
+  originalLine: z.number().int().positive().optional(),
+  diffHunk: z.string().optional(),
   threadId: z.string().min(1).optional(),
   isResolved: z.boolean().optional(),
   isOutdated: z.boolean().optional(),
+  isCurrent: z.boolean().optional(),
+  sourceRevision: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/u)
+    .optional(),
+  requestRevision: z.number().int().nonnegative().safe().optional(),
   actionability: z.enum([
     "unclassified",
     "actionable",
@@ -26,6 +34,7 @@ const feedbackEntrySchema = z.strictObject({
   ]),
   status: z.enum(["pending", "verified", "escalated", "published", "closed"]),
   unresolvedReason: z.string().min(1).optional(),
+  resolution: z.enum(["verified-fixed", "unresolved", "uncertain"]).optional(),
   verificationEvidence: z.array(z.string().min(1)),
   remediationCommitSha: sha.optional(),
   replyId: z.string().min(1).optional(),
@@ -41,6 +50,16 @@ const feedbackLedgerSchema = z
     revision: z.number().int().positive().safe(),
     updatedAt: z.string().datetime(),
     entries: z.array(feedbackEntrySchema),
+    history: z.array(feedbackEntrySchema).optional(),
+    replyOutcomes: z
+      .record(
+        z.string().min(1),
+        z.strictObject({
+          replyId: z.string().min(1),
+          observedAt: z.string().datetime(),
+        }),
+      )
+      .optional(),
   })
   .superRefine((ledger, ctx) => {
     const keys = new Set<string>();

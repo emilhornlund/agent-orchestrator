@@ -2,6 +2,194 @@
 
 ## Current checkpoint
 
+- **P7 implemented and locally validated on the current branch, based on `7fafed1` (integrated P6).**
+  The starting index and working tree were clean. This session authorizes small
+  local P7 task/correction commits only; no push, PR, branch change or P8 work.
+- P7-T1 implements current eligible Ready ordering rather than historical queue
+  timestamps, across feature/improvement/bug/refinement cards. Canonical creation
+  rereads order before claim. Dispatch rechecks order, type and start date before
+  setup or card movement; an unstarted ineligible claim is requeued, while missing
+  cards retain verified orphan retirement and interrupted writers retain recovery.
+- T1 checks: `yarn test tests/task-session-dispatch.test.ts tests/task-session-refinement-scheduling.test.ts tests/task-session-terminal-pr.test.ts tests/preparing-attempt-resume.integration.test.ts`
+  passed **28 tests in four files**; `yarn typecheck` and changed-file ESLint passed.
+  Prettier formatted the changed files. An initial extra pre-claim read invalidated
+  the existing after-claim disappearance fixture; the redundant read was removed,
+  preserving the real post-claim retirement regression. Self-review inspected both
+  production claim routes, queue recovery, mixed types and final eligibility checks.
+  `yarn test tests/run-orchestrator.test.ts tests/card-start-eligibility.test.ts`
+  also passed **49 tests**; changed-file/guide Prettier and `git diff --check` passed.
+  P7 guide and roadmap scope/dependencies remain accurate and unchanged.
+- P7-T2a implements the production side observer during a long `pollProject` writer.
+  It retains content-deduplicated PR/feedback/CI snapshots in artifact-backed,
+  owner-generation-checked attempt storage without updating the writer's task
+  checkpoint or acquiring its mutation queue. It serializes its own reads, backs
+  off after failures, and drains its last read before returning ownership. Missing
+  prior inbox state is compatible. Mixed remote-head/terminal snapshots are rejected.
+  This is observation retention, **not yet scheduling/consumption of arrivals**.
+- T2a checks: `yarn test tests/active-pr-observation.test.ts tests/task-session-dispatch.test.ts tests/observe-task-session-review-cards.test.ts`
+  passed **38 tests in three files**; `yarn typecheck` and changed-file ESLint passed.
+  Self-review inspected the new source/tests, `pollProject` wiring, authority writes,
+  timer lifetime and read races. Added final PR/head verification and insulated
+  diagnostics from writer completion. No known observer-task defect remains.
+- P7-T4 implements current semantic feedback refresh before T2b dispatch. Production
+  observation includes standalone inline/review discussion without requiring a
+  current-head changes-requested verdict, preserves inline context and API actor
+  identity, and excludes automation. A read-only OpenCode classification is checked
+  against exact complete source identities/revisions. Substantive changes renew a
+  request; incidental edits/head/timestamp changes do not renew attempted work.
+  Deleted/superseded items become inactive, prior handling is append-only, and
+  supported older ledgers retain their handling state. Reserved rounds with explicit
+  IDs retain their original inputs; legacy rounds still verify their operation hash.
+  No-op primary correction records unresolved attempted feedback so later heads
+  cannot silently restart it. Refresh now precedes contextual replies.
+- T4 checks: nine focused feedback/GitHub/dispatch suites passed **135 tests**;
+  `yarn test tests/task-lifecycle.integration.test.ts` passed **20 tests**;
+  `yarn typecheck` and changed-file ESLint passed. The broad `yarn test` initially
+  found seven lifecycle fixture failures (2,090 passed): the new semantic operation
+  was incorrectly treated as implementation review by the fixture. Its explicit
+  classification response fixed those failures. A later focused run caught a legacy
+  reservation without feedback IDs and no-op outstanding-count compatibility; both
+  were corrected without guessing identities or claiming unresolved feedback fixed.
+  Self-review covered clients, current/historical ledger writes, original-operation
+  recovery, selection and reply ordering. Queue/quality/terminal obligations below
+  remain unfinished, not implied complete by this task.
+- P7-T2b persists feedback/failed-CI/maintenance descriptors while execution holds
+  the project, with unclassified feedback explicitly nondispatchable. An interruption
+  between retained snapshot and descriptor is reconciled on the next observation.
+  Scheduler refresh consumes current feedback, retires only verified never-started
+  superseded descriptors and prioritizes human corrections before CI before routine
+  maintenance. The same policy applies to specific-event claim callers, while an
+  active/failed writer retains recovery priority. Persisted explicit prerequisites
+  can run first and invalid/missing/cyclic prerequisites are refused. Legacy queue
+  records default to dispatchable without losing order/owners. A new task event
+  permits human work during failed/pending CI without falsely recording CI passed.
+  Maintenance execution remains disabled for P8; only descriptors are retained here.
+- T2b checks: seven focused observation/queue/dispatch/transition suites passed
+  **95 tests**; lifecycle/authority/attachment checks passed **26 tests in three files**.
+  Typecheck and changed-file ESLint passed. Production regression now demonstrates
+  human correction superseding obsolete failed CI before a CI writer starts; it
+  retains later CI-budget, late-feedback and uncertain-reply coverage. Self-review
+  inspected producer/scheduler/recovery callers, queued retirement, prerequisite
+  validation, schema defaults and the interrupted snapshot-to-queue handoff.
+- P7-T3 implements optional `workflow.maxConcurrentAiProjects` (unlimited when
+  omitted), plus the optional 15-second polling default. FCFS tickets and dispatch
+  evidence live in the authoritative attempts. Production workers share the limiter;
+  primary session creation/operation accounting waits before reservation, and direct
+  OpenCode dispatches also acquire capacity. Nested activities reuse a live token;
+  a competing same-project caller cannot steal it. Busy projects requeue, shutdown
+  preserves unserved order, deliberate cancellation does not dispatch, and dormant
+  dependency/Human Review ownership consumes no slot. Unknown execution retains
+  capacity across restart until verified stopped; missing PID is not used as proof.
+- T3 checks: `yarn test tests/ai-execution-capacity.test.ts tests/config.test.ts tests/opencode-client.test.ts tests/run-primary-operation.test.ts tests/primary-task-session.test.ts`
+  passed **203 tests in five files**, including production worker dispatch, restart
+  FCFS, cancellation, nested/same-project exclusion and primary accounting. Typecheck,
+  changed-file ESLint and `git diff --check` passed. Self-review traced worker scope,
+  primary creation/reservation, all OpenCode callers, persisted ticket compatibility,
+  shutdown and stopped-evidence release. Fixed live-slot stealing, detached nested
+  token reuse, pre-dispatch cancellation accounting and recovery-wait eligibility.
+- P7-T5 completes advisory same-PR correction publication and verified Working/Review
+  transitions. Failed local checks and bounded unavailable review still publish
+  available additive corrections with current failure/uncertainty disclosure and
+  draft status. Review attempts persist per source without a lifetime human-round
+  cap. Semantic request revisions distinguish same-body changed requests while
+  legacy operation hashes remain supported. Primary session, attachment refresh,
+  separate independent review and genuine-primary-failure handling remain intact.
+  Explicit expected card location and pending move identity replace phase-based
+  assumptions for new transitions; old published corrections retain their old Review
+  expectation until verified migration. Both normal and recovered publication callers
+  persist return intent before the move and confirm readback afterward. Known stopped
+  exhausted primary correction returns to Review with retained PR/work/ownership;
+  unknown writers remain fenced in Working.
+- T5 checks: nine focused suites (including all **22 real-Git lifecycle scenarios**)
+  passed **152 tests**. New scenarios publish failed validation and unavailable review
+  to the same descendant PR head, and recover an accepted Working move without a
+  duplicate write. Initial failures exposed missing stateful move/body fixtures and
+  a fixture PATH-restoration defect; these were corrected, retaining real crash and
+  unknown-writer assertions. Self-review traced original-session and generic recovery,
+  both publication callers, terminal expected-list precedence, move identity/manual
+  interference and current quality evidence. Corrected same-body request identity,
+  nullable unavailable review recovery and truthful failed-quality persistence.
+  After two lint-only corrections (retained error cause and unused initializer),
+  the eight non-lifecycle suites passed **130 tests**, and both new quality lifecycle
+  scenarios passed again (20 unrelated scenarios filtered out). Typecheck,
+  changed-file ESLint, documentation Prettier and `git diff --check` passed. The
+  selected guide/roadmap scope and dependencies remain accurate.
+- P7-T6 publishes verified/unresolved/uncertain contextual replies on the observed
+  published head without requiring green CI. CI status is reported truthfully,
+  review summaries can receive attributed PR replies, and no conversation is
+  automatically resolved. Immutable accepted reply outcomes survive substantive
+  edits/deletions; unknown sends reconcile rather than resend. Reply operation and
+  marker identity retain request revisions and interrupted batches keep their owner.
+  Outstanding requests remain draft, including no-op/failed corrections. Managed
+  activity is wired through editing/validation/publication and appears at the top;
+  verified completion clears it, while unknown execution reports attention.
+  No-op outcome reporting is durable and independently resumable without another
+  primary execution or fabricated commit/check. Managed body writes retain current
+  human content through observed-body preconditions; only never-dispatched conflicts
+  cancel, while dispatched uncertainty retains P4 reconciliation. Repeated field
+  drift does not reuse a historical completed body intent as current proof.
+- T6 checks: seven focused reply/status/verification/client/dispatch/mutation suites
+  passed **153 tests**; all three quality/no-op lifecycle scenarios passed, including
+  activity visible during the primary writer, human-body preservation and an
+  unresolved no-op reply without another correction. Broad `yarn test` then passed
+  **2,129 tests across 166 files** (not a full `yarn validate`). Self-review traced
+  current/head/revision evidence, edited/deleted uncertain replies, queue recovery,
+  no-op completion, description/status callers and the original P4 dispatch boundary.
+  Corrected cached body-success reuse after drift and preserved the original error
+  cause in status-reconciliation failures. Final affected checks are recorded below.
+  The final eight affected suites passed **196 tests**, including a new dual-failure
+  recovery regression. Typecheck, changed-file ESLint, docs Prettier and
+  `git diff --check` passed. No known T6 defect remains; terminal-race handling below
+  is still unfinished. No live-service qualification or full validation is claimed.
+- P7-T7 implements terminal precedence (REQ-HR-006, REQ-PR-008, with PR-007,
+  SCH-001/002 and WF-003 integration). Durable terminal observation fences stale
+  execution/transport callbacks, cancels active process trees and capacity waits,
+  and remains active behind future dependency rechecks. Existing-PR publication
+  checks the authoritative outcome before push/Review and after rejected push.
+  Initial creation interrupted by human closure binds/reconciles the original PR,
+  including a deleted branch, without replacement publication. Dispatched initial
+  Review/comment effects retain immutable readback reconciliation rather than replay.
+  Terminal consistency requires verified stopped writers and conclusive dispatched
+  effects. Unknown execution retains ownership; unshipped changes and diagnostics
+  are preserved. Cancelled primary operations do not consume genuine-crash budget;
+  superseded queue descriptors retire explicitly. Terminal activity clearing retains
+  human content, and live capacity/cancellation/observer keys include storage/project.
+- T7 checks: six observer/capacity/GitHub/terminal/mutation suites passed **71 tests**;
+  seven lifecycle/publication/publisher/location/primary/process suites initially
+  passed **221 tests** with six lifecycle expectation failures. Those failures
+  reflected earlier terminal discovery and explicit retirement; the destination-read
+  outage fixture now fails only after the intended move. The next lifecycle/capacity
+  run passed **37 tests** with one remaining race-timing expectation failure; its
+  third-read deferred case was corrected, then all **four validation lifecycle cases**
+  passed (24 other scenarios filtered). The new identical-local-attempt-ID capacity
+  isolation regression passed in that capacity run. Typecheck, all changed-code
+  ESLint and formatting passed. Final
+  `yarn test tests/task-lifecycle.integration.test.ts tests/ai-execution-capacity.test.ts`
+  passed **38 tests**, including all 28 lifecycle scenarios; typecheck, changed-code
+  ESLint, documentation/code Prettier and `git diff --check` passed again.
+  Self-review inspected actual production observer/worker/publish/recovery paths,
+  terminal stop proof, journal/transport guards, queue ownership, primary counters,
+  artifact preservation, new files and real-process regressions. Corrected scoped
+  in-memory identities and preserved uncertainty across late initial Trello effects.
+  No known T7 defect remains; full integrated validation is not yet claimed.
+- T7 checkpoint: `3a04855`. T8 combined integration inspection reused the completed
+  task reviews and checked all P7 criteria: current Ready eligibility/order; durable
+  arrivals and serialized prioritized dispatch; current semantic feedback/history;
+  original-session additive correction with refreshed attachments; truthful partial
+  replies/draft/activity; fair optional AI capacity; expected-list/manual-move recovery;
+  and human terminal precedence with pending-effect/unknown-writer preservation.
+  Existing production regressions cover these paths. P8 CI episode/maintenance
+  execution and P10 fresh-attempt/cleanup expansion remain out of scope. Product
+  guidance's stale separate-session/approval-gate and missing-PR outcome claims were
+  corrected to match the integrated behavior. No new implementation gap was found.
+- T8 integrated `yarn validate` passed ESLint, full Prettier checking, TypeScript
+  and **2,142 tests across 166 files**. All P7 contributions are implemented with no
+  known unresolved scoped defect. The final documentation/results checkpoint is
+  revalidated before commit. No live Trello/GitHub/OpenCode qualification is claimed.
+  No P7 implementation work remains; stop before P8.
+
+## Inherited P6 checkpoint
+
 - **P6 implementation complete; distinguish local checks from PR CI.** The original
   local `yarn validate` passed lint, formatting, typecheck and **2,076 tests across
   160 files**. PR #219's first CI run (`42883831283`) instead failed one command-crash
@@ -12,7 +200,7 @@
   Focused checks passed all 42 adapter tests locally and all seven command/shell
   cases in a disposable Debian Node 24/Dash container, plus typecheck, ESLint and
   Prettier. Final local and current-head CI results are reported in the PR/session;
-  a local pass alone does not establish CI success. P7 has not started.
+  a local pass alone does not establish CI success. P6 is now integrated at `7fafed1`.
 - Resume-session checkpoints: `faf726f` current-evidence same-PR promotion,
   `33e325f` isolation startup integration, `24c1d76` notification disclosure and
   product guidance, `cb9d511` integrated recovery/draft fixture coverage.
@@ -33,8 +221,8 @@
   and validate once. No evidence reports or full-suite runs per task.
 - Preserve existing working changes and staging when resuming.
 - Local reviewed-task commits require explicit session authorization. The current
-  session authorizes publishing this branch to PR #219 and correcting its failed CI.
-  No merge, deployment or P7 is authorized.
+  P6 session authorized publishing PR #219 and correcting its failed CI. That
+  historical authorization does not authorize new remote Git actions here.
 
 ## P6 publication checkpoints and remaining work
 
@@ -82,7 +270,7 @@ requirements/specification sections and meaningful regression tests:
   passed all 70 tests; typecheck, changed-file ESLint and Prettier passed. The
   corrected integrated tree then passed full `yarn validate` as recorded above.
 
-No P6 implementation work remains. P7–P10 have not started; P11 covers
+No P6/P7 implementation work remains. P8–P10 have not started. P11 covers
 remaining integration/regression gaps, with broader qualification only if requested.
 
 ## Known carryovers

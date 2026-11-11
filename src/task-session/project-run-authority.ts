@@ -9,6 +9,11 @@ import {
   type RunStoreLease,
 } from "./run-store.js";
 import type { RunEventType, RunRecord } from "./run-record.js";
+import {
+  terminalPrFenceFromRun,
+  otherTaskWriterIsActive,
+  terminalStopProofValid,
+} from "./terminal-pr-fence.js";
 import { isConclusiveOperationResolution } from "./run-record.js";
 import type { TaskExecutionRecord } from "./task-execution-record.js";
 import type { TaskExecutionEvent } from "./task-execution-transition.js";
@@ -34,6 +39,15 @@ const projectLeaseContext = new AsyncLocalStorage<
 /** Lease-bound projection controller. A project queue must bind to a durable
  * preparing/active attempt before any external task effects are dispatched. */
 export class ProjectRunAuthority {
+  /** Attempt identifiers are local to a project's durable storage namespace. */
+  get attemptScopeKey(): string {
+    return JSON.stringify([
+      path.resolve(this.store.storageRoot),
+      this.projectId,
+      this.store.attemptId,
+    ]);
+  }
+
   constructor(
     readonly projectId: string,
     readonly store: RunStore,
@@ -365,6 +379,14 @@ export class ProjectRunAuthority {
 
   async releaseVerifiedTerminal(): Promise<void> {
     const current = this.store.assertCurrentLease(this.ownerGeneration);
+    const fence = terminalPrFenceFromRun(current);
+    if (
+      fence &&
+      (!terminalStopProofValid(this) || otherTaskWriterIsActive(this))
+    )
+      throw new RunStoreConflictError(
+        "Terminal PR release requires verified stopped task writers",
+      );
     if (
       !current ||
       !["done", "refined", "failed", "cancelled"].includes(current.lifecycle) ||
@@ -632,6 +654,7 @@ export class ProjectRunAuthority {
       },
       "publication-completed": { event: "publication-completed", to: "ci" },
       "ci-passed-awaiting-human": { event: "ci-observed", to: "human-review" },
+      "human-feedback-pending": { event: "ci-observed", to: "human-review" },
       "ci-failed": { event: "implementation-correction", to: "implementation" },
       "feedback-received": { event: "feedback-received", to: "implementation" },
       "feedback-ci-failed": { event: "feedback-ci-failed", to: "ci" },
@@ -807,11 +830,19 @@ export class ProjectRunAuthority {
                   : current.operation.generation + 1,
             },
             expectedTrelloListId:
-              projection.phase === "ci" || projection.phase === "human-feedback"
+              options.terminal?.evidence.trelloListId ??
+              projection.expectedTrelloListId ??
+              (projection.pullRequest !== undefined &&
+              projection.phase !== "done" &&
+              (projection.feedbackRemediation !== undefined ||
+                projection.ciRepair?.activePrimaryOperation !== undefined)
                 ? current.pinned.lists.review
-                : projection.phase === "done"
-                  ? current.pinned.lists.done
-                  : current.pinned.lists.working,
+                : projection.phase === "ci" ||
+                    projection.phase === "human-feedback"
+                  ? current.pinned.lists.review
+                  : projection.phase === "done"
+                    ? current.pinned.lists.done
+                    : current.pinned.lists.working),
             ...(projection.recoveryWait
               ? {
                   wait: {

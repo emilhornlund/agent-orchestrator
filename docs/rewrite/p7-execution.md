@@ -1,6 +1,9 @@
 # P7 — observation, scheduling and human feedback
 
 Temporary implementation guide. Follow [delivery workflow](phase-execution.md).
+P7 is implemented and locally validated; [current progress](phase-status.md) records
+the task checkpoints and integrated checks. The contracts below remain scoped guidance,
+not instructions to restart completed tasks or begin P8 automatically.
 Prepare small ordered tasks covering the scope, implement/review them sequentially,
 then check combined integration. Read REQ-HR-001–006, REQ-SCH-002–004, REQ-TR-004,
 REQ-WF-003, REQ-PR-003/007/008, and this workflow's contributions to REQ-REC-002,
@@ -12,6 +15,13 @@ shared requirements do not pull later CI/maintenance/cleanup implementation here
 1. Separate persistent observation from the serialized project writer. Retain
    deduplicated arrivals while execution is blocked; observations cannot mutate the
    task branch or start a second writer. Use revision and owner-generation checks.
+   Observation retention can checkpoint independently of dispatch policy: the side
+   observer stores immutable snapshots without changing the writer projection.
+   Arrival consumption, priority and prerequisites remain a separate complete task;
+   snapshot retention alone does not satisfy the coordinated scheduling criteria.
+   Retained unclassified feedback descriptors are nondispatchable. The serialized
+   scheduler refreshes authoritative current feedback before replacing them with
+   actionable descriptors; stale never-started descriptors are retired, not executed.
 2. Persist queue descriptors/order: human corrections before CI before maintenance,
    with explicit necessary prerequisites. Keep arrivals across restart. Maintenance
    execution itself belongs to P8.
@@ -33,12 +43,28 @@ shared requirements do not pull later CI/maintenance/cleanup implementation here
 7. Publish truthful partial/uncertain replies and managed activity/body updates,
    preserving human content and P4 uncertain-mutation reconciliation. Never resolve
    human-owned threads or claim a fix solely from an agent's declaration.
+   Body edits retain their observed-body precondition. A changed precondition may
+   cancel only never-dispatched intent; a prior dispatched write still reconciles.
+   A completed repeatable body intent is not cached proof of the provider's later
+   fields after observed drift. Replies retain immutable accepted outcomes even
+   when the originating request is edited or deleted.
 8. Observe human merge/closure during active/queued work. Fence stale completions,
    safely cancel and reconcile in-flight effects. No new push, branch resurrection
    or stale Human Review move. Preserve unshipped work; missing PID/group does not
    prove the writer stopped. Final cleanup/fresh attempts belong to P10.
+   Terminal observation also runs behind future dependency rechecks. Reconcile the
+   original initial-publication intent if a human closes a newly created PR before
+   binding; dispatched Trello effects require readback, never replay. Live observer,
+   cancellation and capacity identities include project/storage scope, not just an
+   attempt identifier. Terminal consistency effects require durable stopped proof;
+   preserve unknown execution and unshipped artifacts before releasing ownership.
 
 ## Starting points and checks
+
+After observation retention, implement current semantic feedback refresh before
+arrival dispatch/priority: scheduling must distinguish actionable new requests from
+unchanged exhausted requests and automation status. This refines the order above;
+it does not remove the durable queue/capacity obligations.
 
 Inspect `src/orchestrator/poll-project.ts`, `run-task-session-workflow.ts`,
 `run-task-session-feedback-cycle.ts`, feedback ledger/round modules, RunStore,

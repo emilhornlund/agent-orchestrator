@@ -50,6 +50,7 @@ const taskExecutionEventSchema = z.discriminatedUnion("type", [
     type: z.literal("ci-passed-awaiting-human"),
   }),
   eventIdentitySchema.extend({ type: z.literal("ci-passed-completed") }),
+  eventIdentitySchema.extend({ type: z.literal("human-feedback-pending") }),
   eventIdentitySchema.extend({ type: z.literal("pull-request-merged") }),
   eventIdentitySchema.extend({
     type: z.literal("external-pull-request-reconciled"),
@@ -94,6 +95,7 @@ const phaseTransitions: Record<
   },
   "publication-completed": { from: "publication", to: "ci" },
   "ci-passed-awaiting-human": { from: "ci", to: "human-feedback" },
+  "human-feedback-pending": { from: "ci", to: "human-feedback" },
   "ci-passed-completed": { from: "ci", to: "done" },
   "pull-request-merged": {
     from: [
