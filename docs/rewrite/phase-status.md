@@ -120,6 +120,23 @@
   passed. Guide/roadmap scope remains accurate after T3's integration adjustment.
   Only T5 combined integration/specification checking and final `yarn validate`
   remain; no full validation or live-service qualification is yet claimed.
+- Combined P8 criteria inspection found a concrete CI-001 discovery gap, corrected
+  in T5a: expected workflow documents now come from the exact PR revision through
+  the non-paid GitHub contents API, not stale source-checkout files. Runtime jobs
+  resolve only their verified workflow path/head/PR/trigger, leaving another
+  never-started workflow uncertain. Latest applicable runs supersede older runs;
+  observed additional checks cannot be ignored, and newest same-head commit
+  statuses supersede historical success/failure without renewing episode budgets.
+- T5a self-review inspected the changed clients, pure document parser/evaluator and
+  production observation callers, including malformed/absent discovery, skipped
+  conditional jobs and reruns. Seven focused suites passed **165 tests** after the
+  production dispatch fixture gained its explicit contents-discovery response.
+  Previously that missing response correctly made its expected set uncertain,
+  rather than fabricating green CI. Typecheck passed; a formatting-only lint issue
+  in the new contents fixture was corrected and the final checks are rerun before
+  checkpoint. Permanent CI guidance now describes the actual discovery policy.
+  Remaining: refresh context on nested CI quality-repair dispatch, then final
+  combined checks/documentation and `yarn validate`. No full pass claimed yet.
 
 ## Inherited P7 checkpoint
 

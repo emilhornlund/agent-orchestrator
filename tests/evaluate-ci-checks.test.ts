@@ -66,6 +66,45 @@ function evaluate(
 }
 
 describe("evaluateCiChecks", () => {
+  it.each(["failure", "queued"])(
+    "does not ignore a newly registered %s check absent from a static contract",
+    (state) => {
+      const result = evaluate(
+        ["Build"],
+        [
+          checkRun("Build", "completed", "success"),
+          checkRun(
+            "New check",
+            state === "queued" ? "queued" : "completed",
+            state === "queued" ? null : "failure",
+            headSha,
+            2,
+          ),
+        ],
+      );
+      expect(result.status).toBe(state === "queued" ? "waiting" : "failed");
+    },
+  );
+
+  it.each(["success", "pending", "failure"])(
+    "uses the newest same-head commit status (%s), not stale success/failure history",
+    (state) => {
+      const result = evaluate(
+        ["Tests"],
+        [
+          commitStatus("Tests", "failure", headSha, 1),
+          commitStatus("Tests", state, headSha, 2),
+        ],
+      );
+      expect(result.status).toBe(
+        state === "success"
+          ? "passed"
+          : state === "pending"
+            ? "waiting"
+            : "failed",
+      );
+    },
+  );
   it("passes only when every expected check succeeds on the current head", () => {
     expect(
       evaluate(

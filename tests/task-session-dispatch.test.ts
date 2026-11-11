@@ -1627,6 +1627,13 @@ describe("task-session production dispatch", () => {
       }
       if (
         args[0] === "api" &&
+        args.some((argument) =>
+          argument.includes("/contents/.github/workflows?"),
+        )
+      )
+        return "[]";
+      if (
+        args[0] === "api" &&
         args.some((argument) => argument.includes("/annotations?"))
       )
         return JSON.stringify([[]]);

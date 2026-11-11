@@ -250,6 +250,15 @@ all prior-head CI evidence. A successful complete CI result leaves the open PR i
 merge or complete it. Only an independently observed human merge permits the card to move to `Done` with `dueComplete: true`; a
 human unmerged closure routes it to `Backlog`. A publication or card-transition failure does not produce a successful completion.
 
+Expected checks combine supported target-branch rules with workflow documents read
+through GitHub at the exact PR head, never the source checkout's potentially stale
+files. A dynamic/conditional workflow is resolved only by terminal jobs from a
+verified PR-associated run for that workflow path and revision; one discovered
+workflow cannot stand in for another that never registered. Missing, inaccessible,
+malformed or incomplete discovery remains uncertain. Newly observed non-skipped
+checks are also evaluated, and commit-status history uses the latest context
+result rather than stale same-head success or failure.
+
 ## Human review
 
 Human review takes place on GitHub. The orchestrator never merges a pull request. Approval is an observation, not a terminal event;

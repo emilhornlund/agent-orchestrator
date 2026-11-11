@@ -8,6 +8,8 @@ import {
   GitHubClient,
   type RunGitHubCommand,
 } from "../src/github/github-client.js";
+import { establishCiCheckExpectations } from "../src/github/ci-check-expectations.js";
+import { evaluateCiChecks } from "../src/github/evaluate-ci-checks.js";
 
 let root: string;
 afterEach(() => {
@@ -21,7 +23,171 @@ function workingDirectory(): string {
 
 const headSha = "a".repeat(40);
 
+/** Serve the fixture documents through the exact-revision GitHub contents API. */
+function withWorkflowApi(command: RunGitHubCommand): RunGitHubCommand {
+  return async (cwd, args, ...rest) => {
+    const endpoint = args.find((arg) =>
+      arg.includes("/contents/.github/workflows"),
+    );
+    if (!endpoint) return command(cwd, args, ...rest);
+    expect(endpoint).toContain(`ref=${headSha}`);
+    const directory = path.join(cwd, ".github", "workflows");
+    if (endpoint.includes("/workflows?"))
+      return JSON.stringify(
+        fs.existsSync(directory)
+          ? fs.readdirSync(directory).map((name) => ({
+              name,
+              path: `.github/workflows/${name}`,
+              type: "file",
+            }))
+          : [],
+      );
+    const name = decodeURIComponent(endpoint.split("?")[0]!.split("/").at(-1)!);
+    return JSON.stringify({
+      encoding: "base64",
+      content: fs.readFileSync(path.join(directory, name)).toString("base64"),
+    });
+  };
+}
+
 describe("GitHubClient.getCiObservations", () => {
+  it.each(["static-new-check", "undiscovered-workflow", "latest-run"] as const)(
+    "evaluates exact-revision workflow contracts without substituting unrelated runtime coverage: %s",
+    async (scenario) => {
+      const cwd = workingDirectory();
+      fs.mkdirSync(path.join(cwd, ".github", "workflows"), { recursive: true });
+      fs.writeFileSync(
+        path.join(cwd, ".github", "workflows", "old.yml"),
+        "on: [pull_request]\njobs:\n  OldCheckoutCheck: {}\n",
+      );
+      const dynamic = "on: [pull_request]\njobs:\n  Build:\n    if: always()\n";
+      const documents: Record<string, string> =
+        scenario === "static-new-check"
+          ? {
+              "ci.yml":
+                "on: [pull_request]\njobs:\n  Build: {}\n  RequiredNewCheck: {}\n",
+            }
+          : scenario === "undiscovered-workflow"
+            ? { "first.yml": dynamic, "second.yml": dynamic }
+            : { "first.yml": dynamic };
+      const command = vi.fn<RunGitHubCommand>(async (_cwd, args) => {
+        const endpoint = args.at(-1)!;
+        if (endpoint.includes("/check-runs?"))
+          return JSON.stringify([
+            {
+              check_runs: [
+                {
+                  id: 1,
+                  name: "Build",
+                  head_sha: headSha,
+                  status: "completed",
+                  conclusion: "success",
+                  html_url: null,
+                },
+              ],
+            },
+          ]);
+        if (endpoint.includes("/statuses?")) return JSON.stringify([[]]);
+        if (endpoint.includes("/protection/"))
+          throw new Error("HTTP 404: not found");
+        if (endpoint.includes("/contents/")) {
+          expect(endpoint).toContain(`ref=${headSha}`);
+          if (endpoint.includes("/workflows?"))
+            return JSON.stringify(
+              Object.keys(documents).map((name) => ({
+                name,
+                path: `.github/workflows/${name}`,
+                type: "file",
+              })),
+            );
+          const name = decodeURIComponent(
+            endpoint.split("?")[0]!.split("/").at(-1)!,
+          );
+          return JSON.stringify({
+            encoding: "base64",
+            content: Buffer.from(documents[name]!).toString("base64"),
+          });
+        }
+        if (endpoint.includes("/actions/runs?"))
+          return JSON.stringify([
+            {
+              workflow_runs: [
+                {
+                  id: 2,
+                  path: ".github/workflows/first.yml",
+                  event: "pull_request",
+                  head_sha: headSha,
+                  status: "completed",
+                  pull_requests: [{ number: 7 }],
+                },
+                ...(scenario === "latest-run"
+                  ? [
+                      {
+                        id: 1,
+                        path: ".github/workflows/first.yml",
+                        event: "pull_request",
+                        head_sha: headSha,
+                        status: "in_progress",
+                        pull_requests: [{ number: 7 }],
+                      },
+                    ]
+                  : []),
+              ],
+            },
+          ]);
+        if (endpoint.includes("/actions/runs/2/jobs?"))
+          return JSON.stringify([
+            {
+              jobs: [
+                { name: "Build", status: "completed", conclusion: "success" },
+              ],
+            },
+          ]);
+        throw new Error(`Unexpected query: ${endpoint}`);
+      });
+      const observation = await new GitHubClient(command).getCiObservations({
+        cwd,
+        repository: "owner/repo",
+        defaultBranch: "main",
+        headSha,
+        pullRequestNumber: 7,
+      });
+      const expectations = establishCiCheckExpectations(
+        observation.expectationSources,
+      );
+      const evaluated = evaluateCiChecks({
+        expectedHeadSha: headSha,
+        observedHeadSha: observation.headSha,
+        checks: observation.checks,
+        expectations,
+      });
+      expect(JSON.stringify(observation.expectationSources)).not.toContain(
+        "OldCheckoutCheck",
+      );
+      if (scenario === "static-new-check")
+        expect(evaluated).toMatchObject({
+          status: "waiting",
+          missingChecks: ["RequiredNewCheck"],
+        });
+      else if (scenario === "undiscovered-workflow") {
+        expect(evaluated.status).toBe("uncertain");
+        expect(observation.expectationSources).toContainEqual(
+          expect.objectContaining({
+            sourceId: "workflow:.github/workflows/second.yml",
+            complete: false,
+          }),
+        );
+      } else {
+        expect(evaluated.status).toBe("passed");
+        expect(
+          command.mock.calls.some(([, args]) =>
+            args.some((arg) => arg.includes("/runs/1/jobs")),
+          ),
+        ).toBe(false);
+      }
+    },
+  );
+
   it("collects paginated check runs and commit statuses for the exact SHA plus branch contracts", async () => {
     const cwd = workingDirectory();
     const command = vi.fn<RunGitHubCommand>(async (_cwd, args) => {
@@ -135,7 +301,7 @@ describe("GitHubClient.getCiObservations", () => {
       }
       throw new Error(`Unexpected GitHub query: ${args.join(" ")}`);
     });
-    const github = new GitHubClient(command);
+    const github = new GitHubClient(withWorkflowApi(command));
 
     const observation = await github.getCiObservations({
       cwd,
@@ -210,7 +376,7 @@ describe("GitHubClient.getCiObservations", () => {
         return JSON.stringify([[]]);
       return JSON.stringify({ contexts: [], checks: [] });
     });
-    const github = new GitHubClient(command);
+    const github = new GitHubClient(withWorkflowApi(command));
 
     await expect(
       github.getCiObservations({
@@ -248,7 +414,7 @@ describe("GitHubClient.getCiObservations", () => {
     });
 
     await expect(
-      new GitHubClient(command).getCiObservations({
+      new GitHubClient(withWorkflowApi(command)).getCiObservations({
         cwd,
         repository: "owner/repo",
         defaultBranch: "main",
@@ -266,7 +432,7 @@ describe("GitHubClient.getCiObservations", () => {
         return JSON.stringify([[]]);
       throw new Error("HTTP 403: resource not accessible by integration");
     });
-    const github = new GitHubClient(command);
+    const github = new GitHubClient(withWorkflowApi(command));
 
     const observation = await github.getCiObservations({
       cwd,
@@ -294,7 +460,9 @@ describe("GitHubClient.getCiObservations", () => {
       }
       throw new Error("HTTP 404: branch protection not found");
     });
-    const result = await new GitHubClient(command).getCiObservations({
+    const result = await new GitHubClient(
+      withWorkflowApi(command),
+    ).getCiObservations({
       cwd,
       repository: "owner/repo",
       defaultBranch: "main",
@@ -329,6 +497,8 @@ describe("GitHubClient.getCiObservations", () => {
             workflow_runs: [
               {
                 id: 100,
+                path: ".github/workflows/ci.yml",
+                event: "pull_request",
                 head_sha: headSha,
                 status: "completed",
                 pull_requests: [{ number: 7 }],
@@ -367,7 +537,9 @@ describe("GitHubClient.getCiObservations", () => {
       throw new Error(`Unexpected GitHub query: ${args.join(" ")}`);
     });
 
-    const result = await new GitHubClient(command).getCiObservations({
+    const result = await new GitHubClient(
+      withWorkflowApi(command),
+    ).getCiObservations({
       cwd,
       repository: "owner/repo",
       defaultBranch: "main",
@@ -412,6 +584,8 @@ describe("GitHubClient.getCiObservations", () => {
             workflow_runs: [
               {
                 id: 101,
+                path: ".github/workflows/ci.yml",
+                event: "pull_request",
                 head_sha: headSha,
                 status: "completed",
                 pull_requests: [{ number: 8 }],
@@ -422,7 +596,9 @@ describe("GitHubClient.getCiObservations", () => {
       throw new Error(`Unexpected GitHub query: ${args.join(" ")}`);
     });
 
-    const result = await new GitHubClient(command).getCiObservations({
+    const result = await new GitHubClient(
+      withWorkflowApi(command),
+    ).getCiObservations({
       cwd,
       repository: "owner/repo",
       defaultBranch: "main",
@@ -467,6 +643,8 @@ describe("GitHubClient.getCiObservations", () => {
             workflow_runs: [
               {
                 id: 102,
+                path: ".github/workflows/ci.yml",
+                event: "pull_request",
                 head_sha: headSha,
                 status: "in_progress",
                 pull_requests: [{ number: 7 }],
@@ -495,7 +673,9 @@ describe("GitHubClient.getCiObservations", () => {
       throw new Error(`Unexpected GitHub query: ${args.join(" ")}`);
     });
 
-    const result = await new GitHubClient(command).getCiObservations({
+    const result = await new GitHubClient(
+      withWorkflowApi(command),
+    ).getCiObservations({
       cwd,
       repository: "owner/repo",
       defaultBranch: "main",
@@ -542,6 +722,8 @@ describe("GitHubClient.getCiObservations", () => {
             workflow_runs: [
               {
                 id: 103,
+                path: ".github/workflows/ci.yml",
+                event: "pull_request",
                 head_sha: "b".repeat(40),
                 status: "completed",
                 pull_requests: [{ number: 7 }],
@@ -552,7 +734,9 @@ describe("GitHubClient.getCiObservations", () => {
       throw new Error(`Unexpected GitHub query: ${args.join(" ")}`);
     });
 
-    const result = await new GitHubClient(command).getCiObservations({
+    const result = await new GitHubClient(
+      withWorkflowApi(command),
+    ).getCiObservations({
       cwd,
       repository: "owner/repo",
       defaultBranch: "main",
