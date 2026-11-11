@@ -24,6 +24,7 @@ import {
   enqueueNotification,
   notifyAttentionRequired,
   prepareAttentionNotification,
+  notifyFailed,
 } from "../notifications/email-notifier.js";
 import type { OpenCodeClient } from "../opencode/opencode-client.js";
 import { runBoundedCiReview } from "../task-session/run-bounded-ci-review.js";
@@ -339,6 +340,7 @@ async function finalizeRefinementSetupFailure(options: {
   card: TrelloCard;
   reason: string;
   signal: AbortSignal;
+  emailNotifier?: EmailNotifier;
 }): Promise<void> {
   const { authority, queue, queueEventId, trello, project, card, signal } =
     options;
@@ -406,6 +408,28 @@ async function finalizeRefinementSetupFailure(options: {
     "To retry deliberately, move this card to Ready for Agent.",
   ].join("\n");
   await trello.addComment(card.id, comment);
+  const notification = {
+    project,
+    card,
+    category: analysisFailure ? "Refinement" : "Setup",
+    reason: analysisFailure ?? options.reason,
+  };
+  if (
+    options.emailNotifier &&
+    (options.emailNotifier.isEventEnabled?.("failed") ?? true)
+  )
+    enqueueNotification(
+      options.emailNotifier,
+      project.id,
+      "failed",
+      card.url,
+      buildFailedEmail(notification),
+      {
+        cardId: card.id,
+        listId: project.trello.failedListId,
+        boardId: project.trello.boardId,
+      },
+    );
   if (!failed.some((candidate) => candidate.id === card.id)) {
     const working = await getCardsForDiscovery(
       trello,
@@ -439,6 +463,11 @@ async function finalizeRefinementSetupFailure(options: {
     trelloObservationId: `trello-failed-readback:${card.id}:${observedAt}`,
     trelloVerifiedAt: observedAt,
   });
+  await notifyFailed(
+    options.emailNotifier,
+    notification,
+    logger.child({ projectId: project.id, cardId: card.id }),
+  );
   queue.complete(queueEventId);
   await authority.releaseVerifiedTerminal();
 }
@@ -4209,6 +4238,7 @@ export async function runTaskSessionWorkflow(
     try {
       const failureCard = await trello.getCard(owner.cardId);
       await finalizeRefinementSetupFailure({
+        ...(emailNotifier ? { emailNotifier } : {}),
         authority: refinementAuthority,
         queue,
         queueEventId: owner.eventId,
@@ -4602,6 +4632,7 @@ export async function runTaskSessionWorkflow(
               cause: error,
             });
           await finalizeRefinementSetupFailure({
+            ...(emailNotifier ? { emailNotifier } : {}),
             authority,
             queue,
             queueEventId: recovered.eventId,
@@ -5337,6 +5368,7 @@ export async function runTaskSessionWorkflow(
                 cause: error,
               });
             await finalizeRefinementSetupFailure({
+              ...(emailNotifier ? { emailNotifier } : {}),
               authority,
               queue,
               queueEventId: mutation.eventId,

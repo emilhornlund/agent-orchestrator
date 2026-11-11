@@ -258,6 +258,35 @@ it("does not terminally fail over human field changes discovered after invalid a
   expect(f.authority.store.read()!.lifecycle).toBe("refinement");
 });
 
+it("does not deliver a failed-refinement notification for an unreconciled Failed move", async () => {
+  const f = await fixture();
+  f.engineer.mockImplementation(async ({ cwd }) => {
+    const { getRefinementResultPath } =
+      await import("../src/refinement/refinement-result.js");
+    fs.mkdirSync(path.dirname(getRefinementResultPath(cwd)), {
+      recursive: true,
+    });
+    fs.writeFileSync(getRefinementResultPath(cwd), "{}");
+    return { exitCode: 0, output: "", errorOutput: "" };
+  });
+  const read = f.trello.getCards.bind(f.trello);
+  vi.spyOn(f.trello, "getCards").mockImplementation(async (listId) => {
+    if (listId === f.project.trello.failedListId && f.card.idList === listId)
+      f.card.desc = "Human change during failure readback";
+    return read(listId);
+  });
+  await expect(f.poll()).rejects.toThrow("conflicting current fields");
+  await f.outbox().drain(f.notifier, () => {});
+  expect(
+    f
+      .outbox()
+      .records()
+      .some((record) => record.event === "failed"),
+  ).toBe(true);
+  expect(f.notifier.send).not.toHaveBeenCalled();
+  expect(f.authority.store.read()!.lifecycle).toBe("refinement");
+});
+
 it("recovers a lost completion-comment acknowledgement in Backlog without duplicate effects", async () => {
   const f = await fixture();
   let lost = false;

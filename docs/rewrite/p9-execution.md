@@ -62,6 +62,11 @@ Legacy artifacts/baselines and unknown directory symlinks are preserved/fenced,
 not treated as setup or new output. Combined scoped criteria have been inspected;
 only final integrated validation/completion remains.
 
+Final integration correction wires failure notifications through every bounded
+failure caller and gates delivery on the verified canonical refinement outcome.
+SMTP fixtures use actual recorded child failures, and preparing-attempt recovery
+uses concrete field/history/comment adapters rather than no-op mutation stubs.
+
 Inspect `src/refinement/run-refinement-card.ts`, `run-refinement.ts`,
 `run-refinement-setup.ts`, `refinement-operation.ts`, `refinement-result.ts`,
 `refinement-mutation-snapshot.ts`, `finalize-refinement.ts`, prompts and workflow

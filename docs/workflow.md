@@ -169,6 +169,9 @@ After bounded analysis failure, original fields must still be verified before an
 after the Failed transition and explanatory comment. Human field differences or
 unknown execution/acceptance retain ownership instead of claiming a completed
 failure. Recognized temporary dependency outages preserve context for rechecks.
+Configured failure email uses the durable notification outbox and reports the
+sanitized failure reason only after the refinement failure is verified. Delivery
+failure or uncertain SMTP acceptance does not undo that workflow outcome.
 
 When a refinement card is claimed:
 

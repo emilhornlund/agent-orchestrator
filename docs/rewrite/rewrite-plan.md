@@ -255,6 +255,9 @@ Backlog outcome releases the attempt. See the [P9 guide](p9-execution.md).
 Conclusive bounded field rejection retains its original journal evidence and
 switches to verified own-write compensation. Human or unknown acceptance cannot
 authorize compensation, and restoration must itself be verified before failure.
+This contribution's implementation and combined criteria checks are checkpointed;
+[current progress](phase-status.md) records verification and final validation status.
+P10 cleanup/fresh retries and P11 temporary-guidance removal remain separate.
 
 ### P10 — Terminal obligations, artifact preservation and fresh retries
 

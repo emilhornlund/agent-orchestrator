@@ -5,10 +5,12 @@
 - **P9 in progress on `refactor/p9-recoverable-refinement`, based on `190bb3c`.**
   Initial index/worktree clean; P8 is integrated. Only small local P9 commits are
   authorized, without remote actions or P10 expansion.
-- Current inspection: setup attribution and P4 content/label intents exist, but
+- Implementation/correction tasks are checkpointed through `2c0df08`; combined
+  scoped integration checking is complete. Final integrated `yarn validate` is next.
+- Initial inspection: setup attribution and P4 content/label intents existed, but
   refinement results are still repository-local, no bounded invalid-result correction
   exists, and finalization lacks full-field/history conflict reconciliation.
-- Ordered remaining work: T1 read-only dispatch/external results and conservative
+- Original ordered work: T1 read-only dispatch/external results and conservative
   baseline recovery; T2 complete-result bounded correction and grounded prompts;
   T3 durable conflict-aware field finalization/restart; T4 verified full Backlog
   outcome/comment/release and combined checks, followed by `yarn validate`.
@@ -119,6 +121,22 @@
   corrected boundaries. Six focused suites passed 69 tests; typecheck,
   changed-file ESLint, formatting and whitespace checks passed. Final full
   validation remains and no live-service qualification is claimed.
+- T5b checkpoint: `2c0df08`. Initial integrated `yarn validate` passed lint,
+  formatting and typecheck but failed 3 of 2,219 tests (166 other files passed).
+  Two SMTP cases bypassed durable child evidence and expected the old unbounded
+  failure/stranded queue; the preparing-attempt case used no-op field/history
+  substitutes. Fixtures now execute real stopped-child failure and concrete
+  field/move/comment adapters, retaining restart and SMTP rejection/uncertainty
+  assertions. The SMTP assertions decode their actual transfer encoding.
+- T5c correction also wires durable nonblocking failure notification preparation
+  into all refinement failure callers and retains the sanitized actual failure
+  reason. Self-review traced those callers, terminal release, email binding and
+  new regressions; corrected an early-email gap by requiring verified canonical
+  refinement failure before delivery, not merely a completed Failed move. A human
+  edit during failure readback now retains ownership and cannot authorize email.
+  Six focused suites passed 66 tests; typecheck and changed-file ESLint passed
+  after removing an unused fixture import. Full integrated validation is rerun
+  after this correction; no full pass is yet claimed.
 
 ## Inherited P8 checkpoint
 
@@ -585,7 +603,8 @@ requirements/specification sections and meaningful regression tests:
   passed all 70 tests; typecheck, changed-file ESLint and Prettier passed. The
   corrected integrated tree then passed full `yarn validate` as recorded above.
 
-No P6–P8 implementation work remains. P9–P10 have not started. P11 covers
+No P6–P8 implementation work remains. P9 implementation is checkpointed above;
+final validation remains. P10 has not started. P11 covers
 remaining integration/regression gaps, with broader qualification only if requested.
 
 ## Known carryovers

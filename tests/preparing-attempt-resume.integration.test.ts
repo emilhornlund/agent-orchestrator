@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Config, ProjectConfig } from "../src/config/config.js";
 import {
   acquireProjectOwnership,
@@ -33,7 +33,8 @@ import {
 import { captureSetupEffects } from "../src/process/run-setup.js";
 import { runOrchestrator } from "../src/orchestrator/run-orchestrator.js";
 import { pollProject } from "../src/orchestrator/poll-project.js";
-import type { TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
+import { TrelloClient, type TrelloCard } from "../src/trello/trello-client.js";
+import type { RefinementHistoryAction } from "../src/refinement/refinement-mutation-snapshot.js";
 import {
   runStartup,
   type StartupOperations,
@@ -43,6 +44,7 @@ let root: string;
 const leases: ProjectOwnershipLease[] = [];
 
 afterEach(async () => {
+  vi.unstubAllGlobals();
   await Promise.all(leases.splice(0).map((lease) => lease.release()));
   if (root !== undefined) fs.rmSync(root, { recursive: true, force: true });
 });
@@ -204,9 +206,99 @@ describe("resuming canonical preparing attempts", () => {
       let cardList = project.trello.readyListId;
       const labels = new Set(card.idLabels);
       const effectStates: Array<RunRecord["lifecycle"]> = [];
+      const actualTrello = new TrelloClient({ apiKey: "key", token: "token" });
+      const history: RefinementHistoryAction[] = [];
+      const comments: { id: string; text: string }[] = [];
+      vi.stubGlobal("fetch", async (input: URL, init?: RequestInit) => {
+        const url = new URL(input);
+        const parts = url.pathname.split("/");
+        const current = () => ({
+          ...card,
+          idBoard: project.trello.boardId,
+          idList: cardList,
+          idLabels: [...labels],
+        });
+        if (parts[2] === "members")
+          return Response.json({ id: "orchestrator" });
+        if (parts[2] === "boards")
+          return Response.json(
+            [
+              project.trello.featureLabelId,
+              project.trello.improvementLabelId,
+              project.trello.bugLabelId,
+              project.trello.refinementLabelId,
+            ].map((id) => ({ id, name: id, color: null })),
+          );
+        const record = (
+          type: RefinementHistoryAction["type"],
+          data: RefinementHistoryAction["data"],
+        ) =>
+          history.unshift({
+            id: `action-${history.length}`,
+            idMemberCreator: "orchestrator",
+            type,
+            data,
+          });
+        if (init?.method === "PUT") {
+          const body = JSON.parse(String(init.body)) as {
+            name?: string;
+            desc?: string;
+            idList?: string;
+          };
+          if (body.name !== undefined) {
+            const old = { name: card.name, desc: card.desc };
+            card.name = body.name;
+            card.desc = body.desc!;
+            record("updateCard", {
+              old,
+              card: { id: card.id, name: card.name, desc: card.desc },
+            });
+          }
+          if (body.idList) cardList = body.idList;
+        }
+        if (init?.method === "POST" && parts[4] === "idLabels") {
+          const id = url.searchParams.get("value")!;
+          labels.add(id);
+          record("addLabelToCard", { card: { id: card.id }, label: { id } });
+        }
+        if (init?.method === "DELETE") {
+          labels.delete(parts[5]!);
+          record("removeLabelFromCard", {
+            card: { id: card.id },
+            label: { id: parts[5]! },
+          });
+        }
+        if (parts[4] === "actions") {
+          if (init?.method === "POST") {
+            comments.push({
+              id: `comment-${comments.length}`,
+              text: url.searchParams.get("text")!,
+            });
+            return Response.json({
+              id: comments.at(-1)!.id,
+              type: "commentCard",
+              date: new Date().toISOString(),
+            });
+          }
+          return Response.json(
+            url.searchParams.get("filter") === "commentCard"
+              ? comments.map((comment) => ({
+                  id: comment.id,
+                  type: "commentCard",
+                  data: { text: comment.text },
+                }))
+              : history,
+          );
+        }
+        return Response.json(current());
+      });
       const trello = {
+        getRefinementHistory:
+          actualTrello.getRefinementHistory.bind(actualTrello),
         getCards: async (listId: string) =>
-          cardList === listId ? [{ ...card, idList: listId }] : [],
+          cardList === listId
+            ? [{ ...card, idList: listId, idLabels: [...labels] }]
+            : [],
         getCard: async () => ({
           ...card,
           idList: cardList,
@@ -215,18 +307,16 @@ describe("resuming canonical preparing attempts", () => {
         getCardAttachments: async () => [],
         moveCard: async (_id: string, listId: string) => {
           effectStates.push(authority.store.read()!.lifecycle);
-          cardList = listId;
-          if (
-            taskKind === "refinement" &&
-            listId === project.trello.backlogListId
-          )
-            controller.abort();
-          return { ...card, idList: listId, idLabels: [...labels] };
+          return actualTrello.moveCard(_id, listId);
         },
-        updateCardContent: async () => undefined,
-        addLabel: async (_id: string, label: string) => labels.add(label),
-        removeLabel: async (_id: string, label: string) => labels.delete(label),
-        addComment: async () => undefined,
+        updateCardContent: actualTrello.updateCardContent.bind(actualTrello),
+        addLabel: actualTrello.addLabel.bind(actualTrello),
+        removeLabel: actualTrello.removeLabel.bind(actualTrello),
+        addComment: async (id: string, text: string) => {
+          const result = await actualTrello.addComment(id, text);
+          if (taskKind === "refinement") controller.abort();
+          return result;
+        },
       } as unknown as TrelloClient;
       const git = {
         fetch: async () => undefined,

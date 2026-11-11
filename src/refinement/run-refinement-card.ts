@@ -202,9 +202,14 @@ export async function runRefinementCardWorkflow(options: {
       (error instanceof InvalidRefinementResultError ||
         error instanceof RefinementAnalysisFailedError)
     ) {
+      const failure =
+        error instanceof RefinementAnalysisFailedError &&
+        error.cause instanceof Error
+          ? error.cause
+          : error;
       recordRefinementAnalysisFailure(
         authority,
-        "Refinement did not complete after bounded analysis/correction; original card fields and diagnostics are preserved",
+        `Refinement did not complete after bounded analysis/correction: ${failure.message.slice(0, 1000)}; original card fields and diagnostics are preserved`,
       );
       throw new RefinementSetupFailedError(
         "Refinement analysis exhausted its bounded correction allowance",

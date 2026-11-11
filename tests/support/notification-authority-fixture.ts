@@ -16,7 +16,10 @@ import type { RunRecord } from "../../src/task-session/run-record.js";
 import { TrelloClient } from "../../src/trello/trello-client.js";
 import { GitClient } from "../../src/git/git-client.js";
 import { GitHubClient } from "../../src/github/github-client.js";
-import { OpenCodeClient } from "../../src/opencode/opencode-client.js";
+import {
+  OpenCodeClient,
+  type OpenCodeRunOptions,
+} from "../../src/opencode/opencode-client.js";
 import { CommandRunner } from "../../src/process/command-runner.js";
 import { getRefinementResultPath } from "../../src/refinement/refinement-result.js";
 import type { RefinementHistoryAction } from "../../src/refinement/refinement-mutation-snapshot.js";
@@ -325,7 +328,7 @@ export async function notificationAuthorityFixture(
     );
   }
   const github = new GitHubClient(vi.fn());
-  const engineer = vi.fn(async ({ cwd }: { cwd: string }) => {
+  const engineer = vi.fn(async ({ cwd }: OpenCodeRunOptions) => {
     const file = getRefinementResultPath(cwd);
     fs.mkdirSync(path.dirname(file), { recursive: true });
     if (actualGit) {
