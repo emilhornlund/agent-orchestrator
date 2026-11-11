@@ -219,7 +219,10 @@ export async function observeActivePullRequest(options: {
       expectations: establishCiCheckExpectations(current.ci.expectationSources),
       checks: current.ci.checks,
     });
-    if (ci.status === "failed" && task.ciRepair?.status !== "exhausted")
+    if (
+      ci.status === "failed" &&
+      !["exhausted", "stopped"].includes(task.ciRepair?.status ?? "")
+    )
       queue.enqueue({
         projectId: project.id,
         cardId: task.cardId,

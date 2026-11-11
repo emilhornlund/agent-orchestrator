@@ -80,6 +80,41 @@ function fixture() {
 }
 
 describe("runTaskSessionCiRepairs", () => {
+  it("ends unchanged correction without quality reruns, artificial commits or another pass", async () => {
+    const f = fixture();
+    const result = await runTaskSessionCiRepairs({
+      ...f.base,
+      getSourceIdentity: async () => `sha256:${"a".repeat(64)}`,
+      observeChecks: async (sha) => f.evaluation(sha, "failed"),
+    });
+    expect(result).toMatchObject({
+      status: "stopped",
+      reason: "no-change",
+      attempts: 1,
+    });
+    expect(f.base.rerunLocalGatesAndReview).not.toHaveBeenCalled();
+    expect(f.base.publishSamePullRequest).not.toHaveBeenCalled();
+    expect(f.store.read("card")).toMatchObject({
+      phase: "human-feedback",
+      ciRepair: { status: "stopped", stopReason: "no-change" },
+    });
+  });
+
+  it("publishes available early-finish output once without spending the remaining episode", async () => {
+    const f = fixture();
+    const result = await runTaskSessionCiRepairs({
+      ...f.base,
+      repairPrimarySession: async () => ({ finishEarly: true }),
+      observeChecks: async (sha) => f.evaluation(sha, "failed"),
+    });
+    expect(result).toMatchObject({
+      status: "stopped",
+      reason: "finished-early",
+      attempts: 1,
+      headSha: "b".repeat(40),
+    });
+    expect(f.base.publishSamePullRequest).toHaveBeenCalledOnce();
+  });
   it("resumes an active final-pass CI repair with its exact durable ID and pass", async () => {
     const f = fixture();
     const operationId = "operation:ci:pass:2";

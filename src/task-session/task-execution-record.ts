@@ -622,11 +622,17 @@ const ciRepairSchema = z.strictObject({
   maxAttempts: z.number().int().nonnegative().safe().optional(),
   initiatingEventId: nonBlankIdentifier.optional(),
   headSha: gitSha,
-  status: z.enum(["active", "passed", "exhausted"]),
+  status: z.enum(["active", "passed", "exhausted", "stopped"]),
+  stopReason: z.enum(["no-change", "finished-early"]).optional(),
+  reviewSourceAttempts: z
+    .record(taskSessionContentIdentity, z.number().int().nonnegative().max(3))
+    .optional(),
   activePrimaryOperation: z
     .strictObject({
       operationId: nonBlankIdentifier,
       pass: z.number().int().positive().safe(),
+      sourceIdentity: taskSessionContentIdentity.optional(),
+      finishEarly: z.boolean().optional(),
       promptArtifact: z
         .strictObject({
           reference: z.string().regex(/^sha256:[0-9a-f]{64}$/u),

@@ -62,6 +62,7 @@ interface LifecycleScenario {
   terminalDuringFeedback?: "active" | "unknown" | "capacity" | "push-rejected";
   preparedReview?: "material" | "unavailable";
   ciReviewHandoffs?: boolean;
+  ciQuality?: "validation" | "unavailable";
   feedbackReviewRecovery?:
     "reserved" | "completed" | "validation" | "reviewed" | "unknown";
   ciReviewRecovery?:
@@ -204,6 +205,15 @@ describe("task lifecycle through pollProject", () => {
       quality: "both",
       ciReviewHandoffs: true,
     },
+    ...(["validation", "unavailable"] as const).map((ciQuality) => ({
+      draft: false,
+      terminal: "merged" as const,
+      destination: "done" as const,
+      ackLoss: false,
+      quality: "both" as const,
+      ciReviewHandoffs: true,
+      ciQuality,
+    })),
     ...(
       ["reserved", "completed", "validation", "reviewed", "unknown"] as const
     ).map((feedbackReviewRecovery) => ({
@@ -226,7 +236,7 @@ describe("task lifecycle through pollProject", () => {
       ciReviewRecovery,
     })),
   ] as const)(
-    "preserves the owned lifecycle (quality=$quality, draft=$draft, terminal=$terminal, ackLoss=$ackLoss, correctionFailure=$correctionFailure, feedbackQuality=$feedbackQuality, terminalDuringFeedback=$terminalDuringFeedback, preparedReview=$preparedReview, ciReviewHandoffs=$ciReviewHandoffs, feedbackReviewRecovery=$feedbackReviewRecovery, ciReviewRecovery=$ciReviewRecovery)",
+    "preserves the owned lifecycle (quality=$quality, draft=$draft, terminal=$terminal, ackLoss=$ackLoss, correctionFailure=$correctionFailure, feedbackQuality=$feedbackQuality, terminalDuringFeedback=$terminalDuringFeedback, preparedReview=$preparedReview, ciReviewHandoffs=$ciReviewHandoffs, feedbackReviewRecovery=$feedbackReviewRecovery, ciReviewRecovery=$ciReviewRecovery, ciQuality=$ciQuality)",
     async ({
       draft,
       terminal,
@@ -241,6 +251,7 @@ describe("task lifecycle through pollProject", () => {
       ciReviewHandoffs = false,
       feedbackReviewRecovery,
       ciReviewRecovery,
+      ciQuality,
     }) => {
       // Restore the inherited environment even in scenarios without a scripted child.
       originalProcessPath = process.env.PATH;
@@ -1062,6 +1073,12 @@ describe("task lifecycle through pollProject", () => {
             )?.[1];
             if (identity === undefined)
               throw new Error("CI review prompt omitted source identity");
+            if (ciQuality === "unavailable")
+              return {
+                exitCode: 1,
+                output: "",
+                errorOutput: "Provider unavailable",
+              };
             const record = new TaskExecutionStore(
               contextRoot,
               project,
@@ -1437,8 +1454,8 @@ describe("task lifecycle through pollProject", () => {
       const commandOutcomes: string[] = [];
       const commands = new CommandRunner(async (options: CommandRunOptions) => {
         if (
-          feedbackQuality === "validation" &&
-          correctionFeedback &&
+          ((feedbackQuality === "validation" && correctionFeedback) ||
+            (ciQuality === "validation" && ciPrimaryCorrections > 0)) &&
           options.command === project.repository.validationCommand
         )
           return {
@@ -1820,6 +1837,26 @@ describe("task lifecycle through pollProject", () => {
             run: authorities.get("first")?.store.read(),
           }),
         ).toBe(2);
+        if (ciQuality !== undefined) {
+          expect(prs.size).toBe(1);
+          expect(prs.get("agent/first")?.isDraft).toBe(true);
+          expect(lists.get("first")).toBe("review");
+          expect(
+            await git.getRemoteBranchSha(
+              source,
+              "origin",
+              "agent/first",
+              project,
+            ),
+          ).toBe(ciTask?.pullRequest?.headSha);
+          expect(ciTask?.ciRepair?.status).toBe("passed");
+          expect(
+            ciQuality === "validation"
+              ? ciTask?.publicationQuality?.validation.status
+              : ciTask?.reviewUnavailable,
+          ).toBeTruthy();
+          return;
+        }
         expect(ciReviewRepairOperationIds).toHaveLength(2);
         expect(ciReviewRepairOperationIds[0]).toMatch(/:pass:1$/u);
         expect(ciReviewRepairOperationIds[1]).toMatch(/:pass:2$/u);

@@ -204,8 +204,9 @@ describe("mocked task-session lifecycle scenarios", () => {
     });
     expect(queue.claimNext()?.eventId).toBe("ci-event");
     const repairPrimarySession = vi.fn(
-      async (_diagnostics, _attempt, session) =>
-        expect(session).toBe("primary-session"),
+      async (_diagnostics, _attempt, session) => {
+        expect(session).toBe("primary-session");
+      },
     );
     const rerunLocalGatesAndReview = vi.fn(async () =>
       expect(decideVerifiedPublication(f.quality).allowed).toBe(true),

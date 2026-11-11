@@ -676,6 +676,26 @@ describe("task-session production dispatch", () => {
         }),
       );
 
+      const originalSwap = TaskExecutionStore.prototype.compareAndSwap;
+      const checkpointInterruption = vi
+        .spyOn(TaskExecutionStore.prototype, "compareAndSwap")
+        .mockImplementation(function (
+          this: TaskExecutionStore,
+          cardId,
+          revision,
+          next,
+        ) {
+          const result = originalSwap.call(this, cardId, revision, next);
+          if (
+            next.phase === "review" &&
+            next.ciRepair?.activePrimaryOperation?.operationId ===
+              "ci-cycle-original:pass:1"
+          )
+            throw new Error(
+              "Simulated stop at the durable CI review checkpoint",
+            );
+          return result;
+        });
       await expect(
         authority.run(() =>
           runTaskSessionWorkflow({
@@ -690,6 +710,7 @@ describe("task-session production dispatch", () => {
           }),
         ),
       ).rejects.toThrow("CI repair did not complete");
+      checkpointInterruption.mockRestore();
 
       const resumed = await authority.run(() => ownedStore.read(card.id));
       expect(resumed).toMatchObject({
@@ -2177,9 +2198,9 @@ describe("task-session production dispatch", () => {
     expect(exhaustedRecord).toMatchObject({
       phase: "human-feedback",
       retryCounters: { ci: 2 },
-      ciRepair: { status: "exhausted" },
+      ciRepair: { status: "stopped", stopReason: "no-change" },
     });
-    expect(git.commit).toHaveBeenCalledTimes(5);
+    expect(git.commit).toHaveBeenCalledTimes(4);
     expect(
       new TaskMutationQueue(project.contextRoot, project).list().at(-1)?.status,
     ).toBe("completed");
@@ -2195,11 +2216,15 @@ describe("task-session production dispatch", () => {
     );
     await pollProject(trello, git, github, openCode, commands, project, signal);
     expect(reviewReplyMutationCount).toBe(2);
-    expect(git.commit).toHaveBeenCalledTimes(5);
+    expect(git.commit).toHaveBeenCalledTimes(4);
     expect(
       new TaskExecutionStore(project.contextRoot, project).read(card.id)
         ?.ciRepair,
-    ).toMatchObject({ status: "exhausted", maxAttempts: 2 });
+    ).toMatchObject({
+      status: "stopped",
+      stopReason: "no-change",
+      maxAttempts: 2,
+    });
   });
 
   it("refuses an unowned Working card without a task-session record", async () => {

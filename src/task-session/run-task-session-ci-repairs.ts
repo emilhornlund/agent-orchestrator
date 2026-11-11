@@ -10,6 +10,12 @@ import { TaskExecutionStore } from "./task-execution-store.js";
 export const MAX_CI_REPAIR_ATTEMPTS = 2;
 
 export type TaskSessionCiRepairResult =
+  | {
+      status: "stopped";
+      attempts: number;
+      headSha: string;
+      reason: "no-change" | "finished-early";
+    }
   | { status: "passed"; attempts: number; headSha: string }
   | {
       status: "waiting";
@@ -26,6 +32,7 @@ export type TaskSessionCiRepairResult =
 
 export interface RunTaskSessionCiRepairsOptions {
   maxAttempts?: number;
+  getSourceIdentity?: () => Promise<string>;
   /** The caller verified a CI-owned local review checkpoint before dispatch. */
   resumeReviewRepair?: boolean;
   store: TaskExecutionStore;
@@ -44,7 +51,7 @@ export interface RunTaskSessionCiRepairsOptions {
     attempt: number,
     primarySessionId: string,
     operationId: string,
-  ) => Promise<void>;
+  ) => Promise<void | { finishEarly: boolean }>;
   rerunLocalGatesAndReview: () => Promise<void>;
   publishSamePullRequest: () => Promise<string>;
 }
@@ -244,18 +251,59 @@ export async function runTaskSessionCiRepairs(
             operationId,
             pass: attempt,
             diagnosticsArtifact,
+            ...(options.getSourceIdentity === undefined
+              ? {}
+              : { sourceIdentity: await options.getSourceIdentity() }),
           },
         },
       });
     }
     try {
-      if (!resumeReviewRepair)
-        await options.repairPrimarySession(
+      let finishEarly = active?.finishEarly === true;
+      if (!resumeReviewRepair) {
+        const outcome = await options.repairPrimarySession(
           diagnostics,
           attempt,
           options.expectedPrimarySessionId,
           operationId,
         );
+        finishEarly ||= outcome?.finishEarly === true;
+      }
+      const afterPrimary = options.store.read(options.cardId);
+      const reservation = afterPrimary?.ciRepair?.activePrimaryOperation;
+      if (!afterPrimary || reservation?.operationId !== operationId)
+        throw new TaskSessionCiRepairError(
+          "CI primary reservation changed after correction",
+        );
+      const noChange =
+        reservation.sourceIdentity !== undefined &&
+        options.getSourceIdentity !== undefined &&
+        reservation.sourceIdentity === (await options.getSourceIdentity());
+      if (noChange) {
+        updateRecord(options.store, afterPrimary, {
+          phase: "human-feedback",
+          reviewRepair: undefined,
+          ciRepair: {
+            ...episode,
+            headSha,
+            status: "stopped",
+            stopReason: "no-change",
+          },
+        });
+        return {
+          status: "stopped",
+          attempts: afterPrimary.retryCounters.ci,
+          headSha,
+          reason: "no-change",
+        };
+      }
+      if (finishEarly && !reservation.finishEarly)
+        updateRecord(options.store, afterPrimary, {
+          ciRepair: {
+            ...afterPrimary.ciRepair!,
+            activePrimaryOperation: { ...reservation, finishEarly: true },
+          },
+        });
       resumeReviewRepair = false;
       await options.rerunLocalGatesAndReview();
       headSha = await options.publishSamePullRequest();
@@ -304,6 +352,24 @@ export async function runTaskSessionCiRepairs(
             status: "active",
           },
         });
+      }
+      if (finishEarly) {
+        const latest = options.store.read(options.cardId)!;
+        updateRecord(options.store, latest, {
+          phase: "human-feedback",
+          ciRepair: {
+            ...episode,
+            headSha,
+            status: "stopped",
+            stopReason: "finished-early",
+          },
+        });
+        return {
+          status: "stopped",
+          attempts: latest.retryCounters.ci,
+          headSha,
+          reason: "finished-early",
+        };
       }
     } catch (error) {
       throw new TaskSessionCiRepairError(

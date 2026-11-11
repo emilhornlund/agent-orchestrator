@@ -47,6 +47,25 @@
   Typecheck and changed-code ESLint passed; final legacy-limit correction is
   rechecked before checkpoint. T2b still must remove production quality gates and
   implement CI no-op/early finish; T3–T5 remain. No full validation claimed.
+- P8-T2b completes advisory same-session CI correction publication: negative local
+  checks/review and bounded unavailable independent review publish available safe
+  corrections on the same PR, preserving current failure/uncertainty evidence.
+  Review allowance is source-specific and persisted, including prepared-content
+  verification. Known unchanged source reuses its evidence; bounded unavailable
+  commit-message advice uses a deterministic message without bypassing unknown
+  execution. Exact-source no-op stops before quality reruns/commit; explicit early
+  finish publishes once then stops the episode. Both arrival producers retain that
+  stop until verified new human work. Original primary IDs/session recovery remain.
+- T2b self-review inspected the actual CI writer, quality/review and prepared-source
+  publisher, durable reservations/stops, new bounded-review source and tests. Fixed
+  optional-marker parse failures, active-review state at unavailable publication
+  and missing current publication evidence. A legacy fixture had implicitly relied
+  on negative advice blocking publication; it now injects a real persisted-checkpoint
+  interruption instead. Six focused suites passed **51 tests**; all **eight CI
+  real-Git lifecycle cases** passed (22 unrelated cases filtered), including failed
+  validation, unavailable review, interrupted review recovery and unknown-writer
+  fencing. Typecheck and changed-code ESLint passed. T3–T5 remain; T4 owns final CI
+  activity/description outcome reporting. No full validation claimed.
 
 - **P7 implemented and locally validated on the current branch, based on `7fafed1` (integrated P6).**
   The starting index and working tree were clean. This session authorizes small
