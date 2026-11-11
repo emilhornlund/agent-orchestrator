@@ -63,6 +63,7 @@ interface LifecycleScenario {
   preparedReview?: "material" | "unavailable";
   ciReviewHandoffs?: boolean;
   ciQuality?: "validation" | "unavailable";
+  ciBudget?: number;
   targetMerge?: boolean;
   feedbackReviewRecovery?:
     "reserved" | "completed" | "validation" | "reviewed" | "unknown";
@@ -212,6 +213,15 @@ describe("task lifecycle through pollProject", () => {
       destination: "done",
       ackLoss: false,
       quality: "both",
+      ciReviewHandoffs: true,
+      ciBudget: 3,
+    },
+    {
+      draft: false,
+      terminal: "merged",
+      destination: "done",
+      ackLoss: false,
+      quality: "both",
       targetMerge: true,
     },
     ...(["validation", "unavailable"] as const).map((ciQuality) => ({
@@ -245,7 +255,7 @@ describe("task lifecycle through pollProject", () => {
       ciReviewRecovery,
     })),
   ] as const)(
-    "preserves the owned lifecycle (quality=$quality, draft=$draft, terminal=$terminal, ackLoss=$ackLoss, correctionFailure=$correctionFailure, feedbackQuality=$feedbackQuality, terminalDuringFeedback=$terminalDuringFeedback, preparedReview=$preparedReview, ciReviewHandoffs=$ciReviewHandoffs, feedbackReviewRecovery=$feedbackReviewRecovery, ciReviewRecovery=$ciReviewRecovery, ciQuality=$ciQuality, targetMerge=$targetMerge)",
+    "preserves the owned lifecycle (quality=$quality, draft=$draft, terminal=$terminal, ackLoss=$ackLoss, correctionFailure=$correctionFailure, feedbackQuality=$feedbackQuality, terminalDuringFeedback=$terminalDuringFeedback, preparedReview=$preparedReview, ciReviewHandoffs=$ciReviewHandoffs, feedbackReviewRecovery=$feedbackReviewRecovery, ciReviewRecovery=$ciReviewRecovery, ciQuality=$ciQuality, targetMerge=$targetMerge, ciBudget=$ciBudget)",
     async ({
       draft,
       terminal,
@@ -262,6 +272,7 @@ describe("task lifecycle through pollProject", () => {
       ciReviewRecovery,
       ciQuality,
       targetMerge,
+      ciBudget,
     }) => {
       // Restore the inherited environment even in scenarios without a scripted child.
       originalProcessPath = process.env.PATH;
@@ -423,6 +434,8 @@ describe("task lifecycle through pollProject", () => {
         },
       };
       if (ciReviewHandoffs) project.opencode.remediation.maxPasses = 2;
+      if (ciBudget !== undefined)
+        project.opencode.remediation.ciMaxPasses = ciBudget;
       const coordinationRoot = path.join(root, "coordination");
       fs.mkdirSync(coordinationRoot);
       provisionCoordinationNamespace(coordinationRoot, "lifecycle-test");
@@ -826,7 +839,7 @@ describe("task lifecycle through pollProject", () => {
             ciReviewHandoffs &&
             prs.has("agent/first") &&
             (currentPhase === "ci" || currentPhase === "human-feedback") &&
-            ciPrimaryCorrections < 2;
+            ciPrimaryCorrections < (ciBudget ?? 2);
           return {
             headSha,
             checks: [
@@ -1925,7 +1938,11 @@ describe("task lifecycle through pollProject", () => {
             return;
           }
         }
-        for (let pass = 0; pass < 20 && ciPrimaryCorrections < 2; pass += 1)
+        for (
+          let pass = 0;
+          pass < 20 && ciPrimaryCorrections < (ciBudget ?? 2);
+          pass += 1
+        )
           await poll();
         const ciTask = store.read("first");
         const ciRun = authorities.get("first")?.store.read();
@@ -1943,7 +1960,18 @@ describe("task lifecycle through pollProject", () => {
             task: store.read("first"),
             run: authorities.get("first")?.store.read(),
           }),
-        ).toBe(2);
+        ).toBe(ciBudget ?? 2);
+        if (ciBudget !== undefined) {
+          expect(ciTask?.retryCounters.ci).toBe(ciBudget);
+          expect(ciRun?.budgets.ci).toMatchObject({
+            limit: ciBudget,
+            used: ciBudget,
+            episodeId: ciTask?.ciRepair?.cycleId,
+          });
+          expect(prs.size).toBe(1);
+          expect(lists.get("first")).toBe("review");
+          return;
+        }
         if (ciQuality !== undefined) {
           expect(prs.size).toBe(1);
           expect(prs.get("agent/first")?.isDraft).toBe(true);

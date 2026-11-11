@@ -153,6 +153,17 @@
   filtered). Typecheck and changed-code ESLint passed. Guide/roadmap and permanent
   context guidance remain accurate. Only final integrated verification/validation
   and its completion checkpoint remain.
+- T5c corrects canonical CI budget projection: the authoritative attempt now
+  receives the episode's pinned limit, trigger, ID and actual charges in the same
+  fenced write as the task checkpoint, preserving legacy initial episodes and
+  refusing a same-episode charge regression. Previously a configured third CI pass
+  could exceed the canonical record's old two-pass limit despite a valid task record.
+  The real `pollProject` regression now executes three CI corrections on the same
+  PR and verifies authoritative limit/usage/episode identity. It passed (31 unrelated
+  lifecycle cases filtered), plus **15 tests in four focused authority/CI suites**,
+  typecheck, changed-code ESLint and whitespace checks. Self-review traced initial
+  authority creation, projection writes, episode renewal and the production third
+  dispatch. No known T5c defect remains. Final integrated validation is next.
 
 ## Inherited P7 checkpoint
 
