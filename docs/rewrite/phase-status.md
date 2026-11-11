@@ -22,6 +22,20 @@
   36 tests. The initially requested nonexistent refinement-finalization filename
   ran no suite; actual finalize-refinement/completion suites were then executed.
   Typecheck and changed-code ESLint passed after two formatting fixes. T2–T4 remain.
+- T1 checkpoint: `6ae222c`. T2 checks attempt resources, canonical/common Git
+  identity and preserved PR history before removal; ignored setup output, staged
+  changes and clean local-only commits remain intact. Closed-PR cleanup reads its
+  retained commit history rather than assuming accessibility from an equal SHA.
+  Broad worktree pruning is removed; already-absent resources reconcile repeatedly.
+  The concrete mutation sender also checks ignored output before dispatch/recovery.
+- T2 self-review inspected cleanup callers, Git journal send/readback, local branch
+  removal and new real-Git tests. Moved the local-only commit check ahead of worktree
+  removal. Focused cleanup/terminal checks passed 23 tests; typecheck/changed-code
+  ESLint passed. Lifecycle run passed 31/32 scenarios; one fixture lacked the newly
+  required history API. Its real-object history reader was added and the affected
+  capacity/closure scenario passed (31 unrelated cases filtered). An earlier combined
+  run timed out at 120 seconds and is not a pass. T3 must make preserved resources
+  noninterfering and permit safe cleanup deferral; T4 includes final integrated checks.
 
 ## Inherited P9 checkpoint
 

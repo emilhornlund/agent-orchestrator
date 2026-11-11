@@ -52,7 +52,7 @@ describe("cleanupWorktree", () => {
       "/repo",
       "/worktrees/card-1",
     );
-    expect(git.pruneWorktrees).toHaveBeenCalledWith("/repo");
+    expect(git.pruneWorktrees).not.toHaveBeenCalled();
     expect(git.deleteBranch).toHaveBeenCalledWith("/repo", "agent/card-1");
   });
 
@@ -179,7 +179,7 @@ describe("cleanupWorktree", () => {
 
     expect(git.getStatus).not.toHaveBeenCalled();
     expect(git.removeWorktree).not.toHaveBeenCalled();
-    expect(git.pruneWorktrees).toHaveBeenCalledWith("/repo");
+    expect(git.pruneWorktrees).not.toHaveBeenCalled();
     expect(git.deleteBranch).toHaveBeenCalledWith("/repo", "agent/card-1");
   });
 

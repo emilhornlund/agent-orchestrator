@@ -72,6 +72,7 @@ async function cleanupTerminalWorktree(
   card: TrelloCard,
   cardLog: Logger,
   signal: AbortSignal,
+  preservedHeadSha: string,
 ): Promise<void> {
   if (signal.aborted) return;
   const worktreePath = path.join(project.repository.worktreeRoot, card.id);
@@ -83,6 +84,7 @@ async function cleanupTerminalWorktree(
       worktreePath,
       branch,
       preserveRecoveryState: true,
+      preservedHeadSha,
       signal,
     });
     if (!signal.aborted)
@@ -220,7 +222,14 @@ export async function completeMergedTaskSessionPullRequest(options: {
       "Task artifacts preserved after human merge; interrupted or unshipped work remains available for recovery",
     );
   } else {
-    await cleanupTerminalWorktree(git, project, card, cardLog, signal);
+    await cleanupTerminalWorktree(
+      git,
+      project,
+      card,
+      cardLog,
+      signal,
+      pullRequest.headRefOid!,
+    );
   }
 }
 
@@ -278,7 +287,28 @@ export async function returnClosedTaskSessionPullRequestToBacklog(options: {
       "Task artifacts preserved after human PR closure; interrupted or unshipped work remains available for recovery",
     );
   } else {
-    await cleanupTerminalWorktree(git, project, card, cardLog, signal);
+    // Read the actual retained closed-PR history, even when the recorded head
+    // equals the terminal head. An unavailable API is not preservation proof.
+    if (!options.github || !pullRequest.headRefOid)
+      throw new Error("Closed PR history is unavailable; preserving artifacts");
+    const commits = await options.github.getPullRequestCommitShas({
+      cwd: project.repository.path,
+      repository: project.repository.github,
+      pullRequestNumber: Number(
+        new URL(pullRequest.url).pathname.split("/").at(-1),
+      ),
+      project,
+    });
+    if (commits.at(-1) !== pullRequest.headRefOid)
+      throw new Error("Closed PR history does not preserve the implementation");
+    await cleanupTerminalWorktree(
+      git,
+      project,
+      card,
+      cardLog,
+      signal,
+      pullRequest.headRefOid,
+    );
   }
 }
 

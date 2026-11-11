@@ -526,7 +526,7 @@ export class GitClient {
               (await this.getCommonGitDirectory(value.resource)) !== common ||
               (await this.getCurrentBranch(value.resource)) !== branch ||
               (await this.getHeadSha(value.resource)) !== value.sha ||
-              (await this.hasChanges(value.resource))
+              (await this.getCleanupStatus(value.resource)).trim() !== ""
             )
               throw new Error("Unsafe worktree cleanup");
             await this.removeWorktree(value.cwd, value.resource);
@@ -1147,6 +1147,16 @@ export class GitClient {
     );
   }
 
+  /** Includes ignored setup output: ordinary status alone is not removal proof. */
+  async getCleanupStatus(repositoryPath: string): Promise<string> {
+    return this.runGit(repositoryPath, [
+      "status",
+      "--porcelain=v1",
+      "--untracked-files=all",
+      "--ignored",
+    ]);
+  }
+
   async getUntrackedFiles(
     repositoryPath: string,
     signalOverride?: AbortSignal | null,
@@ -1735,7 +1745,7 @@ export class GitClient {
       if (
         fs.existsSync(worktreePath) &&
         (fs.lstatSync(worktreePath).isSymbolicLink() ||
-          (await this.hasChanges(worktreePath)))
+          (await this.getCleanupStatus(worktreePath)).trim() !== "")
       )
         throw new Error(
           "Unsafe worktree cleanup; artifacts preserved without dispatch",

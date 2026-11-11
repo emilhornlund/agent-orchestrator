@@ -335,12 +335,14 @@ implementation crash or a successfully published correction.
 After an owned pull request reaches either terminal state, reconciliation attempts to remove only the dedicated
 `<worktreeRoot>/<trello-card-id>` worktree and its local `agent/<trello-card-id>` branch. For a merged pull request this
 attempt happens after remote branch cleanup, the successful `Done` transition, and completion notification handling. For a
-closed pull request it happens after the successful `Backlog` transition and explanatory comment attempt. This cleanup is
-best effort: a warning includes the project, card, paths, and failure, but it never undoes a terminal transition or blocks
-the next reconciliation.
+closed pull request it happens after the successful `Backlog` transition and verified explanatory comment. Removal requires
+canonical/common Git repository identity and attempt-owned resources. Closed-PR commit history must remain accessible;
+failed history reads are not proof that removal is safe. Cleanup failure never reverses a terminal Trello transition;
+unresolved obligations remain available for reconciliation.
 
 The local cleanup is skipped when the path is outside the configured root, is symbolic or unexpected, is associated with a
-different branch, has unmerged paths or an active rebase, is dirty, or has a prepared-conflict handoff requiring recovery.
+different branch, has unmerged paths or an active rebase, is dirty (including ignored setup output), has local-only commits,
+or has a prepared-conflict handoff requiring recovery.
 Already-absent worktrees and branches are successful idempotent outcomes. Shutdown cancellation stops before destructive
 cleanup, and preserved worktrees, branches, and prepared-conflict handoffs remain available for diagnosis.
 

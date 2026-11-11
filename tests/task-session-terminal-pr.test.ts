@@ -639,13 +639,13 @@ describe("task-session terminal PR reconciliation", () => {
       } as unknown as GitHubClient;
       const git = {
         remoteBranchExists: vi.fn(async () => false),
-        pruneWorktrees: vi.fn(async () => {
-          if (failCleanupOnce) {
+        branchExists: vi.fn(async () => {
+          if (failCleanupOnce && currentList === project.trello.doneListId) {
             failCleanupOnce = false;
             throw new Error("simulated interruption during terminal cleanup");
           }
+          return false;
         }),
-        branchExists: vi.fn(async () => false),
       } as unknown as GitClient;
       new TaskExecutionStore(contextRoot, project).create({
         version: 1,

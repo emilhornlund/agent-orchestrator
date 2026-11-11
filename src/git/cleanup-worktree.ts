@@ -5,6 +5,7 @@ import type { ProjectConfig } from "../config/config.js";
 import { readPreparedConflict } from "../orchestrator/prepared-conflict-state.js";
 
 import type { GitClient } from "./git-client.js";
+import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 
 export interface CleanupWorktreeOptions {
   git: GitClient;
@@ -12,6 +13,7 @@ export interface CleanupWorktreeOptions {
   worktreePath: string;
   branch: string;
   preserveRecoveryState?: boolean;
+  preservedHeadSha?: string;
   signal?: AbortSignal;
 }
 
@@ -21,6 +23,7 @@ export async function cleanupWorktree({
   worktreePath,
   branch,
   preserveRecoveryState = false,
+  preservedHeadSha,
   signal,
 }: CleanupWorktreeOptions): Promise<void> {
   if (signal?.aborted) {
@@ -30,6 +33,20 @@ export async function cleanupWorktree({
   const repositoryPath = project.repository.path;
   const worktreeRoot = path.resolve(project.repository.worktreeRoot);
   const resolvedWorktreePath = path.resolve(worktreePath);
+  const authority = ProjectRunAuthority.current(project.id);
+  if (authority) {
+    const run = authority.store.assertCurrentLease(authority.ownerGeneration);
+    if (
+      !preservedHeadSha ||
+      !run.resources.some(
+        (r) => r.kind === "worktree" && r.path === resolvedWorktreePath,
+      ) ||
+      !run.resources.some(
+        (r) => r.kind === "branch" && r.path === `refs/heads/${branch}`,
+      )
+    )
+      throw new Error("Cleanup lacks attempt ownership or preserved history");
+  }
 
   if (
     resolvedWorktreePath === worktreeRoot ||
@@ -71,6 +88,15 @@ export async function cleanupWorktree({
     );
   }
 
+  if (preservedHeadSha && (await git.branchExists(repositoryPath, branch))) {
+    const head = await git.getRefSha(repositoryPath, `refs/heads/${branch}`);
+    if (
+      !head ||
+      (head !== preservedHeadSha &&
+        !(await git.isAncestor(repositoryPath, head, preservedHeadSha)))
+    )
+      throw new Error("Cleanup would discard local-only commits");
+  }
   const worktreeStat = fs.lstatSync(worktreePath, { throwIfNoEntry: false });
 
   if (worktreeStat !== undefined) {
@@ -78,6 +104,17 @@ export async function cleanupWorktree({
       throw new Error(
         `Refusing to clean symbolic-link worktree ${worktreePath}`,
       );
+    }
+
+    if (preservedHeadSha) {
+      if (
+        fs.realpathSync(worktreePath) !== resolvedWorktreePath ||
+        (await git.getCommonGitDirectory(worktreePath)) !==
+          (await git.getCommonGitDirectory(repositoryPath))
+      )
+        throw new Error(
+          "Cleanup worktree has ambiguous canonical repository identity",
+        );
     }
 
     const currentBranch = await git.getCurrentBranch(worktreePath);
@@ -118,7 +155,9 @@ export async function cleanupWorktree({
       }
     }
 
-    const status = await git.getStatus(worktreePath);
+    const status = preservedHeadSha
+      ? await git.getCleanupStatus(worktreePath)
+      : await git.getStatus(worktreePath);
 
     if (signal?.aborted) {
       return;
@@ -145,7 +184,7 @@ export async function cleanupWorktree({
     return;
   }
 
-  await git.pruneWorktrees(repositoryPath);
+  // Never broadly prune registrations belonging to other attempts.
 
   if (signal?.aborted) {
     return;
@@ -162,6 +201,15 @@ export async function cleanupWorktree({
       return;
     }
 
+    if (preservedHeadSha) {
+      const head = await git.getRefSha(repositoryPath, `refs/heads/${branch}`);
+      if (
+        !head ||
+        (head !== preservedHeadSha &&
+          !(await git.isAncestor(repositoryPath, head, preservedHeadSha)))
+      )
+        throw new Error("Cleanup would discard local-only commits");
+    }
     await git.deleteBranch(repositoryPath, branch);
   }
 }

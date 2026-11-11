@@ -658,6 +658,29 @@ describe("task lifecycle through pollProject", () => {
       let terminalRaceReadAt = 2;
       let maintenanceBase: string | undefined;
       let github = {
+        getPullRequestCommitShas: async ({
+          pullRequestNumber,
+        }: {
+          pullRequestNumber: number;
+        }) => {
+          const pr = [...prs.values()].find(
+            (entry) => entry.number === pullRequestNumber,
+          )!;
+          const head =
+            (await git.getRemoteBranchSha(
+              source,
+              "origin",
+              "agent/card",
+              project,
+            )) ?? pr.headRefOid;
+          return (
+            await execFile("git", ["rev-list", "--reverse", head!], {
+              cwd: remote,
+            })
+          ).stdout
+            .trim()
+            .split("\n");
+        },
         getBaseBranchHeadSha: async () =>
           (await git.getRemoteBranchSha(source, "origin", "main", project))!,
         comparePullRequestHeadToBase: async ({
