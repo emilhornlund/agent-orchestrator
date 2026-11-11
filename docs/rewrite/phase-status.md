@@ -2,6 +2,29 @@
 
 ## Current checkpoint
 
+- **P10 in progress on `refactor/p10-terminal-outcomes-and-retries`, based on
+  `96292f3` (integrated P9).** Initial index/worktree clean. Small local task commits
+  authorized; no remote actions, branch changes or P11 cleanup.
+- Ordered remaining work: T1 verified terminal effects/comments/release and
+  notification recovery; T2 canonical owned idempotent cleanup, preservation and
+  closed-PR history; T3 recoverable fresh-attempt handoff with isolated old artifacts,
+  new identities and latest default/card/context; T4 combined criteria/recovery
+  checking and final `yarn validate`. Existing P7–P9 mechanisms are reused, not
+  assumed absent. Inspection found swallowed closed-PR comment errors and card-only
+  resource names; these are concrete P10 integration gaps.
+- T1 requires the closed-PR explanation even when recovery finds the card already
+  in Backlog, propagates comment failure instead of silently completing, and checks
+  merged versus unmerged outcomes at the terminal effect entry points. Concrete
+  adapters retain correlation-based comment reconciliation. Self-review traced
+  terminal scheduling/readback, canonical release, failure/refinement finalization
+  and notification isolation; existing unknown-writer/pending-effect fences remain.
+  Three terminal suites passed 13 tests; three refinement/notification suites passed
+  36 tests. The initially requested nonexistent refinement-finalization filename
+  ran no suite; actual finalize-refinement/completion suites were then executed.
+  Typecheck and changed-code ESLint passed after two formatting fixes. T2–T4 remain.
+
+## Inherited P9 checkpoint
+
 - **P9 implemented and locally validated on `refactor/p9-recoverable-refinement`, based on `190bb3c`.**
   Initial index/worktree clean; P8 is integrated. Only small local P9 commits are
   authorized, without remote actions or P10 expansion.

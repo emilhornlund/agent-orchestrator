@@ -113,6 +113,8 @@ export async function completeMergedTaskSessionPullRequest(options: {
   const { trello, git, project, card, pullRequest, signal } = options;
   const cardLog = logger.child({ projectId: project.id, cardId: card.id });
   if (signal.aborted) return;
+  if (pullRequest.state !== "MERGED" || pullRequest.mergedAt === null)
+    throw new Error("Completion requires a verified merged pull request");
   const branch = `agent/${card.id}`;
   await clearTerminalActivity(
     options.github,
@@ -236,6 +238,10 @@ export async function returnClosedTaskSessionPullRequestToBacklog(options: {
   const { trello, git, project, card, pullRequest, signal } = options;
   const cardLog = logger.child({ projectId: project.id, cardId: card.id });
   if (signal.aborted) return;
+  if (pullRequest.state !== "CLOSED" || pullRequest.mergedAt !== null)
+    throw new Error(
+      "Backlog closure requires a verified unmerged pull request",
+    );
   await clearTerminalActivity(
     options.github,
     project,
@@ -262,14 +268,11 @@ export async function returnClosedTaskSessionPullRequestToBacklog(options: {
       `Closed pull request returned card to Backlog: ${pullRequest.url}`,
     );
   }
-  if (!alreadyBacklog || ProjectRunAuthority.current(project.id)) {
-    try {
-      await trello.addComment(card.id, closedPrComment(pullRequest.url));
-    } catch (error) {
-      throwIfWorkflowMutationPending(project.id);
-      cardLog.error(`Could not add closed PR note: ${message(error)}`);
-    }
-  }
+  // The move and explanatory comment are separate obligations. In particular,
+  // finding the card in Backlog after restart does not prove comment delivery.
+  // The concrete adapter reconciles its durable correlation identity rather
+  // than resending a comment whose acceptance is uncertain.
+  await trello.addComment(card.id, closedPrComment(pullRequest.url));
   if (options.preserveWorktree) {
     cardLog.warn(
       "Task artifacts preserved after human PR closure; interrupted or unshipped work remains available for recovery",
