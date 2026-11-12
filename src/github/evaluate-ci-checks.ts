@@ -95,12 +95,9 @@ export function evaluateCiChecks(input: {
   expectations: CiCheckExpectationDecision;
   checks: readonly CiCheckObservation[];
 }): CiCheckEvaluation {
-  const expectedNames =
-    input.expectations.expectedCheckNames.length > 0
-      ? [...new Set(input.expectations.expectedCheckNames)].sort((a, b) =>
-          a.localeCompare(b),
-        )
-      : [];
+  const expectedNames = [
+    ...new Set(input.expectations.expectedCheckNames),
+  ].sort((a, b) => a.localeCompare(b));
 
   if (
     !isSha(input.expectedHeadSha) ||
@@ -163,8 +160,9 @@ export function evaluateCiChecks(input: {
   >();
   for (const check of input.checks) {
     if (check.source !== "commit-status") continue;
+    const createdAt = Date.parse(check.createdAt);
     if (
-      !Number.isFinite(Date.parse(check.createdAt)) ||
+      !Number.isFinite(createdAt) ||
       !Number.isSafeInteger(check.id) ||
       check.id < 1
     )
@@ -176,8 +174,12 @@ export function evaluateCiChecks(input: {
         diagnostic: "Commit status ordering is malformed",
       };
     const previous = latestStatuses.get(check.context);
+    if (previous === undefined) {
+      latestStatuses.set(check.context, check);
+      continue;
+    }
     if (
-      previous?.id === check.id &&
+      previous.id === check.id &&
       JSON.stringify(previous) !== JSON.stringify(check)
     )
       return {
@@ -187,11 +189,10 @@ export function evaluateCiChecks(input: {
         expectedCheckNames: expectedNames,
         diagnostic: "Commit status identity has conflicting observations",
       };
+    const previousCreatedAt = Date.parse(previous.createdAt);
     if (
-      !previous ||
-      Date.parse(check.createdAt) > Date.parse(previous.createdAt) ||
-      (Date.parse(check.createdAt) === Date.parse(previous.createdAt) &&
-        check.id > previous.id)
+      createdAt > previousCreatedAt ||
+      (createdAt === previousCreatedAt && check.id > previous.id)
     )
       latestStatuses.set(check.context, check);
   }
@@ -247,12 +248,6 @@ export function evaluateCiChecks(input: {
         .filter(({ kind }) => kind === "failed")
         .map(({ check }) => check),
     );
-    if (
-      matching.every(({ kind }) => kind === "passed") &&
-      !matching.some(({ kind }) => kind === "failed")
-    ) {
-      continue;
-    }
   }
 
   if (missingChecks.length > 0 || pendingChecks.length > 0) {
