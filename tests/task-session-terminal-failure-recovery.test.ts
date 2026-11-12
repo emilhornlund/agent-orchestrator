@@ -774,8 +774,8 @@ describe("terminal failure recovery", () => {
 
     const card: TrelloCard = {
       id: cardId,
-      name: "Pilot task",
-      desc: "Saved pilot fixture",
+      name: "Legacy failed task",
+      desc: "Retained implementation awaiting operator reconciliation",
       idList: project.trello.workingListId,
       idLabels: [],
       url: "https://trello.example/card",
@@ -799,7 +799,7 @@ describe("terminal failure recovery", () => {
       primarySessionId: "ses_e8db2e6edffezePNR3A6EPnlR5",
       sessionCreationStatus: "bound",
       expectedBranch: `agent/${cardId}`,
-      operationKey: "pilot-operation",
+      operationKey: "legacy-failed-operation",
       revision: 1,
       retryCounters: { validation: 0, review: 0, ci: 0, humanFeedback: 0 },
       createdAt: "2026-10-24T09:00:00.000Z",
@@ -819,13 +819,13 @@ describe("terminal failure recovery", () => {
     queue.enqueue({
       projectId,
       cardId,
-      eventId: "implementation:pilot",
-      operationKey: "pilot-operation",
+      eventId: "implementation:legacy-failed",
+      operationKey: "legacy-failed-operation",
       kind: "implementation",
       enqueuedAt: "2026-10-24T09:00:00.000Z",
     });
     queue.claimNext();
-    queue.fail("implementation:pilot");
+    queue.fail("implementation:legacy-failed");
 
     const poll = () =>
       runTaskSessionWorkflow({
@@ -842,7 +842,7 @@ describe("terminal failure recovery", () => {
     await expect(poll()).resolves.toBeUndefined();
     await expect(poll()).resolves.toBeUndefined();
     expect(queue.getActive()).toMatchObject({
-      eventId: "implementation:pilot",
+      eventId: "implementation:legacy-failed",
       status: "failed",
     });
     expect(queue.getActive()?.ownerToken).toBeUndefined();
