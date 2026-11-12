@@ -1,0 +1,11 @@
+# Keep in sync with .containerignore for Docker and Podman build parity.
+**
+!package.json
+!yarn.lock
+!tsconfig.json
+!tsconfig.build.json
+!src
+!src/**
+!scripts
+!scripts/github-git-askpass.mjs
+!Containerfile

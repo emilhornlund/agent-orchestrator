@@ -216,10 +216,8 @@ export class RunRegistry {
         fs.existsSync(attemptsDirectory) &&
         fs.readdirSync(attemptsDirectory).some((entry) => {
           if (!entry.endsWith(".json")) return false;
-          const candidate = parseRunRecord(
-            safeRead(path.join(attemptsDirectory, entry)),
-          );
-          return candidate.pinned.integrationId === this.integrationId;
+          const candidate = this.readInventoryAttempt(entry);
+          return candidate?.pinned.integrationId === this.integrationId;
         })
       )
         throw new RunStoreConflictError(
@@ -265,7 +263,8 @@ export class RunRegistry {
         entry === `${pointedAttemptId}.json`
       )
         continue;
-      const run = parseRunRecord(safeRead(path.join(attemptsDirectory, entry)));
+      const run = this.readInventoryAttempt(entry);
+      if (!run) continue;
       if (run.pinned.integrationId !== this.integrationId) continue;
       if (!(
         ["done", "refined", "failed", "cancelled"].includes(run.lifecycle) &&
@@ -278,6 +277,50 @@ export class RunRegistry {
       throw new RunStoreConflictError(
         `Conflicting unpointed attempts exist: ${conflicts.join(", ")}; registry handoff is ambiguous`,
       );
+  }
+
+  private readInventoryAttempt(entry: string): RunRecord | null {
+    try {
+      return parseRunRecord(
+        safeRead(path.join(path.resolve(this.root), "attempts", entry)),
+      );
+    } catch (error) {
+      // An unreadable envelope cannot identify its own project. A separately
+      // validated canonical pointer can still attribute it to another owner.
+      // Unpointed or multiply attributed state remains an unknown-writer fence.
+      const registryDirectory = path.join(path.resolve(this.root), "registry");
+      assertNoSymlinkPath(registryDirectory);
+      const owners: string[] = [];
+      if (fs.existsSync(registryDirectory)) {
+        for (const name of fs.readdirSync(registryDirectory)) {
+          if (!/^[a-f0-9]{64}\.json$/u.test(name)) continue;
+          let value: unknown;
+          try {
+            value = safeRead(path.join(registryDirectory, name));
+          } catch {
+            continue;
+          }
+          if (typeof value !== "object" || !value || Array.isArray(value))
+            continue;
+          const pointer = value as Record<string, unknown>;
+          if (
+            pointer.version === 1 &&
+            typeof pointer.integrationId === "string" &&
+            pointer.integrationId.length > 0 &&
+            typeof pointer.attemptId === "string" &&
+            !/[\\/]/u.test(pointer.attemptId) &&
+            `${pointer.attemptId}.json` === entry &&
+            Number.isSafeInteger(pointer.generation) &&
+            (pointer.generation as number) >= 1 &&
+            name ===
+              `${createHash("sha256").update(pointer.integrationId).digest("hex")}.json`
+          )
+            owners.push(pointer.integrationId);
+        }
+      }
+      if (owners.length === 1 && owners[0] !== this.integrationId) return null;
+      throw error;
+    }
   }
 }
 

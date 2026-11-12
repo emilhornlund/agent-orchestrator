@@ -49,8 +49,8 @@ Ready for Agent -> Working -> advisory plan + independent plan feedback
   -> orchestrator validation + configured coverage + independent review
   -> trusted commit + existing/new PR publication
   -> discover expected checks + observe all exact-head check runs and commit statuses
-       -> waiting/uncertain: preserve state; do not repair, reply, or merge
-       -> complete failures: bounded same-session repair -> local gates/review -> same PR -> re-observe new head
+       -> waiting/uncertain: bounded observation; preserve/report uncertainty, never merge
+       -> complete failures: bounded same-session repair -> advisory checks/review -> same PR -> re-observe new head
        -> complete pass: remain active in Human Review
   -> Human Review: current actionable feedback -> Working -> same primary session -> advisory checks -> publish -> Human Review
   -> manually merged PR -> Done; deliberately closed PR -> Backlog
@@ -175,8 +175,9 @@ failure or uncertain SMTP acceptance does not undo that workflow outcome.
 
 When a refinement card is claimed:
 
-1. The orchestrator prepares `<worktreeRoot>/<trello-card-id>` on `agent/<trello-card-id>` before moving the card to
-   `Working`.
+1. The orchestrator prepares the attempt's isolated worktree and branch before moving
+   the card to `Working`. The first attempt may use `<trello-card-id>`; later attempts
+   use `<trello-card-id>--<attempt-id>`. Existing attempts retain their persisted names.
 2. The orchestrator reconciles the current Trello attachments into the card context immediately before the refinement
    session. OpenCode may inspect repository code, tests, documentation, and architecture. It must not modify
    repository files. The child and its descendants receive a read-only worktree
@@ -209,7 +210,7 @@ failure uses the verified Failed protocol above; unsafe/unknown repository or ca
 state stays preserved for reconciliation. A deliberate retry starts by moving a
 confirmed Failed card to `Ready for Agent`; see [Recovery](recovery.md).
 
-## Implementation and quality gates
+## Implementation and advisory quality
 
 An implementation card is claimed only from `Ready for Agent`. The project mutation queue serializes implementation, refinement,
 CI repair, and feedback remediation; an owned worktree and a persisted primary session are tied to the task record. The coordinator
@@ -235,21 +236,21 @@ The orchestrator then creates one trusted commit with the configured Git identit
 fetch and ordinary fast-forward-safe push. This release disables automatic rebasing and prepared-conflict continuation,
 including unpublished publication rebases. If publication would require rewriting history, the worktree and PR state are preserved
 for safe recovery. The optional post-commit PR-description session is presentation-only: if structured
-output or rendering fails, a deterministic Trello-link/attribution body is used without weakening publication gates. Failures
+output or rendering fails, a deterministic task/quality/issues/Trello-link body is used without weakening publication safety. Failures
 preserve the owned worktree and durable task state for recovery; they do not create a success transition.
 
 The description result contract is strict: `summary` is a non-blank string of at most 1,000 characters, while `changes` and
 `validation` are arrays of at most 20 non-blank strings each, with every entry limited to 500 characters. Empty arrays are
 allowed, including an empty `validation` array when no validation or test result is known. JSON wrapped in Markdown, missing
 fields, wrong types, extra fields, and values beyond these fixed bounds are rejected. The result is generated after publication
-rebasing. The standalone application renderer for this contract uses the fixed `Summary`, `Changes`, `Validation`,
+preparation. The standalone application renderer for this contract uses the fixed `Summary`, `Changes`, `Validation`,
 and `Task` sections, places the application-provided Trello card link in `Task`, adds the same attribution footer using
 `projects[].repository.gitIdentity.name`, and reserves exactly one `<!-- agent-orchestrator-status:start -->` /
 `<!-- agent-orchestrator-status:end -->` region. Empty
 `changes` render as `No changes were provided.` and empty `validation` renders as `No validation or test results were provided.`;
 neither claims success. Generated values are rendered as single-line content so they cannot add headings, footer text, or status
-markers. The rendered result is passed to pull-request creation. An existing open pull request is reused without rewriting its
-description.
+markers. The rendered result is passed to pull-request creation. Existing PR updates
+refresh managed description/outcome sections without replacing human text outside them.
 
 Implementation and later primary corrections retain the task's primary OpenCode session.
 Independent planning and implementation reviews use separate sessions. Sessions are
@@ -269,8 +270,7 @@ Existing-PR mutations and refinement/terminal operations use the same durable
 mutation mechanisms. Under production attempt
 authority, pending workflow comments, field updates, Git effects and cleanup
 dispatches retain ownership until independently reconciled; negative reads do not
-authorize resending. The legacy best-effort descriptions elsewhere on this page
-do not override that journal/release gate. Email delivery remains separate,
+authorize resending. Email delivery remains separate,
 nonblocking work and cannot undo successful publication.
 
 Before publication, the task worktree fetches `origin/<defaultBranch>` but does not rebase. A missing task branch or fast-forward
@@ -324,13 +324,13 @@ Unshipped commits, dirty worktrees and ambiguous artifact ownership are preserve
 than cleaned up. Interrupted primary work is recorded as cancelled, not as a fabricated
 implementation crash or a successfully published correction.
 
-| GitHub state                                                 | Trello result                                                      |
-| ------------------------------------------------------------ | ------------------------------------------------------------------ |
-| Pull request merged                                          | Move the card to `Done` and mark it complete                       |
-| Pull request closed without merge                            | Move the card to `Backlog` and add the closed-PR comment           |
-| Open pull request with changes requested on its current head | Move the card to `Working` and pass the feedback to OpenCode       |
-| Open pull request without actionable requested changes       | Leave the card in `Human Review` and observe complete CI evidence  |
-| Expected pull request unavailable or identity uncertain      | Preserve ownership and reconcile; do not assume a terminal outcome |
+| GitHub state                                             | Trello result                                                      |
+| -------------------------------------------------------- | ------------------------------------------------------------------ |
+| Pull request merged                                      | Move the card to `Done` and mark it complete                       |
+| Pull request closed without merge                        | Move the card to `Backlog` and add the closed-PR comment           |
+| Open pull request with current actionable human feedback | Move the card to `Working` and pass the feedback to OpenCode       |
+| Open pull request without actionable requested changes   | Leave the card in `Human Review` and observe complete CI evidence  |
+| Expected pull request unavailable or identity uncertain  | Preserve ownership and reconcile; do not assume a terminal outcome |
 
 After an owned pull request reaches either terminal state, reconciliation attempts to remove only the dedicated
 attempt's worktree and local branch. The first attempt may use `<worktreeRoot>/<trello-card-id>` and `agent/<trello-card-id>`;
@@ -440,32 +440,31 @@ preserved. The worker may continue read-only PR observation and verified termina
 writers or start a new task for an affected card. Operator guidance is in [Recovery](recovery.md).
 There is no automatic replay of legacy intents, rebase, force-push, reset, abort, or silent success.
 
-Trello and GitHub operations used by discovery, reconciliation, transition-history checks, card moves, content and label
-updates, comments, and attachment context are retryable when the service returns HTTP 500, 502, 503, or 504, a rate limit, a
-timeout, or a temporary network/connectivity error. A failed authoritative Trello read does not mean that a card is missing,
-misplaced, or invalid. A failed Trello mutation is not confirmed. The card remains in its last known list, and no corrective
-comment, failure transition, or workflow decision is made from incomplete Trello state. The project worker logs each attempt
-and retries on a later polling cycle, up to three consecutive attempts. Exhaustion blocks the affected card operation and uses
-the existing project diagnostic and `Attention Required` escalation without calling that operation on subsequent normal polls.
-After the external failure is resolved, moving the affected card from its recorded reconciliation list to `Ready for Agent` is
-the explicit recovery condition; the worker then clears the counter and resumes. Project-level failures without a card identity
-require an explicit worker restart after resolution. Invalid authentication, configuration, malformed responses, not-found
-errors, and other non-transient errors retain immediate failure handling. Shutdown cancellation is not retryable. Cards already
-in `Failed` are never automatically retried.
+Transient service failures retain the last verified state. Bounded immediate
+attempts give way to persisted paced dependency rechecks for owned active work;
+recovery verifies outcomes before continuing. Exhausted advisory dependencies are
+reported and skipped when safe, whereas essential execution/publication dependencies
+remain waiting. An unavailable read is not proof of deletion or non-acceptance.
+Legacy reconciliation blocks use the separate explicit recovery conditions in
+[Recovery](recovery.md); a Ready move is not a general way to bypass active work.
+Shutdown preserves interrupted state, and cards already in `Failed` never retry
+automatically.
 
 ## Failures and transitions
 
 Automated failures move the card to `Failed` rather than silently advancing it. A failure comment contains the category,
 reason, and the instruction to move the card to `Ready for Agent` for a deliberate retry. If moving the card to `Failed`
 fails, the orchestrator preserves the primary failure and does not pretend that failure handling completed. If adding the
-failure comment fails after the move, the card remains in `Failed` and the comment failure is logged.
+failure comment fails after the move, the card remains in `Failed` but release waits
+for the original comment's verified outcome; an uncertain send is never blindly repeated.
 
 A pull request that a human closes without merging is a deliberate rejection or cancellation, not an automated failure. The
 card is moved to `Backlog` and receives a comment stating that the pull request was closed without being merged, with its URL;
 this outcome does not send the `failed` notification. If the `Backlog` move fails, the reconciliation fails with diagnostic
 context and no cancellation comment is added. If the move succeeds but the comment fails, the card remains in `Backlog` and
-the comment failure is logged.
+release remains pending until the explanatory comment is verified. Recovery preserves
+the original operation identity rather than sending a duplicate comment.
 
-An external operation must succeed before its related workflow transition is treated as complete. If a merge succeeds but moving
+An external operation must be verified before its related workflow transition is treated as complete. If a human merge succeeds but moving
 the card to `Done` fails, persisted terminal PR reconciliation retries the Trello transition without attempting another merge. A
 closed PR transition is similarly idempotent and returns to `Backlog`. See [Recovery](recovery.md) for these states.

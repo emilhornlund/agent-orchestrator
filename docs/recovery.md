@@ -15,18 +15,23 @@ inspect the state before deliberate operator action.
 Do not hand-edit or remove runtime records to bypass a guard. Preserve these artifacts under the configured `contextRoot`:
 
 ```text
-task-executions/<project-id>/<card-id>.json       phase, owner, session, PR/head, evidence, repair state
-task-plans/<project-id>/<card-id>.json             approved plan and independent verification
-feedback-ledgers/<project-id>/<card-id>.json       stable feedback IDs, dispositions, and contextual reply state
-task-mutation-queues/<project-id>.json             queued events and the single active mutation owner
-<project-id>/reconciliation-block.json             exhausted transient Trello/GitHub reconciliation state
+registry/<integration-hash>.json                 canonical active-attempt pointer
+attempts/<attempt-id>.json                       versioned progress, owner generation, sessions, queue, budgets, effects
+artifacts/                                      referenced context, migration snapshots and process evidence
+history/                                        task events and session logs
 ```
 
-These versioned and revisioned files are authoritative runtime data, separate from the source checkout and task worktrees. Back
-up the context root with the same care as other workflow state. A malformed, stale, or ownership-mismatched record is preserved
-for diagnosis and blocks unsafe continuation.
+These versioned and revisioned records are authoritative runtime data, separate from
+the source checkout and task worktrees. Compatibility projections inside the attempt
+retain task-execution, plan, feedback, queue and maintenance state under the same
+revision/owner fence; they are not independent writers. Pre-upgrade directories such
+as `task-executions/`, `task-plans/`, `feedback-ledgers/` and `task-mutation-queues/`
+are retained as import evidence, not the current authority after import. The host
+coordination directory separately holds integration leases and pinned active-attempt
+references. Back up both state and coordination data while quiesced. Malformed or
+ownership-mismatched state remains preserved and blocks unsafe continuation.
 
-Also inspect the expected worktree `<worktreeRoot>/<card-id>`, branch `agent/<card-id>`, Git status and head, trusted commit
+Also inspect the attempt's recorded worktree/branch, Git status and head, trusted commit
 record, authoritative Trello list/history, GitHub PR identity/head, and the per-card session log when present. Never delete an
 unknown worktree or discard changes as a first response.
 
@@ -65,11 +70,46 @@ A queued `Ready for Agent` claim resumes only when its persisted event identity 
 card. An owned `Working` implementation resumes from its recorded phase only after validating task identity, setup state,
 worktree, branch, head, session binding, and relevant trusted publication evidence. A trusted published commit can be reused;
 recovery never creates a duplicate commit, push, or PR. Refinement events use the same project mutation queue and expected
-`agent/<card-id>` worktree; ambiguous ownership preserves the queue and blocks subsequent mutations.
+attempt-owned worktree; ambiguous ownership preserves the queue and blocks subsequent mutations.
 
 If a different live worker owns the queue, a second poll does not steal its event. A failed or uncertain event retains ownership
-until a verified recovery; do not manually clear it to start another task. Exhausted validation, coverage, review, CI, or feedback
-repair remains preserved for attention rather than being restarted by normal polling.
+until verified recovery; do not manually clear it to start another task. Exhausted
+quality improvements are reported on the existing draft PR, not restarted by normal
+polling. New substantive human requests can begin another feedback cycle; unchanged
+requests, incidental edits and new agent commits cannot renew exhausted work.
+
+### Supported upgrades
+
+Current version-1 attempt envelopes resume at their pinned storage path with
+revision/owner checks. Supported earlier version-1 task-execution records and their
+associated plans, feedback, queue, maintenance, commit, conflict and session
+references are imported into one canonical attempt. Compatibility includes the
+historical writer state represented by commit
+`f8ac2eaa3991a3c2b6b8b4b98945e06076140050`; arbitrary intermediate experimental
+formats are not a promised support target. Identify the actually deployed release
+and its record shapes before a rollout rather than inferring deployment from this
+checkout or the application package version.
+
+Stop old writers first: a new lease cannot fence an older binary that does not use
+the shared coordination namespace. Keep project IDs, board/list mapping,
+repositories, worktree roots and state paths unchanged while an attempt is active.
+Compatible operational settings (models, commands, polling) take effect on restart.
+Unsupported/corrupt originals and immutable migration snapshots are preserved;
+interruption between candidate and pointer writes resumes the handoff rather than
+replaying external operations. A valid other-integration pointer can isolate its
+unreadable record so healthy projects continue. Unattributable or conflicting
+records remain fenced; they are never treated as an empty project.
+
+Import preserves sessions, dirty work, PRs, commits, counters and pending effects,
+but cannot invent missing dispatch, stopped-process or refinement-history proof.
+Such work remains explicitly blocked for reconciliation. Legacy rebase intents
+never become permission to force-push or replay the old writer. Keep supported
+compatibility readers until active attempts can migrate or drain safely.
+
+Prefer a forward correction when an older binary cannot read current state. Do not
+restore a snapshot over later accepted remote effects or unshipped local work.
+Rollback requires quiesced writers and verified state compatibility; it never
+authorizes remote-history rollback, uncertain comment resend or code disposal.
 
 ## CI waiting, failure, and repair
 
@@ -78,19 +118,26 @@ commit statuses are observed for the exact persisted PR head. Conditional/dynami
 empty expectations, delayed check registration, pending or queued jobs, cancelled/skipped/neutral results, and stale or malformed
 observations cannot become a pass. If expectations are incomplete or uncertain, the task remains waiting/fails closed with an
 explicit diagnostic; no repair attempt is consumed and auto-merge is prohibited.
+The per-revision observation window is persisted and bounded at 30 minutes. Expiry
+ends that CI phase in Human Review with uncertainty disclosed, not a pass or task
+failure; later polls still observe results.
 
 Only a complete expected-check set with every expected check terminal can produce a failure result. All failures for that head
 are collected together before the primary session is asked to repair. After each bounded correction the orchestrator reruns local
 validation, configured coverage, independent review, safe publication, and complete CI observation against the new head. The
 repair counter is persisted and finite. When the limit is reached, the PR and worktree remain available for a human; no new PR is
-created.
+created. Its `ciMaxPasses` budget (default two) survives own commits, reruns, restart
+and routine synchronization. A verified new substantive human request may begin a
+new episode; continuing failure or a new SHA alone cannot.
 
 ## Feedback and replies
 
 Review bodies, inline threads, and conversation comments are tracked by stable GitHub identity in the task ledger. New comments do
 not erase earlier still-applicable unresolved feedback. Actionable items are resumed in the primary session and independently
-verified against current content/head. A reply is published only after the correcting commit has been safely published and the
-complete current-head CI evaluation passes. An uncertain send is reconciled by its stable marker before retrying; do not send a
+verified against current content/head. Available corrections publish to the same
+PR despite adverse advisory checks. Replies distinguish verified, unresolved and
+uncertain fulfillment against the observed published head; pending or failed CI is
+disclosed, not a reply gate. A no-op never proves a fix. An uncertain send is reconciled by its stable marker before retrying; do not send a
 duplicate reply manually. The service does not approve reviews, dismiss decisions, or resolve reviewer threads.
 
 ## Terminal pull requests
@@ -102,7 +149,12 @@ ownership, PR metadata, or a Trello move is uncertain, the queue and recovery in
 
 The expected remote branch is deleted only for a verified merged PR and only after it is known to belong to the owned task. The
 local worktree cleanup is restricted to the expected path and branch and refuses symlinks, dirty trees, active rebases, conflicts,
-or unknown paths. A cleanup failure preserves the terminal event so the operation can be retried without losing ownership.
+or unknown paths. It also preserves ignored setup output and clean local-only
+commits. Closed-PR cleanup requires accessible PR commit history. Known owned
+isolated resources may remain preserved without blocking terminal release; unknown
+identity, execution or pending effects cannot. Required terminal moves and comments
+must be verified before the next task. An unknown comment outcome remains pending
+even when the card already appears in its destination list.
 
 ## Additive maintenance and legacy rewrite fences
 
@@ -187,8 +239,10 @@ Automated failures move a card to `Failed` only after that Trello transition suc
 reason, and deliberate retry instruction. Move a card from `Failed` to `Ready for Agent` only when intentionally requesting a
 new pass. Normal polling never retries `Failed` cards automatically.
 
-If Trello or GitHub returns a retryable transient error, the worker retains the last known state and uses the existing bounded
-reconciliation policy. An exhausted card-scoped block is released by moving the affected card from its recorded reconciliation
+If Trello or GitHub returns a retryable transient error, owned active work retains
+its last verified checkpoint and paced dependency wait. It resumes automatically
+after safe readback; a Ready move is not required merely for a service outage.
+For a retained legacy reconciliation block only, an exhausted card-scoped block is released by moving the affected card from its recorded reconciliation
 list to `Ready for Agent`; a cardless project-level block requires resolving the external problem and restarting the worker.
 Authentication, malformed responses, unknown persisted data, or unsupported state are not treated as transient success.
 
@@ -197,63 +251,47 @@ worktree branch/head/status, trusted commit, primary session, complete CI eviden
 task in the project while the current task has ambiguous ownership. Contact a human when the available evidence does not establish
 a safe deterministic continuation.
 
-### Retire a legacy terminal failure without editing runtime state
+### Explicit recovery tooling
 
-For a task produced by a release that left `phase: attention-required` and a failed active implementation event, the queue is
-intentionally still owned. The supported retirement is an explicit, audited Trello move to `Failed`; the next poll verifies the
-project/card/operation/expected-branch identity, verifies that the prior worker no longer owns the queue, and releases only that
-matching event. The task record, plan, session binding/log, worktree, branch, queue history, and all working-tree changes remain in
-place. No retry is started by this procedure.
+Stop the normal service before running an operator command. Commands use the same
+configuration, shared namespace and canonical attempt authority, and refuse a live
+or ambiguous competing owner. From a checkout with development dependencies:
 
-Before authorizing that Trello move, an operator must:
+```sh
+yarn reconcile:external-pr --project ID --card ID --commit SHA --branch BRANCH --pr NUMBER
+yarn recover:legacy-mutation --project ID --event EVENT_ID --confirm-never-started
+```
 
-1. Stop or pause the orchestrator worker for this project. Confirm the queue's `ownerPid` is no longer alive (`kill -0 <pid>` must
-   fail); if it succeeds or its outcome is unclear, stop and wait. Do not use a second worker to recover it.
-2. Verify the task record and active queue event identify the configured project, the exact Trello card, the same operation key,
-   and `agent/<card-id>`. Verify Trello currently has that exact card in `Working`. If any identity differs, stop.
-   Read-only checks against the configured context root can establish the persisted identity:
+For a production image, the equivalent entry points are
+`node dist/operator/reconcile-external-task-session-pr.js` and
+`node dist/operator/recover-legacy-retired-mutation.js` with the same flags and
+persistent mounts. Use external-PR reconciliation only for independently verified
+salvage of the retained implementation through an already human-merged recovery PR.
+It verifies branch/base identity, equivalent implementation content, commit history,
+CI and Trello location before reconciling Done; it does not create a replacement
+PR or authorize rewriting published history. Never use it to associate unrelated work.
 
-   ```sh
-   jq -e --arg project "$PROJECT_ID" --arg card "$CARD_ID" --arg branch "agent/$CARD_ID" \
-     '.projectId == $project and .cardId == $card and .expectedBranch == $branch and .phase == "attention-required"' \
-     "$CONTEXT_ROOT/task-executions/$PROJECT_ID/$CARD_ID.json"
-   jq -e --arg card "$CARD_ID" \
-     '[.events[] | select(.cardId == $card and .status == "failed")] | length == 1' \
-     "$CONTEXT_ROOT/task-mutation-queues/$PROJECT_ID.json"
-   ```
+The legacy-mutation command is narrower: it retires only a completed legacy Ready
+event whose execution never started, with no task-execution owner, after verifying
+Ready membership and absence from Working. The confirmation flag is an operator
+assertion, not something inferred from PID absence. It cannot clear started,
+failed, ambiguous or actively owned work.
 
-   Compare the selected event's `operationKey` to the task record's `operationKey` and verify its `activeEventId` matches its
-   `eventId`. These commands only read state; never use `jq` to rewrite it.
+For an imported legacy `attention-required` implementation without terminal-failure
+proof, an explicitly authorized move to Failed can retire the matching legacy queue
+event after identity/owner checks, but does not invent canonical terminal evidence
+or guarantee project release. Preserve original work and seek explicit reconciliation
+when canonical proof is missing. Do not use stale pre-import JSON files as current
+authority or move the card repeatedly between lists to bypass that fence.
 
-3. Verify the worktree resolves to `<worktreeRoot>/<card-id>` and is on `agent/<card-id>`. Preserve the current state before
-   proceeding:
-
-   ```sh
-   tar -C "$CONTEXT_ROOT" -czf "$BACKUP_DIR/context-before-retirement.tgz" task-executions task-plans task-mutation-queues
-   git -C "$WORKTREE" status --short --branch
-   git -C "$WORKTREE" diff --binary > "$BACKUP_DIR/worktree.patch"
-   git -C "$WORKTREE" ls-files --others --exclude-standard -z > "$BACKUP_DIR/untracked-files.list"
-   ```
-
-   Copy every listed untracked file and any relevant ignored/untracked data into the backup directory. Do not clean, reset, stash,
-   or remove the worktree.
-
-4. Inspect local commits (`git -C "$WORKTREE" log --oneline --decorate -10`), remote branch state
-   (`git ls-remote origin "refs/heads/agent/<card-id>"`), and GitHub PRs
-   (`gh pr list --head "agent/<card-id>" --state all`). Confirm whether each result is absent or belongs to this task; unknown or
-   mismatched commits/branches/PRs mean stop and escalate. Record the results with the incident.
-5. Obtain explicit operator authorization to retire this failed attempt. Only then move the card once in Trello from `Working` to
-   the configured `Failed` list. This Trello action is the authorization signal; do not edit the queue or task JSON.
-6. Restart the project worker with the normal deployment/start command. For a local installation this is `yarn dev` from the
-   repository with its normal environment loaded. Polling verifies the card is in `Failed`, checks the matching dead queue owner,
-   and marks only that queue event completed. Confirm the event is no longer active and verify the task record/worktree still
-   exist. A mismatch, failed lookup, or uncertain transition leaves ownership in place for investigation.
-
-For newly recorded, confirmed nonzero implementation exits, polling performs the `Working` → `Failed` transition itself and
-completes the mutation event only after Trello confirms `Failed`. A lost response is reconciled by checking the Failed list before
-retrying the move. The durable task record and worktree are preserved in either case. To request a later deliberate retry, follow
-the separate retry process only after the failed attempt has been retired and its retained work has been reviewed; never move a
-card back to `Ready for Agent` while its old task record or queue identity remains unresolved.
+Current genuine primary failures use bounded recovery (three verified genuine
+failures per semantic operation), then automatically reconcile Failed and its
+comment before release when no PR exists. Outages and reconstruction have separate
+accounting; a nonzero validation result is not a primary crash. An open PR instead
+retains ownership and a recoverable operational blockage. Normal recovery and
+deliberate retries never require internal-file edits. Unsupported or ambiguous
+state that cannot be established safely stays preserved for operator/support
+resolution rather than receiving a destructive generic reset command.
 
 Recovery has been tested only with local fixtures and mocked services. No live Trello/GitHub pilot, real OpenCode session restart,
 or external API availability test has been performed.
