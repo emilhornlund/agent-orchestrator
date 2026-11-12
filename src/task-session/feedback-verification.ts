@@ -28,9 +28,7 @@ const feedbackVerificationSchema = z.strictObject({
 });
 
 export type FeedbackDisposition = z.infer<typeof dispositionSchema>;
-export type FeedbackVerificationResult = z.infer<
-  typeof feedbackVerificationSchema
->;
+export type FeedbackVerificationResult = z.infer<typeof feedbackVerificationSchema>;
 
 export interface FeedbackVerificationExpectations {
   projectId: string;
@@ -56,27 +54,18 @@ export function parseFeedbackVerificationResult(
     );
   }
   const expectedIds = new Set(expected.actionableFeedbackIds);
-  const dispositionIds = new Set(
-    result.dispositions.map((item) => item.feedbackId),
-  );
-  if (
-    expectedIds.size !== expected.actionableFeedbackIds.length ||
-    expectedIds.size === 0
-  ) {
-    throw new Error(
-      "Expected actionable feedback IDs must be unique and nonempty",
-    );
+  const dispositionIds = new Set(result.dispositions.map((item) => item.feedbackId));
+  if (expectedIds.size !== expected.actionableFeedbackIds.length || expectedIds.size === 0) {
+    throw new Error("Expected actionable feedback IDs must be unique and nonempty");
   }
   if (dispositionIds.size !== result.dispositions.length) {
     throw new Error("Feedback verification contains duplicate dispositions");
   }
   for (const id of expectedIds) {
-    if (!dispositionIds.has(id))
-      throw new Error(`Feedback verification omitted item: ${id}`);
+    if (!dispositionIds.has(id)) throw new Error(`Feedback verification omitted item: ${id}`);
   }
   for (const id of dispositionIds) {
-    if (!expectedIds.has(id))
-      throw new Error(`Feedback verification invented item: ${id}`);
+    if (!expectedIds.has(id)) throw new Error(`Feedback verification invented item: ${id}`);
   }
   return result;
 }

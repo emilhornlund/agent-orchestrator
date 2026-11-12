@@ -16,8 +16,7 @@ import { persistEssentialDependencyWait } from "../src/orchestrator/run-orchestr
 
 const roots: string[] = [];
 afterEach(async () => {
-  for (const root of roots.splice(0))
-    fs.rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
 function directory(prefix: string): string {
@@ -104,9 +103,7 @@ describe("ProjectRunAuthority preparing lifecycle", () => {
       const first = refinement.store.read();
       expect(first?.lifecycle).toBe("preparing");
       expect(first?.taskKind).toBe("refinement");
-      expect(first?.resources[0]?.path).toBe(
-        path.join(worktreeRoot, "card-refine"),
-      );
+      expect(first?.resources[0]?.path).toBe(path.join(worktreeRoot, "card-refine"));
       expect(first?.resources[1]?.path).toBe("refs/heads/agent/card-refine");
       expect(fs.existsSync(first?.resources[0]?.path ?? "")).toBe(false);
       const pointer = new RunRegistry(runtimeRoot, pinned.integrationId, {
@@ -196,9 +193,7 @@ describe("ProjectRunAuthority preparing lifecycle", () => {
         1_000,
         "github:read",
       );
-      expect(notificationId).toBe(
-        "project-one/card-implementation/operation-recovery/dependency",
-      );
+      expect(notificationId).toBe("project-one/card-implementation/operation-recovery/dependency");
       expect(resumed.store.read()).toMatchObject({
         lifecycle: "waiting",
         checkpoint: "planning",

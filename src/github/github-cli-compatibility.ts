@@ -15,11 +15,7 @@ export type RunGitHubCliCompatibilityCommand = (
   project?: ProjectConfig,
 ) => Promise<string>;
 
-export const GITHUB_CLI_PR_STATE_JSON_FIELDS = [
-  "url",
-  "state",
-  "mergedAt",
-] as const;
+export const GITHUB_CLI_PR_STATE_JSON_FIELDS = ["url", "state", "mergedAt"] as const;
 
 export const GITHUB_CLI_PR_MAINTENANCE_JSON_FIELDS = [
   ...GITHUB_CLI_PR_STATE_JSON_FIELDS,
@@ -66,42 +62,33 @@ export interface GitHubCliCommandCapability {
  * Keep this list aligned with every gh command and option assembled by
  * GitHubClient and ensureRepository.
  */
-export const GITHUB_CLI_COMMAND_CAPABILITIES: readonly GitHubCliCommandCapability[] =
-  [
-    {
-      name: "gh repo clone",
-      args: ["repo", "clone", "--help"],
-      requiredHelpOptions: [],
-    },
-    {
-      name: "gh repo view",
-      args: ["repo", "view", "--help"],
-      requiredHelpOptions: ["--json"],
-    },
-    {
-      name: "gh pr list",
-      args: ["pr", "list", "--help"],
-      requiredHelpOptions: [
-        "--repo",
-        "--head",
-        "--base",
-        "--state",
-        "--json",
-        "--jq",
-        "--limit",
-      ],
-    },
-    {
-      name: "gh pr create",
-      args: ["pr", "create", "--help"],
-      requiredHelpOptions: ["--repo", "--base", "--head", "--title", "--body"],
-    },
-    {
-      name: "gh api",
-      args: ["api", "--help"],
-      requiredHelpOptions: ["--paginate", "--slurp"],
-    },
-  ];
+export const GITHUB_CLI_COMMAND_CAPABILITIES: readonly GitHubCliCommandCapability[] = [
+  {
+    name: "gh repo clone",
+    args: ["repo", "clone", "--help"],
+    requiredHelpOptions: [],
+  },
+  {
+    name: "gh repo view",
+    args: ["repo", "view", "--help"],
+    requiredHelpOptions: ["--json"],
+  },
+  {
+    name: "gh pr list",
+    args: ["pr", "list", "--help"],
+    requiredHelpOptions: ["--repo", "--head", "--base", "--state", "--json", "--jq", "--limit"],
+  },
+  {
+    name: "gh pr create",
+    args: ["pr", "create", "--help"],
+    requiredHelpOptions: ["--repo", "--base", "--head", "--title", "--body"],
+  },
+  {
+    name: "gh api",
+    args: ["api", "--help"],
+    requiredHelpOptions: ["--paginate", "--slurp"],
+  },
+];
 
 export class GitHubCliCompatibilityError extends Error {
   constructor(message: string, cause?: unknown) {
@@ -112,9 +99,7 @@ export class GitHubCliCompatibilityError extends Error {
   }
 }
 
-export function parseGitHubCliVersion(
-  output: string,
-): GitHubCliVersion | undefined {
+export function parseGitHubCliVersion(output: string): GitHubCliVersion | undefined {
   const match = output.match(
     /^\s*gh version v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?(?:\s|$)/m,
   );
@@ -143,10 +128,7 @@ function formatGitHubCliVersion(version: GitHubCliVersion): string {
   return `${version.major}.${version.minor}.${version.patch}${version.prerelease === undefined ? "" : `-${version.prerelease}`}`;
 }
 
-function compareGitHubCliVersions(
-  left: GitHubCliVersion,
-  right: GitHubCliVersion,
-): number {
+function compareGitHubCliVersions(left: GitHubCliVersion, right: GitHubCliVersion): number {
   const pairs: readonly (readonly [number, number])[] = [
     [left.major, right.major],
     [left.minor, right.minor],
@@ -194,11 +176,7 @@ export async function validateGitHubCliCompatibility(
   run: RunGitHubCliCompatibilityCommand,
   projects: readonly ProjectConfig[],
 ): Promise<void> {
-  const versionOutput = await runCompatibilityCheck(
-    run,
-    ["--version"],
-    "gh version output",
-  );
+  const versionOutput = await runCompatibilityCheck(run, ["--version"], "gh version output");
   const version = parseGitHubCliVersion(versionOutput);
 
   if (version === undefined) {
@@ -211,10 +189,7 @@ export async function validateGitHubCliCompatibility(
     `gh version ${MINIMUM_SUPPORTED_GITHUB_CLI_VERSION}`,
   );
 
-  if (
-    minimumVersion === undefined ||
-    compareGitHubCliVersions(version, minimumVersion) < 0
-  ) {
+  if (minimumVersion === undefined || compareGitHubCliVersions(version, minimumVersion) < 0) {
     throw new GitHubCliCompatibilityError(
       `installed gh version ${formatGitHubCliVersion(version)} is unsupported; Agent Orchestrator requires gh ${MINIMUM_SUPPORTED_GITHUB_CLI_VERSION} or newer`,
     );

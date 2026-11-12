@@ -8,11 +8,7 @@ import { remediatePreparedConflict } from "../src/orchestrator/remediate-prepare
 import type { PreparedConflictHandoff } from "../src/orchestrator/prepared-conflict-state.js";
 
 describe("prepared conflict recovery refusal", () => {
-  it.each([
-    "active rebase",
-    "completed local rebase",
-    "historically published PR",
-  ])(
+  it.each(["active rebase", "completed local rebase", "historically published PR"])(
     "preserves the handoff and refuses %s continuation without external calls",
     async () => {
       const git = {

@@ -38,10 +38,7 @@ const analysisKey = "refinement-analysis-v1";
 export class RefinementAnalysisFailedError extends Error {}
 class RefinementDependencyUnavailableError extends Error {}
 
-function hasOpenCodePermissionDenial(
-  output: string,
-  errorOutput: string,
-): boolean {
+function hasOpenCodePermissionDenial(output: string, errorOutput: string): boolean {
   const combined = `${output}\n${errorOutput}`.toLowerCase();
 
   return (
@@ -85,18 +82,12 @@ async function runRefinementOnce(
     variant: project.opencode.refinement.variant,
     timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
     prompt:
-      buildRefinementPrompt(
-        card,
-        attachmentContext,
-        getRefinementResultPath(worktreePath),
-      ) +
+      buildRefinementPrompt(card, attachmentContext, getRefinementResultPath(worktreePath)) +
       (correction
         ? "\nThe previous output failed the complete JSON contract. Correct the entire result, retaining the original scope. Do not implement code."
         : ""),
     ...(onExecutionPrepared ? { onExecutionPrepared } : {}),
-    refinementResultDirectory: path.dirname(
-      getRefinementResultPath(worktreePath),
-    ),
+    refinementResultDirectory: path.dirname(getRefinementResultPath(worktreePath)),
     signal,
     sessionLogPath,
     sessionLabel: "OpenCode refinement",
@@ -107,9 +98,7 @@ async function runRefinementOnce(
       throw new RefinementDependencyUnavailableError(
         "Refinement dependency is temporarily unavailable",
       );
-    if (
-      hasOpenCodePermissionDenial(refinement.output, refinement.errorOutput)
-    ) {
+    if (hasOpenCodePermissionDenial(refinement.output, refinement.errorOutput)) {
       throw new WorkflowError(
         "OpenCode permissions",
         "OpenCode was denied permission during refinement",
@@ -186,11 +175,7 @@ export async function runRefinement(
       project,
       authority,
     );
-    const evidence = store.readProcessExecution(
-      card.id,
-      state.executionId,
-      "process-executions",
-    );
+    const evidence = store.readProcessExecution(card.id, state.executionId, "process-executions");
     const expected = {
       executionId: state.executionId,
       command: state.command,
@@ -213,8 +198,7 @@ export async function runRefinement(
       );
   }
   while (state.attempts < 3) {
-    if (state.attempts > 0 && refreshAttachments)
-      attachmentContext = await refreshAttachments();
+    if (state.attempts > 0 && refreshAttachments) attachmentContext = await refreshAttachments();
     const attempts = state.attempts + 1;
     save({ attempts, status: "active" });
     try {
@@ -239,18 +223,13 @@ export async function runRefinement(
       return result;
     } catch (error) {
       if (!(error instanceof InvalidRefinementResultError)) {
-        if (error instanceof RefinementSetupAmbiguousError || !authority)
-          throw error;
+        if (error instanceof RefinementSetupAmbiguousError || !authority) throw error;
         const evidence = state.executionId
           ? new TaskExecutionStore(
               authority.store.read()!.pinned.storageRoot,
               project,
               authority,
-            ).readProcessExecution(
-              card.id,
-              state.executionId,
-              "process-executions",
-            )
+            ).readProcessExecution(card.id, state.executionId, "process-executions")
           : null;
         if (
           !state.executionId ||

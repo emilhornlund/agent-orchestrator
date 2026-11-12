@@ -65,9 +65,7 @@ const plan: TaskPlan = {
   blockers: [],
 };
 
-function createFixture(
-  options: { includePlan?: boolean; legacyPlan?: boolean } = {},
-) {
+function createFixture(options: { includePlan?: boolean; legacyPlan?: boolean } = {}) {
   temporaryRoot = fs.mkdtempSync(
     path.join(os.tmpdir(), "agent-orchestrator-implementation-runner-"),
   );
@@ -113,11 +111,7 @@ function createFixture(
   });
 
   if (options.includePlan !== false) {
-    planStore.create(
-      plan,
-      1,
-      options.legacyPlan === true ? undefined : operationKey,
-    );
+    planStore.create(plan, 1, options.legacyPlan === true ? undefined : operationKey);
     planStore.storeVerification(card.id, 1, {
       version: 1,
       projectId,
@@ -176,9 +170,7 @@ function runImplementation(
     >,
     commands: new CommandRunner(async () => ({
       exitCode: 0,
-      output: JSON.stringify([
-        { id: "ses_primary-task-session", directory: worktreePath },
-      ]),
+      output: JSON.stringify([{ id: "ses_primary-task-session", directory: worktreePath }]),
     })),
     recoveryContextRoot: path.join(
       path.dirname(path.dirname(fixture.worktreePath)),
@@ -211,11 +203,7 @@ describe("runTaskSessionImplementation", () => {
       },
     } as ProjectConfig;
 
-    const result = await runImplementation(
-      fixture,
-      fixture.worktreePath,
-      projectWithoutValidation,
-    );
+    const result = await runImplementation(fixture, fixture.worktreePath, projectWithoutValidation);
     expect(fixture.getCurrentBranch).toHaveBeenCalledWith(fixture.worktreePath);
     expect(fixture.runOpenCode).toHaveBeenCalledOnce();
     expect(result.record.phase).toBe("validation");
@@ -232,9 +220,7 @@ describe("runTaskSessionImplementation", () => {
       sessionId: "ses_primary-task-session",
       model: "implementation-model",
     });
-    expect(
-      fixture.runOpenCode.mock.calls[0]?.[0].captureSessionId,
-    ).toBeUndefined();
+    expect(fixture.runOpenCode.mock.calls[0]?.[0].captureSessionId).toBeUndefined();
     expect(fixture.runOpenCode.mock.calls[0]?.[0].prompt).toContain(
       "Task plan (advisory; may be absent):",
     );
@@ -245,12 +231,8 @@ describe("runTaskSessionImplementation", () => {
     expect(result.record.phase).toBe("validation");
     expect(result.record.lastEvent?.type).toBe("implementation-completed");
     expect(fixture.taskRecordStore.read(card.id)?.phase).toBe("validation");
-    expect(fs.readFileSync(fixture.repositorySentinel, "utf8")).toBe(
-      "source-checkout-unchanged",
-    );
-    expect(fs.readFileSync(fixture.worktreeSentinel, "utf8")).toBe(
-      "owned-worktree-preserved",
-    );
+    expect(fs.readFileSync(fixture.repositorySentinel, "utf8")).toBe("source-checkout-unchanged");
+    expect(fs.readFileSync(fixture.worktreeSentinel, "utf8")).toBe("owned-worktree-preserved");
   });
 
   it("continues from the original task when planning advice is missing or rejected", async () => {
@@ -261,9 +243,7 @@ describe("runTaskSessionImplementation", () => {
     expect(missingPlanFixture.runOpenCode.mock.calls[0]?.[0].prompt).toContain(
       "No usable plan was available.",
     );
-    expect(missingPlanFixture.taskRecordStore.read(card.id)?.phase).toBe(
-      "validation",
-    );
+    expect(missingPlanFixture.taskRecordStore.read(card.id)?.phase).toBe("validation");
 
     const unverifiedFixture = createFixture();
     const reviewFinding = "The plan omitted the required export format choice.";
@@ -287,15 +267,11 @@ describe("runTaskSessionImplementation", () => {
     expect(unverifiedFixture.runOpenCode.mock.calls[0]?.[0].prompt).toContain(
       "Independent plan-review recommendations (advisory only; no approval is required):",
     );
-    expect(unverifiedFixture.runOpenCode.mock.calls[0]?.[0].prompt).toContain(
-      reviewFinding,
-    );
+    expect(unverifiedFixture.runOpenCode.mock.calls[0]?.[0].prompt).toContain(reviewFinding);
     expect(unverifiedFixture.runOpenCode.mock.calls[0]?.[0].prompt).toContain(
       "They are not approval requirements",
     );
-    expect(unverifiedFixture.taskRecordStore.read(card.id)?.phase).toBe(
-      "validation",
-    );
+    expect(unverifiedFixture.taskRecordStore.read(card.id)?.phase).toBe("validation");
   });
 
   it("continues after a durably recorded plan-review failure without invalidating its plan", async () => {
@@ -351,9 +327,7 @@ describe("runTaskSessionImplementation", () => {
     await runImplementation(fixture);
 
     expect(fixture.taskRecordStore.read(card.id)?.phase).toBe("validation");
-    expect(
-      fixture.taskRecordStore.read(card.id)?.planReviewAdvice,
-    ).toMatchObject({
+    expect(fixture.taskRecordStore.read(card.id)?.planReviewAdvice).toMatchObject({
       planRevision: 1,
       taskRecordRevision: 1,
       operationKey,
@@ -385,9 +359,9 @@ describe("runTaskSessionImplementation", () => {
   it("refuses a worktree outside the owned root or inside the source checkout", async () => {
     const fixture = createFixture();
 
-    await expect(
-      runImplementation(fixture, fixture.project.repository.path),
-    ).rejects.toThrow("outside the source checkout");
+    await expect(runImplementation(fixture, fixture.project.repository.path)).rejects.toThrow(
+      "outside the source checkout",
+    );
     await expect(
       runImplementation(fixture, path.join(temporaryRoot!, "unowned-worktree")),
     ).rejects.toThrow("outside the source checkout");
@@ -420,16 +394,11 @@ describe("runTaskSessionImplementation", () => {
       recoveryWait: { resumePhase: "implementation", kind: "dependency" },
     });
     expect(
-      fixture.taskRecordStore.read(card.id)?.primaryOperations?.[
-        `${operationKey}:implementation`
-      ]?.executions,
+      fixture.taskRecordStore.read(card.id)?.primaryOperations?.[`${operationKey}:implementation`]
+        ?.executions,
     ).toBe(1);
-    expect(fs.readFileSync(fixture.repositorySentinel, "utf8")).toBe(
-      "source-checkout-unchanged",
-    );
-    expect(fs.readFileSync(fixture.worktreeSentinel, "utf8")).toBe(
-      "owned-worktree-preserved",
-    );
+    expect(fs.readFileSync(fixture.repositorySentinel, "utf8")).toBe("source-checkout-unchanged");
+    expect(fs.readFileSync(fixture.worktreeSentinel, "utf8")).toBe("owned-worktree-preserved");
   });
 
   it("preserves an aborted implementation phase for restart recovery without cleanup", async () => {

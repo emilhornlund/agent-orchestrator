@@ -20,8 +20,7 @@ export function buildConflictRemediationPrompt(
     `Updated base branch: ${handoff.defaultBranch}`,
     `Rebase target: ${rebaseTarget}`,
     `Rebase target commit: ${handoff.rebase.onto}`,
-    ...(handoff.rebase.currentStep === undefined ||
-    handoff.rebase.totalSteps === undefined
+    ...(handoff.rebase.currentStep === undefined || handoff.rebase.totalSteps === undefined
       ? []
       : [
           `Rebase progress at handoff: commit ${handoff.rebase.currentStep} of ${handoff.rebase.totalSteps}`,

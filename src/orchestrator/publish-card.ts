@@ -19,14 +19,8 @@ import {
   type TrelloClient,
 } from "../trello/trello-client.js";
 import { buildPullRequestDescriptionPrompt } from "../opencode/build-pull-request-description-prompt.js";
-import {
-  captureRepositorySnapshot,
-  repositorySnapshotsEqual,
-} from "../opencode/commit-result.js";
-import {
-  type OpenCodeClient,
-  type OpenCodeRunResult,
-} from "../opencode/opencode-client.js";
+import { captureRepositorySnapshot, repositorySnapshotsEqual } from "../opencode/commit-result.js";
+import { type OpenCodeClient, type OpenCodeRunResult } from "../opencode/opencode-client.js";
 import {
   parsePullRequestDescription,
   PullRequestDescriptionParseError,
@@ -51,10 +45,7 @@ import { getElapsedWorkflowTime } from "./workflow-duration.js";
 import { WorkflowError } from "./workflow-error.js";
 import { writeTrustedCommitState } from "./trusted-commit-state.js";
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
-import {
-  resumeInitialPublication,
-  PublicationWaitingError,
-} from "./initial-publication.js";
+import { resumeInitialPublication, PublicationWaitingError } from "./initial-publication.js";
 
 export interface PublishCardOptions {
   trello: TrelloClient;
@@ -103,8 +94,7 @@ export async function prepareInitialPublicationBody(
   let description = options.pullRequestDescription;
   const task = {
     ...options.card,
-    name:
-      typeof options.card.name === "string" ? options.card.name : "Trello card",
+    name: typeof options.card.name === "string" ? options.card.name : "Trello card",
   };
   if (description !== undefined) {
     try {
@@ -148,9 +138,7 @@ export async function prepareInitialPublicationBody(
             .trim()
             .split(/\r?\n/u)
             .map((file) => `Changed file: ${file}`)
-        : [
-            "Change details could not be summarized automatically; inspect the task diff.",
-          ],
+        : ["Change details could not be summarized automatically; inspect the task diff."],
       validation: [],
     };
   }
@@ -179,10 +167,7 @@ export async function prepareInitialPublicationBody(
       .join("\n")}`;
     disclosure += options.exhaustedReview.requirementAssessments
       .filter((assessment) => assessment.status === "unsatisfied")
-      .map(
-        (assessment) =>
-          `\n> Unsatisfied requirement: ${assessment.requirementId}`,
-      )
+      .map((assessment) => `\n> Unsatisfied requirement: ${assessment.requirementId}`)
       .join("");
   }
   body = body.replace(
@@ -204,9 +189,7 @@ function logDescriptionFallback(
   processExecutionId?: string,
 ): void {
   const failureType =
-    error instanceof PullRequestDescriptionParseError
-      ? error.failureType
-      : "execution-failure";
+    error instanceof PullRequestDescriptionParseError ? error.failureType : "execution-failure";
   const attemptText = attempt === undefined ? "" : ` on ${attempt}`;
   const artifactRef = processExecutionId
     ? `; process execution: process-executions/${processExecutionId}`
@@ -296,8 +279,7 @@ async function generatePullRequestDescription(options: {
         prompt,
         signal,
         readOnly: true,
-        sessionLogPath:
-          sessionLogPath ?? getSessionLogPath(project.id, card.id),
+        sessionLogPath: sessionLogPath ?? getSessionLogPath(project.id, card.id),
         sessionLabel: "OpenCode pull request description",
       });
     } catch (error) {
@@ -331,35 +313,18 @@ async function generatePullRequestDescription(options: {
 
   let snapshotBeforeGeneration;
   try {
-    snapshotBeforeGeneration = await captureRepositorySnapshot(
-      git,
-      worktreePath,
-    );
+    snapshotBeforeGeneration = await captureRepositorySnapshot(git, worktreePath);
   } catch (error) {
     logDescriptionFallback(cardLog, "read-only source snapshot", error);
     return undefined;
   }
 
-  const result = await runDescription(
-    descriptionPrompt,
-    "OpenCode execution",
-    "initial attempt",
-  );
+  const result = await runDescription(descriptionPrompt, "OpenCode execution", "initial attempt");
 
   try {
-    const snapshotAfterGeneration = await captureRepositorySnapshot(
-      git,
-      worktreePath,
-    );
-    if (
-      !repositorySnapshotsEqual(
-        snapshotBeforeGeneration,
-        snapshotAfterGeneration,
-      )
-    ) {
-      throw new Error(
-        "Read-only pull request description generation modified source files",
-      );
+    const snapshotAfterGeneration = await captureRepositorySnapshot(git, worktreePath);
+    if (!repositorySnapshotsEqual(snapshotBeforeGeneration, snapshotAfterGeneration)) {
+      throw new Error("Read-only pull request description generation modified source files");
     }
   } catch (error) {
     logDescriptionFallback(cardLog, "read-only source verification", error);
@@ -387,11 +352,7 @@ async function generatePullRequestDescription(options: {
       snapshotBeforeRetry = await captureRepositorySnapshot(git, worktreePath);
     } catch (snapshotError) {
       if (signal.aborted) throw new TrelloRequestAbortedError();
-      logDescriptionFallback(
-        cardLog,
-        "corrective retry read-only source snapshot",
-        snapshotError,
-      );
+      logDescriptionFallback(cardLog, "corrective retry read-only source snapshot", snapshotError);
       return undefined;
     }
     const correctiveResult = await runDescription(
@@ -408,15 +369,11 @@ async function generatePullRequestDescription(options: {
     );
 
     try {
-      const snapshotAfterRetry = await captureRepositorySnapshot(
-        git,
-        worktreePath,
-      );
+      const snapshotAfterRetry = await captureRepositorySnapshot(git, worktreePath);
       if (!repositorySnapshotsEqual(snapshotBeforeRetry, snapshotAfterRetry)) {
-        throw new Error(
-          "Read-only pull request description retry modified source files",
-          { cause: error },
-        );
+        throw new Error("Read-only pull request description retry modified source files", {
+          cause: error,
+        });
       }
       if (correctiveResult === undefined) return undefined;
       const description = parsePullRequestDescription(correctiveResult.output);
@@ -493,8 +450,7 @@ export async function enrichMaintainedPullRequestDescription(options: {
     card,
     project.repository.gitIdentity.name,
   );
-  if (nextBody === null || nextBody === currentBody || options.signal.aborted)
-    return false;
+  if (nextBody === null || nextBody === currentBody || options.signal.aborted) return false;
   await options.github.editPullRequestDescription({
     ...request,
     body: nextBody,
@@ -539,9 +495,7 @@ export async function publishCard({
     ProjectRunAuthority.isProjectLeaseScoped(project.id) &&
     !ProjectRunAuthority.current(project.id)
   )
-    throw new Error(
-      "Lease-scoped initial publication requires durable attempt authority",
-    );
+    throw new Error("Lease-scoped initial publication requires durable attempt authority");
   // Production publication under attempt authority cannot opt out of the journal.
   if (ProjectRunAuthority.current(project.id)) {
     const resumed = await resumeInitialPublication({
@@ -568,8 +522,7 @@ export async function publishCard({
   let pullRequest;
   let publishedCommitSha: string;
   let finalPullRequestDescription = pullRequestDescription;
-  let verifiedDescriptionFacts: readonly string[] =
-    verifiedDescriptionFactsOption?.() ?? [];
+  let verifiedDescriptionFacts: readonly string[] = verifiedDescriptionFactsOption?.() ?? [];
   const verifyExisting = async () => {
     if (expectedExistingPullRequestUrl)
       await verifyExistingPrOpen({
@@ -589,9 +542,7 @@ export async function publishCard({
     const currentBranch = await git.getCurrentBranch(worktreePath);
 
     if (currentBranch !== branch) {
-      throw new Error(
-        `Publication worktree is on branch "${currentBranch}", expected "${branch}"`,
-      );
+      throw new Error(`Publication worktree is on branch "${currentBranch}", expected "${branch}"`);
     }
 
     const defaultBranchRef = `origin/${project.repository.defaultBranch}`;
@@ -617,25 +568,15 @@ export async function publishCard({
       }
     }
 
-    if (
-      !rebaseAlreadyCompleted &&
-      expectedExistingPullRequestUrl === undefined
-    ) {
-      cardLog.event(
-        `Fetching latest ${defaultBranchRef} before publishing ${branch}...`,
-      );
+    if (!rebaseAlreadyCompleted && expectedExistingPullRequestUrl === undefined) {
+      cardLog.event(`Fetching latest ${defaultBranchRef} before publishing ${branch}...`);
 
       if (signal?.aborted) {
         throw new TrelloRequestAbortedError();
       }
 
       try {
-        await git.fetch(
-          worktreePath,
-          "origin",
-          project.repository.defaultBranch,
-          project,
-        );
+        await git.fetch(worktreePath, "origin", project.repository.defaultBranch, project);
       } catch (error) {
         throw new WorkflowError(
           "Git/GitHub",
@@ -707,8 +648,7 @@ export async function publishCard({
         verifiedFacts: verifiedDescriptionFacts,
         signal: signal ?? new AbortController().signal,
         cardLog,
-        sessionLogPath:
-          sessionLogPath ?? getSessionLogPath(project.id, card.id),
+        sessionLogPath: sessionLogPath ?? getSessionLogPath(project.id, card.id),
       });
     }
 
@@ -722,18 +662,12 @@ export async function publishCard({
         : null;
 
     if (remoteCommitSha === publishedCommitSha) {
-      cardLog.event(
-        `Branch ${branch} is already pushed at ${publishedCommitSha}`,
-      );
+      cardLog.event(`Branch ${branch} is already pushed at ${publishedCommitSha}`);
     } else {
       if (
         remoteCommitSha !== null &&
         typeof git.isAncestor === "function" &&
-        !(await git.isAncestor(
-          worktreePath,
-          remoteCommitSha,
-          publishedCommitSha,
-        ))
+        !(await git.isAncestor(worktreePath, remoteCommitSha, publishedCommitSha))
       ) {
         throw new Error(
           `Refusing to publish ${branch}: rebasing produced ${publishedCommitSha}, which is not a fast-forward descendant of the remote commit ${remoteCommitSha}. A non-fast-forward update would be required; the branch was not pushed. The task worktree and branch were preserved for diagnosis and retry.`,
@@ -791,8 +725,7 @@ export async function publishCard({
 
     if (
       expectedExistingPullRequestUrl !== undefined &&
-      (pullRequest === null ||
-        pullRequest.url !== expectedExistingPullRequestUrl)
+      (pullRequest === null || pullRequest.url !== expectedExistingPullRequestUrl)
     ) {
       throw new WorkflowError(
         "Git/GitHub",
@@ -814,9 +747,7 @@ export async function publishCard({
           pullRequestUrl: pullRequest.url,
           project,
         });
-        cardLog.event(
-          `Unverified pull request confirmed draft: ${pullRequest.url}`,
-        );
+        cardLog.event(`Unverified pull request confirmed draft: ${pullRequest.url}`);
       }
       if (
         typeof github.getPullRequestDescription === "function" &&
@@ -866,16 +797,11 @@ export async function publishCard({
               expectedBody: currentBody,
               project,
             });
-            cardLog.event(
-              `Pull request description enriched: ${pullRequest.url}`,
-            );
+            cardLog.event(`Pull request description enriched: ${pullRequest.url}`);
           }
           const authority = ProjectRunAuthority.current(project.id);
           const ledger = authority
-            ? new FeedbackLedgerStore(
-                authority.store.storageRoot,
-                project,
-              ).read(card.id)
+            ? new FeedbackLedgerStore(authority.store.storageRoot, project).read(card.id)
             : null;
           const unresolvedHumanRequests =
             ledger?.entries.some(
@@ -916,11 +842,7 @@ export async function publishCard({
           }
         } catch (error) {
           if (error instanceof WorkflowMutationWaitingError) throw error;
-          logDescriptionFallback(
-            cardLog,
-            "existing pull request enrichment",
-            error,
-          );
+          logDescriptionFallback(cardLog, "existing pull request enrichment", error);
         }
       }
     } else {
@@ -963,8 +885,7 @@ export async function publishCard({
         draft:
           publicationReviewDisclosure !== null ||
           (publicationReviewResult !== "Passed" &&
-            publicationReviewResult !==
-              reviewConcernsDismissedAsNonMaterialLabel) ||
+            publicationReviewResult !== reviewConcernsDismissedAsNonMaterialLabel) ||
           publicationQualityNeedsDraft,
         project,
       });
@@ -1007,9 +928,7 @@ export async function publishCard({
         })
       ).isDraft;
     } catch {
-      cardLog.warn(
-        "PR draft observation unavailable before notification preparation",
-      );
+      cardLog.warn("PR draft observation unavailable before notification preparation");
     }
   }
   if (emailNotifier && (emailNotifier.isEventEnabled?.("humanReview") ?? true))
@@ -1070,12 +989,7 @@ export async function publishCard({
 
   cardLog.event("Trello card moved to Human Review");
 
-  const elapsedWorkflowTime = await getElapsedWorkflowTime(
-    trello,
-    project,
-    card.id,
-    cardLog,
-  );
+  const elapsedWorkflowTime = await getElapsedWorkflowTime(trello, project, card.id, cardLog);
 
   let actualDraft: boolean | undefined;
   if (ProjectRunAuthority.current(project.id)) {
@@ -1089,9 +1003,7 @@ export async function publishCard({
         })
       ).isDraft;
     } catch {
-      cardLog.warn(
-        "PR draft status could not be independently observed for notification",
-      );
+      cardLog.warn("PR draft status could not be independently observed for notification");
     }
   }
 
@@ -1132,9 +1044,7 @@ export async function publishCard({
     `Commit: ${publishedCommitSha}`,
     `Review: ${publicationReviewResult}`,
     `Remediation: ${remediationResult}`,
-    ...(elapsedWorkflowTime === undefined
-      ? []
-      : [`Elapsed workflow time: ${elapsedWorkflowTime}`]),
+    ...(elapsedWorkflowTime === undefined ? [] : [`Elapsed workflow time: ${elapsedWorkflowTime}`]),
   ].join("\n");
 
   try {
@@ -1143,9 +1053,7 @@ export async function publishCard({
     cardLog.info("Trello card updated with workflow summary");
   } catch (error) {
     if (error instanceof WorkflowMutationWaitingError) throw error;
-    cardLog.error(
-      `Failed to add workflow summary to Trello card: ${getErrorMessage(error)}`,
-    );
+    cardLog.error(`Failed to add workflow summary to Trello card: ${getErrorMessage(error)}`);
   }
 }
 import { WorkflowMutationWaitingError } from "../task-session/workflow-mutation.js";

@@ -31,9 +31,7 @@ function createFixture(): {
   storageRoot: string;
   store: TaskExecutionStore;
 } {
-  temporaryRoot = fs.mkdtempSync(
-    path.join(os.tmpdir(), "agent-orchestrator-task-store-"),
-  );
+  temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agent-orchestrator-task-store-"));
   const project = {
     id: "project-one",
     repository: {
@@ -53,9 +51,7 @@ function createFixture(): {
   };
 }
 
-function createRecord(
-  overrides: Partial<TaskExecutionRecord> = {},
-): TaskExecutionRecord {
+function createRecord(overrides: Partial<TaskExecutionRecord> = {}): TaskExecutionRecord {
   return {
     version: 1,
     projectId: "project-one",
@@ -144,14 +140,7 @@ describe("TaskExecutionStore", () => {
     expect(store.read(record.cardId)).toEqual(record);
     expect(runStore.read()?.revision).toBe(2);
     expect(
-      fs.existsSync(
-        path.join(
-          storageRoot,
-          "task-executions",
-          project.id,
-          `${record.cardId}.json`,
-        ),
-      ),
+      fs.existsSync(path.join(storageRoot, "task-executions", project.id, `${record.cardId}.json`)),
     ).toBe(false);
     const next = {
       ...record,
@@ -175,12 +164,7 @@ describe("TaskExecutionStore", () => {
       operation: { id: "initial-plan-1", kind: "implementation" },
     });
     let projected: TaskExecutionRecord = next;
-    for (const phase of [
-      "validation",
-      "review",
-      "publication",
-      "ci",
-    ] as const) {
+    for (const phase of ["validation", "review", "publication", "ci"] as const) {
       const phaseEvent: Record<
         "validation" | "review" | "publication" | "ci",
         TaskExecutionEvent["type"]
@@ -359,21 +343,10 @@ describe("TaskExecutionStore", () => {
     expect(store.create(record)).toEqual(record);
     expect(store.read(record.cardId)).toEqual(record);
 
-    const filePath = path.join(
-      storageRoot,
-      "task-executions",
-      project.id,
-      `${record.cardId}.json`,
-    );
+    const filePath = path.join(storageRoot, "task-executions", project.id, `${record.cardId}.json`);
     expect(fs.existsSync(filePath)).toBe(true);
-    expect(
-      fs.existsSync(path.join(project.repository.path, ".orchestrator")),
-    ).toBe(false);
-    expect(
-      fs.existsSync(
-        path.join(project.repository.worktreeRoot, ".orchestrator"),
-      ),
-    ).toBe(false);
+    expect(fs.existsSync(path.join(project.repository.path, ".orchestrator"))).toBe(false);
+    expect(fs.existsSync(path.join(project.repository.worktreeRoot, ".orchestrator"))).toBe(false);
     expect(store.read("missing-card")).toBeNull();
   });
 
@@ -445,9 +418,7 @@ describe("TaskExecutionStore", () => {
               evidence: [],
             },
           ],
-          blockingFindings: [
-            { kind: "defect", summary: "Unresolved", detail: "Needs review" },
-          ],
+          blockingFindings: [{ kind: "defect", summary: "Unresolved", detail: "Needs review" }],
           reviewedContentIdentity: `sha256:${"b".repeat(64)}`,
         },
       },
@@ -461,34 +432,23 @@ describe("TaskExecutionStore", () => {
       updatedAt: "2026-10-24T09:00:01.000Z",
     });
     const restarted = new TaskExecutionStore(storageRoot, project);
-    expect(restarted.read(record.cardId)?.feedbackRecoveryAttemptEventId).toBe(
-      eventId,
-    );
+    expect(restarted.read(record.cardId)?.feedbackRecoveryAttemptEventId).toBe(eventId);
   });
 
   it("claims each Human Review notification commit only once across store reloads", () => {
     const { store } = createFixture();
     store.create(createRecord());
 
-    expect(store.claimHumanReviewNotification("card-one", "a".repeat(40))).toBe(
-      true,
-    );
-    const reloadedStore = new TaskExecutionStore(
-      path.join(temporaryRoot!, "runtime-state"),
-      {
-        id: "project-one",
-        repository: {
-          path: path.join(temporaryRoot!, "repository"),
-          worktreeRoot: path.join(temporaryRoot!, "worktrees"),
-        },
-      } as ProjectConfig,
-    );
-    expect(
-      reloadedStore.claimHumanReviewNotification("card-one", "a".repeat(40)),
-    ).toBe(false);
-    expect(
-      reloadedStore.claimHumanReviewNotification("card-one", "b".repeat(40)),
-    ).toBe(true);
+    expect(store.claimHumanReviewNotification("card-one", "a".repeat(40))).toBe(true);
+    const reloadedStore = new TaskExecutionStore(path.join(temporaryRoot!, "runtime-state"), {
+      id: "project-one",
+      repository: {
+        path: path.join(temporaryRoot!, "repository"),
+        worktreeRoot: path.join(temporaryRoot!, "worktrees"),
+      },
+    } as ProjectConfig);
+    expect(reloadedStore.claimHumanReviewNotification("card-one", "a".repeat(40))).toBe(false);
+    expect(reloadedStore.claimHumanReviewNotification("card-one", "b".repeat(40))).toBe(true);
   });
 
   it("rejects duplicate creation and stale compare-and-swap revisions", () => {
@@ -496,9 +456,7 @@ describe("TaskExecutionStore", () => {
     const original = createRecord();
     store.create(original);
 
-    expect(() => store.create(original)).toThrow(
-      TaskExecutionRecordConflictError,
-    );
+    expect(() => store.create(original)).toThrow(TaskExecutionRecordConflictError);
 
     const updated = createRecord({
       revision: 2,
@@ -516,20 +474,11 @@ describe("TaskExecutionStore", () => {
   it("preserves malformed authoritative data instead of overwriting it", () => {
     const { store, storageRoot, project } = createFixture();
     store.create(createRecord());
-    const filePath = path.join(
-      storageRoot,
-      "task-executions",
-      project.id,
-      "card-one.json",
-    );
+    const filePath = path.join(storageRoot, "task-executions", project.id, "card-one.json");
     fs.writeFileSync(filePath, "{malformed", "utf8");
 
-    expect(() => store.read("card-one")).toThrow(
-      "Could not parse task execution record",
-    );
-    expect(() => store.create(createRecord())).toThrow(
-      "Could not parse task execution record",
-    );
+    expect(() => store.read("card-one")).toThrow("Could not parse task execution record");
+    expect(() => store.create(createRecord())).toThrow("Could not parse task execution record");
     expect(fs.readFileSync(filePath, "utf8")).toBe("{malformed");
   });
 
@@ -537,9 +486,9 @@ describe("TaskExecutionStore", () => {
     const { store, project, storageRoot } = createFixture();
 
     expect(() => store.read("../card-one")).toThrow("Invalid card ID");
-    expect(
-      () => new TaskExecutionStore(project.repository.path, project),
-    ).toThrow("must not overlap");
+    expect(() => new TaskExecutionStore(project.repository.path, project)).toThrow(
+      "must not overlap",
+    );
     expect(
       () =>
         new TaskExecutionStore(
@@ -547,12 +496,8 @@ describe("TaskExecutionStore", () => {
           project,
         ),
     ).toThrow("must not overlap");
-    expect(() => new TaskExecutionStore(temporaryRoot!, project)).toThrow(
-      "must not overlap",
-    );
-    expect(() => new TaskExecutionStore("relative-state", project)).toThrow(
-      "absolute path",
-    );
+    expect(() => new TaskExecutionStore(temporaryRoot!, project)).toThrow("must not overlap");
+    expect(() => new TaskExecutionStore("relative-state", project)).toThrow("absolute path");
     expect(storageRoot).not.toBe(project.repository.path);
   });
 
@@ -575,11 +520,7 @@ describe("TaskExecutionStore", () => {
     fsync.mockRestore();
 
     expect(store.read(original.cardId)).toEqual(original);
-    const recordDirectory = path.join(
-      storageRoot,
-      "task-executions",
-      project.id,
-    );
+    const recordDirectory = path.join(storageRoot, "task-executions", project.id);
     expect(fs.readdirSync(recordDirectory)).toEqual(["card-one.json"]);
   });
 
@@ -589,9 +530,7 @@ describe("TaskExecutionStore", () => {
 
     expect(() => store.create(oversized)).toThrow("exceeds the");
     expect(
-      fs.existsSync(
-        path.join(storageRoot, "task-executions", project.id, "card-one.json"),
-      ),
+      fs.existsSync(path.join(storageRoot, "task-executions", project.id, "card-one.json")),
     ).toBe(false);
   });
 });

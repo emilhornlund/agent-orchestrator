@@ -30,9 +30,7 @@ export async function reconcileExternalTaskSessionPullRequest(options: {
   association: ExternalTaskSessionRecoveryAssociation;
   github: Pick<
     GitHubClient,
-    | "getPullRequestStateByNumber"
-    | "getPullRequestCommitShas"
-    | "getCiObservations"
+    "getPullRequestStateByNumber" | "getPullRequestCommitShas" | "getCiObservations"
   >;
   git: Pick<GitClient, "hasEquivalentImplementationCommit">;
   taskStore: TaskExecutionStore;
@@ -48,11 +46,8 @@ export async function reconcileExternalTaskSessionPullRequest(options: {
     typeof association.cardId !== "string" ||
     association.cardId.trim() !== association.cardId ||
     typeof association.implementationCommit !== "string" ||
-    association.implementationCommit.trim() !==
-      association.implementationCommit ||
-    !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu.test(
-      association.implementationCommit,
-    ) ||
+    association.implementationCommit.trim() !== association.implementationCommit ||
+    !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu.test(association.implementationCommit) ||
     typeof association.recoveryBranch !== "string" ||
     association.recoveryBranch.trim() !== association.recoveryBranch ||
     association.recoveryBranch.length === 0 ||
@@ -69,9 +64,7 @@ export async function reconcileExternalTaskSessionPullRequest(options: {
     (record.phase !== "attention-required" && record.phase !== "done") ||
     record.expectedBranch !== taskResources(project, association.cardId).branch
   ) {
-    throw new Error(
-      "External recovery does not match an attention-required task",
-    );
+    throw new Error("External recovery does not match an attention-required task");
   }
 
   if (record.phase === "done") {
@@ -79,14 +72,11 @@ export async function reconcileExternalTaskSessionPullRequest(options: {
     if (
       completedRecovery === undefined ||
       completedRecovery.status !== "card-moved" ||
-      completedRecovery.implementationCommit !==
-        association.implementationCommit ||
+      completedRecovery.implementationCommit !== association.implementationCommit ||
       completedRecovery.recoveryBranch !== association.recoveryBranch ||
       completedRecovery.pullRequestNumber !== association.pullRequestNumber
     ) {
-      throw new Error(
-        "Completed task has no matching persisted recovery evidence",
-      );
+      throw new Error("Completed task has no matching persisted recovery evidence");
     }
     const matchingEvents = queue
       .list()
@@ -98,9 +88,7 @@ export async function reconcileExternalTaskSessionPullRequest(options: {
           event.operationKey === record.operationKey,
       );
     if (matchingEvents.length !== 1)
-      throw new Error(
-        "External recovery requires exactly one matching mutation event",
-      );
+      throw new Error("External recovery requires exactly one matching mutation event");
     const mutation = matchingEvents[0]!;
     const authority = ProjectRunAuthority.current(project.id);
     if (mutation.status === "completed") {
@@ -120,10 +108,7 @@ export async function reconcileExternalTaskSessionPullRequest(options: {
           pullRequest.url !== completedRecovery.pullRequestUrl
         )
           throw new Error("Completed recovery PR is no longer verified merged");
-        const listId = await ProjectRunAuthority.dispatch(
-          project.id,
-          options.readTrelloListId,
-        );
+        const listId = await ProjectRunAuthority.dispatch(project.id, options.readTrelloListId);
         if (listId !== options.doneListId)
           throw new Error("Completed recovery card is not verified in Done");
         const verifiedAt = new Date().toISOString();
@@ -132,22 +117,17 @@ export async function reconcileExternalTaskSessionPullRequest(options: {
           revision: record.revision + 1,
           updatedAt: verifiedAt,
         };
-        await taskStore.compareAndSwap(
-          association.cardId,
-          record.revision,
-          next,
-          {
-            event: "merged",
-            evidence: {
-              prOutcome: "merged",
-              prObservationId: `external-pr-recovery:${association.pullRequestNumber}:${pullRequest.headRefOid ?? "merged"}`,
-              prVerifiedAt: verifiedAt,
-              trelloListId: options.doneListId,
-              trelloObservationId: `external-pr-done:${association.cardId}:${verifiedAt}`,
-              trelloVerifiedAt: verifiedAt,
-            },
+        await taskStore.compareAndSwap(association.cardId, record.revision, next, {
+          event: "merged",
+          evidence: {
+            prOutcome: "merged",
+            prObservationId: `external-pr-recovery:${association.pullRequestNumber}:${pullRequest.headRefOid ?? "merged"}`,
+            prVerifiedAt: verifiedAt,
+            trelloListId: options.doneListId,
+            trelloObservationId: `external-pr-done:${association.cardId}:${verifiedAt}`,
+            trelloVerifiedAt: verifiedAt,
           },
-        );
+        });
         await authority.releaseVerifiedTerminal();
       }
       return;
@@ -157,21 +137,17 @@ export async function reconcileExternalTaskSessionPullRequest(options: {
       throw new Error("Another worker owns the project mutation queue");
     const claimed = queue.claimForRecovery(mutation.eventId);
     if (claimed === null)
-      throw new Error(
-        "Original implementation mutation is still owned by a live worker",
-      );
+      throw new Error("Original implementation mutation is still owned by a live worker");
     try {
       queue.complete(mutation.eventId);
     } catch (error) {
-      if (queue.ownsActive(mutation.eventId))
-        queue.releaseForRecovery(mutation.eventId);
+      if (queue.ownsActive(mutation.eventId)) queue.releaseForRecovery(mutation.eventId);
       throw error;
     }
     return;
   }
 
-  const [repositoryOwner, repositoryName] =
-    project.repository.github.split("/");
+  const [repositoryOwner, repositoryName] = project.repository.github.split("/");
   const pullRequest = await ProjectRunAuthority.dispatch(project.id, () =>
     options.github.getPullRequestStateByNumber({
       cwd: project.repository.path,
@@ -181,9 +157,7 @@ export async function reconcileExternalTaskSessionPullRequest(options: {
     }),
   );
   if (pullRequest === null) {
-    throw new Error(
-      "External pull request could not be found in the configured repository",
-    );
+    throw new Error("External pull request could not be found in the configured repository");
   }
   const url = new URL(pullRequest.url);
   if (
@@ -192,30 +166,23 @@ export async function reconcileExternalTaskSessionPullRequest(options: {
     pullRequest.headRefName !== association.recoveryBranch ||
     pullRequest.baseRefName !== project.repository.defaultBranch ||
     url.hostname !== "github.com" ||
-    url.pathname !==
-      `/${repositoryOwner}/${repositoryName}/pull/${association.pullRequestNumber}`
+    url.pathname !== `/${repositoryOwner}/${repositoryName}/pull/${association.pullRequestNumber}`
   ) {
-    throw new Error(
-      "External pull request identity or merge target is mismatched",
-    );
+    throw new Error("External pull request identity or merge target is mismatched");
   }
 
-  const pullRequestCommitShas = await ProjectRunAuthority.dispatch(
-    project.id,
-    () =>
-      options.github.getPullRequestCommitShas({
-        cwd: project.repository.path,
-        repository: project.repository.github,
-        pullRequestNumber: association.pullRequestNumber,
-        project,
-      }),
+  const pullRequestCommitShas = await ProjectRunAuthority.dispatch(project.id, () =>
+    options.github.getPullRequestCommitShas({
+      cwd: project.repository.path,
+      repository: project.repository.github,
+      pullRequestNumber: association.pullRequestNumber,
+      project,
+    }),
   );
   const pullRequestHeadSha = pullRequest.headRefOid;
   if (
     pullRequestHeadSha === undefined ||
-    !pullRequestCommitShas.some(
-      (sha) => sha.toLowerCase() === pullRequestHeadSha.toLowerCase(),
-    )
+    !pullRequestCommitShas.some((sha) => sha.toLowerCase() === pullRequestHeadSha.toLowerCase())
   ) {
     throw new Error("Merged pull request has incomplete commit evidence");
   }
@@ -230,9 +197,7 @@ export async function reconcileExternalTaskSessionPullRequest(options: {
         event.operationKey === record.operationKey,
     );
   if (matchingEvents.length !== 1) {
-    throw new Error(
-      "External recovery requires exactly one matching mutation event",
-    );
+    throw new Error("External recovery requires exactly one matching mutation event");
   }
   const mutation = matchingEvents[0]!;
   const active = queue.getActive();
@@ -250,9 +215,7 @@ export async function reconcileExternalTaskSessionPullRequest(options: {
       }),
     ))
   ) {
-    throw new Error(
-      "External pull request changes do not match the implementation",
-    );
+    throw new Error("External pull request changes do not match the implementation");
   }
 
   const observations = await ProjectRunAuthority.dispatch(project.id, () =>
@@ -273,8 +236,7 @@ export async function reconcileExternalTaskSessionPullRequest(options: {
     checks: observations.checks,
   });
   if (ciEvaluation.status !== "passed") {
-    const diagnostic =
-      "diagnostic" in ciEvaluation ? `: ${ciEvaluation.diagnostic}` : "";
+    const diagnostic = "diagnostic" in ciEvaluation ? `: ${ciEvaluation.diagnostic}` : "";
     throw new Error(
       `Merged pull request publication checks are not verified: ${ciEvaluation.status}${diagnostic}`,
     );
@@ -296,26 +258,21 @@ export async function reconcileExternalTaskSessionPullRequest(options: {
       existingIntent.pullRequestNumber !== intent.pullRequestNumber ||
       existingIntent.pullRequestUrl !== intent.pullRequestUrl)
   ) {
-    throw new Error(
-      "Conflicting external recovery intent is already persisted",
-    );
+    throw new Error("Conflicting external recovery intent is already persisted");
   }
 
   let claimedMutation = false;
   if (mutation.status !== "completed") {
     const claimed = queue.claimForRecovery(mutation.eventId);
     if (claimed === null) {
-      throw new Error(
-        "Original implementation mutation is still owned by a live worker",
-      );
+      throw new Error("Original implementation mutation is still owned by a live worker");
     }
     claimedMutation = true;
   }
 
   try {
     let latest = taskStore.read(association.cardId);
-    if (latest === null)
-      throw new Error("Task record disappeared during recovery");
+    if (latest === null) throw new Error("Task record disappeared during recovery");
 
     if (latest.phase !== "done") {
       if (latest.externalRecovery?.status !== "move-pending") {
@@ -349,14 +306,11 @@ export async function reconcileExternalTaskSessionPullRequest(options: {
           options.readTrelloListId,
         );
         if (confirmedListId !== options.doneListId)
-          throw new Error(
-            "Trello did not confirm the external recovery Done move",
-          );
+          throw new Error("Trello did not confirm the external recovery Done move");
       }
 
       latest = taskStore.read(association.cardId);
-      if (latest === null)
-        throw new Error("Task record disappeared during recovery");
+      if (latest === null) throw new Error("Task record disappeared during recovery");
       const occurredAt = new Date(
         Math.max(Date.now(), Date.parse(latest.updatedAt) + 1),
       ).toISOString();
@@ -378,12 +332,9 @@ export async function reconcileExternalTaskSessionPullRequest(options: {
         projectId: project.id,
         cardId: association.cardId,
         operationKey: latest.operationKey,
-        occurredAt: new Date(
-          Math.max(Date.now(), Date.parse(latest.updatedAt) + 1),
-        ).toISOString(),
+        occurredAt: new Date(Math.max(Date.now(), Date.parse(latest.updatedAt) + 1)).toISOString(),
       });
-      if (!authority)
-        taskStore.compareAndSwap(latest.cardId, latest.revision, transitioned);
+      if (!authority) taskStore.compareAndSwap(latest.cardId, latest.revision, transitioned);
       if (claimedMutation) {
         queue.complete(mutation.eventId);
         claimedMutation = false;

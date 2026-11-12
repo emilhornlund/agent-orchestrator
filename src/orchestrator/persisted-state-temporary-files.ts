@@ -32,12 +32,7 @@ function reportFailure(action: string, filePath: string, error: unknown): void {
 }
 
 function isMissingPathError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    error.code === "ENOENT"
-  );
+  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
 
 function getErrorCode(error: unknown): string | undefined {
@@ -52,9 +47,7 @@ function readManagedDirectory(directoryPath: string): fs.Dirent[] | undefined {
   const parsedPath = path.parse(directoryPath);
   let currentPath = parsedPath.root;
 
-  for (const component of path
-    .relative(parsedPath.root, directoryPath)
-    .split(path.sep)) {
+  for (const component of path.relative(parsedPath.root, directoryPath).split(path.sep)) {
     if (component.length === 0) {
       continue;
     }
@@ -93,10 +86,7 @@ function readManagedDirectory(directoryPath: string): fs.Dirent[] | undefined {
   }
 }
 
-function getWriterProcessStatus(
-  processId: number,
-  filePath: string,
-): WriterProcessStatus {
+function getWriterProcessStatus(processId: number, filePath: string): WriterProcessStatus {
   if (processId === process.pid) {
     return "active";
   }
@@ -154,10 +144,7 @@ function removeStaleCandidate(filePath: string, processId: number): void {
   }
 }
 
-function cleanupDirectory(
-  directoryPath: string,
-  filenamePattern: RegExp,
-): void {
+function cleanupDirectory(directoryPath: string, filenamePattern: RegExp): void {
   const entries = readManagedDirectory(directoryPath);
 
   if (entries === undefined) {
@@ -181,9 +168,7 @@ function cleanupDirectory(
       reportFailure(
         "inspect",
         path.join(directoryPath, entry.name),
-        new Error(
-          `writer process ID is outside the safe integer range: ${match[1]}`,
-        ),
+        new Error(`writer process ID is outside the safe integer range: ${match[1]}`),
       );
       continue;
     }
@@ -210,8 +195,7 @@ function cleanupProjectPersistedStateTemporaryFiles(
       pattern: cardStateTemporaryFilePattern,
     },
     {
-      getPath: () =>
-        getReconciliationBlockStateDirectory(contextRoot, project.id),
+      getPath: () => getReconciliationBlockStateDirectory(contextRoot, project.id),
       pattern: reconciliationBlockTemporaryFilePattern,
     },
   ];

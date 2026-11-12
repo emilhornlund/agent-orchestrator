@@ -3,10 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import {
-  configureProcessRuntime,
-  getProcessRuntime,
-} from "../src/process/process-runtime.js";
+import { configureProcessRuntime, getProcessRuntime } from "../src/process/process-runtime.js";
 import { GitClient } from "../src/git/git-client.js";
 
 import { WorkflowError } from "../src/orchestrator/workflow-error.js";
@@ -15,10 +12,7 @@ import {
   CommandRunner,
   type RunCommand,
 } from "../src/process/command-runner.js";
-import {
-  captureSetupEffects,
-  runRepositorySetup,
-} from "../src/process/run-setup.js";
+import { captureSetupEffects, runRepositorySetup } from "../src/process/run-setup.js";
 import {
   getSetupTrackedDelta,
   resolveSetupCommitScope,
@@ -30,9 +24,7 @@ interface LinuxProcessIdentity {
   startTime: string;
 }
 
-function readLinuxProcessIdentity(
-  pid: number,
-): LinuxProcessIdentity | undefined {
+function readLinuxProcessIdentity(pid: number): LinuxProcessIdentity | undefined {
   let stat: string;
   try {
     stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
@@ -52,13 +44,10 @@ function readLinuxProcessIdentity(
 
 describe("runRepositorySetup", () => {
   it("finishes the bounded setup inventory after runtime cancellation but stops baseline reads", async () => {
-    const root = fs.mkdtempSync(
-      path.join(os.tmpdir(), "setup-aborted-inventory-"),
-    );
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "setup-aborted-inventory-"));
     const worktree = path.join(root, "repo");
     fs.mkdirSync(worktree);
-    const git = (args: string[]) =>
-      execFileSync("git", args, { cwd: worktree, stdio: "ignore" });
+    const git = (args: string[]) => execFileSync("git", args, { cwd: worktree, stdio: "ignore" });
     const controller = new AbortController();
     try {
       git(["init", "-q"]);
@@ -72,13 +61,11 @@ describe("runRepositorySetup", () => {
       configureProcessRuntime({ runtimeRoot: root, signal: controller.signal });
       const client = new GitClient();
 
-      await expect(
-        captureSetupEffects(client, worktree, controller.signal),
-      ).rejects.toThrow(/abort/i);
+      await expect(captureSetupEffects(client, worktree, controller.signal)).rejects.toThrow(
+        /abort/i,
+      );
       const effects = JSON.parse(
-        (
-          await captureSetupEffects(client, worktree, controller.signal, true)
-        ).toString("utf8"),
+        (await captureSetupEffects(client, worktree, controller.signal, true)).toString("utf8"),
       ) as { status: string; committable: string[] };
       expect(effects.status).toContain("tracked.txt");
       expect(effects.committable).toContain("tracked.txt");
@@ -138,9 +125,7 @@ describe("runRepositorySetup", () => {
         },
       ],
     };
-    expect(
-      resolveSetupCommitScope(before, after, after, verdict),
-    ).toMatchObject({
+    expect(resolveSetupCommitScope(before, after, after, verdict)).toMatchObject({
       include: ["package.json"],
       exclude: [{ path: "yarn.lock" }],
     });
@@ -151,9 +136,7 @@ describe("runRepositorySetup", () => {
         changes: [],
       }),
     ).toThrow(/cover/u);
-    expect(() => resolveSetupCommitScope(before, after, after, null)).toThrow(
-      /malformed/u,
-    );
+    expect(() => resolveSetupCommitScope(before, after, after, null)).toThrow(/malformed/u);
     expect(() =>
       resolveSetupCommitScope(
         before,
@@ -179,9 +162,9 @@ describe("runRepositorySetup", () => {
       ...before,
       files: [{ ...before.files[0]!, sha256: "different-before" }],
     };
-    expect(() =>
-      resolveSetupCommitScope(differentBefore, after, after, verdict),
-    ).toThrow(/context-stale/u);
+    expect(() => resolveSetupCommitScope(differentBefore, after, after, verdict)).toThrow(
+      /context-stale/u,
+    );
   });
 
   it("judges mode-only tracked changes while excluding ignored dependencies from setup scope", () => {
@@ -235,8 +218,7 @@ describe("runRepositorySetup", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "setup-scope-git-"));
     const worktree = path.join(root, "repo");
     fs.mkdirSync(worktree);
-    const git = (args: string[]) =>
-      execFileSync("git", args, { cwd: worktree, stdio: "ignore" });
+    const git = (args: string[]) => execFileSync("git", args, { cwd: worktree, stdio: "ignore" });
     try {
       git(["init", "-q"]);
       git(["config", "user.email", "test@example.invalid"]);
@@ -252,24 +234,16 @@ describe("runRepositorySetup", () => {
       fs.mkdirSync(path.join(worktree, "node_modules", "dependency"), {
         recursive: true,
       });
-      fs.writeFileSync(
-        path.join(worktree, "node_modules", "dependency", "generated"),
-        "ignored",
-      );
+      fs.writeFileSync(path.join(worktree, "node_modules", "dependency", "generated"), "ignored");
       await new GitClient().stageAllExcept(worktree, ["unrelated.txt"]);
-      const output = (args: string[]) =>
-        execFileSync("git", args, { cwd: worktree });
+      const output = (args: string[]) => execFileSync("git", args, { cwd: worktree });
       const staged = output(["diff", "--cached", "--name-only"]).toString();
       expect(staged).toBe("task.txt\n");
-      expect(
-        fs.readFileSync(path.join(worktree, "unrelated.txt"), "utf8"),
-      ).toBe("setup change");
-      expect(output(["status", "--porcelain"]).toString()).toContain(
-        " M unrelated.txt",
+      expect(fs.readFileSync(path.join(worktree, "unrelated.txt"), "utf8")).toBe("setup change");
+      expect(output(["status", "--porcelain"]).toString()).toContain(" M unrelated.txt");
+      expect(output(["status", "--porcelain", "--ignored"]).toString()).toContain(
+        "!! node_modules/",
       );
-      expect(
-        output(["status", "--porcelain", "--ignored"]).toString(),
-      ).toContain("!! node_modules/");
       output([
         "-c",
         "user.name=Test",
@@ -280,20 +254,11 @@ describe("runRepositorySetup", () => {
         "task",
       ]);
       expect(output(["show", "HEAD:unrelated.txt"]).toString()).toBe("base");
-      expect(output(["ls-tree", "HEAD", "unrelated.txt"]).toString()).toContain(
-        "100644",
-      );
+      expect(output(["ls-tree", "HEAD", "unrelated.txt"]).toString()).toContain("100644");
+      expect(fs.readFileSync(path.join(worktree, "unrelated.txt"), "utf8")).toBe("setup change");
+      expect((fs.statSync(path.join(worktree, "unrelated.txt")).mode & 0o111) !== 0).toBe(true);
       expect(
-        fs.readFileSync(path.join(worktree, "unrelated.txt"), "utf8"),
-      ).toBe("setup change");
-      expect(
-        (fs.statSync(path.join(worktree, "unrelated.txt")).mode & 0o111) !== 0,
-      ).toBe(true);
-      expect(
-        fs.readFileSync(
-          path.join(worktree, "node_modules", "dependency", "generated"),
-          "utf8",
-        ),
+        fs.readFileSync(path.join(worktree, "node_modules", "dependency", "generated"), "utf8"),
       ).toBe("ignored");
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
@@ -345,9 +310,7 @@ describe("runRepositorySetup", () => {
   });
 
   it("does not convert an orchestrator shutdown into a setup failure", async () => {
-    const runCommand = vi
-      .fn<RunCommand>()
-      .mockRejectedValue(new CommandRunAbortedError());
+    const runCommand = vi.fn<RunCommand>().mockRejectedValue(new CommandRunAbortedError());
 
     await expect(
       runRepositorySetup(new CommandRunner(runCommand), {
@@ -364,8 +327,7 @@ describe("runRepositorySetup", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "setup-effects-"));
     const worktree = path.join(root, "worktree");
     fs.mkdirSync(worktree);
-    const git = (args: string[]) =>
-      execFileSync("git", args, { cwd: worktree, stdio: "ignore" });
+    const git = (args: string[]) => execFileSync("git", args, { cwd: worktree, stdio: "ignore" });
     try {
       git(["init", "-q"]);
       git(["config", "user.email", "test@example.invalid"]);
@@ -412,9 +374,7 @@ describe("runRepositorySetup", () => {
         exitCode: 0,
         executionId: expect.any(String),
       });
-      expect(fs.readFileSync(path.join(root, "success.txt"), "utf8")).toBe(
-        "successful",
-      );
+      expect(fs.readFileSync(path.join(root, "success.txt"), "utf8")).toBe("successful");
       await expect(
         runRepositorySetup(runner, {
           cwd: root,
@@ -424,9 +384,7 @@ describe("runRepositorySetup", () => {
           sessionLabel: "setup test",
         }),
       ).resolves.toMatchObject({ exitCode: 7 });
-      expect(fs.readFileSync(path.join(root, "failure.txt"), "utf8")).toBe(
-        "before-failure",
-      );
+      expect(fs.readFileSync(path.join(root, "failure.txt"), "utf8")).toBe("before-failure");
       let timedOutExecutionId: string | undefined;
       await expect(
         runRepositorySetup(runner, {
@@ -440,9 +398,7 @@ describe("runRepositorySetup", () => {
           },
         }),
       ).rejects.toThrow(/timeout/i);
-      expect(fs.readFileSync(path.join(root, "timeout.txt"), "utf8")).toBe(
-        "before-timeout",
-      );
+      expect(fs.readFileSync(path.join(root, "timeout.txt"), "utf8")).toBe("before-timeout");
       expect(
         JSON.parse(
           fs.readFileSync(
@@ -477,9 +433,7 @@ describe("runRepositorySetup", () => {
         },
       });
       expect(result.executionId).toBe(executionId);
-      expect(fs.readFileSync(path.join(root, "result"), "utf8")).toBe(
-        "finished",
-      );
+      expect(fs.readFileSync(path.join(root, "result"), "utf8")).toBe("finished");
       const metadata = JSON.parse(
         fs.readFileSync(
           path.join(
@@ -502,37 +456,31 @@ describe("runRepositorySetup", () => {
   });
 
   it("supervises and drains a spawned descendant when PID metadata persistence fails", async () => {
-    const root = fs.mkdtempSync(
-      path.join(os.tmpdir(), "setup-pid-write-failure-"),
-    );
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "setup-pid-write-failure-"));
     const artifacts = path.join(root, "artifacts");
     fs.mkdirSync(artifacts);
     const pidFile = path.join(root, "descendant.pid");
     const originalWriteFileSync = fs.writeFileSync;
     let failedDispatchWrite = false;
     let descendantIdentity: LinuxProcessIdentity | undefined;
-    const writeSpy = vi
-      .spyOn(fs, "writeFileSync")
-      .mockImplementation((file, data, options) => {
-        if (
-          !failedDispatchWrite &&
-          String(file).endsWith("execution.json") &&
-          typeof data === "string" &&
-          data.includes('"dispatchState": "dispatched"')
-        ) {
-          const deadline = Date.now() + 2_000;
-          while (!fs.existsSync(pidFile) && Date.now() < deadline)
-            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
-          if (fs.existsSync(pidFile)) {
-            descendantIdentity = readLinuxProcessIdentity(
-              Number(fs.readFileSync(pidFile, "utf8")),
-            );
-          }
-          failedDispatchWrite = true;
-          throw new Error("injected dispatch metadata failure");
+    const writeSpy = vi.spyOn(fs, "writeFileSync").mockImplementation((file, data, options) => {
+      if (
+        !failedDispatchWrite &&
+        String(file).endsWith("execution.json") &&
+        typeof data === "string" &&
+        data.includes('"dispatchState": "dispatched"')
+      ) {
+        const deadline = Date.now() + 2_000;
+        while (!fs.existsSync(pidFile) && Date.now() < deadline)
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+        if (fs.existsSync(pidFile)) {
+          descendantIdentity = readLinuxProcessIdentity(Number(fs.readFileSync(pidFile, "utf8")));
         }
-        return originalWriteFileSync(file, data, options);
-      });
+        failedDispatchWrite = true;
+        throw new Error("injected dispatch metadata failure");
+      }
+      return originalWriteFileSync(file, data, options);
+    });
     let executionId: string | undefined;
     try {
       await expect(
@@ -570,10 +518,7 @@ describe("runRepositorySetup", () => {
           originalProcessState.state === "X",
       ).toBe(true);
       const metadata = JSON.parse(
-        fs.readFileSync(
-          path.join(artifacts, executionId!, "execution.json"),
-          "utf8",
-        ),
+        fs.readFileSync(path.join(artifacts, executionId!, "execution.json"), "utf8"),
       ) as { treeStopped: boolean; status: string };
       expect(metadata).toMatchObject({
         treeStopped: false,

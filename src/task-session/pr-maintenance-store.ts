@@ -33,11 +33,9 @@ export function parsePrMaintenanceStore(
   const operations = parsed.operations.map(parsePrMaintenanceOperation);
   if (
     operations.some((operation) => operation.projectId !== expectedProjectId) ||
-    new Set(operations.map((operation) => operation.operationId)).size !==
-      operations.length ||
-    operations.filter(
-      (operation) => !["completed", "cancelled"].includes(operation.status),
-    ).length > 1
+    new Set(operations.map((operation) => operation.operationId)).size !== operations.length ||
+    operations.filter((operation) => !["completed", "cancelled"].includes(operation.status))
+      .length > 1
   )
     throw new Error("Invalid PR maintenance operation ownership or history");
   return { ...parsed, operations };
@@ -62,9 +60,7 @@ function within(parent: string, child: string): boolean {
   const relative = path.relative(parent, child);
   return (
     relative === "" ||
-    (relative !== ".." &&
-      !relative.startsWith(`..${path.sep}`) &&
-      !path.isAbsolute(relative))
+    (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
   );
 }
 
@@ -78,9 +74,7 @@ function assertComponent(value: string, label: string): void {
     value.includes("\\") ||
     Array.from(value).some((character) => {
       const code = character.codePointAt(0);
-      return (
-        code !== undefined && (code <= 0x1f || (code >= 0x7f && code <= 0x9f))
-      );
+      return code !== undefined && (code <= 0x1f || (code >= 0x7f && code <= 0x9f));
     })
   ) {
     throw new Error(`Invalid ${label} for PR maintenance storage: ${value}`);
@@ -105,10 +99,7 @@ function isProcessAlive(pid: number): boolean {
 function ensureDirectory(directory: string): void {
   const parsed = path.parse(directory);
   let current = parsed.root;
-  for (const component of path
-    .relative(parsed.root, directory)
-    .split(path.sep)
-    .filter(Boolean)) {
+  for (const component of path.relative(parsed.root, directory).split(path.sep).filter(Boolean)) {
     current = path.join(current, component);
     let stats = fs.lstatSync(current, { throwIfNoEntry: false });
     if (stats === undefined) {
@@ -136,11 +127,7 @@ export class PrMaintenanceStore {
   private readonly ownerToken = randomUUID();
   private readonly authority: ProjectRunAuthority | undefined;
 
-  constructor(
-    rootDirectory: string,
-    project: ProjectConfig,
-    authority?: ProjectRunAuthority,
-  ) {
+  constructor(rootDirectory: string, project: ProjectConfig, authority?: ProjectRunAuthority) {
     if (!path.isAbsolute(rootDirectory))
       throw new Error("PR maintenance storage root must be absolute");
     const root = path.resolve(rootDirectory);
@@ -164,42 +151,29 @@ export class PrMaintenanceStore {
 
   inspect(): PrMaintenanceOperation[];
   inspect(operationId: string): PrMaintenanceOperation | null;
-  inspect(
-    operationId?: string,
-  ): PrMaintenanceOperation[] | PrMaintenanceOperation | null {
+  inspect(operationId?: string): PrMaintenanceOperation[] | PrMaintenanceOperation | null {
     const operations = this.read().operations;
     if (operationId === undefined) return operations;
-    return (
-      operations.find((operation) => operation.operationId === operationId) ??
-      null
-    );
+    return operations.find((operation) => operation.operationId === operationId) ?? null;
   }
 
   requireOwnedActive(
     operationId: string,
     identity: Pick<
       PrMaintenanceOperation,
-      | "projectId"
-      | "cardId"
-      | "pullRequest"
-      | "expectedRemoteHead"
-      | "targetBaseHead"
+      "projectId" | "cardId" | "pullRequest" | "expectedRemoteHead" | "targetBaseHead"
     >,
   ): PrMaintenanceOperation {
     const operation = this.inspect(operationId);
     if (operation === null)
-      throw new PrMaintenanceConflictError(
-        `Unknown maintenance operation: ${operationId}`,
-      );
+      throw new PrMaintenanceConflictError(`Unknown maintenance operation: ${operationId}`);
     this.assertIdentity(operation, identity);
     if (
       operation.status !== "active" ||
       operation.ownerToken !== this.ownerToken ||
       !liveOwners.has(this.ownerToken)
     ) {
-      throw new PrMaintenanceConflictError(
-        "Verified exclusive maintenance ownership is required",
-      );
+      throw new PrMaintenanceConflictError("Verified exclusive maintenance ownership is required");
     }
     return operation;
   }
@@ -208,37 +182,23 @@ export class PrMaintenanceStore {
     operationId: string,
     identity: Pick<
       PrMaintenanceOperation,
-      | "projectId"
-      | "cardId"
-      | "pullRequest"
-      | "expectedRemoteHead"
-      | "targetBaseHead"
+      "projectId" | "cardId" | "pullRequest" | "expectedRemoteHead" | "targetBaseHead"
     >,
   ): PrMaintenanceOperation {
     return this.update((record) => {
-      const index = record.operations.findIndex(
-        (item) => item.operationId === operationId,
-      );
+      const index = record.operations.findIndex((item) => item.operationId === operationId);
       const current = record.operations[index];
       if (current === undefined)
-        throw new PrMaintenanceConflictError(
-          `Unknown maintenance operation: ${operationId}`,
-        );
+        throw new PrMaintenanceConflictError(`Unknown maintenance operation: ${operationId}`);
       this.assertIdentity(current, identity);
       if (current.status === "active") {
-        if (
-          current.ownerToken === this.ownerToken &&
-          liveOwners.has(this.ownerToken)
-        )
+        if (current.ownerToken === this.ownerToken && liveOwners.has(this.ownerToken))
           return record;
         if (
           current.ownerToken !== undefined &&
-          (liveOwners.has(current.ownerToken) ||
-            isProcessAlive(current.ownerPid!))
+          (liveOwners.has(current.ownerToken) || isProcessAlive(current.ownerPid!))
         ) {
-          throw new PrMaintenanceConflictError(
-            "Maintenance operation still has a live owner",
-          );
+          throw new PrMaintenanceConflictError("Maintenance operation still has a live owner");
         }
       } else if (current.status !== "uncertain") {
         throw new PrMaintenanceConflictError(
@@ -263,24 +223,16 @@ export class PrMaintenanceStore {
     operationId: string,
     identity: Pick<
       PrMaintenanceOperation,
-      | "projectId"
-      | "cardId"
-      | "pullRequest"
-      | "expectedRemoteHead"
-      | "targetBaseHead"
+      "projectId" | "cardId" | "pullRequest" | "expectedRemoteHead" | "targetBaseHead"
     >,
     progress: LocalPreparationProgress,
   ): PrMaintenanceOperation {
     const validated = localPreparationSchema.parse(progress);
     return this.update((record) => {
-      const index = record.operations.findIndex(
-        (item) => item.operationId === operationId,
-      );
+      const index = record.operations.findIndex((item) => item.operationId === operationId);
       const current = record.operations[index];
       if (current === undefined)
-        throw new PrMaintenanceConflictError(
-          `Unknown maintenance operation: ${operationId}`,
-        );
+        throw new PrMaintenanceConflictError(`Unknown maintenance operation: ${operationId}`);
       this.assertIdentity(current, identity);
       if (
         current.status !== "active" ||
@@ -304,10 +256,7 @@ export class PrMaintenanceStore {
         conflicted: ["conflicted", "prepared"],
         prepared: ["prepared"],
       };
-      if (
-        previous !== undefined &&
-        !allowedNext[previous.status].includes(validated.status)
-      ) {
+      if (previous !== undefined && !allowedNext[previous.status].includes(validated.status)) {
         throw new PrMaintenanceConflictError(
           `Invalid preparation progress transition: ${previous.status} -> ${validated.status}`,
         );
@@ -327,23 +276,15 @@ export class PrMaintenanceStore {
     operationId: string,
     identity: Pick<
       PrMaintenanceOperation,
-      | "projectId"
-      | "cardId"
-      | "pullRequest"
-      | "expectedRemoteHead"
-      | "targetBaseHead"
+      "projectId" | "cardId" | "pullRequest" | "expectedRemoteHead" | "targetBaseHead"
     >,
     evidence: MaintenanceQualityEvidence,
   ): PrMaintenanceOperation {
     return this.update((record) => {
-      const index = record.operations.findIndex(
-        (item) => item.operationId === operationId,
-      );
+      const index = record.operations.findIndex((item) => item.operationId === operationId);
       const current = record.operations[index];
       if (current === undefined)
-        throw new PrMaintenanceConflictError(
-          `Unknown maintenance operation: ${operationId}`,
-        );
+        throw new PrMaintenanceConflictError(`Unknown maintenance operation: ${operationId}`);
       this.assertIdentity(current, identity);
       if (
         current.status !== "active" ||
@@ -377,23 +318,15 @@ export class PrMaintenanceStore {
     operationId: string,
     identity: Pick<
       PrMaintenanceOperation,
-      | "projectId"
-      | "cardId"
-      | "pullRequest"
-      | "expectedRemoteHead"
-      | "targetBaseHead"
+      "projectId" | "cardId" | "pullRequest" | "expectedRemoteHead" | "targetBaseHead"
     >,
     baseline?: NonNullable<LocalPreparationProgress["conflictBaseline"]>,
   ): PrMaintenanceOperation {
     return this.update((record) => {
-      const index = record.operations.findIndex(
-        (item) => item.operationId === operationId,
-      );
+      const index = record.operations.findIndex((item) => item.operationId === operationId);
       const current = record.operations[index];
       if (current === undefined)
-        throw new PrMaintenanceConflictError(
-          `Unknown maintenance operation: ${operationId}`,
-        );
+        throw new PrMaintenanceConflictError(`Unknown maintenance operation: ${operationId}`);
       this.assertIdentity(current, identity);
       if (
         current.status !== "active" ||
@@ -405,8 +338,7 @@ export class PrMaintenanceStore {
         );
       const updated = parsePrMaintenanceOperation({
         ...current,
-        conflictRemediationAttempts:
-          (current.conflictRemediationAttempts ?? 0) + 1,
+        conflictRemediationAttempts: (current.conflictRemediationAttempts ?? 0) + 1,
         ...(baseline === undefined
           ? {}
           : {
@@ -428,31 +360,22 @@ export class PrMaintenanceStore {
     operationId: string,
     identity: Pick<
       PrMaintenanceOperation,
-      | "projectId"
-      | "cardId"
-      | "pullRequest"
-      | "expectedRemoteHead"
-      | "targetBaseHead"
+      "projectId" | "cardId" | "pullRequest" | "expectedRemoteHead" | "targetBaseHead"
     >,
     status: "push-intended" | "verified",
     resultingHead: string,
   ): PrMaintenanceOperation {
     return this.update((record) => {
-      const index = record.operations.findIndex(
-        (item) => item.operationId === operationId,
-      );
+      const index = record.operations.findIndex((item) => item.operationId === operationId);
       const current = record.operations[index];
       if (current === undefined)
-        throw new PrMaintenanceConflictError(
-          `Unknown maintenance operation: ${operationId}`,
-        );
+        throw new PrMaintenanceConflictError(`Unknown maintenance operation: ${operationId}`);
       this.assertIdentity(current, identity);
       if (
         current.status !== "active" ||
         current.ownerToken !== this.ownerToken ||
         !liveOwners.has(this.ownerToken) ||
-        (current.strategy !== "merge" &&
-          current.qualityVerification?.status !== "passed") ||
+        (current.strategy !== "merge" && current.qualityVerification?.status !== "passed") ||
         current.qualityVerification === undefined ||
         current.qualityVerification.status === "running" ||
         current.qualityVerification.preparedHead !== resultingHead ||
@@ -462,18 +385,14 @@ export class PrMaintenanceStore {
           "Verified exclusive ownership and complete quality evidence are required to publish",
         );
       }
-      if (
-        current.publication?.status === "push-intended" &&
-        status === "push-intended"
-      ) {
+      if (current.publication?.status === "push-intended" && status === "push-intended") {
         throw new PrMaintenanceConflictError(
           "Maintenance push was already intended; an ambiguous push must never be repeated",
         );
       }
       if (
         current.publication?.status === "verified" &&
-        (current.publication.resultingHead !== resultingHead ||
-          status !== "verified")
+        (current.publication.resultingHead !== resultingHead || status !== "verified")
       ) {
         throw new PrMaintenanceConflictError(
           "Verified maintenance publication cannot be changed or regressed",
@@ -502,22 +421,14 @@ export class PrMaintenanceStore {
     operationId: string,
     identity: Pick<
       PrMaintenanceOperation,
-      | "projectId"
-      | "cardId"
-      | "pullRequest"
-      | "expectedRemoteHead"
-      | "targetBaseHead"
+      "projectId" | "cardId" | "pullRequest" | "expectedRemoteHead" | "targetBaseHead"
     >,
   ): PrMaintenanceOperation {
     return this.update((record) => {
-      const index = record.operations.findIndex(
-        (item) => item.operationId === operationId,
-      );
+      const index = record.operations.findIndex((item) => item.operationId === operationId);
       const current = record.operations[index];
       if (current === undefined)
-        throw new PrMaintenanceConflictError(
-          `Unknown maintenance operation: ${operationId}`,
-        );
+        throw new PrMaintenanceConflictError(`Unknown maintenance operation: ${operationId}`);
       this.assertIdentity(current, identity);
       if (current.status === "cancelled") return record;
       if (
@@ -526,8 +437,7 @@ export class PrMaintenanceStore {
         current.localPreparation?.status !== "prepared" ||
         current.localPreparation.resultingHead === undefined ||
         current.qualityVerification?.status !== "failed" ||
-        current.qualityVerification.preparedHead !==
-          current.localPreparation.resultingHead ||
+        current.qualityVerification.preparedHead !== current.localPreparation.resultingHead ||
         current.publication !== undefined
       )
         throw new PrMaintenanceConflictError(
@@ -548,18 +458,12 @@ export class PrMaintenanceStore {
     operationId: string,
     identity: Pick<
       PrMaintenanceOperation,
-      | "projectId"
-      | "cardId"
-      | "pullRequest"
-      | "expectedRemoteHead"
-      | "targetBaseHead"
+      "projectId" | "cardId" | "pullRequest" | "expectedRemoteHead" | "targetBaseHead"
     >,
     targetBaseHead: string,
   ): PrMaintenanceOperation {
     return this.update((record) => {
-      const index = record.operations.findIndex(
-        (item) => item.operationId === operationId,
-      );
+      const index = record.operations.findIndex((item) => item.operationId === operationId);
       const current = record.operations[index];
       if (current === undefined)
         throw new PrMaintenanceConflictError("Unknown maintenance operation");
@@ -588,9 +492,7 @@ export class PrMaintenanceStore {
   /** Persist one failed-queue retry before reclaiming it. */
   claimFailedPreparedRecovery(operationId: string): PrMaintenanceOperation {
     return this.update((record) => {
-      const index = record.operations.findIndex(
-        (item) => item.operationId === operationId,
-      );
+      const index = record.operations.findIndex((item) => item.operationId === operationId);
       const current = record.operations[index];
       if (
         current === undefined ||
@@ -616,10 +518,7 @@ export class PrMaintenanceStore {
   }
 
   create(
-    input: Omit<
-      PrMaintenanceOperation,
-      "version" | "status" | "ownerToken" | "ownerPid"
-    >,
+    input: Omit<PrMaintenanceOperation, "version" | "status" | "ownerToken" | "ownerPid">,
   ): PrMaintenanceOperation {
     const operation = parsePrMaintenanceOperation({
       ...input,
@@ -627,22 +526,14 @@ export class PrMaintenanceStore {
       status: "prepared",
     });
     if (operation.projectId !== this.projectId)
-      throw new PrMaintenanceConflictError(
-        "Maintenance operation belongs to another project",
-      );
+      throw new PrMaintenanceConflictError("Maintenance operation belongs to another project");
     return this.update((record) => {
-      if (
-        record.operations.some(
-          (item) => item.operationId === operation.operationId,
-        )
-      )
+      if (record.operations.some((item) => item.operationId === operation.operationId))
         throw new PrMaintenanceConflictError(
           `Maintenance operation already exists: ${operation.operationId}`,
         );
       if (
-        record.operations.some(
-          (item) => item.status !== "completed" && item.status !== "cancelled",
-        )
+        record.operations.some((item) => item.status !== "completed" && item.status !== "cancelled")
       )
         throw new PrMaintenanceConflictError(
           "An incomplete PR maintenance operation already owns this project",
@@ -657,41 +548,30 @@ export class PrMaintenanceStore {
     nextStatus: PrMaintenanceOperation["status"],
     identity: Pick<
       PrMaintenanceOperation,
-      | "projectId"
-      | "cardId"
-      | "pullRequest"
-      | "expectedRemoteHead"
-      | "targetBaseHead"
+      "projectId" | "cardId" | "pullRequest" | "expectedRemoteHead" | "targetBaseHead"
     >,
   ): PrMaintenanceOperation {
     const updated = this.update((record) => {
-      const index = record.operations.findIndex(
-        (item) => item.operationId === operationId,
-      );
+      const index = record.operations.findIndex((item) => item.operationId === operationId);
       if (index < 0)
-        throw new PrMaintenanceConflictError(
-          `Unknown maintenance operation: ${operationId}`,
-        );
+        throw new PrMaintenanceConflictError(`Unknown maintenance operation: ${operationId}`);
       const current = record.operations[index]!;
       this.assertIdentity(current, identity);
-      if (current.status === "completed" && nextStatus === "completed")
-        return record;
+      if (current.status === "completed" && nextStatus === "completed") return record;
       if (current.status !== expectedStatus)
         throw new PrMaintenanceConflictError(
           `Maintenance status conflict: expected ${expectedStatus}, found ${current.status}`,
         );
       const allowed =
         (current.status === "prepared" && nextStatus === "active") ||
-        (current.status === "active" &&
-          (nextStatus === "uncertain" || nextStatus === "completed"));
+        (current.status === "active" && (nextStatus === "uncertain" || nextStatus === "completed"));
       if (!allowed)
         throw new PrMaintenanceConflictError(
           `Invalid maintenance status transition: ${current.status} -> ${nextStatus}`,
         );
       if (
         current.status === "active" &&
-        (current.ownerToken !== this.ownerToken ||
-          !liveOwners.has(this.ownerToken))
+        (current.ownerToken !== this.ownerToken || !liveOwners.has(this.ownerToken))
       )
         throw new PrMaintenanceConflictError(
           "Maintenance operation is owned by another process; reconcile it before advancing",
@@ -717,21 +597,14 @@ export class PrMaintenanceStore {
     operationId: string,
     identity: Pick<
       PrMaintenanceOperation,
-      | "projectId"
-      | "cardId"
-      | "pullRequest"
-      | "expectedRemoteHead"
-      | "targetBaseHead"
+      "projectId" | "cardId" | "pullRequest" | "expectedRemoteHead" | "targetBaseHead"
     >,
   ): PrMaintenanceOperation {
     const found = this.inspect(operationId);
     if (found === null)
-      throw new PrMaintenanceConflictError(
-        `Unknown maintenance operation: ${operationId}`,
-      );
+      throw new PrMaintenanceConflictError(`Unknown maintenance operation: ${operationId}`);
     this.assertIdentity(found, identity);
-    if (found.status === "completed" || found.status === "uncertain")
-      return found;
+    if (found.status === "completed" || found.status === "uncertain") return found;
     if (found.status !== "active")
       throw new PrMaintenanceConflictError(
         "Only an active interrupted operation can be reconciled",
@@ -740,13 +613,9 @@ export class PrMaintenanceStore {
       found.ownerToken !== undefined &&
       (liveOwners.has(found.ownerToken) || isProcessAlive(found.ownerPid!))
     )
-      throw new PrMaintenanceConflictError(
-        "Maintenance operation still has a live owner",
-      );
+      throw new PrMaintenanceConflictError("Maintenance operation still has a live owner");
     return this.update((record) => {
-      const index = record.operations.findIndex(
-        (item) => item.operationId === operationId,
-      );
+      const index = record.operations.findIndex((item) => item.operationId === operationId);
       const current = record.operations[index];
       if (current === undefined)
         throw new PrMaintenanceConflictError(
@@ -757,12 +626,9 @@ export class PrMaintenanceStore {
       if (
         current.status !== "active" ||
         (current.ownerToken !== undefined &&
-          (liveOwners.has(current.ownerToken) ||
-            isProcessAlive(current.ownerPid!)))
+          (liveOwners.has(current.ownerToken) || isProcessAlive(current.ownerPid!)))
       )
-        throw new PrMaintenanceConflictError(
-          "Maintenance ownership changed during reconciliation",
-        );
+        throw new PrMaintenanceConflictError("Maintenance ownership changed during reconciliation");
       const updated = parsePrMaintenanceOperation({
         ...current,
         status: "uncertain",
@@ -780,11 +646,7 @@ export class PrMaintenanceStore {
     operation: PrMaintenanceOperation,
     identity: Pick<
       PrMaintenanceOperation,
-      | "projectId"
-      | "cardId"
-      | "pullRequest"
-      | "expectedRemoteHead"
-      | "targetBaseHead"
+      "projectId" | "cardId" | "pullRequest" | "expectedRemoteHead" | "targetBaseHead"
     >,
   ): void {
     if (
@@ -803,9 +665,8 @@ export class PrMaintenanceStore {
   private read(): StoreRecord {
     if (this.authority !== undefined)
       return (
-        this.authority.read(
-          ProjectRunAuthority.taskKey("maintenance", this.projectId),
-          (value) => parsePrMaintenanceStore(value, this.projectId),
+        this.authority.read(ProjectRunAuthority.taskKey("maintenance", this.projectId), (value) =>
+          parsePrMaintenanceStore(value, this.projectId),
         ) ?? {
           version: 1,
           projectId: this.projectId,
@@ -824,9 +685,7 @@ export class PrMaintenanceStore {
     if (stats.isSymbolicLink() || !stats.isFile())
       throw new Error("Unsafe PR maintenance store file");
     if (stats.size > MAX_STORE_BYTES)
-      throw new Error(
-        `PR maintenance store exceeds the ${MAX_STORE_BYTES}-byte limit`,
-      );
+      throw new Error(`PR maintenance store exceeds the ${MAX_STORE_BYTES}-byte limit`);
     return parsePrMaintenanceStore(
       JSON.parse(fs.readFileSync(this.filePath, "utf8")) as unknown,
       this.projectId,
@@ -856,13 +715,8 @@ export class PrMaintenanceStore {
                   { ...changed, revision: current.revision + 1 },
                   this.projectId,
                 );
-          const operation = updated.operations.find(
-            (item) => item.operationId === operationId,
-          );
-          if (!operation)
-            throw new PrMaintenanceConflictError(
-              "Maintenance operation disappeared",
-            );
+          const operation = updated.operations.find((item) => item.operationId === operationId);
+          if (!operation) throw new PrMaintenanceConflictError("Maintenance operation disappeared");
           return { value: updated, result: operation };
         },
         (value) => parsePrMaintenanceStore(value, this.projectId),
@@ -872,13 +726,9 @@ export class PrMaintenanceStore {
       const current = this.read();
       const changed = change(current);
       if (changed === current) {
-        const unchanged = changed.operations.find(
-          (item) => item.operationId === operationId,
-        );
+        const unchanged = changed.operations.find((item) => item.operationId === operationId);
         if (unchanged === undefined)
-          throw new PrMaintenanceConflictError(
-            "Maintenance operation disappeared",
-          );
+          throw new PrMaintenanceConflictError("Maintenance operation disappeared");
         return unchanged;
       }
       const next = { ...changed, revision: current.revision + 1 };
@@ -898,13 +748,9 @@ export class PrMaintenanceStore {
       } finally {
         if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
       }
-      const updated = next.operations.find(
-        (item) => item.operationId === operationId,
-      );
+      const updated = next.operations.find((item) => item.operationId === operationId);
       if (updated === undefined)
-        throw new PrMaintenanceConflictError(
-          "Maintenance operation disappeared",
-        );
+        throw new PrMaintenanceConflictError("Maintenance operation disappeared");
       return updated;
     });
   }
@@ -915,15 +761,8 @@ export class PrMaintenanceStore {
     try {
       fd = fs.openSync(lockPath, "wx", 0o600);
     } catch (error) {
-      if (
-        typeof error === "object" &&
-        error !== null &&
-        "code" in error &&
-        error.code === "EEXIST"
-      )
-        throw new PrMaintenanceConflictError(
-          "Another writer owns the PR maintenance store",
-        );
+      if (typeof error === "object" && error !== null && "code" in error && error.code === "EEXIST")
+        throw new PrMaintenanceConflictError("Another writer owns the PR maintenance store");
       throw error;
     }
     try {

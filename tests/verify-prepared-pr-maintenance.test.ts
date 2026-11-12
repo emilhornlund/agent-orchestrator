@@ -3,10 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { ProjectConfig } from "../src/config/config.js";
-import {
-  CommandRunAbortedError,
-  CommandRunner,
-} from "../src/process/command-runner.js";
+import { CommandRunAbortedError, CommandRunner } from "../src/process/command-runner.js";
 import { configureProcessRuntime } from "../src/process/process-runtime.js";
 import { getSessionLogPath } from "../src/logging/session-log.js";
 import { PrMaintenanceStore } from "../src/task-session/pr-maintenance-store.js";
@@ -26,9 +23,7 @@ function fixture(
     stale?: boolean;
   } = {},
 ) {
-  const root = fs.mkdtempSync(
-    path.join(os.tmpdir(), "prepared-maintenance-quality-"),
-  );
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "prepared-maintenance-quality-"));
   const repository = path.join(root, "repo");
   const worktree = path.join(root, "worktree");
   const context = path.join(root, "context");
@@ -88,8 +83,7 @@ function fixture(
   };
   let commands: Pick<CommandRunner, "run"> = {
     run: vi.fn(async ({ command }: { command: string }) => {
-      if (options.interrupted && command === "validate")
-        throw new CommandRunAbortedError();
+      if (options.interrupted && command === "validate") throw new CommandRunAbortedError();
       return {
         exitCode:
           command === "validate"
@@ -136,8 +130,7 @@ function fixture(
       requirementIds: ["R1"],
       review: async ({ contentIdentity }) => {
         review.reviewedContentIdentity = contentIdentity;
-        if (options.stale)
-          review.reviewedContentIdentity = `sha256:${"0".repeat(64)}`;
+        if (options.stale) review.reviewedContentIdentity = `sha256:${"0".repeat(64)}`;
         if (options.mutate && !changed) {
           fs.writeFileSync(path.join(worktree, "source.txt"), "changed");
           changed = true;
@@ -181,18 +174,12 @@ describe("verifyPreparedPrMaintenance", () => {
     expect(result.coverage?.exitCode).toBe(0);
     expect(result.coverage?.diagnostic).toHaveLength(2_000);
     expect(result.coverage?.diagnostic).toContain("[truncated]");
-    const executions = fs.readdirSync(
-      path.join(artifactRoot, "process-executions"),
-    );
+    const executions = fs.readdirSync(path.join(artifactRoot, "process-executions"));
     expect(executions).toHaveLength(2);
     for (const id of executions) {
       const directory = path.join(artifactRoot, "process-executions", id);
-      expect(fs.readFileSync(path.join(directory, "stdout.txt"), "utf8")).toBe(
-        "o".repeat(3_000),
-      );
-      expect(fs.readFileSync(path.join(directory, "stderr.txt"), "utf8")).toBe(
-        "e".repeat(3_000),
-      );
+      expect(fs.readFileSync(path.join(directory, "stdout.txt"), "utf8")).toBe("o".repeat(3_000));
+      expect(fs.readFileSync(path.join(directory, "stderr.txt"), "utf8")).toBe("e".repeat(3_000));
     }
     fs.rmSync(f.root, { recursive: true, force: true });
   });
@@ -212,12 +199,8 @@ describe("verifyPreparedPrMaintenance", () => {
         sessionLabel: "PR maintenance coverage",
       }),
     );
-    expect(f.store.inspect("maintenance")?.qualityVerification?.status).toBe(
-      "passed",
-    );
-    expect(
-      f.store.inspect("maintenance")?.qualityVerification?.preparedHead,
-    ).toBe(sha("c"));
+    expect(f.store.inspect("maintenance")?.qualityVerification?.status).toBe("passed");
+    expect(f.store.inspect("maintenance")?.qualityVerification?.preparedHead).toBe(sha("c"));
   });
   it.each([
     ["validation fails", { validationFails: true }],
@@ -232,13 +215,9 @@ describe("verifyPreparedPrMaintenance", () => {
     expect(["failed", "uncertain"]).toContain(
       f.store.inspect("maintenance")?.qualityVerification?.status,
     );
-    expect(
-      f.store.inspect("maintenance")?.qualityVerification?.diagnostic,
-    ).toBeTruthy();
+    expect(f.store.inspect("maintenance")?.qualityVerification?.diagnostic).toBeTruthy();
     if (_label === "interrupted verification")
-      expect(f.store.inspect("maintenance")?.qualityVerification?.status).toBe(
-        "uncertain",
-      );
+      expect(f.store.inspect("maintenance")?.qualityVerification?.status).toBe("uncertain");
     fs.rmSync(f.root, { recursive: true, force: true });
   });
 

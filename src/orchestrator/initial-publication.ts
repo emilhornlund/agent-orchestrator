@@ -1,8 +1,5 @@
 import fs from "node:fs";
-import {
-  taskResources,
-  runTaskResources,
-} from "../task-session/task-resources.js";
+import { taskResources, runTaskResources } from "../task-session/task-resources.js";
 import { withJournaledDispatch } from "../task-session/workflow-mutation.js";
 import os from "node:os";
 import path from "node:path";
@@ -10,10 +7,7 @@ import { z } from "zod";
 import type { ProjectConfig } from "../config/config.js";
 import type { GitClient, GitIdentity } from "../git/git-client.js";
 import { prepareVerbatimCommitMessage } from "../git/git-client.js";
-import type {
-  GitHubClient,
-  PullRequestState,
-} from "../github/github-client.js";
+import type { GitHubClient, PullRequestState } from "../github/github-client.js";
 import type { TrelloClient } from "../trello/trello-client.js";
 import { sanitizeControlledText } from "../security/redact-secrets.js";
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
@@ -21,18 +15,12 @@ import {
   implementationReviewResultSchema,
   reviewConcernsDismissedAsNonMaterialLabel,
 } from "../task-session/implementation-review-result.js";
-import type {
-  MutationEvent,
-  MutationIntent,
-} from "../task-session/durable-mutation.js";
+import type { MutationEvent, MutationIntent } from "../task-session/durable-mutation.js";
 import { mutationProvenNotDelivered } from "../task-session/durable-mutation.js";
 import { ProcessExecutionError } from "../process/process-runtime.js";
 import { TrelloRequestError } from "../trello/trello-client.js";
 import { TaskExecutionStore } from "../task-session/task-execution-store.js";
-import {
-  captureSetupEffects,
-  assertSetupInventoryIdentity,
-} from "../process/run-setup.js";
+import { captureSetupEffects, assertSetupInventoryIdentity } from "../process/run-setup.js";
 import {
   getSetupTrackedDelta,
   resolveSetupCommitScope,
@@ -41,10 +29,7 @@ import {
 } from "../process/setup-commit-scope.js";
 import { TaskMutationQueue } from "../task-session/task-mutation-queue.js";
 import { transitionTaskExecutionRecord } from "../task-session/task-execution-transition.js";
-import {
-  readPendingCommitState,
-  writeTrustedCommitState,
-} from "./trusted-commit-state.js";
+import { readPendingCommitState, writeTrustedCommitState } from "./trusted-commit-state.js";
 import type { PublishCardOptions } from "./publish-card.js";
 import { prepareInitialPublicationBody } from "./publish-card.js";
 import type { OpenCodeClient } from "../opencode/opencode-client.js";
@@ -101,9 +86,7 @@ const checkpointSchema = z.strictObject({
   verifiedFacts: z.array(z.string()),
   sourceIdentity: z.string().regex(/^sha256:[0-9a-f]{64}$/u),
   elapsedWorkflowTime: z.string().nullable().optional(),
-  gitDestinations: z
-    .strictObject({ fetch: nonBlank, push: nonBlank })
-    .optional(),
+  gitDestinations: z.strictObject({ fetch: nonBlank, push: nonBlank }).optional(),
   commitCleanup: z.literal("verbatim").optional(),
   setupDisposition: z
     .strictObject({
@@ -145,12 +128,8 @@ async function validateSetupDisposition(
     task.setup.after === undefined ||
     task.setup.relevance !== disposition.artifactReference
   )
-    throw new PublicationSafetyError(
-      "Setup scope proof is missing or unbound to the task record",
-    );
-  const rawArtifact = store.readPrimaryResultArtifact(
-    disposition.artifactReference,
-  );
+    throw new PublicationSafetyError("Setup scope proof is missing or unbound to the task record");
+  const rawArtifact = store.readPrimaryResultArtifact(disposition.artifactReference);
   if (typeof rawArtifact !== "object" || rawArtifact === null)
     throw new PublicationSafetyError("Setup scope artifact is malformed");
   const artifact = rawArtifact as Record<string, unknown>;
@@ -162,8 +141,7 @@ async function validateSetupDisposition(
     task.setup.history.length === 0 ||
     task.setup.history.length !== task.setup.attempts ||
     task.setup.history[0]?.before !== task.setup.before ||
-    task.setup.history.at(-1)?.before !==
-      (task.setup.attemptBefore ?? task.setup.before) ||
+    task.setup.history.at(-1)?.before !== (task.setup.attemptBefore ?? task.setup.before) ||
     task.setup.history.at(-1)?.after !== task.setup.after ||
     task.setup.history.at(-1)?.outcome !== "passed" ||
     typeof artifact.verdict !== "object" ||
@@ -197,9 +175,7 @@ async function validateSetupDisposition(
     throw new PublicationSafetyError(
       "Setup scope proof context differs from durable relevance evidence",
     );
-  const live = JSON.parse(
-    (await captureSetupEffects(git, cwd)).toString("utf8"),
-  ) as unknown;
+  const live = JSON.parse((await captureSetupEffects(git, cwd)).toString("utf8")) as unknown;
   assertSetupInventoryIdentity(live, cwd, checkpoint.branch);
   const candidatePaths = getSetupTrackedDelta(
     before as SetupInventory,
@@ -209,9 +185,7 @@ async function validateSetupDisposition(
   const recordedByPath = new Map(
     (artifact.current as SetupInventory).files.map((file) => [file.path, file]),
   );
-  const liveByPath = new Map(
-    (live as SetupInventory).files.map((file) => [file.path, file]),
-  );
+  const liveByPath = new Map((live as SetupInventory).files.map((file) => [file.path, file]));
   for (const filePath of candidatePaths) {
     const expected = recordedByPath.get(filePath);
     const actual = liveByPath.get(filePath);
@@ -252,19 +226,14 @@ async function assertSetupExcludedIdentities(
 ): Promise<void> {
   const excluded = checkpoint.setupDisposition?.exclude ?? [];
   if (excluded.length === 0) return;
-  const inventory = JSON.parse(
-    (await captureSetupEffects(git, cwd)).toString("utf8"),
-  ) as unknown;
+  const inventory = JSON.parse((await captureSetupEffects(git, cwd)).toString("utf8")) as unknown;
   assertSetupInventoryIdentity(inventory, cwd, checkpoint.branch);
-  const currentByPath = new Map(
-    inventory.files.map((file) => [file.path, file]),
-  );
+  const currentByPath = new Map(inventory.files.map((file) => [file.path, file]));
   for (const entry of excluded) {
     const current = currentByPath.get(entry.path);
     if (
       (entry.identity === "absent" && current !== undefined) ||
-      (entry.identity !== "absent" &&
-        (!current || setupFileIdentity(current) !== entry.identity))
+      (entry.identity !== "absent" && (!current || setupFileIdentity(current) !== entry.identity))
     )
       throw new PublicationSafetyError(
         `Preserved setup content changed after commit scope review: ${entry.path}`,
@@ -286,8 +255,7 @@ class PublicationNotSentError extends PublicationSafetyError {}
 
 function authorityFor(project: ProjectConfig): ProjectRunAuthority {
   const authority = ProjectRunAuthority.current(project.id);
-  if (!authority)
-    throw new Error("Initial publication requires durable attempt authority");
+  if (!authority) throw new Error("Initial publication requires durable attempt authority");
   const run = authority.store.assertCurrentLease(authority.ownerGeneration);
   if (
     run.pinned.repository !== project.repository.github ||
@@ -318,9 +286,7 @@ function save(authority: ProjectRunAuthority, checkpoint: Checkpoint): void {
 /** Begins only at a verified publication boundary. Never fabricate this for an
  * already uncertain legacy write. Payloads are sanitized BEFORE hashing/saving. */
 export function beginInitialPublication(
-  options:
-    | PublishCardOptions
-    | (Omit<PublishCardOptions, "commitSha"> & { commitMessage: string }),
+  options: PublishCardOptions | (Omit<PublishCardOptions, "commitSha"> & { commitMessage: string }),
   body: string,
   sourceIdentity: string,
 ): void {
@@ -335,10 +301,7 @@ export function beginInitialPublication(
   )
     throw new Error("Initial publication ownership/checkpoint mismatch");
   if (authority.read(key, checkpointSchema.parse)) return;
-  if (
-    project.repository.setupCommand !== undefined &&
-    options.setupDisposition === undefined
-  )
+  if (project.repository.setupCommand !== undefined && options.setupDisposition === undefined)
     throw new Error(
       "Configured setup has no persisted commit-scope disposition; publication blocked",
     );
@@ -355,9 +318,7 @@ export function beginInitialPublication(
           ["github-pr-create", "git-commit", "git-push"].includes(entry.kind)),
     )
   )
-    throw new Error(
-      "Legacy uncertain publication must be preserved for reconciliation",
-    );
+    throw new Error("Legacy uncertain publication must be preserved for reconciliation");
   save(authority, {
     version: 1,
     cardId: card.id,
@@ -378,9 +339,7 @@ export function beginInitialPublication(
     ...(options.qualityNeedsDraft === undefined
       ? {}
       : { qualityNeedsDraft: options.qualityNeedsDraft }),
-    message: prepareVerbatimCommitMessage(
-      sanitizeControlledText(options.commitMessage),
-    ),
+    message: prepareVerbatimCommitMessage(sanitizeControlledText(options.commitMessage)),
     commitCleanup: "verbatim",
     ...(options.setupDisposition === undefined
       ? {}
@@ -395,9 +354,7 @@ export function beginInitialPublication(
     waitingReason: null,
     diagnostic: null,
     descriptionPending: true,
-    verifiedFacts: (options.verifiedDescriptionFacts?.() ?? []).map(
-      sanitizeControlledText,
-    ),
+    verifiedFacts: (options.verifiedDescriptionFacts?.() ?? []).map(sanitizeControlledText),
     sourceIdentity,
   });
 }
@@ -420,11 +377,8 @@ export async function resumeInitialPublication(options: {
   if (!checkpoint || checkpoint.completed) return false;
   authorityFor(options.project);
   if (checkpoint.baseBranch !== options.project.repository.defaultBranch)
-    throw new Error(
-      "Publication base branch differs from the original checkpoint",
-    );
-  if (checkpoint.retryAt && Date.now() < Date.parse(checkpoint.retryAt))
-    return true;
+    throw new Error("Publication base branch differs from the original checkpoint");
+  if (checkpoint.retryAt && Date.now() < Date.parse(checkpoint.retryAt)) return true;
   const { project, git, github, trello } = options;
   const run = authority.store.read()!;
   const finishNoOutput = async (): Promise<void> => {
@@ -434,8 +388,7 @@ export async function resumeInitialPublication(options: {
     if (
       (await git.getHeadSha(cwd)) !== proof.parent ||
       (await git.getCommitTreeSha(cwd)) !== proof.tree ||
-      (await getTaskSessionSourceSnapshotIdentity(git, cwd)) !==
-        checkpoint!.sourceIdentity ||
+      (await getTaskSessionSourceSnapshotIdentity(git, cwd)) !== checkpoint!.sourceIdentity ||
       (await github.findPullRequestState({
         cwd,
         repository: run.pinned.repository,
@@ -455,9 +408,7 @@ export async function resumeInitialPublication(options: {
       task.externalRecovery ||
       !["publication", "attention-required"].includes(task.phase)
     )
-      throw new PublicationSafetyError(
-        "No-output outcome no longer matches an unpublished task",
-      );
+      throw new PublicationSafetyError("No-output outcome no longer matches an unpublished task");
     if (task.phase === "publication") {
       const terminal = transitionTaskExecutionRecord(task, {
         type: "attention-required",
@@ -482,8 +433,7 @@ export async function resumeInitialPublication(options: {
       completed: true,
       retryAt: null,
       waitingReason: null,
-      diagnostic:
-        "No meaningful task output; terminal failure reconciliation pending",
+      diagnostic: "No meaningful task output; terminal failure reconciliation pending",
     });
   };
   if (checkpoint.noOutput) {
@@ -499,8 +449,7 @@ export async function resumeInitialPublication(options: {
     run.operation.id === checkpoint.executionId &&
     ["push", "pr", "move", "comment"].every((name) =>
       run.pendingOperations.some(
-        (entry) =>
-          entry.id === `initial:${name}` && entry.status === "completed",
+        (entry) => entry.id === `initial:${name}` && entry.status === "completed",
       ),
     )
   ) {
@@ -513,25 +462,13 @@ export async function resumeInitialPublication(options: {
       actual.fetch !== checkpoint.gitDestinations.fetch ||
       actual.push !== checkpoint.gitDestinations.push
     )
-      throw new Error(
-        "Publication Git destination changed before local recovery handoff",
-      );
-    const queue = new TaskMutationQueue(
-      run.pinned.storageRoot,
-      options.project,
-    );
+      throw new Error("Publication Git destination changed before local recovery handoff");
+    const queue = new TaskMutationQueue(run.pinned.storageRoot, options.project);
     const active = queue.getActive();
     if (active) {
-      if (
-        active.cardId !== checkpoint.cardId ||
-        active.operationKey !== checkpoint.executionId
-      )
+      if (active.cardId !== checkpoint.cardId || active.operationKey !== checkpoint.executionId)
         throw new Error("Publication queue identity mismatch");
-      if (
-        !queue.ownsActive(active.eventId) &&
-        !queue.claimForRecovery(active.eventId)
-      )
-        return true;
+      if (!queue.ownsActive(active.eventId) && !queue.claimForRecovery(active.eventId)) return true;
       queue.complete(active.eventId);
     }
     save(authority, {
@@ -549,13 +486,8 @@ export async function resumeInitialPublication(options: {
     run.operation.id !== checkpoint.executionId ||
     run.operation.generation !== checkpoint.executionGeneration
   )
-    throw new Error(
-      "Publication checkpoint execution was superseded; preserve for reconciliation",
-    );
-  const publicationQueue = new TaskMutationQueue(
-    run.pinned.storageRoot,
-    options.project,
-  );
+    throw new Error("Publication checkpoint execution was superseded; preserve for reconciliation");
+  const publicationQueue = new TaskMutationQueue(run.pinned.storageRoot, options.project);
   const publicationEvent = publicationQueue.getActive();
   if (
     !publicationEvent ||
@@ -567,21 +499,16 @@ export async function resumeInitialPublication(options: {
   const cwd = runTaskResources(run).path;
   await validateSetupDisposition(checkpoint, run, options.project, git, cwd);
   const now = () => new Date().toISOString();
-  const next = () =>
-    new Date(Date.now() + PUBLICATION_RECHECK_MS).toISOString();
+  const next = () => new Date(Date.now() + PUBLICATION_RECHECK_MS).toISOString();
   const assertExecution = () => {
     assertNoTerminalPr(authority, true);
-    const current = authority.store.assertCurrentLease(
-      authority.ownerGeneration,
-    );
+    const current = authority.store.assertCurrentLease(authority.ownerGeneration);
     if (
       current.lifecycle !== "publication" ||
       current.operation.id !== checkpoint!.executionId ||
       current.operation.generation !== checkpoint!.executionGeneration
     )
-      throw new PublicationSafetyError(
-        "Publication execution changed during reconciliation",
-      );
+      throw new PublicationSafetyError("Publication execution changed during reconciliation");
   };
   const artifact = (value: unknown): string => {
     const artifact = authority.store.writeArtifact(
@@ -632,8 +559,7 @@ export async function resumeInitialPublication(options: {
       now(),
     );
     const operation = entry(id)!;
-    if (!operation.mutation)
-      throw new PublicationSafetyError("Legacy mutation cannot be resent");
+    if (!operation.mutation) throw new PublicationSafetyError("Legacy mutation cannot be resent");
     if (operation.status === "completed") return;
     if (
       operation.mutation.nextRecheckAt &&
@@ -646,10 +572,7 @@ export async function resumeInitialPublication(options: {
       actual = await observe();
     } catch (error) {
       if (error instanceof ObservedPrTerminalError) throw error;
-      if (
-        operation.mutation.dispatches.length &&
-        !mutationProvenNotDelivered(operation.mutation)
-      )
+      if (operation.mutation.dispatches.length && !mutationProvenNotDelivered(operation.mutation))
         event(id, {
           type: "observe",
           outcome: "uncertain",
@@ -674,9 +597,7 @@ export async function resumeInitialPublication(options: {
       assertNoTerminalPr(authority, true);
       event(id, { type: "dispatch", nextRecheckAt: next() });
       try {
-        await authority.dispatch(() =>
-          withJournaledDispatch(authority, id, send),
-        );
+        await authority.dispatch(() => withJournaledDispatch(authority, id, send));
         event(id, {
           type: "response",
           outcome: "accepted",
@@ -688,10 +609,8 @@ export async function resumeInitialPublication(options: {
           error instanceof PublicationNotSentError ||
           (error instanceof ObservedPrTerminalError &&
             error.transport?.operationId === id &&
-            error.transport.generation ===
-              entry(id)?.mutation?.dispatches.at(-1)?.generation) ||
-          (error instanceof ProcessExecutionError &&
-            error.classification === "spawn-failure")
+            error.transport.generation === entry(id)?.mutation?.dispatches.at(-1)?.generation) ||
+          (error instanceof ProcessExecutionError && error.classification === "spawn-failure")
             ? ("transport-proven-not-sent" as const)
             : error instanceof TrelloRequestError &&
                 (kind === "trello-move" || kind === "trello-comment") &&
@@ -709,8 +628,7 @@ export async function resumeInitialPublication(options: {
                 : "unknown; diagnostics in process artifacts",
               ...(error instanceof PublicationNotSentError
                 ? {
-                    reason:
-                      "destination guard rejected before Git push invocation",
+                    reason: "destination guard rejected before Git push invocation",
                   }
                 : {}),
               ...(proof && error instanceof ProcessExecutionError
@@ -733,10 +651,7 @@ export async function resumeInitialPublication(options: {
     event(id, {
       type: "observe",
       outcome: actual ? "verified" : "absent",
-      evidence: evidence(
-        id,
-        actual?.fields ?? { observed: "absent; not non-delivery" },
-      ),
+      evidence: evidence(id, actual?.fields ?? { observed: "absent; not non-delivery" }),
       ...(actual ? { resourceId: actual.id } : { nextRecheckAt: next() }),
       attentionRequired: !actual,
     });
@@ -759,14 +674,9 @@ export async function resumeInitialPublication(options: {
       (await git.getRebaseState(cwd)) !== null ||
       (await git.getConflictedPaths(cwd)).length
     )
-      throw new PublicationSafetyError(
-        "Publication worktree provenance is unsafe",
-      );
+      throw new PublicationSafetyError("Publication worktree provenance is unsafe");
     const verifyDestinations = async () => {
-      const actual = await git.resolvePublicationDestinations(
-        cwd,
-        run.pinned.repository,
-      );
+      const actual = await git.resolvePublicationDestinations(cwd, run.pinned.repository);
       if (checkpoint!.gitDestinations) {
         if (
           actual.fetch !== checkpoint!.gitDestinations.fetch ||
@@ -790,27 +700,15 @@ export async function resumeInitialPublication(options: {
     // not permission to publish or terminal proof. Review is allowed only after
     // the journaled move has been dispatched.
     const inWorking = (await trello.getCards(run.pinned.lists.working)).some(
-      (card) =>
-        card.id === checkpoint!.cardId &&
-        card.idList === run.pinned.lists.working,
+      (card) => card.id === checkpoint!.cardId && card.idList === run.pinned.lists.working,
     );
     const inReview = (await trello.getCards(run.pinned.lists.review)).some(
-      (card) =>
-        card.id === checkpoint!.cardId &&
-        card.idList === run.pinned.lists.review,
+      (card) => card.id === checkpoint!.cardId && card.idList === run.pinned.lists.review,
     );
-    if (
-      !inWorking &&
-      !(inReview && entry("initial:move")?.mutation?.dispatches.length)
-    )
+    if (!inWorking && !(inReview && entry("initial:move")?.mutation?.dispatches.length))
       throw new PublicationSafetyError("Publication card moved unexpectedly");
-    if (
-      (await getTaskSessionSourceSnapshotIdentity(git, cwd)) !==
-      checkpoint.sourceIdentity
-    )
-      throw new PublicationSafetyError(
-        "Publication source differs from the verified checkpoint",
-      );
+    if ((await getTaskSessionSourceSnapshotIdentity(git, cwd)) !== checkpoint.sourceIdentity)
+      throw new PublicationSafetyError("Publication source differs from the verified checkpoint");
     if (!checkpoint.commitSha) {
       const commitEntry = entry("initial:commit");
       if (!commitEntry?.mutation?.dispatches.length) {
@@ -852,9 +750,7 @@ export async function resumeInitialPublication(options: {
       if (commitEntry?.mutation) {
         const reference = authority.store
           .read()!
-          .artifacts.find(
-            (a) => a.id === commitEntry.mutation!.intent.payloadId,
-          )!;
+          .artifacts.find((a) => a.id === commitEntry.mutation!.intent.payloadId)!;
         payload = z
           .strictObject({
             parent: gitSha,
@@ -893,8 +789,7 @@ export async function resumeInitialPublication(options: {
           ...(checkpoint.setupDisposition === undefined
             ? {}
             : {
-                setupScopeReference:
-                  checkpoint.setupDisposition.artifactReference,
+                setupScopeReference: checkpoint.setupDisposition.artifactReference,
                 setupContextDigest: checkpoint.setupDisposition.contextDigest,
               }),
           identity: project.repository.gitIdentity,
@@ -910,10 +805,8 @@ export async function resumeInitialPublication(options: {
         }
       }
       if (
-        payload.setupScopeReference !==
-          checkpoint.setupDisposition?.artifactReference ||
-        payload.setupContextDigest !==
-          checkpoint.setupDisposition?.contextDigest
+        payload.setupScopeReference !== checkpoint.setupDisposition?.artifactReference ||
+        payload.setupContextDigest !== checkpoint.setupDisposition?.contextDigest
       )
         throw new PublicationSafetyError(
           "Commit intent is not bound to the validated setup scope proof",
@@ -952,8 +845,7 @@ export async function resumeInitialPublication(options: {
           }
           if (
             (await git.getCurrentBranch(cwd)) !== checkpoint!.branch ||
-            (await git.getRefSha(cwd, `refs/heads/${checkpoint!.branch}`)) !==
-              head ||
+            (await git.getRefSha(cwd, `refs/heads/${checkpoint!.branch}`)) !== head ||
             (await git.getCommitParentShas(cwd)).join(" ") !== payload.parent ||
             (await git.getCommitTreeSha(cwd)) !== payload.tree ||
             (await git.getVerbatimCommitMessage(cwd)) !== payload.message ||
@@ -964,15 +856,11 @@ export async function resumeInitialPublication(options: {
                 ),
             )
           )
-            throw new PublicationSafetyError(
-              "Commit discovery conflicts with original intent",
-            );
+            throw new PublicationSafetyError("Commit discovery conflicts with original intent");
           return { id: head, fields: { head, ...payload } };
         },
         async () => {
-          const directory = fs.mkdtempSync(
-            path.join(os.tmpdir(), "publication-message-"),
-          );
+          const directory = fs.mkdtempSync(path.join(os.tmpdir(), "publication-message-"));
           try {
             const file = path.join(directory, "message");
             fs.writeFileSync(file, payload.message, { mode: 0o600 });
@@ -982,9 +870,7 @@ export async function resumeInitialPublication(options: {
           }
         },
       );
-      const verifiedCommit = entry(
-        "initial:commit",
-      )?.mutation?.observations.find(
+      const verifiedCommit = entry("initial:commit")?.mutation?.observations.find(
         (observation) => observation.outcome === "verified",
       )?.resourceId;
       if (!verifiedCommit || (await git.getHeadSha(cwd)) !== verifiedCommit)
@@ -1008,10 +894,9 @@ export async function resumeInitialPublication(options: {
       commitSha: sha,
     });
     if (checkpoint.descriptionPending) {
-      const storedTask = new TaskExecutionStore(
-        run.pinned.storageRoot,
-        project,
-      ).read(checkpoint.cardId);
+      const storedTask = new TaskExecutionStore(run.pinned.storageRoot, project).read(
+        checkpoint.cardId,
+      );
       const exhaustedReview =
         checkpoint.reviewDisclosure !== undefined
           ? (checkpoint.reviewDisclosure ?? undefined)
@@ -1023,9 +908,7 @@ export async function resumeInitialPublication(options: {
         git,
         github,
         trello,
-        ...(options.opencode === undefined
-          ? {}
-          : { opencode: options.opencode }),
+        ...(options.opencode === undefined ? {} : { opencode: options.opencode }),
         card: {
           id: checkpoint.cardId,
           name: checkpoint.title,
@@ -1071,8 +954,7 @@ export async function resumeInitialPublication(options: {
       if (
         !Number.isSafeInteger(number) ||
         number < 1 ||
-        pr.url.toLowerCase() !==
-          `https://github.com/${run.pinned.repository}/pull/${number}` ||
+        pr.url.toLowerCase() !== `https://github.com/${run.pinned.repository}/pull/${number}` ||
         (pr.state === "OPEN" && pr.headRefOid !== sha) ||
         pr.headRefName !== checkpoint!.branch ||
         pr.baseRefName !== project.repository.defaultBranch ||
@@ -1085,22 +967,14 @@ export async function resumeInitialPublication(options: {
       if (pr.state !== "OPEN") {
         const creation = entry("initial:pr");
         if (!creation?.mutation?.dispatches.length || !pr.headRefOid)
-          throw new PublicationSafetyError(
-            "Terminal PR has no dispatched creation provenance",
-          );
+          throw new PublicationSafetyError("Terminal PR has no dispatched creation provenance");
         if (creation.status !== "completed") {
           const fields = await github.getPullRequestPublicationFields({
             ...request,
             pullRequestUrl: pr.url,
           });
-          if (
-            !fields.body.includes(
-              `<!-- agent-orchestrator-publication:${run.attemptId} -->`,
-            )
-          )
-            throw new PublicationSafetyError(
-              "Terminal PR creation correlation cannot be verified",
-            );
+          if (!fields.body.includes(`<!-- agent-orchestrator-publication:${run.attemptId} -->`))
+            throw new PublicationSafetyError("Terminal PR creation correlation cannot be verified");
           event("initial:pr", {
             type: "observe",
             outcome: "verified",
@@ -1116,10 +990,7 @@ export async function resumeInitialPublication(options: {
         }
         const tasks = new TaskExecutionStore(run.pinned.storageRoot, project);
         let task = tasks.read(checkpoint!.cardId);
-        if (!task)
-          throw new PublicationSafetyError(
-            "Terminal PR lost its task checkpoint",
-          );
+        if (!task) throw new PublicationSafetyError("Terminal PR lost its task checkpoint");
         if (!task.pullRequest)
           task = tasks.compareAndSwap(task.cardId, task.revision, {
             ...task,
@@ -1142,9 +1013,7 @@ export async function resumeInitialPublication(options: {
     // awaits readback. Reconcile that original PR before interpreting ref loss.
     if (entry("initial:pr")?.mutation?.dispatches.length) await find();
     if (!entry("initial:push")?.mutation?.dispatches.length && (await find()))
-      throw new PublicationSafetyError(
-        "Unjournaled PR exists; refusing branch mutation",
-      );
+      throw new PublicationSafetyError("Unjournaled PR exists; refusing branch mutation");
     if (!entry("initial:push")?.mutation?.dispatches.length) {
       await verifyDestinations();
       await git.fetch(
@@ -1190,25 +1059,12 @@ export async function resumeInitialPublication(options: {
             "Publication destination guard stopped dispatch before invoking Git push",
           );
         }
-        await git.push(
-          cwd,
-          destinations.push,
-          checkpoint!.branch,
-          project,
-          sha,
-        );
+        await git.push(cwd, destinations.push, checkpoint!.branch, project, sha);
       },
     );
     const marker = `<!-- agent-orchestrator-publication:${run.attemptId} -->`;
     await verifyDestinations();
-    if (
-      (await git.getRemoteBranchSha(
-        cwd,
-        destinations.push,
-        checkpoint.branch,
-        project,
-      )) !== sha
-    )
+    if ((await git.getRemoteBranchSha(cwd, destinations.push, checkpoint.branch, project)) !== sha)
       throw new PublicationSafetyError(
         "Verified publication remote head changed; no replacement push or PR will be dispatched",
       );
@@ -1236,9 +1092,7 @@ export async function resumeInitialPublication(options: {
           fields.title !== checkpoint!.title ||
           fields.isDraft !== checkpoint!.draft
         )
-          throw new PublicationSafetyError(
-            "PR fields differ from original publication intent",
-          );
+          throw new PublicationSafetyError("PR fields differ from original publication intent");
         return {
           id: pr.url,
           fields: {
@@ -1265,9 +1119,7 @@ export async function resumeInitialPublication(options: {
         (observation) => observation.outcome === "verified",
       )?.resourceId !== pr.url
     )
-      throw new PublicationSafetyError(
-        "Current PR differs from immutable journal verification",
-      );
+      throw new PublicationSafetyError("Current PR differs from immutable journal verification");
     const taskStore = new TaskExecutionStore(run.pinned.storageRoot, project);
     assertExecution();
     let task = taskStore.read(checkpoint.cardId);
@@ -1278,13 +1130,8 @@ export async function resumeInitialPublication(options: {
       url: pr.url,
       headSha: sha,
     };
-    if (
-      task.pullRequest &&
-      JSON.stringify(task.pullRequest) !== JSON.stringify(identity)
-    )
-      throw new PublicationSafetyError(
-        "Persisted PR identity conflicts with discovery",
-      );
+    if (task.pullRequest && JSON.stringify(task.pullRequest) !== JSON.stringify(identity))
+      throw new PublicationSafetyError("Persisted PR identity conflicts with discovery");
     if (!task.pullRequest)
       task = taskStore.compareAndSwap(task.cardId, task.revision, {
         ...task,
@@ -1300,14 +1147,10 @@ export async function resumeInitialPublication(options: {
       { listId: run.pinned.lists.review },
       async () => {
         if (!(await find()))
-          throw new PublicationSafetyError(
-            "PR unavailable before Trello synchronization",
-          );
+          throw new PublicationSafetyError("PR unavailable before Trello synchronization");
         const cards = await trello.getCards(run.pinned.lists.review);
         const actual = cards.find(
-          (card) =>
-            card.id === checkpoint!.cardId &&
-            card.idList === run.pinned.lists.review,
+          (card) => card.id === checkpoint!.cardId && card.idList === run.pinned.lists.review,
         );
         return actual
           ? {
@@ -1328,8 +1171,7 @@ export async function resumeInitialPublication(options: {
       );
       checkpoint = {
         ...checkpoint,
-        elapsedWorkflowTime:
-          elapsed === undefined ? null : sanitizeControlledText(elapsed),
+        elapsedWorkflowTime: elapsed === undefined ? null : sanitizeControlledText(elapsed),
       };
       save(authority, checkpoint);
     }
@@ -1354,13 +1196,9 @@ export async function resumeInitialPublication(options: {
       { text: comment },
       async () => {
         const comments = await trello.getCardComments(checkpoint!.cardId);
-        const matching = comments.filter(
-          (candidate) => candidate.text === comment,
-        );
+        const matching = comments.filter((candidate) => candidate.text === comment);
         if (matching.length > 1)
-          throw new PublicationSafetyError(
-            "Publication comment correlation is ambiguous",
-          );
+          throw new PublicationSafetyError("Publication comment correlation is ambiguous");
         return matching[0] ? { id: matching[0].id, fields: matching[0] } : null;
       },
       () => trello.addComment(checkpoint!.cardId, comment),
@@ -1368,14 +1206,10 @@ export async function resumeInitialPublication(options: {
     if (
       !(await find()) ||
       !(await trello.getCards(run.pinned.lists.review)).some(
-        (card) =>
-          card.id === checkpoint!.cardId &&
-          card.idList === run.pinned.lists.review,
+        (card) => card.id === checkpoint!.cardId && card.idList === run.pinned.lists.review,
       )
     )
-      throw new PublicationSafetyError(
-        "Publication destination changed before completion",
-      );
+      throw new PublicationSafetyError("Publication destination changed before completion");
     task = taskStore.read(checkpoint.cardId)!;
     assertExecution();
     // Durable event handoff precedes the local completion projection. Recovery
@@ -1431,10 +1265,7 @@ export async function resumeInitialPublication(options: {
       waitingReason: null,
       diagnostic: null,
     });
-    if (
-      options.emailNotifier &&
-      (options.emailNotifier.isEventEnabled?.("humanReview") ?? true)
-    )
+    if (options.emailNotifier && (options.emailNotifier.isEventEnabled?.("humanReview") ?? true))
       await notifyHumanReview(
         options.emailNotifier,
         {
@@ -1455,9 +1286,7 @@ export async function resumeInitialPublication(options: {
           outstandingIssues: publicationNotificationIssues(
             checkpoint.reviewResult,
             checkpoint.remediationResult,
-          ).concat(
-            checkpoint.qualityNeedsDraft ? checkpoint.verifiedFacts : [],
-          ),
+          ).concat(checkpoint.qualityNeedsDraft ? checkpoint.verifiedFacts : []),
           publicationContext: `Verified initial publication; draft: ${checkpoint.draft}.`,
           ...(checkpoint.elapsedWorkflowTime
             ? { elapsedWorkflowTime: checkpoint.elapsedWorkflowTime }
@@ -1469,12 +1298,9 @@ export async function resumeInitialPublication(options: {
   } catch (error) {
     authority.assertHeld();
     // Do not copy arbitrary exception/process text into durable payloads or logs.
-    const attention =
-      Date.now() - Date.parse(checkpoint.startedAt) >= 5 * 60_000;
+    const attention = Date.now() - Date.parse(checkpoint.startedAt) >= 5 * 60_000;
     const waitingReason =
-      error instanceof PublicationWaitingError
-        ? "recheck"
-        : "dependency-or-conflict";
+      error instanceof PublicationWaitingError ? "recheck" : "dependency-or-conflict";
     const diagnostic =
       error instanceof PublicationSafetyError
         ? error.message
@@ -1524,11 +1350,7 @@ export async function resumeInitialPublication(options: {
         logger.child({ projectId: project.id, cardId: checkpoint.cardId }),
       );
     if (options.signal?.aborted) throw error;
-    if (
-      error instanceof TypeError ||
-      error instanceof RangeError ||
-      error instanceof SyntaxError
-    )
+    if (error instanceof TypeError || error instanceof RangeError || error instanceof SyntaxError)
       throw error;
     return true;
   } finally {

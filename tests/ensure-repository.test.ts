@@ -8,17 +8,12 @@ import type { ProjectConfig } from "../src/config/config.js";
 import { ensureRepository } from "../src/git/ensure-repository.js";
 import { GitClient, type RunGit } from "../src/git/git-client.js";
 import { GitHubCredentialProvider } from "../src/github/github-credential-provider.js";
-import {
-  CommandRunner,
-  type RunCommand,
-} from "../src/process/command-runner.js";
+import { CommandRunner, type RunCommand } from "../src/process/command-runner.js";
 
 const temporaryDirectories: string[] = [];
 
 function createTemporaryDirectory(): string {
-  const directory = fs.mkdtempSync(
-    path.join(os.tmpdir(), "agent-orchestrator-"),
-  );
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "agent-orchestrator-"));
 
   temporaryDirectories.push(directory);
 
@@ -140,9 +135,10 @@ describe("ensureRepository", () => {
         }),
         appCredentialProvider,
       );
-      const appEnvironment = JSON.parse(
-        fs.readFileSync(appRecord, "utf8"),
-      ) as Record<string, unknown>;
+      const appEnvironment = JSON.parse(fs.readFileSync(appRecord, "utf8")) as Record<
+        string,
+        unknown
+      >;
       expect(appEnvironment).toMatchObject({
         GH_TOKEN: "app-scoped-token",
         GITHUB_TOKEN: "app-scoped-token",
@@ -160,9 +156,10 @@ describe("ensureRepository", () => {
         new CommandRunner(),
         createProject(patRepository),
       );
-      const patEnvironment = JSON.parse(
-        fs.readFileSync(patRecord, "utf8"),
-      ) as Record<string, unknown>;
+      const patEnvironment = JSON.parse(fs.readFileSync(patRecord, "utf8")) as Record<
+        string,
+        unknown
+      >;
       expect(patEnvironment).toMatchObject({
         GH_TOKEN: "ambient-pat-gh",
         GITHUB_TOKEN: "ambient-pat-github",
@@ -186,41 +183,27 @@ describe("ensureRepository", () => {
       .mockImplementation(async (_cwd, args) =>
         args[0] === "remote" ? "git@github.com:owner/repository.git" : "true",
       );
-    const runCommand = vi
-      .fn<RunCommand>()
-      .mockImplementation(async (options) => {
-        const ambientSecretValues = [
-          process.env.GH_TOKEN,
-          process.env.GITHUB_TOKEN,
-        ].filter(
-          (value): value is string => value !== undefined && value.length > 0,
-        );
+    const runCommand = vi.fn<RunCommand>().mockImplementation(async (options) => {
+      const ambientSecretValues = [process.env.GH_TOKEN, process.env.GITHUB_TOKEN].filter(
+        (value): value is string => value !== undefined && value.length > 0,
+      );
 
-        expect(options).toEqual({
-          cwd: process.cwd(),
-          command: `gh repo clone owner/repository ${repositoryPath}`,
-          processFamily: "github",
-          ...(ambientSecretValues.length === 0
-            ? {}
-            : { secretValues: ambientSecretValues }),
-        });
-
-        fs.mkdirSync(repositoryPath);
-
-        return { exitCode: 0 };
+      expect(options).toEqual({
+        cwd: process.cwd(),
+        command: `gh repo clone owner/repository ${repositoryPath}`,
+        processFamily: "github",
+        ...(ambientSecretValues.length === 0 ? {} : { secretValues: ambientSecretValues }),
       });
 
-    await ensureRepository(
-      createGit(runGit),
-      new CommandRunner(runCommand),
-      project,
-    );
+      fs.mkdirSync(repositoryPath);
+
+      return { exitCode: 0 };
+    });
+
+    await ensureRepository(createGit(runGit), new CommandRunner(runCommand), project);
 
     expect(runCommand).toHaveBeenCalledTimes(1);
-    expect(runGit).toHaveBeenCalledWith(repositoryPath, [
-      "rev-parse",
-      "--is-inside-work-tree",
-    ]);
+    expect(runGit).toHaveBeenCalledWith(repositoryPath, ["rev-parse", "--is-inside-work-tree"]);
   });
 
   it("uses the project installation token when cloning a missing repository", async () => {
@@ -232,31 +215,24 @@ describe("ensureRepository", () => {
       privateKeyPath: "/secrets/app-a.pem",
     });
     const runGit = vi.fn<RunGit>().mockResolvedValue("true");
-    const runCommand = vi
-      .fn<RunCommand>()
-      .mockImplementation(async (options) => {
-        expect(options.environment?.GH_TOKEN).toBe("token-a");
-        expect(options.environment?.GITHUB_TOKEN).toBe("token-a");
-        expect(options.processFamily).toBe("github");
-        expect(options.command).toBe(
-          `gh repo clone owner/repository ${repositoryPath} -- -c credential.helper=`,
-        );
-        expect(options.secretValues).toEqual(["token-a"]);
-        fs.mkdirSync(repositoryPath);
-        return { exitCode: 0 };
-      });
+    const runCommand = vi.fn<RunCommand>().mockImplementation(async (options) => {
+      expect(options.environment?.GH_TOKEN).toBe("token-a");
+      expect(options.environment?.GITHUB_TOKEN).toBe("token-a");
+      expect(options.processFamily).toBe("github");
+      expect(options.command).toBe(
+        `gh repo clone owner/repository ${repositoryPath} -- -c credential.helper=`,
+      );
+      expect(options.secretValues).toEqual(["token-a"]);
+      fs.mkdirSync(repositoryPath);
+      return { exitCode: 0 };
+    });
     const credentials = new GitHubCredentialProvider({
       authenticator: {
         getInstallationToken: vi.fn().mockResolvedValue("token-a"),
       },
     });
 
-    await ensureRepository(
-      createGit(runGit),
-      new CommandRunner(runCommand),
-      project,
-      credentials,
-    );
+    await ensureRepository(createGit(runGit), new CommandRunner(runCommand), project, credentials);
 
     expect(runCommand).toHaveBeenCalledTimes(1);
   });
@@ -271,9 +247,7 @@ describe("ensureRepository", () => {
     const runGit = vi
       .fn<RunGit>()
       .mockImplementation(async (_cwd, args) =>
-        args[0] === "remote"
-          ? "https://github.com/owner/repository.git"
-          : "true",
+        args[0] === "remote" ? "https://github.com/owner/repository.git" : "true",
       );
     const runCommand = vi.fn<RunCommand>();
 
@@ -293,9 +267,7 @@ describe("ensureRepository", () => {
     const repositoryPath = path.join(root, "repository");
     fs.mkdirSync(repositoryPath);
 
-    const runGit = vi
-      .fn<RunGit>()
-      .mockRejectedValue(new Error("fatal: not a git repository"));
+    const runGit = vi.fn<RunGit>().mockRejectedValue(new Error("fatal: not a git repository"));
     const runCommand = vi.fn<RunCommand>();
 
     await expect(
@@ -329,14 +301,8 @@ describe("ensureRepository", () => {
         createProject(repositoryPath),
       ),
     ).rejects.toThrow("Repository origin mismatch");
-    expect(fs.readFileSync(sourceFile, "utf8")).toBe(
-      "preserve source checkout\n",
-    );
-    expect(runGit).toHaveBeenCalledWith(repositoryPath, [
-      "remote",
-      "get-url",
-      "origin",
-    ]);
+    expect(fs.readFileSync(sourceFile, "utf8")).toBe("preserve source checkout\n");
+    expect(runGit).toHaveBeenCalledWith(repositoryPath, ["remote", "get-url", "origin"]);
   });
 
   it("fails when cloning fails", async () => {
@@ -377,9 +343,6 @@ describe("ensureRepository", () => {
       `Repository clone completed, but project "test-project" destination "${repositoryPath}" is not a valid Git repository`,
     );
 
-    expect(runGit).toHaveBeenCalledWith(repositoryPath, [
-      "rev-parse",
-      "--is-inside-work-tree",
-    ]);
+    expect(runGit).toHaveBeenCalledWith(repositoryPath, ["rev-parse", "--is-inside-work-tree"]);
   });
 });

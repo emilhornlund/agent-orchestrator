@@ -21,9 +21,7 @@ export class FeedbackLedgerConflictError extends Error {
 function safeId(value: string, label: string): void {
   const hasControlCharacter = Array.from(value).some((character) => {
     const code = character.codePointAt(0);
-    return (
-      code !== undefined && (code <= 0x1f || (code >= 0x7f && code <= 0x9f))
-    );
+    return code !== undefined && (code <= 0x1f || (code >= 0x7f && code <= 0x9f));
   });
   if (
     !value ||
@@ -42,19 +40,14 @@ function within(parent: string, child: string): boolean {
   const relative = path.relative(parent, child);
   return (
     relative === "" ||
-    (relative !== ".." &&
-      !relative.startsWith(`..${path.sep}`) &&
-      !path.isAbsolute(relative))
+    (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
   );
 }
 
 function ensureDirectory(directory: string, create: boolean): boolean {
   const parsed = path.parse(directory);
   let current = parsed.root;
-  for (const part of path
-    .relative(parsed.root, directory)
-    .split(path.sep)
-    .filter(Boolean)) {
+  for (const part of path.relative(parsed.root, directory).split(path.sep).filter(Boolean)) {
     current = path.join(current, part);
     let stat = fs.lstatSync(current, { throwIfNoEntry: false });
     if (stat === undefined) {
@@ -73,13 +66,8 @@ export class FeedbackLedgerStore {
   private readonly projectId: string;
   private readonly authority: ProjectRunAuthority | undefined;
 
-  constructor(
-    rootDirectory: string,
-    project: ProjectConfig,
-    authority?: ProjectRunAuthority,
-  ) {
-    if (!path.isAbsolute(rootDirectory))
-      throw new Error("Feedback ledger root must be absolute");
+  constructor(rootDirectory: string, project: ProjectConfig, authority?: ProjectRunAuthority) {
+    if (!path.isAbsolute(rootDirectory)) throw new Error("Feedback ledger root must be absolute");
     safeId(project.id, "project ID");
     const root = path.resolve(rootDirectory);
     if (
@@ -88,9 +76,7 @@ export class FeedbackLedgerStore {
       within(path.resolve(project.repository.worktreeRoot), root) ||
       within(root, path.resolve(project.repository.worktreeRoot))
     ) {
-      throw new Error(
-        "Feedback ledger root must not overlap repository or worktree root",
-      );
+      throw new Error("Feedback ledger root must not overlap repository or worktree root");
     }
     this.projectId = project.id;
     this.authority = authority ?? ProjectRunAuthority.current(project.id);
@@ -110,10 +96,7 @@ export class FeedbackLedgerStore {
         ProjectRunAuthority.taskKey("feedback-ledger", cardId),
         parseFeedbackLedger,
       );
-      if (
-        ledger &&
-        (ledger.projectId !== this.projectId || ledger.cardId !== cardId)
-      )
+      if (ledger && (ledger.projectId !== this.projectId || ledger.cardId !== cardId))
         throw new Error("Feedback ledger projection ownership mismatch");
       return ledger;
     }
@@ -124,9 +107,7 @@ export class FeedbackLedgerStore {
     if (stat.isSymbolicLink() || !stat.isFile())
       throw new Error(`Unsafe feedback ledger file: ${file}`);
     if (stat.size > MAX_FEEDBACK_LEDGER_BYTES)
-      throw new Error(
-        `Feedback ledger exceeds ${MAX_FEEDBACK_LEDGER_BYTES} bytes`,
-      );
+      throw new Error(`Feedback ledger exceeds ${MAX_FEEDBACK_LEDGER_BYTES} bytes`);
     let raw: unknown;
     try {
       raw = JSON.parse(fs.readFileSync(file, "utf8")) as unknown;
@@ -141,10 +122,7 @@ export class FeedbackLedgerStore {
     return ledger;
   }
 
-  create(
-    cardId: string,
-    entries: readonly FeedbackLedgerEntry[] = [],
-  ): FeedbackLedger {
+  create(cardId: string, entries: readonly FeedbackLedgerEntry[] = []): FeedbackLedger {
     const initial = parseFeedbackLedger({
       version: 1,
       projectId: this.projectId,
@@ -159,9 +137,7 @@ export class FeedbackLedgerStore {
         null,
         (value) => {
           if (value !== null)
-            throw new FeedbackLedgerConflictError(
-              "Feedback ledger already exists",
-            );
+            throw new FeedbackLedgerConflictError("Feedback ledger already exists");
           return { value: initial, result: initial };
         },
         parseFeedbackLedger,
@@ -186,22 +162,16 @@ export class FeedbackLedgerStore {
       if (
         Object.entries(current.replyOutcomes ?? {}).some(
           ([marker, outcome]) =>
-            JSON.stringify(next.replyOutcomes?.[marker]) !==
-            JSON.stringify(outcome),
+            JSON.stringify(next.replyOutcomes?.[marker]) !== JSON.stringify(outcome),
         )
       )
-        throw new FeedbackLedgerConflictError(
-          "Known feedback reply outcomes cannot be rewritten",
-        );
+        throw new FeedbackLedgerConflictError("Known feedback reply outcomes cannot be rewritten");
       if (
         (current.history ?? []).some(
-          (entry, index) =>
-            JSON.stringify(entry) !== JSON.stringify(next.history?.[index]),
+          (entry, index) => JSON.stringify(entry) !== JSON.stringify(next.history?.[index]),
         )
       )
-        throw new FeedbackLedgerConflictError(
-          "Feedback handling history cannot be rewritten",
-        );
+        throw new FeedbackLedgerConflictError("Feedback handling history cannot be rewritten");
     };
     if (this.authority !== undefined)
       return this.authority.mutate(
@@ -210,9 +180,7 @@ export class FeedbackLedgerStore {
         (value) => {
           const current = value === null ? null : parseFeedbackLedger(value);
           if (current === null || current.revision !== expectedRevision)
-            throw new FeedbackLedgerConflictError(
-              "Feedback ledger projection revision conflict",
-            );
+            throw new FeedbackLedgerConflictError("Feedback ledger projection revision conflict");
           assertHistory(current);
           if (
             next.projectId !== this.projectId ||
@@ -232,9 +200,7 @@ export class FeedbackLedgerStore {
       next.cardId !== cardId ||
       next.revision !== expectedRevision + 1
     ) {
-      throw new Error(
-        "Updated feedback ledger must preserve owner and increment revision once",
-      );
+      throw new Error("Updated feedback ledger must preserve owner and increment revision once");
     }
     return this.withLock(file, () => {
       const current = this.read(cardId);
@@ -256,9 +222,7 @@ export class FeedbackLedgerStore {
   ): FeedbackLedger {
     const current = this.read(cardId);
     if (current === null) return this.create(cardId, entries);
-    const byKey = new Map(
-      current.entries.map((entry) => [`${entry.kind}:${entry.id}`, entry]),
-    );
+    const byKey = new Map(current.entries.map((entry) => [`${entry.kind}:${entry.id}`, entry]));
     const history = [...(current.history ?? [])];
     for (const incoming of entries) {
       const key = `${incoming.kind}:${incoming.id}`;
@@ -277,8 +241,7 @@ export class FeedbackLedgerStore {
         history.push(previous);
       byKey.set(
         key,
-        previous === undefined ||
-          (incoming.requestRevision ?? 0) > (previous.requestRevision ?? 0)
+        previous === undefined || (incoming.requestRevision ?? 0) > (previous.requestRevision ?? 0)
           ? incoming
           : {
               ...incoming,
@@ -286,22 +249,16 @@ export class FeedbackLedgerStore {
               status: previous.status,
               verificationEvidence: previous.verificationEvidence,
               resolution: previous.resolution,
-              sourceRevision:
-                incoming.sourceRevision ?? previous.sourceRevision,
-              requestRevision:
-                incoming.requestRevision ?? previous.requestRevision,
+              sourceRevision: incoming.sourceRevision ?? previous.sourceRevision,
+              requestRevision: incoming.requestRevision ?? previous.requestRevision,
               ...(previous.remediationCommitSha === undefined
                 ? {}
                 : { remediationCommitSha: previous.remediationCommitSha }),
-              ...(previous.replyId === undefined
-                ? {}
-                : { replyId: previous.replyId }),
+              ...(previous.replyId === undefined ? {} : { replyId: previous.replyId }),
               ...(previous.replyOperationId === undefined
                 ? {}
                 : { replyOperationId: previous.replyOperationId }),
-              ...(previous.replyState === undefined
-                ? {}
-                : { replyState: previous.replyState }),
+              ...(previous.replyState === undefined ? {} : { replyState: previous.replyState }),
               ...(previous.unresolvedReason === undefined
                 ? {}
                 : { unresolvedReason: previous.unresolvedReason }),
@@ -309,9 +266,7 @@ export class FeedbackLedgerStore {
       );
     }
     if (options.replaceCurrent === true) {
-      const incomingKeys = new Set(
-        entries.map((entry) => `${entry.kind}:${entry.id}`),
-      );
+      const incomingKeys = new Set(entries.map((entry) => `${entry.kind}:${entry.id}`));
       for (const [key, entry] of byKey) {
         if (incomingKeys.has(key) || entry.isCurrent === false) continue;
         history.push(entry);
@@ -326,19 +281,13 @@ export class FeedbackLedgerStore {
     return this.compareAndSwap(cardId, current.revision, {
       ...current,
       revision: current.revision + 1,
-      updatedAt: new Date(
-        Math.max(Date.now(), Date.parse(current.updatedAt) + 1),
-      ).toISOString(),
+      updatedAt: new Date(Math.max(Date.now(), Date.parse(current.updatedAt) + 1)).toISOString(),
       entries: [...byKey.values()],
       ...(history.length === 0 ? {} : { history }),
     });
   }
 
-  private write(
-    file: string,
-    ledger: FeedbackLedger,
-    exclusive: boolean,
-  ): void {
+  private write(file: string, ledger: FeedbackLedger, exclusive: boolean): void {
     const text = `${JSON.stringify(parseFeedbackLedger(ledger), null, 2)}\n`;
     if (Buffer.byteLength(text) > MAX_FEEDBACK_LEDGER_BYTES)
       throw new Error("Feedback ledger exceeds size limit");
@@ -374,9 +323,7 @@ export class FeedbackLedgerStore {
         "code" in error &&
         error.code === "EEXIST"
       ) {
-        throw new FeedbackLedgerConflictError(
-          `Feedback ledger is locked: ${file}`,
-        );
+        throw new FeedbackLedgerConflictError(`Feedback ledger is locked: ${file}`);
       }
       throw error;
     }

@@ -17,9 +17,7 @@ import {
 function canonicalJson(value: unknown): string {
   return JSON.stringify(value, (_key, item: unknown) =>
     item && typeof item === "object" && !Array.isArray(item)
-      ? Object.fromEntries(
-          Object.entries(item).sort(([a], [b]) => a.localeCompare(b)),
-        )
+      ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b)))
       : item,
   );
 }
@@ -43,10 +41,7 @@ const dispatchContext = new AsyncLocalStorage<DispatchCapability>();
 // provider-outcome evidence or a second persisted mutation authority.
 const issuedDispatches = new Set<string>();
 const reconciliationContext = new AsyncLocalStorage<string>();
-export function withMutationReconciliation<T>(
-  id: string,
-  operation: () => T,
-): T {
+export function withMutationReconciliation<T>(id: string, operation: () => T): T {
   return reconciliationContext.run(id, operation);
 }
 export async function withJournaledDispatch<T>(
@@ -72,19 +67,14 @@ export async function withJournaledDispatch<T>(
     entry.mutation.executionFence.id !== run.operation.id ||
     entry.mutation.executionFence.generation !== run.operation.generation
   )
-    throw new Error(
-      "Journal dispatch has no current unresponded durable dispatch",
-    );
-  const reference = run.artifacts.find(
-    (item) => item.id === entry.mutation!.intent.payloadId,
-  )!;
+    throw new Error("Journal dispatch has no current unresponded durable dispatch");
+  const reference = run.artifacts.find((item) => item.id === entry.mutation!.intent.payloadId)!;
   const payload: unknown = JSON.parse(fs.readFileSync(reference.path, "utf8"));
   // T3 payloads already enumerate concrete client routes. T2's original payloads
   // are translated from their persisted fields, never from caller-supplied scope
   // options. Incompatible historical payloads fail closed rather than gain power.
   let expected: WorkflowMutationRequest;
-  if (operationId.startsWith("workflow:"))
-    expected = payload as WorkflowMutationRequest;
+  if (operationId.startsWith("workflow:")) expected = payload as WorkflowMutationRequest;
   else {
     const value = payload as Record<string, unknown>;
     const cwd = runTaskResources(run).path;
@@ -117,9 +107,7 @@ export async function withJournaledDispatch<T>(
         break;
       case "git-commit":
         if (!value.identity || value.cleanup !== "verbatim")
-          throw new Error(
-            "Commit dispatch lacks durable identity/cleanup proof",
-          );
+          throw new Error("Commit dispatch lacks durable identity/cleanup proof");
         expected = {
           route: "git-commit",
           args: {
@@ -171,14 +159,12 @@ export async function withJournaledDispatch<T>(
   const initial = operationId.startsWith("initial:");
   let target: string;
   if (expected.route.startsWith("trello-")) {
-    if (args.cardId !== run.cardId)
-      throw new Error("Dispatch card differs from attempt");
+    if (args.cardId !== run.cardId) throw new Error("Dispatch card differs from attempt");
     if (
       expected.route === "trello-move" &&
       (!Object.values(run.pinned.lists).includes(String(args.listId)) ||
         args.listId === run.pinned.lists.ready ||
-        (args.listId === run.pinned.lists.failed &&
-          run.publicationState !== "none"))
+        (args.listId === run.pinned.lists.failed && run.publicationState !== "none"))
     )
       throw new Error("Forbidden dispatch destination");
     if (
@@ -199,9 +185,7 @@ export async function withJournaledDispatch<T>(
     } else {
       if (
         !run.resources.some(
-          (resource) =>
-            resource.kind === "pull-request" &&
-            resource.path === args.pullRequestUrl,
+          (resource) => resource.kind === "pull-request" && resource.path === args.pullRequestUrl,
         )
       )
         throw new Error("Dispatch PR is not owned by attempt");
@@ -214,22 +198,15 @@ export async function withJournaledDispatch<T>(
         args.cwd !== run.pinned.repositoryPath ||
         !run.resources.some(
           (resource) =>
-            resource.kind ===
-              (args.kind === "worktree" ? "worktree" : "branch") &&
+            resource.kind === (args.kind === "worktree" ? "worktree" : "branch") &&
             resource.path ===
-              (args.kind === "worktree"
-                ? args.resource
-                : `refs/heads/${String(args.resource)}`),
+              (args.kind === "worktree" ? args.resource : `refs/heads/${String(args.resource)}`),
         )
       )
         throw new Error("Dispatch cleanup resource is not owned");
       target = `git:${String(args.kind)}:${encodeURIComponent(String(args.resource))}`;
     } else if (expected.route === "git-worktree") {
-      if (
-        args.cwd !== run.pinned.repositoryPath ||
-        args.worktree !== cwd ||
-        args.branch !== branch
-      )
+      if (args.cwd !== run.pinned.repositoryPath || args.worktree !== cwd || args.branch !== branch)
         throw new Error("Dispatch worktree differs from attempt");
       target = `git:worktree:${encodeURIComponent(cwd)}`;
     } else {
@@ -300,9 +277,7 @@ export function consumeJournaledDispatch(
   const run = authority.store.assertCurrentLease(authority.ownerGeneration);
   if (["done", "refined", "failed", "cancelled"].includes(run.lifecycle))
     throw new Error("Terminal attempt cannot consume a dispatch capability");
-  const entry = run.pendingOperations.find(
-    (entry) => entry.id === capability.operationId,
-  );
+  const entry = run.pendingOperations.find((entry) => entry.id === capability.operationId);
   const dispatch = entry?.mutation?.dispatches.at(-1);
   if (
     entry?.status !== "ambiguous" ||
@@ -314,10 +289,7 @@ export function consumeJournaledDispatch(
   )
     throw new Error("Stale journal dispatch capability");
   let expected = capability.expected;
-  if (
-    capability.operationId.startsWith("workflow:") &&
-    expected.route === "git-commit"
-  )
+  if (capability.operationId.startsWith("workflow:") && expected.route === "git-commit")
     expected = {
       ...expected,
       args: {
@@ -327,11 +299,7 @@ export function consumeJournaledDispatch(
     };
   if (
     capability.operationId.startsWith("workflow:") &&
-    [
-      "trello-comment",
-      "github-conversation-reply",
-      "github-thread-reply",
-    ].includes(expected.route)
+    ["trello-comment", "github-conversation-reply", "github-thread-reply"].includes(expected.route)
   ) {
     const args = expected.args as Record<string, unknown>;
     const field = expected.route === "trello-comment" ? "text" : "body";
@@ -345,18 +313,14 @@ export function consumeJournaledDispatch(
   }
   // Key order is not part of a transport's semantics; extra/missing fields are.
   if (canonicalJson(request) !== canonicalJson(expected))
-    throw new Error(
-      "Concrete mutation differs from journal dispatch capability",
-    );
+    throw new Error("Concrete mutation differs from journal dispatch capability");
   capability.consumed = true;
   return true;
 }
 
 export function rejectJournaledDispatch(): void {
   if (dispatchContext.getStore())
-    throw new Error(
-      "Unjournaled mutation inside journal dispatch scope is forbidden",
-    );
+    throw new Error("Unjournaled mutation inside journal dispatch scope is forbidden");
 }
 
 /** Recheck at the private transport boundary, after asynchronous credentials or
@@ -367,9 +331,7 @@ export function assertJournaledTransport(): void {
   if (!capability) {
     const projectId = ProjectRunAuthority.currentProjectId();
     const fence = readTerminalPrFence(
-      projectId === undefined
-        ? undefined
-        : ProjectRunAuthority.current(projectId),
+      projectId === undefined ? undefined : ProjectRunAuthority.current(projectId),
     );
     if (fence) throw new ObservedPrTerminalError(fence, true);
     return;
@@ -383,9 +345,7 @@ export function assertJournaledTransport(): void {
   )
     throw new Error("Invalid journal transport capability");
   const run = authority.store.assertCurrentLease(authority.ownerGeneration);
-  const entry = run.pendingOperations.find(
-    (entry) => entry.id === capability.operationId,
-  );
+  const entry = run.pendingOperations.find((entry) => entry.id === capability.operationId);
   const dispatch = entry?.mutation?.dispatches.at(-1);
   if (
     ["done", "refined", "failed", "cancelled"].includes(run.lifecycle) ||
@@ -418,22 +378,17 @@ export function throwIfWorkflowMutationPending(projectId: string): void {
       ?.store.read()
       ?.pendingOperations.some(
         (entry) =>
-          entry.id.startsWith("workflow:") &&
-          !["completed", "cancelled"].includes(entry.status),
+          entry.id.startsWith("workflow:") && !["completed", "cancelled"].includes(entry.status),
       )
   )
     throw new WorkflowMutationWaitingError();
 }
 
-export function mutationAuthority(
-  projectId: string | undefined,
-): ProjectRunAuthority | undefined {
+export function mutationAuthority(projectId: string | undefined): ProjectRunAuthority | undefined {
   const id = projectId ?? ProjectRunAuthority.currentProjectId();
   if (!id) {
     if (ProjectRunAuthority.hasProjectLeaseScope())
-      throw new Error(
-        "Workflow mutation has no unambiguous project attempt authority",
-      );
+      throw new Error("Workflow mutation has no unambiguous project attempt authority");
     return undefined;
   }
   const authority = ProjectRunAuthority.current(id);
@@ -496,18 +451,12 @@ export async function workflowMutation<T>(options: {
   observedStateChanged?: boolean;
   send: (marker: string) => Promise<unknown>;
   preflight?: () => Promise<void>;
-  rejected?: (
-    error: unknown,
-  ) => { status: number; operation: string } | undefined;
-  observe: (
-    marker: string,
-  ) => Promise<{ id: string; fields: unknown; result: T } | null>;
+  rejected?: (error: unknown) => { status: number; operation: string } | undefined;
+  observe: (marker: string) => Promise<{ id: string; fields: unknown; result: T } | null>;
 }): Promise<T> {
   const { authority } = options;
   if (options.observedStateChanged && options.kind !== "github-pr-body")
-    throw new Error(
-      "Observed body drift cannot authorize repeating a non-idempotent mutation",
-    );
+    throw new Error("Observed body drift cannot authorize repeating a non-idempotent mutation");
   const run = authority.store.assertCurrentLease(authority.ownerGeneration);
   const id =
     reconciliationContext.getStore() ??
@@ -521,19 +470,15 @@ export async function workflowMutation<T>(options: {
   const existing = run.pendingOperations.find((entry) => entry.id === id);
   const terminal = terminalPrFenceFromRun(run);
   const permitted = terminalMutationAllowed(run, options.request);
-  if (terminal && !permitted && !existing)
-    throw new ObservedPrTerminalError(terminal, true);
+  if (terminal && !permitted && !existing) throw new ObservedPrTerminalError(terminal, true);
   if (
     !reconciliationContext.getStore() &&
     run.pendingOperations.some(
-      (entry) =>
-        entry.id !== id &&
-        !["completed", "cancelled", "failed"].includes(entry.status),
+      (entry) => entry.id !== id && !["completed", "cancelled", "failed"].includes(entry.status),
     )
   )
     throw new WorkflowMutationWaitingError();
-  const correlationId =
-    existing?.mutation?.intent.correlationId ?? `${run.attemptId}:${id}`;
+  const correlationId = existing?.mutation?.intent.correlationId ?? `${run.attemptId}:${id}`;
   const marker = `<!-- agent-orchestrator-mutation:${correlationId} -->`;
   const now = () => new Date().toISOString();
   const next = () => new Date(Date.now() + 15_000).toISOString();
@@ -549,8 +494,7 @@ export async function workflowMutation<T>(options: {
     );
     return reference.id;
   };
-  const entry = () =>
-    authority.store.read()!.pendingOperations.find((entry) => entry.id === id)!;
+  const entry = () => authority.store.read()!.pendingOperations.find((entry) => entry.id === id)!;
   const event = (value: MutationEvent) =>
     authority.store.recordMutationEvent(
       authority.store.read()!.revision,
@@ -566,24 +510,18 @@ export async function workflowMutation<T>(options: {
     artifactId: artifact(fields),
   });
   if (existing) {
-    const reference = run.artifacts.find(
-      (item) => item.id === existing.mutation?.intent.payloadId,
-    );
+    const reference = run.artifacts.find((item) => item.id === existing.mutation?.intent.payloadId);
     const persisted: unknown = reference
       ? JSON.parse(fs.readFileSync(reference.path, "utf8"))
       : null;
     if (
       !existing.mutation ||
       canonicalJson(persisted) !==
-        canonicalJson(
-          JSON.parse(sanitizeControlledText(JSON.stringify(options.request))),
-        ) ||
+        canonicalJson(JSON.parse(sanitizeControlledText(JSON.stringify(options.request)))) ||
       existing.mutation.intent.kind !== options.kind ||
       existing.mutation.intent.target !== options.target
     )
-      throw new Error(
-        "Reconciliation request differs from immutable mutation intent",
-      );
+      throw new Error("Reconciliation request differs from immutable mutation intent");
   } else {
     const payloadId = artifact(options.request);
     authority.store.persistMutationIntent(
@@ -603,8 +541,7 @@ export async function workflowMutation<T>(options: {
   if (
     terminal &&
     !permitted &&
-    (operation.mutation!.dispatches.length === 0 ||
-      mutationProvenNotDelivered(operation.mutation!))
+    (operation.mutation!.dispatches.length === 0 || mutationProvenNotDelivered(operation.mutation!))
   ) {
     if (operation.mutation!.dispatches.length === 0)
       event({
@@ -614,8 +551,7 @@ export async function workflowMutation<T>(options: {
       });
     throw new ObservedPrTerminalError(terminal, true);
   }
-  if (operation.status === "cancelled")
-    throw new WorkflowMutationWaitingError();
+  if (operation.status === "cancelled") throw new WorkflowMutationWaitingError();
   if (operation.status === "completed") {
     // The adapter result is a projection of immutable independent evidence, not
     // a fresh write or a mutable response cached in a second authority.
@@ -633,10 +569,7 @@ export async function workflowMutation<T>(options: {
     Date.now() < Date.parse(operation.mutation!.nextRecheckAt)
   )
     throw new WorkflowMutationWaitingError();
-  if (
-    !operation.mutation!.dispatches.length ||
-    mutationProvenNotDelivered(operation.mutation!)
-  ) {
+  if (!operation.mutation!.dispatches.length || mutationProvenNotDelivered(operation.mutation!)) {
     try {
       await options.preflight?.();
     } catch (error) {
@@ -669,8 +602,7 @@ export async function workflowMutation<T>(options: {
       const notSent =
         error instanceof ObservedPrTerminalError &&
         error.transport?.operationId === id &&
-        error.transport.generation ===
-          entry().mutation!.dispatches.at(-1)?.generation;
+        error.transport.generation === entry().mutation!.dispatches.at(-1)?.generation;
       event({
         type: "response",
         outcome: rejection || notSent ? "not-delivered" : "unknown",
@@ -679,13 +611,10 @@ export async function workflowMutation<T>(options: {
             response: "unknown; process diagnostics retained separately",
             ...(rejection ? { rejection } : {}),
           }),
-          ...(notSent
-            ? { nonDeliveryProof: "transport-proven-not-sent" as const }
-            : {}),
+          ...(notSent ? { nonDeliveryProof: "transport-proven-not-sent" as const } : {}),
           ...(rejection
             ? {
-                nonDeliveryProof:
-                  "provider-rejected-before-acceptance" as const,
+                nonDeliveryProof: "provider-rejected-before-acceptance" as const,
               }
             : {}),
         },
@@ -718,9 +647,7 @@ export async function workflowMutation<T>(options: {
     event({
       type: "observe",
       outcome: actual ? "verified" : "absent",
-      evidence: evidence(
-        actual ?? { observed: "not verified; absence is not non-delivery" },
-      ),
+      evidence: evidence(actual ?? { observed: "not verified; absence is not non-delivery" }),
       ...(actual ? { resourceId: actual.id } : { nextRecheckAt: next() }),
       attentionRequired: !actual,
     });

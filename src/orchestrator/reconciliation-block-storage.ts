@@ -40,8 +40,7 @@ const trelloOperations = [
 export type ReconciliationBlockOperation =
   (typeof githubOperations)[number] | (typeof trelloOperations)[number];
 
-export type ReconciliationRecoveryCondition =
-  "card-moved-to-ready" | "worker-restart";
+export type ReconciliationRecoveryCondition = "card-moved-to-ready" | "worker-restart";
 
 export interface PersistedReconciliationBlock {
   version: typeof RECONCILIATION_BLOCK_VERSION;
@@ -87,10 +86,7 @@ const persistedBlockSchema = z
   .superRefine((block, context) => {
     const isGitHub = block.operation.startsWith("GitHub ");
 
-    if (
-      block.cardId !== undefined &&
-      !block.attemptKey.startsWith(`${block.cardId}:`)
-    ) {
+    if (block.cardId !== undefined && !block.attemptKey.startsWith(`${block.cardId}:`)) {
       context.addIssue({
         code: "custom",
         path: ["attemptKey"],
@@ -98,10 +94,7 @@ const persistedBlockSchema = z
       });
     }
 
-    if (
-      block.cardId === undefined &&
-      !block.attemptKey.startsWith("project:")
-    ) {
+    if (block.cardId === undefined && !block.attemptKey.startsWith("project:")) {
       context.addIssue({
         code: "custom",
         path: ["attemptKey"],
@@ -140,16 +133,11 @@ function validatePersistedBlock(
 
   if (!result.success) {
     throw new Error(
-      result.error.issues
-        .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
-        .join("; "),
+      result.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; "),
     );
   }
 
-  if (
-    expectedProjectId !== undefined &&
-    result.data.projectId !== expectedProjectId
-  ) {
+  if (expectedProjectId !== undefined && result.data.projectId !== expectedProjectId) {
     throw new Error(
       `record projectId "${result.data.projectId}" does not match configured project "${expectedProjectId}"`,
     );
@@ -168,9 +156,7 @@ function normalizeContextRoot(contextRoot: string): string {
   }
 
   if (!path.isAbsolute(contextRoot)) {
-    throw new Error(
-      `Invalid context root "${contextRoot}": must be an absolute path`,
-    );
+    throw new Error(`Invalid context root "${contextRoot}": must be an absolute path`);
   }
 
   return path.resolve(contextRoot);
@@ -178,9 +164,7 @@ function normalizeContextRoot(contextRoot: string): string {
 
 function validatePathComponent(value: string, description: string): void {
   if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error(
-      `Invalid ${description}: must be a non-blank path component`,
-    );
+    throw new Error(`Invalid ${description}: must be a non-blank path component`);
   }
 
   if (
@@ -193,22 +177,16 @@ function validatePathComponent(value: string, description: string): void {
     path.win32.parse(value).root.length > 0 ||
     Array.from(value).some((character) => {
       const code = character.codePointAt(0);
-      return (
-        code !== undefined && (code <= 0x1f || (code >= 0x7f && code <= 0x9f))
-      );
+      return code !== undefined && (code <= 0x1f || (code >= 0x7f && code <= 0x9f));
     })
   ) {
-    throw new Error(
-      `Invalid ${description} "${value}": must be a single relative path component`,
-    );
+    throw new Error(`Invalid ${description} "${value}": must be a single relative path component`);
   }
 }
 
 function assertBelowRoot(root: string, candidate: string): void {
   if (candidate === root || !candidate.startsWith(`${root}${path.sep}`)) {
-    throw new Error(
-      `Refusing runtime storage path outside context root: ${candidate}`,
-    );
+    throw new Error(`Refusing runtime storage path outside context root: ${candidate}`);
   }
 }
 
@@ -216,9 +194,7 @@ function inspectDirectory(directoryPath: string, description: string): void {
   const parsedPath = path.parse(directoryPath);
   let currentPath = parsedPath.root;
 
-  for (const component of path
-    .relative(parsedPath.root, directoryPath)
-    .split(path.sep)) {
+  for (const component of path.relative(parsedPath.root, directoryPath).split(path.sep)) {
     if (component.length === 0) {
       continue;
     }
@@ -231,15 +207,11 @@ function inspectDirectory(directoryPath: string, description: string): void {
     }
 
     if (stat.isSymbolicLink()) {
-      throw new Error(
-        `Refusing symbolic-link ${description} path "${currentPath}"`,
-      );
+      throw new Error(`Refusing symbolic-link ${description} path "${currentPath}"`);
     }
 
     if (!stat.isDirectory()) {
-      throw new Error(
-        `Refusing non-directory ${description} path "${currentPath}"`,
-      );
+      throw new Error(`Refusing non-directory ${description} path "${currentPath}"`);
     }
   }
 }
@@ -261,9 +233,7 @@ function blockPath(contextRoot: string, projectId: string): string {
   const stat = fs.lstatSync(filePath, { throwIfNoEntry: false });
 
   if (stat?.isSymbolicLink()) {
-    throw new Error(
-      `Refusing symbolic-link runtime storage path "${filePath}"`,
-    );
+    throw new Error(`Refusing symbolic-link runtime storage path "${filePath}"`);
   }
 
   if (stat !== undefined && !stat.isFile()) {
@@ -277,9 +247,7 @@ function ensureDirectory(directoryPath: string): void {
   const parsedPath = path.parse(directoryPath);
   let currentPath = parsedPath.root;
 
-  for (const component of path
-    .relative(parsedPath.root, directoryPath)
-    .split(path.sep)) {
+  for (const component of path.relative(parsedPath.root, directoryPath).split(path.sep)) {
     if (component.length === 0) {
       continue;
     }
@@ -290,21 +258,14 @@ function ensureDirectory(directoryPath: string): void {
     if (stat === undefined) {
       fs.mkdirSync(currentPath);
     } else if (stat.isSymbolicLink()) {
-      throw new Error(
-        `Refusing symbolic-link runtime storage path "${currentPath}"`,
-      );
+      throw new Error(`Refusing symbolic-link runtime storage path "${currentPath}"`);
     } else if (!stat.isDirectory()) {
-      throw new Error(
-        `Refusing non-directory runtime storage path "${currentPath}"`,
-      );
+      throw new Error(`Refusing non-directory runtime storage path "${currentPath}"`);
     }
   }
 }
 
-export function getReconciliationBlockPath(
-  contextRoot: string,
-  projectId: string,
-): string {
+export function getReconciliationBlockPath(contextRoot: string, projectId: string): string {
   return blockPath(contextRoot, projectId);
 }
 
@@ -322,13 +283,10 @@ export function loadReconciliationBlock(
   const authority = ProjectRunAuthority.current(projectId);
   if (authority) {
     try {
-      const block = authority.read(
-        ProjectRunAuthority.reconciliationBlockKey(projectId),
-        (value) => validatePersistedBlock(value, projectId),
+      const block = authority.read(ProjectRunAuthority.reconciliationBlockKey(projectId), (value) =>
+        validatePersistedBlock(value, projectId),
       );
-      return block === null
-        ? { status: "missing" }
-        : { status: "loaded", block };
+      return block === null ? { status: "missing" } : { status: "loaded", block };
     } catch (error) {
       return {
         status: "malformed",
@@ -398,14 +356,10 @@ export function writeReconciliationBlock(
   );
 
   try {
-    fs.writeFileSync(
-      temporaryPath,
-      `${JSON.stringify(validatedBlock, null, 2)}\n`,
-      {
-        encoding: "utf8",
-        flag: "wx",
-      },
-    );
+    fs.writeFileSync(temporaryPath, `${JSON.stringify(validatedBlock, null, 2)}\n`, {
+      encoding: "utf8",
+      flag: "wx",
+    });
     fs.renameSync(temporaryPath, filePath);
   } catch (error) {
     try {
@@ -414,17 +368,13 @@ export function writeReconciliationBlock(
       // Preserve the original storage error.
     }
 
-    throw new Error(
-      `Could not persist reconciliation block "${filePath}": ${formatError(error)}`,
-      { cause: error },
-    );
+    throw new Error(`Could not persist reconciliation block "${filePath}": ${formatError(error)}`, {
+      cause: error,
+    });
   }
 }
 
-export function removeReconciliationBlock(
-  contextRoot: string,
-  projectId: string,
-): void {
+export function removeReconciliationBlock(contextRoot: string, projectId: string): void {
   const authority = ProjectRunAuthority.current(projectId);
   if (authority) {
     authority.remove(ProjectRunAuthority.reconciliationBlockKey(projectId));

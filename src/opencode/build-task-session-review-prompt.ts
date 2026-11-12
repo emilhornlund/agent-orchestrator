@@ -31,17 +31,13 @@ export interface BuildTaskSessionReviewPromptInput {
   attachmentContext?: CardAttachmentPromptContext;
 }
 
-export function buildTaskSessionReviewPrompt(
-  input: BuildTaskSessionReviewPromptInput,
-): string {
+export function buildTaskSessionReviewPrompt(input: BuildTaskSessionReviewPromptInput): string {
   if (
     input.approvedPlan !== undefined &&
     (input.approvedPlan.projectId !== input.projectId ||
       input.approvedPlan.cardId !== input.card.id)
   ) {
-    throw new Error(
-      "Approved task plan does not match the implementation review identity",
-    );
+    throw new Error("Approved task plan does not match the implementation review identity");
   }
 
   if (
@@ -49,9 +45,7 @@ export function buildTaskSessionReviewPrompt(
     (input.attachmentContext.projectId !== input.projectId ||
       input.attachmentContext.cardId !== input.card.id)
   ) {
-    throw new Error(
-      "Review attachment context does not match the task project and card",
-    );
+    throw new Error("Review attachment context does not match the task project and card");
   }
 
   const identity = {
@@ -63,32 +57,27 @@ export function buildTaskSessionReviewPrompt(
   const passingExample = {
     ...identity,
     verdict: "pass",
-    requirementAssessments: (input.approvedPlan?.requirements ?? []).map(
-      (requirement) => ({
-        requirementId: requirement.id,
-        status: "satisfied",
-        details: "The requested behavior is implemented.",
-        evidence: ["src/example.ts", "tests/example.test.ts"],
-      }),
-    ),
+    requirementAssessments: (input.approvedPlan?.requirements ?? []).map((requirement) => ({
+      requirementId: requirement.id,
+      status: "satisfied",
+      details: "The requested behavior is implemented.",
+      evidence: ["src/example.ts", "tests/example.test.ts"],
+    })),
     blockingFindings: [],
     previousFindingAssessments: [],
   };
   const failingExample = {
     ...identity,
     verdict: "fail",
-    requirementAssessments: (input.approvedPlan?.requirements ?? []).map(
-      (requirement, index) => ({
-        requirementId: requirement.id,
-        status: index === 0 ? "unsatisfied" : "satisfied",
-        details:
-          index === 0
-            ? "The requested behavior is not implemented."
-            : "The requested behavior is implemented.",
-        evidence:
-          index === 0 ? [] : ["src/example.ts", "tests/example.test.ts"],
-      }),
-    ),
+    requirementAssessments: (input.approvedPlan?.requirements ?? []).map((requirement, index) => ({
+      requirementId: requirement.id,
+      status: index === 0 ? "unsatisfied" : "satisfied",
+      details:
+        index === 0
+          ? "The requested behavior is not implemented."
+          : "The requested behavior is implemented.",
+      evidence: index === 0 ? [] : ["src/example.ts", "tests/example.test.ts"],
+    })),
     blockingFindings: [
       {
         kind: "incomplete",
@@ -107,9 +96,7 @@ export function buildTaskSessionReviewPrompt(
     `Task identity: ${JSON.stringify({ projectId: input.projectId, cardId: input.card.id })}`,
     `Original task title: ${JSON.stringify(input.card.name)}`,
     "Original task description:",
-    input.card.desc.trim().length > 0
-      ? input.card.desc
-      : "No additional description was provided.",
+    input.card.desc.trim().length > 0 ? input.card.desc : "No additional description was provided.",
     ...buildCardAttachmentPromptLines(input.attachmentContext),
     "Advisory plan and acceptance criteria:",
     input.approvedPlan === undefined

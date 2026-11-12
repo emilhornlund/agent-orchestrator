@@ -10,15 +10,10 @@ describe("hasCommittedImplementation", () => {
       getChangedFiles: vi.fn().mockResolvedValue("src/example.ts"),
     } as unknown as GitClient;
 
-    await expect(
-      hasCommittedImplementation(git, "/worktree", "origin/main"),
-    ).resolves.toBe(true);
+    await expect(hasCommittedImplementation(git, "/worktree", "origin/main")).resolves.toBe(true);
 
     expect(git.getStatus).toHaveBeenCalledWith("/worktree");
-    expect(git.getChangedFiles).toHaveBeenCalledWith(
-      "/worktree",
-      "origin/main",
-    );
+    expect(git.getChangedFiles).toHaveBeenCalledWith("/worktree", "origin/main");
   });
 
   it("does not treat a clean branch at its base as implementation work", async () => {
@@ -27,9 +22,7 @@ describe("hasCommittedImplementation", () => {
       getChangedFiles: vi.fn().mockResolvedValue(""),
     } as unknown as GitClient;
 
-    await expect(
-      hasCommittedImplementation(git, "/worktree", "origin/main"),
-    ).resolves.toBe(false);
+    await expect(hasCommittedImplementation(git, "/worktree", "origin/main")).resolves.toBe(false);
   });
 
   it("does not treat uncommitted changes as a completed commit", async () => {
@@ -38,9 +31,7 @@ describe("hasCommittedImplementation", () => {
       getChangedFiles: vi.fn(),
     } as unknown as GitClient;
 
-    await expect(
-      hasCommittedImplementation(git, "/worktree", "origin/main"),
-    ).resolves.toBe(false);
+    await expect(hasCommittedImplementation(git, "/worktree", "origin/main")).resolves.toBe(false);
 
     expect(git.getChangedFiles).not.toHaveBeenCalled();
   });
@@ -51,9 +42,9 @@ describe("hasCommittedImplementation", () => {
       getChangedFiles: vi.fn().mockResolvedValue("src/example.ts"),
     } as unknown as GitClient;
 
-    await expect(
-      hasCommittedImplementation(git, "/worktree", "origin/main", ""),
-    ).resolves.toBe(true);
+    await expect(hasCommittedImplementation(git, "/worktree", "origin/main", "")).resolves.toBe(
+      true,
+    );
 
     expect(git.getStatus).not.toHaveBeenCalled();
   });

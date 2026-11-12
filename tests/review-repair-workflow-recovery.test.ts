@@ -12,10 +12,7 @@ import {
 } from "../src/opencode/opencode-client.js";
 import { buildTaskSessionReviewRepairPrompt } from "../src/opencode/build-task-session-review-repair-prompt.js";
 import { runTaskSessionWorkflow } from "../src/orchestrator/run-task-session-workflow.js";
-import {
-  CommandRunner,
-  type RunCommand,
-} from "../src/process/command-runner.js";
+import { CommandRunner, type RunCommand } from "../src/process/command-runner.js";
 import {
   ProcessEvidenceError,
   ProcessGroupTerminationError,
@@ -36,9 +33,7 @@ afterEach(() => {
   if (root !== undefined) fs.rmSync(root, { recursive: true, force: true });
 });
 
-const projectConfig = (
-  base: string,
-): ProjectConfig & { contextRoot: string } => ({
+const projectConfig = (base: string): ProjectConfig & { contextRoot: string } => ({
   id: "project",
   autoMerge: false,
   contextRoot: path.join(base, "state"),
@@ -294,13 +289,10 @@ describe("production workflow recovery of reserved review repairs", () => {
             attempt: 1,
             maxAttempts: 1,
           });
-      const artifact = store.writePrimaryResultArtifact(
-        `${operationId}:prompt`,
-        {
-          prompt: exactPrompt,
-          review: failedReview,
-        },
-      );
+      const artifact = store.writePrimaryResultArtifact(`${operationId}:prompt`, {
+        prompt: exactPrompt,
+        review: failedReview,
+      });
       const updatedAt = new Date().toISOString();
       store.create({
         version: 1,
@@ -404,9 +396,7 @@ describe("production workflow recovery of reserved review repairs", () => {
             version: 1,
             projectId: project.id,
             cardId: card.id,
-            requirements: [
-              { id: "REQ-1", text: "Feature", verification: "Test" },
-            ],
+            requirements: [{ id: "REQ-1", text: "Feature", verification: "Test" }],
             steps: [
               {
                 id: "STEP-1",
@@ -451,14 +441,11 @@ describe("production workflow recovery of reserved review repairs", () => {
       } as unknown as TrelloClient;
       const git = {
         getCurrentBranch: vi.fn(async () => "agent/card"),
-        getHeadSha: vi.fn(async () =>
-          taskCommitCreated ? "b".repeat(40) : "a".repeat(40),
-        ),
+        getHeadSha: vi.fn(async () => (taskCommitCreated ? "b".repeat(40) : "a".repeat(40))),
         getRefSha: vi.fn(async () => "a".repeat(40)),
         getRemoteBranchSha: vi.fn(async () => null),
-        getCommitCountBetween: vi.fn(
-          async (_cwd: string, _base: string, head: string) =>
-            taskCommitCreated && head === "b".repeat(40) ? 1 : 0,
+        getCommitCountBetween: vi.fn(async (_cwd: string, _base: string, head: string) =>
+          taskCommitCreated && head === "b".repeat(40) ? 1 : 0,
         ),
         getStatus: vi.fn(async () => (taskCommitCreated ? "" : " M src.ts")),
         getDiff: vi.fn(async () => (taskCommitCreated ? "" : "partial work")),
@@ -476,10 +463,7 @@ describe("production workflow recovery of reserved review repairs", () => {
         push: vi.fn(async () => undefined),
       } as unknown as GitClient;
       if (publicationReviewCheckpoint) {
-        const currentIdentity = await getTaskSessionSourceSnapshotIdentity(
-          git,
-          worktree,
-        );
+        const currentIdentity = await getTaskSessionSourceSnapshotIdentity(git, worktree);
         const record = store.read(card.id)!;
         const now = new Date().toISOString();
         const reopenedFindingId = "finding-ledger-prior";
@@ -519,8 +503,7 @@ describe("production workflow recovery of reserved review repairs", () => {
                   sourceContentIdentity: currentIdentity,
                   kind: "defect",
                   summary: "Current prepared source has a material defect",
-                  detail:
-                    "The stored current review identifies the missing behavior.",
+                  detail: "The stored current review identifies the missing behavior.",
                 },
               ],
           ...(retainedPriorFinding
@@ -564,8 +547,7 @@ describe("production workflow recovery of reserved review repairs", () => {
               id: "finding-ledger-current",
               kind: "defect" as const,
               summary: "Current prepared source has a material defect",
-              detail:
-                "The stored current review identifies the missing behavior.",
+              detail: "The stored current review identifies the missing behavior.",
               sourceContentIdentity: currentIdentity,
               sourceIdentities: [currentIdentity],
               status: "unresolved" as const,
@@ -604,17 +586,11 @@ describe("production workflow recovery of reserved review repairs", () => {
               contentIdentity: currentIdentity,
             },
             review: currentReview,
-            reviewPreviousFindingIds: retainedPriorFinding
-              ? [reopenedFindingId]
-              : [],
-            reviewPreviousFindings: retainedPriorFinding
-              ? [previousFinding]
-              : [],
+            reviewPreviousFindingIds: retainedPriorFinding ? [reopenedFindingId] : [],
+            reviewPreviousFindings: retainedPriorFinding ? [previousFinding] : [],
           },
           revision: record.revision + 1,
-          updatedAt: new Date(
-            Math.max(Date.now(), Date.parse(record.updatedAt) + 1),
-          ).toISOString(),
+          updatedAt: new Date(Math.max(Date.now(), Date.parse(record.updatedAt) + 1)).toISOString(),
         });
         writeTrustedCommitState(project, card.id, {
           version: 1,
@@ -640,14 +616,12 @@ describe("production workflow recovery of reserved review repairs", () => {
               }
             : null,
         ),
-        createPullRequest: vi.fn(
-          async (options: { draft: boolean; body: string }) => {
-            publishedPullRequest = true;
-            publishedDraft = options.draft;
-            publishedBody = options.body;
-            return { url: "https://github.com/owner/repo/pull/42" };
-          },
-        ),
+        createPullRequest: vi.fn(async (options: { draft: boolean; body: string }) => {
+          publishedPullRequest = true;
+          publishedDraft = options.draft;
+          publishedBody = options.body;
+          return { url: "https://github.com/owner/repo/pull/42" };
+        }),
       } as unknown as GitHubClient;
       const primaryDispatches: Array<{
         prompt: string;
@@ -656,8 +630,7 @@ describe("production workflow recovery of reserved review repairs", () => {
         variant?: string;
       }> = [];
       const order: string[] = [];
-      const reviewFailureError =
-        reviewFailure === undefined ? undefined : reviewFailure;
+      const reviewFailureError = reviewFailure === undefined ? undefined : reviewFailure;
       let independentReviewRounds = 0;
       let priorReviewIdentity: string | undefined;
       let dispositionFindingId: string | undefined;
@@ -700,10 +673,8 @@ describe("production workflow recovery of reserved review repairs", () => {
                 blockingFindings: [
                   {
                     kind: "incomplete",
-                    summary:
-                      "The requested persistence behavior is incomplete.",
-                    detail:
-                      "A concrete reload failure leaves the value at default.",
+                    summary: "The requested persistence behavior is incomplete.",
+                    detail: "A concrete reload failure leaves the value at default.",
                   },
                 ],
                 reviewedContentIdentity: reviewedIdentity,
@@ -717,8 +688,7 @@ describe("production workflow recovery of reserved review repairs", () => {
             )?.[1];
             if (reviewedIdentity === undefined)
               throw new Error("review prompt omitted source identity");
-            const previousFindings =
-              store.read(card.id)?.reviewRepair?.findings ?? [];
+            const previousFindings = store.read(card.id)?.reviewRepair?.findings ?? [];
             return {
               exitCode: 0,
               output: JSON.stringify({
@@ -785,9 +755,7 @@ describe("production workflow recovery of reserved review repairs", () => {
         }
         if (
           interruptAfterUnavailable
-            ? options.prompt.startsWith(
-                "Address the independent implementation review findings",
-              )
+            ? options.prompt.startsWith("Address the independent implementation review findings")
             : includePlan
               ? options.prompt === exactPrompt
               : options.prompt.startsWith(
@@ -798,12 +766,8 @@ describe("production workflow recovery of reserved review repairs", () => {
           primaryDispatches.push({
             prompt: options.prompt,
             ...(options.model === undefined ? {} : { model: options.model }),
-            ...(options.variant === undefined
-              ? {}
-              : { variant: options.variant }),
-            ...(options.sessionId === undefined
-              ? {}
-              : { sessionId: options.sessionId }),
+            ...(options.variant === undefined ? {} : { variant: options.variant }),
+            ...(options.sessionId === undefined ? {} : { sessionId: options.sessionId }),
           });
           if (interruptAfterUnavailable)
             fs.writeFileSync(
@@ -811,13 +775,9 @@ describe("production workflow recovery of reserved review repairs", () => {
               "review correction changed the source\n",
             );
           if (interruptAfterUnavailable) {
-            const findingId = options.prompt.match(
-              /"id":\s*"(finding-[^"]+)"/u,
-            )?.[1];
+            const findingId = options.prompt.match(/"id":\s*"(finding-[^"]+)"/u)?.[1];
             if (findingId === undefined)
-              throw new Error(
-                "review repair prompt omitted its stable finding ID",
-              );
+              throw new Error("review repair prompt omitted its stable finding ID");
             dispositionFindingId = findingId;
             const report = JSON.stringify({
               version: 1,
@@ -833,8 +793,7 @@ describe("production workflow recovery of reserved review repairs", () => {
                 {
                   requirementId: "REQ-1",
                   status: "dismissed",
-                  rationale:
-                    "The primary confirms the requested behavior is implemented.",
+                  rationale: "The primary confirms the requested behavior is implemented.",
                 },
               ],
             });
@@ -856,8 +815,7 @@ describe("production workflow recovery of reserved review repairs", () => {
           const resultPath = options.prompt.match(
             /Write exactly one JSON object to ([^\n]+)\./u,
           )?.[1];
-          if (resultPath === undefined)
-            throw new Error("commit prompt omitted its result path");
+          if (resultPath === undefined) throw new Error("commit prompt omitted its result path");
           fs.mkdirSync(path.dirname(path.join(options.cwd, resultPath)), {
             recursive: true,
           });
@@ -875,14 +833,11 @@ describe("production workflow recovery of reserved review repairs", () => {
           };
         }
         if (twoPass && !restartingSecondPass) {
-          const pending = store.read(card.id)?.reviewRepair
-            ?.activePrimaryOperation;
+          const pending = store.read(card.id)?.reviewRepair?.activePrimaryOperation;
           secondPassDispatch = {
             operationId: pending?.operationId ?? "missing-operation-id",
             prompt: options.prompt,
-            ...(options.sessionId === undefined
-              ? {}
-              : { sessionId: options.sessionId }),
+            ...(options.sessionId === undefined ? {} : { sessionId: options.sessionId }),
           };
           await options.onExecutionPrepared?.({
             executionId: `review-repair-execution-${primaryDispatches.length}`,
@@ -897,9 +852,7 @@ describe("production workflow recovery of reserved review repairs", () => {
         if (options.command.startsWith("opencode session list"))
           return {
             exitCode: 0,
-            output: JSON.stringify([
-              { id: "primary-session", directory: worktree },
-            ]),
+            output: JSON.stringify([{ id: "primary-session", directory: worktree }]),
             errorOutput: "",
           };
         if (options.command === "validate") {
@@ -917,21 +870,13 @@ describe("production workflow recovery of reserved review repairs", () => {
 
       if (interruptAfterUnavailable) {
         const compareAndSwap = TaskExecutionStore.prototype.compareAndSwap;
-        vi.spyOn(
-          TaskExecutionStore.prototype,
-          "compareAndSwap",
-        ).mockImplementation(function (
+        vi.spyOn(TaskExecutionStore.prototype, "compareAndSwap").mockImplementation(function (
           this: TaskExecutionStore,
           cardId,
           revision,
           nextRecord,
         ) {
-          const persisted = compareAndSwap.call(
-            this,
-            cardId,
-            revision,
-            nextRecord,
-          );
+          const persisted = compareAndSwap.call(this, cardId, revision, nextRecord);
           if (
             interruptHandoff &&
             cardId === card.id &&
@@ -948,21 +893,13 @@ describe("production workflow recovery of reserved review repairs", () => {
       let publicationCheckpointWrites = 0;
       if (publicationReviewCheckpoint === "reopened") {
         const compareAndSwap = TaskExecutionStore.prototype.compareAndSwap;
-        vi.spyOn(
-          TaskExecutionStore.prototype,
-          "compareAndSwap",
-        ).mockImplementation(function (
+        vi.spyOn(TaskExecutionStore.prototype, "compareAndSwap").mockImplementation(function (
           this: TaskExecutionStore,
           cardId,
           revision,
           nextRecord,
         ) {
-          const persisted = compareAndSwap.call(
-            this,
-            cardId,
-            revision,
-            nextRecord,
-          );
+          const persisted = compareAndSwap.call(this, cardId, revision, nextRecord);
           const publicationQuality = nextRecord.publicationQuality;
           if (
             cardId === card.id &&
@@ -971,9 +908,7 @@ describe("production workflow recovery of reserved review repairs", () => {
               store.read(card.id)?.publicationQuality?.contentIdentity &&
             publicationQuality.review !== null &&
             publicationQuality.review !== undefined &&
-            publicationQuality.reviewPreviousFindingIds?.includes(
-              "finding-ledger-prior",
-            )
+            publicationQuality.reviewPreviousFindingIds?.includes("finding-ledger-prior")
           ) {
             publicationCheckpointWrites += 1;
             if (publicationCheckpointWrites <= 2) {
@@ -1041,16 +976,13 @@ describe("production workflow recovery of reserved review repairs", () => {
         ]);
         const reviewsBeforeFinalRestart = runOpenCode.mock.calls.filter(
           ([call]) =>
-            call.readOnly &&
-            call.prompt.includes("Independently review the implementation"),
+            call.readOnly && call.prompt.includes("Independently review the implementation"),
         ).length;
         const primaryDispatchesBeforeFinalRestart = primaryDispatches.length;
         await restart();
         expect(publicationCheckpointWrites).toBeGreaterThanOrEqual(2);
         expect(store.read(card.id)?.phase).toBe("ci");
-        expect(
-          store.read(card.id)?.publicationQuality?.reviewPreviousFindings,
-        ).toEqual([
+        expect(store.read(card.id)?.publicationQuality?.reviewPreviousFindings).toEqual([
           expect.objectContaining({
             id: "finding-ledger-prior",
             sourceIdentities: [identity],
@@ -1060,18 +992,13 @@ describe("production workflow recovery of reserved review repairs", () => {
         expect(
           runOpenCode.mock.calls.filter(
             ([call]) =>
-              call.readOnly &&
-              call.prompt.includes("Independently review the implementation"),
+              call.readOnly && call.prompt.includes("Independently review the implementation"),
           ),
         ).toHaveLength(reviewsBeforeFinalRestart);
-        expect(primaryDispatches).toHaveLength(
-          primaryDispatchesBeforeFinalRestart,
-        );
+        expect(primaryDispatches).toHaveLength(primaryDispatchesBeforeFinalRestart);
         expect(github.createPullRequest).toHaveBeenCalledOnce();
         expect(publishedDraft).toBe(true);
-        expect(publishedBody).toContain(
-          "Current prepared source has a material defect",
-        );
+        expect(publishedBody).toContain("Current prepared source has a material defect");
         expect(store.read(card.id)?.phase).not.toBe("attention-required");
         return;
       }
@@ -1080,10 +1007,7 @@ describe("production workflow recovery of reserved review repairs", () => {
         expect(taskCommitCreated).toBe(false);
         expect(github.createPullRequest).not.toHaveBeenCalled();
         expect(readPendingCommitState(project, card.id)).toBeNull();
-        const reopenedStore = new TaskExecutionStore(
-          project.contextRoot!,
-          project,
-        );
+        const reopenedStore = new TaskExecutionStore(project.contextRoot!, project);
         expect(reopenedStore.read(card.id)).toMatchObject({
           phase: "publication",
           reviewRepair: {
@@ -1125,13 +1049,10 @@ describe("production workflow recovery of reserved review repairs", () => {
         expect(reopenedStore.read(card.id)?.reviewRepair).not.toHaveProperty(
           "finishAfterNextReview",
         );
-        expect(
-          reopenedStore.read(card.id)?.reviewRepair?.finalReview,
-        ).toBeUndefined();
+        expect(reopenedStore.read(card.id)?.reviewRepair?.finalReview).toBeUndefined();
         const reviewsBeforeRestart = runOpenCode.mock.calls.filter(
           ([call]) =>
-            call.readOnly &&
-            call.prompt.startsWith("Independently review the implementation"),
+            call.readOnly && call.prompt.startsWith("Independently review the implementation"),
         ).length;
         const repairsBeforeRestart = primaryDispatches.length;
         workflowController = new AbortController();
@@ -1151,19 +1072,14 @@ describe("production workflow recovery of reserved review repairs", () => {
         expect(github.createPullRequest).toHaveBeenCalledOnce();
         expect(publishedDraft).toBe(true);
         expect(publishedBody).toContain("Prior review concern");
-        expect(publishedBody).toContain(
-          "The requested persistence behavior is incomplete.",
-        );
-        expect(publishedBody).toContain(
-          "A concrete reload failure leaves the value at default.",
-        );
+        expect(publishedBody).toContain("The requested persistence behavior is incomplete.");
+        expect(publishedBody).toContain("A concrete reload failure leaves the value at default.");
         expect(publishedBody).toContain("REQ-1");
         expect(publishedBody).toContain("follow-up review");
         expect(
           runOpenCode.mock.calls.filter(
             ([call]) =>
-              call.readOnly &&
-              call.prompt.startsWith("Independently review the implementation"),
+              call.readOnly && call.prompt.startsWith("Independently review the implementation"),
           ),
         ).toHaveLength(reviewsBeforeRestart);
         expect(primaryDispatches).toHaveLength(repairsBeforeRestart);
@@ -1176,19 +1092,14 @@ describe("production workflow recovery of reserved review repairs", () => {
         expect(
           runOpenCode.mock.calls.filter(
             ([call]) =>
-              call.readOnly &&
-              call.prompt.startsWith("Independently review the implementation"),
+              call.readOnly && call.prompt.startsWith("Independently review the implementation"),
           ),
         ).toEqual([]);
         expect(store.read(card.id)?.phase).toBe("ci");
         expect(github.createPullRequest).toHaveBeenCalledOnce();
         expect(publishedDraft).toBe(true);
-        expect(publishedBody).toContain(
-          "Current prepared source has a material defect",
-        );
-        expect(publishedBody).toContain(
-          "Review: Failed (human review required",
-        );
+        expect(publishedBody).toContain("Current prepared source has a material defect");
+        expect(publishedBody).toContain("Review: Failed (human review required");
         expect(store.read(card.id)?.publicationQuality?.review).toMatchObject({
           verdict: "fail",
         });
@@ -1220,10 +1131,7 @@ describe("production workflow recovery of reserved review repairs", () => {
           "Latest independent review result and blocking findings:",
         );
 
-        fs.writeFileSync(
-          path.join(worktree, "src.ts"),
-          "early-finished primary correction\n",
-        );
+        fs.writeFileSync(path.join(worktree, "src.ts"), "early-finished primary correction\n");
         const current = store.read(card.id)!;
         const dispositionReport = JSON.stringify({
           version: 1,
@@ -1232,8 +1140,7 @@ describe("production workflow recovery of reserved review repairs", () => {
             {
               requirementId: "REQ-1",
               status: "dismissed",
-              rationale:
-                "The primary confirms the requested behavior is implemented.",
+              rationale: "The primary confirms the requested behavior is implemented.",
             },
           ],
         });
@@ -1282,16 +1189,12 @@ describe("production workflow recovery of reserved review repairs", () => {
         expect(primaryDispatches).toHaveLength(dispatchesBeforeRestart);
         const resumed = store.read(card.id)!;
         expect(resumed.reviewRepair?.activePrimaryOperation).toBeUndefined();
-        expect(resumed.primaryOperations?.[pending!.operationId]).toMatchObject(
-          {
-            executions: 1,
-            status: "completed",
-          },
-        );
+        expect(resumed.primaryOperations?.[pending!.operationId]).toMatchObject({
+          executions: 1,
+          status: "completed",
+        });
         expect(
-          runCommand.mock.calls.filter(
-            ([options]) => options.command === "validate",
-          ),
+          runCommand.mock.calls.filter(([options]) => options.command === "validate"),
         ).toHaveLength(3);
         expect(github.findPullRequestState).toHaveBeenCalled();
         expect(resumed.reviewRepair).toMatchObject({
@@ -1301,8 +1204,7 @@ describe("production workflow recovery of reserved review repairs", () => {
           requirementDispositions: [
             {
               requirementId: "REQ-1",
-              reviewedContentIdentity:
-                savedPrompt.review.reviewedContentIdentity,
+              reviewedContentIdentity: savedPrompt.review.reviewedContentIdentity,
               status: "dismissed",
             },
           ],
@@ -1329,9 +1231,7 @@ describe("production workflow recovery of reserved review repairs", () => {
         });
         if (includePlan) expect(primaryDispatches[0]?.prompt).toBe(exactPrompt);
         else {
-          expect(primaryDispatches[0]?.prompt).toContain(
-            "No usable plan was available.",
-          );
+          expect(primaryDispatches[0]?.prompt).toContain("No usable plan was available.");
           expect(primaryDispatches[0]?.prompt).toContain(card.desc);
         }
       }
@@ -1345,9 +1245,7 @@ describe("production workflow recovery of reserved review repairs", () => {
         ),
       ).toBe(false);
       expect(
-        runCommand.mock.calls.filter(
-          ([options]) => options.command === "validate",
-        ),
+        runCommand.mock.calls.filter(([options]) => options.command === "validate"),
       ).toHaveLength(includePlan ? 1 : 2);
       expect(order).toEqual(
         completed
@@ -1358,10 +1256,7 @@ describe("production workflow recovery of reserved review repairs", () => {
       );
       if (!includePlan) {
         const resultRecord = store.read(card.id);
-        expect(
-          resultRecord,
-          `record=${JSON.stringify(resultRecord)}`,
-        ).toMatchObject({
+        expect(resultRecord, `record=${JSON.stringify(resultRecord)}`).toMatchObject({
           validationRepair: {
             status: "exhausted",
             maxAttempts: 0,
@@ -1378,15 +1273,12 @@ describe("production workflow recovery of reserved review repairs", () => {
             ],
           },
         });
-        expect(
-          store.read(card.id)?.reviewRepair?.activePrimaryOperation,
-        ).toBeUndefined();
-        expect(
-          store.read(card.id)?.primaryOperations?.[operationId],
-        ).toMatchObject({ status: "completed", executions: 1 });
-        expect(store.read(card.id)?.reviewRepair?.finalReview?.verdict).toBe(
-          "pass",
-        );
+        expect(store.read(card.id)?.reviewRepair?.activePrimaryOperation).toBeUndefined();
+        expect(store.read(card.id)?.primaryOperations?.[operationId]).toMatchObject({
+          status: "completed",
+          executions: 1,
+        });
+        expect(store.read(card.id)?.reviewRepair?.finalReview?.verdict).toBe("pass");
         expect(store.read(card.id)).toMatchObject({
           phase: "ci",
           pullRequest: { headSha: "b".repeat(40) },
@@ -1394,12 +1286,8 @@ describe("production workflow recovery of reserved review repairs", () => {
       }
       expect(github.findPullRequestState).toHaveBeenCalled();
       expect(publishedDraft).toBe(true);
-      expect(
-        store.read(card.id)?.reviewRepair?.activePrimaryOperation,
-      ).toBeUndefined();
-      expect(
-        store.read(card.id)?.primaryOperations?.[operationId]?.executions,
-      ).toBe(1);
+      expect(store.read(card.id)?.reviewRepair?.activePrimaryOperation).toBeUndefined();
+      expect(store.read(card.id)?.primaryOperations?.[operationId]?.executions).toBe(1);
       if (includePlan && !twoPass)
         expect(store.read(card.id)).toMatchObject({
           reviewUnavailable: {
@@ -1411,9 +1299,7 @@ describe("production workflow recovery of reserved review repairs", () => {
           },
         });
       if (includePlan && !twoPass) {
-        expect(
-          store.read(card.id)?.reviewUnavailable?.priorReview,
-        ).toMatchObject({
+        expect(store.read(card.id)?.reviewUnavailable?.priorReview).toMatchObject({
           verdict: "fail",
         });
         expect(store.read(card.id)?.reviewRepair?.finalReview).toBeUndefined();
@@ -1424,9 +1310,7 @@ describe("production workflow recovery of reserved review repairs", () => {
         expect(publishedBody).toContain("Correct the failing behavior.");
         expect(publishedBody).toContain("A concrete failure was reproduced.");
         expect(publishedBody).toContain("REQ-1");
-        expect(publishedBody).toContain(
-          "No matching primary-session disposition is recorded",
-        );
+        expect(publishedBody).toContain("No matching primary-session disposition is recorded");
         expect(publishedDraft).toBe(true);
       }
     },

@@ -71,9 +71,7 @@ function createFixture(): {
   store: TaskExecutionStore;
   root: string;
 } {
-  temporaryRoot = fs.mkdtempSync(
-    path.join(os.tmpdir(), "agent-orchestrator-primary-session-"),
-  );
+  temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agent-orchestrator-primary-session-"));
   const project = {
     id: "project-one",
     repository: {
@@ -152,9 +150,7 @@ describe("runWithPrimaryTaskSession", () => {
     );
     const run = vi
       .fn<RunOpenCode>()
-      .mockRejectedValueOnce(
-        new OpenCodeTimeoutError(100, "exec-timeout", true),
-      )
+      .mockRejectedValueOnce(new OpenCodeTimeoutError(100, "exec-timeout", true))
       .mockResolvedValueOnce({
         exitCode: 0,
         output: "planning advice",
@@ -324,10 +320,7 @@ describe("runWithPrimaryTaskSession", () => {
           inspect: async () => "reachable",
           context: bundle,
           contextDirectory: path.join(temporaryRoot!, "context"),
-          forbiddenPaths: [
-            project.repository.path,
-            project.repository.worktreeRoot,
-          ],
+          forbiddenPaths: [project.repository.path, project.repository.worktreeRoot],
           attemptId: "attempt-one",
           baseline: recoveryBaseline(),
         },
@@ -421,10 +414,7 @@ describe("runWithPrimaryTaskSession", () => {
         inspect: async () => "confirmed-absent",
         context: bundle,
         contextDirectory: root,
-        forbiddenPaths: [
-          project.repository.path,
-          project.repository.worktreeRoot,
-        ],
+        forbiddenPaths: [project.repository.path, project.repository.worktreeRoot],
         attemptId: "attempt-one",
         baseline: recoveryBaseline(),
       },
@@ -455,10 +445,7 @@ describe("runWithPrimaryTaskSession", () => {
           inspect: async () => "reachable",
           context: bundle,
           contextDirectory: root,
-          forbiddenPaths: [
-            project.repository.path,
-            project.repository.worktreeRoot,
-          ],
+          forbiddenPaths: [project.repository.path, project.repository.worktreeRoot],
           attemptId: "attempt-one",
           baseline: recoveryBaseline(),
         },
@@ -475,10 +462,7 @@ describe("runWithPrimaryTaskSession", () => {
         {
           inspect: async () => "reachable",
           context: bundle,
-          forbiddenPaths: [
-            project.repository.path,
-            project.repository.worktreeRoot,
-          ],
+          forbiddenPaths: [project.repository.path, project.repository.worktreeRoot],
           attemptId: "attempt-one",
           baseline: recoveryBaseline(),
           persistArtifact: () => ({
@@ -501,16 +485,8 @@ describe("runWithPrimaryTaskSession", () => {
     async ({ owningStatus, metadataStatus }) => {
       const { store, project, root: storeRoot } = createFixture();
       const trustedRoot = path.join(storeRoot, "artifacts");
-      const artifactRoot = path.join(
-        trustedRoot,
-        "card-one",
-        "process-executions",
-      );
-      const metadataPath = path.join(
-        artifactRoot,
-        "original-primary-execution",
-        "execution.json",
-      );
+      const artifactRoot = path.join(trustedRoot, "card-one", "process-executions");
+      const metadataPath = path.join(artifactRoot, "original-primary-execution", "execution.json");
       fs.mkdirSync(path.dirname(metadataPath), { recursive: true });
       const bundle = {
         version: 1 as const,
@@ -574,9 +550,7 @@ describe("runWithPrimaryTaskSession", () => {
           executionId: "original-primary-execution",
           cwd: project.repository.path,
           status: metadataStatus,
-          ...(metadataStatus === "spawn-failure"
-            ? { dispatchState: "not-dispatched" }
-            : {}),
+          ...(metadataStatus === "spawn-failure" ? { dispatchState: "not-dispatched" } : {}),
         }),
       );
       const run = vi
@@ -602,10 +576,7 @@ describe("runWithPrimaryTaskSession", () => {
         inspect: async () => "reachable" as const,
         context: bundle,
         contextDirectory: path.join(temporaryRoot!, "recovery-context"),
-        forbiddenPaths: [
-          project.repository.path,
-          project.repository.worktreeRoot,
-        ],
+        forbiddenPaths: [project.repository.path, project.repository.worktreeRoot],
         attemptId: "attempt-one",
         baseline: recoveryBaseline(),
       };
@@ -642,12 +613,10 @@ describe("runWithPrimaryTaskSession", () => {
           operationId,
           readOnlyAcknowledged: true,
           inspectOwningPrimary: (entry) =>
-            inspectPrimaryOperationEvidence(
-              restartedStore,
-              "card-one",
-              entry.id,
-              { trustedRoot, cwd: project.repository.path },
-            ),
+            inspectPrimaryOperationEvidence(restartedStore, "card-one", entry.id, {
+              trustedRoot,
+              cwd: project.repository.path,
+            }),
           inspectPending: async (entry) => ({
             status: "stopped-after-dispatch",
             operationId,
@@ -658,9 +627,7 @@ describe("runWithPrimaryTaskSession", () => {
       );
       expect(result.exitCode).toBe(0);
       expect(run).toHaveBeenCalledOnce();
-      expect(run.mock.calls.map(([options]) => options.sessionId)).toEqual([
-        "ses_replacement",
-      ]);
+      expect(run.mock.calls.map(([options]) => options.sessionId)).toEqual(["ses_replacement"]);
       expect(restartedStore.read("card-one")).toMatchObject({
         primarySessionId: "ses_replacement",
         primaryOperations: {
@@ -732,9 +699,7 @@ describe("runWithPrimaryTaskSession", () => {
     );
 
     expect(result.sessionId).toBe("ses_primary-one");
-    expect(runOpenCode).toHaveBeenCalledWith(
-      expect.objectContaining({ captureSessionId: true }),
-    );
+    expect(runOpenCode).toHaveBeenCalledWith(expect.objectContaining({ captureSessionId: true }));
     expect(store.read("card-one")).toMatchObject({
       primarySessionId: "ses_primary-one",
       sessionCreationStatus: "bound",
@@ -871,10 +836,7 @@ describe("runWithPrimaryTaskSession", () => {
         inspect: async () => "reachable",
         context,
         contextDirectory: path.join(temporaryRoot!, "context"),
-        forbiddenPaths: [
-          project.repository.path,
-          project.repository.worktreeRoot,
-        ],
+        forbiddenPaths: [project.repository.path, project.repository.worktreeRoot],
         attemptId: "attempt-one",
         baseline: recoveryBaseline(),
       },
@@ -933,10 +895,7 @@ describe("runWithPrimaryTaskSession", () => {
           inspect: async () => "reachable",
           context,
           contextDirectory: path.join(temporaryRoot!, "context"),
-          forbiddenPaths: [
-            project.repository.path,
-            project.repository.worktreeRoot,
-          ],
+          forbiddenPaths: [project.repository.path, project.repository.worktreeRoot],
           attemptId: "attempt-one",
           baseline: {
             ...recoveryBaseline(),
@@ -946,9 +905,7 @@ describe("runWithPrimaryTaskSession", () => {
       ),
     ).rejects.toThrow("changed after replacement binding");
     expect(run).not.toHaveBeenCalled();
-    expect(store.read("card-one")?.sessionRecovery?.status).toBe(
-      "reconstruction-blocked",
-    );
+    expect(store.read("card-one")?.sessionRecovery?.status).toBe("reconstruction-blocked");
   });
 
   it("reconstructs only after confirmed absence and persists a hashed context bundle", async () => {
@@ -1014,16 +971,11 @@ describe("runWithPrimaryTaskSession", () => {
             status: "available",
             references: ["feedback:1"],
             content: JSON.stringify({
-              entries: [
-                { id: "feedback:1", text: `useful feedback ${canaries[4]}` },
-              ],
+              entries: [{ id: "feedback:1", text: `useful feedback ${canaries[4]}` }],
             }),
           },
         },
-        forbiddenPaths: [
-          project.repository.path,
-          project.repository.worktreeRoot,
-        ],
+        forbiddenPaths: [project.repository.path, project.repository.worktreeRoot],
         attemptId: "attempt-one",
         baseline: recoveryBaseline(),
       },
@@ -1042,15 +994,15 @@ describe("runWithPrimaryTaskSession", () => {
         contextReference: expect.stringMatching(/^sha256:/u),
       },
     });
-    expect(
-      store.read("card-one")?.sessionRecovery?.replacementSessionIds,
-    ).toEqual(["ses_replacement"]);
+    expect(store.read("card-one")?.sessionRecovery?.replacementSessionIds).toEqual([
+      "ses_replacement",
+    ]);
     expect(fs.readdirSync(contextDirectory)).toHaveLength(1);
     const saved = store.read("card-one")!.sessionRecovery!;
     const artifactBytes = fs.readFileSync(saved.contextPath!);
-    expect(
-      `sha256:${createHash("sha256").update(artifactBytes).digest("hex")}`,
-    ).toBe(saved.contextReference);
+    expect(`sha256:${createHash("sha256").update(artifactBytes).digest("hex")}`).toBe(
+      saved.contextReference,
+    );
     const artifact = artifactBytes.toString("utf8");
     const outbound = runOpenCode.mock.calls[0]![0].prompt;
     for (const canary of canaries) {
@@ -1062,9 +1014,7 @@ describe("runWithPrimaryTaskSession", () => {
     expect(JSON.parse(decoded.plan.content).summary).toContain("useful plan");
     expect(JSON.parse(decoded.currentDiff).diff).toContain("useful diff");
     expect(JSON.parse(decoded.history).history).toContain("useful history");
-    expect(JSON.parse(decoded.feedback.content).entries[0].text).toContain(
-      "useful feedback",
-    );
+    expect(JSON.parse(decoded.feedback.content).entries[0].text).toContain("useful feedback");
     expect(outbound).toContain("useful feedback");
   });
 
@@ -1079,10 +1029,7 @@ describe("runWithPrimaryTaskSession", () => {
     fs.writeFileSync(path.join(repo, "tracked.txt"), "tracked original\n");
     gitRun(["add", "tracked.txt"]);
     gitRun(["commit", "-m", "fixture"]);
-    fs.writeFileSync(
-      path.join(repo, "untracked.txt"),
-      "safe untracked fact; untracked-canary",
-    );
+    fs.writeFileSync(path.join(repo, "untracked.txt"), "safe untracked fact; untracked-canary");
     fs.writeFileSync(
       path.join(repo, "tracked.txt"),
       "tracked original\nstaged safe diff; diff-canary\n",
@@ -1250,11 +1197,7 @@ describe("runWithPrimaryTaskSession", () => {
       updatedAt: new Date().toISOString(),
     });
     const authority = new ProjectRunAuthority("project-one", runStore, 1);
-    const artifactStore = new TaskExecutionStore(
-      coordination,
-      project,
-      authority,
-    );
+    const artifactStore = new TaskExecutionStore(coordination, project, authority);
     const persistedRecord = { ...executionRecord };
     delete persistedRecord.reviewObservation;
     artifactStore.create(persistedRecord as TaskExecutionRecord);
@@ -1269,10 +1212,7 @@ describe("runWithPrimaryTaskSession", () => {
       });
     const before = fingerprint();
     const actualBaseline = {
-      sourceIdentity: await getTaskSessionSourceSnapshotIdentity(
-        gitClient,
-        repo,
-      ),
+      sourceIdentity: await getTaskSessionSourceSnapshotIdentity(gitClient, repo),
       head: gitRun(["rev-parse", "HEAD"]),
       branch: gitRun(["branch", "--show-current"]),
       branchRef: gitRun(["rev-parse", "HEAD"]),
@@ -1323,18 +1263,13 @@ describe("runWithPrimaryTaskSession", () => {
     }
     expect(parsed.plan.content).toContain("safe plan fact");
     expect(parsed.attachmentManifest.content).toContain("safe attachment fact");
-    expect(JSON.parse(parsed.feedback.content).entries[0].text).toContain(
-      "safe feedback",
-    );
+    expect(JSON.parse(parsed.feedback.content).entries[0].text).toContain("safe feedback");
     const history = JSON.parse(parsed.history);
     const ledger = JSON.parse(history.feedbackLedger);
     expect(ledger.entries[0].text).not.toContain(canaries[6]);
     expect(ledger.entries[0].text).toContain("safe feedback");
     expect(
-      Buffer.from(
-        JSON.parse(parsed.currentDiff).untracked[0].contentBase64,
-        "base64",
-      ).toString(),
+      Buffer.from(JSON.parse(parsed.currentDiff).untracked[0].contentBase64, "base64").toString(),
     ).toContain("safe untracked fact");
     expect(outbound).toContain("safe card fact");
   });
@@ -1388,10 +1323,7 @@ describe("runWithPrimaryTaskSession", () => {
         inspect: async () => "confirmed-absent",
         context: context("a".repeat(40)),
         contextDirectory,
-        forbiddenPaths: [
-          project.repository.path,
-          project.repository.worktreeRoot,
-        ],
+        forbiddenPaths: [project.repository.path, project.repository.worktreeRoot],
         attemptId: "attempt-one",
         baseline: recoveryBaseline(),
       },
@@ -1434,10 +1366,7 @@ describe("runWithPrimaryTaskSession", () => {
         inspect: async () => "confirmed-absent",
         context: context("b".repeat(40)),
         contextDirectory,
-        forbiddenPaths: [
-          project.repository.path,
-          project.repository.worktreeRoot,
-        ],
+        forbiddenPaths: [project.repository.path, project.repository.worktreeRoot],
         attemptId: "attempt-one",
         baseline: editedBaseline,
       },
@@ -1448,12 +1377,11 @@ describe("runWithPrimaryTaskSession", () => {
       },
     );
     expect(second.sessionId).toBe("ses_replacement-two");
-    expect(
-      store.read("card-one")?.sessionRecovery?.replacementSessionIds,
-    ).toEqual(["ses_replacement-one", "ses_replacement-two"]);
-    expect(
-      store.read("card-one")?.sessionRecovery?.contextLineage,
-    ).toHaveLength(2);
+    expect(store.read("card-one")?.sessionRecovery?.replacementSessionIds).toEqual([
+      "ses_replacement-one",
+      "ses_replacement-two",
+    ]);
+    expect(store.read("card-one")?.sessionRecovery?.contextLineage).toHaveLength(2);
     expect(store.read("card-one")?.primaryOperations).toBeUndefined();
   });
 
@@ -1468,27 +1396,15 @@ describe("runWithPrimaryTaskSession", () => {
     const runOpenCode = vi.fn<RunOpenCode>();
     const openCode = new OpenCodeClient(runOpenCode);
     await expect(
-      runWithPrimaryTaskSession(
-        store,
-        openCode,
-        "project-one",
-        "card-one",
-        createRunOptions(),
-        { inspect: async () => "unknown" },
-      ),
+      runWithPrimaryTaskSession(store, openCode, "project-one", "card-one", createRunOptions(), {
+        inspect: async () => "unknown",
+      }),
     ).rejects.toThrow("unknown");
     await expect(
-      runWithPrimaryTaskSession(
-        store,
-        openCode,
-        "project-one",
-        "card-one",
-        createRunOptions(),
-        {
-          inspect: async () => "confirmed-absent",
-          baseline: recoveryBaseline(),
-        },
-      ),
+      runWithPrimaryTaskSession(store, openCode, "project-one", "card-one", createRunOptions(), {
+        inspect: async () => "confirmed-absent",
+        baseline: recoveryBaseline(),
+      }),
     ).rejects.toThrow("context is unavailable");
     expect(runOpenCode).not.toHaveBeenCalled();
   });
@@ -1523,12 +1439,10 @@ describe("runWithPrimaryTaskSession", () => {
           inspectPending: async () => ({ status: "unknown" }),
         },
       ),
-    ).rejects.toMatchObject<Partial<PrimarySessionReconstructionRequiredError>>(
-      {
-        name: "PrimarySessionReconstructionRequiredError",
-        operationId: "attempt-one:implementation",
-      },
-    );
+    ).rejects.toMatchObject<Partial<PrimarySessionReconstructionRequiredError>>({
+      name: "PrimarySessionReconstructionRequiredError",
+      operationId: "attempt-one:implementation",
+    });
     expect(inspect).toHaveBeenCalledTimes(2);
     expect(openCode).not.toHaveBeenCalled();
     expect(store.read("card-one")?.primaryOperations).toBeUndefined();
@@ -1579,12 +1493,11 @@ describe("runWithPrimaryTaskSession", () => {
       createRunOptions(),
     );
 
-    expect(
-      resumeSession.mock.calls.map(([options]) => options.sessionId),
-    ).toEqual(["ses_card-one", "ses_card-two"]);
-    expect(
-      resumeSession.mock.calls.every(([options]) => !options.captureSessionId),
-    ).toBe(true);
+    expect(resumeSession.mock.calls.map(([options]) => options.sessionId)).toEqual([
+      "ses_card-one",
+      "ses_card-two",
+    ]);
+    expect(resumeSession.mock.calls.every(([options]) => !options.captureSessionId)).toBe(true);
     expect(createSession).toHaveBeenCalledOnce();
   });
 
@@ -1592,8 +1505,7 @@ describe("runWithPrimaryTaskSession", () => {
     const { store } = createFixture();
     store.create(createRecord());
     let runStarted: (() => void) | undefined;
-    let finishRun:
-      ((result: Awaited<ReturnType<RunOpenCode>>) => void) | undefined;
+    let finishRun: ((result: Awaited<ReturnType<RunOpenCode>>) => void) | undefined;
     const started = new Promise<void>((resolve) => {
       runStarted = resolve;
     });
@@ -1615,13 +1527,7 @@ describe("runWithPrimaryTaskSession", () => {
     await started;
 
     await expect(
-      runWithPrimaryTaskSession(
-        store,
-        openCode,
-        "project-one",
-        "card-one",
-        createRunOptions(),
-      ),
+      runWithPrimaryTaskSession(store, openCode, "project-one", "card-one", createRunOptions()),
     ).rejects.toThrow("ambiguous");
     expect(runOpenCode).toHaveBeenCalledOnce();
 
@@ -1650,26 +1556,14 @@ describe("runWithPrimaryTaskSession", () => {
     const openCode = new OpenCodeClient(runOpenCode);
 
     await expect(
-      runWithPrimaryTaskSession(
-        store,
-        openCode,
-        "project-one",
-        "card-one",
-        createRunOptions(),
-      ),
+      runWithPrimaryTaskSession(store, openCode, "project-one", "card-one", createRunOptions()),
     ).rejects.toThrow("outcome is ambiguous");
     expect(store.read("card-one")).toMatchObject({
       sessionCreationStatus: "ambiguous",
     });
 
     await expect(
-      runWithPrimaryTaskSession(
-        store,
-        openCode,
-        "project-one",
-        "card-one",
-        createRunOptions(),
-      ),
+      runWithPrimaryTaskSession(store, openCode, "project-one", "card-one", createRunOptions()),
     ).rejects.toThrow("refusing to create a replacement");
     expect(runOpenCode).toHaveBeenCalledOnce();
   });

@@ -103,10 +103,7 @@ describe("transitionTaskExecutionRecord", () => {
       },
     };
 
-    const nextRecord = transitionTaskExecutionRecord(
-      record,
-      createEvent("feedback-received"),
-    );
+    const nextRecord = transitionTaskExecutionRecord(record, createEvent("feedback-received"));
 
     expect(nextRecord.phase).toBe("implementation");
     expect(nextRecord.feedbackRemediation).toBeUndefined();
@@ -123,9 +120,7 @@ describe("transitionTaskExecutionRecord", () => {
         record,
         createEvent(type, {
           eventId: `recovery-${type}`,
-          occurredAt: new Date(
-            Date.parse(record.updatedAt) + 1_000,
-          ).toISOString(),
+          occurredAt: new Date(Date.parse(record.updatedAt) + 1_000).toISOString(),
         }),
       );
     }
@@ -154,10 +149,7 @@ describe("transitionTaskExecutionRecord", () => {
     ["human-feedback", "feedback-replies-published", "ci"],
     ["human-feedback", "pull-request-merged", "done"],
   ] as const)("advances %s on %s to %s", (phase, eventType, expectedPhase) => {
-    const nextRecord = transitionTaskExecutionRecord(
-      createRecord(phase),
-      createEvent(eventType),
-    );
+    const nextRecord = transitionTaskExecutionRecord(createRecord(phase), createEvent(eventType));
 
     expect(nextRecord.phase).toBe(expectedPhase);
     expect(nextRecord.revision).toBe(2);
@@ -210,9 +202,7 @@ describe("transitionTaskExecutionRecord", () => {
     const event = createEvent("plan-approved");
     const transitioned = transitionTaskExecutionRecord(record, event);
 
-    expect(transitionTaskExecutionRecord(transitioned, event)).toEqual(
-      transitioned,
-    );
+    expect(transitionTaskExecutionRecord(transitioned, event)).toEqual(transitioned);
     expect(transitioned.revision).toBe(2);
   });
 
@@ -247,10 +237,7 @@ describe("transitionTaskExecutionRecord", () => {
 
   it("rejects an event from the wrong phase and an old timestamp", () => {
     expect(() =>
-      transitionTaskExecutionRecord(
-        createRecord("planning"),
-        createEvent("review-passed"),
-      ),
+      transitionTaskExecutionRecord(createRecord("planning"), createEvent("review-passed")),
     ).toThrow("not allowed during the planning phase");
     expect(() =>
       transitionTaskExecutionRecord(

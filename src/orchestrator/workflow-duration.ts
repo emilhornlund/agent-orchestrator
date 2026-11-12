@@ -1,9 +1,6 @@
 import type { ProjectConfig } from "../config/config.js";
 import type { Logger } from "../logging/logger.js";
-import type {
-  TrelloClient,
-  TrelloListTransition,
-} from "../trello/trello-client.js";
+import type { TrelloClient, TrelloListTransition } from "../trello/trello-client.js";
 
 export interface WorkflowListIds {
   readyListId: string;
@@ -100,9 +97,7 @@ function selectWorkflowPass(
     timestampedTransitions.push({ transition, timestamp });
   }
 
-  timestampedTransitions.sort(
-    (left, right) => left.timestamp - right.timestamp,
-  );
+  timestampedTransitions.sort((left, right) => left.timestamp - right.timestamp);
 
   for (let index = 1; index < timestampedTransitions.length; index += 1) {
     const previous = timestampedTransitions[index - 1];
@@ -125,9 +120,7 @@ function selectWorkflowPass(
   const end = endCandidates.at(-1);
 
   if (end === undefined) {
-    return omitted(
-      `no ${listIds.workingListId} -> ${options.endListId} transition was recorded`,
-    );
+    return omitted(`no ${listIds.workingListId} -> ${options.endListId} transition was recorded`);
   }
 
   const latestTransition = timestampedTransitions.at(-1);
@@ -140,8 +133,7 @@ function selectWorkflowPass(
 
   const workingEntries = timestampedTransitions.filter(
     ({ transition, timestamp }) =>
-      transition.listAfterId === listIds.workingListId &&
-      timestamp < end.timestamp,
+      transition.listAfterId === listIds.workingListId && timestamp < end.timestamp,
   );
   const workingEntry = workingEntries.at(-1);
 
@@ -278,9 +270,7 @@ async function getElapsedWorkflowTimeForPass(
   trello: TrelloClient,
   cardId: string,
   cardLog: Logger,
-  selectPass: (
-    transitions: readonly TrelloListTransition[],
-  ) => WorkflowDurationResult,
+  selectPass: (transitions: readonly TrelloListTransition[]) => WorkflowDurationResult,
 ): Promise<string | undefined> {
   try {
     if (typeof trello.getListTransitions !== "function") {
@@ -290,9 +280,7 @@ async function getElapsedWorkflowTimeForPass(
     const transitions = await trello.getListTransitions(cardId);
 
     if (transitions === null) {
-      throw new Error(
-        "Trello action history contains an incomplete list transition",
-      );
+      throw new Error("Trello action history contains an incomplete list transition");
     }
 
     const duration = selectPass(transitions);

@@ -148,9 +148,7 @@ function createSmtpTestServer(options: SmtpTestServerOptions): net.Server {
       options.onAuthentication?.();
 
       if (options.rejectAuthentication) {
-        socket.write(
-          "535 authentication rejected for smtp-user smtp-password\r\n",
-        );
+        socket.write("535 authentication rejected for smtp-user smtp-password\r\n");
         return;
       }
 
@@ -240,8 +238,7 @@ function createSmtpTestServer(options: SmtpTestServerOptions): net.Server {
           const payload = input.slice(0, terminator);
           input = input.slice(terminator + "\r\n.\r\n".length);
           receivingData = false;
-          if (options.rejectData)
-            socket.write("451 message rejected before acceptance\r\n");
+          if (options.rejectData) socket.write("451 message rejected before acceptance\r\n");
           else {
             options.onMessage?.(payload, socket instanceof tls.TLSSocket);
             if (options.loseAcceptanceResponse) socket.destroy();
@@ -304,9 +301,9 @@ describe("SmtpEmailNotifier", () => {
           ),
       },
     });
-    await expect(
-      sender.send({ subject: "Task", text: "Task" }),
-    ).rejects.toBeInstanceOf(NotificationNotDeliveredError);
+    await expect(sender.send({ subject: "Task", text: "Task" })).rejects.toBeInstanceOf(
+      NotificationNotDeliveredError,
+    );
   });
   it.each(["tcp-refused", "tls-setup"] as const)(
     "safely retries proven %s non-submission after restart and pacing",
@@ -341,14 +338,10 @@ describe("SmtpEmailNotifier", () => {
           timeoutMilliseconds: 1_000,
         });
         await open().drain(untrusted, () => {});
-        expect(open().records()[0]?.dispatches[0]?.outcome).toBe(
-          "known-not-delivered",
-        );
+        expect(open().records()[0]?.dispatches[0]?.outcome).toBe("known-not-delivered");
         expect(received).toHaveLength(0);
         if (failure === "tcp-refused")
-          await new Promise<void>((resolve) =>
-            server.listen(port, "127.0.0.1", () => resolve()),
-          );
+          await new Promise<void>((resolve) => server.listen(port, "127.0.0.1", () => resolve()));
         await open().drain(notifier(port, true), () => {});
         expect(open().records()[0]?.dispatches).toHaveLength(1);
         now += NOTIFICATION_RECHECK_MS;
@@ -426,10 +419,7 @@ describe("SmtpEmailNotifier", () => {
         "refinementComplete",
       );
       await outbox.drain(notifier(port, true), () => {});
-      await new NotificationOutbox(root, "p", () => {}).drain(
-        notifier(port, true),
-        () => {},
-      );
+      await new NotificationOutbox(root, "p", () => {}).drain(notifier(port, true), () => {});
       expect(received).toHaveLength(5);
       const bodies = received.join("\n");
       expect(bodies).toContain("Actual draft status: true");
@@ -437,13 +427,9 @@ describe("SmtpEmailNotifier", () => {
       expect(bodies).toContain("validation failed");
       expect(bodies).toContain("https://trello.com/c/c");
       for (const entry of outbox.records())
-        expect(bodies.replace(/\r\n[\t ]+/gu, " ")).toContain(
-          `Message-ID: ${entry.messageId}`,
-        );
+        expect(bodies.replace(/\r\n[\t ]+/gu, " ")).toContain(`Message-ID: ${entry.messageId}`);
       expect(
-        outbox
-          .records()
-          .every((entry) => entry.dispatches.at(-1)?.outcome === "confirmed"),
+        outbox.records().every((entry) => entry.dispatches.at(-1)?.outcome === "confirmed"),
       ).toBe(true);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
@@ -486,9 +472,7 @@ describe("SmtpEmailNotifier", () => {
         now += NOTIFICATION_RECHECK_MS;
         await open().drain(notifier(port, true), () => {});
         expect(received).toHaveLength(1);
-        expect(open().records()[0]?.dispatches).toHaveLength(
-          mode === "reject" ? 2 : 1,
-        );
+        expect(open().records()[0]?.dispatches).toHaveLength(mode === "reject" ? 2 : 1);
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }

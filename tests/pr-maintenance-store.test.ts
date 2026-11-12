@@ -35,9 +35,7 @@ function setup(projectId = "project-a") {
 }
 
 const sha = (digit: string) => digit.repeat(40);
-function operation(
-  overrides: Partial<Omit<PrMaintenanceOperation, "version" | "status">> = {},
-) {
+function operation(overrides: Partial<Omit<PrMaintenanceOperation, "version" | "status">> = {}) {
   return {
     projectId: "project-a",
     cardId: "card-1",
@@ -66,11 +64,7 @@ const identity = (overrides: Record<string, unknown> = {}) =>
     ...overrides,
   }) as Pick<
     PrMaintenanceOperation,
-    | "projectId"
-    | "cardId"
-    | "pullRequest"
-    | "expectedRemoteHead"
-    | "targetBaseHead"
+    "projectId" | "cardId" | "pullRequest" | "expectedRemoteHead" | "targetBaseHead"
   >;
 
 describe("PrMaintenanceStore", () => {
@@ -83,11 +77,9 @@ describe("PrMaintenanceStore", () => {
       operationId: "maintenance-1",
     });
     expect(store.inspect("maintenance-1")).toEqual(created);
-    expect(
-      fs.existsSync(
-        path.join(contextRoot, "pr-maintenance", `${project.id}.json`),
-      ),
-    ).toBe(true);
+    expect(fs.existsSync(path.join(contextRoot, "pr-maintenance", `${project.id}.json`))).toBe(
+      true,
+    );
     expect(() => store.create(operation())).toThrow(PrMaintenanceConflictError);
   });
 
@@ -95,43 +87,33 @@ describe("PrMaintenanceStore", () => {
     const { store } = setup();
     store.create(operation());
     expect(() =>
-      store.create(
-        operation({ operationId: "maintenance-2", cardId: "card-2" }),
-      ),
+      store.create(operation({ operationId: "maintenance-2", cardId: "card-2" })),
     ).toThrow(/already owns this project/);
-    expect(
-      setup("project-b").store.create(operation({ projectId: "project-b" }))
-        .status,
-    ).toBe("prepared");
+    expect(setup("project-b").store.create(operation({ projectId: "project-b" })).status).toBe(
+      "prepared",
+    );
   });
 
   it("enforces valid transitions, exclusive active ownership, and identity", () => {
     const { store, contextRoot, project } = setup();
     store.create(operation());
+    expect(() => store.advance("maintenance-1", "prepared", "completed", identity())).toThrow(
+      /Invalid/,
+    );
     expect(() =>
-      store.advance("maintenance-1", "prepared", "completed", identity()),
-    ).toThrow(/Invalid/);
-    expect(() =>
-      store.advance(
-        "maintenance-1",
-        "prepared",
-        "active",
-        identity({ cardId: "other-card" }),
-      ),
+      store.advance("maintenance-1", "prepared", "active", identity({ cardId: "other-card" })),
     ).toThrow(/identity/);
-    expect(
-      store.advance("maintenance-1", "prepared", "active", identity()).status,
-    ).toBe("active");
+    expect(store.advance("maintenance-1", "prepared", "active", identity()).status).toBe("active");
     const contender = new PrMaintenanceStore(contextRoot, project);
-    expect(() =>
-      contender.advance("maintenance-1", "active", "completed", identity()),
-    ).toThrow(/owned by another process/);
-    expect(() =>
-      store.advance("maintenance-1", "active", "prepared", identity()),
-    ).toThrow(/Invalid/);
-    expect(
-      store.advance("maintenance-1", "active", "completed", identity()).status,
-    ).toBe("completed");
+    expect(() => contender.advance("maintenance-1", "active", "completed", identity())).toThrow(
+      /owned by another process/,
+    );
+    expect(() => store.advance("maintenance-1", "active", "prepared", identity())).toThrow(
+      /Invalid/,
+    );
+    expect(store.advance("maintenance-1", "active", "completed", identity()).status).toBe(
+      "completed",
+    );
   });
 
   it.each([
@@ -159,9 +141,9 @@ describe("PrMaintenanceStore", () => {
   ])("rejects a mismatched %s identity", (_label, mismatch) => {
     const { store } = setup();
     store.create(operation());
-    expect(() =>
-      store.advance("maintenance-1", "prepared", "active", identity(mismatch)),
-    ).toThrow(/identity/);
+    expect(() => store.advance("maintenance-1", "prepared", "active", identity(mismatch))).toThrow(
+      /identity/,
+    );
   });
 
   it("preserves prepared operations across restart and retains incomplete state on uncertain outcome", () => {
@@ -172,9 +154,9 @@ describe("PrMaintenanceStore", () => {
     restarted.advance("maintenance-1", "prepared", "active", identity());
     restarted.advance("maintenance-1", "active", "uncertain", identity());
     expect(restarted.inspect("maintenance-1")?.status).toBe("uncertain");
-    expect(() =>
-      restarted.create(operation({ operationId: "maintenance-2" })),
-    ).toThrow(/already owns this project/);
+    expect(() => restarted.create(operation({ operationId: "maintenance-2" }))).toThrow(
+      /already owns this project/,
+    );
   });
 
   it("requires live exclusive ownership to write quality evidence", () => {
@@ -197,14 +179,10 @@ describe("PrMaintenanceStore", () => {
     const contender = new PrMaintenanceStore(contextRoot, project);
     const writeQuality = (writer: PrMaintenanceStore) =>
       writer.recordQualityVerification("maintenance-1", identity(), evidence);
-    expect(() => writeQuality(contender)).toThrow(
-      /exclusive maintenance ownership/,
-    );
+    expect(() => writeQuality(contender)).toThrow(/exclusive maintenance ownership/);
     expect(writeQuality(store).qualityVerification?.status).toBe("running");
     store.advance("maintenance-1", "active", "completed", identity());
-    expect(() => writeQuality(store)).toThrow(
-      /exclusive maintenance ownership/,
-    );
+    expect(() => writeQuality(store)).toThrow(/exclusive maintenance ownership/);
   });
 
   it("persists bounded conflict-remediation attempts across process restarts", () => {
@@ -220,20 +198,17 @@ describe("PrMaintenanceStore", () => {
         .conflictRemediationAttempts,
     ).toBe(2);
     store.advance("maintenance-1", "active", "uncertain", identity());
-    expect(
-      new PrMaintenanceStore(contextRoot, project).inspect("maintenance-1"),
-    ).toMatchObject({ status: "uncertain", conflictRemediationAttempts: 2 });
+    expect(new PrMaintenanceStore(contextRoot, project).inspect("maintenance-1")).toMatchObject({
+      status: "uncertain",
+      conflictRemediationAttempts: 2,
+    });
   });
 
   it("reconciles stale ownership without releasing the incomplete operation", () => {
     const { store, contextRoot, project } = setup();
     store.create(operation());
     store.advance("maintenance-1", "prepared", "active", identity());
-    const filePath = path.join(
-      contextRoot,
-      "pr-maintenance",
-      `${project.id}.json`,
-    );
+    const filePath = path.join(contextRoot, "pr-maintenance", `${project.id}.json`);
     const state = JSON.parse(fs.readFileSync(filePath, "utf8")) as {
       operations: Array<{ ownerToken: string; ownerPid: number }>;
     };
@@ -241,15 +216,11 @@ describe("PrMaintenanceStore", () => {
     state.operations[0]!.ownerPid = 2_147_483_647;
     fs.writeFileSync(filePath, JSON.stringify(state));
     const restarted = new PrMaintenanceStore(contextRoot, project);
-    expect(
-      restarted.reconcileInterrupted("maintenance-1", identity()).status,
-    ).toBe("uncertain");
-    expect(
-      restarted.reconcileInterrupted("maintenance-1", identity()).status,
-    ).toBe("uncertain");
-    expect(() =>
-      restarted.create(operation({ operationId: "maintenance-2" })),
-    ).toThrow(/already owns this project/);
+    expect(restarted.reconcileInterrupted("maintenance-1", identity()).status).toBe("uncertain");
+    expect(restarted.reconcileInterrupted("maintenance-1", identity()).status).toBe("uncertain");
+    expect(() => restarted.create(operation({ operationId: "maintenance-2" }))).toThrow(
+      /already owns this project/,
+    );
   });
 
   it("accepts cancelled history followed by one replacement across restarts", () => {
@@ -272,22 +243,17 @@ describe("PrMaintenanceStore", () => {
       diagnostic: "Review verdict unavailable",
     });
     store.advance("maintenance-1", "active", "uncertain", identity());
-    expect(
-      store.cancelFailedUnpublished("maintenance-1", identity()).status,
-    ).toBe("cancelled");
+    expect(store.cancelFailedUnpublished("maintenance-1", identity()).status).toBe("cancelled");
 
     const replacement = store.create(
       operation({ operationId: "maintenance-2", targetBaseHead: sha("d") }),
     );
     expect(replacement.status).toBe("prepared");
     const restarted = new PrMaintenanceStore(contextRoot, project);
-    expect(restarted.inspect().map(({ status }) => status)).toEqual([
-      "cancelled",
-      "prepared",
-    ]);
-    expect(() =>
-      restarted.create(operation({ operationId: "maintenance-3" })),
-    ).toThrow(/already owns this project/);
+    expect(restarted.inspect().map(({ status }) => status)).toEqual(["cancelled", "prepared"]);
+    expect(() => restarted.create(operation({ operationId: "maintenance-3" }))).toThrow(
+      /already owns this project/,
+    );
     expect(
       restarted.advance(
         "maintenance-2",
@@ -301,17 +267,13 @@ describe("PrMaintenanceStore", () => {
   it("retargets only an untouched prepared maintenance operation", () => {
     const { store, contextRoot, project } = setup();
     store.create(operation());
-    const retargeted = store.retargetUnstarted(
-      "maintenance-1",
-      identity(),
-      sha("c"),
-    );
+    const retargeted = store.retargetUnstarted("maintenance-1", identity(), sha("c"));
     expect(retargeted.targetBaseHead).toBe(sha("c"));
     const restarted = new PrMaintenanceStore(contextRoot, project);
     expect(restarted.inspect("maintenance-1")?.targetBaseHead).toBe(sha("c"));
-    expect(() =>
-      restarted.retargetUnstarted("maintenance-1", identity(), sha("d")),
-    ).toThrow(/identity/);
+    expect(() => restarted.retargetUnstarted("maintenance-1", identity(), sha("d"))).toThrow(
+      /identity/,
+    );
     restarted.advance(
       "maintenance-1",
       "prepared",
@@ -330,38 +292,21 @@ describe("PrMaintenanceStore", () => {
   it("persists a single failed prepared-event recovery allowance", () => {
     const { store, project, contextRoot } = setup();
     store.create(operation());
-    expect(
-      store.claimFailedPreparedRecovery("maintenance-1")
-        .failedPreparedRecoveryAttempted,
-    ).toBe(true);
+    expect(store.claimFailedPreparedRecovery("maintenance-1").failedPreparedRecoveryAttempted).toBe(
+      true,
+    );
     const restarted = new PrMaintenanceStore(contextRoot, project);
-    expect(() =>
-      restarted.claimFailedPreparedRecovery("maintenance-1"),
-    ).toThrow(/already used/);
+    expect(() => restarted.claimFailedPreparedRecovery("maintenance-1")).toThrow(/already used/);
   });
 
   it("completes idempotently and permits a subsequent operation", () => {
     const { store } = setup();
     store.create(operation());
-    const completed = store.advance(
-      "maintenance-1",
-      "prepared",
-      "active",
-      identity(),
-    );
-    const done = store.advance(
-      "maintenance-1",
-      "active",
-      "completed",
-      identity(),
-    );
-    expect(
-      store.advance("maintenance-1", "completed", "completed", identity()),
-    ).toEqual(done);
+    const completed = store.advance("maintenance-1", "prepared", "active", identity());
+    const done = store.advance("maintenance-1", "active", "completed", identity());
+    expect(store.advance("maintenance-1", "completed", "completed", identity())).toEqual(done);
     expect(done.updatedAt).toBeTruthy();
     expect(completed.status).toBe("active");
-    expect(
-      store.create(operation({ operationId: "maintenance-2" })).status,
-    ).toBe("prepared");
+    expect(store.create(operation({ operationId: "maintenance-2" })).status).toBe("prepared");
   });
 });

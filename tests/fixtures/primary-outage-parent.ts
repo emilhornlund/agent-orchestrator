@@ -111,9 +111,7 @@ if (recovery.status === "waiting") {
   process.exit(0);
 }
 if (recovery.status !== "resume")
-  throw new Error(
-    `Expected production recovery to resume; got ${recovery.status}`,
-  );
+  throw new Error(`Expected production recovery to resume; got ${recovery.status}`);
 
 const openCode = new OpenCodeClient();
 const commands = new CommandRunner();
@@ -136,8 +134,7 @@ try {
             store,
             cardId,
             operationId,
-            store.read(cardId)?.primaryOperations?.[operationId]?.executions ??
-              -1,
+            store.read(cardId)?.primaryOperations?.[operationId]?.executions ?? -1,
             evidence,
           );
         },
@@ -169,12 +166,7 @@ try {
       `${JSON.stringify({ status: "waiting", retryAt: store.read(cardId)?.recoveryWait?.retryAt })}\n`,
     );
   } else if (error instanceof PrimaryOperationExhaustedError) {
-    const disposition = persistPrimaryOperationRecovery(
-      store,
-      current,
-      error,
-      1_000,
-    );
+    const disposition = persistPrimaryOperationRecovery(store, current, error, 1_000);
     process.stdout.write(
       `${JSON.stringify({ status: "exhausted", disposition, executions: store.read(cardId)?.primaryOperations?.[operationId]?.executions })}\n`,
     );

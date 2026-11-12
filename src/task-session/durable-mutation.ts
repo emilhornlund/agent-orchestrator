@@ -58,11 +58,7 @@ const evidence = z.strictObject({
 export const mutationEventSchema = z.discriminatedUnion("type", [
   z.strictObject({
     type: z.literal("cancel"),
-    reason: z.enum([
-      "terminal-observed",
-      "execution-superseded",
-      "precondition-changed",
-    ]),
+    reason: z.enum(["terminal-observed", "execution-superseded", "precondition-changed"]),
     evidence,
   }),
   z.strictObject({ type: z.literal("dispatch"), nextRecheckAt: date }),
@@ -117,11 +113,7 @@ export const durableMutationSchema = z
     attentionRequired: z.boolean(),
     cancellation: z
       .strictObject({
-        reason: z.enum([
-          "terminal-observed",
-          "execution-superseded",
-          "precondition-changed",
-        ]),
+        reason: z.enum(["terminal-observed", "execution-superseded", "precondition-changed"]),
         evidence,
         ownerGeneration: z.number().int().positive().safe(),
         recordedAt: date,
@@ -141,29 +133,22 @@ export const durableMutationSchema = z
         mutation.attentionRequired ||
         mutation.cancellation.evidence.nonDeliveryProof !== undefined ||
         mutation.cancellation.evidence.observedAt < mutation.createdAt ||
-        mutation.cancellation.evidence.observedAt >
-          mutation.cancellation.recordedAt ||
+        mutation.cancellation.evidence.observedAt > mutation.cancellation.recordedAt ||
         (mutation.cancellation.reason === "execution-superseded" &&
-          mutation.cancellation.executionFence.id ===
-            mutation.executionFence.id &&
-          mutation.cancellation.executionFence.generation ===
-            mutation.executionFence.generation))
+          mutation.cancellation.executionFence.id === mutation.executionFence.id &&
+          mutation.cancellation.executionFence.generation === mutation.executionFence.generation))
     )
       ctx.addIssue({
         code: "custom",
-        message:
-          "Cancellation resolves only never-dispatched intent, not external outcomes",
+        message: "Cancellation resolves only never-dispatched intent, not external outcomes",
       });
     const outcomes = [
-      ...mutation.dispatches.flatMap((entry) =>
-        entry.response ? [entry.response] : [],
-      ),
+      ...mutation.dispatches.flatMap((entry) => (entry.response ? [entry.response] : [])),
       ...mutation.observations,
     ];
     if (
       outcomes.some(
-        (entry) =>
-          entry.outcome === "not-delivered" && !entry.evidence.nonDeliveryProof,
+        (entry) => entry.outcome === "not-delivered" && !entry.evidence.nonDeliveryProof,
       )
     )
       ctx.addIssue({
@@ -189,14 +174,12 @@ export const durableMutationSchema = z
             (prior.response?.outcome !== "not-delivered" &&
               !mutation.observations.some(
                 (entry) =>
-                  entry.generation === prior.generation &&
-                  entry.outcome === "not-delivered",
+                  entry.generation === prior.generation && entry.outcome === "not-delivered",
               ))))
       )
         ctx.addIssue({
           code: "custom",
-          message:
-            "Dispatch history must preserve intent ordering and prove previous non-delivery",
+          message: "Dispatch history must preserve intent ordering and prove previous non-delivery",
         });
       if (
         dispatch.response &&
@@ -204,8 +187,7 @@ export const durableMutationSchema = z
           (dispatch.response.outcome === "accepted" &&
             mutation.observations.some(
               (entry) =>
-                entry.generation === dispatch.generation &&
-                entry.outcome === "not-delivered",
+                entry.generation === dispatch.generation && entry.outcome === "not-delivered",
             )))
       )
         ctx.addIssue({
@@ -213,11 +195,7 @@ export const durableMutationSchema = z
           message: "Response contradicts dispatch/observation evidence",
         });
     }
-    if (
-      mutation.observations.some(
-        (entry) => entry.generation > mutation.dispatches.length,
-      )
-    )
+    if (mutation.observations.some((entry) => entry.generation > mutation.dispatches.length))
       ctx.addIssue({
         code: "custom",
         message: "Observation requires a durable dispatch",
@@ -233,8 +211,7 @@ export const durableMutationSchema = z
             dispatch.response?.outcome === "not-delivered" ||
             mutation.observations.some(
               (entry) =>
-                entry.generation === observation.generation &&
-                entry.outcome === "not-delivered",
+                entry.generation === observation.generation && entry.outcome === "not-delivered",
             )))
       )
         ctx.addIssue({
@@ -242,10 +219,7 @@ export const durableMutationSchema = z
           message: "Verification/observation contradicts dispatch history",
         });
     }
-    if (
-      mutation.observations.filter((entry) => entry.outcome === "verified")
-        .length > 1
-    )
+    if (mutation.observations.filter((entry) => entry.outcome === "verified").length > 1)
       ctx.addIssue({
         code: "custom",
         message: "Completed mutation has one immutable verification",
@@ -268,9 +242,7 @@ export function mutationProvenNotDelivered(mutation: DurableMutation): boolean {
     dispatch !== undefined &&
     (dispatch.response?.outcome === "not-delivered" ||
       mutation.observations.some(
-        (entry) =>
-          entry.generation === dispatch.generation &&
-          entry.outcome === "not-delivered",
+        (entry) => entry.generation === dispatch.generation && entry.outcome === "not-delivered",
       ))
   );
 }
@@ -287,8 +259,7 @@ export function applyMutationEvent(
   const dispatch = next.dispatches.at(-1);
   if (next.cancellation) throw new Error("Cancelled mutation is immutable");
   if (event.type === "cancel") {
-    if (!executionFence)
-      throw new Error("Cancellation requires the current execution fence");
+    if (!executionFence) throw new Error("Cancellation requires the current execution fence");
     if (next.dispatches.length !== 0 || next.observations.length !== 0)
       throw new Error("Cannot cancel a mutation after any durable dispatch");
     next.cancellation = {
@@ -320,16 +291,9 @@ export function applyMutationEvent(
   } else {
     if (!dispatch) throw new Error("Outcome requires durable dispatch intent");
     if (event.outcome === "not-delivered" && !event.evidence.nonDeliveryProof)
-      throw new Error(
-        "Non-delivery requires conclusive provider/transport proof, not absence",
-      );
-    if (
-      event.evidence.observedAt < dispatch.dispatchedAt ||
-      event.evidence.observedAt > now
-    )
-      throw new Error(
-        "Outcome evidence time is outside dispatch/recording interval",
-      );
+      throw new Error("Non-delivery requires conclusive provider/transport proof, not absence");
+    if (event.evidence.observedAt < dispatch.dispatchedAt || event.evidence.observedAt > now)
+      throw new Error("Outcome evidence time is outside dispatch/recording interval");
     if (event.type === "response") {
       if (dispatch.ownerGeneration !== ownerGeneration || dispatch.response)
         throw new Error("Stale or duplicate dispatch response");
@@ -352,18 +316,11 @@ export function applyMutationEvent(
       )
         throw new Error("Uncertainty requires a future controlled recheck");
       if (event.outcome === "verified" && mutationProvenNotDelivered(next))
-        throw new Error(
-          "Contradictory acceptance after conclusive non-delivery",
-        );
-      if (
-        event.outcome === "not-delivered" &&
-        dispatch.response?.outcome === "accepted"
-      )
+        throw new Error("Contradictory acceptance after conclusive non-delivery");
+      if (event.outcome === "not-delivered" && dispatch.response?.outcome === "accepted")
         throw new Error("Accepted response cannot prove non-delivery");
       if (event.outcome === "verified" && !event.resourceId)
-        throw new Error(
-          "Verification must bind the actual resource/effect identity",
-        );
+        throw new Error("Verification must bind the actual resource/effect identity");
       next.observations.push({
         generation: dispatch.generation,
         outcome: event.outcome,
@@ -371,9 +328,7 @@ export function applyMutationEvent(
         ...(event.resourceId ? { resourceId: event.resourceId } : {}),
       });
       next.nextRecheckAt =
-        event.outcome === "verified"
-          ? null
-          : (event.nextRecheckAt ?? next.nextRecheckAt);
+        event.outcome === "verified" ? null : (event.nextRecheckAt ?? next.nextRecheckAt);
       next.attentionRequired = event.attentionRequired;
     }
   }

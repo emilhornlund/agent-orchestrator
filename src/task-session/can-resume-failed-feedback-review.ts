@@ -37,9 +37,7 @@ export function canResumeFeedbackReviewRepair(
   if (reservation === undefined)
     return (
       record.phase !== "implementation" &&
-      (active.status === "active" ||
-        repair.status === "active" ||
-        repair.status === "passed")
+      (active.status === "active" || repair.status === "active" || repair.status === "passed")
     );
   const operation = record.primaryOperations?.[reservation.operationId];
   return (

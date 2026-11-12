@@ -10,10 +10,7 @@ import {
   establishCiCheckExpectations,
   type CiCheckExpectationDecision,
 } from "../github/ci-check-expectations.js";
-import {
-  evaluateCiChecks,
-  type CiCheckEvaluation,
-} from "../github/evaluate-ci-checks.js";
+import { evaluateCiChecks, type CiCheckEvaluation } from "../github/evaluate-ci-checks.js";
 import type { TrelloCard } from "../trello/trello-client.js";
 import { TaskExecutionStore } from "../task-session/task-execution-store.js";
 import { logger } from "../logging/logger.js";
@@ -89,11 +86,7 @@ async function terminalObservation(
     );
   const authority = ProjectRunAuthority.current(project.id);
   const active = authority
-    ? new TaskMutationQueue(
-        authority.store.storageRoot,
-        project,
-        authority,
-      ).getActive()
+    ? new TaskMutationQueue(authority.store.storageRoot, project, authority).getActive()
     : null;
   const fence = authority
     ? recordTerminalPrFence(
@@ -134,8 +127,7 @@ export async function observeTaskSessionReviewCards(
       record.phase === "review" &&
       record.reviewRepair?.status === "exhausted" &&
       record.feedbackRemediation?.status === "changed" &&
-      record.feedbackRecoveryAttemptEventId !==
-        record.feedbackRemediation.operationId;
+      record.feedbackRecoveryAttemptEventId !== record.feedbackRemediation.operationId;
     const owningFeedbackCheckpoint =
       record.feedbackRemediation?.status === "changed" &&
       (record.phase === "validation" ||
@@ -156,15 +148,11 @@ export async function observeTaskSessionReviewCards(
       record.expectedBranch !== taskResources(project, card.id).branch ||
       record.pullRequest === undefined
     ) {
-      throw new Error(
-        `Owned Human Review task has ambiguous task-record identity: ${card.id}`,
-      );
+      throw new Error(`Owned Human Review task has ambiguous task-record identity: ${card.id}`);
     }
     const headSha = record.pullRequest.headSha;
     if (headSha === undefined) {
-      throw new Error(
-        `Owned Human Review task has no persisted expected PR head: ${card.id}`,
-      );
+      throw new Error(`Owned Human Review task has no persisted expected PR head: ${card.id}`);
     }
     const lookup = {
       cwd: options.cwd ?? project.repository.path,
@@ -198,9 +186,7 @@ export async function observeTaskSessionReviewCards(
       );
     }
     const [owner, repository] = project.repository.github.split("/");
-    const expectedNumber = Number(
-      new URL(record.pullRequest.url).pathname.split("/").at(-1),
-    );
+    const expectedNumber = Number(new URL(record.pullRequest.url).pathname.split("/").at(-1));
     const hasVerifiedOpenIdentity =
       pullRequest.baseRefName !== undefined &&
       pullRequest.headRefName !== undefined &&
@@ -210,21 +196,15 @@ export async function observeTaskSessionReviewCards(
       hasVerifiedOpenIdentity &&
       (pullRequest.baseRefName !== project.repository.defaultBranch ||
         pullRequest.headRefName !== taskResources(project, card.id).branch ||
-        pullRequest.headRepository?.name.toLowerCase() !==
-          repository?.toLowerCase() ||
-        pullRequest.headRepositoryOwner?.login.toLowerCase() !==
-          owner?.toLowerCase())
+        pullRequest.headRepository?.name.toLowerCase() !== repository?.toLowerCase() ||
+        pullRequest.headRepositoryOwner?.login.toLowerCase() !== owner?.toLowerCase())
     ) {
       throw new Error(
         `Open pull request metadata or ownership is ambiguous for Human Review card ${card.id}`,
       );
     }
-    let baseRelation: "current" | "behind" | "diverged" | "uncertain" =
-      "uncertain";
-    if (
-      hasVerifiedOpenIdentity &&
-      typeof github.comparePullRequestHeadToBase === "function"
-    ) {
+    let baseRelation: "current" | "behind" | "diverged" | "uncertain" = "uncertain";
+    if (hasVerifiedOpenIdentity && typeof github.comparePullRequestHeadToBase === "function") {
       try {
         baseRelation = await github.comparePullRequestHeadToBase({
           cwd: lookup.cwd,
@@ -251,28 +231,26 @@ export async function observeTaskSessionReviewCards(
     } else {
       reportedOutdatedPullRequests.delete(diagnosticKey);
     }
-    const [ciObservation, requestedChanges, conversationComments] =
-      await Promise.all([
-        github.getCiObservations({
-          cwd: lookup.cwd,
-          repository: project.repository.github,
-          defaultBranch: project.repository.defaultBranch,
-          headSha,
-          pullRequestNumber: Number(
-            new URL(record.pullRequest.url).pathname.split("/").at(-1),
-          ),
-          project,
-        }),
-        github.findChangesRequestedPullRequest(lookup, true),
-        github.getPullRequestConversationComments({
-          cwd: lookup.cwd,
-          repository: project.repository.github,
-          pullRequestUrl: record.pullRequest.url,
-          project,
-        }),
-      ]);
-    const expectationDecision: CiCheckExpectationDecision =
-      establishCiCheckExpectations(ciObservation.expectationSources);
+    const [ciObservation, requestedChanges, conversationComments] = await Promise.all([
+      github.getCiObservations({
+        cwd: lookup.cwd,
+        repository: project.repository.github,
+        defaultBranch: project.repository.defaultBranch,
+        headSha,
+        pullRequestNumber: Number(new URL(record.pullRequest.url).pathname.split("/").at(-1)),
+        project,
+      }),
+      github.findChangesRequestedPullRequest(lookup, true),
+      github.getPullRequestConversationComments({
+        cwd: lookup.cwd,
+        repository: project.repository.github,
+        pullRequestUrl: record.pullRequest.url,
+        project,
+      }),
+    ]);
+    const expectationDecision: CiCheckExpectationDecision = establishCiCheckExpectations(
+      ciObservation.expectationSources,
+    );
     const ciEvaluation = evaluateCiChecks({
       expectedHeadSha: headSha,
       observedHeadSha: ciObservation.headSha,
@@ -281,9 +259,7 @@ export async function observeTaskSessionReviewCards(
     });
     const finalPullRequest = await github.findPullRequestState(lookup);
     if (finalPullRequest && finalPullRequest.state !== "OPEN") {
-      observed.push(
-        await terminalObservation(options, record, finalPullRequest),
-      );
+      observed.push(await terminalObservation(options, record, finalPullRequest));
       continue;
     }
     if (
@@ -293,9 +269,7 @@ export async function observeTaskSessionReviewCards(
       finalPullRequest.url !== record.pullRequest.url ||
       finalPullRequest.headRefOid !== headSha
     ) {
-      throw new Error(
-        `Pull request head changed while monitoring Human Review card ${card.id}`,
-      );
+      throw new Error(`Pull request head changed while monitoring Human Review card ${card.id}`);
     }
     const feedbackIds = [
       ...(requestedChanges?.feedback.reviews.flatMap((review) => [
@@ -304,19 +278,11 @@ export async function observeTaskSessionReviewCards(
           comment.id === undefined ? [] : [`inline-comment:${comment.id}`],
         ),
       ]) ?? []),
-      ...conversationComments.map(
-        (comment) => `conversation-comment:${comment.id}`,
-      ),
+      ...conversationComments.map((comment) => `conversation-comment:${comment.id}`),
     ].sort();
     const latest = taskRecordStore.read(card.id);
-    if (
-      latest === null ||
-      latest.revision !== record.revision ||
-      latest.phase !== record.phase
-    ) {
-      throw new Error(
-        `Task record changed during read-only review monitoring for card ${card.id}`,
-      );
+    if (latest === null || latest.revision !== record.revision || latest.phase !== record.phase) {
+      throw new Error(`Task record changed during read-only review monitoring for card ${card.id}`);
     }
     const openObservation: ObservedTaskSessionReviewCard = {
       state: "OPEN",
@@ -338,11 +304,7 @@ export async function observeTaskSessionReviewCards(
           }
         : {}),
     };
-    if (
-      failedFeedbackReview ||
-      owningFeedbackCheckpoint ||
-      owningCiReviewCheckpoint
-    ) {
+    if (failedFeedbackReview || owningFeedbackCheckpoint || owningCiReviewCheckpoint) {
       observed.push(openObservation);
       continue;
     }
@@ -351,22 +313,17 @@ export async function observeTaskSessionReviewCards(
       ciObservationWindow: (() => {
         const previous = latest.ciObservationWindow;
         const startedAt =
-          previous?.headSha === headSha
-            ? previous.startedAt
-            : new Date().toISOString();
+          previous?.headSha === headSha ? previous.startedAt : new Date().toISOString();
         const deadline =
           previous?.headSha === headSha
             ? previous.deadline
-            : new Date(
-                Date.parse(startedAt) + CI_OBSERVATION_TIMEOUT_MS,
-              ).toISOString();
+            : new Date(Date.parse(startedAt) + CI_OBSERVATION_TIMEOUT_MS).toISOString();
         return {
           headSha,
           startedAt,
           deadline,
           timedOut:
-            (ciEvaluation.status === "waiting" ||
-              ciEvaluation.status === "uncertain") &&
+            (ciEvaluation.status === "waiting" || ciEvaluation.status === "uncertain") &&
             Date.now() >= Date.parse(deadline),
         };
       })(),
@@ -376,10 +333,8 @@ export async function observeTaskSessionReviewCards(
         ciEvaluation: {
           status: ciEvaluation.status,
           expectedCheckNames: expectationDecision.expectedCheckNames,
-          missingChecks:
-            ciEvaluation.status === "waiting" ? ciEvaluation.missingChecks : [],
-          pendingChecks:
-            ciEvaluation.status === "waiting" ? ciEvaluation.pendingChecks : [],
+          missingChecks: ciEvaluation.status === "waiting" ? ciEvaluation.missingChecks : [],
+          pendingChecks: ciEvaluation.status === "waiting" ? ciEvaluation.pendingChecks : [],
           failureCheckNames:
             ciEvaluation.status === "failed"
               ? [
@@ -390,8 +345,7 @@ export async function observeTaskSessionReviewCards(
                   ),
                 ]
               : [],
-          ...(ciEvaluation.status === "waiting" ||
-          ciEvaluation.status === "uncertain"
+          ...(ciEvaluation.status === "waiting" || ciEvaluation.status === "uncertain"
             ? { diagnostic: ciEvaluation.diagnostic }
             : {}),
         },

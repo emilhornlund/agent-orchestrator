@@ -34,9 +34,7 @@ function getIndexPaths(indexEntries: string): string[] {
     const separatorIndex = entry.indexOf("\t");
 
     if (separatorIndex < 0) {
-      throw new Error(
-        "Git returned a malformed index entry while fingerprinting",
-      );
+      throw new Error("Git returned a malformed index entry while fingerprinting");
     }
 
     paths.push(entry.slice(separatorIndex + 1));
@@ -60,9 +58,7 @@ function resolveWorktreeFile(worktreePath: string, filePath: string): string {
     relative.startsWith(`..${path.sep}`) ||
     path.isAbsolute(relative)
   ) {
-    throw new Error(
-      `Git returned a source path outside the worktree: ${filePath}`,
-    );
+    throw new Error(`Git returned a source path outside the worktree: ${filePath}`);
   }
 
   let current = resolvedWorktree;
@@ -72,25 +68,15 @@ function resolveWorktreeFile(worktreePath: string, filePath: string): string {
     const stats = fs.lstatSync(current, { throwIfNoEntry: false });
     if (stats?.isSymbolicLink() && index < components.length - 1)
       throw new Error(`Symlink traversal in task source path: ${filePath}`);
-    if (
-      index < components.length - 1 &&
-      stats !== undefined &&
-      !stats.isDirectory()
-    )
-      throw new Error(
-        `Non-directory component in task source path: ${filePath}`,
-      );
+    if (index < components.length - 1 && stats !== undefined && !stats.isDirectory())
+      throw new Error(`Non-directory component in task source path: ${filePath}`);
   }
 
   return resolvedFile;
 }
 
-async function getIgnoredIdentity(
-  worktreePath: string,
-  files: string[],
-): Promise<string> {
-  if (files.length > 10_000)
-    throw new Error("Ignored source inventory exceeds the recovery limit");
+async function getIgnoredIdentity(worktreePath: string, files: string[]): Promise<string> {
+  if (files.length > 10_000) throw new Error("Ignored source inventory exceeds the recovery limit");
   const hash = createHash("sha256");
   let totalBytes = 0;
   for (const filePath of [...files].sort()) {
@@ -106,15 +92,9 @@ async function getIgnoredIdentity(
       hash.update(fs.readlinkSync(absolute));
       continue;
     }
-    if (!stat.isFile())
-      throw new Error(`Unsupported ignored source file type: ${filePath}`);
-    if (
-      stat.size > 16 * 1024 * 1024 ||
-      totalBytes + stat.size > 128 * 1024 * 1024
-    )
-      throw new Error(
-        "Ignored source content exceeds the recovery fingerprint limit",
-      );
+    if (!stat.isFile()) throw new Error(`Unsupported ignored source file type: ${filePath}`);
+    if (stat.size > 16 * 1024 * 1024 || totalBytes + stat.size > 128 * 1024 * 1024)
+      throw new Error("Ignored source content exceeds the recovery fingerprint limit");
     totalBytes += stat.size;
     hash.update(fs.readFileSync(absolute));
   }
@@ -139,9 +119,7 @@ function addWorktreeFile(
   }
 
   if (!stats.isFile()) {
-    throw new Error(
-      `Unsupported source file type while fingerprinting: ${filePath}`,
-    );
+    throw new Error(`Unsupported source file type while fingerprinting: ${filePath}`);
   }
 
   updateField(hash, "state", "file");
@@ -196,11 +174,7 @@ export async function getTaskSessionSourceSnapshotIdentity(
   // Identical working-tree contents must survive staging and commits.
   updateField(hash, "snapshot-version", "task-session-source-v2");
 
-  const filePaths = new Set([
-    ...headFiles,
-    ...getIndexPaths(indexEntries),
-    ...untrackedFiles,
-  ]);
+  const filePaths = new Set([...headFiles, ...getIndexPaths(indexEntries), ...untrackedFiles]);
   const sortedPaths = [...filePaths].sort((left, right) =>
     Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8")),
   );

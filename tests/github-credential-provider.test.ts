@@ -5,19 +5,13 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { ProjectConfig } from "../src/config/config.js";
 import { GitClient, type RunGit } from "../src/git/git-client.js";
-import {
-  GitHubClient,
-  type RunGitHubCommand,
-} from "../src/github/github-client.js";
+import { GitHubClient, type RunGitHubCommand } from "../src/github/github-client.js";
 import { GitHubCredentialProvider } from "../src/github/github-credential-provider.js";
 import { withGitHubOperationProject } from "../src/github/github-operation-context.js";
 
 const execFileAsync = promisify(execFile);
 
-function project(
-  id: string,
-  githubApp?: ProjectConfig["repository"]["githubApp"],
-): ProjectConfig {
+function project(id: string, githubApp?: ProjectConfig["repository"]["githubApp"]): ProjectConfig {
   return {
     id,
     repository: {
@@ -29,9 +23,7 @@ function project(
 
 describe("GitHubCredentialProvider", () => {
   it("selects a project GitHub App installation token", async () => {
-    const getInstallationToken = vi
-      .fn()
-      .mockResolvedValue("project-a-installation-token");
+    const getInstallationToken = vi.fn().mockResolvedValue("project-a-installation-token");
     const provider = new GitHubCredentialProvider({
       authenticator: { getInstallationToken },
     });
@@ -48,15 +40,9 @@ describe("GitHubCredentialProvider", () => {
       configuredProject.repository.github,
     );
     expect(credential.mode).toBe("github-app");
-    expect(credential.environment.GH_TOKEN).toBe(
-      "project-a-installation-token",
-    );
-    expect(credential.environment.GITHUB_TOKEN).toBe(
-      "project-a-installation-token",
-    );
-    expect(credential.environment.GIT_ASKPASS).not.toContain(
-      "project-a-installation-token",
-    );
+    expect(credential.environment.GH_TOKEN).toBe("project-a-installation-token");
+    expect(credential.environment.GITHUB_TOKEN).toBe("project-a-installation-token");
+    expect(credential.environment.GIT_ASKPASS).not.toContain("project-a-installation-token");
     expect(credential.secretValues).toEqual(["project-a-installation-token"]);
   });
 
@@ -119,9 +105,7 @@ describe("GitHubCredentialProvider", () => {
     try {
       const provider = new GitHubCredentialProvider({
         authenticator: {
-          getInstallationToken: vi
-            .fn()
-            .mockRejectedValue(new Error("scoped exchange failed")),
+          getInstallationToken: vi.fn().mockRejectedValue(new Error("scoped exchange failed")),
         },
       });
       const configuredProject = project("project-a", {
@@ -165,14 +149,12 @@ describe("GitHubCredentialProvider", () => {
       privateKeyPath: "/secrets/b.pem",
     });
 
-    const credentials = await Promise.all([
-      provider.resolve(projectA),
-      provider.resolve(projectB),
-    ]);
+    const credentials = await Promise.all([provider.resolve(projectA), provider.resolve(projectB)]);
 
-    expect(
-      credentials.map((credential) => credential.environment.GH_TOKEN),
-    ).toEqual(["token-a", "token-b"]);
+    expect(credentials.map((credential) => credential.environment.GH_TOKEN)).toEqual([
+      "token-a",
+      "token-b",
+    ]);
   });
 });
 
@@ -294,9 +276,7 @@ describe("GitHub credential command wiring", () => {
     const runGitHubCommand = vi.fn<RunGitHubCommand>();
     const provider = new GitHubCredentialProvider({
       authenticator: {
-        getInstallationToken: vi
-          .fn()
-          .mockRejectedValue(new Error("token-a must not be exposed")),
+        getInstallationToken: vi.fn().mockRejectedValue(new Error("token-a must not be exposed")),
       },
     });
     const github = new GitHubClient(runGitHubCommand, provider);
@@ -394,16 +374,14 @@ describe("GitHub credential command wiring", () => {
 
   it("isolates project tokens across concurrent GitHub CLI operations", async () => {
     const calls: Array<{ repository: string; token: string | undefined }> = [];
-    const runGitHubCommand = vi.fn<RunGitHubCommand>(
-      async (_cwd, args, environment) => {
-        await new Promise((resolve) => setTimeout(resolve, 1));
-        calls.push({
-          repository: args[args.indexOf("--repo") + 1] ?? "",
-          token: environment?.GH_TOKEN,
-        });
-        return `https://github.com/${args[args.indexOf("--repo") + 1]}/pull/1`;
-      },
-    );
+    const runGitHubCommand = vi.fn<RunGitHubCommand>(async (_cwd, args, environment) => {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      calls.push({
+        repository: args[args.indexOf("--repo") + 1] ?? "",
+        token: environment?.GH_TOKEN,
+      });
+      return `https://github.com/${args[args.indexOf("--repo") + 1]}/pull/1`;
+    });
     const provider = new GitHubCredentialProvider({
       authenticator: {
         getInstallationToken: vi.fn(async (githubApp) =>
@@ -471,18 +449,8 @@ describe("GitHub credential command wiring", () => {
     await withGitHubOperationProject(configuredProject, async () => {
       await git.fetch("/repo", "origin", "main", configuredProject);
       await git.push("/repo", "origin", "agent/card-1", configuredProject);
-      await git.remoteBranchExists(
-        "/repo",
-        "origin",
-        "agent/card-1",
-        configuredProject,
-      );
-      await git.deleteRemoteBranch(
-        "/repo",
-        "origin",
-        "agent/card-1",
-        configuredProject,
-      );
+      await git.remoteBranchExists("/repo", "origin", "agent/card-1", configuredProject);
+      await git.deleteRemoteBranch("/repo", "origin", "agent/card-1", configuredProject);
     });
 
     expect(runGit).toHaveBeenCalledTimes(4);
@@ -509,9 +477,7 @@ describe("GitHub credential command wiring", () => {
   });
 
   it("redacts a Git failure without retaining an App token", async () => {
-    const runGit = vi
-      .fn<RunGit>()
-      .mockRejectedValue(new Error("remote rejected token-a"));
+    const runGit = vi.fn<RunGit>().mockRejectedValue(new Error("remote rejected token-a"));
     const provider = new GitHubCredentialProvider({
       authenticator: {
         getInstallationToken: vi.fn().mockResolvedValue("token-a"),
@@ -524,25 +490,13 @@ describe("GitHub credential command wiring", () => {
       privateKeyPath: "/secrets/app-a.pem",
     });
 
-    const request = git.push(
-      "/repo",
-      "origin",
-      "agent/card-1",
-      configuredProject,
-    );
+    const request = git.push("/repo", "origin", "agent/card-1", configuredProject);
 
     await expect(request).rejects.toThrow("[REDACTED]");
     await expect(request).rejects.not.toThrow("token-a");
     expect(runGit).toHaveBeenCalledWith(
       "/repo",
-      [
-        "-c",
-        "credential.helper=",
-        "push",
-        "--set-upstream",
-        "origin",
-        "agent/card-1",
-      ],
+      ["-c", "credential.helper=", "push", "--set-upstream", "origin", "agent/card-1"],
       expect.objectContaining({
         GH_TOKEN: "token-a",
         GITHUB_TOKEN: "token-a",
@@ -554,9 +508,7 @@ describe("GitHub credential command wiring", () => {
     const runGit = vi.fn<RunGit>().mockResolvedValue("");
     const provider = new GitHubCredentialProvider({
       authenticator: {
-        getInstallationToken: vi
-          .fn()
-          .mockRejectedValue(new Error("token-a must not be exposed")),
+        getInstallationToken: vi.fn().mockRejectedValue(new Error("token-a must not be exposed")),
       },
     });
     const git = new GitClient(runGit, provider);

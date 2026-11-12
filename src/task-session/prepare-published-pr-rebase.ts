@@ -2,10 +2,7 @@ import type { ProjectConfig } from "../config/config.js";
 import type { GitClient } from "../git/git-client.js";
 import type { GitHubClient } from "../github/github-client.js";
 import type { TaskExecutionStore } from "./task-execution-store.js";
-import {
-  PrMaintenanceConflictError,
-  PrMaintenanceStore,
-} from "./pr-maintenance-store.js";
+import { PrMaintenanceConflictError, PrMaintenanceStore } from "./pr-maintenance-store.js";
 import type { PrMaintenanceOperation } from "./pr-maintenance-operation.js";
 
 export interface PreparePublishedPrRebaseOptions {

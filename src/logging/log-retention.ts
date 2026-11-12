@@ -3,10 +3,7 @@ import path from "node:path";
 
 import { isActiveLogFile } from "./active-log-files.js";
 import { getLoggerRuntimeRoot, logger } from "./logger.js";
-import {
-  isConclusiveOperationResolution,
-  parseRunRecord,
-} from "../task-session/run-record.js";
+import { isConclusiveOperationResolution, parseRunRecord } from "../task-session/run-record.js";
 
 const millisecondsPerDay = 24 * 60 * 60 * 1000;
 const dailyLogFilePattern = /^(?:test-)?orchestrator-\d{4}-\d{2}-\d{2}\.log$/;
@@ -20,21 +17,14 @@ function getFailureReason(error: unknown): string {
 
 function reportFailure(action: string, filePath: string, error: unknown): void {
   try {
-    logger.warn(
-      `Log retention could not ${action} ${filePath}: ${getFailureReason(error)}`,
-    );
+    logger.warn(`Log retention could not ${action} ${filePath}: ${getFailureReason(error)}`);
   } catch {
     // A logging failure must not stop retention from processing other files.
   }
 }
 
 function isMissingPathError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    error.code === "ENOENT"
-  );
+  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
 
 function readManagedDirectory(directoryPath: string): fs.Dirent[] | undefined {
@@ -72,9 +62,7 @@ function hasSafeAncestors(absolutePath: string): boolean {
   const resolved = path.resolve(absolutePath);
   const parsed = path.parse(resolved);
   let current = parsed.root;
-  for (const component of path
-    .relative(parsed.root, resolved)
-    .split(path.sep)) {
+  for (const component of path.relative(parsed.root, resolved).split(path.sep)) {
     if (!component) continue;
     current = path.join(current, component);
     try {
@@ -139,10 +127,7 @@ function scanSessionLogs(
       continue;
     }
 
-    const projectDirectoryPath = path.join(
-      sessionsDirectory,
-      projectDirectory.name,
-    );
+    const projectDirectoryPath = path.join(sessionsDirectory, projectDirectory.name);
     const sessionFiles = readManagedDirectory(projectDirectoryPath);
 
     if (sessionFiles === undefined) {
@@ -165,11 +150,7 @@ function scanSessionLogs(
   }
 }
 
-function legacySessionPath(
-  root: string,
-  projectId: string,
-  cardId: string,
-): string | undefined {
+function legacySessionPath(root: string, projectId: string, cardId: string): string | undefined {
   if (
     !projectId ||
     !cardId ||
@@ -180,16 +161,8 @@ function legacySessionPath(
   )
     return undefined;
   const safePart = (value: string) =>
-    value.replace(
-      /[^a-zA-Z0-9._-]/g,
-      (character) => `_${character.codePointAt(0)!.toString(16)}_`,
-    );
-  return path.resolve(
-    root,
-    "sessions",
-    safePart(projectId),
-    `${safePart(cardId)}.log`,
-  );
+    value.replace(/[^a-zA-Z0-9._-]/g, (character) => `_${character.codePointAt(0)!.toString(16)}_`);
+  return path.resolve(root, "sessions", safePart(projectId), `${safePart(cardId)}.log`);
 }
 
 const terminalProcessStatuses = new Set([
@@ -215,9 +188,7 @@ function isWithin(parent: string, candidate: string): boolean {
   const relative = path.relative(parent, candidate);
   return (
     relative === "" ||
-    (!relative.startsWith(`..${path.sep}`) &&
-      relative !== ".." &&
-      !path.isAbsolute(relative))
+    (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative))
   );
 }
 
@@ -234,9 +205,7 @@ function scanProcessExecutions(
       const metadataPath = path.join(executionDirectory, "execution.json");
       const stats = fs.lstatSync(metadataPath);
       if (stats.isSymbolicLink() || !stats.isFile()) continue;
-      const metadata: unknown = JSON.parse(
-        fs.readFileSync(metadataPath, "utf8"),
-      );
+      const metadata: unknown = JSON.parse(fs.readFileSync(metadataPath, "utf8"));
       if (!metadata || typeof metadata !== "object") continue;
       const value = metadata as {
         executionId?: unknown;
@@ -257,30 +226,21 @@ function scanProcessExecutions(
         Date.parse(value.finishedAt) < Date.parse(value.startedAt) ||
         typeof value.stdoutArtifact !== "string" ||
         typeof value.stderrArtifact !== "string" ||
-        path.resolve(value.stdoutArtifact) !==
-          path.join(executionDirectory, "stdout.txt") ||
-        path.resolve(value.stderrArtifact) !==
-          path.join(executionDirectory, "stderr.txt")
+        path.resolve(value.stdoutArtifact) !== path.join(executionDirectory, "stdout.txt") ||
+        path.resolve(value.stderrArtifact) !== path.join(executionDirectory, "stderr.txt")
       )
         continue;
       if (
         Date.parse(value.finishedAt) >= cutoff ||
         stats.mtimeMs >= cutoff ||
-        [...protectedPaths].some((reference) =>
-          isWithin(executionDirectory, reference),
-        )
+        [...protectedPaths].some((reference) => isWithin(executionDirectory, reference))
       )
         continue;
       const files = readManagedDirectory(executionDirectory);
-      if (
-        !files ||
-        files.some((file) => file.isSymbolicLink() || !file.isFile())
-      )
-        continue;
+      if (!files || files.some((file) => file.isSymbolicLink() || !file.isFile())) continue;
       fs.rmSync(executionDirectory, { recursive: true, force: false });
     } catch (error) {
-      if (!isMissingPathError(error))
-        reportFailure("inspect", executionDirectory, error);
+      if (!isMissingPathError(error)) reportFailure("inspect", executionDirectory, error);
     }
   }
 }
@@ -292,9 +252,7 @@ export function cleanupLogRetention(
   protectedAttemptIds: readonly string[] = [],
 ): void {
   const cutoffMilliseconds = now.getTime() - retentionDays * millisecondsPerDay;
-  const effectiveRoots = runtimeRoots.length
-    ? runtimeRoots
-    : [getLoggerRuntimeRoot()];
+  const effectiveRoots = runtimeRoots.length ? runtimeRoots : [getLoggerRuntimeRoot()];
   const roots = [
     ...new Set([
       path.join(process.cwd(), "logs"),
@@ -334,34 +292,25 @@ export function cleanupLogRetention(
       const file = path.join(attemptsPath, entry.name),
         id = entry.name.slice(0, -5);
       try {
-        if (entry.isSymbolicLink() || !entry.isFile())
-          throw new Error("unsupported attempt entry");
-        const record = parseRunRecord(
-          JSON.parse(fs.readFileSync(file, "utf8")),
-        );
-        if (record.attemptId !== id)
-          throw new Error("attempt filename identity mismatch");
+        if (entry.isSymbolicLink() || !entry.isFile()) throw new Error("unsupported attempt entry");
+        const record = parseRunRecord(JSON.parse(fs.readFileSync(file, "utf8")));
+        if (record.attemptId !== id) throw new Error("attempt filename identity mismatch");
         const terminal =
-          ["done", "refined", "failed", "cancelled"].includes(
-            record.lifecycle,
-          ) &&
+          ["done", "refined", "failed", "cancelled"].includes(record.lifecycle) &&
           record.terminalSync === "verified" &&
           record.terminalEvidence !== null &&
           record.pendingOperations.every(isConclusiveOperationResolution);
         // Record artifacts are content-addressed state referenced by the
         // durable run envelope, including after the run becomes terminal.
         for (const artifact of record.artifacts)
-          if (path.isAbsolute(artifact.path))
-            protectedPaths.add(path.resolve(artifact.path));
+          if (path.isAbsolute(artifact.path)) protectedPaths.add(path.resolve(artifact.path));
         if (!terminal || protectedIds.has(id)) {
           hasActiveAttempt ||= !terminal;
           protectedIds.add(id);
           for (const resource of record.resources)
-            if (path.isAbsolute(resource.path))
-              protectedPaths.add(path.resolve(resource.path));
+            if (path.isAbsolute(resource.path)) protectedPaths.add(path.resolve(resource.path));
           for (const session of Object.values(record.sessions))
-            if (path.isAbsolute(session))
-              protectedPaths.add(path.resolve(session));
+            if (path.isAbsolute(session)) protectedPaths.add(path.resolve(session));
           if (!terminal) {
             for (const root of [process.cwd(), ...effectiveRoots]) {
               const legacy = legacySessionPath(
@@ -417,8 +366,7 @@ export function cleanupLogRetention(
     walk(path.join(runtimeRoot, "history"), 0);
     walk(path.join(runtimeRoot, "artifacts"), 0);
     if (!unsafeRoots.has(runtimeRoot))
-      for (const candidate of candidates)
-        removeIfExpired(candidate, cutoffMilliseconds);
+      for (const candidate of candidates) removeIfExpired(candidate, cutoffMilliseconds);
   }
   for (const logsDirectory of roots) {
     const logEntries = readManagedDirectory(logsDirectory);
@@ -432,18 +380,12 @@ export function cleanupLogRetention(
 
       if (logEntry.isFile() && dailyLogFilePattern.test(logEntry.name)) {
         if (!hasActiveAttempt)
-          removeIfExpired(
-            path.join(logsDirectory, logEntry.name),
-            cutoffMilliseconds,
-          );
+          removeIfExpired(path.join(logsDirectory, logEntry.name), cutoffMilliseconds);
         continue;
       }
 
       if (logEntry.isFile() && logEntry.name === "execution.json") {
-        removeIfExpired(
-          path.join(logsDirectory, logEntry.name),
-          cutoffMilliseconds,
-        );
+        removeIfExpired(path.join(logsDirectory, logEntry.name), cutoffMilliseconds);
         continue;
       }
 

@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  createSecretRedactor,
-  redactSecrets,
-} from "../src/security/redact-secrets.js";
+import { createSecretRedactor, redactSecrets } from "../src/security/redact-secrets.js";
 
 describe("secret redaction", () => {
   it("redacts literal secrets split at every chunk boundary", () => {
@@ -87,9 +84,7 @@ describe("secret redaction", () => {
           redactor.push(form.slice(0, boundary)) +
           redactor.push(form.slice(boundary)) +
           redactor.flush();
-        expect(result, `${JSON.stringify(form)} split at ${boundary}`).toBe(
-          "[REDACTED]",
-        );
+        expect(result, `${JSON.stringify(form)} split at ${boundary}`).toBe("[REDACTED]");
       }
     }
   });
@@ -102,15 +97,11 @@ describe("secret redaction", () => {
   });
 
   it("does not repeatedly redact existing markers when secrets are short", () => {
-    expect(redactSecrets("a [REDACTED] a", ["a"])).toBe(
-      "[REDACTED] [REDACTED] [REDACTED]",
-    );
+    expect(redactSecrets("a [REDACTED] a", ["a"])).toBe("[REDACTED] [REDACTED] [REDACTED]");
   });
 
   it("does not emit duplicate markers for overlapping credential patterns", () => {
-    expect(redactSecrets("authorization: Bearer long-token")).toBe(
-      "authorization: [REDACTED]",
-    );
+    expect(redactSecrets("authorization: Bearer long-token")).toBe("authorization: [REDACTED]");
   });
 
   it("redacts credential values that continue across a chunk boundary", () => {
@@ -126,9 +117,8 @@ describe("secret redaction", () => {
     const redactor = createSecretRedactor();
     const output = redactor.push(`Bearer ${"x".repeat(1_000_000)}`);
     expect(output).toBe("Bearer [REDACTED]");
-    expect(
-      redactor.push(`${"y".repeat(1_000_000)}, next output\n`) +
-        redactor.flush(),
-    ).toBe(", next output\n");
+    expect(redactor.push(`${"y".repeat(1_000_000)}, next output\n`) + redactor.flush()).toBe(
+      ", next output\n",
+    );
   });
 });

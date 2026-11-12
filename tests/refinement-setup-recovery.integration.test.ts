@@ -12,10 +12,7 @@ import {
 import { verifyAndPinProjects } from "../src/coordination/project-registry.js";
 import { GitClient } from "../src/git/git-client.js";
 import { logger } from "../src/logging/logger.js";
-import {
-  OpenCodeClient,
-  type OpenCodeRunOptions,
-} from "../src/opencode/opencode-client.js";
+import { OpenCodeClient, type OpenCodeRunOptions } from "../src/opencode/opencode-client.js";
 import { CommandRunner } from "../src/process/command-runner.js";
 import { runRefinementCardWorkflow } from "../src/refinement/run-refinement-card.js";
 import { getRefinementResultPath } from "../src/refinement/refinement-result.js";
@@ -100,17 +97,12 @@ async function fixture(setupCommand: string) {
     cwd: repositoryPath,
   });
   fs.writeFileSync(path.join(repositoryPath, "README.md"), "initial\n");
-  fs.writeFileSync(
-    path.join(repositoryPath, ".gitignore"),
-    "ignored-generated/\n",
-  );
+  fs.writeFileSync(path.join(repositoryPath, ".gitignore"), "ignored-generated/\n");
   execFileSync("git", ["add", "."], { cwd: repositoryPath });
   execFileSync("git", ["commit", "-qm", "initial"], { cwd: repositoryPath });
-  execFileSync(
-    "git",
-    ["worktree", "add", "-qb", `agent/${card.id}`, worktreePath, "HEAD"],
-    { cwd: repositoryPath },
-  );
+  execFileSync("git", ["worktree", "add", "-qb", `agent/${card.id}`, worktreePath, "HEAD"], {
+    cwd: repositoryPath,
+  });
   const integrationId = JSON.stringify({
     trelloBoardId: project.trello.boardId,
     githubRepository: project.repository.github,
@@ -202,9 +194,7 @@ describe("refinement setup recovery (canonical authority, real Git and processes
       expect(() => clearRefinementResult(f.worktreePath)).toThrow(
         "Unsafe refinement artifact directory",
       );
-      expect(fs.readFileSync(protectedFile, "utf8")).toBe(
-        "preserve source content",
-      );
+      expect(fs.readFileSync(protectedFile, "utf8")).toBe("preserve source content");
     });
   });
   it("recovers a verified nonzero refinement child before accepting a complete result", async () => {
@@ -243,19 +233,15 @@ fs.writeFileSync(${JSON.stringify(resultPath)},JSON.stringify({title:'Grounded r
             HOME: home,
           },
         });
-        const state = f.authority.read(
-          "refinement-analysis-v1",
-          (value) => value,
-        ) as { executionId: string; command: string };
+        const state = f.authority.read("refinement-analysis-v1", (value) => value) as {
+          executionId: string;
+          command: string;
+        };
         const evidence = new TaskExecutionStore(
           f.pinned.storageRoot,
           f.project,
           f.authority,
-        ).readProcessExecution(
-          f.card.id,
-          state.executionId,
-          "process-executions",
-        );
+        ).readProcessExecution(f.card.id, state.executionId, "process-executions");
         expect(evidence).toMatchObject({
           executionId: state.executionId,
           command: state.command,
@@ -324,10 +310,7 @@ fs.writeFileSync(${JSON.stringify(resultPath)},JSON.stringify({title:'Grounded r
         cardLog: logger,
       });
       const before = await f.git.getStatus(f.worktreePath);
-      fs.writeFileSync(
-        path.join(f.worktreePath, refinementResultRelativePath),
-        "changed",
-      );
+      fs.writeFileSync(path.join(f.worktreePath, refinementResultRelativePath), "changed");
       expect(await f.git.getStatus(f.worktreePath)).toBe(before);
       await expect(
         assertRefinementSetupBaselineUnchanged({
@@ -337,12 +320,9 @@ fs.writeFileSync(${JSON.stringify(resultPath)},JSON.stringify({title:'Grounded r
           signal: new AbortController().signal,
         }),
       ).rejects.toThrow("no longer matches");
-      expect(
-        fs.readFileSync(
-          path.join(f.worktreePath, refinementResultRelativePath),
-          "utf8",
-        ),
-      ).toBe("changed");
+      expect(fs.readFileSync(path.join(f.worktreePath, refinementResultRelativePath), "utf8")).toBe(
+        "changed",
+      );
     });
   });
   it("retains bounded corrections and validated output across reconstructed authority", async () => {
@@ -392,9 +372,10 @@ fs.writeFileSync(${JSON.stringify(resultPath)},JSON.stringify({title:'Grounded r
     );
     await expect(execute(resumed)).resolves.toMatchObject({ type: "bug" });
     expect(run).toHaveBeenCalledTimes(2);
-    expect(
-      f.authority.read("refinement-analysis-v1", (value) => value),
-    ).toMatchObject({ attempts: 2, status: "complete" });
+    expect(f.authority.read("refinement-analysis-v1", (value) => value)).toMatchObject({
+      attempts: 2,
+      status: "complete",
+    });
   });
   it("confines refinement and descendants to external results while preserving setup files, index and refs", async () => {
     const f = await fixture("printf generated > setup-file");
@@ -416,10 +397,7 @@ fs.writeFileSync(${JSON.stringify(resultPath)},JSON.stringify({title:'Grounded r
       fs.mkdirSync(path.dirname(resultPath), { recursive: true });
       const metadata = path.resolve(
         f.worktreePath,
-        fs
-          .readFileSync(path.join(f.worktreePath, ".git"), "utf8")
-          .trim()
-          .slice(8),
+        fs.readFileSync(path.join(f.worktreePath, ".git"), "utf8").trim().slice(8),
       );
       const protectedPaths = [
         "README.md",
@@ -457,12 +435,8 @@ fs.writeFileSync(${JSON.stringify(resultPath)}, JSON.stringify({title:'Grounded 
       expect(JSON.parse(fs.readFileSync(resultPath, "utf8"))).toMatchObject({
         type: "feature",
       });
-      expect(
-        fs.readFileSync(path.join(f.worktreePath, "setup-file"), "utf8"),
-      ).toBe("generated");
-      expect(
-        fs.readFileSync(path.join(f.worktreePath, "README.md"), "utf8"),
-      ).toBe("initial\n");
+      expect(fs.readFileSync(path.join(f.worktreePath, "setup-file"), "utf8")).toBe("generated");
+      expect(fs.readFileSync(path.join(f.worktreePath, "README.md"), "utf8")).toBe("initial\n");
     });
   });
   it.each([
@@ -507,21 +481,13 @@ fs.writeFileSync(${JSON.stringify(resultPath)}, JSON.stringify({title:'Grounded 
       ).rejects.toThrow();
       expect(runOpenCode).not.toHaveBeenCalled();
       expect(dispatched).toBe(3);
-      expect(
-        fs.readFileSync(path.join(f.worktreePath, "setup-effect"), "utf8"),
-      ).toBe("preserved");
+      expect(fs.readFileSync(path.join(f.worktreePath, "setup-effect"), "utf8")).toBe("preserved");
       const persisted = stateFor(f.authority, f.card.id);
       expect(persisted).toMatchObject({
         status: "failed",
-        attempts: [
-          { outcome: "failed" },
-          { outcome: "failed" },
-          { outcome: "failed" },
-        ],
+        attempts: [{ outcome: "failed" }, { outcome: "failed" }, { outcome: "failed" }],
       });
-      expect(
-        persisted.attempts.every((attempt) => attempt.after !== undefined),
-      ).toBe(true);
+      expect(persisted.attempts.every((attempt) => attempt.after !== undefined)).toBe(true);
       const processStore = new TaskExecutionStore(
         f.authority.store.read()!.pinned.storageRoot,
         f.project,
@@ -529,9 +495,7 @@ fs.writeFileSync(${JSON.stringify(resultPath)}, JSON.stringify({title:'Grounded 
       );
       for (const attempt of persisted.attempts) {
         expect(attempt.executionId).toBeDefined();
-        expect(
-          processStore.readProcessExecution(f.card.id, attempt.executionId!),
-        ).toMatchObject({
+        expect(processStore.readProcessExecution(f.card.id, attempt.executionId!)).toMatchObject({
           treeStopped: true,
           status: _label === "timeout" ? "timeout" : "nonzero",
         });
@@ -553,9 +517,9 @@ fs.writeFileSync(${JSON.stringify(resultPath)}, JSON.stringify({title:'Grounded 
         cardLog: logger.child({ projectId: f.project.id, cardId: f.card.id }),
       }),
     );
-    expect(
-      fs.readFileSync(path.join(f.worktreePath, "generated-lockfile"), "utf8"),
-    ).toBe("setup-ready");
+    expect(fs.readFileSync(path.join(f.worktreePath, "generated-lockfile"), "utf8")).toBe(
+      "setup-ready",
+    );
     const attemptId = f.authority.store.read()!.attemptId;
     await lease!.release();
     lease = await acquireProjectOwnership(
@@ -652,18 +616,15 @@ fs.writeFileSync(${JSON.stringify(resultPath)}, JSON.stringify({title:'Grounded 
         }),
       );
       if (classification === "ignored") {
-        const excludePath = execFileSync(
-          "git",
-          ["rev-parse", "--git-path", "info/exclude"],
-          { cwd: f.worktreePath, encoding: "utf8" },
-        ).trim();
+        const excludePath = execFileSync("git", ["rev-parse", "--git-path", "info/exclude"], {
+          cwd: f.worktreePath,
+          encoding: "utf8",
+        }).trim();
         fs.appendFileSync(
           path.resolve(f.worktreePath, excludePath),
           `${refinementResultRelativePath}\n`,
         );
-        expect(await f.git.getIgnoredFiles(f.worktreePath)).toContain(
-          refinementResultRelativePath,
-        );
+        expect(await f.git.getIgnoredFiles(f.worktreePath)).toContain(refinementResultRelativePath);
       } else {
         expect(await f.git.getUntrackedFiles(f.worktreePath)).toContain(
           refinementResultRelativePath,
@@ -712,9 +673,7 @@ fs.writeFileSync(${JSON.stringify(resultPath)}, JSON.stringify({title:'Grounded 
             prepareAttachmentContext: async () => undefined,
           }),
         ),
-      ).rejects.toThrow(
-        "Refinement worktree no longer matches the persisted post-setup baseline",
-      );
+      ).rejects.toThrow("Refinement worktree no longer matches the persisted post-setup baseline");
       expect(openCode).not.toHaveBeenCalled();
       expect(fs.existsSync(resultPath)).toBe(true);
       expect(setupExecutions).toBe(1);
@@ -835,19 +794,10 @@ fs.writeFileSync(${JSON.stringify(resultPath)}, JSON.stringify({title:'Grounded 
         cardLog: logger.child({ projectId: f.project.id, cardId: f.card.id }),
       }),
     );
-    fs.writeFileSync(
-      path.join(f.worktreePath, "README.md"),
-      "interrupted tracked edit\n",
-    );
-    fs.writeFileSync(
-      path.join(f.worktreePath, "untracked-agent-file"),
-      "preserve me",
-    );
+    fs.writeFileSync(path.join(f.worktreePath, "README.md"), "interrupted tracked edit\n");
+    fs.writeFileSync(path.join(f.worktreePath, "untracked-agent-file"), "preserve me");
     fs.mkdirSync(path.join(f.worktreePath, "ignored-generated"));
-    fs.writeFileSync(
-      path.join(f.worktreePath, "ignored-generated", "cache"),
-      "keep",
-    );
+    fs.writeFileSync(path.join(f.worktreePath, "ignored-generated", "cache"), "keep");
     const attemptId = f.authority.store.read()!.attemptId;
     await lease!.release();
     lease = await acquireProjectOwnership(
@@ -889,21 +839,15 @@ fs.writeFileSync(${JSON.stringify(resultPath)}, JSON.stringify({title:'Grounded 
       ),
     ).rejects.toThrow(/post-setup baseline/i);
     expect(runOpenCode).not.toHaveBeenCalled();
-    expect(
-      fs.readFileSync(path.join(f.worktreePath, "README.md"), "utf8"),
-    ).toBe("interrupted tracked edit\n");
-    expect(
-      fs.readFileSync(
-        path.join(f.worktreePath, "untracked-agent-file"),
-        "utf8",
-      ),
-    ).toBe("preserve me");
-    expect(
-      fs.readFileSync(
-        path.join(f.worktreePath, "ignored-generated", "cache"),
-        "utf8",
-      ),
-    ).toBe("keep");
+    expect(fs.readFileSync(path.join(f.worktreePath, "README.md"), "utf8")).toBe(
+      "interrupted tracked edit\n",
+    );
+    expect(fs.readFileSync(path.join(f.worktreePath, "untracked-agent-file"), "utf8")).toBe(
+      "preserve me",
+    );
+    expect(fs.readFileSync(path.join(f.worktreePath, "ignored-generated", "cache"), "utf8")).toBe(
+      "keep",
+    );
   });
 
   it("keeps an unbound dispatch outcome ambiguous and preserves work without agent dispatch", async () => {
@@ -939,14 +883,10 @@ fs.writeFileSync(${JSON.stringify(resultPath)}, JSON.stringify({title:'Grounded 
       ),
     ).rejects.toThrow(/ambiguous/i);
     expect(runOpenCode).not.toHaveBeenCalled();
-    expect(fs.readFileSync(preservedPath, "utf8")).toBe(
-      "keep for operator recovery",
-    );
+    expect(fs.readFileSync(preservedPath, "utf8")).toBe("keep for operator recovery");
     expect(stateFor(f.authority, f.card.id)).toMatchObject({
       status: "ambiguous",
-      attempts: [
-        { outcome: "ambiguous", after: expect.stringMatching(/^sha256:/u) },
-      ],
+      attempts: [{ outcome: "ambiguous", after: expect.stringMatching(/^sha256:/u) }],
     });
   });
 
@@ -989,9 +929,7 @@ fs.writeFileSync(${JSON.stringify(resultPath)}, JSON.stringify({title:'Grounded 
     ).rejects.toThrow(/after-effects\/result evidence/i);
     expect(initialOpenCode).not.toHaveBeenCalled();
     expect(stateFor(f.authority, f.card.id).status).toBe("active");
-    expect(
-      fs.readFileSync(path.join(f.worktreePath, "recovery-marker"), "utf8"),
-    ).toBe("once");
+    expect(fs.readFileSync(path.join(f.worktreePath, "recovery-marker"), "utf8")).toBe("once");
     const attemptId = f.authority.store.read()!.attemptId;
     await lease!.release();
     lease = await acquireProjectOwnership(

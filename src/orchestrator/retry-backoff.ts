@@ -17,9 +17,7 @@ export function getRetryBackoffDelayMilliseconds(attempt: number): number {
     return exponentialDelay;
   }
 
-  const jitter = Math.floor(
-    exponentialDelay * RETRY_BACKOFF_JITTER_RATIO * Math.random(),
-  );
+  const jitter = Math.floor(exponentialDelay * RETRY_BACKOFF_JITTER_RATIO * Math.random());
 
   return Math.min(RETRY_BACKOFF_MAX_MILLISECONDS, exponentialDelay + jitter);
 }

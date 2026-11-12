@@ -47,12 +47,7 @@ function setup() {
   };
   fs.mkdirSync(identity.repositoryPath);
   fs.mkdirSync(identity.worktreeRoot);
-  const store = new RunStore(
-    identity.storageRoot,
-    "attempt-1",
-    identity,
-    lease,
-  );
+  const store = new RunStore(identity.storageRoot, "attempt-1", identity, lease);
   return { root, lease, identity, store };
 }
 function fixture(identity: ReturnType<typeof setup>["identity"]): RunRecord {
@@ -84,10 +79,7 @@ function fixture(identity: ReturnType<typeof setup>["identity"]): RunRecord {
     updatedAt: new Date(0).toISOString(),
   };
 }
-function terminalProof(
-  identity: ReturnType<typeof setup>["identity"],
-  event: string,
-) {
+function terminalProof(identity: ReturnType<typeof setup>["identity"], event: string) {
   return {
     prOutcome:
       event === "merged"
@@ -155,11 +147,7 @@ describe("RunStore authoritative foundation", () => {
             ownership === "wrong-hash",
           );
         if (ownership === "multiple") writePointer("third-integration");
-        const registry = new RunRegistry(
-          identity.storageRoot,
-          lease.integrationId,
-          lease,
-        );
+        const registry = new RunRegistry(identity.storageRoot, lease.integrationId, lease);
         if (ownership === "other") {
           registry.handoff(store, null, 1);
           expect(registry.reconcile()?.attemptId).toBe("attempt-1");
@@ -167,9 +155,7 @@ describe("RunStore authoritative foundation", () => {
           expect(() => registry.handoff(store, null, 1)).toThrow();
           expect(() => registry.reconcile()).toThrow();
         }
-        expect(
-          fs.readFileSync(path.join(attempts, "unreadable.json"), "utf8"),
-        ).toBe(bytes);
+        expect(fs.readFileSync(path.join(attempts, "unreadable.json"), "utf8")).toBe(bytes);
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }
@@ -232,12 +218,7 @@ describe("RunStore authoritative foundation", () => {
       const base = setup();
       let sequence = 0;
       const attemptId = `matrix-${sequence++}`;
-      const store = new RunStore(
-        base.identity.storageRoot,
-        attemptId,
-        base.identity,
-        base.lease,
-      );
+      const store = new RunStore(base.identity.storageRoot, attemptId, base.identity, base.lease);
       const initial = {
         ...fixture(base.identity),
         attemptId,
@@ -250,14 +231,8 @@ describe("RunStore authoritative foundation", () => {
             : ("implementation" as const),
         lifecycle: source,
         checkpoint:
-          source === "waiting"
-            ? event === "wait-resumed"
-              ? target
-              : "planning"
-            : source,
-        publicationState: ["merged", "closed-unmerged", "cancelled"].includes(
-          event,
-        )
+          source === "waiting" ? (event === "wait-resumed" ? target : "planning") : source,
+        publicationState: ["merged", "closed-unmerged", "cancelled"].includes(event)
           ? ("open" as const)
           : ("none" as const),
         wait:
@@ -304,11 +279,7 @@ describe("RunStore authoritative foundation", () => {
         "failed",
         "cancelled",
       ].includes(event);
-      const claim = [
-        "claim",
-        "implementation-claimed",
-        "refinement-claimed",
-      ].includes(event);
+      const claim = ["claim", "implementation-claimed", "refinement-claimed"].includes(event);
       const result = store.transition(
         1,
         1,
@@ -355,8 +326,7 @@ describe("RunStore authoritative foundation", () => {
             : "matrix-evidence",
       );
       expect(result.lifecycle).toBe(target);
-      if (observation)
-        expect(result.pendingOperations[0]?.status).toBe("ambiguous");
+      if (observation) expect(result.pendingOperations[0]?.status).toBe("ambiguous");
       for (const forbidden of runLifecycleStates.filter(
         (candidate) => !allowed.includes(candidate),
       )) {
@@ -376,9 +346,7 @@ describe("RunStore authoritative foundation", () => {
           rejectedStore.transition(
             1,
             1,
-            observation || event === "claim"
-              ? null
-              : { id: "matrix-op", generation: 1 },
+            observation || event === "claim" ? null : { id: "matrix-op", generation: 1 },
             event,
             source,
             forbidden,
@@ -392,14 +360,14 @@ describe("RunStore authoritative foundation", () => {
   it("allows only matrix transitions and rejects stale revisions, owner and operation completions", () => {
     const { store, identity } = setup();
     store.create(fixture(identity));
-    expect(() =>
-      store.transition(1, 1, null, "claim", "ready", "done", (run) => run),
-    ).toThrow("Forbidden transition");
+    expect(() => store.transition(1, 1, null, "claim", "ready", "done", (run) => run)).toThrow(
+      "Forbidden transition",
+    );
     const claimed = start(store);
     expect(claimed.lifecycle).toBe("planning");
-    expect(() =>
-      store.transition(1, 1, null, "claim", "ready", "planning", (run) => run),
-    ).toThrow(RunStoreConflictError);
+    expect(() => store.transition(1, 1, null, "claim", "ready", "planning", (run) => run)).toThrow(
+      RunStoreConflictError,
+    );
     expect(() =>
       store.transition(
         2,
@@ -412,15 +380,7 @@ describe("RunStore authoritative foundation", () => {
       ),
     ).toThrow(RunStoreConflictError);
     expect(() =>
-      store.transition(
-        2,
-        9,
-        null,
-        "plan-approved",
-        "planning",
-        "implementation",
-        (run) => run,
-      ),
+      store.transition(2, 9, null, "plan-approved", "planning", "implementation", (run) => run),
     ).toThrow(RunStoreConflictError);
   });
   it("rejects wait-resumed from every lifecycle other than waiting through the source matrix", () => {
@@ -429,19 +389,10 @@ describe("RunStore authoritative foundation", () => {
       (candidate) => candidate !== "waiting" && candidate !== "refined",
     )) {
       const attemptId = `not-waiting-${state}`;
-      const store = new RunStore(
-        base.identity.storageRoot,
-        attemptId,
-        base.identity,
-        base.lease,
-      );
+      const store = new RunStore(base.identity.storageRoot, attemptId, base.identity, base.lease);
       const terminal = ["done", "failed", "cancelled"].includes(state);
       const terminalEvent =
-        state === "done"
-          ? "merged"
-          : state === "failed"
-            ? "failed"
-            : "cancelled";
+        state === "done" ? "merged" : state === "failed" ? "failed" : "cancelled";
       const initial = {
         ...fixture(base.identity),
         attemptId,
@@ -449,30 +400,16 @@ describe("RunStore authoritative foundation", () => {
         lifecycle: state,
         checkpoint: terminal ? "planning" : state,
         publicationState:
-          state === "done"
-            ? "merged"
-            : state === "cancelled"
-              ? "closed-unmerged"
-              : "none",
+          state === "done" ? "merged" : state === "cancelled" ? "closed-unmerged" : "none",
         terminalSync: terminal ? "verified" : "not-applicable",
-        terminalEvidence: terminal
-          ? terminalProof(base.identity, terminalEvent)
-          : null,
+        terminalEvidence: terminal ? terminalProof(base.identity, terminalEvent) : null,
         expectedTrelloListId: terminal
           ? terminalProof(base.identity, terminalEvent).trelloListId
           : null,
       } as RunRecord;
       store.create(initial);
       expect(() =>
-        store.transition(
-          1,
-          1,
-          null,
-          "wait-resumed",
-          state,
-          state,
-          (run) => run,
-        ),
+        store.transition(1, 1, null, "wait-resumed", state, state, (run) => run),
       ).toThrow("event/source pair");
     }
   });
@@ -480,29 +417,21 @@ describe("RunStore authoritative foundation", () => {
     const { store, identity } = setup();
     const initial = fixture(identity);
     store.create(initial);
-    const claim = store.transition(
-      1,
-      1,
-      null,
-      "claim",
-      "ready",
-      "planning",
-      (run) => ({
-        ...run,
-        operation: { id: "op-1", kind: "planning", generation: 1 },
-        pendingOperations: [
-          {
-            id: "op-1",
-            kind: "planning",
-            status: "running",
-            generation: 1,
-            expectedRevision: 1,
-            prerequisites: [],
-            intent: {},
-          },
-        ],
-      }),
-    );
+    const claim = store.transition(1, 1, null, "claim", "ready", "planning", (run) => ({
+      ...run,
+      operation: { id: "op-1", kind: "planning", generation: 1 },
+      pendingOperations: [
+        {
+          id: "op-1",
+          kind: "planning",
+          status: "running",
+          generation: 1,
+          expectedRevision: 1,
+          prerequisites: [],
+          intent: {},
+        },
+      ],
+    }));
     const completed = store.transition(
       claim.revision,
       1,
@@ -573,23 +502,16 @@ describe("RunStore authoritative foundation", () => {
         (run) => run,
       ),
     ).toThrow("unresolved");
-    const notFound = store.recordDiscoveredOperationOutcome(
-      waiting.revision,
-      1,
-      "op-2",
-      1,
-      {
-        disposition: "not-found",
-        source: "trello",
-        observationId: "trello-negative-lookup",
-        observedAt: new Date(0).toISOString(),
-      },
-    );
+    const notFound = store.recordDiscoveredOperationOutcome(waiting.revision, 1, "op-2", 1, {
+      disposition: "not-found",
+      source: "trello",
+      observationId: "trello-negative-lookup",
+      observedAt: new Date(0).toISOString(),
+    });
     expect(notFound.lifecycle).toBe("waiting");
-    expect(
-      notFound.pendingOperations[1]?.status ??
-        notFound.pendingOperations[0]?.status,
-    ).toBe("ambiguous");
+    expect(notFound.pendingOperations[1]?.status ?? notFound.pendingOperations[0]?.status).toBe(
+      "ambiguous",
+    );
     expect(() =>
       store.transition(
         notFound.revision,
@@ -601,18 +523,12 @@ describe("RunStore authoritative foundation", () => {
         (run) => run,
       ),
     ).toThrow("unresolved");
-    const reconciled = store.recordDiscoveredOperationOutcome(
-      notFound.revision,
-      1,
-      "op-2",
-      1,
-      {
-        disposition: "accepted",
-        source: "trello",
-        observationId: "late-accepted-effect",
-        observedAt: new Date(1).toISOString(),
-      },
-    );
+    const reconciled = store.recordDiscoveredOperationOutcome(notFound.revision, 1, "op-2", 1, {
+      disposition: "accepted",
+      source: "trello",
+      observationId: "late-accepted-effect",
+      observedAt: new Date(1).toISOString(),
+    });
     expect(() =>
       store.transition(
         reconciled.revision,
@@ -639,35 +555,23 @@ describe("RunStore authoritative foundation", () => {
   it("terminal observation supersedes but preserves in-flight operations and blocks failure for open PRs", () => {
     const { store, identity, lease } = setup();
     store.create({ ...fixture(identity), publicationState: "open" });
-    const registry = new RunRegistry(
-      identity.storageRoot,
-      identity.integrationId,
-      lease,
-    );
+    const registry = new RunRegistry(identity.storageRoot, identity.integrationId, lease);
     registry.handoff(store, null, 1);
-    const claimed = store.transition(
-      1,
-      1,
-      null,
-      "claim",
-      "ready",
-      "planning",
-      (run) => ({
-        ...run,
-        operation: { id: "push", kind: "publish", generation: 1 },
-        pendingOperations: [
-          {
-            id: "push",
-            kind: "publish",
-            status: "running",
-            generation: 1,
-            expectedRevision: 1,
-            prerequisites: [],
-            intent: { sha: "abc" },
-          },
-        ],
-      }),
-    );
+    const claimed = store.transition(1, 1, null, "claim", "ready", "planning", (run) => ({
+      ...run,
+      operation: { id: "push", kind: "publish", generation: 1 },
+      pendingOperations: [
+        {
+          id: "push",
+          kind: "publish",
+          status: "running",
+          generation: 1,
+          expectedRevision: 1,
+          prerequisites: [],
+          intent: { sha: "abc" },
+        },
+      ],
+    }));
     const active = store.transition(
       claimed.revision,
       1,
@@ -683,9 +587,7 @@ describe("RunStore authoritative foundation", () => {
           since: new Date(0).toISOString(),
           retryAt: null,
         },
-        pendingOperations: [
-          { ...run.pendingOperations[0]!, status: "ambiguous" },
-        ],
+        pendingOperations: [{ ...run.pendingOperations[0]!, status: "ambiguous" }],
       }),
     );
     expect(() =>
@@ -721,12 +623,7 @@ describe("RunStore authoritative foundation", () => {
       token: "restart-token",
       assertHeld() {},
     };
-    const candidate = new RunStore(
-      identity.storageRoot,
-      candidateId,
-      identity,
-      lease,
-    );
+    const candidate = new RunStore(identity.storageRoot, candidateId, identity, lease);
     candidate.create({
       ...fixture(identity),
       attemptId: candidateId,
@@ -735,30 +632,15 @@ describe("RunStore authoritative foundation", () => {
     expect(() => registry.handoff(candidate, previousPointer, 2)).toThrow(
       "verified terminal release",
     );
-    const restarted = new RunStore(
-      identity.storageRoot,
-      "attempt-1",
-      identity,
-      candidateLease,
-    );
-    const takeover = restarted.takeOwnership(
-      finished.revision,
-      1,
-      "restart-token",
-    );
-    const reconciled = restarted.recordDiscoveredOperationOutcome(
-      takeover.revision,
-      2,
-      "push",
-      1,
-      {
-        disposition: "conclusively-not-accepted",
-        source: "github",
-        observationId: "push-discovery-readback",
-        observedAt: new Date(0).toISOString(),
-        reason: "provider-rejected",
-      },
-    );
+    const restarted = new RunStore(identity.storageRoot, "attempt-1", identity, candidateLease);
+    const takeover = restarted.takeOwnership(finished.revision, 1, "restart-token");
+    const reconciled = restarted.recordDiscoveredOperationOutcome(takeover.revision, 2, "push", 1, {
+      disposition: "conclusively-not-accepted",
+      source: "github",
+      observationId: "push-discovery-readback",
+      observedAt: new Date(0).toISOString(),
+      reason: "provider-rejected",
+    });
     expect(reconciled.lifecycle).toBe("done");
     expect(reconciled.pendingOperations[0]?.status).toBe("failed");
     const restartedCandidate = new RunStore(
@@ -813,18 +695,10 @@ describe("RunStore authoritative foundation", () => {
       const isolated = setup();
       isolated.store.create(fixture(isolated.identity));
       expect(() =>
-        isolated.store.transition(
-          1,
-          1,
-          null,
-          "claim",
-          "ready",
-          "planning",
-          (run) => {
-            mutate(run);
-            return run;
-          },
-        ),
+        isolated.store.transition(1, 1, null, "claim", "ready", "planning", (run) => {
+          mutate(run);
+          return run;
+        }),
       ).toThrow();
       expect(isolated.store.read()?.revision).toBe(1);
     }
@@ -832,11 +706,7 @@ describe("RunStore authoritative foundation", () => {
   it("preserves unsupported and malformed records and validates storage location", () => {
     const { store, identity } = setup();
     store.create(fixture(identity));
-    const record = path.join(
-      identity.storageRoot,
-      "attempts",
-      "attempt-1.json",
-    );
+    const record = path.join(identity.storageRoot, "attempts", "attempt-1.json");
     const original = '{"version":99}\n';
     fs.writeFileSync(record, original);
     expect(() => store.read()).toThrow(RunStoreUnsupportedVersionError);
@@ -854,18 +724,11 @@ describe("RunStore authoritative foundation", () => {
     const { store, identity } = setup();
     store.create(fixture(identity));
     const ref = store.writeArtifact(Buffer.from("plan"));
-    expect(ref.id).toBe(
-      `sha256:${createHash("sha256").update("plan").digest("hex")}`,
-    );
-    const next = store.transition(
-      1,
-      1,
-      null,
-      "claim",
-      "ready",
-      "planning",
-      (run) => ({ ...run, artifacts: [ref] }),
-    );
+    expect(ref.id).toBe(`sha256:${createHash("sha256").update("plan").digest("hex")}`);
+    const next = store.transition(1, 1, null, "claim", "ready", "planning", (run) => ({
+      ...run,
+      artifacts: [ref],
+    }));
     expect(next.artifacts).toHaveLength(1);
     fs.writeFileSync(ref.path, "tampered");
     expect(() => store.read()).toThrow("Missing or modified artifact");
@@ -873,11 +736,7 @@ describe("RunStore authoritative foundation", () => {
   it("rejects missing, duplicate, and interrupted artifact references without losing the prior record", () => {
     const { store, identity } = setup();
     store.create(fixture(identity));
-    const recordPath = path.join(
-      identity.storageRoot,
-      "attempts",
-      "attempt-1.json",
-    );
+    const recordPath = path.join(identity.storageRoot, "attempts", "attempt-1.json");
     const debrisPath = `${recordPath}.dead-process.tmp`;
     fs.writeFileSync(debrisPath, "partial");
     expect(store.read()?.revision).toBe(1);
@@ -901,11 +760,7 @@ describe("RunStore authoritative foundation", () => {
   });
   it("durably creates attempt before registry pointer handoff and rejects absent candidates", () => {
     const { store, identity, lease } = setup();
-    const registry = new RunRegistry(
-      identity.storageRoot,
-      identity.integrationId,
-      lease,
-    );
+    const registry = new RunRegistry(identity.storageRoot, identity.integrationId, lease);
     expect(() => registry.handoff(store, null, 1)).toThrow("durable candidate");
     store.create(fixture(identity));
     registry.handoff(store, null, 1);
@@ -915,11 +770,7 @@ describe("RunStore authoritative foundation", () => {
 
   it("scopes unpointed-attempt reconciliation to its canonical integration", () => {
     const { root, lease, identity, store } = setup();
-    const firstRegistry = new RunRegistry(
-      identity.storageRoot,
-      identity.integrationId,
-      lease,
-    );
+    const firstRegistry = new RunRegistry(identity.storageRoot, identity.integrationId, lease);
     store.create(fixture(identity));
     firstRegistry.handoff(store, null, 1);
 
@@ -980,11 +831,7 @@ describe("RunStore authoritative foundation", () => {
       },
     };
     store.create(terminal);
-    const registry = new RunRegistry(
-      identity.storageRoot,
-      identity.integrationId,
-      lease,
-    );
+    const registry = new RunRegistry(identity.storageRoot, identity.integrationId, lease);
     registry.handoff(store, null, 1);
 
     const predecessor = RunStore.openWithPersistedIdentity(
@@ -992,9 +839,7 @@ describe("RunStore authoritative foundation", () => {
       terminal.attemptId,
       lease,
     );
-    expect(predecessor?.read()?.pinned.repositoryPath).toBe(
-      identity.repositoryPath,
-    );
+    expect(predecessor?.read()?.pinned.repositoryPath).toBe(identity.repositoryPath);
     const nextRepository = path.join(root, "new-repo");
     const nextWorktrees = path.join(root, "new-worktrees");
     fs.mkdirSync(nextRepository);
@@ -1004,12 +849,7 @@ describe("RunStore authoritative foundation", () => {
       repositoryPath: nextRepository,
       worktreeRoot: nextWorktrees,
     };
-    const nextStore = new RunStore(
-      identity.storageRoot,
-      "attempt-next",
-      nextIdentity,
-      lease,
-    );
+    const nextStore = new RunStore(identity.storageRoot, "attempt-next", nextIdentity, lease);
     nextStore.create({
       ...fixture(nextIdentity),
       attemptId: "attempt-next",
@@ -1021,37 +861,20 @@ describe("RunStore authoritative foundation", () => {
   it("rejects active registry replacement and dangling pointer recovery", () => {
     const { store, identity, lease } = setup();
     store.create(fixture(identity));
-    const registry = new RunRegistry(
-      identity.storageRoot,
-      identity.integrationId,
-      lease,
-    );
+    const registry = new RunRegistry(identity.storageRoot, identity.integrationId, lease);
     registry.handoff(store, null, 1);
     const nextIdentity = { ...identity };
-    const nextStore = new RunStore(
-      identity.storageRoot,
-      "attempt-2",
-      nextIdentity,
-      lease,
-    );
+    const nextStore = new RunStore(identity.storageRoot, "attempt-2", nextIdentity, lease);
     nextStore.create({ ...fixture(identity), attemptId: "attempt-2" });
     const prior = registry.read();
-    expect(() => registry.handoff(nextStore, prior, 2)).toThrow(
-      "active attempt",
-    );
-    fs.unlinkSync(
-      path.join(identity.storageRoot, "attempts", "attempt-1.json"),
-    );
+    expect(() => registry.handoff(nextStore, prior, 2)).toThrow("active attempt");
+    fs.unlinkSync(path.join(identity.storageRoot, "attempts", "attempt-1.json"));
     expect(() => registry.reconcile()).toThrow("missing attempt");
   });
   it("allows pointer replacement only after terminal reconciliation and compares prior pointer", () => {
     const { store, identity, lease } = setup();
     store.create(fixture(identity));
-    const registry = new RunRegistry(
-      identity.storageRoot,
-      identity.integrationId,
-      lease,
-    );
+    const registry = new RunRegistry(identity.storageRoot, identity.integrationId, lease);
     registry.handoff(store, null, 1);
     store.transition(1, 1, null, "claim", "ready", "planning", (run) => run);
     store.transition(
@@ -1068,12 +891,10 @@ describe("RunStore authoritative foundation", () => {
     const next = new RunStore(identity.storageRoot, nextId, identity, lease);
     next.create({ ...fixture(identity), attemptId: nextId, cardId: "card-2" });
     const pointer = registry.read()!;
-    expect(() => registry.reconcile()).toThrow(
-      "Conflicting unpointed attempts",
+    expect(() => registry.reconcile()).toThrow("Conflicting unpointed attempts");
+    expect(() => registry.handoff(next, { ...pointer, generation: 0 }, 2)).toThrow(
+      "compare-and-swap",
     );
-    expect(() =>
-      registry.handoff(next, { ...pointer, generation: 0 }, 2),
-    ).toThrow("compare-and-swap");
     registry.handoff(next, pointer, 2);
     expect(registry.reconcile()?.attemptId).toBe(nextId);
   });
@@ -1086,12 +907,7 @@ describe("RunStore authoritative foundation", () => {
         if (!held) throw new Error("lease lost");
       },
     };
-    const firstStore = new RunStore(
-      identity.storageRoot,
-      "attempt-1",
-      identity,
-      firstLease,
-    );
+    const firstStore = new RunStore(identity.storageRoot, "attempt-1", identity, firstLease);
     firstStore.create(fixture(identity));
     held = false;
     expect(() => start(firstStore)).toThrow("lease lost");
@@ -1101,42 +917,22 @@ describe("RunStore authoritative foundation", () => {
       token: "lease-token-2",
       assertHeld() {},
     };
-    const nextStore = new RunStore(
-      identity.storageRoot,
-      "attempt-1",
-      identity,
-      nextLease,
-    );
+    const nextStore = new RunStore(identity.storageRoot, "attempt-1", identity, nextLease);
     const taken = nextStore.takeOwnership(1, 1, "lease-token-2");
     expect(taken.owner.generation).toBe(2);
     expect(taken.owner.instanceId).toBe("instance-2");
     expect(() =>
-      nextStore.transition(
-        2,
-        1,
-        null,
-        "claim",
-        "ready",
-        "planning",
-        (run) => run,
-      ),
+      nextStore.transition(2, 1, null, "claim", "ready", "planning", (run) => run),
     ).toThrow(RunStoreConflictError);
   });
   it("recovers ownership after a real owner process dies and fences stale completions", async () => {
     const { identity } = setup();
-    const coordinationRoot = path.join(
-      identity.storageRoot,
-      "restart-coordination",
-    );
+    const coordinationRoot = path.join(identity.storageRoot, "restart-coordination");
     fs.mkdirSync(coordinationRoot, { mode: 0o700, recursive: true });
     provisionCoordinationNamespace(coordinationRoot, "restart-namespace");
     const marker = path.join(identity.storageRoot, "owner-ready");
-    const runUrl = new URL("../src/task-session/run-store.ts", import.meta.url)
-      .href;
-    const ownershipUrl = new URL(
-      "../src/coordination/project-ownership.ts",
-      import.meta.url,
-    ).href;
+    const runUrl = new URL("../src/task-session/run-store.ts", import.meta.url).href;
+    const ownershipUrl = new URL("../src/coordination/project-ownership.ts", import.meta.url).href;
     const script = `import fs from 'node:fs'; import { acquireProjectOwnership } from ${JSON.stringify(ownershipUrl)}; import { RunStore } from ${JSON.stringify(runUrl)}; const [encoded,coord,marker,recordJson]=process.argv.slice(1); const identity=JSON.parse(encoded); const owner=await acquireProjectOwnership(coord,{trelloBoardId:'board',githubRepository:'owner/repo'},'restart-namespace'); const lease={integrationId:identity.integrationId,instanceId:'dead-instance',token:'dead-token',assertHeld(){owner.assertHeld()}}; new RunStore(identity.storageRoot,'attempt-1',identity,lease).create({...JSON.parse(recordJson),owner:{instanceId:'dead-instance',token:'dead-token',generation:1}}); fs.writeFileSync(marker,'ready'); const a=new Int32Array(new SharedArrayBuffer(4));while(true)Atomics.wait(a,0,0,1000);`;
     const child = spawn(
       process.execPath,
@@ -1169,24 +965,11 @@ describe("RunStore authoritative foundation", () => {
       token: "new-token",
       assertHeld: () => acquired.assertHeld(),
     };
-    const restarted = new RunStore(
-      identity.storageRoot,
-      "attempt-1",
-      identity,
-      nextLease,
-    );
+    const restarted = new RunStore(identity.storageRoot, "attempt-1", identity, nextLease);
     const taken = restarted.takeOwnership(1, 1, "new-token");
     expect(taken.owner.generation).toBe(2);
     expect(() =>
-      restarted.transition(
-        2,
-        1,
-        null,
-        "claim",
-        "ready",
-        "planning",
-        (run) => run,
-      ),
+      restarted.transition(2, 1, null, "claim", "ready", "planning", (run) => run),
     ).toThrow(RunStoreConflictError);
     await acquired.release();
   });
@@ -1195,12 +978,8 @@ describe("RunStore authoritative foundation", () => {
     const coordinationRoot = path.join(identity.storageRoot, "coordination");
     fs.mkdirSync(coordinationRoot, { mode: 0o700, recursive: true });
     provisionCoordinationNamespace(coordinationRoot, "test-namespace");
-    const runUrl = new URL("../src/task-session/run-store.ts", import.meta.url)
-      .href;
-    const ownershipUrl = new URL(
-      "../src/coordination/project-ownership.ts",
-      import.meta.url,
-    ).href;
+    const runUrl = new URL("../src/task-session/run-store.ts", import.meta.url).href;
+    const ownershipUrl = new URL("../src/coordination/project-ownership.ts", import.meta.url).href;
     const recordJson = JSON.stringify(fixture(identity));
     const barrier = path.join(identity.storageRoot, "lease-test-barrier");
     fs.mkdirSync(barrier);
@@ -1236,19 +1015,13 @@ describe("RunStore authoritative foundation", () => {
     );
     const childOutput: string[] = [];
     for (const child of children) {
-      child.stdout?.on("data", (chunk: Buffer) =>
-        childOutput.push(chunk.toString()),
-      );
-      child.stderr?.on("data", (chunk: Buffer) =>
-        childOutput.push(chunk.toString()),
-      );
+      child.stdout?.on("data", (chunk: Buffer) => childOutput.push(chunk.toString()));
+      child.stderr?.on("data", (chunk: Buffer) => childOutput.push(chunk.toString()));
     }
     for (
       let attempt = 0;
       attempt < 200 &&
-      [0, 1].some(
-        (index) => !fs.existsSync(path.join(barrier, `${index}.attempted`)),
-      );
+      [0, 1].some((index) => !fs.existsSync(path.join(barrier, `${index}.attempted`)));
       attempt++
     )
       await new Promise((resolve) => setTimeout(resolve, 10));
@@ -1290,12 +1063,7 @@ describe("RunStore authoritative foundation", () => {
       ),
       new Promise<never>((_, reject) =>
         setTimeout(
-          () =>
-            reject(
-              new Error(
-                "post-release canonical ownership acquisition timed out",
-              ),
-            ),
+          () => reject(new Error("post-release canonical ownership acquisition timed out")),
           3000,
         ),
       ),
@@ -1321,9 +1089,7 @@ describe("RunStore authoritative foundation", () => {
       })),
     ).toThrow("byte limit");
     expect(store.read()?.revision).toBe(1);
-    const outside = fs.mkdtempSync(
-      path.join(os.tmpdir(), "run-store-outside-"),
-    );
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "run-store-outside-"));
     const parent = path.join(identity.storageRoot, "attempts");
     const moved = path.join(identity.storageRoot, "attempts-real");
     fs.renameSync(parent, moved);
@@ -1334,20 +1100,11 @@ describe("RunStore authoritative foundation", () => {
     const { store, identity } = setup();
     store.create(fixture(identity));
     const marker = path.join(identity.storageRoot, "rename-barrier");
-    const runUrl = new URL("../src/task-session/run-store.ts", import.meta.url)
-      .href;
+    const runUrl = new URL("../src/task-session/run-store.ts", import.meta.url).href;
     const script = `import fs from 'node:fs'; import { RunStore } from ${JSON.stringify(runUrl)}; const [encoded, marker] = process.argv.slice(1); const identity=JSON.parse(encoded); const original=fs.renameSync; fs.renameSync=(from,to)=>{fs.writeFileSync(marker,'ready');const a=new Int32Array(new SharedArrayBuffer(4));while(true)Atomics.wait(a,0,0,1000);return original(from,to)}; const lease={integrationId:identity.integrationId,instanceId:'instance-1',token:'lease-token-1',assertHeld(){}}; new RunStore(identity.storageRoot,'attempt-1',identity,lease).transition(1,1,null,'claim','ready','planning',r=>r);`;
     const child = spawn(
       process.execPath,
-      [
-        "--import",
-        "tsx",
-        "--input-type=module",
-        "-e",
-        script,
-        JSON.stringify(identity),
-        marker,
-      ],
+      ["--import", "tsx", "--input-type=module", "-e", script, JSON.stringify(identity), marker],
       { stdio: "ignore" },
     );
     for (let attempt = 0; attempt < 200 && !fs.existsSync(marker); attempt++)
@@ -1360,26 +1117,13 @@ describe("RunStore authoritative foundation", () => {
   it("recovers an interrupted registry handoff without mistaking the candidate for absent", async () => {
     const { store, identity, lease } = setup();
     store.create(fixture(identity));
-    const registry = new RunRegistry(
-      identity.storageRoot,
-      identity.integrationId,
-      lease,
-    );
+    const registry = new RunRegistry(identity.storageRoot, identity.integrationId, lease);
     const marker = path.join(identity.storageRoot, "pointer-barrier");
-    const runUrl = new URL("../src/task-session/run-store.ts", import.meta.url)
-      .href;
+    const runUrl = new URL("../src/task-session/run-store.ts", import.meta.url).href;
     const script = `import fs from 'node:fs'; import { RunRegistry, RunStore } from ${JSON.stringify(runUrl)}; const [encoded, marker] = process.argv.slice(1); const identity=JSON.parse(encoded); const original=fs.renameSync; fs.renameSync=(from,to)=>{if(String(to).includes('/registry/')){fs.writeFileSync(marker,'ready');const a=new Int32Array(new SharedArrayBuffer(4));while(true)Atomics.wait(a,0,0,1000)}return original(from,to)}; const lease={integrationId:identity.integrationId,instanceId:'instance-1',token:'lease-token-1',assertHeld(){}}; const candidate=new RunStore(identity.storageRoot,'attempt-1',identity,lease); new RunRegistry(identity.storageRoot,identity.integrationId,lease).handoff(candidate,null,1);`;
     const child = spawn(
       process.execPath,
-      [
-        "--import",
-        "tsx",
-        "--input-type=module",
-        "-e",
-        script,
-        JSON.stringify(identity),
-        marker,
-      ],
+      ["--import", "tsx", "--input-type=module", "-e", script, JSON.stringify(identity), marker],
       { stdio: "ignore" },
     );
     for (let attempt = 0; attempt < 200 && !fs.existsSync(marker); attempt++)

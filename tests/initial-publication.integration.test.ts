@@ -49,8 +49,7 @@ import {
 const roots: string[] = [];
 afterEach(() => {
   vi.useRealTimers();
-  for (const root of roots.splice(0))
-    fs.rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 function fixture(projectId = "p") {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "initial-publication-"));
@@ -65,10 +64,7 @@ async function begin(
   setupDisposition?: PersistedSetupDisposition,
   qualityNeedsDraft = false,
 ) {
-  const identity = await getTaskSessionSourceSnapshotIdentity(
-    f.git,
-    f.worktreePath,
-  );
+  const identity = await getTaskSessionSourceSnapshotIdentity(f.git, f.worktreePath);
   f.authority.run(() =>
     beginInitialPublication(
       {
@@ -96,18 +92,13 @@ async function createSetupDisposition(
   unrelatedPath: string,
   includeRelevantSetupChange = true,
 ): Promise<PersistedSetupDisposition> {
-  const taskStore = f.authority.run(
-    () => new TaskExecutionStore(f.project.contextRoot, f.project),
-  );
+  const taskStore = f.authority.run(() => new TaskExecutionStore(f.project.contextRoot, f.project));
   const existing = task(f)!;
   const before = JSON.parse(
     (await captureSetupEffects(f.git, f.worktreePath)).toString("utf8"),
   ) as Parameters<typeof getSetupTrackedDelta>[0];
   if (includeRelevantSetupChange)
-    fs.writeFileSync(
-      path.join(f.worktreePath, "yarn.lock"),
-      "task dependency\n",
-    );
+    fs.writeFileSync(path.join(f.worktreePath, "yarn.lock"), "task dependency\n");
   fs.writeFileSync(path.join(f.worktreePath, unrelatedPath), "preserve me\n");
   f.isolated.git(f.worktreePath, "add", unrelatedPath);
   const failedAttemptAfter = JSON.parse(
@@ -118,11 +109,7 @@ async function createSetupDisposition(
   const after = JSON.parse(
     (await captureSetupEffects(f.git, f.worktreePath)).toString("utf8"),
   ) as Parameters<typeof getSetupTrackedDelta>[1];
-  const { candidates, contextDigest } = getSetupTrackedDelta(
-    before,
-    after,
-    after,
-  );
+  const { candidates, contextDigest } = getSetupTrackedDelta(before, after, after);
   const verdict = {
     version: 1 as const,
     contextDigest,
@@ -133,29 +120,20 @@ async function createSetupDisposition(
     })),
   };
   const scope = resolveSetupCommitScope(before, after, after, verdict);
-  const beforeArtifact = taskStore.writePrimaryResultArtifact(
-    "setup-before-integration",
-    before,
-  );
-  const afterArtifact = taskStore.writePrimaryResultArtifact(
-    "setup-after-integration",
-    after,
-  );
+  const beforeArtifact = taskStore.writePrimaryResultArtifact("setup-before-integration", before);
+  const afterArtifact = taskStore.writePrimaryResultArtifact("setup-after-integration", after);
   const failedAttemptAfterArtifact = taskStore.writePrimaryResultArtifact(
     "setup-failed-attempt-after-integration",
     failedAttemptAfter,
   );
-  const scopeArtifact = taskStore.writePrimaryResultArtifact(
-    "setup-scope-integration",
-    {
-      version: 1,
-      before: beforeArtifact.reference,
-      after: afterArtifact.reference,
-      current: after,
-      verdict,
-      scope,
-    },
-  );
+  const scopeArtifact = taskStore.writePrimaryResultArtifact("setup-scope-integration", {
+    version: 1,
+    before: beforeArtifact.reference,
+    after: afterArtifact.reference,
+    current: after,
+    verdict,
+    scope,
+  });
   f.authority.run(() =>
     taskStore.compareAndSwap(f.services.card().id, existing.revision, {
       ...existing,
@@ -202,10 +180,7 @@ async function createSetupDisposition(
 async function publicationEvidence(
   f: ReturnType<typeof fixture>,
 ): Promise<VerifiedPublicationDecisionInput> {
-  const identity = await getTaskSessionSourceSnapshotIdentity(
-    f.git,
-    f.worktreePath,
-  );
+  const identity = await getTaskSessionSourceSnapshotIdentity(f.git, f.worktreePath);
   return {
     currentContentIdentity: identity,
     validationCommand: "true",
@@ -263,13 +238,8 @@ async function poll(
     f.authority,
   );
 }
-function operation(
-  f: ReturnType<typeof reopenPublicationFixture>,
-  name: string,
-) {
-  return f.store
-    .read()!
-    .pendingOperations.find((entry) => entry.id === `initial:${name}`);
+function operation(f: ReturnType<typeof reopenPublicationFixture>, name: string) {
+  return f.store.read()!.pendingOperations.find((entry) => entry.id === `initial:${name}`);
 }
 async function through(
   f: ReturnType<typeof reopenPublicationFixture>,
@@ -280,9 +250,7 @@ async function through(
     if (operation(f, name)?.status === "completed") return;
     await poll(f, true, openCode);
   }
-  throw new Error(
-    `Did not complete ${name}: ${JSON.stringify(f.store.read()?.compatibility)}`,
-  );
+  throw new Error(`Did not complete ${name}: ${JSON.stringify(f.store.read()?.compatibility)}`);
 }
 function task(f: ReturnType<typeof reopenPublicationFixture>) {
   return f.authority.run(() =>
@@ -308,9 +276,11 @@ describe("setup-aware initial publication commit scope", () => {
     vi.spyOn(github, "findPullRequestState").mockImplementation(async () =>
       f.services.github.findPullRequestState({} as never),
     );
-    vi.spyOn(github, "getPullRequestPublicationFields").mockImplementation(
-      async () => ({ title: pr.title, body: pr.body, isDraft: draft }),
-    );
+    vi.spyOn(github, "getPullRequestPublicationFields").mockImplementation(async () => ({
+      title: pr.title,
+      body: pr.body,
+      isDraft: draft,
+    }));
     await expect(
       f.authority.run(() =>
         github.ensurePullRequestReady({
@@ -343,15 +313,7 @@ describe("setup-aware initial publication commit scope", () => {
     ).toBe(true);
   });
 
-  it.each([
-    "passed",
-    "dismissed",
-    "failed",
-    "skipped",
-    "uncertain",
-    "stale",
-    "material",
-  ] as const)(
+  it.each(["passed", "dismissed", "failed", "skipped", "uncertain", "stale", "material"] as const)(
     "updates the same draft PR using current readiness, not reviewer approval (%s)",
     async (outcome) => {
       const f = fixture();
@@ -373,8 +335,7 @@ describe("setup-aware initial publication commit scope", () => {
           ...evidence.validation!,
           contentIdentity: `sha256:${"f".repeat(64)}`,
         };
-      if (outcome === "dismissed")
-        evidence.review = { ...evidence.review!, verdict: "fail" };
+      if (outcome === "dismissed") evidence.review = { ...evidence.review!, verdict: "fail" };
       const ready = vi.fn();
       const github = {
         ...f.services.github,
@@ -405,18 +366,12 @@ describe("setup-aware initial publication commit scope", () => {
               ? "Failed (primary assessed review concerns as non-material)"
               : "Passed",
           reviewDisclosure:
-            outcome === "material"
-              ? { ...evidence.review!, verdict: "fail" }
-              : null,
-          qualityNeedsDraft: ["failed", "skipped", "uncertain"].includes(
-            outcome,
-          ),
+            outcome === "material" ? { ...evidence.review!, verdict: "fail" } : null,
+          qualityNeedsDraft: ["failed", "skipped", "uncertain"].includes(outcome),
           readinessEvidence: evidence,
         }),
       });
-      expect(ready).toHaveBeenCalledTimes(
-        ["passed", "dismissed"].includes(outcome) ? 1 : 0,
-      );
+      expect(ready).toHaveBeenCalledTimes(["passed", "dismissed"].includes(outcome) ? 1 : 0);
       if (ready.mock.calls.length)
         expect(ready).toHaveBeenCalledWith(
           expect.objectContaining({
@@ -442,23 +397,13 @@ describe("setup-aware initial publication commit scope", () => {
         : undefined;
       await begin(f, "feat: task", disposition);
       await poll(f);
-      expect(task(f)?.terminalFailure?.reason).toContain(
-        "No meaningful task-related changes",
-      );
+      expect(task(f)?.terminalFailure?.reason).toContain("No meaningful task-related changes");
       expect(operation(f, "commit")).toBeUndefined();
       const restarted = reopenPublicationFixture(f.root);
-      for (
-        let count = 0;
-        count < 8 && restarted.services.read().list !== "failed";
-        count++
-      )
+      for (let count = 0; count < 8 && restarted.services.read().list !== "failed"; count++)
         await poll(restarted);
       // A verified move alone is not completion: reconcile the journaled failure comment too.
-      for (
-        let count = 0;
-        count < 8 && restarted.store.read()?.lifecycle !== "failed";
-        count++
-      )
+      for (let count = 0; count < 8 && restarted.store.read()?.lifecycle !== "failed"; count++)
         await poll(restarted);
       expect(restarted.services.read().list).toBe("failed");
       expect(restarted.store.read()?.lifecycle).toBe("failed");
@@ -474,9 +419,9 @@ describe("setup-aware initial publication commit scope", () => {
       expect(await f.git.getHeadSha(f.worktreePath)).toBe(head);
       expect(fs.existsSync(f.worktreePath)).toBe(true);
       if (withExcludedSetup)
-        expect(
-          fs.readFileSync(path.join(f.worktreePath, "unrelated.setup"), "utf8"),
-        ).toBe("preserve me\n");
+        expect(fs.readFileSync(path.join(f.worktreePath, "unrelated.setup"), "utf8")).toBe(
+          "preserve me\n",
+        );
       expect(f.services.read().requests).toEqual([]);
       await poll(restarted);
       expect(f.services.read().requests).toEqual([]);
@@ -485,10 +430,7 @@ describe("setup-aware initial publication commit scope", () => {
 
   it("publishes a complete observed fallback after advisory description failure and retains its exact payload on restart", async () => {
     const f = fixture();
-    const identity = await getTaskSessionSourceSnapshotIdentity(
-      f.git,
-      f.worktreePath,
-    );
+    const identity = await getTaskSessionSourceSnapshotIdentity(f.git, f.worktreePath);
     f.authority.run(() =>
       beginInitialPublication(
         {
@@ -532,24 +474,14 @@ describe("setup-aware initial publication commit scope", () => {
     const disposition = await createSetupDisposition(f, "unrelated.setup");
     await begin(f, "feat: setup aware task", disposition);
     await through(f, "pr");
-    expect(f.isolated.git(f.worktreePath, "show", "HEAD:yarn.lock")).toBe(
-      "task dependency",
+    expect(f.isolated.git(f.worktreePath, "show", "HEAD:yarn.lock")).toBe("task dependency");
+    expect(() => f.isolated.git(f.worktreePath, "show", "HEAD:unrelated.setup")).toThrow();
+    expect(fs.readFileSync(path.join(f.worktreePath, "unrelated.setup"), "utf8")).toBe(
+      "preserve me\n",
     );
-    expect(() =>
-      f.isolated.git(f.worktreePath, "show", "HEAD:unrelated.setup"),
-    ).toThrow();
+    expect(f.isolated.git(f.worktreePath, "status", "--porcelain")).toContain("?? unrelated.setup");
     expect(
-      fs.readFileSync(path.join(f.worktreePath, "unrelated.setup"), "utf8"),
-    ).toBe("preserve me\n");
-    expect(f.isolated.git(f.worktreePath, "status", "--porcelain")).toContain(
-      "?? unrelated.setup",
-    );
-    expect(
-      f.isolated.git(
-        path.join(f.root, "remote.git"),
-        "show",
-        "refs/heads/agent/card:yarn.lock",
-      ),
+      f.isolated.git(path.join(f.root, "remote.git"), "show", "refs/heads/agent/card:yarn.lock"),
     ).toBe("task dependency");
     expect(f.services.read().requests.length).toBeGreaterThan(0);
   });
@@ -590,9 +522,7 @@ describe("setup-aware initial publication commit scope", () => {
       await through(f, "pr");
       await through(f, "comment");
 
-      const originalExcludedBytes = fs.readFileSync(
-        path.join(f.worktreePath, "unrelated.setup"),
-      );
+      const originalExcludedBytes = fs.readFileSync(path.join(f.worktreePath, "unrelated.setup"));
       expect(f.isolated.git(f.worktreePath, "status", "--porcelain")).toContain(
         "?? unrelated.setup",
       );
@@ -611,15 +541,12 @@ describe("setup-aware initial publication commit scope", () => {
           reviewResult: "Passed",
           remediationResult: "Validated correction",
           initialEvidence: {} as VerifiedPublicationDecisionInput,
-          verifyPreparedContent: async () =>
-            ({}) as VerifiedPublicationDecisionInput,
+          verifyPreparedContent: async () => ({}) as VerifiedPublicationDecisionInput,
         }),
       );
       expect(resolvedDisposition).toEqual(disposition);
       if (resolvedDisposition === undefined)
-        throw new Error(
-          "Expected durable setup scope for existing-PR correction",
-        );
+        throw new Error("Expected durable setup scope for existing-PR correction");
       // Production registers Git mutation intents before dispatch. Keep this
       // focused test on real Git while executing the shared publisher inside the
       // task authority with the normal journaled mutations replaced locally.
@@ -692,34 +619,32 @@ describe("setup-aware initial publication commit scope", () => {
           }),
         );
         correctionHeads.push(head);
-        expect(
-          fs.readFileSync(path.join(f.worktreePath, "unrelated.setup")),
-        ).toEqual(originalExcludedBytes);
+        expect(fs.readFileSync(path.join(f.worktreePath, "unrelated.setup"))).toEqual(
+          originalExcludedBytes,
+        );
       }
 
       expect(correctionHeads).toHaveLength(2);
       expect(f.services.read().prs).toHaveLength(1);
       expect(f.services.read().prs[0]?.url).toBe(originalPrUrl);
       const remote = path.join(f.root, "remote.git");
-      expect(
-        f.isolated.git(remote, "show", "refs/heads/agent/card:source.txt"),
-      ).toBe("meaningful ci correction");
+      expect(f.isolated.git(remote, "show", "refs/heads/agent/card:source.txt")).toBe(
+        "meaningful ci correction",
+      );
       if (includeRelevantSetupChange)
-        expect(
-          f.isolated.git(remote, "show", "refs/heads/agent/card:yarn.lock"),
-        ).toBe("correction dependency ci");
+        expect(f.isolated.git(remote, "show", "refs/heads/agent/card:yarn.lock")).toBe(
+          "correction dependency ci",
+        );
       expect(() =>
         f.isolated.git(remote, "show", "refs/heads/agent/card:unrelated.setup"),
       ).toThrow();
-      expect(
-        fs.readFileSync(path.join(f.worktreePath, "unrelated.setup")),
-      ).toEqual(originalExcludedBytes);
+      expect(fs.readFileSync(path.join(f.worktreePath, "unrelated.setup"))).toEqual(
+        originalExcludedBytes,
+      );
       expect(f.isolated.git(f.worktreePath, "status", "--porcelain")).toContain(
         "?? unrelated.setup",
       );
-      expect(
-        f.isolated.git(f.worktreePath, "rev-list", "--count", "main..HEAD"),
-      ).toBe("3");
+      expect(f.isolated.git(f.worktreePath, "rev-list", "--count", "main..HEAD")).toBe("3");
     },
     30_000,
   );
@@ -732,24 +657,14 @@ describe("setup-aware initial publication commit scope", () => {
         worktree: "/wrong/worktree",
       }),
     ],
-    [
-      "wrong branch",
-      (current: SetupInventory) => ({ ...current, branch: "agent/other" }),
-    ],
-    [
-      "malformed inventory",
-      (current: SetupInventory) => ({ ...current, files: "invalid" }),
-    ],
+    ["wrong branch", (current: SetupInventory) => ({ ...current, branch: "agent/other" })],
+    ["malformed inventory", (current: SetupInventory) => ({ ...current, files: "invalid" })],
   ] as const)(
     "blocks an existing-PR correction with a self-addressed historical inventory having %s before commit or push",
     async (_problem, corruptCurrent) => {
       const f = fixture();
       f.project.repository.setupCommand = "true";
-      const disposition = await createSetupDisposition(
-        f,
-        "unrelated.setup",
-        false,
-      );
+      const disposition = await createSetupDisposition(f, "unrelated.setup", false);
       const initialEvidence = await publicationEvidence(f);
       await expect(
         f.authority.run(() =>
@@ -777,9 +692,10 @@ describe("setup-aware initial publication commit scope", () => {
       const taskStore = f.authority.run(
         () => new TaskExecutionStore(f.project.contextRoot, f.project),
       );
-      const oldArtifact = taskStore.readPrimaryResultArtifact(
-        currentRecord.setup!.relevance!,
-      ) as { current: SetupInventory; [key: string]: unknown };
+      const oldArtifact = taskStore.readPrimaryResultArtifact(currentRecord.setup!.relevance!) as {
+        current: SetupInventory;
+        [key: string]: unknown;
+      };
       const newArtifact = taskStore.writePrimaryResultArtifact(
         `altered-current-inventory-${_problem}`,
         { ...oldArtifact, current: corruptCurrent(oldArtifact.current) },
@@ -799,11 +715,7 @@ describe("setup-aware initial publication commit scope", () => {
       const commit = vi.spyOn(f.git, "commit");
       const push = vi.spyOn(f.git, "push");
       const remote = path.join(f.root, "remote.git");
-      const remoteHead = f.isolated.git(
-        remote,
-        "rev-parse",
-        "refs/heads/agent/card",
-      );
+      const remoteHead = f.isolated.git(remote, "rev-parse", "refs/heads/agent/card");
       const evidence = await publicationEvidence(f);
       await expect(
         f.authority.run(() =>
@@ -823,14 +735,10 @@ describe("setup-aware initial publication commit scope", () => {
             verifyPreparedContent: async () => evidence,
           }),
         ),
-      ).rejects.toThrow(
-        "Setup inventory worktree identity or inventory is invalid",
-      );
+      ).rejects.toThrow("Setup inventory worktree identity or inventory is invalid");
       expect(commit).not.toHaveBeenCalled();
       expect(push).not.toHaveBeenCalled();
-      expect(f.isolated.git(remote, "rev-parse", "refs/heads/agent/card")).toBe(
-        remoteHead,
-      );
+      expect(f.isolated.git(remote, "rev-parse", "refs/heads/agent/card")).toBe(remoteHead);
     },
     30_000,
   );
@@ -838,11 +746,7 @@ describe("setup-aware initial publication commit scope", () => {
   it("blocks stale excluded setup bytes before correction commit or push", async () => {
     const f = fixture();
     f.project.repository.setupCommand = "true";
-    const disposition = await createSetupDisposition(
-      f,
-      "unrelated.setup",
-      false,
-    );
+    const disposition = await createSetupDisposition(f, "unrelated.setup", false);
     const initialEvidence = await publicationEvidence(f);
     await expect(
       f.authority.run(() =>
@@ -874,10 +778,7 @@ describe("setup-aware initial publication commit scope", () => {
       "refs/heads/agent/card",
     );
     fs.writeFileSync(path.join(f.worktreePath, "source.txt"), "correction\n");
-    fs.writeFileSync(
-      path.join(f.worktreePath, "unrelated.setup"),
-      "changed outside review\n",
-    );
+    fs.writeFileSync(path.join(f.worktreePath, "unrelated.setup"), "changed outside review\n");
     const evidence = await publicationEvidence(f);
     await expect(
       f.authority.run(() =>
@@ -897,26 +798,18 @@ describe("setup-aware initial publication commit scope", () => {
           verifyPreparedContent: async () => evidence,
         }),
       ),
-    ).rejects.toThrow(
-      "Excluded setup output changed since initial publication",
-    );
+    ).rejects.toThrow("Excluded setup output changed since initial publication");
     expect(commit).not.toHaveBeenCalled();
     expect(push).not.toHaveBeenCalled();
     expect(
-      f.isolated.git(
-        path.join(f.root, "remote.git"),
-        "rev-parse",
-        "refs/heads/agent/card",
-      ),
+      f.isolated.git(path.join(f.root, "remote.git"), "rev-parse", "refs/heads/agent/card"),
     ).toBe(remoteHead);
   }, 30_000);
 
   it("blocks publication when the immutable original setup baseline is missing", async () => {
     const f = fixture();
     const disposition = await createSetupDisposition(f, "unrelated.setup");
-    const store = f.authority.run(
-      () => new TaskExecutionStore(f.project.contextRoot, f.project),
-    );
+    const store = f.authority.run(() => new TaskExecutionStore(f.project.contextRoot, f.project));
     const existing = task(f)!;
     f.authority.run(() =>
       store.compareAndSwap(f.services.card().id, existing.revision, {
@@ -929,20 +822,16 @@ describe("setup-aware initial publication commit scope", () => {
     await begin(f, "feat: missing setup baseline", disposition);
     await expect(poll(f, false)).rejects.toThrow(/baseline|artifact|evidence/u);
     expect(f.services.read().requests).toHaveLength(0);
-    expect(
-      f.isolated.git(f.worktreePath, "rev-list", "--count", "main..HEAD"),
-    ).toBe("0");
-    expect(
-      fs.readFileSync(path.join(f.worktreePath, "unrelated.setup"), "utf8"),
-    ).toBe("preserve me\n");
+    expect(f.isolated.git(f.worktreePath, "rev-list", "--count", "main..HEAD")).toBe("0");
+    expect(fs.readFileSync(path.join(f.worktreePath, "unrelated.setup"), "utf8")).toBe(
+      "preserve me\n",
+    );
   });
 
   it("blocks a final-attempt-only proof that overwrote the original baseline", async () => {
     const f = fixture();
     const disposition = await createSetupDisposition(f, "unrelated.setup");
-    const store = f.authority.run(
-      () => new TaskExecutionStore(f.project.contextRoot, f.project),
-    );
+    const store = f.authority.run(() => new TaskExecutionStore(f.project.contextRoot, f.project));
     const existing = task(f)!;
     const retryBaseline = existing.setup!.attemptBefore!;
     f.authority.run(() =>
@@ -956,9 +845,7 @@ describe("setup-aware initial publication commit scope", () => {
     await begin(f, "feat: overwritten setup baseline", disposition);
     await expect(poll(f, false)).rejects.toThrow(/durable setup evidence/u);
     expect(f.services.read().requests).toHaveLength(0);
-    expect(
-      f.isolated.git(f.worktreePath, "rev-list", "--count", "main..HEAD"),
-    ).toBe("0");
+    expect(f.isolated.git(f.worktreePath, "rev-list", "--count", "main..HEAD")).toBe("0");
   });
 
   it("blocks an old configured-setup publication checkpoint without a scope artifact", async () => {
@@ -969,9 +856,7 @@ describe("setup-aware initial publication commit scope", () => {
     await expect(poll(f, false)).rejects.toThrow(/scope proof/u);
     expect(await f.git.getHeadSha(f.worktreePath)).toBe(parent);
     expect(f.services.read().requests).toHaveLength(0);
-    expect(
-      f.isolated.git(f.worktreePath, "rev-list", "--count", "main..HEAD"),
-    ).toBe("0");
+    expect(f.isolated.git(f.worktreePath, "rev-list", "--count", "main..HEAD")).toBe("0");
   });
 
   it("does not begin a configured-setup publication without durable disposition", async () => {
@@ -1037,9 +922,7 @@ describe("setup-aware initial publication commit scope", () => {
     ).toThrow(/context-stale/u);
     expect(await f.git.getHeadSha(f.worktreePath)).toBe(beforeHead);
     expect(f.services.read().requests).toHaveLength(0);
-    expect(
-      f.isolated.git(f.worktreePath, "rev-list", "--count", "main..HEAD"),
-    ).toBe("0");
+    expect(f.isolated.git(f.worktreePath, "rev-list", "--count", "main..HEAD")).toBe("0");
   });
 
   it("blocks a setup-included file changed after the verdict when resuming a checkpoint", async () => {
@@ -1047,25 +930,18 @@ describe("setup-aware initial publication commit scope", () => {
     const disposition = await createSetupDisposition(f, "unrelated.setup");
     await begin(f, "feat: setup scope resume", disposition);
     const parent = await f.git.getHeadSha(f.worktreePath);
-    fs.writeFileSync(
-      path.join(f.worktreePath, "yarn.lock"),
-      "tampered after review\n",
-    );
+    fs.writeFileSync(path.join(f.worktreePath, "yarn.lock"), "tampered after review\n");
     const reopened = reopenPublicationFixture(f.root);
     await expect(poll(reopened, false)).rejects.toThrow(/stale/u);
     expect(await reopened.git.getHeadSha(reopened.worktreePath)).toBe(parent);
     expect(reopened.services.read().requests).toHaveLength(0);
-    expect(
-      fs.readFileSync(path.join(reopened.worktreePath, "yarn.lock"), "utf8"),
-    ).toBe("tampered after review\n");
+    expect(fs.readFileSync(path.join(reopened.worktreePath, "yarn.lock"), "utf8")).toBe(
+      "tampered after review\n",
+    );
   });
 });
 
-async function killPublicationAt(
-  f: ReturnType<typeof fixture>,
-  effect: string,
-  barrier: string,
-) {
+async function killPublicationAt(f: ReturnType<typeof fixture>, effect: string, barrier: string) {
   const child = spawn(
     process.execPath,
     [
@@ -1092,21 +968,14 @@ async function killPublicationAt(
     vi.setSystemTime(Date.parse(f.store.read()!.updatedAt) + 15_001);
     return reopenPublicationFixture(f.root, `resumed-${effect}-${barrier}`);
   } finally {
-    if (child.exitCode === null && child.signalCode === null)
-      child.kill("SIGKILL");
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
   }
 }
 
-function payload(
-  f: ReturnType<typeof reopenPublicationFixture>,
-  effect: string,
-): unknown {
+function payload(f: ReturnType<typeof reopenPublicationFixture>, effect: string): unknown {
   const id = operation(f, effect)!.mutation!.intent.payloadId;
   return JSON.parse(
-    fs.readFileSync(
-      f.store.read()!.artifacts.find((artifact) => artifact.id === id)!.path,
-      "utf8",
-    ),
+    fs.readFileSync(f.store.read()!.artifacts.find((artifact) => artifact.id === id)!.path, "utf8"),
   ) as unknown;
 }
 
@@ -1123,40 +992,24 @@ describe("initial publication production checkpoint with independent simulated s
     );
     const lookup = f.services.github.findPullRequestState;
     let closed = false;
-    vi.spyOn(f.services.github, "findPullRequestState").mockImplementation(
-      async (options) => {
-        const pr = await lookup(options);
-        return pr && closed ? { ...pr, state: "CLOSED", mergedAt: null } : pr;
-      },
-    );
+    vi.spyOn(f.services.github, "findPullRequestState").mockImplementation(async (options) => {
+      const pr = await lookup(options);
+      return pr && closed ? { ...pr, state: "CLOSED", mergedAt: null } : pr;
+    });
     f.services.change({ delayMove: true, secondReady: true });
     await begin(f);
-    for (
-      let pass = 0;
-      pass < 8 && !f.services.read().pendingMoves?.length;
-      pass++
-    )
-      await poll(f);
-    expect(f.services.read().pendingMoves).toEqual([
-      { cardId: "card", listId: "review" },
-    ]);
+    for (let pass = 0; pass < 8 && !f.services.read().pendingMoves?.length; pass++) await poll(f);
+    expect(f.services.read().pendingMoves).toEqual([{ cardId: "card", listId: "review" }]);
     expect(operation(f, "move")?.mutation?.dispatches).toHaveLength(1);
     closed = true;
     for (let pass = 0; pass < 3; pass++) await poll(f);
     expect(readTerminalPrFence(f.authority)?.state).toBe("CLOSED");
     expect(f.services.read().list).toBe("working");
     expect(f.store.read()!.terminalSync).not.toBe("verified");
-    expect(
-      f.services.entries().filter((entry) => entry.type === "move-request"),
-    ).toHaveLength(1);
+    expect(f.services.entries().filter((entry) => entry.type === "move-request")).toHaveLength(1);
     f.services.acceptLateMoves();
     expect(f.services.read().list).toBe("review");
-    for (
-      let pass = 0;
-      pass < 8 && f.store.read()!.lifecycle !== "cancelled";
-      pass++
-    )
-      await poll(f);
+    for (let pass = 0; pass < 8 && f.store.read()!.lifecycle !== "cancelled"; pass++) await poll(f);
     expect(
       operation(f, "move")?.status,
       JSON.stringify({
@@ -1172,9 +1025,7 @@ describe("initial publication production checkpoint with independent simulated s
       lifecycle: "cancelled",
       terminalSync: "verified",
     });
-    expect(
-      f.services.entries().filter((entry) => entry.type === "move-request"),
-    ).toHaveLength(2); // original Review + terminal Backlog
+    expect(f.services.entries().filter((entry) => entry.type === "move-request")).toHaveLength(2); // original Review + terminal Backlog
     expect(f.services.read().requests).toHaveLength(1);
   });
 
@@ -1191,27 +1042,23 @@ describe("initial publication production checkpoint with independent simulated s
     const lookup = f.services.github.findPullRequestState;
     const create = f.services.github.createPullRequest;
     let closed = false;
-    vi.spyOn(f.services.github, "findPullRequestState").mockImplementation(
-      async (options) => {
-        const pr = await lookup(options);
-        return pr && closed ? { ...pr, state: "CLOSED", mergedAt: null } : pr;
-      },
-    );
-    vi.spyOn(f.services.github, "createPullRequest").mockImplementation(
-      async (options) => {
-        const result = await create(options);
-        closed = true;
-        f.isolated.git(
-          f.root,
-          "--git-dir",
-          path.join(f.root, "remote.git"),
-          "update-ref",
-          "-d",
-          "refs/heads/agent/card",
-        );
-        return result;
-      },
-    );
+    vi.spyOn(f.services.github, "findPullRequestState").mockImplementation(async (options) => {
+      const pr = await lookup(options);
+      return pr && closed ? { ...pr, state: "CLOSED", mergedAt: null } : pr;
+    });
+    vi.spyOn(f.services.github, "createPullRequest").mockImplementation(async (options) => {
+      const result = await create(options);
+      closed = true;
+      f.isolated.git(
+        f.root,
+        "--git-dir",
+        path.join(f.root, "remote.git"),
+        "update-ref",
+        "-d",
+        "refs/heads/agent/card",
+      );
+      return result;
+    });
     const move = vi.spyOn(f.services.trello, "moveCard");
     const push = vi.spyOn(f.git, "push");
     const agent = {
@@ -1220,11 +1067,7 @@ describe("initial publication production checkpoint with independent simulated s
       }),
     };
     await begin(f);
-    for (
-      let pass = 0;
-      pass < 8 && f.store.read()!.lifecycle !== "cancelled";
-      pass++
-    )
+    for (let pass = 0; pass < 8 && f.store.read()!.lifecycle !== "cancelled"; pass++)
       await poll(f, true, agent);
     expect(
       task(f)?.pullRequest?.url,
@@ -1247,12 +1090,7 @@ describe("initial publication production checkpoint with independent simulated s
     expect(agent.run).not.toHaveBeenCalled();
     expect(fs.existsSync(f.worktreePath)).toBe(true); // Unregistered legacy fixture artifacts are preserved.
     expect(
-      await f.git.getRemoteBranchSha(
-        f.worktreePath,
-        "origin",
-        "agent/card",
-        f.project,
-      ),
+      await f.git.getRemoteBranchSha(f.worktreePath, "origin", "agent/card", f.project),
     ).toBeNull();
   });
 
@@ -1271,24 +1109,16 @@ describe("initial publication production checkpoint with independent simulated s
         (args[4] as { type: string }).type === "dispatch"
       ) {
         change = false;
-        f.isolated.git(
-          f.project.repository.path,
-          "config",
-          "remote.origin.pushurl",
-          wrong,
-        );
+        f.isolated.git(f.project.repository.path, "config", "remote.origin.pushurl", wrong);
       }
       return result;
     };
     await through(f, "commit");
     expect(operation(f, "push")?.status).toBe("failed");
-    expect(
-      operation(f, "push")?.mutation?.dispatches[0]?.response?.evidence
-        .nonDeliveryProof,
-    ).toBe("transport-proven-not-sent");
-    expect(
-      f.isolated.git(wrong, "for-each-ref", "--format=%(objectname)"),
-    ).toBe("");
+    expect(operation(f, "push")?.mutation?.dispatches[0]?.response?.evidence.nonDeliveryProof).toBe(
+      "transport-proven-not-sent",
+    );
+    expect(f.isolated.git(wrong, "for-each-ref", "--format=%(objectname)")).toBe("");
     expect(
       f.isolated.git(
         path.join(f.root, "remote.git"),
@@ -1297,19 +1127,12 @@ describe("initial publication production checkpoint with independent simulated s
         "refs/heads/agent/card",
       ),
     ).toBe("");
-    f.isolated.git(
-      f.project.repository.path,
-      "config",
-      "--unset-all",
-      "remote.origin.pushurl",
-    );
+    f.isolated.git(f.project.repository.path, "config", "--unset-all", "remote.origin.pushurl");
     await through(f, "comment");
     expect(operation(f, "push")?.mutation?.dispatches).toHaveLength(2);
     expect(task(f)?.phase).toBe("ci");
     expect(f.services.read().requests).toHaveLength(1);
-    expect(
-      f.isolated.git(f.worktreePath, "rev-list", "--count", "main..HEAD"),
-    ).toBe("1");
+    expect(f.isolated.git(f.worktreePath, "rev-list", "--count", "main..HEAD")).toBe("1");
   });
   it.each(["cleanup-proof", "destination-proof"] as const)(
     "preserves pre-fix publication state missing %s without inventing historical proof",
@@ -1369,12 +1192,10 @@ describe("initial publication production checkpoint with independent simulated s
       const original = operation(f, "push");
       await poll(f);
       expect(operation(f, "push")).toEqual(original);
-      expect(
-        f.store.read()!.compatibility["initial-publication-v1"],
-      ).not.toHaveProperty("gitDestinations");
-      expect(
-        f.isolated.git(f.worktreePath, "rev-list", "--count", "main..HEAD"),
-      ).toBe("0");
+      expect(f.store.read()!.compatibility["initial-publication-v1"]).not.toHaveProperty(
+        "gitDestinations",
+      );
+      expect(f.isolated.git(f.worktreePath, "rev-list", "--count", "main..HEAD")).toBe("0");
       expect(f.services.read().requests).toHaveLength(0);
       expect(task(f)?.phase).toBe("publication");
     },
@@ -1398,30 +1219,15 @@ describe("initial publication production checkpoint with independent simulated s
       const wrong = path.join(f.root, "unintended.git");
       f.isolated.git(f.root, "init", "--bare", "--initial-branch=main", wrong);
       const correct = "https://github.com/owner/repo.git";
-      if (mode === "pushurl")
-        f.isolated.git(source, "config", "remote.origin.pushurl", wrong);
-      if (
-        ["multiple-pushurls", "duplicate-pushurls", "empty-pushurl"].includes(
-          mode,
-        )
-      ) {
+      if (mode === "pushurl") f.isolated.git(source, "config", "remote.origin.pushurl", wrong);
+      if (["multiple-pushurls", "duplicate-pushurls", "empty-pushurl"].includes(mode)) {
+        f.isolated.git(source, "config", "--add", "remote.origin.pushurl", correct);
         f.isolated.git(
           source,
           "config",
           "--add",
           "remote.origin.pushurl",
-          correct,
-        );
-        f.isolated.git(
-          source,
-          "config",
-          "--add",
-          "remote.origin.pushurl",
-          mode === "multiple-pushurls"
-            ? wrong
-            : mode === "empty-pushurl"
-              ? ""
-              : correct,
+          mode === "multiple-pushurls" ? wrong : mode === "empty-pushurl" ? "" : correct,
         );
       }
       if (mode === "multiple-fetchurls")
@@ -1429,39 +1235,18 @@ describe("initial publication production checkpoint with independent simulated s
       if (mode === "fetch-rewrite" || mode === "second-rewrite")
         f.isolated.git(source, "config", `url.${wrong}.insteadOf`, correct);
       if (mode === "second-rewrite") {
-        f.isolated.git(
-          source,
-          "remote",
-          "set-url",
-          "origin",
-          "publication-alias:",
-        );
-        f.isolated.git(
-          source,
-          "config",
-          `url.${correct}.insteadOf`,
-          "publication-alias:",
-        );
+        f.isolated.git(source, "remote", "set-url", "origin", "publication-alias:");
+        f.isolated.git(source, "config", `url.${correct}.insteadOf`, "publication-alias:");
       }
       if (mode === "push-rewrite" || mode === "explicit-pushurl-rewrite")
         f.isolated.git(source, "config", `url.${wrong}.pushInsteadOf`, correct);
       if (mode === "global-push-rewrite")
-        f.isolated.git(
-          source,
-          "config",
-          "--global",
-          `url.${wrong}.pushInsteadOf`,
-          correct,
-        );
+        f.isolated.git(source, "config", "--global", `url.${wrong}.pushInsteadOf`, correct);
       if (mode === "explicit-pushurl-rewrite")
         f.isolated.git(source, "config", "remote.origin.pushurl", correct);
       if (mode === "pushurl") {
-        expect(
-          f.isolated.git(source, "remote", "get-url", "--all", "origin"),
-        ).toBe(correct);
-        expect(
-          await f.git.getRemoteBranchSha(source, "origin", "main"),
-        ).toMatch(/^[0-9a-f]{40}$/u);
+        expect(f.isolated.git(source, "remote", "get-url", "--all", "origin")).toBe(correct);
+        expect(await f.git.getRemoteBranchSha(source, "origin", "main")).toMatch(/^[0-9a-f]{40}$/u);
       }
       const beforeWrong = f.isolated.git(
         wrong,
@@ -1474,13 +1259,9 @@ describe("initial publication production checkpoint with independent simulated s
       await begin(f);
       await poll(f);
       await poll(f);
-      expect(
-        f.isolated.git(
-          wrong,
-          "for-each-ref",
-          "--format=%(refname) %(objectname)",
-        ),
-      ).toBe(beforeWrong);
+      expect(f.isolated.git(wrong, "for-each-ref", "--format=%(refname) %(objectname)")).toBe(
+        beforeWrong,
+      );
       expect(
         f.isolated.git(
           path.join(f.root, "remote.git"),
@@ -1489,17 +1270,13 @@ describe("initial publication production checkpoint with independent simulated s
           "refs/heads/agent/card",
         ),
       ).toBe("");
-      expect(
-        f.isolated.git(f.worktreePath, "rev-list", "--count", "main..HEAD"),
-      ).toBe("0");
-      expect(
-        fs.readFileSync(path.join(f.worktreePath, "source.txt"), "utf8"),
-      ).toBe("meaningful task implementation\n");
+      expect(f.isolated.git(f.worktreePath, "rev-list", "--count", "main..HEAD")).toBe("0");
+      expect(fs.readFileSync(path.join(f.worktreePath, "source.txt"), "utf8")).toBe(
+        "meaningful task implementation\n",
+      );
       expect(task(f)?.phase).toBe("publication");
       expect(
-        f.authority.run(() =>
-          new TaskMutationQueue(f.project.contextRoot, f.project).getActive(),
-        ),
+        f.authority.run(() => new TaskMutationQueue(f.project.contextRoot, f.project).getActive()),
       ).not.toBeNull();
       expect(f.services.read().requests).toHaveLength(0);
     },
@@ -1508,13 +1285,7 @@ describe("initial publication production checkpoint with independent simulated s
   it("accepts a terminal Git URL alias rewrite and binds the concrete destination, not origin, into push intent", async () => {
     const f = fixture();
     const correct = "https://github.com/owner/repo.git";
-    f.isolated.git(
-      f.project.repository.path,
-      "remote",
-      "set-url",
-      "origin",
-      "publication-alias:",
-    );
+    f.isolated.git(f.project.repository.path, "remote", "set-url", "origin", "publication-alias:");
     f.isolated.git(
       f.project.repository.path,
       "config",
@@ -1527,9 +1298,7 @@ describe("initial publication production checkpoint with independent simulated s
       destinations: { fetch: correct, push: correct },
       branch: "agent/card",
     });
-    expect(operation(f, "push")?.mutation?.intent.target).toBe(
-      `${correct}#refs/heads/agent/card`,
-    );
+    expect(operation(f, "push")?.mutation?.intent.target).toBe(`${correct}#refs/heads/agent/card`);
     expect(task(f)?.phase).toBe("ci");
     expect(f.services.read().requests).toHaveLength(1);
   }, 30_000);
@@ -1550,52 +1319,29 @@ describe("initial publication production checkpoint with independent simulated s
       const sha = f.isolated.git(f.worktreePath, "rev-parse", "HEAD");
       const wrong = path.join(f.root, "unintended.git");
       f.isolated.git(f.root, "init", "--bare", "--initial-branch=main", wrong);
-      f.isolated.git(
-        f.project.repository.path,
-        "config",
-        "remote.origin.pushurl",
-        wrong,
-      );
+      f.isolated.git(f.project.repository.path, "config", "remote.origin.pushurl", wrong);
       for (let count = 0; count < 3; count++) await poll(restarted);
-      expect(
-        f.isolated.git(
-          wrong,
-          "for-each-ref",
-          "--format=%(refname) %(objectname)",
-        ),
-      ).toBe("");
+      expect(f.isolated.git(wrong, "for-each-ref", "--format=%(refname) %(objectname)")).toBe("");
       expect(operation(restarted, "push")?.status).toBe(
         barrier === "intent" ? "pending" : "ambiguous",
       );
       expect(payload(restarted, "push")).toEqual(originalPayload);
       expect(f.isolated.git(f.worktreePath, "rev-parse", "HEAD")).toBe(sha);
-      expect(
-        fs.readFileSync(path.join(f.worktreePath, "source.txt"), "utf8"),
-      ).toBe("meaningful task implementation\n");
+      expect(fs.readFileSync(path.join(f.worktreePath, "source.txt"), "utf8")).toBe(
+        "meaningful task implementation\n",
+      );
       expect(task(restarted)?.phase).toBe("publication");
       expect(
         restarted.authority.run(() =>
-          new TaskMutationQueue(
-            restarted.project.contextRoot,
-            restarted.project,
-          ).getActive(),
+          new TaskMutationQueue(restarted.project.contextRoot, restarted.project).getActive(),
         ),
       ).not.toBeNull();
       expect(restarted.services.read().requests).toHaveLength(0);
-      f.isolated.git(
-        f.project.repository.path,
-        "config",
-        "--unset-all",
-        "remote.origin.pushurl",
-      );
+      f.isolated.git(f.project.repository.path, "config", "--unset-all", "remote.origin.pushurl");
       await through(restarted, "comment");
       expect(task(restarted)?.phase).toBe("ci");
-      expect(operation(restarted, "push")?.mutation?.dispatches).toHaveLength(
-        1,
-      );
-      expect(
-        f.isolated.git(f.worktreePath, "rev-list", "--count", "main..HEAD"),
-      ).toBe("1");
+      expect(operation(restarted, "push")?.mutation?.dispatches).toHaveLength(1);
+      expect(f.isolated.git(f.worktreePath, "rev-list", "--count", "main..HEAD")).toBe("1");
     },
   );
 
@@ -1616,12 +1362,7 @@ describe("initial publication production checkpoint with independent simulated s
     expect(operation(f, "push")).toBeUndefined();
     expect(f.services.read().requests).toHaveLength(0);
     expect(task(f)?.phase).toBe("publication");
-    f.isolated.git(
-      f.project.repository.path,
-      "config",
-      "--unset-all",
-      "remote.origin.pushurl",
-    );
+    f.isolated.git(f.project.repository.path, "config", "--unset-all", "remote.origin.pushurl");
     await through(f, "comment");
     expect(task(f)?.phase).toBe("ci");
   });
@@ -1643,12 +1384,7 @@ describe("initial publication production checkpoint with independent simulated s
     "recovers one verbatim commit after acceptance/restart with commit.cleanup=$cleanup and message $message",
     async ({ cleanup, message }) => {
       const f = fixture();
-      f.isolated.git(
-        f.project.repository.path,
-        "config",
-        "commit.cleanup",
-        cleanup,
-      );
+      f.isolated.git(f.project.repository.path, "config", "commit.cleanup", cleanup);
       await begin(f, message);
       const restarted = await killPublicationAt(f, "commit", "acceptance");
       const expected = message.endsWith("\n") ? message : `${message}\n`;
@@ -1663,20 +1399,11 @@ describe("initial publication production checkpoint with independent simulated s
         cleanup: "verbatim",
       });
       expect(operation(restarted, "commit")?.status).toBe("ambiguous");
-      f.isolated.git(
-        f.project.repository.path,
-        "config",
-        "commit.cleanup",
-        "strip",
-      );
+      f.isolated.git(f.project.repository.path, "config", "commit.cleanup", "strip");
       await through(restarted, "comment");
       expect(task(restarted)?.phase).toBe("ci");
-      expect(
-        f.isolated.git(f.worktreePath, "rev-list", "--count", "main..HEAD"),
-      ).toBe("1");
-      expect(operation(restarted, "commit")?.mutation?.dispatches).toHaveLength(
-        1,
-      );
+      expect(f.isolated.git(f.worktreePath, "rev-list", "--count", "main..HEAD")).toBe("1");
+      expect(operation(restarted, "commit")?.mutation?.dispatches).toHaveLength(1);
       expect(restarted.services.read().prs).toHaveLength(1);
     },
     30_000,
@@ -1706,8 +1433,7 @@ describe("initial publication production checkpoint with independent simulated s
           commitSha: "a".repeat(40),
           reviewResult: "Passed",
           remediationResult: "Not required",
-          expectedExistingPullRequestUrl:
-            "https://github.com/owner/repo/pull/1",
+          expectedExistingPullRequestUrl: "https://github.com/owner/repo/pull/1",
         }),
       ),
     ).rejects.toBeInstanceOf(PublicationWaitingError);
@@ -1720,20 +1446,12 @@ describe("initial publication production checkpoint with independent simulated s
   it("preserves the content fence across publication waiting instead of staging newly changed source", async () => {
     const f = fixture();
     await begin(f);
-    fs.writeFileSync(
-      path.join(f.worktreePath, "source.txt"),
-      "unverified later change\n",
-    );
+    fs.writeFileSync(path.join(f.worktreePath, "source.txt"), "unverified later change\n");
     await poll(f);
     expect(operation(f, "commit")).toBeUndefined();
-    expect(
-      f.isolated.git(f.worktreePath, "rev-list", "--count", "main..HEAD"),
-    ).toBe("0");
+    expect(f.isolated.git(f.worktreePath, "rev-list", "--count", "main..HEAD")).toBe("0");
     expect(f.services.read().requests).toHaveLength(0);
-    fs.writeFileSync(
-      path.join(f.worktreePath, "source.txt"),
-      "meaningful task implementation\n",
-    );
+    fs.writeFileSync(path.join(f.worktreePath, "source.txt"), "meaningful task implementation\n");
     await through(f, "comment");
     expect(task(f)?.phase).toBe("ci");
   });
@@ -1766,10 +1484,9 @@ describe("initial publication production checkpoint with independent simulated s
     };
     await through(f, "push");
     expect(operation(f, "pr")?.status).toBe("failed");
-    expect(
-      operation(f, "pr")?.mutation?.dispatches[0]?.response?.evidence
-        .nonDeliveryProof,
-    ).toBe("transport-proven-not-sent");
+    expect(operation(f, "pr")?.mutation?.dispatches[0]?.response?.evidence.nonDeliveryProof).toBe(
+      "transport-proven-not-sent",
+    );
     f.services.github.createPullRequest = create;
     await through(f, "comment");
     expect(f.services.read().requests).toHaveLength(1);
@@ -1806,8 +1523,7 @@ describe("initial publication production checkpoint with independent simulated s
         await exited;
         vi.setSystemTime(Date.parse(f.store.read()!.updatedAt) + 15_001);
         const restarted = reopenPublicationFixture(f.root, `after-${effect}`);
-        if (effect !== "projection")
-          expect(operation(restarted, effect)?.status).toBe("ambiguous");
+        if (effect !== "projection") expect(operation(restarted, effect)?.status).toBe("ambiguous");
         await through(restarted, "comment");
         if (effect === "projection") {
           // The killed writer had committed the workflow projection but never
@@ -1843,26 +1559,18 @@ describe("initial publication production checkpoint with independent simulated s
         expect(task(restarted)?.phase).toBe("ci");
         expect(
           restarted.authority.run(() =>
-            new TaskMutationQueue(
-              restarted.project.contextRoot,
-              restarted.project,
-            ).getActive(),
+            new TaskMutationQueue(restarted.project.contextRoot, restarted.project).getActive(),
           ),
         ).toBeNull();
-        expect(
-          f.isolated.git(f.worktreePath, "rev-list", "--count", "main..HEAD"),
-        ).toBe("1");
+        expect(f.isolated.git(f.worktreePath, "rev-list", "--count", "main..HEAD")).toBe("1");
         expect(restarted.services.read().requests).toHaveLength(1);
         expect(restarted.services.read().prs).toHaveLength(1);
         expect(restarted.services.read().comments).toHaveLength(1);
         expect(
-          restarted.services
-            .entries()
-            .filter((entry) => entry.type === "move-request"),
+          restarted.services.entries().filter((entry) => entry.type === "move-request"),
         ).toHaveLength(1);
       } finally {
-        if (child.exitCode === null && child.signalCode === null)
-          child.kill("SIGKILL");
+        if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
       }
     },
   );
@@ -1908,14 +1616,11 @@ describe("initial publication production checkpoint with independent simulated s
     const before = f.store.read()!;
     await expect(begin(f)).rejects.toThrow("Legacy uncertain publication");
     expect(f.store.read()).toEqual(before);
-    expect(
-      f.authority.run(() => readPendingCommitState(f.project, "card"))
-        ?.parentSha,
-    ).toBe("a".repeat(40));
-    expect(f.services.entries()).toEqual([]);
-    expect(f.isolated.git(f.worktreePath, "status", "--porcelain")).toContain(
-      "source.txt",
+    expect(f.authority.run(() => readPendingCommitState(f.project, "card"))?.parentSha).toBe(
+      "a".repeat(40),
     );
+    expect(f.services.entries()).toEqual([]);
+    expect(f.isolated.git(f.worktreePath, "status", "--porcelain")).toContain("source.txt");
   });
 
   it("does not upgrade a legacy trusted commit into proof that PR creation was never dispatched", () => {
@@ -1950,10 +1655,7 @@ describe("initial publication production checkpoint with independent simulated s
     const canary = "publication-canary-93bb";
     registerProcessSecrets([canary]);
     const encoded = Buffer.from(canary).toString("base64");
-    const sourceIdentity = await getTaskSessionSourceSnapshotIdentity(
-      f.git,
-      f.worktreePath,
-    );
+    const sourceIdentity = await getTaskSessionSourceSnapshotIdentity(f.git, f.worktreePath);
     f.authority.run(() =>
       beginInitialPublication(
         {
@@ -1977,9 +1679,7 @@ describe("initial publication production checkpoint with independent simulated s
       JSON.stringify(f.store.read()),
       JSON.stringify(f.services.read()),
       f.isolated.git(f.worktreePath, "log", "-1", "--format=%B"),
-      ...f.store
-        .read()!
-        .artifacts.map((artifact) => fs.readFileSync(artifact.path, "utf8")),
+      ...f.store.read()!.artifacts.map((artifact) => fs.readFileSync(artifact.path, "utf8")),
     ]) {
       expect(text).not.toContain(canary);
       expect(text).not.toContain(encoded);
@@ -1994,19 +1694,16 @@ describe("initial publication production checkpoint with independent simulated s
     await through(f, "pr");
     expect(task(f)?.pullRequest?.number).toBe(1);
     expect(operation(f, "move")?.status).toBe("failed");
-    expect(
-      operation(f, "move")?.mutation?.dispatches[0]?.response?.evidence
-        .nonDeliveryProof,
-    ).toBe("provider-rejected-before-acceptance");
+    expect(operation(f, "move")?.mutation?.dispatches[0]?.response?.evidence.nonDeliveryProof).toBe(
+      "provider-rejected-before-acceptance",
+    );
     f.services.change({ rejectMove: false });
     const restarted = reopenPublicationFixture(f.root, "trello-restored");
     await through(restarted, "comment");
     expect(task(restarted)?.phase).toBe("ci");
     expect(operation(restarted, "move")?.mutation?.dispatches).toHaveLength(2);
     expect(
-      restarted.services
-        .entries()
-        .filter((entry) => entry.type === "move-accept"),
+      restarted.services.entries().filter((entry) => entry.type === "move-accept"),
     ).toHaveLength(1);
     expect(restarted.services.read().requests).toHaveLength(1);
   });
@@ -2018,9 +1715,7 @@ describe("initial publication production checkpoint with independent simulated s
     const controller = new AbortController();
     const messages: string[] = [];
     const deferredValidation = vi.fn(async () => {
-      throw new Error(
-        "Must not reroute active publication to startup exhaustion",
-      );
+      throw new Error("Must not reroute active publication to startup exhaustion");
     });
     let ticks = 0;
     const timer = setInterval(() => {
@@ -2049,33 +1744,21 @@ describe("initial publication production checkpoint with independent simulated s
         {
           send: async (message) => {
             messages.push(message.text);
-            if (message.text.includes("Event: Human Review"))
-              controller.abort();
+            if (message.text.includes("Event: Human Review")) controller.abort();
           },
         },
         deferredValidation,
-        new Map([
-          [
-            f.project.id,
-            { authority: f.authority, pinned: f.store.read()!.pinned },
-          ],
-        ]),
+        new Map([[f.project.id, { authority: f.authority, pinned: f.store.read()!.pinned }]]),
       );
     } finally {
       clearInterval(timer);
     }
     expect(ticks).toBeLessThan(300);
     expect(deferredValidation).not.toHaveBeenCalled();
-    expect(
-      messages.filter((text) => text.includes("Event: Attention Required")),
-    ).toHaveLength(1);
-    expect(
-      messages.filter((text) => text.includes("Event: Human Review")),
-    ).toHaveLength(1);
-    const outbox = new NotificationOutbox(
-      f.store.storageRoot,
-      f.project.id,
-      () => f.authority.assertHeld(),
+    expect(messages.filter((text) => text.includes("Event: Attention Required"))).toHaveLength(1);
+    expect(messages.filter((text) => text.includes("Event: Human Review"))).toHaveLength(1);
+    const outbox = new NotificationOutbox(f.store.storageRoot, f.project.id, () =>
+      f.authority.assertHeld(),
     );
     const attentionRecords = outbox
       .records()
@@ -2086,10 +1769,8 @@ describe("initial publication production checkpoint with independent simulated s
     expect(attentionRecords[0]!.dispatches[0]?.outcome).toBe("confirmed");
     // A fresh outbox reader represents worker restart. Repeated due-window drains
     // must retain the same event identity and must not redeliver a confirmed event.
-    const restartedOutbox = new NotificationOutbox(
-      f.store.storageRoot,
-      f.project.id,
-      () => f.authority.assertHeld(),
+    const restartedOutbox = new NotificationOutbox(f.store.storageRoot, f.project.id, () =>
+      f.authority.assertHeld(),
     );
     const redeliveries: string[] = [];
     for (let window = 0; window < 2; window++)
@@ -2110,17 +1791,12 @@ describe("initial publication production checkpoint with independent simulated s
     ).toEqual([attentionIdentity]);
     expect(task(f)?.phase).toBe("ci");
     expect(f.services.read().requests).toHaveLength(1);
-    expect(
-      f.services.entries().some((entry) => entry.type === "trello-read:ready"),
-    ).toBe(false);
+    expect(f.services.entries().some((entry) => entry.type === "trello-read:ready")).toBe(false);
   });
 
   it("routes the production commit entrypoint through journal, persists verified PR BEFORE Trello, and resumes lost move acknowledgment", async () => {
     let f = fixture();
-    const identity = await getTaskSessionSourceSnapshotIdentity(
-      f.git,
-      f.worktreePath,
-    );
+    const identity = await getTaskSessionSourceSnapshotIdentity(f.git, f.worktreePath);
     const evidence: VerifiedPublicationDecisionInput = {
       currentContentIdentity: identity,
       validationCommand: "true",
@@ -2174,15 +1850,9 @@ describe("initial publication production checkpoint with independent simulated s
     expect(operation(f, "commit")?.mutation?.dispatches).toHaveLength(1);
     f.services.change({ loseMoveResponse: true });
     await through(f, "pr");
-    expect(task(f)?.pullRequest?.url).toBe(
-      "https://github.com/owner/repo/pull/1",
-    );
-    expect(
-      f.services.entries().filter((entry) => entry.type === "move-request"),
-    ).toHaveLength(1);
-    expect(
-      operation(f, "move")?.mutation?.dispatches[0]?.response?.outcome,
-    ).toBe("unknown");
+    expect(task(f)?.pullRequest?.url).toBe("https://github.com/owner/repo/pull/1");
+    expect(f.services.entries().filter((entry) => entry.type === "move-request")).toHaveLength(1);
+    expect(operation(f, "move")?.mutation?.dispatches[0]?.response?.outcome).toBe("unknown");
     // The first move is already dispatched in the PR verification pass. Make
     // readback unavailable, then restart from durable state and restore reads.
     f.services.change({ trelloOutage: true });
@@ -2196,19 +1866,11 @@ describe("initial publication production checkpoint with independent simulated s
     expect(task(f)?.phase).toBe("ci");
     expect(f.services.read().prs).toHaveLength(1);
     expect(f.services.read().comments).toHaveLength(1);
+    expect(f.isolated.git(f.worktreePath, "rev-list", "--count", "main..HEAD")).toBe("1");
+    expect(f.isolated.git(f.project.repository.path, "status", "--porcelain")).toBe("");
+    expect(f.isolated.git(f.project.repository.path, "show", "HEAD:source.txt")).toBe("original");
     expect(
-      f.isolated.git(f.worktreePath, "rev-list", "--count", "main..HEAD"),
-    ).toBe("1");
-    expect(
-      f.isolated.git(f.project.repository.path, "status", "--porcelain"),
-    ).toBe("");
-    expect(
-      f.isolated.git(f.project.repository.path, "show", "HEAD:source.txt"),
-    ).toBe("original");
-    expect(
-      f.authority.run(() =>
-        new TaskMutationQueue(f.project.contextRoot, f.project).getActive(),
-      ),
+      f.authority.run(() => new TaskMutationQueue(f.project.contextRoot, f.project).getActive()),
     ).toBeNull();
     expect(f.store.read()!.publicationState).toBe("open");
   });
@@ -2289,8 +1951,7 @@ describe("initial publication production checkpoint with independent simulated s
     };
     const preparedReview = {
       reviewResult: scenario.result,
-      reviewDisclosure:
-        scenario.disclosure === "current" ? currentReview : null,
+      reviewDisclosure: scenario.disclosure === "current" ? currentReview : null,
       qualityNeedsDraft: false,
     };
     const openCode = {
@@ -2345,14 +2006,10 @@ describe("initial publication production checkpoint with independent simulated s
     await poll(f, false);
     expect(f.services.entries()).toHaveLength(before); // Controlled pacing includes reads.
     await poll(f);
-    expect(operation(f, "pr")?.mutation?.observations.at(-1)?.outcome).toBe(
-      "absent",
-    );
+    expect(operation(f, "pr")?.mutation?.observations.at(-1)?.outcome).toBe("absent");
     expect(task(f)?.pullRequest).toBeUndefined();
     expect(
-      f.authority.run(() =>
-        new TaskMutationQueue(f.project.contextRoot, f.project).getActive(),
-      ),
+      f.authority.run(() => new TaskMutationQueue(f.project.contextRoot, f.project).getActive()),
     ).not.toBeNull();
     const restarted = reopenPublicationFixture(f.root, "resumed");
     restarted.services.acceptLate();
@@ -2361,14 +2018,9 @@ describe("initial publication production checkpoint with independent simulated s
     expect(restarted.services.read().requests).toHaveLength(1);
     expect(restarted.services.read().prs).toHaveLength(1);
     const ledger = restarted.services.entries().map((entry) => entry.type);
-    expect(ledger.indexOf("pr-request")).toBeLessThan(
-      ledger.indexOf("pr-accept-late"),
-    );
+    expect(ledger.indexOf("pr-request")).toBeLessThan(ledger.indexOf("pr-accept-late"));
     expect(
-      ledger.slice(
-        ledger.indexOf("pr-request") + 1,
-        ledger.indexOf("pr-accept-late"),
-      ),
+      ledger.slice(ledger.indexOf("pr-request") + 1, ledger.indexOf("pr-accept-late")),
     ).toContain("pr-read");
   });
 
@@ -2394,22 +2046,24 @@ describe("initial publication production checkpoint with independent simulated s
       // just to advance Date. Leave a full recheck interval before the threshold.
       vi.setSystemTime(attentionAt - PUBLICATION_RECHECK_MS - 1);
       await poll(f, false);
-      expect(
-        f.store.read()!.compatibility["initial-publication-v1"],
-      ).toMatchObject({ attention: false, attentionNotified: false });
+      expect(f.store.read()!.compatibility["initial-publication-v1"]).toMatchObject({
+        attention: false,
+        attentionNotified: false,
+      });
       vi.setSystemTime(attentionAt);
       await poll(f, false);
-      expect(
-        f.store.read()!.compatibility["initial-publication-v1"],
-      ).toMatchObject({ attention: true, attentionNotified: true });
+      expect(f.store.read()!.compatibility["initial-publication-v1"]).toMatchObject({
+        attention: true,
+        attentionNotified: true,
+      });
       expect(task(f)?.phase).toBe("publication");
       expect(f.store.read()!.lifecycle).toBe("publication");
-      expect(
-        f.isolated.git(f.worktreePath, "rev-list", "--count", "main..HEAD"),
-      ).toBe(fault === "before-create" ? "0" : "1");
-      expect(
-        f.services.entries().filter((entry) => entry.type === "pr-request"),
-      ).toHaveLength(fault === "before-create" ? 0 : 1);
+      expect(f.isolated.git(f.worktreePath, "rev-list", "--count", "main..HEAD")).toBe(
+        fault === "before-create" ? "0" : "1",
+      );
+      expect(f.services.entries().filter((entry) => entry.type === "pr-request")).toHaveLength(
+        fault === "before-create" ? 0 : 1,
+      );
       const restarted = reopenPublicationFixture(f.root, "recovered");
       restarted.services.change({ githubOutage: false });
       await through(restarted, "comment");
@@ -2419,10 +2073,7 @@ describe("initial publication production checkpoint with independent simulated s
     },
   );
 
-  it.each([
-    "github-accepted-response-lost",
-    "trello-move-accepted-response-lost",
-  ] as const)(
+  it.each(["github-accepted-response-lost", "trello-move-accepted-response-lost"] as const)(
     "holds the canonical publication checkpoint through a restarted $fault outage and honors retryAt",
     async (fault) => {
       const f = fixture();
@@ -2446,15 +2097,16 @@ describe("initial publication production checkpoint with independent simulated s
         };
         await through(f, "pr");
         expect(f.services.read().list).toBe("review");
-        expect(
-          f.services.entries().filter((entry) => entry.type === "move-accept"),
-        ).toHaveLength(1);
+        expect(f.services.entries().filter((entry) => entry.type === "move-accept")).toHaveLength(
+          1,
+        );
       }
 
       await poll(f, false);
-      const firstWait = f.store.read()!.compatibility[
-        "initial-publication-v1"
-      ] as { retryAt: string | null; attentionNotified: boolean };
+      const firstWait = f.store.read()!.compatibility["initial-publication-v1"] as {
+        retryAt: string | null;
+        attentionNotified: boolean;
+      };
       expect(firstWait.retryAt).not.toBeNull();
       expect(firstWait.attentionNotified).toBe(false);
       // Project B uses an independent durable authority/context and service
@@ -2468,15 +2120,12 @@ describe("initial publication production checkpoint with independent simulated s
       expect(b.services.read().prs).toHaveLength(1);
       expect(task(b)?.phase).toBe("ci");
       expect(
-        b.authority.run(() =>
-          new TaskMutationQueue(b.project.contextRoot, b.project).getActive(),
-        ),
+        b.authority.run(() => new TaskMutationQueue(b.project.contextRoot, b.project).getActive()),
       ).toBeNull();
       expect(f.store.read()!.lifecycle).toBe("publication");
       expect(
-        f.authority.run(() =>
-          new TaskMutationQueue(f.project.contextRoot, f.project).getActive(),
-        )?.cardId,
+        f.authority.run(() => new TaskMutationQueue(f.project.contextRoot, f.project).getActive())
+          ?.cardId,
       ).toBe("card");
       expect(f.services.read().requests).toHaveLength(1);
       const retryAt = Date.parse(firstWait.retryAt!);
@@ -2501,13 +2150,11 @@ describe("initial publication production checkpoint with independent simulated s
               : entry.type.startsWith("trello-read:"),
           ),
         ).toBe(true);
-        const nextWait = f.store.read()!.compatibility[
-          "initial-publication-v1"
-        ] as { retryAt: string | null };
+        const nextWait = f.store.read()!.compatibility["initial-publication-v1"] as {
+          retryAt: string | null;
+        };
         expect(nextWait.retryAt).not.toBeNull();
-        expect(nextWait.retryAt).toBe(
-          new Date(duePollTime + PUBLICATION_RECHECK_MS).toISOString(),
-        );
+        expect(nextWait.retryAt).toBe(new Date(duePollTime + PUBLICATION_RECHECK_MS).toISOString());
         vi.setSystemTime(Date.parse(nextWait.retryAt!) - 1);
         const beforeNotDue = f.services.entries();
         await poll(f, false);
@@ -2524,10 +2171,7 @@ describe("initial publication production checkpoint with independent simulated s
       expect(restarted.store.read()!.lifecycle).toBe("publication");
       expect(
         restarted.authority.run(() =>
-          new TaskMutationQueue(
-            restarted.project.contextRoot,
-            restarted.project,
-          ).getActive(),
+          new TaskMutationQueue(restarted.project.contextRoot, restarted.project).getActive(),
         ),
       ).not.toBeNull();
 
@@ -2541,26 +2185,14 @@ describe("initial publication production checkpoint with independent simulated s
       expect(restarted.services.read().requests).toHaveLength(1);
       expect(restarted.services.read().comments).toHaveLength(1);
       expect(
-        restarted.services
-          .entries()
-          .filter((entry) => entry.type === "move-accept"),
+        restarted.services.entries().filter((entry) => entry.type === "move-accept"),
       ).toHaveLength(1);
       expect(
         restarted.authority.run(() =>
-          new TaskMutationQueue(
-            restarted.project.contextRoot,
-            restarted.project,
-          ).getActive(),
+          new TaskMutationQueue(restarted.project.contextRoot, restarted.project).getActive(),
         ),
       ).toBeNull();
-      expect(
-        f.isolated.git(
-          restarted.worktreePath,
-          "rev-list",
-          "--count",
-          "main..HEAD",
-        ),
-      ).toBe("1");
+      expect(f.isolated.git(restarted.worktreePath, "rev-list", "--count", "main..HEAD")).toBe("1");
     },
   );
 
@@ -2573,22 +2205,14 @@ describe("initial publication production checkpoint with independent simulated s
     expect(operation(f, "move")?.status).toBe("ambiguous");
     expect(task(f)?.phase).toBe("publication");
     expect(task(f)?.pullRequest?.number).toBe(1);
-    expect(
-      f.services.entries().filter((entry) => entry.type === "move-request"),
-    ).toHaveLength(1);
+    expect(f.services.entries().filter((entry) => entry.type === "move-request")).toHaveLength(1);
     expect(f.services.read().comments).toHaveLength(0);
     f.services.change({ list: "review" }); // Later independent authoritative acceptance.
     await through(f, "comment");
     expect(task(f)?.phase).toBe("ci");
   });
 
-  it.each([
-    "intent",
-    "dispatch",
-    "acceptance",
-    "response",
-    "completion",
-  ] as const)(
+  it.each(["intent", "dispatch", "acceptance", "response", "completion"] as const)(
     "survives SIGKILL at PR %s through the production polling entrypoint",
     async (barrier) => {
       const f = fixture();
@@ -2622,8 +2246,7 @@ describe("initial publication production checkpoint with independent simulated s
         child.kill("SIGKILL");
         await exited;
         let restarted = reopenPublicationFixture(f.root, `after-${barrier}`);
-        if (barrier === "completion")
-          expect(operation(restarted, "pr")?.status).toBe("completed");
+        if (barrier === "completion") expect(operation(restarted, "pr")?.status).toBe("completed");
         if (barrier === "dispatch") {
           for (let count = 0; count < 3; count++) await poll(restarted);
           expect(restarted.services.read().requests).toHaveLength(0);
@@ -2637,20 +2260,15 @@ describe("initial publication production checkpoint with independent simulated s
         expect(task(restarted)?.phase).toBe("ci");
         expect(restarted.services.read().requests).toHaveLength(1);
         expect(restarted.services.read().prs).toHaveLength(1);
-        expect(
-          f.isolated.git(f.worktreePath, "rev-list", "--count", "main..HEAD"),
-        ).toBe("1");
+        expect(f.isolated.git(f.worktreePath, "rev-list", "--count", "main..HEAD")).toBe("1");
         restarted = reopenPublicationFixture(f.root, `final-${barrier}`);
         expect(
           restarted.store
             .read()!
-            .pendingOperations.filter(
-              (entry) => entry.kind === "github-pr-create",
-            ),
+            .pendingOperations.filter((entry) => entry.kind === "github-pr-create"),
         ).toHaveLength(1);
       } finally {
-        if (child.exitCode === null && child.signalCode === null)
-          child.kill("SIGKILL");
+        if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
       }
     },
   );

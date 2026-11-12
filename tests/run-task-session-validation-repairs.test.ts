@@ -6,10 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ProjectConfig } from "../src/config/config.js";
 import type { GitClient } from "../src/git/git-client.js";
-import {
-  OpenCodeClient,
-  type RunOpenCode,
-} from "../src/opencode/opencode-client.js";
+import { OpenCodeClient, type RunOpenCode } from "../src/opencode/opencode-client.js";
 import {
   MAX_VALIDATION_REPAIR_ATTEMPTS,
   VALIDATION_REPAIR_EARLY_FINISH_MARKER,
@@ -91,20 +88,14 @@ function createFixture(): {
   >;
   setHeadSha: (sha: string) => void;
 } {
-  temporaryRoot = fs.mkdtempSync(
-    path.join(os.tmpdir(), "agent-orchestrator-validation-repairs-"),
-  );
+  temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agent-orchestrator-validation-repairs-"));
   const repositoryPath = path.join(temporaryRoot, "repository");
   const worktreeRoot = path.join(temporaryRoot, "worktrees");
   const worktreePath = path.join(worktreeRoot, card.id);
   const storageRoot = path.join(temporaryRoot, "runtime-state");
   fs.mkdirSync(repositoryPath);
   fs.mkdirSync(worktreePath, { recursive: true });
-  fs.writeFileSync(
-    path.join(worktreePath, "src.ts"),
-    "before repair\n",
-    "utf8",
-  );
+  fs.writeFileSync(path.join(worktreePath, "src.ts"), "before repair\n", "utf8");
 
   const project = {
     id: projectId,
@@ -183,9 +174,7 @@ function runRepairs(
   fixture: ReturnType<typeof createFixture>,
   expectedSessionId = primarySessionId,
   repairOperationKey = operationKey,
-  prepareContext?: Parameters<
-    typeof runTaskSessionValidationWithRepairs
-  >[0]["prepareContext"],
+  prepareContext?: Parameters<typeof runTaskSessionValidationWithRepairs>[0]["prepareContext"],
 ) {
   return runTaskSessionValidationWithRepairs({
     ...(prepareContext === undefined ? {} : { prepareContext }),
@@ -226,19 +215,14 @@ describe("runTaskSessionValidationWithRepairs", () => {
       });
       await expect(
         runRepairs(fixture, primarySessionId, operationKey, async () => {
-          if (kind === "unavailable")
-            throw new Error("Current attachment access unavailable");
+          if (kind === "unavailable") throw new Error("Current attachment access unavailable");
           return { card: { ...card, id: "another-card" } };
         }),
       ).rejects.toThrow(
-        kind === "unavailable"
-          ? "Current attachment access unavailable"
-          : "another task",
+        kind === "unavailable" ? "Current attachment access unavailable" : "another task",
       );
       expect(fixture.runOpenCode).not.toHaveBeenCalled();
-      expect(
-        fixture.executionStore.read(card.id)?.retryCounters.validation,
-      ).toBe(0);
+      expect(fixture.executionStore.read(card.id)?.retryCounters.validation).toBe(0);
     },
   );
   it("replays a reserved repair and recognizes its unchanged source without rerunning quality", async () => {
@@ -371,9 +355,7 @@ describe("runTaskSessionValidationWithRepairs", () => {
     fixture.runOpenCode.mockImplementation(async (runOptions) => {
       expect(runOptions.prompt).toBe(prompt);
       expect(fixture.runCommand).not.toHaveBeenCalled();
-      expect(
-        fixture.executionStore.read(card.id)?.retryCounters.validation,
-      ).toBe(2);
+      expect(fixture.executionStore.read(card.id)?.retryCounters.validation).toBe(2);
       return { exitCode: 0, output: "resumed repair", errorOutput: "" };
     });
 
@@ -382,12 +364,8 @@ describe("runTaskSessionValidationWithRepairs", () => {
     expect(fixture.runOpenCode).toHaveBeenCalledOnce();
     expect(result.attempts).toBe(2);
     expect(result.record.validationRepair?.maxAttempts).toBe(2);
-    expect(
-      result.record.validationRepair?.activePrimaryOperation,
-    ).toBeUndefined();
-    expect(
-      fixture.executionStore.read(card.id)?.primaryOperations?.[operationId],
-    ).toMatchObject({
+    expect(result.record.validationRepair?.activePrimaryOperation).toBeUndefined();
+    expect(fixture.executionStore.read(card.id)?.primaryOperations?.[operationId]).toMatchObject({
       executions: 1,
       status: "completed",
     });
@@ -413,14 +391,8 @@ describe("runTaskSessionValidationWithRepairs", () => {
       expect(options.prompt).toContain("attempt 1 of 2");
       expect(options.prompt).toContain(VALIDATION_REPAIR_EARLY_FINISH_MARKER);
       expect(options.prompt).toContain(plan.requirements[0]?.text);
-      expect(
-        fixture.executionStore.read(card.id)?.retryCounters.validation,
-      ).toBe(1);
-      fs.writeFileSync(
-        path.join(fixture.worktreePath, "src.ts"),
-        "after repair\n",
-        "utf8",
-      );
+      expect(fixture.executionStore.read(card.id)?.retryCounters.validation).toBe(1);
+      fs.writeFileSync(path.join(fixture.worktreePath, "src.ts"), "after repair\n", "utf8");
       return {
         exitCode: 0,
         output: "repair prompt complete",
@@ -454,10 +426,7 @@ describe("runTaskSessionValidationWithRepairs", () => {
     });
     fixture.runOpenCode.mockImplementation(async () => {
       repairNumber += 1;
-      fs.writeFileSync(
-        path.join(fixture.worktreePath, "src.ts"),
-        `repair ${repairNumber}\n`,
-      );
+      fs.writeFileSync(path.join(fixture.worktreePath, "src.ts"), `repair ${repairNumber}\n`);
       return { exitCode: 0, output: "repair changed source", errorOutput: "" };
     });
 
@@ -471,12 +440,8 @@ describe("runTaskSessionValidationWithRepairs", () => {
         },
       },
     });
-    expect(fixture.runCommand).toHaveBeenCalledTimes(
-      MAX_VALIDATION_REPAIR_ATTEMPTS + 1,
-    );
-    expect(fixture.runOpenCode).toHaveBeenCalledTimes(
-      MAX_VALIDATION_REPAIR_ATTEMPTS,
-    );
+    expect(fixture.runCommand).toHaveBeenCalledTimes(MAX_VALIDATION_REPAIR_ATTEMPTS + 1);
+    expect(fixture.runOpenCode).toHaveBeenCalledTimes(MAX_VALIDATION_REPAIR_ATTEMPTS);
     expect(fixture.executionStore.read(card.id)).toMatchObject({
       retryCounters: { validation: MAX_VALIDATION_REPAIR_ATTEMPTS },
       validationRepair: { cycleId: operationKey, status: "exhausted" },
@@ -485,12 +450,8 @@ describe("runTaskSessionValidationWithRepairs", () => {
     await expect(runRepairs(fixture)).resolves.toMatchObject({
       record: { validationRepair: { status: "exhausted" } },
     });
-    expect(fixture.runCommand).toHaveBeenCalledTimes(
-      MAX_VALIDATION_REPAIR_ATTEMPTS + 1,
-    );
-    expect(fixture.runOpenCode).toHaveBeenCalledTimes(
-      MAX_VALIDATION_REPAIR_ATTEMPTS,
-    );
+    expect(fixture.runCommand).toHaveBeenCalledTimes(MAX_VALIDATION_REPAIR_ATTEMPTS + 1);
+    expect(fixture.runOpenCode).toHaveBeenCalledTimes(MAX_VALIDATION_REPAIR_ATTEMPTS);
   });
 
   it("honors a zero validation maximum without dispatching a writer", async () => {
@@ -530,15 +491,9 @@ describe("runTaskSessionValidationWithRepairs", () => {
       projectId,
       cardId: card.id,
       operationKey,
-      occurredAt: new Date(
-        Date.parse(exhausted.record.updatedAt) + 1,
-      ).toISOString(),
+      occurredAt: new Date(Date.parse(exhausted.record.updatedAt) + 1).toISOString(),
     });
-    fixture.executionStore.compareAndSwap(
-      card.id,
-      exhausted.record.revision,
-      publication,
-    );
+    fixture.executionStore.compareAndSwap(card.id, exhausted.record.revision, publication);
     fixture.runCommand.mockClear();
 
     const unchanged = await runRepairs(fixture);
@@ -552,25 +507,21 @@ describe("runTaskSessionValidationWithRepairs", () => {
     expect(fixture.runOpenCode).not.toHaveBeenCalled();
 
     const beforeUnknownWriter = fixture.executionStore.read(card.id)!;
-    fixture.executionStore.compareAndSwap(
-      card.id,
-      beforeUnknownWriter.revision,
-      {
-        ...beforeUnknownWriter,
-        primaryOperations: {
-          "unresolved-validation-writer": {
-            id: "unresolved-validation-writer",
-            activity: "validation-repair-pass-1",
-            executions: 1,
-            status: "ambiguous",
-            lastSessionId: primarySessionId,
-            updatedAt: new Date().toISOString(),
-          },
+    fixture.executionStore.compareAndSwap(card.id, beforeUnknownWriter.revision, {
+      ...beforeUnknownWriter,
+      primaryOperations: {
+        "unresolved-validation-writer": {
+          id: "unresolved-validation-writer",
+          activity: "validation-repair-pass-1",
+          executions: 1,
+          status: "ambiguous",
+          lastSessionId: primarySessionId,
+          updatedAt: new Date().toISOString(),
         },
-        revision: beforeUnknownWriter.revision + 1,
-        updatedAt: new Date().toISOString(),
       },
-    );
+      revision: beforeUnknownWriter.revision + 1,
+      updatedAt: new Date().toISOString(),
+    });
     await expect(runRepairs(fixture)).rejects.toThrow(
       "unresolved primary operation unresolved-validation-writer",
     );
@@ -591,9 +542,7 @@ describe("runTaskSessionValidationWithRepairs", () => {
 
     expect(refreshed.record.phase).toBe("publication");
     expect(refreshed.validation.status).toBe("failed");
-    expect(refreshed.validation.contentIdentity).not.toBe(
-      exhausted.validation.contentIdentity,
-    );
+    expect(refreshed.validation.contentIdentity).not.toBe(exhausted.validation.contentIdentity);
     expect(refreshed.record.retryCounters.validation).toBe(0);
     expect(fixture.runCommand).toHaveBeenCalledOnce();
     expect(fixture.runOpenCode).not.toHaveBeenCalled();
@@ -608,10 +557,7 @@ describe("runTaskSessionValidationWithRepairs", () => {
       errorOutput: "failure diagnostic",
     });
     fixture.runOpenCode.mockImplementation(async () => {
-      fs.writeFileSync(
-        path.join(fixture.worktreePath, "src.ts"),
-        "repair changed source\n",
-      );
+      fs.writeFileSync(path.join(fixture.worktreePath, "src.ts"), "repair changed source\n");
       return { exitCode: 0, output: "repair complete", errorOutput: "" };
     });
 
@@ -668,12 +614,8 @@ describe("runTaskSessionValidationWithRepairs", () => {
       output: "assertion failed",
       errorOutput: "still failing",
     });
-    const interruption = new Error(
-      "simulated restart after primary result persistence",
-    );
-    const compareAndSwap = fixture.executionStore.compareAndSwap.bind(
-      fixture.executionStore,
-    );
+    const interruption = new Error("simulated restart after primary result persistence");
+    const compareAndSwap = fixture.executionStore.compareAndSwap.bind(fixture.executionStore);
     const failDisposition = vi
       .spyOn(fixture.executionStore, "compareAndSwap")
       .mockImplementation((cardId, expectedRevision, nextRecord) => {
@@ -734,11 +676,7 @@ describe("runTaskSessionValidationWithRepairs", () => {
       errorOutput: "failure diagnostic",
     });
     fixture.runOpenCode.mockImplementation(async () => {
-      fs.writeFileSync(
-        path.join(fixture.worktreePath, "src.ts"),
-        "attempted repair\n",
-        "utf8",
-      );
+      fs.writeFileSync(path.join(fixture.worktreePath, "src.ts"), "attempted repair\n", "utf8");
       return {
         exitCode: 0,
         output: JSON.stringify({
@@ -804,9 +742,7 @@ describe("runTaskSessionValidationWithRepairs", () => {
     expect(result.attempts).toBe(1);
     expect(fixture.runCommand).toHaveBeenCalledOnce();
     expect(fixture.runOpenCode).not.toHaveBeenCalled();
-    expect(fixture.executionStore.read(card.id)?.validationRepair?.status).toBe(
-      "passed",
-    );
+    expect(fixture.executionStore.read(card.id)?.validationRepair?.status).toBe("passed");
   });
 
   it("refreshes passed quality evidence for changed source without renewing attempts", async () => {
@@ -815,16 +751,11 @@ describe("runTaskSessionValidationWithRepairs", () => {
     expect(firstResult.validation.status).toBe("passed");
     expect(fixture.runCommand).toHaveBeenCalledOnce();
 
-    fs.writeFileSync(
-      path.join(fixture.worktreePath, "src.ts"),
-      "changed source\n",
-    );
+    fs.writeFileSync(path.join(fixture.worktreePath, "src.ts"), "changed source\n");
 
     const refreshed = await runRepairs(fixture);
     expect(refreshed.validation.status).toBe("passed");
-    expect(refreshed.validation.contentIdentity).not.toBe(
-      firstResult.validation.contentIdentity,
-    );
+    expect(refreshed.validation.contentIdentity).not.toBe(firstResult.validation.contentIdentity);
     expect(refreshed.attempts).toBe(0);
     expect(refreshed.record.validationRepair).toMatchObject({
       status: "passed",
@@ -843,9 +774,7 @@ describe("runTaskSessionValidationWithRepairs", () => {
       projectId,
       cardId: card.id,
       operationKey,
-      occurredAt: new Date(
-        Date.parse(result.record.updatedAt) + 1,
-      ).toISOString(),
+      occurredAt: new Date(Date.parse(result.record.updatedAt) + 1).toISOString(),
     });
 
     expect(Date.parse(reviewedRecord.updatedAt)).toBeGreaterThan(
@@ -883,23 +812,15 @@ describe("runTaskSessionValidationWithRepairs", () => {
         errorOutput: "",
       });
     fixture.runOpenCode.mockImplementation(async (options) => {
-      expect(options.prompt).toContain(
-        'Coverage command: "yarn coverage --threshold"',
-      );
+      expect(options.prompt).toContain('Coverage command: "yarn coverage --threshold"');
       expect(options.prompt).toContain("repository threshold not met");
-      fs.writeFileSync(
-        path.join(fixture.worktreePath, "src.ts"),
-        "coverage fix applied\n",
-        "utf8",
-      );
+      fs.writeFileSync(path.join(fixture.worktreePath, "src.ts"), "coverage fix applied\n", "utf8");
       return { exitCode: 0, output: "fixed", errorOutput: "" };
     });
 
     const result = await runRepairs(fixture);
 
-    expect(
-      fixture.runCommand.mock.calls.map(([options]) => options.command),
-    ).toEqual([
+    expect(fixture.runCommand.mock.calls.map(([options]) => options.command)).toEqual([
       "yarn validate",
       "yarn coverage --threshold",
       "yarn validate",
@@ -938,18 +859,12 @@ describe("runTaskSessionValidationWithRepairs", () => {
       record: { validationRepair: { status: "exhausted" } },
     });
     expect(
-      fixture.runCommand.mock.calls.filter(
-        ([options]) => options.command === "yarn validate",
-      ),
+      fixture.runCommand.mock.calls.filter(([options]) => options.command === "yarn validate"),
     ).toHaveLength(MAX_VALIDATION_REPAIR_ATTEMPTS + 1);
     expect(
-      fixture.runCommand.mock.calls.filter(
-        ([options]) => options.command === "yarn coverage",
-      ),
+      fixture.runCommand.mock.calls.filter(([options]) => options.command === "yarn coverage"),
     ).toHaveLength(MAX_VALIDATION_REPAIR_ATTEMPTS + 1);
-    expect(fixture.runOpenCode).toHaveBeenCalledTimes(
-      MAX_VALIDATION_REPAIR_ATTEMPTS,
-    );
+    expect(fixture.runOpenCode).toHaveBeenCalledTimes(MAX_VALIDATION_REPAIR_ATTEMPTS);
   });
 
   it("starts a new bounded repair cycle only when task operation identity changes", async () => {
@@ -962,10 +877,7 @@ describe("runTaskSessionValidationWithRepairs", () => {
     });
     fixture.runOpenCode.mockImplementation(async () => {
       repairNumber += 1;
-      fs.writeFileSync(
-        path.join(fixture.worktreePath, "src.ts"),
-        `cycle repair ${repairNumber}\n`,
-      );
+      fs.writeFileSync(path.join(fixture.worktreePath, "src.ts"), `cycle repair ${repairNumber}\n`);
       return { exitCode: 0, output: "repair changed source", errorOutput: "" };
     });
     await expect(runRepairs(fixture)).resolves.toMatchObject({
@@ -990,8 +902,6 @@ describe("runTaskSessionValidationWithRepairs", () => {
     ).resolves.toMatchObject({
       record: { validationRepair: { status: "exhausted" } },
     });
-    expect(fixture.runCommand).toHaveBeenCalledTimes(
-      2 * (MAX_VALIDATION_REPAIR_ATTEMPTS + 1),
-    );
+    expect(fixture.runCommand).toHaveBeenCalledTimes(2 * (MAX_VALIDATION_REPAIR_ATTEMPTS + 1));
   });
 });

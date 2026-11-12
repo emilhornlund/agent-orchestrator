@@ -5,9 +5,7 @@ import {
 import type { TrelloAttachment, TrelloCard } from "../trello/trello-client.js";
 import { taskSessionRepositoryGuidance } from "./task-session-prompt-guidance.js";
 
-function buildAttachmentMetadata(
-  attachments: readonly TrelloAttachment[],
-): string {
+function buildAttachmentMetadata(attachments: readonly TrelloAttachment[]): string {
   return JSON.stringify(
     attachments.map((attachment) => ({
       id: attachment.id,
@@ -29,12 +27,9 @@ export function buildTaskPlanningPrompt(
 ): string {
   if (
     attachmentContext !== undefined &&
-    (attachmentContext.projectId !== projectId ||
-      attachmentContext.cardId !== card.id)
+    (attachmentContext.projectId !== projectId || attachmentContext.cardId !== card.id)
   ) {
-    throw new Error(
-      "Task planning attachment context does not match the task project and card",
-    );
+    throw new Error("Task planning attachment context does not match the task project and card");
   }
 
   const description = card.desc.trim();
@@ -45,9 +40,7 @@ export function buildTaskPlanningPrompt(
     `Task identity: ${JSON.stringify({ projectId, cardId: card.id })}`,
     `Task title: ${JSON.stringify(card.name)}`,
     "Original task description:",
-    description.length > 0
-      ? description
-      : "No additional description was provided.",
+    description.length > 0 ? description : "No additional description was provided.",
     "",
     "Original Trello attachment metadata (uploaded file URLs are intentionally omitted):",
     buildAttachmentMetadata(attachments),
@@ -95,8 +88,7 @@ export function buildTaskPlanningPrompt(
           "Task card title/description and relevant repository files were examined",
           "Available attachment context was examined",
         ],
-        reason:
-          "A required decision cannot be inferred from the available evidence",
+        reason: "A required decision cannot be inferred from the available evidence",
         questions: ["Which specific behavior or choice should be used?"],
       },
       null,

@@ -19,8 +19,7 @@ export function canResumeCiReviewRepair(
     !["active", "failed"].includes(event.status) ||
     record.pullRequest?.headSha === undefined ||
     event.eventId !== ciRepairEventId(record, record.pullRequest.headSha) ||
-    event.operationKey !==
-      `${record.operationKey}:ci:${record.pullRequest.headSha}` ||
+    event.operationKey !== `${record.operationKey}:ci:${record.pullRequest.headSha}` ||
     record.ciRepair?.status !== "active" ||
     record.ciRepair.headSha !== record.pullRequest.headSha ||
     record.ciRepair.activePrimaryOperation === undefined ||
@@ -41,19 +40,14 @@ export function canResumeCiReviewRepair(
     return false;
   const repair = record.reviewRepair;
   if (
-    repair.cycleId !==
-      `${record.operationKey}:ci-review:${record.ciRepair.cycleId}` &&
-    !(
-      repair.cycleId === record.operationKey &&
-      repair.activePrimaryOperation !== undefined
-    )
+    repair.cycleId !== `${record.operationKey}:ci-review:${record.ciRepair.cycleId}` &&
+    !(repair.cycleId === record.operationKey && repair.activePrimaryOperation !== undefined)
   )
     return false;
   const reservation = repair.activePrimaryOperation;
   if (reservation === undefined)
     return (
-      record.phase !== "implementation" &&
-      (event.status === "active" || repair.status === "passed")
+      record.phase !== "implementation" && (event.status === "active" || repair.status === "passed")
     );
   const primary = record.primaryOperations?.[reservation.operationId];
   return (

@@ -11,10 +11,7 @@ import type { TrelloCard } from "../trello/trello-client.js";
 import { resolveCardAttachmentPath } from "../context/card-context-storage.js";
 import type { PrimarySessionContextBundle } from "./primary-task-session.js";
 import type { TaskExecutionRecord } from "./task-execution-record.js";
-import {
-  parsePlanVerificationResult,
-  type PlanVerificationResult,
-} from "./plan-verification.js";
+import { parsePlanVerificationResult, type PlanVerificationResult } from "./plan-verification.js";
 import { getTaskSessionSourceSnapshotIdentity } from "./source-snapshot.js";
 import { getProcessRuntime } from "../process/process-runtime.js";
 import { redactSecrets } from "../security/redact-secrets.js";
@@ -29,10 +26,7 @@ function sanitizeContextValue(value: unknown): unknown {
     if (Array.isArray(item)) return item.map(sanitize);
     if (item !== null && typeof item === "object")
       return Object.fromEntries(
-        Object.entries(item).map(([key, child]) => [
-          redactSecrets(key, secrets),
-          sanitize(child),
-        ]),
+        Object.entries(item).map(([key, child]) => [redactSecrets(key, secrets), sanitize(child)]),
       );
     return item;
   };
@@ -73,9 +67,7 @@ export function sanitizePrimarySessionContextBundle(
     },
     feedback: {
       ...bundle.feedback,
-      references: bundle.feedback.references.map((item) =>
-        redactSecrets(item, secrets),
-      ),
+      references: bundle.feedback.references.map((item) => redactSecrets(item, secrets)),
       ...(bundle.feedback.content === undefined ? {} : { content: "" }),
     },
     currentDiff: "",
@@ -85,8 +77,7 @@ export function sanitizePrimarySessionContextBundle(
   if (bundle.plan.content !== undefined)
     sanitized.plan.content = sanitizeOpaque(bundle.plan.content) ?? "";
   if (bundle.attachmentManifest.content !== undefined)
-    sanitized.attachmentManifest.content =
-      sanitizeOpaque(bundle.attachmentManifest.content) ?? "";
+    sanitized.attachmentManifest.content = sanitizeOpaque(bundle.attachmentManifest.content) ?? "";
   if (bundle.feedback.content !== undefined)
     sanitized.feedback.content = sanitizeOpaque(bundle.feedback.content) ?? "";
   sanitized.currentDiff = sanitizeOpaque(bundle.currentDiff) ?? "";
@@ -126,25 +117,20 @@ export async function buildPrimarySessionContext(input: {
       input.projectId !== planReviewAdvice.projectId ||
       input.card.id !== planReviewAdvice.cardId)
   )
-    throw new Error(
-      "Primary-session plan-review advice does not match the task and plan revision",
-    );
-  const [head, sourceIdentity, status, staged, unstaged, index, untracked] =
-    await Promise.all([
-      input.git.getHeadSha(input.worktreePath),
-      getTaskSessionSourceSnapshotIdentity(input.git, input.worktreePath),
-      input.git.getStatus(input.worktreePath),
-      input.git.getDiff(input.worktreePath, true),
-      input.git.getDiff(input.worktreePath),
-      input.git.getIndexEntries(input.worktreePath),
-      input.git.getUntrackedFiles(input.worktreePath),
-    ]);
+    throw new Error("Primary-session plan-review advice does not match the task and plan revision");
+  const [head, sourceIdentity, status, staged, unstaged, index, untracked] = await Promise.all([
+    input.git.getHeadSha(input.worktreePath),
+    getTaskSessionSourceSnapshotIdentity(input.git, input.worktreePath),
+    input.git.getStatus(input.worktreePath),
+    input.git.getDiff(input.worktreePath, true),
+    input.git.getDiff(input.worktreePath),
+    input.git.getIndexEntries(input.worktreePath),
+    input.git.getUntrackedFiles(input.worktreePath),
+  ]);
   let totalUntrackedBytes = 0;
   const files = untracked.map((relativePath) => {
     if (path.isAbsolute(relativePath) || path.win32.isAbsolute(relativePath))
-      throw new Error(
-        "Git returned an absolute untracked path for reconstruction context",
-      );
+      throw new Error("Git returned an absolute untracked path for reconstruction context");
     const absolute = path.resolve(input.worktreePath, relativePath);
     const relative = path.relative(path.resolve(input.worktreePath), absolute);
     if (
@@ -156,57 +142,41 @@ export async function buildPrimarySessionContext(input: {
       throw new Error("Untracked reconstruction path escapes task worktree");
     const stat = fs.lstatSync(absolute);
     if (!stat.isFile() || stat.isSymbolicLink())
-      throw new Error(
-        `Untracked reconstruction path is not a regular file: ${relativePath}`,
-      );
+      throw new Error(`Untracked reconstruction path is not a regular file: ${relativePath}`);
     if (stat.size > 4 * 1024 * 1024)
-      throw new Error(
-        `Untracked reconstruction file exceeds bundle limit: ${relativePath}`,
-      );
+      throw new Error(`Untracked reconstruction file exceeds bundle limit: ${relativePath}`);
     totalUntrackedBytes += stat.size;
     if (totalUntrackedBytes > 4 * 1024 * 1024)
-      throw new Error(
-        "Untracked reconstruction inventory exceeds bundle limit",
-      );
+      throw new Error("Untracked reconstruction inventory exceeds bundle limit");
     const sourceBytes = fs.readFileSync(absolute);
     let contentBase64: string | undefined;
     try {
-      const text = new TextDecoder("utf-8", { fatal: true }).decode(
-        sourceBytes,
-      );
+      const text = new TextDecoder("utf-8", { fatal: true }).decode(sourceBytes);
       const safeText = redactSecrets(text, getProcessRuntime().secretValues);
       contentBase64 = Buffer.from(safeText, "utf8").toString("base64");
     } catch {
       // Do not emit raw or transformed binary bytes as reconstruction content.
     }
-    const bytes =
-      contentBase64 === undefined
-        ? sourceBytes
-        : Buffer.from(contentBase64, "base64");
+    const bytes = contentBase64 === undefined ? sourceBytes : Buffer.from(contentBase64, "base64");
     return {
       path: relativePath,
       sha256: createHash("sha256").update(bytes).digest("hex"),
       hashBytes: bytes.byteLength,
       contentBase64: contentBase64 ?? "",
-      contentStatus:
-        contentBase64 === undefined ? "unsupported-binary" : "available",
+      contentStatus: contentBase64 === undefined ? "unsupported-binary" : "available",
     };
   });
   if (
     input.attachments !== undefined &&
-    (input.attachments.projectId !== input.projectId ||
-      input.attachments.cardId !== input.card.id)
+    (input.attachments.projectId !== input.projectId || input.attachments.cardId !== input.card.id)
   )
-    throw new Error(
-      "Primary-session attachment context identity does not match task",
-    );
+    throw new Error("Primary-session attachment context identity does not match task");
   const attachmentLines = buildCardAttachmentPromptLines(input.attachments);
   let totalAttachmentBytes = 0;
   let totalInlineTextBytes = 0;
   const attachmentInventory =
     input.attachments?.manifest.attachments.map((entry) => {
-      if (!entry.isUpload)
-        return { ...entry, availability: "external-url" as const };
+      if (!entry.isUpload) return { ...entry, availability: "external-url" as const };
       const filePath = resolveCardAttachmentPath(
         input.attachments!.contextRoot,
         input.projectId,
@@ -216,30 +186,19 @@ export async function buildPrimarySessionContext(input: {
       const stat = fs.lstatSync(filePath);
       if (stat.isSymbolicLink() || !stat.isFile())
         throw new Error("Materialized attachment is not a regular file");
-      if (
-        stat.size > 20 * 1024 * 1024 ||
-        totalAttachmentBytes + stat.size > 64 * 1024 * 1024
-      )
-        throw new Error(
-          "Materialized attachments exceed the primary reconstruction limit",
-        );
+      if (stat.size > 20 * 1024 * 1024 || totalAttachmentBytes + stat.size > 64 * 1024 * 1024)
+        throw new Error("Materialized attachments exceed the primary reconstruction limit");
       const bytes = fs.readFileSync(filePath);
       totalAttachmentBytes += bytes.byteLength;
       const mimeType = entry.mimeType?.toLowerCase() ?? "";
       const textLike =
         mimeType.startsWith("text/") ||
-        ["application/json", "application/xml", "application/yaml"].includes(
-          mimeType,
-        );
+        ["application/json", "application/xml", "application/yaml"].includes(mimeType);
       const inlineContent =
         textLike &&
         bytes.byteLength <= INLINE_ATTACHMENT_MAX_BYTES &&
-        totalInlineTextBytes + bytes.byteLength <=
-          INLINE_ATTACHMENT_TOTAL_MAX_BYTES
-          ? redactSecrets(
-              bytes.toString("utf8"),
-              getProcessRuntime().secretValues,
-            )
+        totalInlineTextBytes + bytes.byteLength <= INLINE_ATTACHMENT_TOTAL_MAX_BYTES
+          ? redactSecrets(bytes.toString("utf8"), getProcessRuntime().secretValues)
           : undefined;
       if (inlineContent !== undefined) totalInlineTextBytes += bytes.byteLength;
       return {
@@ -248,9 +207,7 @@ export async function buildPrimarySessionContext(input: {
         availability: "materialized" as const,
         sha256: createHash("sha256").update(bytes).digest("hex"),
         bytes: bytes.byteLength,
-        ...(inlineContent === undefined
-          ? {}
-          : { readableContent: inlineContent }),
+        ...(inlineContent === undefined ? {} : { readableContent: inlineContent }),
       };
     }) ?? [];
   const attachmentContext =
@@ -267,21 +224,14 @@ export async function buildPrimarySessionContext(input: {
   const feedbackContent = input.feedbackContent;
   if (feedbackIds.length > 0) {
     if (feedbackContent === undefined)
-      throw new Error(
-        "Primary-session recovery requires the current feedback ledger",
-      );
+      throw new Error("Primary-session recovery requires the current feedback ledger");
     const ledger = JSON.parse(feedbackContent) as {
       entries?: Array<{ id?: string; kind?: string }>;
     };
     const ids = new Set(
       (ledger.entries ?? []).flatMap((entry) => {
         if (typeof entry.id !== "string") return [];
-        return [
-          entry.id,
-          ...(typeof entry.kind === "string"
-            ? [`${entry.kind}:${entry.id}`]
-            : []),
-        ];
+        return [entry.id, ...(typeof entry.kind === "string" ? [`${entry.kind}:${entry.id}`] : [])];
       }),
     );
     if (feedbackIds.some((id) => !ids.has(id)))

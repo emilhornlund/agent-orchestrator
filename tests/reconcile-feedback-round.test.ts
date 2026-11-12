@@ -24,10 +24,7 @@ function fixture() {
   const store = new FeedbackLedgerStore(path.join(root, "state"), project);
   return { store, sha: "a".repeat(40) };
 }
-const entry = (
-  id: string,
-  overrides: Partial<FeedbackLedgerEntry> = {},
-): FeedbackLedgerEntry => ({
+const entry = (id: string, overrides: Partial<FeedbackLedgerEntry> = {}): FeedbackLedgerEntry => ({
   kind: "inline-comment",
   id,
   author: "reviewer",

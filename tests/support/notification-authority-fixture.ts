@@ -16,10 +16,7 @@ import type { RunRecord } from "../../src/task-session/run-record.js";
 import { TrelloClient } from "../../src/trello/trello-client.js";
 import { GitClient } from "../../src/git/git-client.js";
 import { GitHubClient } from "../../src/github/github-client.js";
-import {
-  OpenCodeClient,
-  type OpenCodeRunOptions,
-} from "../../src/opencode/opencode-client.js";
+import { OpenCodeClient, type OpenCodeRunOptions } from "../../src/opencode/opencode-client.js";
 import { CommandRunner } from "../../src/process/command-runner.js";
 import { getRefinementResultPath } from "../../src/refinement/refinement-result.js";
 import type { RefinementHistoryAction } from "../../src/refinement/refinement-mutation-snapshot.js";
@@ -88,20 +85,13 @@ export async function notificationAuthorityFixture(
       timeoutMinutes: 1,
     },
   } as ProjectConfig & { contextRoot: string };
-  const coordinationRoot =
-    shared?.coordinationRoot ?? path.join(base, "coordination");
+  const coordinationRoot = shared?.coordinationRoot ?? path.join(base, "coordination");
   if (!fs.existsSync(coordinationRoot)) {
     fs.mkdirSync(coordinationRoot);
-    provisionCoordinationNamespace(
-      coordinationRoot,
-      "notification-authority-test",
-    );
+    provisionCoordinationNamespace(coordinationRoot, "notification-authority-test");
   }
   const config = {
-    projects: [
-      ...(shared?.otherProjects.map((other) => other.project) ?? []),
-      project,
-    ],
+    projects: [...(shared?.otherProjects.map((other) => other.project) ?? []), project],
     workflow: {
       contextRoot: project.contextRoot,
       coordinationRoot,
@@ -172,8 +162,7 @@ export async function notificationAuthorityFixture(
     const method = init?.method ?? "GET";
     const parts = url.pathname.split("/");
     requests.push(`${method}:${url.pathname}`);
-    if (method === "GET" && parts[2] === "members")
-      return Response.json({ id: "orchestrator" });
+    if (method === "GET" && parts[2] === "members") return Response.json({ id: "orchestrator" });
     if (method === "GET" && parts[2] === "lists")
       return Response.json(card.idList === parts[3] ? [card] : []);
     if (method === "GET" && parts[2] === "boards")
@@ -202,12 +191,8 @@ export async function notificationAuthorityFixture(
     if (method === "PUT") {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
       const old = {
-        ...(typeof body.name === "string" && body.name !== card.name
-          ? { name: card.name }
-          : {}),
-        ...(typeof body.desc === "string" && body.desc !== card.desc
-          ? { desc: card.desc }
-          : {}),
+        ...(typeof body.name === "string" && body.name !== card.name ? { name: card.name } : {}),
+        ...(typeof body.desc === "string" && body.desc !== card.desc ? { desc: card.desc } : {}),
       };
       if (typeof body.name === "string") card.name = body.name;
       if (typeof body.desc === "string") card.desc = body.desc;
@@ -262,21 +247,15 @@ export async function notificationAuthorityFixture(
   let git = {
     fetch: vi.fn(async () => {}),
     branchExists: vi.fn(async () => false),
-    addWorktreeWithNewBranch: vi.fn(
-      async (_repo: string, directory: string) => {
-        fs.mkdirSync(directory, { recursive: true });
-      },
-    ),
+    addWorktreeWithNewBranch: vi.fn(async (_repo: string, directory: string) => {
+      fs.mkdirSync(directory, { recursive: true });
+    }),
     getStatus: vi.fn(async (directory: string) =>
-      fs.existsSync(
-        path.join(directory, ".agent-orchestrator/refinement-result.json"),
-      )
+      fs.existsSync(path.join(directory, ".agent-orchestrator/refinement-result.json"))
         ? "?? .agent-orchestrator/refinement-result.json"
         : "",
     ),
-    getCurrentBranch: vi.fn(
-      async (directory: string) => `agent/${path.basename(directory)}`,
-    ),
+    getCurrentBranch: vi.fn(async (directory: string) => `agent/${path.basename(directory)}`),
     getHeadSha: vi.fn(async () => "a".repeat(40)),
     getHeadTrackedFiles: vi.fn(async () => []),
     getCommittableChangedPaths: vi.fn(async () => []),
@@ -294,23 +273,14 @@ export async function notificationAuthorityFixture(
     const run = isolated.git;
     const remote = path.join(base, "remote.git");
     run(repositoryPath, "init", "-b", "main");
-    fs.writeFileSync(
-      path.join(repositoryPath, "source.txt"),
-      "Repository evidence\n",
-    );
+    fs.writeFileSync(path.join(repositoryPath, "source.txt"), "Repository evidence\n");
     run(repositoryPath, "add", ".");
     run(repositoryPath, "commit", "-m", "baseline");
     run(base, "init", "--bare", remote);
     run(repositoryPath, "remote", "add", "origin", remote);
     run(repositoryPath, "push", "origin", "main");
     run(repositoryPath, "fetch", "origin", "main");
-    run(
-      repositoryPath,
-      "remote",
-      "set-url",
-      "origin",
-      `https://github.com/owner/${id}.git`,
-    );
+    run(repositoryPath, "remote", "set-url", "origin", `https://github.com/owner/${id}.git`);
     git = new GitClient(async (cwd, args, override) =>
       execFileSync(
         "git",
@@ -376,9 +346,7 @@ export async function notificationAuthorityFixture(
       id,
       () => lease.assertHeld(),
       Date.now,
-      notificationTriggerObserver(pinned.storageRoot, id, () =>
-        lease.assertHeld(),
-      ),
+      notificationTriggerObserver(pinned.storageRoot, id, () => lease.assertHeld()),
     );
   const poll = () =>
     pollProject(

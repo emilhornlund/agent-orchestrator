@@ -42,9 +42,7 @@ function hasControlCharacter(value: string): boolean {
   return Array.from(value).some((character) => {
     const code = character.codePointAt(0);
 
-    return (
-      code !== undefined && (code <= 0x1f || (code >= 0x7f && code <= 0x9f))
-    );
+    return code !== undefined && (code <= 0x1f || (code >= 0x7f && code <= 0x9f));
   });
 }
 
@@ -123,14 +121,7 @@ const sessionRecoveryStateSchema = z.strictObject({
 
 const taskSetupState = z.strictObject({
   command: z.string().min(1).nullable(),
-  status: z.enum([
-    "not-required",
-    "pending",
-    "active",
-    "passed",
-    "failed",
-    "ambiguous",
-  ]),
+  status: z.enum(["not-required", "pending", "active", "passed", "failed", "ambiguous"]),
   worktreePath: z.string().min(1).optional(),
   before: z
     .string()
@@ -151,12 +142,7 @@ const taskSetupState = z.strictObject({
   executionId: nonBlankIdentifier.optional(),
   exitCode: z.number().int().nullable().optional(),
   diagnostic: z.string().max(2_000).optional(),
-  attempts: z
-    .number()
-    .int()
-    .nonnegative()
-    .max(OPERATION_RECOVERY_MAX_EXECUTIONS)
-    .optional(),
+  attempts: z.number().int().nonnegative().max(OPERATION_RECOVERY_MAX_EXECUTIONS).optional(),
   history: z
     .array(
       z.strictObject({
@@ -238,9 +224,7 @@ export const primaryOperationSchema = z.strictObject({
   failureExecutions: z.number().int().nonnegative().safe().optional(),
   dependencyOutages: z.number().int().nonnegative().safe().optional(),
   accountedExecution: z.number().int().positive().safe().optional(),
-  lastExecutionClassification: z
-    .enum(["failure", "dependency-outage"])
-    .optional(),
+  lastExecutionClassification: z.enum(["failure", "dependency-outage"]).optional(),
   status: z.enum([
     "intent",
     "dispatched",
@@ -297,10 +281,7 @@ const primaryOperationsSchema = z
   .record(nonBlankIdentifier, primaryOperationSchema)
   .superRefine((operations, ctx) => {
     for (const [key, operation] of Object.entries(operations)) {
-      if (
-        operation.status === "cancelled" &&
-        operation.cancellationEvidence === undefined
-      )
+      if (operation.status === "cancelled" && operation.cancellationEvidence === undefined)
         ctx.addIssue({
           code: "custom",
           path: [key, "cancellationEvidence"],
@@ -340,8 +321,7 @@ const primaryOperationsSchema = z
         ctx.addIssue({
           code: "custom",
           path: [key, "commitMessageResult"],
-          message:
-            "Commit-message result requires a completed advisory operation",
+          message: "Commit-message result requires a completed advisory operation",
         });
       if (
         operation.status === "exhausted" &&
@@ -357,8 +337,7 @@ const primaryOperationsSchema = z
         });
       if (
         operation.status === "exhausted" &&
-        (operation.failureExecutions ?? operation.executions) <
-          OPERATION_RECOVERY_MAX_EXECUTIONS
+        (operation.failureExecutions ?? operation.executions) < OPERATION_RECOVERY_MAX_EXECUTIONS
       )
         ctx.addIssue({
           code: "custom",
@@ -391,9 +370,7 @@ const validationEvidenceSchema = z.strictObject({
   startedAt: z.string().datetime(),
   completedAt: z.string().datetime(),
   exitCode: z.number().int().nullable(),
-  status: z
-    .enum(["passed", "failed", "timed-out", "aborted", "uncertain", "skipped"])
-    .optional(),
+  status: z.enum(["passed", "failed", "timed-out", "aborted", "uncertain", "skipped"]).optional(),
   diagnostic: z.string().max(2_000),
   contentIdentity: taskSessionContentIdentity,
 });
@@ -403,9 +380,7 @@ const validationRepairSchema = z
     cycleId: nonBlankIdentifier,
     status: z.enum(["active", "passed", "exhausted", "skipped"]),
     maxAttempts: z.number().int().nonnegative().safe().optional(),
-    stopReason: z
-      .enum(["attempt-limit", "no-change", "finished-early"])
-      .optional(),
+    stopReason: z.enum(["attempt-limit", "no-change", "finished-early"]).optional(),
     finishAfterNextCheck: z.enum(["no-change", "finished-early"]).optional(),
     activePrimaryOperation: z
       .strictObject({
@@ -419,14 +394,7 @@ const validationRepairSchema = z
               startedAt: z.string().datetime(),
               completedAt: z.string().datetime(),
               exitCode: z.number().int().nullable(),
-              status: z.enum([
-                "passed",
-                "failed",
-                "timed-out",
-                "aborted",
-                "uncertain",
-                "skipped",
-              ]),
+              status: z.enum(["passed", "failed", "timed-out", "aborted", "uncertain", "skipped"]),
               timedOut: z.boolean(),
               aborted: z.boolean(),
               diagnostic: z.string().max(8_000),
@@ -486,10 +454,7 @@ const validationRepairSchema = z
         message: "Only exhausted validation repairs have a stop reason",
       });
     }
-    if (
-      repair.finishAfterNextCheck !== undefined &&
-      repair.status !== "active"
-    ) {
+    if (repair.finishAfterNextCheck !== undefined && repair.status !== "active") {
       ctx.addIssue({
         code: "custom",
         path: ["finishAfterNextCheck"],
@@ -521,9 +486,7 @@ const reviewRepairSchema = z.strictObject({
       "review-unavailable",
     ])
     .optional(),
-  finishAfterNextReview: z
-    .union([z.boolean(), z.enum(["no-change", "finished-early"])])
-    .optional(),
+  finishAfterNextReview: z.union([z.boolean(), z.enum(["no-change", "finished-early"])]).optional(),
   activePrimaryOperation: z
     .strictObject({
       operationId: nonBlankIdentifier,
@@ -580,10 +543,7 @@ const reviewRepairSchema = z.strictObject({
           });
         }
         ids.add(finding.id);
-        if (
-          finding.status === "superseded" &&
-          finding.justification === undefined
-        ) {
+        if (finding.status === "superseded" && finding.justification === undefined) {
           ctx.addIssue({
             code: "custom",
             path: [index, "justification"],
@@ -767,15 +727,11 @@ const taskExecutionRecordSchema = z
         priorReview: implementationReviewResultSchema.optional(),
       })
       .superRefine((marker, ctx) => {
-        if (
-          marker.priorReview !== undefined &&
-          marker.priorReview.verdict !== "fail"
-        )
+        if (marker.priorReview !== undefined && marker.priorReview.verdict !== "fail")
           ctx.addIssue({
             code: "custom",
             path: ["priorReview", "verdict"],
-            message:
-              "Only a prior negative review may be retained as unavailable-review context",
+            message: "Only a prior negative review may be retained as unavailable-review context",
           });
       })
       .optional(),
@@ -801,10 +757,7 @@ const taskExecutionRecordSchema = z
     updatedAt: z.string().datetime(),
   })
   .superRefine((record, ctx) => {
-    if (
-      record.sessionCreationStatus === "bound" &&
-      record.primarySessionId === undefined
-    ) {
+    if (record.sessionCreationStatus === "bound" && record.primarySessionId === undefined) {
       ctx.addIssue({
         code: "custom",
         path: ["primarySessionId"],
@@ -820,8 +773,7 @@ const taskExecutionRecordSchema = z
       ctx.addIssue({
         code: "custom",
         path: ["sessionCreationStatus"],
-        message:
-          "Cannot have a primary session ID before session creation is bound",
+        message: "Cannot have a primary session ID before session creation is bound",
       });
     }
 
@@ -861,9 +813,7 @@ const taskExecutionRecordSchema = z
       });
     }
 
-    const pullRequestIsRequired = ["ci", "human-feedback", "done"].includes(
-      record.phase,
-    );
+    const pullRequestIsRequired = ["ci", "human-feedback", "done"].includes(record.phase);
 
     if (pullRequestIsRequired && record.pullRequest === undefined) {
       ctx.addIssue({
@@ -882,15 +832,11 @@ const taskExecutionRecordSchema = z
     }
 
     if (record.validationRepair !== undefined) {
-      if (
-        record.validationRepair.status === "active" &&
-        record.phase !== "validation"
-      ) {
+      if (record.validationRepair.status === "active" && record.phase !== "validation") {
         ctx.addIssue({
           code: "custom",
           path: ["validationRepair"],
-          message:
-            "Active validation repair state is only valid during validation",
+          message: "Active validation repair state is only valid during validation",
         });
       }
 
@@ -964,8 +910,7 @@ const taskExecutionRecordSchema = z
         ctx.addIssue({
           code: "custom",
           path: ["validationRepair", "coverageEvidence", "contentIdentity"],
-          message:
-            "Validation and coverage evidence must share a source snapshot",
+          message: "Validation and coverage evidence must share a source snapshot",
         });
       }
     }
@@ -990,10 +935,9 @@ const taskExecutionRecordSchema = z
         });
       }
 
-      const stopReasonRequiresStopped = [
-        "validation-exhausted",
-        "review-unavailable",
-      ].includes(record.reviewRepair.stopReason ?? "");
+      const stopReasonRequiresStopped = ["validation-exhausted", "review-unavailable"].includes(
+        record.reviewRepair.stopReason ?? "",
+      );
       if (
         record.reviewRepair.stopReason !== undefined &&
         !stopReasonRequiresStopped &&
@@ -1005,10 +949,7 @@ const taskExecutionRecordSchema = z
           message: "A completed review stop reason requires an exhausted cycle",
         });
       }
-      if (
-        (record.reviewRepair.status === "stopped") !==
-        stopReasonRequiresStopped
-      ) {
+      if ((record.reviewRepair.status === "stopped") !== stopReasonRequiresStopped) {
         ctx.addIssue({
           code: "custom",
           path: ["reviewRepair", "stopReason"],
@@ -1041,16 +982,10 @@ const taskExecutionRecordSchema = z
         record.reviewRepair.status !== "active" &&
         record.phase !== "review" &&
         !(
-          ["passed", "exhausted", "stopped"].includes(
-            record.reviewRepair.status,
-          ) &&
-          [
-            "publication",
-            "ci",
-            "human-feedback",
-            "attention-required",
-            "done",
-          ].includes(record.phase)
+          ["passed", "exhausted", "stopped"].includes(record.reviewRepair.status) &&
+          ["publication", "ci", "human-feedback", "attention-required", "done"].includes(
+            record.phase,
+          )
         ) &&
         !(
           record.reviewRepair.status === "stopped" &&
@@ -1061,16 +996,12 @@ const taskExecutionRecordSchema = z
         ctx.addIssue({
           code: "custom",
           path: ["reviewRepair", "status"],
-          message:
-            "Completed review repair is only valid during the review phase",
+          message: "Completed review repair is only valid during the review phase",
         });
       }
 
       const { maxAttempts, finalReview } = record.reviewRepair;
-      if (
-        maxAttempts !== undefined &&
-        record.retryCounters.review > maxAttempts
-      ) {
+      if (maxAttempts !== undefined && record.retryCounters.review > maxAttempts) {
         ctx.addIssue({
           code: "custom",
           path: ["retryCounters", "review"],
@@ -1088,16 +1019,14 @@ const taskExecutionRecordSchema = z
         ctx.addIssue({
           code: "custom",
           path: ["reviewRepair", "status"],
-          message:
-            "Exhausted review repair requires the configured number of attempts",
+          message: "Exhausted review repair requires the configured number of attempts",
         });
       }
       if (
         finalReview !== undefined &&
         (finalReview.projectId !== record.projectId ||
           finalReview.cardId !== record.cardId ||
-          (record.reviewRepair.status === "passed") !==
-            (finalReview.verdict === "pass"))
+          (record.reviewRepair.status === "passed") !== (finalReview.verdict === "pass"))
       ) {
         ctx.addIssue({
           code: "custom",
@@ -1111,16 +1040,12 @@ const taskExecutionRecordSchema = z
       if (
         record.ciRepair.status !== "active" &&
         !["ci", "human-feedback", "done"].includes(record.phase) &&
-        !(
-          record.ciRepair.status === "exhausted" &&
-          record.phase === "attention-required"
-        )
+        !(record.ciRepair.status === "exhausted" && record.phase === "attention-required")
       ) {
         ctx.addIssue({
           code: "custom",
           path: ["ciRepair", "status"],
-          message:
-            "Completed CI repair state must remain in CI or attention-required",
+          message: "Completed CI repair state must remain in CI or attention-required",
         });
       }
       if (record.retryCounters.ci > (record.ciRepair.maxAttempts ?? 2)) {
@@ -1142,15 +1067,11 @@ const taskExecutionRecordSchema = z
       }
     }
 
-    if (
-      record.feedbackRemediation?.status === "active" &&
-      record.phase !== "human-feedback"
-    ) {
+    if (record.feedbackRemediation?.status === "active" && record.phase !== "human-feedback") {
       ctx.addIssue({
         code: "custom",
         path: ["feedbackRemediation"],
-        message:
-          "Feedback remediation state is only valid during human feedback",
+        message: "Feedback remediation state is only valid during human feedback",
       });
     }
 
@@ -1161,8 +1082,7 @@ const taskExecutionRecordSchema = z
       ctx.addIssue({
         code: "custom",
         path: ["reviewObservation", "headSha"],
-        message:
-          "Review observation head must match the persisted pull request head",
+        message: "Review observation head must match the persisted pull request head",
       });
     }
 

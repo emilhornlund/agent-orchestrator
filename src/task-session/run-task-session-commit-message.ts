@@ -4,10 +4,7 @@ import fs from "node:fs";
 import type { ProjectConfig } from "../config/config.js";
 import type { GitClient } from "../git/git-client.js";
 import { buildCommitPrompt } from "../opencode/build-commit-prompt.js";
-import type {
-  OpenCodeClient,
-  OpenCodeRunOptions,
-} from "../opencode/opencode-client.js";
+import type { OpenCodeClient, OpenCodeRunOptions } from "../opencode/opencode-client.js";
 import {
   captureRepositorySnapshot,
   clearCommitResult,
@@ -40,12 +37,7 @@ export interface RunTaskSessionCommitMessageOptions {
   openCode: OpenCodeClient;
   runOptions: Omit<
     OpenCodeRunOptions,
-    | "cwd"
-    | "prompt"
-    | "sessionId"
-    | "captureSessionId"
-    | "readOnly"
-    | "onExecutionPrepared"
+    "cwd" | "prompt" | "sessionId" | "captureSessionId" | "readOnly" | "onExecutionPrepared"
   >;
 }
 
@@ -72,11 +64,7 @@ export async function runTaskSessionCommitMessage(
 ): Promise<string> {
   const { project, card, operationKey, commitIntentId, operationId } = options;
   let record = options.taskRecordStore.read(card.id);
-  if (
-    record === null ||
-    record.projectId !== project.id ||
-    record.operationKey !== operationKey
-  )
+  if (record === null || record.projectId !== project.id || record.operationKey !== operationKey)
     throw new CommitMessageRecoveryBlockedError(
       "Commit-message generation does not match the owned task operation",
     );
@@ -88,8 +76,7 @@ export async function runTaskSessionCommitMessage(
       (["intent", "dispatched", "ambiguous"].includes(operation.status) ||
         (operation.status === "failed" && operation.retrySafe !== true)),
   );
-  if (unresolvedWriter !== undefined)
-    throw new PrimaryOperationWaitingError(unresolvedWriter.id);
+  if (unresolvedWriter !== undefined) throw new PrimaryOperationWaitingError(unresolvedWriter.id);
 
   const legacyOperationId = `${operationKey}:commit-message`;
   const legacyOperation = record.primaryOperations?.[legacyOperationId];
@@ -98,8 +85,7 @@ export async function runTaskSessionCommitMessage(
     (legacyOperation.status === "intent" ||
       legacyOperation.status === "dispatched" ||
       legacyOperation.status === "ambiguous" ||
-      (legacyOperation.status === "failed" &&
-        legacyOperation.retrySafe !== true))
+      (legacyOperation.status === "failed" && legacyOperation.retrySafe !== true))
   )
     throw new PrimaryOperationWaitingError(legacyOperationId);
   if (legacyOperation !== undefined) clearCommitResult(options.worktreePath);
@@ -121,11 +107,7 @@ export async function runTaskSessionCommitMessage(
     )
     .digest("hex");
   const resultPath = getCommitResultRelativePath(resultArtifactHash);
-  const before = await captureRepositorySnapshot(
-    options.git,
-    options.worktreePath,
-    [resultPath],
-  );
+  const before = await captureRepositorySnapshot(options.git, options.worktreePath, [resultPath]);
   const intentIdentity = `sha256:${createHash("sha256")
     .update(
       JSON.stringify({
@@ -150,17 +132,14 @@ export async function runTaskSessionCommitMessage(
         "Persisted commit message does not match its completed commit intent",
       );
     clearCommitResult(options.worktreePath, resultArtifactHash);
-    if (operationId === legacyOperationId)
-      clearCommitResult(options.worktreePath);
+    if (operationId === legacyOperationId) clearCommitResult(options.worktreePath);
     return savedOperation.commitMessageResult.message;
   }
 
   if (
     legacyOperationId === operationId &&
     legacyOperation?.status === "completed" &&
-    !fs.existsSync(
-      getCommitResultPath(options.worktreePath, resultArtifactHash),
-    )
+    !fs.existsSync(getCommitResultPath(options.worktreePath, resultArtifactHash))
   ) {
     // Older completed message operations have no source-bound ledger result.
     // Their message is optional metadata, so retain the operation and let the
@@ -187,11 +166,8 @@ export async function runTaskSessionCommitMessage(
     {
       ...options.runOptions,
       cwd: options.worktreePath,
-      sessionLogPath:
-        options.runOptions.sessionLogPath ??
-        getSessionLogPath(project.id, card.id),
-      sessionLabel:
-        options.runOptions.sessionLabel ?? "Task-session commit message",
+      sessionLogPath: options.runOptions.sessionLogPath ?? getSessionLogPath(project.id, card.id),
+      sessionLabel: options.runOptions.sessionLabel ?? "Task-session commit message",
       prompt: buildCommitPrompt(card, resultPath),
     },
     {},
@@ -202,25 +178,18 @@ export async function runTaskSessionCommitMessage(
       // records; the operation ID binds this message to its commit intent.
       activity: "advisory",
       inspectPending: (entry) =>
-        inspectPrimaryOperationEvidence(
-          options.taskRecordStore,
-          card.id,
-          entry.id,
-          {
-            trustedRoot:
-              ProjectRunAuthority.current(project.id)?.store.storageRoot ??
-              getProcessRuntime().artifactRoot,
-            cwd: options.worktreePath,
-          },
-        ),
+        inspectPrimaryOperationEvidence(options.taskRecordStore, card.id, entry.id, {
+          trustedRoot:
+            ProjectRunAuthority.current(project.id)?.store.storageRoot ??
+            getProcessRuntime().artifactRoot,
+          cwd: options.worktreePath,
+        }),
     },
   );
   if (runResult.exitCode !== 0) {
-    const afterFailure = await captureRepositorySnapshot(
-      options.git,
-      options.worktreePath,
-      [resultPath],
-    );
+    const afterFailure = await captureRepositorySnapshot(options.git, options.worktreePath, [
+      resultPath,
+    ]);
     if (!repositorySnapshotsEqual(before, afterFailure))
       throw new CommitMessageRecoveryBlockedError(
         "Commit-message generation changed source files outside its owned result artifact",
@@ -234,10 +203,7 @@ export async function runTaskSessionCommitMessage(
   let message: string;
   let invalidResult: InvalidCommitResultError | undefined;
   try {
-    message = readCommitResult(
-      options.worktreePath,
-      resultArtifactHash,
-    ).message;
+    message = readCommitResult(options.worktreePath, resultArtifactHash).message;
   } catch (error) {
     if (
       legacyOperationId === operationId &&
@@ -252,11 +218,7 @@ export async function runTaskSessionCommitMessage(
       throw error;
     }
   }
-  const after = await captureRepositorySnapshot(
-    options.git,
-    options.worktreePath,
-    [resultPath],
-  );
+  const after = await captureRepositorySnapshot(options.git, options.worktreePath, [resultPath]);
   if (!repositorySnapshotsEqual(before, after)) {
     throw new CommitMessageRecoveryBlockedError(
       "Commit-message generation changed source files outside its owned result artifact",
@@ -273,14 +235,8 @@ export async function runTaskSessionCommitMessage(
   }
 
   record = options.taskRecordStore.read(card.id);
-  if (
-    record === null ||
-    record.projectId !== project.id ||
-    record.operationKey !== operationKey
-  )
-    throw new Error(
-      "Task ownership changed before the commit message could be persisted",
-    );
+  if (record === null || record.projectId !== project.id || record.operationKey !== operationKey)
+    throw new Error("Task ownership changed before the commit message could be persisted");
   const completedOperation = record.primaryOperations?.[operationId];
   if (completedOperation?.status !== "completed")
     throw new Error(
@@ -291,9 +247,7 @@ export async function runTaskSessionCommitMessage(
     (completedOperation.commitMessageResult.intentIdentity !== intentIdentity ||
       completedOperation.commitMessageResult.message !== message)
   )
-    throw new Error(
-      "Commit-message replay result conflicts with its persisted intent result",
-    );
+    throw new Error("Commit-message replay result conflicts with its persisted intent result");
 
   if (completedOperation.commitMessageResult === undefined)
     options.taskRecordStore.compareAndSwap(card.id, record.revision, {
@@ -309,7 +263,6 @@ export async function runTaskSessionCommitMessage(
       updatedAt: nextTimestamp(record.updatedAt),
     });
   clearCommitResult(options.worktreePath, resultArtifactHash);
-  if (legacyOperationId === operationId)
-    clearCommitResult(options.worktreePath);
+  if (legacyOperationId === operationId) clearCommitResult(options.worktreePath);
   return message;
 }

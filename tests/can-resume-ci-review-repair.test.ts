@@ -101,9 +101,7 @@ describe("CI review recovery eligibility", () => {
       { reviewRepair: { ...record.reviewRepair!, cycleId: "other" } },
       { retryCounters: { ...record.retryCounters, review: 0 } },
     ])
-      expect(canResumeCiReviewRepair({ ...record, ...update }, event)).toBe(
-        false,
-      );
+      expect(canResumeCiReviewRepair({ ...record, ...update }, event)).toBe(false);
   });
 
   it("keeps a reserved review selectable while its own execution is ambiguous", () => {

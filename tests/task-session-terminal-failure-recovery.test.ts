@@ -47,9 +47,7 @@ describe("terminal failure recovery", () => {
     } satisfies PrimaryOperationEntry;
 
     expect(isPlanningOutageSafeToSkip(operation)).toBe(false);
-    expect(isPlanningOutageSafeToSkip({ ...operation, retrySafe: true })).toBe(
-      true,
-    );
+    expect(isPlanningOutageSafeToSkip({ ...operation, retrySafe: true })).toBe(true);
     expect(
       isPlanningOutageSafeToSkip({
         ...operation,
@@ -60,9 +58,7 @@ describe("terminal failure recovery", () => {
   });
 
   it("keeps a plan-review process-evidence failure fenced before implementation", async () => {
-    root = fs.mkdtempSync(
-      path.join(os.tmpdir(), "plan-review-evidence-failure-"),
-    );
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "plan-review-evidence-failure-"));
     const projectId = "agent-orchestrator";
     const cardId = "plan-review-safety-card";
     const contextRoot = path.join(root, "state");
@@ -143,29 +139,25 @@ describe("terminal failure recovery", () => {
       assumptions: [],
       blockers: [],
     };
-    const runOpenCode = vi.fn(
-      async (options: { captureSessionId?: boolean }) => {
-        if (!options.captureSessionId)
-          throw new ProcessEvidenceError(
-            "review evidence could not be finalized",
-          );
-        return {
-          exitCode: 0,
-          output: [
-            JSON.stringify({
-              type: "step_start",
-              sessionID: "ses-plan-safety",
-            }),
-            JSON.stringify({
-              type: "text",
-              sessionID: "ses-plan-safety",
-              part: { type: "text", text: JSON.stringify(plan) },
-            }),
-          ].join("\n"),
-          errorOutput: "",
-        };
-      },
-    );
+    const runOpenCode = vi.fn(async (options: { captureSessionId?: boolean }) => {
+      if (!options.captureSessionId)
+        throw new ProcessEvidenceError("review evidence could not be finalized");
+      return {
+        exitCode: 0,
+        output: [
+          JSON.stringify({
+            type: "step_start",
+            sessionID: "ses-plan-safety",
+          }),
+          JSON.stringify({
+            type: "text",
+            sessionID: "ses-plan-safety",
+            part: { type: "text", text: JSON.stringify(plan) },
+          }),
+        ].join("\n"),
+        errorOutput: "",
+      };
+    });
     const taskStore = new TaskExecutionStore(contextRoot, project);
 
     await expect(
@@ -175,11 +167,9 @@ describe("terminal failure recovery", () => {
         git: {
           fetch: vi.fn(async () => undefined),
           branchExists: vi.fn(async () => false),
-          addWorktreeWithNewBranch: vi.fn(
-            async (_repo: string, worktree: string) => {
-              fs.mkdirSync(worktree, { recursive: true });
-            },
-          ),
+          addWorktreeWithNewBranch: vi.fn(async (_repo: string, worktree: string) => {
+            fs.mkdirSync(worktree, { recursive: true });
+          }),
         } as unknown as GitClient,
         github: {
           findPullRequestState: vi.fn(async () => null),
@@ -199,11 +189,9 @@ describe("terminal failure recovery", () => {
     expect(record?.planReviewAdvice).toBeUndefined();
     expect(record?.primarySessionId).toBe("ses-plan-safety");
     expect(runOpenCode).toHaveBeenCalledTimes(2);
-    expect(
-      runOpenCode.mock.calls.every(
-        ([options]) => options.captureSessionId !== false,
-      ),
-    ).toBe(true);
+    expect(runOpenCode.mock.calls.every(([options]) => options.captureSessionId !== false)).toBe(
+      true,
+    );
   });
 
   it.each([false, true])(
@@ -334,11 +322,9 @@ describe("terminal failure recovery", () => {
           git: {
             fetch: vi.fn(async () => undefined),
             branchExists: vi.fn(async () => false),
-            addWorktreeWithNewBranch: vi.fn(
-              async (_repo: string, worktree: string) => {
-                fs.mkdirSync(worktree, { recursive: true });
-              },
-            ),
+            addWorktreeWithNewBranch: vi.fn(async (_repo: string, worktree: string) => {
+              fs.mkdirSync(worktree, { recursive: true });
+            }),
           } as unknown as GitClient,
           github: {
             findPullRequestState: vi.fn(async () =>
@@ -360,9 +346,7 @@ describe("terminal failure recovery", () => {
           prepareAttachmentContext: async () => attachmentContext,
         });
       const workflow = () =>
-        authorityRef.current === undefined
-          ? runWorkflow()
-          : authorityRef.current.run(runWorkflow);
+        authorityRef.current === undefined ? runWorkflow() : authorityRef.current.run(runWorkflow);
 
       await workflow();
       if (openPr) {
@@ -404,12 +388,7 @@ describe("terminal failure recovery", () => {
         token: "clarification-lease",
         assertHeld: () => undefined,
       };
-      const canonicalRunStore = new RunStore(
-        canonicalRoot,
-        "clarification-attempt",
-        pinned,
-        lease,
-      );
+      const canonicalRunStore = new RunStore(canonicalRoot, "clarification-attempt", pinned, lease);
       const now = new Date().toISOString();
       canonicalRunStore.create({
         version: 1,
@@ -455,11 +434,7 @@ describe("terminal failure recovery", () => {
         undefined,
         cardId,
       );
-      const canonicalTaskStore = new TaskExecutionStore(
-        contextRoot,
-        project,
-        authorityRef.current,
-      );
+      const canonicalTaskStore = new TaskExecutionStore(contextRoot, project, authorityRef.current);
       const prior = taskStore.read(cardId)!;
       const clarificationPayload = taskStore.readPrimaryResultArtifact(
         prior.terminalFailure!.clarificationArtifact!,
@@ -478,11 +453,7 @@ describe("terminal failure recovery", () => {
         createdAt: now,
         updatedAt: now,
       });
-      const canonicalQueue = new TaskMutationQueue(
-        contextRoot,
-        project,
-        authorityRef.current,
-      );
+      const canonicalQueue = new TaskMutationQueue(contextRoot, project, authorityRef.current);
       canonicalQueue.enqueue({
         projectId,
         cardId,
@@ -496,15 +467,15 @@ describe("terminal failure recovery", () => {
       taskStore = canonicalTaskStore;
       await expect(workflow()).rejects.toThrow("Failed move response loss");
       expect(taskStore.read(cardId)?.terminalFailure?.outcome).toBe("pending");
-      const simulateProcessRestart = vi
-        .spyOn(process, "kill")
-        .mockImplementation(((pid: number) => {
-          if (pid === process.pid)
-            throw Object.assign(new Error("simulated old process exit"), {
-              code: "ESRCH",
-            });
-          return true;
-        }) as typeof process.kill);
+      const simulateProcessRestart = vi.spyOn(process, "kill").mockImplementation(((
+        pid: number,
+      ) => {
+        if (pid === process.pid)
+          throw Object.assign(new Error("simulated old process exit"), {
+            code: "ESRCH",
+          });
+        return true;
+      }) as typeof process.kill);
       await workflow();
       simulateProcessRestart.mockRestore();
 
@@ -544,9 +515,7 @@ describe("terminal failure recovery", () => {
         title: card.name,
         description: card.desc,
       });
-      expect(evidence.attachmentContext.manifest.attachments[0]?.name).toBe(
-        "export-notes.md",
-      );
+      expect(evidence.attachmentContext.manifest.attachments[0]?.name).toBe("export-notes.md");
     },
   );
 
@@ -650,23 +619,17 @@ describe("terminal failure recovery", () => {
           status: "stopped-after-dispatch",
           operationId: entry.id,
           execution: entry.executions,
-          ...(entry.lastSessionId === undefined
-            ? {}
-            : { sessionId: entry.lastSessionId }),
+          ...(entry.lastSessionId === undefined ? {} : { sessionId: entry.lastSessionId }),
         }),
       }),
     ).rejects.toBeInstanceOf(PrimaryOperationExhaustedError);
     const exhausted = store.read(cardId)!;
-    expect(exhausted.primaryOperations?.[primaryOperationId]?.executions).toBe(
-      3,
-    );
+    expect(exhausted.primaryOperations?.[primaryOperationId]?.executions).toBe(3);
     expect(
       persistPrimaryOperationRecovery(
         store,
         exhausted,
-        new PrimaryOperationExhaustedError(
-          `Primary operation ${primaryOperationId} exhausted`,
-        ),
+        new PrimaryOperationExhaustedError(`Primary operation ${primaryOperationId} exhausted`),
         1000,
       ),
     ).toBe("prepublication-failure");
@@ -683,11 +646,7 @@ describe("terminal failure recovery", () => {
     queue.claimNext();
     queue.fail("implementation:failure");
 
-    const outbox = new NotificationOutbox(
-      contextRoot,
-      projectId,
-      () => undefined,
-    );
+    const outbox = new NotificationOutbox(contextRoot, projectId, () => undefined);
     const emailNotifier = {
       deliveryTarget: "test-inbox@example.invalid",
       isEventEnabled: (event: string) => event === "failed",
@@ -716,10 +675,7 @@ describe("terminal failure recovery", () => {
 
     await outbox.run(runWorkflow);
 
-    expect(trello.moveCard).toHaveBeenCalledWith(
-      cardId,
-      project.trello.failedListId,
-    );
+    expect(trello.moveCard).toHaveBeenCalledWith(cardId, project.trello.failedListId);
     expect(queue.getActive()).toBeNull();
     expect(store.read(cardId)).toMatchObject({
       primarySessionId: "session-preserved",
@@ -810,9 +766,7 @@ describe("terminal failure recovery", () => {
       store.compareAndSwap(cardId, current.revision, {
         ...current,
         revision: current.revision + 1,
-        updatedAt: new Date(
-          Date.parse(current.updatedAt) + 1_000,
-        ).toISOString(),
+        updatedAt: new Date(Date.parse(current.updatedAt) + 1_000).toISOString(),
       });
     }
     const queue = new TaskMutationQueue(contextRoot, project);
@@ -862,9 +816,7 @@ describe("terminal failure recovery", () => {
       phase: "attention-required",
       primarySessionId: "ses_e8db2e6edffezePNR3A6EPnlR5",
     });
-    expect(fs.readFileSync(path.join(worktree, "preserved.txt"), "utf8")).toBe(
-      "keep me",
-    );
+    expect(fs.readFileSync(path.join(worktree, "preserved.txt"), "utf8")).toBe("keep me");
     await poll();
     expect(trello.moveCard).not.toHaveBeenCalled();
   });

@@ -53,8 +53,7 @@ describe("parseImplementationReviewResult", () => {
         {
           findingId: "finding-defect",
           status: "addressed",
-          rationale:
-            "Fixed the incorrect persisted-value lookup and added a regression test.",
+          rationale: "Fixed the incorrect persisted-value lookup and added a regression test.",
         },
       ],
       requirementDispositions: [
@@ -93,9 +92,7 @@ describe("parseImplementationReviewResult", () => {
         ["REQ-1", "REQ-2"],
       ),
     ).toBeUndefined();
-    expect(
-      parsePrimaryReviewDispositionReport("not JSON", ["finding-style"], []),
-    ).toBeUndefined();
+    expect(parsePrimaryReviewDispositionReport("not JSON", ["finding-style"], [])).toBeUndefined();
     const oversized = JSON.stringify({
       version: 1,
       findingDispositions: [],
@@ -107,9 +104,7 @@ describe("parseImplementationReviewResult", () => {
         },
       ],
     });
-    expect(
-      parsePrimaryReviewDispositionReport(oversized, [], ["REQ-1"]),
-    ).toBeUndefined();
+    expect(parsePrimaryReviewDispositionReport(oversized, [], ["REQ-1"])).toBeUndefined();
     expect(
       parsePrimaryReviewDispositionReport(
         JSON.stringify({
@@ -147,8 +142,7 @@ describe("parseImplementationReviewResult", () => {
       requirementId: "REQ-1",
       reviewedContentIdentity: contentIdentity,
       status: "dismissed" as const,
-      rationale:
-        "The primary confirms the requirement is implemented in the current source.",
+      rationale: "The primary confirms the requirement is implemented in the current source.",
     };
 
     expect(hasUndisposedReviewConcerns(review, [], [dismissal])).toBe(false);
@@ -196,9 +190,7 @@ describe("parseImplementationReviewResult", () => {
       ],
     };
 
-    expect(
-      parseCachedImplementationReviewResult(cached, cachedExpectations),
-    ).toEqual(cached);
+    expect(parseCachedImplementationReviewResult(cached, cachedExpectations)).toEqual(cached);
     expect(() =>
       parseCachedImplementationReviewResult(cached, {
         ...cachedExpectations,
@@ -216,22 +208,17 @@ describe("parseImplementationReviewResult", () => {
           id: "finding-prior",
           kind: "defect" as const,
           summary: "The prior defect remains",
-          detail:
-            "The concrete failure remains present in the reviewed source.",
+          detail: "The concrete failure remains present in the reviewed source.",
         },
       ],
-      previousFindingAssessments: [
-        { findingId: "finding-prior", status: "unresolved" as const },
-      ],
+      previousFindingAssessments: [{ findingId: "finding-prior", status: "unresolved" as const }],
     };
     const legacyExpectations = {
       ...expected,
       previousFindingIds: ["finding-prior"],
     };
 
-    expect(
-      parseCachedImplementationReviewResult(cached, legacyExpectations),
-    ).toEqual(cached);
+    expect(parseCachedImplementationReviewResult(cached, legacyExpectations)).toEqual(cached);
     expect(() =>
       parseCachedImplementationReviewResult(cached, {
         ...legacyExpectations,
@@ -259,9 +246,7 @@ describe("parseImplementationReviewResult", () => {
           detail: "The same concrete failure remains in the current source.",
         },
       ],
-      previousFindingAssessments: [
-        { findingId: priorFindingId, status: "unresolved" as const },
-      ],
+      previousFindingAssessments: [{ findingId: priorFindingId, status: "unresolved" as const }],
     };
 
     expect(
@@ -318,9 +303,7 @@ describe("parseImplementationReviewResult", () => {
       ],
     };
 
-    expect(parseImplementationReviewResult(persistedResult, expected)).toEqual(
-      persistedResult,
-    );
+    expect(parseImplementationReviewResult(persistedResult, expected)).toEqual(persistedResult);
   });
 
   it("rejects missing or duplicate requirement assessments", () => {
@@ -361,9 +344,7 @@ describe("parseImplementationReviewResult", () => {
       parseImplementationReviewResult(
         {
           ...result,
-          previousFindingAssessments: [
-            { findingId: "finding-prior", status: "superseded" },
-          ],
+          previousFindingAssessments: [{ findingId: "finding-prior", status: "superseded" }],
         },
         { ...expected, previousFindingIds: ["finding-prior"] },
       ),
@@ -377,8 +358,7 @@ describe("parseImplementationReviewResult", () => {
             {
               findingId: "finding-prior",
               status: "superseded",
-              justification:
-                "The reported behavior no longer exists in this implementation.",
+              justification: "The reported behavior no longer exists in this implementation.",
             },
           ],
         },
@@ -450,10 +430,7 @@ describe("parseImplementationReviewResult", () => {
     const prior = {
       id: "finding-prior",
       sourceContentIdentity: `sha256:${"b".repeat(64)}`,
-      sourceIdentities: [
-        `sha256:${"b".repeat(64)}`,
-        `sha256:${"c".repeat(64)}`,
-      ],
+      sourceIdentities: [`sha256:${"b".repeat(64)}`, `sha256:${"c".repeat(64)}`],
       status: "resolved" as const,
     };
     const nextIdentity = `sha256:${"c".repeat(64)}`;
@@ -470,9 +447,7 @@ describe("parseImplementationReviewResult", () => {
       ...result,
       verdict: "fail" as const,
       blockingFindings: [reopenedFinding],
-      previousFindingAssessments: [
-        { findingId: prior.id, status: "resolved" as const },
-      ],
+      previousFindingAssessments: [{ findingId: prior.id, status: "resolved" as const }],
       reviewedContentIdentity: nextIdentity,
     };
 
@@ -502,10 +477,7 @@ describe("parseImplementationReviewResult", () => {
 
   it("rejects invalid verdicts and inconsistent pass/fail outcomes", () => {
     expect(() =>
-      parseImplementationReviewResult(
-        { ...result, verdict: "unknown" },
-        expected,
-      ),
+      parseImplementationReviewResult({ ...result, verdict: "unknown" }, expected),
     ).toThrow();
 
     expect(() =>
@@ -521,9 +493,9 @@ describe("parseImplementationReviewResult", () => {
       ),
     ).toThrow("cannot contain unsatisfied requirements");
 
-    expect(() =>
-      parseImplementationReviewResult({ ...result, verdict: "fail" }, expected),
-    ).toThrow("requires an unsatisfied requirement");
+    expect(() => parseImplementationReviewResult({ ...result, verdict: "fail" }, expected)).toThrow(
+      "requires an unsatisfied requirement",
+    );
   });
 
   it("rejects stale or mismatched task identities", () => {
@@ -535,18 +507,12 @@ describe("parseImplementationReviewResult", () => {
     ).toThrow("content identity is stale");
 
     expect(() =>
-      parseImplementationReviewResult(
-        { ...result, cardId: "another-card" },
-        expected,
-      ),
+      parseImplementationReviewResult({ ...result, cardId: "another-card" }, expected),
     ).toThrow("task identity does not match");
   });
 
   it.each([
-    [
-      "blank finding summary",
-      { kind: "defect", summary: " ", detail: "A defect" },
-    ],
+    ["blank finding summary", { kind: "defect", summary: " ", detail: "A defect" }],
     [
       "path traversal location",
       {
@@ -589,10 +555,7 @@ describe("parseImplementationReviewResult", () => {
     ).toThrow("require concrete evidence");
 
     expect(() =>
-      parseImplementationReviewResult(
-        { ...result, unrecognized: true },
-        expected,
-      ),
+      parseImplementationReviewResult({ ...result, unrecognized: true }, expected),
     ).toThrow("Unrecognized key");
   });
 });

@@ -43,25 +43,12 @@ async function fixture(
   taskKind: "implementation" | "refinement" = "refinement",
   attemptId?: string,
 ): Promise<Fixture> {
-  if (fixtures.length === 0)
-    root = fs.mkdtempSync(path.join(os.tmpdir(), "ai-capacity-"));
-  const f = await notificationAuthorityFixture(
-    root,
-    id,
-    undefined,
-    false,
-    taskKind,
-    attemptId,
-  );
+  if (fixtures.length === 0) root = fs.mkdtempSync(path.join(os.tmpdir(), "ai-capacity-"));
+  const f = await notificationAuthorityFixture(root, id, undefined, false, taskKind, attemptId);
   fixtures.push(f);
   return f;
 }
-function dispatch(
-  f: Fixture,
-  client: OpenCodeClient,
-  signal: AbortSignal,
-  prompt: string,
-) {
+function dispatch(f: Fixture, client: OpenCodeClient, signal: AbortSignal, prompt: string) {
   return f.authority.run(() =>
     client.run({
       cwd: f.project.repository.path,
@@ -91,12 +78,12 @@ it("isolates live execution and capacity for identical local attempt IDs in diff
     expect(otherTaskWriterIsActive(a.authority)).toBe(true);
     expect(otherTaskWriterIsActive(b.authority)).toBe(false);
     await capacity.run(b.authority, signal, signal, async () => {
-      expect(
-        a.authority.read("ai-execution-capacity", (value) => value),
-      ).toMatchObject({ state: "active" });
-      expect(
-        b.authority.read("ai-execution-capacity", (value) => value),
-      ).toMatchObject({ state: "active" });
+      expect(a.authority.read("ai-execution-capacity", (value) => value)).toMatchObject({
+        state: "active",
+      });
+      expect(b.authority.read("ai-execution-capacity", (value) => value)).toMatchObject({
+        state: "active",
+      });
     });
   } finally {
     release.resolve();
@@ -129,9 +116,9 @@ it("allocates slots FCFS across projects and sends a busy project behind an exis
   await capacity.runInScope(shutdown.signal, async () => {
     const first = dispatch(a, client, shutdown.signal, "a1");
     await startedA.promise;
-    await expect(
-      dispatch(a, client, shutdown.signal, "competing-a"),
-    ).rejects.toThrow("live AI execution slot");
+    await expect(dispatch(a, client, shutdown.signal, "competing-a")).rejects.toThrow(
+      "live AI execution slot",
+    );
     const waiting = dispatch(b, client, shutdown.signal, "b");
     const again = first.then(() => dispatch(a, client, shutdown.signal, "a2"));
     releaseA.resolve();
@@ -141,9 +128,9 @@ it("allocates slots FCFS across projects and sends a busy project behind an exis
     await Promise.all([again, waiting]);
   });
   expect(order).toEqual(["a1", "b", "a2"]);
-  expect(
-    a.authority.read("ai-execution-capacity", (value) => value),
-  ).toMatchObject({ state: "idle" });
+  expect(a.authority.read("ai-execution-capacity", (value) => value)).toMatchObject({
+    state: "idle",
+  });
 });
 
 it("preserves an unserved shutdown ticket ahead of later requests after restart", async () => {
@@ -163,9 +150,7 @@ it("preserves an unserved shutdown ticket ahead of later requests after restart"
   await new AiExecutionCapacity(1).runInScope(shutdown.signal, async () => {
     const active = dispatch(a, client, shutdown.signal, "hold");
     await started.promise;
-    const waiting = dispatch(b, client, shutdown.signal, "b").catch(
-      (error: unknown) => error,
-    );
+    const waiting = dispatch(b, client, shutdown.signal, "b").catch((error: unknown) => error);
     shutdown.abort();
     release.resolve();
     await Promise.all([active, waiting]);
@@ -178,15 +163,14 @@ it("preserves an unserved shutdown ticket ahead of later requests after restart"
     order.push(prompt);
     return { exitCode: 0, output: "done", errorOutput: "" };
   });
-  await new AiExecutionCapacity(1, [
-    a.authority,
-    b.authority,
-    c.authority,
-  ]).runInScope(next.signal, async () => {
-    const later = dispatch(c, resumedClient, next.signal, "c");
-    const earlier = dispatch(b, resumedClient, next.signal, "b");
-    await Promise.all([later, earlier]);
-  });
+  await new AiExecutionCapacity(1, [a.authority, b.authority, c.authority]).runInScope(
+    next.signal,
+    async () => {
+      const later = dispatch(c, resumedClient, next.signal, "c");
+      const earlier = dispatch(b, resumedClient, next.signal, "b");
+      await Promise.all([later, earlier]);
+    },
+  );
   expect(order).toEqual(["b", "c"]);
 });
 
@@ -227,9 +211,9 @@ it("cancels a queued operation without dispatching it or retaining an execution 
     const waiting = dispatch(b, client, local.signal, "cancelled");
     local.abort();
     await expect(waiting).rejects.toThrow("cancelled before execution");
-    expect(
-      b.authority.read("ai-execution-capacity", (value) => value),
-    ).toMatchObject({ state: "idle" });
+    expect(b.authority.read("ai-execution-capacity", (value) => value)).toMatchObject({
+      state: "idle",
+    });
     release.resolve();
     await active;
   });
@@ -241,11 +225,7 @@ it("retains unknown process capacity across restart until stopped evidence is es
   const b = await fixture("b");
   const shutdown = new AbortController();
   const executionId = randomUUID();
-  const directory = path.join(
-    a.authority.store.storageRoot,
-    "process-executions",
-    executionId,
-  );
+  const directory = path.join(a.authority.store.storageRoot, "process-executions", executionId);
   fs.mkdirSync(directory, { recursive: true });
   const metadataPath = path.join(directory, "metadata.json");
   const metadata = {
@@ -265,13 +245,11 @@ it("retains unknown process capacity across restart until stopped evidence is es
     throw new Error("unknown writer");
   });
   await new AiExecutionCapacity(1).runInScope(shutdown.signal, async () => {
-    await expect(
-      dispatch(a, failing, shutdown.signal, "write"),
-    ).rejects.toThrow("unknown writer");
+    await expect(dispatch(a, failing, shutdown.signal, "write")).rejects.toThrow("unknown writer");
   });
-  expect(
-    a.authority.read("ai-execution-capacity", (value) => value),
-  ).toMatchObject({ state: "active" });
+  expect(a.authority.read("ai-execution-capacity", (value) => value)).toMatchObject({
+    state: "active",
+  });
   const restarted = new AiExecutionCapacity(1, [a.authority, b.authority]);
   const cancel = new AbortController();
   let dispatched = false;
@@ -285,13 +263,9 @@ it("retains unknown process capacity across restart until stopped evidence is es
     await expect(waiting).rejects.toThrow("cancelled");
   });
   expect(dispatched).toBe(false);
-  fs.writeFileSync(
-    metadataPath,
-    JSON.stringify({ ...metadata, treeStopped: true }),
-  );
-  await new AiExecutionCapacity(1, [a.authority, b.authority]).runInScope(
-    shutdown.signal,
-    () => dispatch(b, client, shutdown.signal, "b"),
+  fs.writeFileSync(metadataPath, JSON.stringify({ ...metadata, treeStopped: true }));
+  await new AiExecutionCapacity(1, [a.authority, b.authority]).runInScope(shutdown.signal, () =>
+    dispatch(b, client, shutdown.signal, "b"),
   );
   expect(dispatched).toBe(true);
 });
@@ -299,11 +273,7 @@ it("retains unknown process capacity across restart until stopped evidence is es
 it("does not reserve a primary execution or mark session creation ambiguous while waiting for capacity", async () => {
   const a = await fixture("a");
   const b = await fixture("b", "implementation");
-  const tasks = new TaskExecutionStore(
-    b.project.contextRoot,
-    b.project,
-    b.authority,
-  );
+  const tasks = new TaskExecutionStore(b.project.contextRoot, b.project, b.authority);
   tasks.create({
     version: 1,
     projectId: b.project.id,
@@ -374,11 +344,7 @@ it("retains a dormant dependency ticket without consuming capacity or blocking r
     () => ({ value: ticket, result: undefined }),
     (value) => value,
   );
-  const tasks = new TaskExecutionStore(
-    a.project.contextRoot,
-    a.project,
-    a.authority,
-  );
+  const tasks = new TaskExecutionStore(a.project.contextRoot, a.project, a.authority);
   tasks.create({
     version: 1,
     projectId: a.project.id,
@@ -398,14 +364,11 @@ it("retains a dormant dependency ticket without consuming capacity or blocking r
     executed = true;
     return { exitCode: 0, output: "done", errorOutput: "" };
   });
-  await new AiExecutionCapacity(1, [a.authority, b.authority]).runInScope(
-    shutdown.signal,
-    () => dispatch(b, client, shutdown.signal, "b"),
+  await new AiExecutionCapacity(1, [a.authority, b.authority]).runInScope(shutdown.signal, () =>
+    dispatch(b, client, shutdown.signal, "b"),
   );
   expect(executed).toBe(true);
-  expect(a.authority.read("ai-execution-capacity", (value) => value)).toEqual(
-    ticket,
-  );
+  expect(a.authority.read("ai-execution-capacity", (value) => value)).toEqual(ticket);
 });
 
 it("applies configured capacity through the production project workers and OpenCode entry point", async () => {
@@ -463,11 +426,7 @@ it("applies configured capacity through the production project workers and OpenC
 
 it("observes human closure while the production worker is behind a future dependency recheck", async () => {
   const f = await fixture("waiting", "implementation");
-  const tasks = new TaskExecutionStore(
-    f.project.contextRoot,
-    f.project,
-    f.authority,
-  );
+  const tasks = new TaskExecutionStore(f.project.contextRoot, f.project, f.authority);
   tasks.create({
     version: 1,
     projectId: f.project.id,

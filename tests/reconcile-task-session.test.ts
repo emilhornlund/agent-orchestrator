@@ -5,10 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
 import { GitClient } from "../src/git/git-client.js";
 import { CommandRunner } from "../src/process/command-runner.js";
-import {
-  captureSetupEffects,
-  runRepositorySetup,
-} from "../src/process/run-setup.js";
+import { captureSetupEffects, runRepositorySetup } from "../src/process/run-setup.js";
 import { beginProcessEvidence } from "../src/process/process-runtime.js";
 import type { ProjectConfig } from "../src/config/config.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
@@ -81,10 +78,7 @@ function fixture(phase: TaskExecutionPhase = "validation") {
     worktreeBranch: "agent/card",
     worktreeHeadSha: sha,
     worktreeRebaseActive: false,
-    trustedCommitSha:
-      phase === "ci" || phase === "human-feedback" || phase === "done"
-        ? sha
-        : null,
+    trustedCommitSha: phase === "ci" || phase === "human-feedback" || phase === "done" ? sha : null,
     remoteBranchHeadSha: null,
     trelloListId:
       phase === "human-feedback" || phase === "ci"
@@ -113,10 +107,7 @@ function fixture(phase: TaskExecutionPhase = "validation") {
     uncertainReplyIds: [],
     reconciledReplyIds: [],
   };
-  const reconcile = (
-    snapshot: Partial<TaskSessionRecoverySnapshot> = {},
-    now?: () => number,
-  ) =>
+  const reconcile = (snapshot: Partial<TaskSessionRecoverySnapshot> = {}, now?: () => number) =>
     reconcileTaskSession({
       project,
       cardId: "card",
@@ -193,10 +184,7 @@ function canonicalSetupFixture() {
   const authority = new ProjectRunAuthority(f.project.id, runStore, 1);
   const store = new TaskExecutionStore(storageRoot, f.project, authority);
   store.create(f.store.read("card")!);
-  const reconcile = (
-    snapshot: Partial<TaskSessionRecoverySnapshot> = {},
-    now?: () => number,
-  ) =>
+  const reconcile = (snapshot: Partial<TaskSessionRecoverySnapshot> = {}, now?: () => number) =>
     reconcileTaskSession({
       project: f.project,
       cardId: "card",
@@ -236,9 +224,7 @@ describe("reconcileTaskSession", () => {
     });
     const before = f.store.writePrimaryResultArtifact(
       "setup-before-recovery",
-      JSON.parse(
-        (await captureSetupEffects(f.git, f.worktreePath)).toString("utf8"),
-      ) as unknown,
+      JSON.parse((await captureSetupEffects(f.git, f.worktreePath)).toString("utf8")) as unknown,
     );
     const current = f.store.read("card")!;
     const firstAttemptResult = await runRepositorySetup(new CommandRunner(), {
@@ -252,9 +238,7 @@ describe("reconcileTaskSession", () => {
     expect(firstAttemptResult.exitCode).toBe(9);
     const firstAttemptAfter = f.store.writePrimaryResultArtifact(
       "setup-failed-attempt-after",
-      JSON.parse(
-        (await captureSetupEffects(f.git, f.worktreePath)).toString("utf8"),
-      ) as unknown,
+      JSON.parse((await captureSetupEffects(f.git, f.worktreePath)).toString("utf8")) as unknown,
     );
     f.store.compareAndSwap("card", current.revision, {
       ...current,
@@ -316,23 +300,15 @@ describe("reconcileTaskSession", () => {
         },
       ],
     });
-    fs.writeFileSync(
-      path.join(f.worktreePath, "agent.txt"),
-      "agent edited after setup",
-    );
+    fs.writeFileSync(path.join(f.worktreePath, "agent.txt"), "agent edited after setup");
     await expect(f.reconcile()).resolves.toMatchObject({ status: "resume" });
     const executionPath = path.join(
       f.store.processExecutionDirectory("card")!,
       executionId!,
       "execution.json",
     );
-    const metadata = JSON.parse(
-      fs.readFileSync(executionPath, "utf8"),
-    ) as Record<string, unknown>;
-    fs.writeFileSync(
-      executionPath,
-      JSON.stringify({ ...metadata, command: "different command" }),
-    );
+    const metadata = JSON.parse(fs.readFileSync(executionPath, "utf8")) as Record<string, unknown>;
+    fs.writeFileSync(executionPath, JSON.stringify({ ...metadata, command: "different command" }));
     await expect(f.reconcile()).resolves.toMatchObject({
       status: "attention-required",
     });
@@ -358,9 +334,7 @@ describe("reconcileTaskSession", () => {
     const current = f.store.read("card")!;
     const before = f.store.writePrimaryResultArtifact(
       "setup-before-corrupt-check",
-      JSON.parse(
-        (await captureSetupEffects(f.git, f.worktreePath)).toString("utf8"),
-      ) as unknown,
+      JSON.parse((await captureSetupEffects(f.git, f.worktreePath)).toString("utf8")) as unknown,
     );
     f.store.compareAndSwap("card", current.revision, {
       ...current,
@@ -433,9 +407,7 @@ describe("reconcileTaskSession", () => {
     const current = f.store.read("card")!;
     const before = f.store.writePrimaryResultArtifact(
       "setup-before-live",
-      JSON.parse(
-        (await captureSetupEffects(f.git, f.worktreePath)).toString("utf8"),
-      ) as unknown,
+      JSON.parse((await captureSetupEffects(f.git, f.worktreePath)).toString("utf8")) as unknown,
     );
     f.store.compareAndSwap("card", current.revision, {
       ...current,
@@ -486,9 +458,9 @@ describe("reconcileTaskSession", () => {
       controller.abort();
       await expect(running).rejects.toThrow();
     }
-    await expect(
-      f.reconcile({}, () => Date.now() + 2_000),
-    ).resolves.toMatchObject({ status: "resume" });
+    await expect(f.reconcile({}, () => Date.now() + 2_000)).resolves.toMatchObject({
+      status: "resume",
+    });
     expect(f.store.read("card")?.setup).toMatchObject({
       status: "pending",
       attempts: 1,
@@ -515,9 +487,7 @@ describe("reconcileTaskSession", () => {
     });
     const before = f.store.writePrimaryResultArtifact(
       "setup-before-spawn-failure",
-      JSON.parse(
-        (await captureSetupEffects(f.git, f.worktreePath)).toString("utf8"),
-      ) as unknown,
+      JSON.parse((await captureSetupEffects(f.git, f.worktreePath)).toString("utf8")) as unknown,
     );
     const execution = beginProcessEvidence(
       command,
@@ -570,9 +540,7 @@ describe("reconcileTaskSession", () => {
     });
     const before = f.store.writePrimaryResultArtifact(
       "setup-before-timeout",
-      JSON.parse(
-        (await captureSetupEffects(f.git, f.worktreePath)).toString("utf8"),
-      ) as unknown,
+      JSON.parse((await captureSetupEffects(f.git, f.worktreePath)).toString("utf8")) as unknown,
     );
     const current = f.store.read("card")!;
     f.store.compareAndSwap("card", current.revision, {
@@ -639,9 +607,7 @@ describe("reconcileTaskSession", () => {
       const current = f.store.read("card")!;
       const before = f.store.writePrimaryResultArtifact(
         `setup-before-${attempt}`,
-        JSON.parse(
-          (await captureSetupEffects(f.git, f.worktreePath)).toString("utf8"),
-        ) as unknown,
+        JSON.parse((await captureSetupEffects(f.git, f.worktreePath)).toString("utf8")) as unknown,
       );
       f.store.compareAndSwap("card", current.revision, {
         ...current,
@@ -670,9 +636,7 @@ describe("reconcileTaskSession", () => {
               ...active,
               setup: { ...active.setup!, executionId },
               revision: active.revision + 1,
-              updatedAt: new Date(
-                Date.parse(active.updatedAt) + 1,
-              ).toISOString(),
+              updatedAt: new Date(Date.parse(active.updatedAt) + 1).toISOString(),
             });
           },
         }),
@@ -689,11 +653,7 @@ describe("reconcileTaskSession", () => {
             setup: {
               status: "failed",
               attempts: 3,
-              history: [
-                { outcome: "failed" },
-                { outcome: "failed" },
-                { outcome: "failed" },
-              ],
+              history: [{ outcome: "failed" }, { outcome: "failed" }, { outcome: "failed" }],
             },
           },
         });
@@ -820,9 +780,9 @@ describe("reconcileTaskSession", () => {
       record: { primarySessionId: "session" },
     });
     const unknown = fixture();
-    await expect(
-      unknown.reconcile({ primarySessionAccessible: "unknown" }),
-    ).resolves.toMatchObject({ status: "waiting" });
+    await expect(unknown.reconcile({ primarySessionAccessible: "unknown" })).resolves.toMatchObject(
+      { status: "waiting" },
+    );
     const conflict = fixture();
     await expect(
       conflict.reconcile({ primarySessionAccessible: "conflict" }),
@@ -833,8 +793,7 @@ describe("reconcileTaskSession", () => {
     async (phase) => {
       const f = fixture(phase);
       const initial = f.store.read("card")!;
-      const operationId =
-        phase === "ci" ? "ci-repair:published-head" : "feedback:request-17";
+      const operationId = phase === "ci" ? "ci-repair:published-head" : "feedback:request-17";
       f.store.compareAndSwap("card", initial.revision, {
         ...initial,
         primaryOperations: {
@@ -853,10 +812,7 @@ describe("reconcileTaskSession", () => {
 
       // A new store instance models process restart. Persisted PR identity is
       // authoritative even though recovery is occurring in a correction phase.
-      const restarted = new TaskExecutionStore(
-        path.join(root, "state"),
-        f.project,
-      );
+      const restarted = new TaskExecutionStore(path.join(root, "state"), f.project);
       const result = await reconcileTaskSession({
         project: f.project,
         cardId: "card",
@@ -906,9 +862,7 @@ describe("reconcileTaskSession", () => {
         executions: 1,
         lastSessionId: "session",
       });
-      expect(Object.keys(result.record.primaryOperations ?? {})).toEqual([
-        operationId,
-      ]);
+      expect(Object.keys(result.record.primaryOperations ?? {})).toEqual([operationId]);
     },
   );
 
@@ -954,9 +908,9 @@ describe("reconcileTaskSession", () => {
       revision: current.revision + 1,
       updatedAt: "2026-10-24T09:00:00.001Z",
     });
-    await expect(
-      f.reconcile({ primarySessionAccessible: "reachable" }),
-    ).resolves.toMatchObject({ status: "reconstruction-required" });
+    await expect(f.reconcile({ primarySessionAccessible: "reachable" })).resolves.toMatchObject({
+      status: "reconstruction-required",
+    });
     const bound = f.store.read("card")!;
     f.store.compareAndSwap("card", bound.revision, {
       ...bound,
@@ -967,9 +921,9 @@ describe("reconcileTaskSession", () => {
       revision: bound.revision + 1,
       updatedAt: "2026-10-24T09:00:00.002Z",
     });
-    await expect(
-      f.reconcile({ primarySessionAccessible: "reachable" }),
-    ).resolves.toMatchObject({ status: "attention-required" });
+    await expect(f.reconcile({ primarySessionAccessible: "reachable" })).resolves.toMatchObject({
+      status: "attention-required",
+    });
   });
   it("applies the primary recovery gate after publication checkpoint validation", async () => {
     const f = fixture("publication");
@@ -1069,9 +1023,7 @@ describe("reconcileTaskSession", () => {
         sessionRecovery: {
           originalSessionId: "session",
           status,
-          ...(status === "replacement-bound"
-            ? { reconstructionBaseline: baseline }
-            : {}),
+          ...(status === "replacement-bound" ? { reconstructionBaseline: baseline } : {}),
         },
         revision: record.revision + 1,
         updatedAt: "2026-10-24T09:00:00.001Z",
@@ -1098,9 +1050,7 @@ describe("reconcileTaskSession", () => {
       expect(waited.sessionRecovery?.status).toBe(status);
       expect(waited.sessionRecovery?.contextAvailability).toBe("unavailable");
       if (status === "replacement-bound")
-        expect(waited.sessionRecovery?.reconstructionBaseline).toEqual(
-          baseline,
-        );
+        expect(waited.sessionRecovery?.reconstructionBaseline).toEqual(baseline);
       const reconciled = await f.reconcile(
         { primarySessionAccessible: "reachable" },
         () => Date.now() + 2_000,
@@ -1152,10 +1102,7 @@ describe("reconcileTaskSession", () => {
       "Trello context unavailable",
     );
     await expect(
-      f.reconcile(
-        { primarySessionAccessible: "reachable" },
-        () => Date.now() + 2_000,
-      ),
+      f.reconcile({ primarySessionAccessible: "reachable" }, () => Date.now() + 2_000),
     ).resolves.toMatchObject({ status: "reconstruction-required" });
     const verifying = f.store.read("card")!;
     f.store.compareAndSwap("card", verifying.revision, {
@@ -1168,16 +1115,14 @@ describe("reconcileTaskSession", () => {
         contextAvailabilityReason: undefined,
       },
       revision: verifying.revision + 1,
-      updatedAt: new Date(
-        Math.max(Date.now(), Date.parse(verifying.updatedAt) + 1),
-      ).toISOString(),
+      updatedAt: new Date(Math.max(Date.now(), Date.parse(verifying.updatedAt) + 1)).toISOString(),
     });
-    await expect(
-      f.reconcile({ primarySessionAccessible: "reachable" }),
-    ).resolves.toMatchObject({ status: "resume" });
-    await expect(
-      f.reconcile({ primarySessionAccessible: "reachable" }),
-    ).resolves.toMatchObject({ status: "resume" });
+    await expect(f.reconcile({ primarySessionAccessible: "reachable" })).resolves.toMatchObject({
+      status: "resume",
+    });
+    await expect(f.reconcile({ primarySessionAccessible: "reachable" })).resolves.toMatchObject({
+      status: "resume",
+    });
     expect(f.store.read("card")?.sessionRecovery).toMatchObject({
       status: "reconstruction-verified",
       contextAvailability: "available",
@@ -1215,27 +1160,12 @@ describe("reconcileTaskSession", () => {
         },
       },
     } as unknown as RunRecord;
-    expect(
-      hasDueTaskSessionRecoveryWait(
-        run,
-        Date.parse("2026-10-24T09:00:00.500Z"),
-      ),
-    ).toBe(false);
-    expect(
-      hasDueTaskSessionRecoveryWait(
-        run,
-        Date.parse("2026-10-24T09:00:01.000Z"),
-      ),
-    ).toBe(true);
-    expect(
-      hasDueTaskSessionRecoveryWait(
-        { ...run, lifecycle: "implementation" },
-        Date.now(),
-      ),
-    ).toBe(false);
-    expect(
-      hasDueTaskSessionRecoveryWait({ ...run, compatibility: {} }, Date.now()),
-    ).toBe(false);
+    expect(hasDueTaskSessionRecoveryWait(run, Date.parse("2026-10-24T09:00:00.500Z"))).toBe(false);
+    expect(hasDueTaskSessionRecoveryWait(run, Date.parse("2026-10-24T09:00:01.000Z"))).toBe(true);
+    expect(hasDueTaskSessionRecoveryWait({ ...run, lifecycle: "implementation" }, Date.now())).toBe(
+      false,
+    );
+    expect(hasDueTaskSessionRecoveryWait({ ...run, compatibility: {} }, Date.now())).toBe(false);
   });
   it("resumes a verified restart at its persisted phase", async () => {
     const f = fixture();
@@ -1263,13 +1193,8 @@ describe("reconcileTaskSession", () => {
     });
     expect(f.store.read("card")?.phase).toBe("validation");
     const persisted = f.store.read("card")!;
-    expect(persisted.recoveryWait?.reason).toContain(
-      "snapshot could not be read",
-    );
-    const restarted = new TaskExecutionStore(
-      path.join(root, "state"),
-      f.project,
-    );
+    expect(persisted.recoveryWait?.reason).toContain("snapshot could not be read");
+    const restarted = new TaskExecutionStore(path.join(root, "state"), f.project);
     let reads = 0;
     const early = await reconcileTaskSession({
       project: f.project,
@@ -1314,9 +1239,7 @@ describe("reconcileTaskSession", () => {
       revision: record!.revision + 1,
       updatedAt: "2026-10-24T09:00:01.000Z",
     });
-    expect(
-      (await f.reconcile({ verifiedUncommittedPublication: true })).status,
-    ).toBe("resume");
+    expect((await f.reconcile({ verifiedUncommittedPublication: true })).status).toBe("resume");
 
     const withRemote = fixture("publication");
     const owned = withRemote.store.read("card");
@@ -1368,9 +1291,7 @@ describe("reconcileTaskSession", () => {
     });
     expect(restarted.status).toBe("resume");
     expect(f.store.read("card")?.reviewRepair?.finalReview).toBeUndefined();
-    expect(f.store.read("card")?.reviewUnavailable?.diagnostic).toContain(
-      "execution failed",
-    );
+    expect(f.store.read("card")?.reviewUnavailable?.diagnostic).toContain("execution failed");
     const sameRestart = await f.reconcile({
       verifiedUncommittedPublication: true,
     });
@@ -1417,10 +1338,9 @@ describe("reconcileTaskSession", () => {
 
   it("resumes an unambiguously prepared publication but blocks mismatched CI and reply outcomes", async () => {
     const publication = fixture("publication");
-    expect(
-      (await publication.reconcile({ trustedCommitSha: publication.sha }))
-        .status,
-    ).toBe("resume");
+    expect((await publication.reconcile({ trustedCommitSha: publication.sha })).status).toBe(
+      "resume",
+    );
 
     const ci = fixture("ci");
     expect(
@@ -1484,10 +1404,7 @@ describe("reconcileTaskSession", () => {
       reason: expect.stringContaining("unexpected list"),
       attempts: 1,
     });
-    const alternating = await f.reconcile(
-      { trelloListId: "other" },
-      () => Date.now() + 2_000,
-    );
+    const alternating = await f.reconcile({ trelloListId: "other" }, () => Date.now() + 2_000);
     expect(alternating.status).toBe("waiting");
     expect(alternating.record.recoveryWait?.attempts).toBe(2);
     expect(alternating.record.recoveryWait?.notificationId).toBe(
@@ -1612,9 +1529,7 @@ describe("reconcileTaskSession", () => {
       "{broken",
       "utf8",
     );
-    await expect(malformed.reconcile()).rejects.toThrow(
-      "Could not parse task execution record",
-    );
+    await expect(malformed.reconcile()).rejects.toThrow("Could not parse task execution record");
 
     const committed = fixture();
     const mismatch = await committed.reconcile({
@@ -1630,8 +1545,7 @@ describe("reconcileTaskSession", () => {
     const missingSetupState = await legacyRecord.reconcile();
     expect(missingSetupState).toMatchObject({
       status: "attention-required",
-      reason:
-        "Repository setup state is missing, changed, or has an uncertain outcome",
+      reason: "Repository setup state is missing, changed, or has an uncertain outcome",
     });
 
     const interruptedSetup = fixture("planning");
@@ -1647,8 +1561,7 @@ describe("reconcileTaskSession", () => {
     const setupOutcome = await interruptedSetup.reconcile();
     expect(setupOutcome).toMatchObject({
       status: "attention-required",
-      reason:
-        "Repository setup state is missing, changed, or has an uncertain outcome",
+      reason: "Repository setup state is missing, changed, or has an uncertain outcome",
     });
     expect(interruptedSetup.store.read("card")?.setup?.status).toBe("active");
   });

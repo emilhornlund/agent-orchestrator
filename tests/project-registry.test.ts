@@ -21,19 +21,14 @@ const execFileAsync = promisify(execFile);
 
 const roots: string[] = [];
 afterEach(() => {
-  for (const root of roots.splice(0))
-    fs.rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 function root(): string {
   const value = fs.mkdtempSync(path.join(os.tmpdir(), "host-registry-"));
   roots.push(value);
   return value;
 }
-function config(
-  coordinationRoot: string,
-  contextRoot: string,
-  id: string,
-): Config {
+function config(coordinationRoot: string, contextRoot: string, id: string): Config {
   const project = {
     id,
     trello: {
@@ -87,15 +82,9 @@ describe("host project registry", () => {
     const b = config(coordinationRoot, root(), "beta");
     await Promise.all([pin(a), pin(b)]);
     const value = JSON.parse(
-      fs.readFileSync(
-        path.join(coordinationRoot, "projects.registry.json"),
-        "utf8",
-      ),
+      fs.readFileSync(path.join(coordinationRoot, "projects.registry.json"), "utf8"),
     ) as { projects: { projectId: string }[] };
-    expect(value.projects.map((entry) => entry.projectId).sort()).toEqual([
-      "alpha",
-      "beta",
-    ]);
+    expect(value.projects.map((entry) => entry.projectId).sort()).toEqual(["alpha", "beta"]);
   });
 
   it("does not lose updates from separate registry-writer processes", async () => {
@@ -105,24 +94,12 @@ describe("host project registry", () => {
     const spawnOne = (id: string): Promise<unknown> =>
       execFileAsync(
         process.execPath,
-        [
-          "--import",
-          "tsx",
-          "--input-type=module",
-          "-e",
-          script,
-          id,
-          root(),
-          coordinationRoot,
-        ],
+        ["--import", "tsx", "--input-type=module", "-e", script, id, root(), coordinationRoot],
         { cwd: process.cwd() },
       );
     await Promise.all([spawnOne("process-a"), spawnOne("process-b")]);
     const value = JSON.parse(
-      fs.readFileSync(
-        path.join(coordinationRoot, "projects.registry.json"),
-        "utf8",
-      ),
+      fs.readFileSync(path.join(coordinationRoot, "projects.registry.json"), "utf8"),
     ) as { projects: { projectId: string }[] };
     expect(value.projects.map((entry) => entry.projectId).sort()).toEqual([
       "process-a",
@@ -158,9 +135,9 @@ describe("host project registry", () => {
     } finally {
       await lease.release();
     }
-    await expect(
-      pin(config(coordinationRoot, root(), "handoff")),
-    ).rejects.toThrow("interrupted attempt handoff");
+    await expect(pin(config(coordinationRoot, root(), "handoff"))).rejects.toThrow(
+      "interrupted attempt handoff",
+    );
 
     const aliases = [
       {
@@ -271,15 +248,10 @@ describe("host project registry", () => {
     );
     try {
       await verifyAndPinProjects(initial, [initialLease]);
-      await updateProjectActiveAttempt(
-        coordinationRoot,
-        "protected",
-        initialLease,
-        {
-          attemptId: "active-attempt",
-          storageRoot: initial.workflow.contextRoot,
-        },
-      );
+      await updateProjectActiveAttempt(coordinationRoot, "protected", initialLease, {
+        attemptId: "active-attempt",
+        storageRoot: initial.workflow.contextRoot,
+      });
     } finally {
       await initialLease.release();
     }
@@ -303,9 +275,9 @@ describe("host project registry", () => {
       "test",
     );
     try {
-      await expect(
-        verifyAndPinProjects(changedConfig, [changedLease]),
-      ).rejects.toThrow('Active project "protected"');
+      await expect(verifyAndPinProjects(changedConfig, [changedLease])).rejects.toThrow(
+        'Active project "protected"',
+      );
     } finally {
       await changedLease.release();
     }
@@ -330,21 +302,11 @@ describe("host project registry", () => {
       "test",
     );
     try {
-      await updateProjectActiveAttempt(
-        coordinationRoot,
-        "reconfigured",
-        lease,
-        {
-          attemptId: "between-config-revisions",
-          storageRoot: secondConfig.workflow.contextRoot,
-        },
-      );
-      await updateProjectActiveAttempt(
-        coordinationRoot,
-        "reconfigured",
-        lease,
-        null,
-      );
+      await updateProjectActiveAttempt(coordinationRoot, "reconfigured", lease, {
+        attemptId: "between-config-revisions",
+        storageRoot: secondConfig.workflow.contextRoot,
+      });
+      await updateProjectActiveAttempt(coordinationRoot, "reconfigured", lease, null);
     } finally {
       await lease.release();
     }
@@ -352,24 +314,16 @@ describe("host project registry", () => {
     await pin(thirdConfig);
     const fourthConfig = config(coordinationRoot, root(), "reconfigured");
     await pin(fourthConfig);
-    const history = await readHistoricalProjectPins(
-      coordinationRoot,
-      "reconfigured",
-    );
+    const history = await readHistoricalProjectPins(coordinationRoot, "reconfigured");
     expect(history.map((pin) => pin.storageRoot)).toEqual([
       oldConfig.workflow.contextRoot,
       secondConfig.workflow.contextRoot,
       thirdConfig.workflow.contextRoot,
     ]);
     const registry = JSON.parse(
-      fs.readFileSync(
-        path.join(coordinationRoot, "projects.registry.json"),
-        "utf8",
-      ),
+      fs.readFileSync(path.join(coordinationRoot, "projects.registry.json"), "utf8"),
     ) as { projects: { projectId: string }[] };
-    expect(registry.projects.map((pin) => pin.projectId)).toContain(
-      "unrelated",
-    );
+    expect(registry.projects.map((pin) => pin.projectId)).toContain("unrelated");
   });
 
   it("refuses a lease for one integration to mutate another project's reference", async () => {
@@ -409,15 +363,15 @@ describe("host project registry", () => {
       }),
       { mode: 0o600 },
     );
-    await expect(
-      pin(config(coordinationRoot, root(), "alpha")),
-    ).rejects.toThrow("Malformed project registry");
+    await expect(pin(config(coordinationRoot, root(), "alpha"))).rejects.toThrow(
+      "Malformed project registry",
+    );
     fs.unlinkSync(file);
     const target = path.join(coordinationRoot, "target");
     fs.writeFileSync(target, "{}", { mode: 0o600 });
     fs.symlinkSync(target, file);
-    await expect(
-      pin(config(coordinationRoot, root(), "alpha")),
-    ).rejects.toThrow("Unsafe project registry");
+    await expect(pin(config(coordinationRoot, root(), "alpha"))).rejects.toThrow(
+      "Unsafe project registry",
+    );
   });
 });

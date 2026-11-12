@@ -24,9 +24,7 @@ afterEach(() => {
 });
 
 function makeTemporaryDirectory(): string {
-  temporaryDirectory = fs.mkdtempSync(
-    path.join(os.tmpdir(), "agent-orchestrator-context-"),
-  );
+  temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "agent-orchestrator-context-"));
 
   return temporaryDirectory;
 }
@@ -35,37 +33,26 @@ describe("card context storage", () => {
   it("resolves the exact card layout without requiring existing data", () => {
     const root = path.join(makeTemporaryDirectory(), "context-root");
     const expectedCardDirectory = path.join(root, "project-one", "card-one");
-    const expectedAttachmentsDirectory = path.join(
-      expectedCardDirectory,
-      "attachments",
-    );
-    const expectedManifestPath = path.join(
-      expectedCardDirectory,
-      "attachments.json",
-    );
+    const expectedAttachmentsDirectory = path.join(expectedCardDirectory, "attachments");
+    const expectedManifestPath = path.join(expectedCardDirectory, "attachments.json");
 
     expect(resolveCardContextDirectory(root, "project-one", "card-one")).toBe(
       expectedCardDirectory,
     );
-    expect(
-      resolveCardAttachmentsDirectory(root, "project-one", "card-one"),
-    ).toBe(expectedAttachmentsDirectory);
-    expect(
-      resolveCardAttachmentsManifestPath(root, "project-one", "card-one"),
-    ).toBe(expectedManifestPath);
-    expect(
-      resolveCardAttachmentPath(root, "project-one", "card-one", "invoice.pdf"),
-    ).toBe(path.join(expectedAttachmentsDirectory, "invoice.pdf"));
+    expect(resolveCardAttachmentsDirectory(root, "project-one", "card-one")).toBe(
+      expectedAttachmentsDirectory,
+    );
+    expect(resolveCardAttachmentsManifestPath(root, "project-one", "card-one")).toBe(
+      expectedManifestPath,
+    );
+    expect(resolveCardAttachmentPath(root, "project-one", "card-one", "invoice.pdf")).toBe(
+      path.join(expectedAttachmentsDirectory, "invoice.pdf"),
+    );
     expect(fs.existsSync(root)).toBe(false);
   });
 
   it("creates recursive card directories idempotently and preserves data", () => {
-    const root = path.join(
-      makeTemporaryDirectory(),
-      "missing",
-      "nested",
-      "context-root",
-    );
+    const root = path.join(makeTemporaryDirectory(), "missing", "nested", "context-root");
 
     const paths = createCardContextDirectories(root, "project-one", "card-one");
     const markerPath = path.join(paths.contextDirectory, "future-context.txt");
@@ -73,12 +60,8 @@ describe("card context storage", () => {
     fs.writeFileSync(paths.manifestPath, '{"attachments":[]}', "utf8");
     fs.writeFileSync(markerPath, "preserve me", "utf8");
 
-    expect(
-      createCardContextDirectories(root, "project-one", "card-one"),
-    ).toEqual(paths);
-    expect(fs.readFileSync(paths.manifestPath, "utf8")).toBe(
-      '{"attachments":[]}',
-    );
+    expect(createCardContextDirectories(root, "project-one", "card-one")).toEqual(paths);
+    expect(fs.readFileSync(paths.manifestPath, "utf8")).toBe('{"attachments":[]}');
     expect(fs.readFileSync(markerPath, "utf8")).toBe("preserve me");
     expect(fs.statSync(paths.contextDirectory).isDirectory()).toBe(true);
     expect(fs.statSync(paths.attachmentsDirectory).isDirectory()).toBe(true);
@@ -100,9 +83,7 @@ describe("card context storage", () => {
       return originalMkdirSync(targetPath, options);
     });
 
-    expect(() =>
-      createCardContextDirectories(root, "project-one", "card-one"),
-    ).not.toThrow();
+    expect(() => createCardContextDirectories(root, "project-one", "card-one")).not.toThrow();
     expect(fs.lstatSync(paths.contextDirectory).isDirectory()).toBe(true);
   });
 
@@ -119,9 +100,7 @@ describe("card context storage", () => {
   ])("rejects an invalid project ID: %s", (_label, projectId) => {
     const root = path.join(makeTemporaryDirectory(), "context-root");
 
-    expect(() =>
-      resolveCardContextDirectory(root, projectId, "card-one"),
-    ).toThrow("project ID");
+    expect(() => resolveCardContextDirectory(root, projectId, "card-one")).toThrow("project ID");
   });
 
   it.each([
@@ -134,9 +113,7 @@ describe("card context storage", () => {
   ])("rejects an invalid card ID: %s", (_label, cardId) => {
     const root = path.join(makeTemporaryDirectory(), "context-root");
 
-    expect(() =>
-      resolveCardContextDirectory(root, "project-one", cardId),
-    ).toThrow("card ID");
+    expect(() => resolveCardContextDirectory(root, "project-one", cardId)).toThrow("card ID");
   });
 
   it.each([
@@ -150,29 +127,20 @@ describe("card context storage", () => {
   ])("rejects an invalid attachment filename: %s", (_label, filename) => {
     const root = path.join(makeTemporaryDirectory(), "context-root");
 
-    expect(() =>
-      resolveCardAttachmentPath(root, "project-one", "card-one", filename),
-    ).toThrow("attachment filename");
+    expect(() => resolveCardAttachmentPath(root, "project-one", "card-one", filename)).toThrow(
+      "attachment filename",
+    );
   });
 
   it("keeps attachment paths below the card attachments directory boundary", () => {
     const root = path.join(makeTemporaryDirectory(), "context");
     const paths = resolveCardContextPaths(root, "project-one", "card-one");
-    const attachmentPath = resolveCardAttachmentPath(
-      root,
-      "project-one",
-      "card-one",
-      "report.txt",
-    );
+    const attachmentPath = resolveCardAttachmentPath(root, "project-one", "card-one", "report.txt");
 
-    expect(
-      attachmentPath.startsWith(`${paths.attachmentsDirectory}${path.sep}`),
-    ).toBe(true);
-    expect(
-      attachmentPath.startsWith(
-        `${path.join(root, "project-one-other")}${path.sep}`,
-      ),
-    ).toBe(false);
+    expect(attachmentPath.startsWith(`${paths.attachmentsDirectory}${path.sep}`)).toBe(true);
+    expect(attachmentPath.startsWith(`${path.join(root, "project-one-other")}${path.sep}`)).toBe(
+      false,
+    );
   });
 
   it("rejects symbolic-link managed directories", () => {
@@ -184,9 +152,9 @@ describe("card context storage", () => {
 
     fs.symlinkSync(outside, path.join(root, "project-one"), "dir");
 
-    expect(() =>
-      resolveCardContextDirectory(root, "project-one", "card-one"),
-    ).toThrow("symbolic-link");
+    expect(() => resolveCardContextDirectory(root, "project-one", "card-one")).toThrow(
+      "symbolic-link",
+    );
   });
 
   it("rejects symbolic-link card and attachments directories", () => {
@@ -198,23 +166,19 @@ describe("card context storage", () => {
 
     fs.symlinkSync(outside, path.join(root, "project-one", "card-one"), "dir");
 
-    expect(() =>
-      resolveCardContextDirectory(root, "project-one", "card-one"),
-    ).toThrow("symbolic-link");
+    expect(() => resolveCardContextDirectory(root, "project-one", "card-one")).toThrow(
+      "symbolic-link",
+    );
 
     fs.rmSync(path.join(root, "project-one", "card-one"), {
       force: true,
     });
     fs.mkdirSync(path.join(root, "project-one", "card-one"));
-    fs.symlinkSync(
-      outside,
-      path.join(root, "project-one", "card-one", "attachments"),
-      "dir",
-    );
+    fs.symlinkSync(outside, path.join(root, "project-one", "card-one", "attachments"), "dir");
 
-    expect(() =>
-      resolveCardAttachmentsDirectory(root, "project-one", "card-one"),
-    ).toThrow("symbolic-link");
+    expect(() => resolveCardAttachmentsDirectory(root, "project-one", "card-one")).toThrow(
+      "symbolic-link",
+    );
   });
 
   it("rejects non-directory managed paths", () => {
@@ -223,9 +187,9 @@ describe("card context storage", () => {
     fs.mkdirSync(root);
     fs.writeFileSync(path.join(root, "project-one"), "not a directory", "utf8");
 
-    expect(() =>
-      resolveCardContextDirectory(root, "project-one", "card-one"),
-    ).toThrow("non-directory");
+    expect(() => resolveCardContextDirectory(root, "project-one", "card-one")).toThrow(
+      "non-directory",
+    );
   });
 
   it("rejects a symbolic-link manifest or attachment file", () => {
@@ -237,17 +201,14 @@ describe("card context storage", () => {
     fs.writeFileSync(outsideManifest, "{}", "utf8");
     fs.writeFileSync(outsideAttachment, "outside", "utf8");
     fs.symlinkSync(outsideManifest, paths.manifestPath);
-    fs.symlinkSync(
-      outsideAttachment,
-      path.join(paths.attachmentsDirectory, "file.txt"),
-    );
+    fs.symlinkSync(outsideAttachment, path.join(paths.attachmentsDirectory, "file.txt"));
 
-    expect(() =>
-      resolveCardAttachmentsManifestPath(root, "project-one", "card-one"),
-    ).toThrow("symbolic-link");
-    expect(() =>
-      resolveCardAttachmentPath(root, "project-one", "card-one", "file.txt"),
-    ).toThrow("symbolic-link");
+    expect(() => resolveCardAttachmentsManifestPath(root, "project-one", "card-one")).toThrow(
+      "symbolic-link",
+    );
+    expect(() => resolveCardAttachmentPath(root, "project-one", "card-one", "file.txt")).toThrow(
+      "symbolic-link",
+    );
   });
 
   it("reports filesystem creation failures with the affected path", () => {

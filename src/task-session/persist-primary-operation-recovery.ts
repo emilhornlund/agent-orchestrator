@@ -18,8 +18,7 @@ export function findPrimaryRecoveryError(
   error: unknown,
   seen = new Set<unknown>(),
 ): PrimaryRecoveryError | undefined {
-  if (error === null || typeof error !== "object" || seen.has(error))
-    return undefined;
+  if (error === null || typeof error !== "object" || seen.has(error)) return undefined;
   seen.add(error);
   if (
     error instanceof PrimaryOperationWaitingError ||
@@ -51,22 +50,16 @@ export function persistPrimaryOperationRecovery(
   retryIntervalMs: number,
 ): PrimaryOperationRecoveryDisposition {
   if (!Number.isSafeInteger(retryIntervalMs) || retryIntervalMs <= 0)
-    throw new RangeError(
-      "Primary operation retry interval must be a positive safe integer",
-    );
+    throw new RangeError("Primary operation retry interval must be a positive safe integer");
   const primaryError = findPrimaryRecoveryError(error);
   if (primaryError === undefined) return "unhandled";
   const current = store.read(record.cardId);
   if (current === null || current.revision !== record.revision)
-    throw new Error(
-      "Primary operation recovery record changed before persistence",
-    );
-  if (current.phase === "done" || current.phase === "attention-required")
-    return "unhandled";
+    throw new Error("Primary operation recovery record changed before persistence");
+  if (current.phase === "done" || current.phase === "attention-required") return "unhandled";
 
   const operationId =
-    "operationId" in primaryError &&
-    typeof primaryError.operationId === "string"
+    "operationId" in primaryError && typeof primaryError.operationId === "string"
       ? primaryError.operationId
       : current.primaryOperations === undefined
         ? undefined
@@ -79,8 +72,7 @@ export function persistPrimaryOperationRecovery(
   if (
     exhausted &&
     (operation?.status !== "exhausted" ||
-      (operation.failureExecutions ?? operation.executions) <
-        OPERATION_RECOVERY_MAX_EXECUTIONS)
+      (operation.failureExecutions ?? operation.executions) < OPERATION_RECOVERY_MAX_EXECUTIONS)
   )
     return "unhandled";
 
@@ -100,9 +92,7 @@ export function persistPrimaryOperationRecovery(
       ...current,
       recoveryWait,
       revision: current.revision + 1,
-      updatedAt: new Date(
-        Math.max(Date.now(), Date.parse(current.updatedAt) + 1),
-      ).toISOString(),
+      updatedAt: new Date(Math.max(Date.now(), Date.parse(current.updatedAt) + 1)).toISOString(),
     });
     return "waiting";
   }
@@ -112,9 +102,7 @@ export function persistPrimaryOperationRecovery(
       ...current,
       recoveryWait: { ...recoveryWait, reason },
       revision: current.revision + 1,
-      updatedAt: new Date(
-        Math.max(Date.now(), Date.parse(current.updatedAt) + 1),
-      ).toISOString(),
+      updatedAt: new Date(Math.max(Date.now(), Date.parse(current.updatedAt) + 1)).toISOString(),
     });
     return "published-blockage";
   }
@@ -124,9 +112,7 @@ export function persistPrimaryOperationRecovery(
     projectId: current.projectId,
     cardId: current.cardId,
     operationKey: current.operationKey,
-    occurredAt: new Date(
-      Math.max(Date.now(), Date.parse(current.updatedAt) + 1),
-    ).toISOString(),
+    occurredAt: new Date(Math.max(Date.now(), Date.parse(current.updatedAt) + 1)).toISOString(),
   });
   store.compareAndSwap(current.cardId, current.revision, {
     ...terminal,

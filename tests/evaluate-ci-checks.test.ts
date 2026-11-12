@@ -99,9 +99,7 @@ describe("evaluateCiChecks", () => {
           commitStatus("Tests", state, headSha, 2),
         ];
         expect(evaluate(["Tests"], checks).status).toBe(expected);
-        expect(evaluate(["Tests"], [...checks].reverse()).status).toBe(
-          expected,
-        );
+        expect(evaluate(["Tests"], [...checks].reverse()).status).toBe(expected);
       },
     );
 
@@ -158,10 +156,7 @@ describe("evaluateCiChecks", () => {
 
     it("fails closed on conflicting observations of the same status identity", () => {
       expect(
-        evaluate(
-          ["Tests"],
-          [commitStatus("Tests", "success"), commitStatus("Tests", "failure")],
-        ),
+        evaluate(["Tests"], [commitStatus("Tests", "success"), commitStatus("Tests", "failure")]),
       ).toMatchObject({
         status: "uncertain",
         diagnostic: "Commit status identity has conflicting observations",
@@ -172,10 +167,7 @@ describe("evaluateCiChecks", () => {
     expect(
       evaluate(
         ["Build", "Tests"],
-        [
-          checkRun("Build", "completed", "success"),
-          commitStatus("Tests", "success"),
-        ],
+        [checkRun("Build", "completed", "success"), commitStatus("Tests", "success")],
       ),
     ).toMatchObject({ status: "passed", expectedHeadSha: headSha });
   });
@@ -193,21 +185,22 @@ describe("evaluateCiChecks", () => {
   });
 
   it("waits for delayed check registration even when visible checks pass", () => {
-    expect(
-      evaluate(["Build", "Tests"], [checkRun("Build", "completed", "success")]),
-    ).toMatchObject({
-      status: "waiting",
-      missingChecks: ["Tests"],
-    });
+    expect(evaluate(["Build", "Tests"], [checkRun("Build", "completed", "success")])).toMatchObject(
+      {
+        status: "waiting",
+        missingChecks: ["Tests"],
+      },
+    );
   });
 
   it.each([
     ["queued", null],
     ["in_progress", null],
   ])("waits for a %s expected check", (status, conclusion) => {
-    expect(
-      evaluate(["Build"], [checkRun("Build", status, conclusion)]),
-    ).toMatchObject({ status: "waiting", pendingChecks: ["Build"] });
+    expect(evaluate(["Build"], [checkRun("Build", status, conclusion)])).toMatchObject({
+      status: "waiting",
+      pendingChecks: ["Build"],
+    });
   });
 
   it("waits instead of repairing when failures coexist with pending expected checks", () => {
@@ -243,25 +236,18 @@ describe("evaluateCiChecks", () => {
   it.each(["cancelled", "skipped", "neutral"])(
     "marks a %s conclusion uncertain rather than successful or repairable",
     (conclusion) => {
-      expect(
-        evaluate(["Build"], [checkRun("Build", "completed", conclusion)]),
-      ).toMatchObject({ status: "uncertain" });
+      expect(evaluate(["Build"], [checkRun("Build", "completed", conclusion)])).toMatchObject({
+        status: "uncertain",
+      });
     },
   );
 
-  it.each(["failure", "error"])(
-    "treats commit status %s as a terminal failure",
-    (state) => {
-      expect(evaluate(["Tests"], [commitStatus("Tests", state)])).toMatchObject(
-        {
-          status: "failed",
-          failures: [
-            expect.objectContaining({ source: "commit-status", state }),
-          ],
-        },
-      );
-    },
-  );
+  it.each(["failure", "error"])("treats commit status %s as a terminal failure", (state) => {
+    expect(evaluate(["Tests"], [commitStatus("Tests", state)])).toMatchObject({
+      status: "failed",
+      failures: [expect.objectContaining({ source: "commit-status", state })],
+    });
+  });
 
   it("does not pass empty or incomplete expectations", () => {
     expect(evaluate([], [])).toMatchObject({ status: "uncertain" });
@@ -287,10 +273,7 @@ describe("evaluateCiChecks", () => {
       ),
     ).toMatchObject({ status: "uncertain" });
     expect(
-      evaluate(
-        ["Build"],
-        [checkRun("Build", "completed", "success", "b".repeat(40))],
-      ),
+      evaluate(["Build"], [checkRun("Build", "completed", "success", "b".repeat(40))]),
     ).toMatchObject({ status: "uncertain" });
   });
 });

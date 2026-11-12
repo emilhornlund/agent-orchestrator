@@ -29,9 +29,9 @@ describe("GitClient", () => {
       email: "agent-orchestrator@example.com",
     };
 
-    await expect(
-      git.rebase("/worktree", "origin/main", identity),
-    ).rejects.toThrow("disabled to protect published history");
+    await expect(git.rebase("/worktree", "origin/main", identity)).rejects.toThrow(
+      "disabled to protect published history",
+    );
     expect(runGit).not.toHaveBeenCalled();
   });
 
@@ -53,9 +53,7 @@ describe("GitClient", () => {
     const runGit = vi.fn<RunGit>().mockResolvedValue("");
     const git = new GitClient(runGit);
 
-    await expect(
-      git.isAncestor("/worktree", "remote-sha", "head-sha"),
-    ).resolves.toBe(true);
+    await expect(git.isAncestor("/worktree", "remote-sha", "head-sha")).resolves.toBe(true);
 
     expect(runGit).toHaveBeenCalledWith("/worktree", [
       "merge-base",
@@ -69,27 +67,21 @@ describe("GitClient", () => {
     const runGit = vi.fn<RunGit>().mockRejectedValue(new Error("not ancestor"));
     const git = new GitClient(runGit);
 
-    await expect(
-      git.isAncestor("/worktree", "remote-sha", "head-sha"),
-    ).resolves.toBe(false);
+    await expect(git.isAncestor("/worktree", "remote-sha", "head-sha")).resolves.toBe(false);
   });
 
   it("detects an existing branch", async () => {
     const runGit = vi.fn<RunGit>().mockResolvedValue("  agent/card-123");
     const git = new GitClient(runGit);
 
-    await expect(git.branchExists("/repo", "agent/card-123")).resolves.toBe(
-      true,
-    );
+    await expect(git.branchExists("/repo", "agent/card-123")).resolves.toBe(true);
   });
 
   it("detects a missing branch", async () => {
     const runGit = vi.fn<RunGit>().mockResolvedValue("");
     const git = new GitClient(runGit);
 
-    await expect(git.branchExists("/repo", "agent/card-123")).resolves.toBe(
-      false,
-    );
+    await expect(git.branchExists("/repo", "agent/card-123")).resolves.toBe(false);
   });
 
   it("adds a worktree for an existing branch", async () => {
@@ -128,9 +120,7 @@ describe("GitClient", () => {
   });
 
   it("gets repository status including untracked files", async () => {
-    const runGit = vi
-      .fn<RunGit>()
-      .mockResolvedValue(" M src/main.cpp\n?? new-file.txt");
+    const runGit = vi.fn<RunGit>().mockResolvedValue(" M src/main.cpp\n?? new-file.txt");
 
     const git = new GitClient(runGit);
 
@@ -160,21 +150,12 @@ describe("GitClient", () => {
     await git.getDiff("/worktree");
     await git.getDiff("/worktree", true);
 
-    expect(runGit).toHaveBeenNthCalledWith(1, "/worktree", [
-      "diff",
-      "--binary",
-    ]);
-    expect(runGit).toHaveBeenNthCalledWith(2, "/worktree", [
-      "diff",
-      "--cached",
-      "--binary",
-    ]);
+    expect(runGit).toHaveBeenNthCalledWith(1, "/worktree", ["diff", "--binary"]);
+    expect(runGit).toHaveBeenNthCalledWith(2, "/worktree", ["diff", "--cached", "--binary"]);
   });
 
   it("lists untracked files with NUL-delimited Git output", async () => {
-    const runGit = vi
-      .fn<RunGit>()
-      .mockResolvedValue("new.txt\0nested/file.txt\0");
+    const runGit = vi.fn<RunGit>().mockResolvedValue("new.txt\0nested/file.txt\0");
     const git = new GitClient(runGit);
 
     await expect(git.getUntrackedFiles("/worktree")).resolves.toEqual([
@@ -200,9 +181,7 @@ describe("GitClient", () => {
 
     await git.stageAll("/worktree");
     await git.commit("/worktree", "/tmp/message-file", identity);
-    await expect(
-      git.getCommitCountBetween("/worktree", "before", "after"),
-    ).resolves.toBe(1);
+    await expect(git.getCommitCountBetween("/worktree", "before", "after")).resolves.toBe(1);
 
     expect(runGit).toHaveBeenNthCalledWith(1, "/worktree", ["add", "-A"]);
     expect(runGit).toHaveBeenNthCalledWith(
@@ -276,47 +255,29 @@ describe("GitClient", () => {
       "GIT_CONFIG_KEY_1",
       "GIT_CONFIG_VALUE_1",
     ] as const;
-    const priorEnvironment = Object.fromEntries(
-      injected.map((key) => [key, process.env[key]]),
-    );
+    const priorEnvironment = Object.fromEntries(injected.map((key) => [key, process.env[key]]));
     const runGit = (args: string[], cwd = repository): string =>
       execFileSync("git", args, {
         cwd,
         encoding: "utf8",
         env: Object.fromEntries(
-          Object.entries(process.env).filter(
-            ([key]) => !key.startsWith("GIT_CONFIG_"),
-          ),
+          Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_CONFIG_")),
         ),
       }).trim();
 
     try {
       fs.mkdirSync(repository);
-      execFileSync("ssh-keygen", [
-        "-q",
-        "-t",
-        "ed25519",
-        "-N",
-        "",
-        "-f",
-        keyPath,
-      ]);
+      execFileSync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-f", keyPath]);
       runGit(["init", "--quiet"]);
       runGit(["config", "commit.gpgSign", "false"]);
       runGit(["config", "gpg.format", "openpgp"]);
       runGit(["config", "user.signingKey", `${keyPath}.pub`]);
-      fs.writeFileSync(
-        path.join(repository, "tracked.txt"),
-        "signed payload\n",
-      );
+      fs.writeFileSync(path.join(repository, "tracked.txt"), "signed payload\n");
       fs.writeFileSync(messagePath, "signed commit\n");
       runGit(["add", "tracked.txt"]);
 
       const publicKey = fs.readFileSync(`${keyPath}.pub`, "utf8").trim();
-      fs.writeFileSync(
-        allowedSignersPath,
-        `agent@example.com namespaces="git" ${publicKey}\n`,
-      );
+      fs.writeFileSync(allowedSignersPath, `agent@example.com namespaces="git" ${publicKey}\n`);
       process.env.GIT_CONFIG_COUNT = "2";
       process.env.GIT_CONFIG_KEY_0 = "commit.gpgSign";
       process.env.GIT_CONFIG_VALUE_0 = "false";
@@ -374,14 +335,9 @@ describe("GitClient", () => {
 
     const git = new GitClient(runGit);
 
-    await expect(git.getCurrentBranch("/worktree")).resolves.toBe(
-      "agent/card-123",
-    );
+    await expect(git.getCurrentBranch("/worktree")).resolves.toBe("agent/card-123");
 
-    expect(runGit).toHaveBeenCalledWith("/worktree", [
-      "branch",
-      "--show-current",
-    ]);
+    expect(runGit).toHaveBeenCalledWith("/worktree", ["branch", "--show-current"]);
   });
 
   it("reads an active merge rebase and conflicted paths", async () => {
@@ -390,15 +346,9 @@ describe("GitClient", () => {
     );
     const rebaseDirectory = path.join(temporaryDirectory, "rebase-merge");
     fs.mkdirSync(rebaseDirectory);
-    fs.writeFileSync(
-      path.join(rebaseDirectory, "head-name"),
-      "refs/heads/agent/card-1\n",
-    );
+    fs.writeFileSync(path.join(rebaseDirectory, "head-name"), "refs/heads/agent/card-1\n");
     fs.writeFileSync(path.join(rebaseDirectory, "onto"), `${"b".repeat(40)}\n`);
-    fs.writeFileSync(
-      path.join(rebaseDirectory, "orig-head"),
-      `${"a".repeat(40)}\n`,
-    );
+    fs.writeFileSync(path.join(rebaseDirectory, "orig-head"), `${"a".repeat(40)}\n`);
     fs.writeFileSync(path.join(rebaseDirectory, "msgnum"), "2\n");
     fs.writeFileSync(path.join(rebaseDirectory, "end"), "4\n");
     const runGit = vi.fn<RunGit>(async (_cwd, args) => {
@@ -428,9 +378,10 @@ describe("GitClient", () => {
         currentStep: 2,
         totalSteps: 4,
       });
-      await expect(git.getConflictedPaths(temporaryDirectory)).resolves.toEqual(
-        ["src/changed.ts", "src/other.ts"],
-      );
+      await expect(git.getConflictedPaths(temporaryDirectory)).resolves.toEqual([
+        "src/changed.ts",
+        "src/other.ts",
+      ]);
     } finally {
       fs.rmSync(temporaryDirectory, { recursive: true, force: true });
     }
@@ -440,15 +391,9 @@ describe("GitClient", () => {
     const runGit = vi.fn<RunGit>().mockResolvedValue("src/main.cpp");
     const git = new GitClient(runGit);
 
-    await expect(git.getChangedFiles("/worktree", "origin/main")).resolves.toBe(
-      "src/main.cpp",
-    );
+    await expect(git.getChangedFiles("/worktree", "origin/main")).resolves.toBe("src/main.cpp");
 
-    expect(runGit).toHaveBeenCalledWith("/worktree", [
-      "diff",
-      "--name-only",
-      "origin/main...HEAD",
-    ]);
+    expect(runGit).toHaveBeenCalledWith("/worktree", ["diff", "--name-only", "origin/main...HEAD"]);
   });
 
   it("pushes a branch and configures its upstream", async () => {
@@ -470,12 +415,7 @@ describe("GitClient", () => {
     const git = new GitClient(runGit);
 
     await expect(
-      git.pushWithLease(
-        "/tmp/repository",
-        "origin",
-        "agent/card-123",
-        "remote-sha",
-      ),
+      git.pushWithLease("/tmp/repository", "origin", "agent/card-123", "remote-sha"),
     ).rejects.toThrow("Force-with-lease pushes are disabled");
     expect(runGit).not.toHaveBeenCalled();
   });
@@ -486,11 +426,7 @@ describe("GitClient", () => {
 
     await git.removeWorktree("/repo", "/worktrees/card-1");
 
-    expect(runGit).toHaveBeenCalledWith("/repo", [
-      "worktree",
-      "remove",
-      "/worktrees/card-1",
-    ]);
+    expect(runGit).toHaveBeenCalledWith("/repo", ["worktree", "remove", "/worktrees/card-1"]);
   });
 
   it("deletes a local branch", async () => {
@@ -499,11 +435,7 @@ describe("GitClient", () => {
 
     await git.deleteBranch("/repo", "agent/card-1");
 
-    expect(runGit).toHaveBeenCalledWith("/repo", [
-      "branch",
-      "-D",
-      "agent/card-1",
-    ]);
+    expect(runGit).toHaveBeenCalledWith("/repo", ["branch", "-D", "agent/card-1"]);
   });
 
   it("prunes stale worktree metadata", async () => {
@@ -521,11 +453,7 @@ describe("GitClient", () => {
 
     await git.resetHard("/worktree");
 
-    expect(runGit).toHaveBeenCalledWith("/worktree", [
-      "reset",
-      "--hard",
-      "HEAD",
-    ]);
+    expect(runGit).toHaveBeenCalledWith("/worktree", ["reset", "--hard", "HEAD"]);
   });
 
   it("removes untracked files from a worktree", async () => {
@@ -542,9 +470,7 @@ describe("GitClient", () => {
 
     const git = new GitClient(runGit);
 
-    await expect(
-      git.remoteBranchExists("/repo", "origin", "agent/card-1"),
-    ).resolves.toBe(true);
+    await expect(git.remoteBranchExists("/repo", "origin", "agent/card-1")).resolves.toBe(true);
 
     expect(runGit).toHaveBeenCalledWith("/repo", [
       "ls-remote",
@@ -555,41 +481,33 @@ describe("GitClient", () => {
   });
 
   it("gets the SHA of an existing remote branch", async () => {
-    const runGit = vi
-      .fn<RunGit>()
-      .mockResolvedValue("abc123\trefs/heads/agent/card-1");
+    const runGit = vi.fn<RunGit>().mockResolvedValue("abc123\trefs/heads/agent/card-1");
     const git = new GitClient(runGit);
 
-    await expect(
-      git.getRemoteBranchSha("/repo", "origin", "agent/card-1"),
-    ).resolves.toBe("abc123");
+    await expect(git.getRemoteBranchSha("/repo", "origin", "agent/card-1")).resolves.toBe("abc123");
   });
 
   it("returns no SHA when a remote branch is missing", async () => {
     const runGit = vi.fn<RunGit>().mockResolvedValue("");
     const git = new GitClient(runGit);
 
-    await expect(
-      git.getRemoteBranchSha("/repo", "origin", "agent/card-1"),
-    ).resolves.toBeNull();
+    await expect(git.getRemoteBranchSha("/repo", "origin", "agent/card-1")).resolves.toBeNull();
   });
 
   it("rejects malformed remote branch output", async () => {
     const runGit = vi.fn<RunGit>().mockResolvedValue("not-a-remote-ref");
     const git = new GitClient(runGit);
 
-    await expect(
-      git.getRemoteBranchSha("/repo", "origin", "agent/card-1"),
-    ).rejects.toThrow("invalid remote branch result");
+    await expect(git.getRemoteBranchSha("/repo", "origin", "agent/card-1")).rejects.toThrow(
+      "invalid remote branch result",
+    );
   });
 
   it("detects a missing remote branch", async () => {
     const runGit = vi.fn().mockResolvedValue("");
     const git = new GitClient(runGit);
 
-    await expect(
-      git.remoteBranchExists("/repo", "origin", "agent/card-1"),
-    ).resolves.toBe(false);
+    await expect(git.remoteBranchExists("/repo", "origin", "agent/card-1")).resolves.toBe(false);
   });
 
   it("deletes a remote branch", async () => {
@@ -598,11 +516,6 @@ describe("GitClient", () => {
 
     await git.deleteRemoteBranch("/repo", "origin", "agent/card-1");
 
-    expect(runGit).toHaveBeenCalledWith("/repo", [
-      "push",
-      "origin",
-      "--delete",
-      "agent/card-1",
-    ]);
+    expect(runGit).toHaveBeenCalledWith("/repo", ["push", "origin", "--delete", "agent/card-1"]);
   });
 });

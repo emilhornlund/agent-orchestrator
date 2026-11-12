@@ -54,8 +54,7 @@ const message = {
   text: "Project p / Task c / https://github.com/o/r/pull/1",
 };
 afterEach(() => {
-  for (const root of roots.splice(0))
-    fs.rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
 describe("notification-only durable outbox", () => {
@@ -95,13 +94,7 @@ describe("notification-only durable outbox", () => {
         .find((record) => record.eventKey === "prepared")?.trigger,
     ).toBeUndefined();
   });
-  it.each([
-    "humanReview",
-    "failed",
-    "attentionRequired",
-    "refinementComplete",
-    "done",
-  ] as const)(
+  it.each(["humanReview", "failed", "attentionRequired", "refinementComplete", "done"] as const)(
     "propagates %s preparation failure instead of logging and forgetting",
     async (event) => {
       const f = fixture();
@@ -219,12 +212,8 @@ describe("notification-only durable outbox", () => {
     f.tick();
     await f.open().drain({ send }, report);
     expect(send).toHaveBeenCalledTimes(1);
-    expect(f.open().records()[0]?.dispatches[0]?.providerId).toBe(
-      "provider-queue-42",
-    );
-    expect(report).toHaveBeenCalledWith(
-      expect.stringContaining("partial recipient acceptance"),
-    );
+    expect(f.open().records()[0]?.dispatches[0]?.providerId).toBe("provider-queue-42");
+    expect(report).toHaveBeenCalledWith(expect.stringContaining("partial recipient acceptance"));
   });
   it("returns from the production helper while SMTP is still awaiting acceptance", async () => {
     const f = fixture();
@@ -251,9 +240,7 @@ describe("notification-only durable outbox", () => {
     );
     expect(f.open().records()[0]?.dispatches[0]?.outcome).toBe("ambiguous");
     acknowledge();
-    await vi.waitFor(() =>
-      expect(f.open().records()[0]?.dispatches[0]?.outcome).toBe("confirmed"),
-    );
+    await vi.waitFor(() => expect(f.open().records()[0]?.dispatches[0]?.outcome).toBe("confirmed"));
   });
   it("pins transport identity, respects per-event disablement, and isolates projects", async () => {
     const f = fixture();
@@ -262,15 +249,10 @@ describe("notification-only durable outbox", () => {
     const report = vi.fn();
     await f.open().drain({ send, deliveryTarget: "smtp-changed" }, report);
     expect(send).not.toHaveBeenCalled();
-    expect(report).toHaveBeenCalledWith(
-      expect.stringContaining("identity changed"),
-    );
+    expect(report).toHaveBeenCalledWith(expect.stringContaining("identity changed"));
     await f
       .open()
-      .drain(
-        { send, deliveryTarget: "smtp-original", isEventEnabled: () => false },
-        report,
-      );
+      .drain({ send, deliveryTarget: "smtp-original", isEventEnabled: () => false }, report);
     expect(send).not.toHaveBeenCalled();
     const other = new NotificationOutbox(f.root, "other-project", () => {});
     other.enqueue("attempt:event", message);
@@ -282,23 +264,18 @@ describe("notification-only durable outbox", () => {
   });
   it("does not require infrastructure when disabled", () => {
     expect(createEmailNotifier(undefined, {})).toBeUndefined();
-    expect(
-      enqueueNotification(undefined, "p", "failed", "c", message),
-    ).toBeUndefined();
+    expect(enqueueNotification(undefined, "p", "failed", "c", message)).toBeUndefined();
   });
   it("persists intent, retries only proven non-delivery after restart and pacing, deduplicates actual confirmation", async () => {
     const f = fixture();
     f.open().enqueue("attempt-old:humanReview:sha", message);
     const sink: string[] = [];
     const send = vi.fn(async (outbound: { text: string }) => {
-      if (send.mock.calls.length === 1)
-        throw new NotificationNotDeliveredError("rejected");
+      if (send.mock.calls.length === 1) throw new NotificationNotDeliveredError("rejected");
       sink.push(outbound.text);
     });
     await f.open().drain({ send }, () => {});
-    expect(f.open().records()[0]?.dispatches[0]?.outcome).toBe(
-      "known-not-delivered",
-    );
+    expect(f.open().records()[0]?.dispatches[0]?.outcome).toBe("known-not-delivered");
     await f.open().drain({ send }, () => {});
     expect(send).toHaveBeenCalledTimes(1);
     f.tick();
@@ -327,23 +304,18 @@ describe("notification-only durable outbox", () => {
     const report = vi.fn();
     await f.open().drain({ send }, report);
     f.tick();
-    await f
-      .open()
-      .drain({ send, lookupDelivery: async () => "ambiguous" }, report);
+    await f.open().drain({ send, lookupDelivery: async () => "ambiguous" }, report);
     accepted.push(f.open().records()[0]!.messageId);
     f.tick();
     await f.open().drain(
       {
         send,
-        lookupDelivery: async (id) =>
-          accepted.includes(id) ? "confirmed" : "ambiguous",
+        lookupDelivery: async (id) => (accepted.includes(id) ? "confirmed" : "ambiguous"),
       },
       report,
     );
     expect(send).toHaveBeenCalledTimes(1);
-    expect(report).toHaveBeenCalledWith(
-      expect.stringContaining("no automatic resend"),
-    );
+    expect(report).toHaveBeenCalledWith(expect.stringContaining("no automatic resend"));
     expect(f.open().records()[0]?.dispatches[0]?.outcome).toBe("confirmed");
   });
   it("redacts stored and outbound known literal/encoded secrets and never stores raw exceptions", async () => {
@@ -388,10 +360,7 @@ describe("notification-only durable outbox", () => {
     const g = fixture();
     const entry = g.open().enqueue("event", message);
     const directory = path.join(g.root, "notifications");
-    const projectDirectory = path.join(
-      directory,
-      fs.readdirSync(directory)[0]!,
-    );
+    const projectDirectory = path.join(directory, fs.readdirSync(directory)[0]!);
     const file = path.join(projectDirectory, `${entry.id}.json`);
     fs.writeFileSync(file, '{"version":99}');
     expect(() => g.open().records()).toThrow();
@@ -403,13 +372,7 @@ describe("notification-only durable outbox", () => {
       const f = fixture();
       const child = spawn(
         process.execPath,
-        [
-          "--import",
-          "tsx",
-          "tests/fixtures/notification-crash.ts",
-          f.root,
-          barrier,
-        ],
+        ["--import", "tsx", "tests/fixtures/notification-crash.ts", f.root, barrier],
         { stdio: ["ignore", "pipe", "pipe", "ipc"] },
       );
       try {
@@ -422,10 +385,7 @@ describe("notification-only durable outbox", () => {
         await f.open().drain({ send }, () => {});
         expect(send).toHaveBeenCalledTimes(barrier === "intent" ? 1 : 0);
         const accepted = fs.existsSync(path.join(f.root, "sink.jsonl"))
-          ? fs
-              .readFileSync(path.join(f.root, "sink.jsonl"), "utf8")
-              .trim()
-              .split("\n")
+          ? fs.readFileSync(path.join(f.root, "sink.jsonl"), "utf8").trim().split("\n")
           : [];
         expect(accepted).toHaveLength(
           ["acceptance", "response", "confirmed"].includes(barrier) ? 1 : 0,

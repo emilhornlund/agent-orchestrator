@@ -8,10 +8,7 @@ import { getTaskSessionSourceSnapshotIdentity } from "../src/task-session/source
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
 import { TaskPlanStore } from "../src/task-session/task-plan-store.js";
 import { GitClient } from "../src/git/git-client.js";
-import {
-  GitHubClient,
-  type CiCheckObservation,
-} from "../src/github/github-client.js";
+import { GitHubClient, type CiCheckObservation } from "../src/github/github-client.js";
 import { OpenCodeClient } from "../src/opencode/opencode-client.js";
 import { CommandRunner } from "../src/process/command-runner.js";
 import { pollProject } from "../src/orchestrator/poll-project.js";
@@ -115,10 +112,7 @@ describe("task-session human-owned pull request outcome", () => {
         pruneWorktrees: vi.fn(async () => undefined),
         branchExists: vi.fn(async () => false),
       } as unknown as GitClient;
-      const contentIdentity = await getTaskSessionSourceSnapshotIdentity(
-        git,
-        worktreePath,
-      );
+      const contentIdentity = await getTaskSessionSourceSnapshotIdentity(git, worktreePath);
       let observedChecks: CiCheckObservation[] = [
         {
           source: "check-run" as const,
@@ -254,9 +248,7 @@ describe("task-session human-owned pull request outcome", () => {
         );
       await poll();
       expect(mergePullRequest).not.toHaveBeenCalled();
-      expect(
-        taskStore.read(card.id)?.reviewObservation?.ciEvaluation,
-      ).toMatchObject({
+      expect(taskStore.read(card.id)?.reviewObservation?.ciEvaluation).toMatchObject({
         status: "waiting",
         missingChecks: ["Tests"],
       });
@@ -287,17 +279,12 @@ describe("task-session human-owned pull request outcome", () => {
         phase: "human-feedback",
         pullRequest: { headSha },
       });
-      expect(
-        taskStore.read(card.id)?.reviewObservation?.ciEvaluation,
-      ).toMatchObject({
+      expect(taskStore.read(card.id)?.reviewObservation?.ciEvaluation).toMatchObject({
         status: "passed",
       });
       expect(git.removeWorktree).not.toHaveBeenCalled();
       expect(fs.existsSync(worktreePath)).toBe(true);
-      expect(trello.moveCard).not.toHaveBeenCalledWith(
-        nextCard.id,
-        project.trello.workingListId,
-      );
+      expect(trello.moveCard).not.toHaveBeenCalledWith(nextCard.id, project.trello.workingListId);
     },
   );
 });

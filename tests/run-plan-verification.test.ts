@@ -75,9 +75,7 @@ function createFixture(): {
   executionStore: TaskExecutionStore;
   planStore: TaskPlanStore;
 } {
-  temporaryRoot = fs.mkdtempSync(
-    path.join(os.tmpdir(), "agent-orchestrator-plan-verification-"),
-  );
+  temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agent-orchestrator-plan-verification-"));
   const project = {
     id: projectId,
     repository: {
@@ -114,9 +112,7 @@ function createFixture(): {
   return { executionStore, planStore };
 }
 
-function verification(
-  overrides: Partial<PlanVerificationResult> = {},
-): PlanVerificationResult {
+function verification(overrides: Partial<PlanVerificationResult> = {}): PlanVerificationResult {
   return {
     version: 1,
     projectId,
@@ -166,9 +162,7 @@ describe("runPlanVerification", () => {
     );
 
     expect(result.verification.verdict).toBe("pass");
-    expect(planStore.read(card.id, 1)?.verification).toEqual(
-      result.verification,
-    );
+    expect(planStore.read(card.id, 1)?.verification).toEqual(result.verification);
     expect(planStore.read(card.id)?.planRevision).toBe(1);
     expect(executionStore.read(card.id)?.phase).toBe("planning");
     expect(runOpenCode.mock.calls[0]?.[0]).toMatchObject({
@@ -176,9 +170,7 @@ describe("runPlanVerification", () => {
       prompt: expect.stringContaining(card.desc),
     });
     expect(runOpenCode.mock.calls[0]?.[0].prompt).toContain("invented-scope");
-    expect(runOpenCode.mock.calls[0]?.[0].prompt).toContain(
-      "Do not implement the task",
-    );
+    expect(runOpenCode.mock.calls[0]?.[0].prompt).toContain("Do not implement the task");
     expect(runOpenCode.mock.calls[0]?.[0].sessionId).toBeUndefined();
   });
 
@@ -207,9 +199,7 @@ describe("runPlanVerification", () => {
     );
 
     expect(result.verification.verdict).toBe("pass");
-    expect(planStore.read(card.id)?.taskOperationKey).toBe(
-      "planning-operation",
-    );
+    expect(planStore.read(card.id)?.taskOperationKey).toBe("planning-operation");
     expect(executionStore.read(card.id)?.revision).toBe(2);
     expect(runOpenCode).toHaveBeenCalledOnce();
   });
@@ -249,10 +239,7 @@ describe("runPlanVerification", () => {
 
   it.each([
     ["malformed JSON", "not JSON"],
-    [
-      "mismatched plan revision",
-      JSON.stringify(verification({ planRevision: 2 })),
-    ],
+    ["mismatched plan revision", JSON.stringify(verification({ planRevision: 2 }))],
     [
       "failed verdict without concrete findings",
       JSON.stringify(verification({ verdict: "fail", findings: [] })),
@@ -262,9 +249,7 @@ describe("runPlanVerification", () => {
     const runOpenCode = runOpenCodeWithResult(output);
 
     await expect(
-      runPlanVerification(
-        options(executionStore, planStore, new OpenCodeClient(runOpenCode)),
-      ),
+      runPlanVerification(options(executionStore, planStore, new OpenCodeClient(runOpenCode))),
     ).rejects.toThrow();
 
     expect(planStore.read(card.id)?.verification).toBeUndefined();
@@ -272,32 +257,18 @@ describe("runPlanVerification", () => {
   });
 
   it("classifies only verified stopped or never-dispatched reviewer failures as advisory", async () => {
-    const safelyStoppedTimeout = new OpenCodeTimeoutError(
-      100,
-      "review-exec",
-      true,
-    );
+    const safelyStoppedTimeout = new OpenCodeTimeoutError(100, "review-exec", true);
     const { executionStore, planStore } = createFixture();
-    const timedOut = vi
-      .fn<RunOpenCode>()
-      .mockRejectedValue(safelyStoppedTimeout);
+    const timedOut = vi.fn<RunOpenCode>().mockRejectedValue(safelyStoppedTimeout);
     await expect(
-      runPlanVerification(
-        options(executionStore, planStore, new OpenCodeClient(timedOut)),
-      ),
+      runPlanVerification(options(executionStore, planStore, new OpenCodeClient(timedOut))),
     ).rejects.toMatchObject({ advisoryFailure: true });
     expect(planStore.read(card.id)?.verification).toBeUndefined();
 
-    const spawnFailure = new ProcessExecutionError(
-      "OpenCode",
-      "spawn-exec",
-      "spawn-failure",
-    );
+    const spawnFailure = new ProcessExecutionError("OpenCode", "spawn-exec", "spawn-failure");
     const failedToSpawn = vi.fn<RunOpenCode>().mockRejectedValue(spawnFailure);
     await expect(
-      runPlanVerification(
-        options(executionStore, planStore, new OpenCodeClient(failedToSpawn)),
-      ),
+      runPlanVerification(options(executionStore, planStore, new OpenCodeClient(failedToSpawn))),
     ).rejects.toMatchObject({ advisoryFailure: true });
     expect(planStore.read(card.id)?.verification).toBeUndefined();
   });
@@ -308,11 +279,7 @@ describe("runPlanVerification", () => {
     controller.abort();
     const failure = new OpenCodeTimeoutError(100, "review-exec", true);
     const run = vi.fn<RunOpenCode>().mockRejectedValue(failure);
-    const runOptions = options(
-      executionStore,
-      planStore,
-      new OpenCodeClient(run),
-    );
+    const runOptions = options(executionStore, planStore, new OpenCodeClient(run));
     runOptions.runOptions.signal = controller.signal;
 
     await expect(runPlanVerification(runOptions)).rejects.toBe(failure);
@@ -321,40 +288,23 @@ describe("runPlanVerification", () => {
   });
 
   it.each([
-    [
-      "process evidence failure",
-      () => new ProcessEvidenceError("evidence unavailable"),
-    ],
-    [
-      "unverified timeout",
-      () => new OpenCodeTimeoutError(100, "review-exec", false),
-    ],
-    [
-      "process group termination uncertainty",
-      () => new ProcessGroupTerminationError(123),
-    ],
-    [
-      "generic operation failure",
-      () => new Error("ownership or storage failure"),
-    ],
-  ])(
-    "does not downgrade %s into completed advisory advice",
-    async (_label, createError) => {
-      const { executionStore, planStore } = createFixture();
-      const failure = createError();
-      const run = vi.fn<RunOpenCode>().mockRejectedValue(failure);
+    ["process evidence failure", () => new ProcessEvidenceError("evidence unavailable")],
+    ["unverified timeout", () => new OpenCodeTimeoutError(100, "review-exec", false)],
+    ["process group termination uncertainty", () => new ProcessGroupTerminationError(123)],
+    ["generic operation failure", () => new Error("ownership or storage failure")],
+  ])("does not downgrade %s into completed advisory advice", async (_label, createError) => {
+    const { executionStore, planStore } = createFixture();
+    const failure = createError();
+    const run = vi.fn<RunOpenCode>().mockRejectedValue(failure);
 
-      await expect(
-        runPlanVerification(
-          options(executionStore, planStore, new OpenCodeClient(run)),
-        ),
-      ).rejects.toBe(failure);
+    await expect(
+      runPlanVerification(options(executionStore, planStore, new OpenCodeClient(run))),
+    ).rejects.toBe(failure);
 
-      expect(planStore.read(card.id)?.verification).toBeUndefined();
-      expect(executionStore.read(card.id)).toMatchObject({ phase: "planning" });
-      expect(executionStore.read(card.id)?.planReviewAdvice).toBeUndefined();
-    },
-  );
+    expect(planStore.read(card.id)?.verification).toBeUndefined();
+    expect(executionStore.read(card.id)).toMatchObject({ phase: "planning" });
+    expect(executionStore.read(card.id)?.planReviewAdvice).toBeUndefined();
+  });
 
   it("refuses verification after the task record has moved to another phase", async () => {
     const { executionStore, planStore } = createFixture();
@@ -373,9 +323,7 @@ describe("runPlanVerification", () => {
     const runOpenCode = vi.fn<RunOpenCode>();
 
     await expect(
-      runPlanVerification(
-        options(executionStore, planStore, new OpenCodeClient(runOpenCode)),
-      ),
+      runPlanVerification(options(executionStore, planStore, new OpenCodeClient(runOpenCode))),
     ).rejects.toThrow("planning phase");
     expect(runOpenCode).not.toHaveBeenCalled();
   });

@@ -11,10 +11,7 @@ import {
   type HostProjectPin,
 } from "../coordination/project-registry.js";
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
-import {
-  projectUsingHostPin,
-  reconcilePinnedProjectAttempt,
-} from "../startup/run-startup.js";
+import { projectUsingHostPin, reconcilePinnedProjectAttempt } from "../startup/run-startup.js";
 
 export interface ProjectRunOperatorContext {
   readonly lease: ProjectOwnershipLease;
@@ -32,9 +29,7 @@ export async function acquireProjectRunOperatorContext(
   const coordinationRoot = config.workflow.coordinationRoot;
   const namespaceId = config.workflow.coordinationNamespaceId;
   if (!coordinationRoot || !namespaceId)
-    throw new Error(
-      "Operator recovery requires the configured host coordination namespace",
-    );
+    throw new Error("Operator recovery requires the configured host coordination namespace");
   const lease = await acquireProjectOwnership(
     coordinationRoot,
     {
@@ -44,21 +39,16 @@ export async function acquireProjectRunOperatorContext(
     namespaceId,
   );
   try {
-    const candidates = await readProjectPinCandidates(
-      coordinationRoot,
-      project.id,
-    );
+    const candidates = await readProjectPinCandidates(coordinationRoot, project.id);
     let pin: HostProjectPin | undefined = candidates[0];
     let effectiveProject = project;
     if (pin?.activeAttempt || pin?.pendingAttempt) {
       if (
         JSON.stringify(project.trello) !== JSON.stringify(pin.trello) ||
-        canonicalizeGitHubRepository(project.repository.github) !==
-          pin.repository.github ||
+        canonicalizeGitHubRepository(project.repository.github) !== pin.repository.github ||
         path.resolve(project.repository.path) !== pin.repository.path ||
         project.repository.defaultBranch !== pin.repository.defaultBranch ||
-        path.resolve(project.repository.worktreeRoot) !==
-          pin.repository.worktreeRoot ||
+        path.resolve(project.repository.worktreeRoot) !== pin.repository.worktreeRoot ||
         path.resolve(config.workflow.contextRoot) !== pin.storageRoot
       ) {
         throw new Error(
@@ -67,9 +57,9 @@ export async function acquireProjectRunOperatorContext(
       }
       effectiveProject = projectUsingHostPin(project, pin);
     } else {
-      pin = (
-        await verifyAndPinProjects({ ...config, projects: [project] }, [lease])
-      ).find((candidate) => candidate.projectId === project.id);
+      pin = (await verifyAndPinProjects({ ...config, projects: [project] }, [lease])).find(
+        (candidate) => candidate.projectId === project.id,
+      );
     }
     if (!pin) throw new Error(`No host project pin exists for ${project.id}`);
     const effectiveConfig = {

@@ -7,8 +7,7 @@ import { sanitizeControlledText } from "../security/redact-secrets.js";
 
 import { z } from "zod";
 
-export const refinementResultRelativePath =
-  ".agent-orchestrator/refinement-result.json";
+export const refinementResultRelativePath = ".agent-orchestrator/refinement-result.json";
 
 export const refinementResultContract = {
   title: {
@@ -24,18 +23,13 @@ export const refinementResultContract = {
 
 const refinementResultSchemaFields = {
   title: z.string().trim().min(1, "Refinement title must not be blank"),
-  description: z
-    .string()
-    .trim()
-    .min(1, "Refinement description must not be blank"),
+  description: z.string().trim().min(1, "Refinement description must not be blank"),
   type: z.enum(refinementResultContract.type.values),
 } satisfies {
   [field in keyof typeof refinementResultContract]: z.ZodType;
 };
 
-export const refinementResultSchema = z.strictObject(
-  refinementResultSchemaFields,
-);
+export const refinementResultSchema = z.strictObject(refinementResultSchemaFields);
 
 export class InvalidRefinementResultError extends Error {}
 
@@ -62,12 +56,7 @@ export function getRefinementResultPath(worktreePath: string): string {
   if (run) {
     if (path.resolve(worktreePath) !== runTaskResources(run).path)
       throw new Error("Refinement result worktree differs from owned attempt");
-    return path.join(
-      run.pinned.storageRoot,
-      "refinement-results",
-      run.attemptId,
-      "result.json",
-    );
+    return path.join(run.pinned.storageRoot, "refinement-results", run.attemptId, "result.json");
   }
   return path.join(worktreePath, refinementResultRelativePath);
 }
@@ -83,9 +72,7 @@ function assertArtifactDirectory(directory: string, create: boolean): void {
       stat = fs.lstatSync(current);
     }
     if (stat.isSymbolicLink() || !stat.isDirectory())
-      throw new Error(
-        "Unsafe refinement artifact directory; preserving unknown paths",
-      );
+      throw new Error("Unsafe refinement artifact directory; preserving unknown paths");
   }
 }
 
@@ -117,12 +104,9 @@ export function readRefinementResult(worktreePath: string): RefinementResult {
     stat = fs.lstatSync(resultPath);
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-      throw new InvalidRefinementResultError(
-        `Refinement result file not found: ${resultPath}`,
-        {
-          cause: error,
-        },
-      );
+      throw new InvalidRefinementResultError(`Refinement result file not found: ${resultPath}`, {
+        cause: error,
+      });
     }
 
     throw error;
@@ -145,17 +129,12 @@ export function readRefinementResult(worktreePath: string): RefinementResult {
   try {
     parsed = JSON.parse(fs.readFileSync(resultPath, "utf8"));
   } catch (error) {
-    throw new InvalidRefinementResultError(
-      `Invalid refinement result JSON: ${resultPath}`,
-      {
-        cause: error,
-      },
-    );
+    throw new InvalidRefinementResultError(`Invalid refinement result JSON: ${resultPath}`, {
+      cause: error,
+    });
   }
 
-  const controlled: unknown = JSON.parse(
-    sanitizeControlledText(JSON.stringify(parsed)),
-  );
+  const controlled: unknown = JSON.parse(sanitizeControlledText(JSON.stringify(parsed)));
   const result = refinementResultSchema.safeParse(controlled);
 
   if (!result.success) {
@@ -164,9 +143,7 @@ export function readRefinementResult(worktreePath: string): RefinementResult {
       return `${location}: ${issue.message}`;
     });
 
-    throw new InvalidRefinementResultError(
-      `Invalid refinement result:\n${messages.join("\n")}`,
-    );
+    throw new InvalidRefinementResultError(`Invalid refinement result:\n${messages.join("\n")}`);
   }
 
   return result.data;

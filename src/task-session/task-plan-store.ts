@@ -4,10 +4,7 @@ import path from "node:path";
 import { z } from "zod";
 
 import type { ProjectConfig } from "../config/config.js";
-import {
-  parsePlanVerificationResult,
-  type PlanVerificationResult,
-} from "./plan-verification.js";
+import { parsePlanVerificationResult, type PlanVerificationResult } from "./plan-verification.js";
 import { parseTaskPlan, type TaskPlan } from "./task-plan.js";
 import { ProjectRunAuthority } from "./project-run-authority.js";
 
@@ -50,9 +47,7 @@ function isWithin(parent: string, candidate: string): boolean {
 
   return (
     relative === "" ||
-    (relative !== ".." &&
-      !relative.startsWith(`..${path.sep}`) &&
-      !path.isAbsolute(relative))
+    (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
   );
 }
 
@@ -73,19 +68,14 @@ function assertSafeComponent(value: string, label: string): void {
     Array.from(value).some((character) => {
       const code = character.codePointAt(0);
 
-      return (
-        code !== undefined && (code <= 0x1f || (code >= 0x7f && code <= 0x9f))
-      );
+      return code !== undefined && (code <= 0x1f || (code >= 0x7f && code <= 0x9f));
     })
   ) {
     throw new Error(`Invalid ${label} for task plan storage: ${value}`);
   }
 }
 
-function resolveStorageRoot(
-  rootDirectory: string,
-  project: ProjectConfig,
-): string {
+function resolveStorageRoot(rootDirectory: string, project: ProjectConfig): string {
   if (!path.isAbsolute(rootDirectory)) {
     throw new Error("Task plan storage root must be an absolute path");
   }
@@ -108,9 +98,7 @@ function assertDirectoryPath(directoryPath: string, create: boolean): boolean {
   const parsedPath = path.parse(directoryPath);
   let currentPath = parsedPath.root;
 
-  for (const component of path
-    .relative(parsedPath.root, directoryPath)
-    .split(path.sep)) {
+  for (const component of path.relative(parsedPath.root, directoryPath).split(path.sep)) {
     if (component.length === 0) {
       continue;
     }
@@ -192,9 +180,7 @@ function readTaskPlanFile(
   }
 
   if (stats.size > MAX_TASK_PLAN_BYTES) {
-    throw new Error(
-      `Task plan exceeds the ${MAX_TASK_PLAN_BYTES}-byte limit: ${filePath}`,
-    );
+    throw new Error(`Task plan exceeds the ${MAX_TASK_PLAN_BYTES}-byte limit: ${filePath}`);
   }
 
   let value: unknown;
@@ -208,9 +194,7 @@ function readTaskPlanFile(
   const stored = parseStoredTaskPlan(value);
 
   if (stored.plan.projectId !== projectId || stored.plan.cardId !== cardId) {
-    throw new Error(
-      `Task plan identity does not match ${projectId}/${cardId}: ${filePath}`,
-    );
+    throw new Error(`Task plan identity does not match ${projectId}/${cardId}: ${filePath}`);
   }
 
   return stored;
@@ -231,11 +215,7 @@ export class TaskPlanStore {
   private readonly directoryPath: string;
   private readonly authority: ProjectRunAuthority | undefined;
 
-  constructor(
-    rootDirectory: string,
-    project: ProjectConfig,
-    authority?: ProjectRunAuthority,
-  ) {
+  constructor(rootDirectory: string, project: ProjectConfig, authority?: ProjectRunAuthority) {
     const root = resolveStorageRoot(rootDirectory, project);
     this.projectId = project.id;
     this.authority = authority ?? ProjectRunAuthority.current(project.id);
@@ -259,14 +239,8 @@ export class TaskPlanStore {
         ProjectRunAuthority.taskKey("task-plan", cardId),
         parseStoredTaskPlan,
       );
-      if (
-        stored &&
-        (stored.plan.projectId !== this.projectId ||
-          stored.plan.cardId !== cardId)
-      )
-        throw new TaskPlanConflictError(
-          "Task plan projection identity mismatch",
-        );
+      if (stored && (stored.plan.projectId !== this.projectId || stored.plan.cardId !== cardId))
+        throw new TaskPlanConflictError("Task plan projection identity mismatch");
       if (
         stored &&
         expectedTaskOperationKey !== undefined &&
@@ -279,8 +253,7 @@ export class TaskPlanStore {
       if (
         stored &&
         expectedTaskRecordRevision !== undefined &&
-        (expectedTaskOperationKey === undefined ||
-          stored.taskOperationKey === undefined) &&
+        (expectedTaskOperationKey === undefined || stored.taskOperationKey === undefined) &&
         stored.taskRecordRevision !== expectedTaskRecordRevision
       )
         throw new TaskPlanConflictError(
@@ -310,8 +283,7 @@ export class TaskPlanStore {
     if (
       stored !== null &&
       expectedTaskRecordRevision !== undefined &&
-      (expectedTaskOperationKey === undefined ||
-        stored.taskOperationKey === undefined) &&
+      (expectedTaskOperationKey === undefined || stored.taskOperationKey === undefined) &&
       stored.taskRecordRevision !== expectedTaskRecordRevision
     ) {
       throw new TaskPlanConflictError(
@@ -343,8 +315,7 @@ export class TaskPlanStore {
         ProjectRunAuthority.taskKey("task-plan", plan.cardId),
         null,
         (value) => {
-          if (value !== null)
-            throw new TaskPlanConflictError("Task plan already exists");
+          if (value !== null) throw new TaskPlanConflictError("Task plan already exists");
           return { value: stored, result: stored };
         },
         parseStoredTaskPlan,
@@ -354,9 +325,7 @@ export class TaskPlanStore {
 
     return this.withLock(filePath, () => {
       if (readTaskPlanFile(filePath, this.projectId, plan.cardId) !== null) {
-        throw new TaskPlanConflictError(
-          `Task plan already exists: ${filePath}`,
-        );
+        throw new TaskPlanConflictError(`Task plan already exists: ${filePath}`);
       }
 
       const temporaryPath = this.writeTemporaryPlan(filePath, stored);
@@ -370,9 +339,7 @@ export class TaskPlanStore {
           "code" in error &&
           error.code === "EEXIST"
         ) {
-          throw new TaskPlanConflictError(
-            `Task plan already exists: ${filePath}`,
-          );
+          throw new TaskPlanConflictError(`Task plan already exists: ${filePath}`);
         }
 
         throw error;
@@ -390,10 +357,7 @@ export class TaskPlanStore {
     planInput: TaskPlan,
     taskRecordRevision: number,
   ): StoredTaskPlan {
-    if (
-      !Number.isSafeInteger(expectedPlanRevision) ||
-      expectedPlanRevision < 1
-    ) {
+    if (!Number.isSafeInteger(expectedPlanRevision) || expectedPlanRevision < 1) {
       throw new Error("Expected task plan revision must be positive");
     }
 
@@ -412,9 +376,7 @@ export class TaskPlanStore {
         (value) => {
           const current = value === null ? null : parseStoredTaskPlan(value);
           if (current === null || current.planRevision !== expectedPlanRevision)
-            throw new TaskPlanConflictError(
-              "Task plan projection revision conflict",
-            );
+            throw new TaskPlanConflictError("Task plan projection revision conflict");
           const updated: StoredTaskPlan = {
             version: 1,
             planRevision: expectedPlanRevision + 1,
@@ -472,10 +434,7 @@ export class TaskPlanStore {
     expectedPlanRevision: number,
     verificationInput: PlanVerificationResult,
   ): StoredTaskPlan {
-    if (
-      !Number.isSafeInteger(expectedPlanRevision) ||
-      expectedPlanRevision < 1
-    ) {
+    if (!Number.isSafeInteger(expectedPlanRevision) || expectedPlanRevision < 1) {
       throw new Error("Expected task plan revision must be positive");
     }
 
@@ -486,9 +445,7 @@ export class TaskPlanStore {
       verification.cardId !== cardId ||
       verification.planRevision !== expectedPlanRevision
     ) {
-      throw new Error(
-        "Plan verification identity must match the requested task and plan revision",
-      );
+      throw new Error("Plan verification identity must match the requested task and plan revision");
     }
 
     const filePath = this.getPlanPath(cardId);
@@ -500,9 +457,7 @@ export class TaskPlanStore {
         (value) => {
           const current = value === null ? null : parseStoredTaskPlan(value);
           if (current === null || current.planRevision !== expectedPlanRevision)
-            throw new TaskPlanConflictError(
-              "Task plan projection revision conflict",
-            );
+            throw new TaskPlanConflictError("Task plan projection revision conflict");
           const updated = parseStoredTaskPlan({ ...current, verification });
           return { value: updated, result: updated };
         },
@@ -535,9 +490,7 @@ export class TaskPlanStore {
 
   private assertPlanOwner(plan: TaskPlan): void {
     if (plan.projectId !== this.projectId) {
-      throw new Error(
-        `Task plan project ID does not match configured project ${this.projectId}`,
-      );
+      throw new Error(`Task plan project ID does not match configured project ${this.projectId}`);
     }
   }
 

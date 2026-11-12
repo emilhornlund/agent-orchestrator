@@ -58,9 +58,7 @@ function stopped(value: Record<string, unknown>): boolean {
   return (
     notDispatched(value) ||
     (value.treeStopped === true &&
-      ["success", "nonzero", "timeout", "interrupted"].includes(
-        String(value.status),
-      ))
+      ["success", "nonzero", "timeout", "interrupted"].includes(String(value.status)))
   );
 }
 
@@ -93,15 +91,11 @@ export async function prepareTerminalTaskSession(options: {
     !pullRequest.headRefOid ||
     pullRequest.headRefName !== task.expectedBranch ||
     pullRequest.baseRefName !== project.repository.defaultBranch ||
-    pullRequest.headRepositoryOwner?.login.toLowerCase() !==
-      owner?.toLowerCase() ||
-    pullRequest.headRepository?.name.toLowerCase() !==
-      repository?.toLowerCase() ||
+    pullRequest.headRepositoryOwner?.login.toLowerCase() !== owner?.toLowerCase() ||
+    pullRequest.headRepository?.name.toLowerCase() !== repository?.toLowerCase() ||
     (pullRequest.state === "MERGED") !== (pullRequest.mergedAt !== null)
   )
-    throw new Error(
-      "Terminal PR outcome has ambiguous repository or branch identity",
-    );
+    throw new Error("Terminal PR outcome has ambiguous repository or branch identity");
   const authority = ProjectRunAuthority.current(project.id);
   const active = queue.getActive();
   const preserve =
@@ -120,14 +114,12 @@ export async function prepareTerminalTaskSession(options: {
         const resources = owner.store.read()!.resources;
         if (
           !resources.some(
-            (resource) =>
-              resource.kind === "worktree" && resource.path === worktree,
+            (resource) => resource.kind === "worktree" && resource.path === worktree,
           ) ||
           !resources.some(
             (resource) =>
               resource.kind === "branch" &&
-              resource.path ===
-                `refs/heads/${task.expectedBranch ?? `agent/${cardId}`}`,
+              resource.path === `refs/heads/${task.expectedBranch ?? `agent/${cardId}`}`,
           )
         )
           return true;
@@ -140,14 +132,12 @@ export async function prepareTerminalTaskSession(options: {
         );
       if (!stat.isDirectory() || stat.isSymbolicLink()) return true;
       if (
-        (await options.git.getCurrentBranch(worktree)) !==
-          task.expectedBranch ||
+        (await options.git.getCurrentBranch(worktree)) !== task.expectedBranch ||
         (await options.git.getStatus(worktree)).trim() !== ""
       )
         return true;
       const head = await options.git.getHeadSha(worktree);
-      if (head === task.pullRequest!.headSha && options.headContinuityVerified)
-        return false;
+      if (head === task.pullRequest!.headSha && options.headContinuityVerified) return false;
       return (
         head !== pullRequest.headRefOid &&
         !(await options.git.isAncestor(worktree, head, pullRequest.headRefOid!))
@@ -157,13 +147,7 @@ export async function prepareTerminalTaskSession(options: {
     }
   };
   if (authority)
-    recordTerminalPrFence(
-      authority,
-      task,
-      pullRequest,
-      preserve,
-      project.repository.defaultBranch,
-    );
+    recordTerminalPrFence(authority, task, pullRequest, preserve, project.repository.defaultBranch);
   const fence = readTerminalPrFence(authority);
   const waiting = () => {
     logger
@@ -181,36 +165,26 @@ export async function prepareTerminalTaskSession(options: {
     authority &&
     authority.store
       .read()!
-      .pendingOperations.some(
-        (entry) => !isConclusiveOperationResolution(entry),
-      )
+      .pendingOperations.some((entry) => !isConclusiveOperationResolution(entry))
   )
     return waiting();
   if (authority && terminalStopProofValid(authority)) {
     await assertTerminalArtifactIsolation(project, options.git);
     const preserveArtifacts = await inspectArtifacts();
     if (fence!.preserveArtifacts !== preserveArtifacts)
-      markTerminalWritersStopped(
-        authority,
-        fence!.proofArtifact!,
-        preserveArtifacts,
-      );
+      markTerminalWritersStopped(authority, fence!.proofArtifact!, preserveArtifacts);
     queue.cancelAfterTerminal(cardId);
     return {
       ready: true,
       preserveArtifacts: readTerminalPrFence(authority)!.preserveArtifacts,
     };
   }
-  const root = path.resolve(
-    authority?.store.storageRoot ?? getProcessRuntime().artifactRoot,
-  );
+  const root = path.resolve(authority?.store.storageRoot ?? getProcessRuntime().artifactRoot);
   let checkedEvidenceRecords = 0;
   const digest = createHash("sha256");
   const checked = (file: string) => {
     checkedEvidenceRecords++;
-    digest
-      .update(file)
-      .update(createHash("sha256").update(fs.readFileSync(file)).digest());
+    digest.update(file).update(createHash("sha256").update(fs.readFileSync(file)).digest());
   };
   if (authority) {
     const directory = path.join(
@@ -227,8 +201,7 @@ export async function prepareTerminalTaskSession(options: {
       for (const id of fs.readdirSync(directory)) {
         const file = path.join(directory, id, "execution.json");
         const value = metadata(root, file);
-        if (!value || value.executionId !== id || !stopped(value))
-          return waiting();
+        if (!value || value.executionId !== id || !stopped(value)) return waiting();
         checked(file);
       }
     }
@@ -244,8 +217,7 @@ export async function prepareTerminalTaskSession(options: {
       cancellations.push({ id: operation.id, neverDispatched: true });
       continue;
     }
-    if (!operation.processMetadataPath || !operation.processExecutionId)
-      return waiting();
+    if (!operation.processMetadataPath || !operation.processExecutionId) return waiting();
     const value = metadata(root, operation.processMetadataPath);
     if (
       !value ||
@@ -294,13 +266,10 @@ export async function prepareTerminalTaskSession(options: {
           ? Math.max(0, entry.executions - 1)
           : entry.executions,
         retrySafe: false,
-        diagnostic:
-          "Human PR outcome cancelled the operation after verified execution stop",
+        diagnostic: "Human PR outcome cancelled the operation after verified execution stop",
         updatedAt: new Date().toISOString(),
         cancellationEvidence: {
-          source: cancellation.neverDispatched
-            ? "never-dispatched"
-            : "stopped-after-dispatch",
+          source: cancellation.neverDispatched ? "never-dispatched" : "stopped-after-dispatch",
           observedAt: new Date().toISOString(),
           pullRequestUrl: pullRequest.url,
           ...(proof ? { proofArtifact: proof.id } : {}),
@@ -312,9 +281,7 @@ export async function prepareTerminalTaskSession(options: {
       primaryOperations: operations,
       feedbackCardMove: undefined,
       revision: current.revision + 1,
-      updatedAt: new Date(
-        Math.max(Date.now(), Date.parse(current.updatedAt) + 1),
-      ).toISOString(),
+      updatedAt: new Date(Math.max(Date.now(), Date.parse(current.updatedAt) + 1)).toISOString(),
     });
   }
   if (authority && proof) {
@@ -337,7 +304,6 @@ export async function prepareTerminalTaskSession(options: {
   }
   return {
     ready: true,
-    preserveArtifacts:
-      readTerminalPrFence(authority)?.preserveArtifacts ?? preserveArtifacts,
+    preserveArtifacts: readTerminalPrFence(authority)?.preserveArtifacts ?? preserveArtifacts,
   };
 }

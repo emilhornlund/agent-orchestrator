@@ -44,11 +44,7 @@ export class TaskSessionReviewError extends Error {
 
 /** Only execution and format failures qualify for the missing-review fallback. */
 export class TaskSessionReviewUnavailableError extends TaskSessionReviewError {
-  constructor(
-    message: string,
-    runResult?: OpenCodeRunResult,
-    options?: ErrorOptions,
-  ) {
+  constructor(message: string, runResult?: OpenCodeRunResult, options?: ErrorOptions) {
     super(message, runResult, options);
     this.name = "TaskSessionReviewUnavailableError";
   }
@@ -88,9 +84,7 @@ export interface TaskSessionReviewOperationResult {
   review: ImplementationReviewResult;
   runResult: OpenCodeRunResult;
   contentIdentity: string;
-  previousFindings: NonNullable<
-    ImplementationReviewExpectations["previousFindings"]
-  >;
+  previousFindings: NonNullable<ImplementationReviewExpectations["previousFindings"]>;
 }
 
 const MAX_FORMAT_ONLY_RETRIES = 1;
@@ -136,9 +130,7 @@ function readUntrackedFile(
   }
 
   if (!stats.isFile()) {
-    throw new Error(
-      `Unsupported untracked file type during review: ${filePath}`,
-    );
+    throw new Error(`Unsupported untracked file type during review: ${filePath}`);
   }
 
   const bytes = fs.readFileSync(resolvedPath);
@@ -165,9 +157,7 @@ async function collectCurrentDiff(
   return {
     staged,
     unstaged,
-    untracked: untrackedPaths.map((filePath) =>
-      readUntrackedFile(worktreePath, filePath),
-    ),
+    untracked: untrackedPaths.map((filePath) => readUntrackedFile(worktreePath, filePath)),
   };
 }
 
@@ -215,8 +205,7 @@ export async function runTaskSessionReview(
 
   if (
     storedPlan !== null &&
-    (storedPlan.plan.projectId !== project.id ||
-      storedPlan.plan.cardId !== card.id)
+    (storedPlan.plan.projectId !== project.id || storedPlan.plan.cardId !== card.id)
   ) {
     throw new TaskSessionReviewError(
       `Implementation review plan identity does not match ${project.id}/${card.id}`,
@@ -263,10 +252,7 @@ export async function runTaskSessionReview(
     );
   }
 
-  const contentIdentity = await getTaskSessionSourceSnapshotIdentity(
-    git,
-    worktreePath,
-  );
+  const contentIdentity = await getTaskSessionSourceSnapshotIdentity(git, worktreePath);
 
   if (
     contentIdentity !== validation.contentIdentity ||
@@ -300,9 +286,7 @@ export async function runTaskSessionReview(
       projectId: project.id,
       cardId: card.id,
       operationKey,
-      occurredAt: new Date(
-        Math.max(Date.now(), Date.parse(record.updatedAt) + 1),
-      ).toISOString(),
+      occurredAt: new Date(Math.max(Date.now(), Date.parse(record.updatedAt) + 1)).toISOString(),
     });
     taskRecordStore.compareAndSwap(card.id, record.revision, reviewedRecord);
   }
@@ -326,25 +310,17 @@ export async function runTaskSessionReview(
     try {
       runResult = await openCode.run({
         ...runOptions,
-        sessionLogPath:
-          runOptions.sessionLogPath ?? getSessionLogPath(project.id, card.id),
-        sessionLabel:
-          runOptions.sessionLabel ?? "Task-session implementation review",
+        sessionLogPath: runOptions.sessionLogPath ?? getSessionLogPath(project.id, card.id),
+        sessionLabel: runOptions.sessionLabel ?? "Task-session implementation review",
         cwd: worktreePath,
         prompt: attemptPrompt,
         readOnly: true,
       });
     } catch (error) {
-      if (
-        runOptions.signal?.aborted ||
-        error instanceof OpenCodeRunAbortedError
-      )
-        throw error;
-      const safelyStoppedTimeout =
-        error instanceof OpenCodeTimeoutError && error.treeStopped;
+      if (runOptions.signal?.aborted || error instanceof OpenCodeRunAbortedError) throw error;
+      const safelyStoppedTimeout = error instanceof OpenCodeTimeoutError && error.treeStopped;
       const verifiedNeverDispatched =
-        error instanceof ProcessExecutionError &&
-        error.classification === "spawn-failure";
+        error instanceof ProcessExecutionError && error.classification === "spawn-failure";
       if (!safelyStoppedTimeout && !verifiedNeverDispatched) throw error;
       throw new TaskSessionReviewUnavailableError(
         "Independent implementation review execution failed",
@@ -362,34 +338,27 @@ export async function runTaskSessionReview(
     }
 
     try {
-      review = parseImplementationReviewResult(
-        JSON.parse(runResult.output) as unknown,
-        {
-          projectId: project.id,
-          cardId: card.id,
-          requirementIds: (storedPlan?.plan.requirements ?? []).map(
-            (requirement) => requirement.id,
-          ),
-          contentIdentity,
-          previousFindingIds: (previousFindings ?? []).map(({ id }) => id),
-          previousFindings: (previousFindings ?? []).map(
-            ({ id, sourceContentIdentity, sourceIdentities, status }) => ({
-              id,
-              sourceContentIdentity,
-              sourceIdentities,
-              status,
-            }),
-          ),
-        },
-      );
+      review = parseImplementationReviewResult(JSON.parse(runResult.output) as unknown, {
+        projectId: project.id,
+        cardId: card.id,
+        requirementIds: (storedPlan?.plan.requirements ?? []).map((requirement) => requirement.id),
+        contentIdentity,
+        previousFindingIds: (previousFindings ?? []).map(({ id }) => id),
+        previousFindings: (previousFindings ?? []).map(
+          ({ id, sourceContentIdentity, sourceIdentities, status }) => ({
+            id,
+            sourceContentIdentity,
+            sourceIdentities,
+            status,
+          }),
+        ),
+      });
       break;
     } catch (error) {
-      const formatError =
-        error instanceof SyntaxError || error instanceof ZodError;
+      const formatError = error instanceof SyntaxError || error instanceof ZodError;
 
       if (formatError && formatRetry < MAX_FORMAT_ONLY_RETRIES) {
-        formatErrorMessage =
-          error instanceof Error ? error.message : "Invalid JSON response";
+        formatErrorMessage = error instanceof Error ? error.message : "Invalid JSON response";
         continue;
       }
 
@@ -402,15 +371,10 @@ export async function runTaskSessionReview(
   }
 
   if (runResult === undefined) {
-    throw new TaskSessionReviewError(
-      "Independent implementation review did not run",
-    );
+    throw new TaskSessionReviewError("Independent implementation review did not run");
   }
 
-  const currentContentIdentity = await getTaskSessionSourceSnapshotIdentity(
-    git,
-    worktreePath,
-  );
+  const currentContentIdentity = await getTaskSessionSourceSnapshotIdentity(git, worktreePath);
 
   if (currentContentIdentity !== contentIdentity) {
     throw new TaskSessionReviewError(
@@ -426,9 +390,7 @@ export async function runTaskSessionReview(
     previousFindings: (previousFindings ?? []).map(
       ({ id, sourceContentIdentity, sourceIdentities, status }) => ({
         id,
-        ...(sourceContentIdentity === undefined
-          ? {}
-          : { sourceContentIdentity }),
+        ...(sourceContentIdentity === undefined ? {} : { sourceContentIdentity }),
         sourceIdentities,
         status,
       }),

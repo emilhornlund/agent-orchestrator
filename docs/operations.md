@@ -1,40 +1,39 @@
 # Operations
 
-[README](../README.md) | [Workflow](workflow.md) | [Configuration](configuration.md) | [Recovery](recovery.md)
+[README](../README.md) | [Workflow](workflow.md) | [Configuration](configuration.md) |
+[Recovery](recovery.md)
 
-This page is the canonical operator reference for execution isolation, publication boundaries, timing, notifications,
-shutdown, logging, retention, and multi-project operation.
+This page is the canonical operator reference for execution isolation, publication boundaries,
+timing, notifications, shutdown, logging, retention, and multi-project operation.
 
 ## Local and container installation
 
-Local operation uses Node.js 24+, Yarn Classic, Git 2.30+, GitHub CLI 2.40+,
-OpenCode 1.0+ with the required `run` options, Bubblewrap and `flock` (util-linux).
-Install them for the service account, provision the shared coordination namespace
-as described in [Configuration](configuration.md#provisioning-a-shared-host-coordination-namespace),
-then use `yarn dev`, or `yarn build` followed by `node dist/main.js`.
-Both commands read `config.yaml` from the working directory. No container engine
-is needed locally.
+Local operation uses Node.js 24+, Yarn Classic, Git 2.30+, GitHub CLI 2.40+, OpenCode 1.0+ with the
+required `run` options, Bubblewrap and `flock` (util-linux). Install them for the service account,
+provision the shared coordination namespace as described in
+[Configuration](configuration.md#provisioning-a-shared-host-coordination-namespace), then use
+`yarn dev`, or `yarn build` followed by `node dist/main.js`. Both commands read `config.yaml` from
+the working directory. No container engine is needed locally.
 
-The supplied `Containerfile` builds the same production entry point, installs the
-required tools and runs as the non-root `node` user. Build it with either:
+The supplied `Containerfile` builds the same production entry point, installs the required tools and
+runs as the non-root `node` user. Build it with either:
 
 ```sh
 podman build -f Containerfile -t agent-orchestrator .
 # Or: docker build -f Containerfile -t agent-orchestrator .
 ```
 
-Tool versions can be selected with the `GH_VERSION` and `OPENCODE_VERSION` build
-arguments; startup checks their actual capabilities. The build context allowlists
-exclude local configuration, credentials, checkout metadata and runtime data. Never
-add secrets as build arguments or copy them into an image. Install project-specific
-build tools in a derived image when the task's setup/validation commands need them.
+Tool versions can be selected with the `GH_VERSION` and `OPENCODE_VERSION` build arguments; startup
+checks their actual capabilities. The build context allowlists exclude local configuration,
+credentials, checkout metadata and runtime data. Never add secrets as build arguments or copy them
+into an image. Install project-specific build tools in a derived image when the task's
+setup/validation commands need them.
 
-Before running, configure absolute persistent repository, worktree, context and
-coordination paths. Mount those paths consistently across restarts. Active attempt
-paths cannot be relocated during an upgrade. Mount a protected `config.yaml` at
-`/app/config.yaml:ro`, provide credentials using a protected runtime environment file
-or supported secret files, and persist `/home/node` for OpenCode sessions and
-authentication. For example, after provisioning the directories and namespace:
+Before running, configure absolute persistent repository, worktree, context and coordination paths.
+Mount those paths consistently across restarts. Active attempt paths cannot be relocated during an
+upgrade. Mount a protected `config.yaml` at `/app/config.yaml:ro`, provide credentials using a
+protected runtime environment file or supported secret files, and persist `/home/node` for OpenCode
+sessions and authentication. For example, after provisioning the directories and namespace:
 
 ```sh
 podman run --name agent-orchestrator --userns=keep-id:uid=1000,gid=1000 \
@@ -45,57 +44,57 @@ podman run --name agent-orchestrator --userns=keep-id:uid=1000,gid=1000 \
   agent-orchestrator
 ```
 
-This is a mount/identity example, not a universal host security policy. The configured
-paths must match the mounted paths; all local/container instances must share the
-same host coordination directory and namespace ID. Match the service UID, keep
-credentials private, and do not relabel shared mounts or source checkouts to bypass
-access errors. A read-only configuration mount does not protect credentials placed
-in other broadly accessible directories.
+This is a mount/identity example, not a universal host security policy. The configured paths must
+match the mounted paths; all local/container instances must share the same host coordination
+directory and namespace ID. Match the service UID, keep credentials private, and do not relabel
+shared mounts or source checkouts to bypass access errors. A read-only configuration mount does not
+protect credentials placed in other broadly accessible directories.
 
-Nested Bubblewrap isolation requires a host/container policy permitting its mount
-and PID namespace operations. Some default rootless Podman policies deny its `/proc`
-mount even when the binary is installed. Verify the startup isolation probe under
-the actual service identity and have the administrator establish an appropriate
-least-privilege policy; do not use privileged mode or disable isolation/SELinux to
-force startup. A denied probe prevents task execution. A successful image build or
-tool-version check is not proof that this runtime prerequisite or live integrations
-are available.
+Nested Bubblewrap isolation requires a host/container policy permitting its mount and PID namespace
+operations. Some default rootless Podman policies deny its `/proc` mount even when the binary is
+installed. Verify the startup isolation probe under the actual service identity and have the
+administrator establish an appropriate least-privilege policy; do not use privileged mode or disable
+isolation/SELinux to force startup. A denied probe prevents task execution. A successful image build
+or tool-version check is not proof that this runtime prerequisite or live integrations are
+available.
 
-Send `SIGTERM` and allow the service to drain before replacing the container. Keep
-volumes and original state; do not use ephemeral container storage for task state,
-sessions or worktrees. The same [upgrade and recovery rules](recovery.md) apply to
-local and container installations.
+Send `SIGTERM` and allow the service to drain before replacing the container. Keep volumes and
+original state; do not use ephemeral container storage for task state, sessions or worktrees. The
+same [upgrade and recovery rules](recovery.md) apply to local and container installations.
 
 ## Reconciliation block storage
 
-For legacy reconciliation records, when a retryable GitHub or Trello reconciliation reaches the existing three-attempt limit, the project worker writes its
-blocked state to `<contextRoot>/<project-id>/reconciliation-block.json`. This runtime record is below the configured context
-root, separate from the configured source checkout and every task worktree, and is written atomically. It stores the project
-ID, retry key and exhausted attempt, operation, optional card and reconciliation-list IDs, failure category and reason, the
-expected recovery condition, and the notification identities needed to suppress a duplicate alert. Tokens and authenticated
-request data are never stored.
+For legacy reconciliation records, when a retryable GitHub or Trello reconciliation reaches the
+existing three-attempt limit, the project worker writes its blocked state to
+`<contextRoot>/<project-id>/reconciliation-block.json`. This runtime record is below the configured
+context root, separate from the configured source checkout and every task worktree, and is written
+atomically. It stores the project ID, retry key and exhausted attempt, operation, optional card and
+reconciliation-list IDs, failure category and reason, the expected recovery condition, and the
+notification identities needed to suppress a duplicate alert. Tokens and authenticated request data
+are never stored.
 
-On worker startup, a valid block is restored before normal polling. The exhausted operation is not launched as part of restore.
-A known-card block performs only the existing lightweight Trello list check and is released when that card is deliberately moved
-from its recorded reconciliation list to `Ready for Agent`. Successful recovery removes the block and clears its retry state.
-A cardless project block has no card-based check: the external issue must be resolved and an explicit worker restart is the
-operator recovery action. Restored notification identity prevents a restart from sending another `Attention Required` alert for
-the same unresolved failure. Polling, recovery-check, and notification-delivery failures never remove or overwrite unresolved
-block state.
+On worker startup, a valid block is restored before normal polling. The exhausted operation is not
+launched as part of restore. A known-card block performs only the existing lightweight Trello list
+check and is released when that card is deliberately moved from its recorded reconciliation list to
+`Ready for Agent`. Successful recovery removes the block and clears its retry state. A cardless
+project block has no card-based check: the external issue must be resolved and an explicit worker
+restart is the operator recovery action. Restored notification identity prevents a restart from
+sending another `Attention Required` alert for the same unresolved failure. Polling, recovery-check,
+and notification-delivery failures never remove or overwrite unresolved block state.
 
-Current owned task checkpoints additionally support paced dependency waits with a
-persisted `retryAt`: bounded immediate read failures preserve the verified checkpoint
-and recheck it later instead of requiring a manual Ready move solely for an outage.
-Do not confuse this with a deliberate fresh retry or a legacy block lacking evidence.
-Primary execution accounting separately records actual dispatches, verified genuine
-failures and dependency outages. The recovery policy counts three verified
-genuine failures per primary operation and separately accounts outages/reconstruction;
-do not infer another global task deadline or
-reuse service-request counts as correction-pass budgets. Orphan execution without
-reliable stopped proof remains fenced, not automatically retried.
+Current owned task checkpoints additionally support paced dependency waits with a persisted
+`retryAt`: bounded immediate read failures preserve the verified checkpoint and recheck it later
+instead of requiring a manual Ready move solely for an outage. Do not confuse this with a deliberate
+fresh retry or a legacy block lacking evidence. Primary execution accounting separately records
+actual dispatches, verified genuine failures and dependency outages. The recovery policy counts
+three verified genuine failures per primary operation and separately accounts
+outages/reconstruction; do not infer another global task deadline or reuse service-request counts as
+correction-pass budgets. Orphan execution without reliable stopped proof remains fenced, not
+automatically retried.
 
-Before repository bootstrap and project reconciliation at startup, the service removes stale atomic-write temporary files for
-each configured project. The recognized scope is limited to these writer-generated names:
+Before repository bootstrap and project reconciliation at startup, the service removes stale
+atomic-write temporary files for each configured project. The recognized scope is limited to these
+writer-generated names:
 
 ```text
 <worktreeRoot>/.orchestrator/prepared-conflicts/<project-id>/<card-id>.json.<process-id>.tmp
@@ -104,35 +103,42 @@ each configured project. The recognized scope is limited to these writer-generat
 <contextRoot>/<project-id>/.reconciliation-block.json.<process-id>.<unique-suffix>
 ```
 
-Only regular files whose writer process is no longer running are removed. Missing directories and candidates that disappear
-concurrently are harmless. Authoritative state files, malformed authoritative state, directories, symbolic links, unknown
-entries, and files from other subsystems are preserved. The cleanup does not scan for arbitrary `.tmp`, dot, JSON, log,
-attachment, source-checkout, or worktree files. Inspection or removal failures include the affected path and reason in a
-diagnostic and do not stop independent project startup.
+Only regular files whose writer process is no longer running are removed. Missing directories and
+candidates that disappear concurrently are harmless. Authoritative state files, malformed
+authoritative state, directories, symbolic links, unknown entries, and files from other subsystems
+are preserved. The cleanup does not scan for arbitrary `.tmp`, dot, JSON, log, attachment,
+source-checkout, or worktree files. Inspection or removal failures include the affected path and
+reason in a diagnostic and do not stop independent project startup.
 
-Block records are validated at the storage boundary, including strict record shape, non-blank values, optional types,
-supported operation and recovery values, and project/card identity consistency. Malformed or mismatched state is retained and
-fails closed with an actionable project diagnostic; it is never treated as recovered and never triggers the exhausted operation.
-Each project loads its own record, so a blocked or malformed record does not stop independent project workers. Operators should
-preserve the file and use supported recovery procedures, not edit it to bypass ownership.
+Block records are validated at the storage boundary, including strict record shape, non-blank
+values, optional types, supported operation and recovery values, and project/card identity
+consistency. Malformed or mismatched state is retained and fails closed with an actionable project
+diagnostic; it is never treated as recovered and never triggers the exhausted operation. Each
+project loads its own record, so a blocked or malformed record does not stop independent project
+workers. Operators should preserve the file and use supported recovery procedures, not edit it to
+bypass ownership.
 
 ### Persisted-state size guard
 
-The reconciliation block, prepared-conflict handoff, trusted committed-implementation record, and rejected-commit record are authoritative JSON state files. Each is
-limited by the same fixed 1 MiB upper bound; this is an implementation safety limit, not a configuration option. The service
-checks the filesystem byte size before reading a file for JSON parsing. A file above the limit is rejected as malformed state, and
-the diagnostic identifies the affected path and size-limit failure without logging its contents.
+The reconciliation block, prepared-conflict handoff, trusted committed-implementation record, and
+rejected-commit record are authoritative JSON state files. Each is limited by the same fixed 1 MiB
+upper bound; this is an implementation safety limit, not a configuration option. The service checks
+the filesystem byte size before reading a file for JSON parsing. A file above the limit is rejected
+as malformed state, and the diagnostic identifies the affected path and size-limit failure without
+logging its contents.
 
-Oversized files are retained unchanged for diagnosis. A reconciliation block follows the existing malformed-state project-blocking
-path. An oversized prepared-conflict, trusted-commit, or rejected-commit record follows its existing recovery error path. Missing
-files and ordinary malformed or schema-invalid files behave as before, and no workflow state advances because persisted state was
-rejected.
+Oversized files are retained unchanged for diagnosis. A reconciliation block follows the existing
+malformed-state project-blocking path. An oversized prepared-conflict, trusted-commit, or
+rejected-commit record follows its existing recovery error path. Missing files and ordinary
+malformed or schema-invalid files behave as before, and no workflow state advances because persisted
+state was rejected.
 
 ## Card context storage
 
-`workflow.contextRoot` is the workflow-level filesystem boundary for card-specific external context. It defaults to
-`/opt/.agent-context` and must be an absolute path separate from every configured source checkout and Git worktree root.
-The service never uses the current working directory, a Git repository, or a Git worktree as this default.
+`workflow.contextRoot` is the workflow-level filesystem boundary for card-specific external context.
+It defaults to `/opt/.agent-context` and must be an absolute path separate from every configured
+source checkout and Git worktree root. The service never uses the current working directory, a Git
+repository, or a Git worktree as this default.
 
 When a card context is created, its exact layout is:
 
@@ -142,12 +148,12 @@ When a card context is created, its exact layout is:
 <contextRoot>/<project-id>/<card-id>/attachments.json
 ```
 
-Before each applicable OpenCode session starts for a card, the current Trello attachment metadata is reconciled into this
-directory. Refinement, implementation, automatic review, automatic remediation, and human review-feedback implementation
-sessions use the context; commit sessions do not.
-Uploaded Trello files are downloaded with Trello authentication under `attachments/`; external URL attachments are never
-dereferenced and have no local file. `attachments.json` contains the current attachments in Trello order after a successful
-reconciliation:
+Before each applicable OpenCode session starts for a card, the current Trello attachment metadata is
+reconciled into this directory. Refinement, implementation, automatic review, automatic remediation,
+and human review-feedback implementation sessions use the context; commit sessions do not. Uploaded
+Trello files are downloaded with Trello authentication under `attachments/`; external URL
+attachments are never dereferenced and have no local file. `attachments.json` contains the current
+attachments in Trello order after a successful reconciliation:
 
 ```json
 {
@@ -174,14 +180,16 @@ reconciliation:
 }
 ```
 
-`mimeType` and `bytes` retain Trello's nullable and empty values. `localFilename` is a single filename, never a path. Names
-are reduced to safe filename components and duplicate names receive stable numeric suffixes. Existing valid files are reused
-when all stored Trello metadata matches, so repeated preparation does not download them again. Files not present in the
-current Trello response are removed when they are regular files claimed by the previous manifest, including a superseded
-file after a replacement is published. Unknown and unrelated context files are retained; the service does not delete
-arbitrary files.
+`mimeType` and `bytes` retain Trello's nullable and empty values. `localFilename` is a single
+filename, never a path. Names are reduced to safe filename components and duplicate names receive
+stable numeric suffixes. Existing valid files are reused when all stored Trello metadata matches, so
+repeated preparation does not download them again. Files not present in the current Trello response
+are removed when they are regular files claimed by the previous manifest, including a superseded
+file after a replacement is published. Unknown and unrelated context files are retained; the service
+does not delete arbitrary files.
 
-After every successful refresh, the existing project- and card-scoped logger emits one concise reconciliation event. Its format is:
+After every successful refresh, the existing project- and card-scoped logger emits one concise
+reconciliation event. Its format is:
 
 ```text
 Trello attachment context refreshed: reused uploaded attachments: 1; newly downloaded uploaded attachments: 1; removed stale managed attachments: 1; external URL attachments: 1; total current attachments: 3
@@ -189,24 +197,36 @@ Trello attachment context refreshed: reused uploaded attachments: 1; newly downl
 
 The counts mean:
 
-- `reused uploaded attachments`: current uploads whose stored metadata and existing regular materialized file were reused.
+- `reused uploaded attachments`: current uploads whose stored metadata and existing regular
+  materialized file were reused.
 - `newly downloaded uploaded attachments`: new or changed uploads materialized during this refresh.
-- `removed stale managed attachments`: regular files claimed by the previous manifest that were removed because they are no longer current, including replaced uploads. Unknown and unrelated files are not counted or removed.
-- `external URL attachments`: external attachments in the current Trello response. They are metadata-only and are never downloaded.
-- `total current attachments`: all entries in the successfully published current manifest, including uploads and external URLs.
+- `removed stale managed attachments`: regular files claimed by the previous manifest that were
+  removed because they are no longer current, including replaced uploads. Unknown and unrelated
+  files are not counted or removed.
+- `external URL attachments`: external attachments in the current Trello response. They are
+  metadata-only and are never downloaded.
+- `total current attachments`: all entries in the successfully published current manifest, including
+  uploads and external URLs.
 
-All categories are logged when zero, including for an empty card. A retrieval, validation, download, manifest, filesystem, stale-file, or abort failure emits no successful summary. The card-scoped failure diagnostic identifies attachment context preparation and its reason through the normal failure flow. Attachment contents, response bodies, credentials, authenticated download URLs, and other sensitive request data are not included in attachment summaries or failure diagnostics.
+All categories are logged when zero, including for an empty card. A retrieval, validation, download,
+manifest, filesystem, stale-file, or abort failure emits no successful summary. The card-scoped
+failure diagnostic identifies attachment context preparation and its reason through the normal
+failure flow. Attachment contents, response bodies, credentials, authenticated download URLs, and
+other sensitive request data are not included in attachment summaries or failure diagnostics.
 
-Each new upload is limited to `maxAttachmentBytes`, which defaults to 50 MiB, and all new downloads in one preparation are
-limited to `maxTotalAttachmentBytes`, which defaults to 200 MiB. The limits apply to declared metadata, response
-`Content-Length`, and streamed bytes, including when a size is unknown or unusable. The optional settings are positive safe
-integers in `workflow`. A failed, aborted, over-limit, or filesystem-failed transfer does not publish its final file or a
-manifest claiming success, and prevents OpenCode from starting. Existing manifests and managed paths are validated with
-`lstat`; malformed manifests, traversal paths, symlinks, and unexpected file types are refused.
+Each new upload is limited to `maxAttachmentBytes`, which defaults to 50 MiB, and all new downloads
+in one preparation are limited to `maxTotalAttachmentBytes`, which defaults to 200 MiB. The limits
+apply to declared metadata, response `Content-Length`, and streamed bytes, including when a size is
+unknown or unusable. The optional settings are positive safe integers in `workflow`. A failed,
+aborted, over-limit, or filesystem-failed transfer does not publish its final file or a manifest
+claiming success, and prevents OpenCode from starting. Existing manifests and managed paths are
+validated with `lstat`; malformed manifests, traversal paths, symlinks, and unexpected file types
+are refused.
 
-When a card has attachments, the refinement, implementation, automatic review, automatic remediation, and review-feedback
-remediation prompts include a compact section containing the attachment name, a non-blank MIME type when Trello provides
-one, and a usable location. The section is omitted when the card has no attachments. Its format is:
+When a card has attachments, the refinement, implementation, automatic review, automatic
+remediation, and review-feedback remediation prompts include a compact section containing the
+attachment name, a non-blank MIME type when Trello provides one, and a usable location. The section
+is omitted when the card has no attachments. Its format is:
 
 ```text
 Trello card attachments:
@@ -215,90 +235,102 @@ These attachments are part of the Trello task context. Inspect them when relevan
 - Reference: external URL: https://example.com/reference
 ```
 
-Uploaded attachments are represented by the absolute path to the downloaded file. External-link attachments are represented
-by their URL and are never dereferenced or assigned a local path. Ordinary commit
-prompts do not include this section, which contains metadata/locations only.
-Confirmed-loss primary-session reconstruction separately permits bounded sanitized
-supported text content in its external context bundle; it does not download external
-URL attachments or establish support for every document/image format.
+Uploaded attachments are represented by the absolute path to the downloaded file. External-link
+attachments are represented by their URL and are never dereferenced or assigned a local path.
+Ordinary commit prompts do not include this section, which contains metadata/locations only.
+Confirmed-loss primary-session reconstruction separately permits bounded sanitized supported text
+content in its external context bundle; it does not download external URL attachments or establish
+support for every document/image format.
 
-The path is resolved in the filesystem namespace of the running process. In a local deployment, create or grant write
-permission to the configured root for the service user. In Docker, configure the same absolute path inside the container and
-mount a persistent host or named volume at that container path; permissions and ownership must allow the container process
-to create project, card, and attachment directories. A host path that is not mounted at the configured container path is not
+The path is resolved in the filesystem namespace of the running process. In a local deployment,
+create or grant write permission to the configured root for the service user. In Docker, configure
+the same absolute path inside the container and mount a persistent host or named volume at that
+container path; permissions and ownership must allow the container process to create project, card,
+and attachment directories. A host path that is not mounted at the configured container path is not
 the storage location used by the service, and it is not the path shown to OpenCode.
 
-Card context is operational filesystem data, not Git state. It is outside the source checkout and all worktrees, is not
-committed or included in task branches, and should be backed up, retained, and access-controlled independently from Git
-repositories. Successful attachment reconciliation removes only stale regular files claimed by the prior manifest; it
-does not remove unknown files.
+Card context is operational filesystem data, not Git state. It is outside the source checkout and
+all worktrees, is not committed or included in task branches, and should be backed up, retained, and
+access-controlled independently from Git repositories. Successful attachment reconciliation removes
+only stale regular files claimed by the prior manifest; it does not remove unknown files.
 
-The service does not remove card context immediately after a successful, failed, resumed, or retried card. A failed
-preparation keeps the last successfully published manifest and its materialized files and removes only partial files created
-by that preparation. Stale managed files are cleaned as part of a successful manifest publication. Unknown files remain
-available for diagnosis and are never removed as part of attachment reconciliation. Scheduled context retention later removes
-the expired card context directory as a unit; there is no separate operator-triggered cleanup command. Any manual cleanup must
-be limited to known card-context paths below the configured `contextRoot`.
+The service does not remove card context immediately after a successful, failed, resumed, or retried
+card. A failed preparation keeps the last successfully published manifest and its materialized files
+and removes only partial files created by that preparation. Stale managed files are cleaned as part
+of a successful manifest publication. Unknown files remain available for diagnosis and are never
+removed as part of attachment reconciliation. Scheduled context retention later removes the expired
+card context directory as a unit; there is no separate operator-triggered cleanup command. Any
+manual cleanup must be limited to known card-context paths below the configured `contextRoot`.
 
 ### Card context retention
 
-`workflow.contextRetentionDays` defaults to `14`. Cleanup runs once during startup and once per day while the orchestrator is
-running, and its periodic timer is stopped during shutdown. Expiration uses the card context directory's filesystem
-modification time and the cleanup-time cutoff: only a directory strictly older than the cutoff is removed. A directory at the
-exact cutoff or newer is retained.
+`workflow.contextRetentionDays` defaults to `14`. Cleanup runs once during startup and once per day
+while the orchestrator is running, and its periodic timer is stopped during shutdown. Expiration
+uses the card context directory's filesystem modification time and the cleanup-time cutoff: only a
+directory strictly older than the cutoff is removed. A directory at the exact cutoff or newer is
+retained.
 
-The scanner examines only the configured project directories and their direct card context directories under:
+The scanner examines only the configured project directories and their direct card context
+directories under:
 
 ```text
 <contextRoot>/<project-id>/<card-id>/
 ```
 
-It never removes the context root, project directories merely because they are empty, unrelated entries, repositories,
-worktree roots, worktrees, or any path outside `contextRoot`. Active cards are protected for the full processing interval,
-including attachment reconciliation and OpenCode stages. Missing paths and concurrent removals are harmless; scan,
-inspection, and removal failures include the affected path and reason in diagnostics while independent candidates continue.
-Symbolic links at managed paths, and symbolic links found inside a candidate context, are skipped without following or removing
-them. The configured context root is normalized and each candidate is checked against that boundary.
+It never removes the context root, project directories merely because they are empty, unrelated
+entries, repositories, worktree roots, worktrees, or any path outside `contextRoot`. Active cards
+are protected for the full processing interval, including attachment reconciliation and OpenCode
+stages. Missing paths and concurrent removals are harmless; scan, inspection, and removal failures
+include the affected path and reason in diagnostics while independent candidates continue. Symbolic
+links at managed paths, and symbolic links found inside a candidate context, are skipped without
+following or removing them. The configured context root is normalized and each candidate is checked
+against that boundary.
 
 ## Isolated worktrees
 
-The configured `repository.path` is the normal source checkout. Agent execution takes place in a dedicated attempt-owned worktree
-and task branch. The first attempt may use `<worktreeRoot>/<trello-card-id>` and `agent/<trello-card-id>`;
-later attempts use `<trello-card-id>--<attempt-id>` in both names. Existing attempts keep their persisted resource identities.
-The source checkout is never used as an
-agent working directory or as the publication worktree.
+The configured `repository.path` is the normal source checkout. Agent execution takes place in a
+dedicated attempt-owned worktree and task branch. The first attempt may use
+`<worktreeRoot>/<trello-card-id>` and `agent/<trello-card-id>`; later attempts use
+`<trello-card-id>--<attempt-id>` in both names. Existing attempts keep their persisted resource
+identities. The source checkout is never used as an agent working directory or as the publication
+worktree.
 
-Worktree paths must remain under the configured `worktreeRoot`. The service refuses symbolic links, non-directory paths,
-unexpected branches, and cleanup requests outside the configured root. Cleanup also refuses to remove a dirty worktree. It
-removes only the expected worktree and branch, without broad worktree pruning; it does not delete arbitrary or
-unknown worktrees.
+Worktree paths must remain under the configured `worktreeRoot`. The service refuses symbolic links,
+non-directory paths, unexpected branches, and cleanup requests outside the configured root. Cleanup
+also refuses to remove a dirty worktree. It removes only the expected worktree and branch, without
+broad worktree pruning; it does not delete arbitrary or unknown worktrees.
 
-For an initial claim, the expected worktree is prepared before the Trello card is moved to `Working`. A failed move leaves
-that prepared worktree available for the next attempt. Reconciliation checks existing worktrees but does not create them.
-Implementation worktrees remain available while their owned PR is under CI monitoring or Human Review so bounded CI and feedback
-repairs can reuse the task branch. After an authoritative terminal PR transition, cleanup is limited to the expected
-attempt-owned artifacts. Required terminal transitions, comments and in-flight effects
-remain durable until verified. Known owned resources that cannot be safely removed
-may be preserved without blocking a fresh isolated attempt; unknown identity or execution
-continues to block release. Recovery never repeats a human merge or duplicates the
-terminal Trello transition. Refinement preserves its external result artifacts and attempts local worktree cleanup after moving the card to `Backlog` and verifying the completion comment.
-Result-file and refinement cleanup are housekeeping; failures are warning-level diagnostics with project, card, operation, and
-affected path, and do not undo a confirmed `Backlog` transition. Failed or unsafe removals preserve the remaining artifact.
+For an initial claim, the expected worktree is prepared before the Trello card is moved to
+`Working`. A failed move leaves that prepared worktree available for the next attempt.
+Reconciliation checks existing worktrees but does not create them. Implementation worktrees remain
+available while their owned PR is under CI monitoring or Human Review so bounded CI and feedback
+repairs can reuse the task branch. After an authoritative terminal PR transition, cleanup is limited
+to the expected attempt-owned artifacts. Required terminal transitions, comments and in-flight
+effects remain durable until verified. Known owned resources that cannot be safely removed may be
+preserved without blocking a fresh isolated attempt; unknown identity or execution continues to
+block release. Recovery never repeats a human merge or duplicates the terminal Trello transition.
+Refinement preserves its external result artifacts and attempts local worktree cleanup after moving
+the card to `Backlog` and verifying the completion comment. Result-file and refinement cleanup are
+housekeeping; failures are warning-level diagnostics with project, card, operation, and affected
+path, and do not undo a confirmed `Backlog` transition. Failed or unsafe removals preserve the
+remaining artifact.
 
-Terminal cleanup is fail-closed. It does not remove symbolic links, paths outside the configured root, nested or unknown
-worktrees, unexpected branches, dirty worktrees, worktrees with unmerged paths, or worktrees with an active rebase. A
-prepared-conflict handoff also protects its worktree until recovery is complete. An already-absent worktree or local branch
-is idempotent. If any safety check or Git removal fails, the remaining artifacts are left for diagnosis where possible;
-shutdown cancellation does not start or continue destructive cleanup.
+Terminal cleanup is fail-closed. It does not remove symbolic links, paths outside the configured
+root, nested or unknown worktrees, unexpected branches, dirty worktrees, worktrees with unmerged
+paths, or worktrees with an active rebase. A prepared-conflict handoff also protects its worktree
+until recovery is complete. An already-absent worktree or local branch is idempotent. If any safety
+check or Git removal fails, the remaining artifacts are left for diagnosis where possible; shutdown
+cancellation does not start or continue destructive cleanup.
 
 ## Publication and GitHub boundaries
 
 ### GitHub CLI compatibility
 
-Agent Orchestrator supports GitHub CLI (`gh`) `2.40.0` and later. Startup validates the installed CLI before bootstrapping any
-configured repository or beginning Trello project processing. The validation runs `gh --version` and checks the help surface
-for the executable commands and options used by the service. It does not contact a repository: credentials, repository access,
-and project resources are checked separately and must not be conflated with executable compatibility.
+Agent Orchestrator supports GitHub CLI (`gh`) `2.40.0` and later. Startup validates the installed
+CLI before bootstrapping any configured repository or beginning Trello project processing. The
+validation runs `gh --version` and checks the help surface for the executable commands and options
+used by the service. It does not contact a repository: credentials, repository access, and project
+resources are checked separately and must not be conflated with executable compatibility.
 
 The required command surface is:
 
@@ -310,66 +342,76 @@ The required command surface is:
 | `gh pr create`  | `--repo`, `--base`, `--head`, `--title`, and `--body`                    |
 | `gh api`        | `--paginate` and `--slurp`                                               |
 
-The help probes cover the commands and flags actually used, and intentionally do not require an automatic-merge command or
-merge capability. GitHub authentication and configured repository access are independent project resources.
+The help probes cover the commands and flags actually used, and intentionally do not require an
+automatic-merge command or merge capability. GitHub authentication and configured repository access
+are independent project resources.
 
-GitHub authentication is selected per project at the `repository.githubApp` operation boundary. These are the two supported
-modes:
+GitHub authentication is selected per project at the `repository.githubApp` operation boundary.
+These are the two supported modes:
 
-- **GitHub App:** If `repository.githubApp` is configured, the service reads its private key on demand and exchanges an App JWT
-  for a short-lived installation token scoped to exactly the project's configured `repository.github` repository. The request
-  sends that repository's name, rather than its full `owner/repository` name, in GitHub's `repositories` field. The token is used for the project's repository cloning, GitHub CLI
-  pull-request and review calls, and authenticated `git fetch`, `git ls-remote`, `git push`, and remote-branch deletion.
-- **Ambient authentication:** If `repository.githubApp` is omitted, the service leaves ambient GitHub CLI and Git
-  authentication unchanged. This supports an authenticated `gh` session and PATs supplied through `GH_TOKEN` or
-  `GITHUB_TOKEN`, including other ambient Git authentication.
+- **GitHub App:** If `repository.githubApp` is configured, the service reads its private key on
+  demand and exchanges an App JWT for a short-lived installation token scoped to exactly the
+  project's configured `repository.github` repository. The request sends that repository's name,
+  rather than its full `owner/repository` name, in GitHub's `repositories` field. The token is used
+  for the project's repository cloning, GitHub CLI pull-request and review calls, and authenticated
+  `git fetch`, `git ls-remote`, `git push`, and remote-branch deletion.
+- **Ambient authentication:** If `repository.githubApp` is omitted, the service leaves ambient
+  GitHub CLI and Git authentication unchanged. This supports an authenticated `gh` session and PATs
+  supplied through `GH_TOKEN` or `GITHUB_TOKEN`, including other ambient Git authentication.
 
-Successful installation tokens are cached in process memory per App identity, installation, and repository scope, reused until
-five minutes before the returned `expires_at`, and then refreshed. Projects using the same App installation but different
-repositories never share a completed or in-flight exchange. For Git, a bounded invocation clears configured credential helpers and uses
-`GIT_ASKPASS` to read the token from its child environment. The token never appears in command arguments, repository URLs,
-logs, session logs, persisted state, or failure diagnostics. Ambient `GH_TOKEN` and
-`GITHUB_TOKEN` values are registered to redact child output and failures.
-Git/GitHub children retain operation-specific ambient
-authentication; setup, validation and OpenCode do not inherit GitHub/Trello/SMTP credentials.
+Successful installation tokens are cached in process memory per App identity, installation, and
+repository scope, reused until five minutes before the returned `expires_at`, and then refreshed.
+Projects using the same App installation but different repositories never share a completed or
+in-flight exchange. For Git, a bounded invocation clears configured credential helpers and uses
+`GIT_ASKPASS` to read the token from its child environment. The token never appears in command
+arguments, repository URLs, logs, session logs, persisted state, or failure diagnostics. Ambient
+`GH_TOKEN` and `GITHUB_TOKEN` values are registered to redact child output and failures. Git/GitHub
+children retain operation-specific ambient authentication; setup, validation and OpenCode do not
+inherit GitHub/Trello/SMTP credentials.
 
-App credential resolution is project-isolated and has precedence over ambient credentials. A missing or unreadable private key,
-invalid App credentials, failed JWT generation, or failed installation-token exchange fails the affected operation without PAT or
-other ambient fallback. Startup clone failures stop startup; workflow failures preserve the card's existing failure/reconciliation
-behavior and preserve recoverable worktrees and agent changes. Operators must correct the App configuration or external GitHub
-access and retry through the normal workflow; the service does not persist tokens or expiration data. A missing, blank, or invalid
-`expires_at` makes the exchange fail and is not cached. An exchanged token is usable only when its parsed `expires_at` is
-strictly later than the current time plus the five-minute refresh window; expired, nearly expired, and exact-boundary
-responses therefore fail through the safe App exchange error path without being returned or cached.
+App credential resolution is project-isolated and has precedence over ambient credentials. A missing
+or unreadable private key, invalid App credentials, failed JWT generation, or failed
+installation-token exchange fails the affected operation without PAT or other ambient fallback.
+Startup clone failures stop startup; workflow failures preserve the card's existing
+failure/reconciliation behavior and preserve recoverable worktrees and agent changes. Operators must
+correct the App configuration or external GitHub access and retry through the normal workflow; the
+service does not persist tokens or expiration data. A missing, blank, or invalid `expires_at` makes
+the exchange fail and is not cached. An exchanged token is usable only when its parsed `expires_at`
+is strictly later than the current time plus the five-minute refresh window; expired, nearly
+expired, and exact-boundary responses therefore fail through the safe App exchange error path
+without being returned or cached.
 
-Immediately before publication, the task worktree fetches `origin/<defaultBranch>`.
-Automatic rebasing and legacy prepared-conflict continuation are disabled. Published
-branch maintenance instead uses additive merges with bounded conflict assistance.
-Unsafe publication preserves state rather than rewriting history.
+Immediately before publication, the task worktree fetches `origin/<defaultBranch>`. Automatic
+rebasing and legacy prepared-conflict continuation are disabled. Published branch maintenance
+instead uses additive merges with bounded conflict assistance. Unsafe publication preserves state
+rather than rewriting history.
 
-The post-commit AI pull-request-description step is presentation-only. Its strict structured output accepts a summary of at most
-1,000 characters, at most 20 `changes` entries and 20 `validation` entries, and at most 500 characters per entry. Empty arrays
-remain valid, including `validation` when no result is known. Its context collection, OpenCode execution, structured output
-parsing or validation, and Markdown rendering failures, including oversized output, are logged with the failed stage and do not
-block publication. The deterministic fallback includes task purpose, changed files
-when available, observed quality results (or explicit absence of evidence),
-outstanding issues and the Trello link. Generated and fallback descriptions use
-the configured Git identity attribution footer. Agent-reported validation claims
-never replace orchestrator-observed results. Existing PR updates refresh only the
-managed description region, preserving human content outside it. Unknown or
+The post-commit AI pull-request-description step is presentation-only. Its strict structured output
+accepts a summary of at most 1,000 characters, at most 20 `changes` entries and 20 `validation`
+entries, and at most 500 characters per entry. Empty arrays remain valid, including `validation`
+when no result is known. Its context collection, OpenCode execution, structured output parsing or
+validation, and Markdown rendering failures, including oversized output, are logged with the failed
+stage and do not block publication. The deterministic fallback includes task purpose, changed files
+when available, observed quality results (or explicit absence of evidence), outstanding issues and
+the Trello link. Generated and fallback descriptions use the configured Git identity attribution
+footer. Agent-reported validation claims never replace orchestrator-observed results. Existing PR
+updates refresh only the managed description region, preserving human content outside it. Unknown or
 malformed ownership markers are preserved rather than overwritten.
 
-For every open owned PR, the worker verifies the persisted URL, branch, repository, and exact current head before observing CI and
-feedback. Checks and commit statuses are matched to automatically established expectations from repository rules and static
-workflow contracts. Conditional or dynamic workflows, inaccessible policies, delayed/missing checks, skipped/neutral/cancelled
-results, and stale heads remain waiting or uncertain. The worker never uses currently visible green checks as proof that the
-expected check set is complete. Only complete failures trigger the bounded primary-session CI repair cycle; complete passes may
-support verified feedback replies but never authorize merging. Open PRs remain active regardless of approval or CI status.
+For every open owned PR, the worker verifies the persisted URL, branch, repository, and exact
+current head before observing CI and feedback. Checks and commit statuses are matched to
+automatically established expectations from repository rules and static workflow contracts.
+Conditional or dynamic workflows, inaccessible policies, delayed/missing checks,
+skipped/neutral/cancelled results, and stale heads remain waiting or uncertain. The worker never
+uses currently visible green checks as proof that the expected check set is complete. Only complete
+failures trigger the bounded primary-session CI repair cycle; complete passes may support verified
+feedback replies but never authorize merging. Open PRs remain active regardless of approval or CI
+status.
 
-On review feedback, stable review/thread/comment identities remain in the durable task ledger through remediation and independent
-verification. Replies use the original GitHub conversation context and the observed
-published PR head, distinguishing verified fixes, unresolved requests and uncertainty.
-Failed or pending CI is reported honestly and does not veto a reply or available
+On review feedback, stable review/thread/comment identities remain in the durable task ledger
+through remediation and independent verification. Replies use the original GitHub conversation
+context and the observed published PR head, distinguishing verified fixes, unresolved requests and
+uncertainty. Failed or pending CI is reported honestly and does not veto a reply or available
 correction publication. A repair that produces no change does not mark feedback as addressed. The
 orchestrator does not approve reviews, dismiss reviewer decisions, or resolve threads.
 
@@ -377,43 +419,49 @@ The publication rules are:
 
 - A missing remote task branch is pushed with a normal push.
 - A remote branch already at the resulting commit is not pushed again.
-- A remote branch that is not an ancestor of the resulting commit is rejected because it would require a non-fast-forward
-  update.
-- Fetch failure stops publication. A required non-fast-forward update is refused without rebase, and preserves the worktree and PR.
+- A remote branch that is not an ancestor of the resulting commit is rejected because it would
+  require a non-fast-forward update.
+- Fetch failure stops publication. A required non-fast-forward update is refused without rebase, and
+  preserves the worktree and PR.
 - An existing open pull request is reused; a new pull request is created only when needed.
-- Normal publication never force-pushes. A task PR is observed on the exact published head. CI and local quality evidence are
-  recorded for the human reviewer; neither passing evidence nor approval authorizes an orchestrator merge.
+- Normal publication never force-pushes. A task PR is observed on the exact published head. CI and
+  local quality evidence are recorded for the human reviewer; neither passing evidence nor approval
+  authorizes an orchestrator merge.
 
-If feedback remediation returns no source changes, its feedback remains unverified in the task ledger. The orchestrator does not
-commit, publish, reply with a success claim, or move the card to `Done` based on a no-op result; the existing PR and worktree remain
-available for further review or operator attention.
+If feedback remediation returns no source changes, its feedback remains unverified in the task
+ledger. The orchestrator does not commit, publish, reply with a success claim, or move the card to
+`Done` based on a no-op result; the existing PR and worktree remain available for further review or
+operator attention.
 
-The task worktree and branch are preserved after fetch, rebase, publication, CI, or terminal reconciliation failures so conflicts
-and diagnostics can be resolved. An open pull request, including an approved or draft pull request, remains active and blocks the
-project's next task until a human merges or closes it. `autoMerge: true` is rejected during configuration loading.
+The task worktree and branch are preserved after fetch, rebase, publication, CI, or terminal
+reconciliation failures so conflicts and diagnostics can be resolved. An open pull request,
+including an approved or draft pull request, remains active and blocks the project's next task until
+a human merges or closes it. `autoMerge: true` is rejected during configuration loading.
 
-Prepared-publication conflicts and legacy prepared handoffs are not automatically handled. The worker does not inspect them to infer
-that rewriting is safe, and does not run a conflict agent, continue/abort/reset, clean, remove, recreate, or publish the worktree.
-The record, branch, refs, objects, intent, dirty/unshipped work, and handoff are preserved. PR state observation and verified
-terminal reconciliation continue read-only; affected task writers and claims remain blocked pending explicit reconciliation.
-See [Recovery](recovery.md).
+Prepared-publication conflicts and legacy prepared handoffs are not automatically handled. The
+worker does not inspect them to infer that rewriting is safe, and does not run a conflict agent,
+continue/abort/reset, clean, remove, recreate, or publish the worktree. The record, branch, refs,
+objects, intent, dirty/unshipped work, and handoff are preserved. PR state observation and verified
+terminal reconciliation continue read-only; affected task writers and claims remain blocked pending
+explicit reconciliation. See [Recovery](recovery.md).
 
 ### Published branch rewriting is disabled
 
-The service exposes no `pushWithLease` capability and disables all automatic rebases, including pre-publication and conflict continuation.
-No force-push or rebase-based publication is promised. Published history, remote refs, maintenance intents, conflict handoffs,
-worktrees, local-only commits, and dirty changes are retained when safe continuation is unavailable.
-Automatic target synchronization uses additive merges and ordinary pushes on the
-existing PR, with persisted original/local/target provenance and bounded conflict
-assistance. Accepted merge/push effects are reconciled after interruption rather
-than repeated. Unknown local-only commits, staged unrelated output, unresolved
-conflicts and ambiguous remote effects remain preserved recovery conditions.
-Legacy rebase intents are still fenced. Do not manually retry an uncertain push
-or reset/discard its worktree. Ordinary initial publication remains supported.
+The service exposes no `pushWithLease` capability and disables all automatic rebases, including
+pre-publication and conflict continuation. No force-push or rebase-based publication is promised.
+Published history, remote refs, maintenance intents, conflict handoffs, worktrees, local-only
+commits, and dirty changes are retained when safe continuation is unavailable. Automatic target
+synchronization uses additive merges and ordinary pushes on the existing PR, with persisted
+original/local/target provenance and bounded conflict assistance. Accepted merge/push effects are
+reconciled after interruption rather than repeated. Unknown local-only commits, staged unrelated
+output, unresolved conflicts and ambiguous remote effects remain preserved recovery conditions.
+Legacy rebase intents are still fenced. Do not manually retry an uncertain push or reset/discard its
+worktree. Ordinary initial publication remains supported.
 
 ## Elapsed workflow time
 
-When a refinement card is successfully moved to `Backlog`, its concise Trello completion comment can contain:
+When a refinement card is successfully moved to `Backlog`, its concise Trello completion comment can
+contain:
 
 ```text
 Agent Orchestrator completed refinement.
@@ -423,38 +471,41 @@ Refined task title: Add inventory support
 Elapsed workflow time: 1 hour 5 minutes
 ```
 
-For refinement, the timer starts at the current pass's `Ready for Agent` to `Working` transition, or at `Failed` to `Ready
-for Agent` for a deliberate retry. It ends at that pass's successful `Working` to `Backlog` transition. The comment omits the
-elapsed-time line when that transition history is missing, incomplete, malformed, ambiguous, or has invalid date ordering;
-the reason is logged and the successful `Backlog` state is preserved.
+For refinement, the timer starts at the current pass's `Ready for Agent` to `Working` transition, or
+at `Failed` to `Ready for Agent` for a deliberate retry. It ends at that pass's successful `Working`
+to `Backlog` transition. The comment omits the elapsed-time line when that transition history is
+missing, incomplete, malformed, ambiguous, or has invalid date ordering; the reason is logged and
+the successful `Backlog` state is preserved.
 
-When an implementation card is successfully published and moved to `Human Review`, its Trello success comment and Human
-Review email can contain a line such as:
+When an implementation card is successfully published and moved to `Human Review`, its Trello
+success comment and Human Review email can contain a line such as:
 
 ```text
 Elapsed workflow time: 1 hour 5 minutes
 ```
 
-This is elapsed workflow time for the current automated pass, not OpenCode-only runtime. The timer starts at:
+This is elapsed workflow time for the current automated pass, not OpenCode-only runtime. The timer
+starts at:
 
 - `Ready for Agent` to `Working` for an initial pass;
 - `Failed` to `Ready for Agent` for a deliberate retry; or
 - `Human Review` to `Working` for a review-feedback pass.
 
-It ends at that pass's resulting `Working` to `Human Review` transition. The value uses explicit seconds, minutes, hours,
-and days as needed. If Trello action history is missing, incomplete, malformed, ambiguous, or has invalid date ordering, the
-summary and Human Review email are still attempted and the card remains in `Human Review`; the elapsed-time line is omitted
-and the reason is logged.
+It ends at that pass's resulting `Working` to `Human Review` transition. The value uses explicit
+seconds, minutes, hours, and days as needed. If Trello action history is missing, incomplete,
+malformed, ambiguous, or has invalid date ordering, the summary and Human Review email are still
+attempted and the card remains in `Human Review`; the elapsed-time line is omitted and the reason is
+logged.
 
 ## Notifications
 
-Email is optional and disabled when `notifications.email` is omitted or `enabled` is `false`. Configuration, SMTP
-credentials, and event defaults are in the [configuration reference](configuration.md#notificationsemail).
+Email is optional and disabled when `notifications.email` is omitted or `enabled` is `false`.
+Configuration, SMTP credentials, and event defaults are in the
+[configuration reference](configuration.md#notificationsemail).
 
-When enabled, events receive durable deduplicated notification identities after
-their corresponding verified transition or attention outcome. Four core events
-are refinement completion, PR ready for human review, attention required and task
-failure; `done` is an additional compatibility event:
+When enabled, events receive durable deduplicated notification identities after their corresponding
+verified transition or attention outcome. Four core events are refinement completion, PR ready for
+human review, attention required and task failure; `done` is an additional compatibility event:
 
 | Event                | Sent when                                                                                                              |
 | -------------------- | ---------------------------------------------------------------------------------------------------------------------- |
@@ -464,187 +515,205 @@ failure; `done` is an additional compatibility event:
 | `done`               | Compatibility event when a human-merged pull request moves its card to `Done`                                          |
 | `attentionRequired`  | A project poll or reconciliation cannot safely continue after any bounded retry, including ambiguous active-card state |
 
-The service does not notify for cards merely observed in `Human Review`, `Failed`, or `Done`, unrelated list transitions, or
-repeated polling of an already completed transition. Human Review messages include project, card, Trello URL, pull-request
-URL, commit/publication context, review result, remediation result, and, when reliable history is available, the elapsed
-workflow time. Completion messages include project, card, Trello URL, and merged pull-request URL. Failed messages include
-project, card, Trello URL, failure category and reason, plus the deliberate retry instruction. Refinement completion emails
-include project, card, Trello URL, classification, refined title, and, when reliable history is available, elapsed workflow time;
-they do not include the refined description. The corresponding Trello comment is the concise summary described above. Attention
-Required messages include the project, failure category and reason, affected card IDs when available, session-log paths when
-available, and failure-handling outcome when available.
+The service does not notify for cards merely observed in `Human Review`, `Failed`, or `Done`,
+unrelated list transitions, or repeated polling of an already completed transition. Human Review
+messages include project, card, Trello URL, pull-request URL, commit/publication context, review
+result, remediation result, and, when reliable history is available, the elapsed workflow time.
+Completion messages include project, card, Trello URL, and merged pull-request URL. Failed messages
+include project, card, Trello URL, failure category and reason, plus the deliberate retry
+instruction. Refinement completion emails include project, card, Trello URL, classification, refined
+title, and, when reliable history is available, elapsed workflow time; they do not include the
+refined description. The corresponding Trello comment is the concise summary described above.
+Attention Required messages include the project, failure category and reason, affected card IDs when
+available, session-log paths when available, and failure-handling outcome when available.
 
-Failure reasons and failure-handling outcomes in failed-card comments, failed emails, `Attention Required` emails, and project
-failure diagnostics use one fixed 2,000-character maximum per externally derived value. Values above the maximum end with the
-deterministic `... [truncated]` marker; fixed retry or recovery guidance and available session-log references remain present.
-Existing secret redaction occurs before this bound is applied. This limit affects concise presentation surfaces only. The complete
-redacted command and OpenCode output remains in the retained per-card session log for investigation.
+Failure reasons and failure-handling outcomes in failed-card comments, failed emails,
+`Attention Required` emails, and project failure diagnostics use one fixed 2,000-character maximum
+per externally derived value. Values above the maximum end with the deterministic `... [truncated]`
+marker; fixed retry or recovery guidance and available session-log references remain present.
+Existing secret redaction occurs before this bound is applied. This limit affects concise
+presentation surfaces only. The complete redacted command and OpenCode output remains in the
+retained per-card session log for investigation.
 
-Closing an expected pull request without merging moves its Human Review card to `Backlog` and adds a Trello explanation with
-the pull-request URL; it does not send the `failed` event. A failed Backlog move is retained as a reconciliation diagnostic,
-while a comment failure after a successful move leaves the card in `Backlog` with
-project release pending original-comment reconciliation. Unknown delivery never
-authorizes a blind resend.
+Closing an expected pull request without merging moves its Human Review card to `Backlog` and adds a
+Trello explanation with the pull-request URL; it does not send the `failed` event. A failed Backlog
+move is retained as a reconciliation diagnostic, while a comment failure after a successful move
+leaves the card in `Backlog` with project release pending original-comment reconciliation. Unknown
+delivery never authorizes a blind resend.
 
-`Attention Required` is diagnostic, not permission to discard state or start a new
-task. Trello/GitHub timeouts, connectivity errors, rate limits and HTTP
-500/502/503/504 retain verified state with bounded immediate attempts and controlled
-rechecks. Owned attempts persist dependency waits and resume when outcomes are
-verified; legacy reconciliation blocks use their documented explicit recovery
-condition. Unknown mergeability is not proof of conflict, success or deletion.
-Unknown writes retain their original identity for readback, not blind retries.
-Authentication, configuration and malformed-state errors produce sanitized
-diagnostics. Alerts are deduplicated and are not sent for intentional shutdown or
-quality exhaustion alone. No policy automatically retries a confirmed Failed card.
+`Attention Required` is diagnostic, not permission to discard state or start a new task.
+Trello/GitHub timeouts, connectivity errors, rate limits and HTTP 500/502/503/504 retain verified
+state with bounded immediate attempts and controlled rechecks. Owned attempts persist dependency
+waits and resume when outcomes are verified; legacy reconciliation blocks use their documented
+explicit recovery condition. Unknown mergeability is not proof of conflict, success or deletion.
+Unknown writes retain their original identity for readback, not blind retries. Authentication,
+configuration and malformed-state errors produce sanitized diagnostics. Alerts are deduplicated and
+are not sent for intentional shutdown or quality exhaustion alone. No policy automatically retries a
+confirmed Failed card.
 
-Notification delivery is isolated from workflow state. Existing card-transition email is attempted only after its Trello move
-succeeds. A delivery failure is logged with project and card context when available; it does not move a card, replace the
-primary workflow error, stop polling, or prevent other enabled handling. A successful refinement still receives its Trello
-summary comment when email is disabled or fails.
-Known non-delivery can be retried through the durable outbox. Confirmed delivery is
-deduplicated; uncertain SMTP acceptance remains recorded rather than blindly resent.
+Notification delivery is isolated from workflow state. Existing card-transition email is attempted
+only after its Trello move succeeds. A delivery failure is logged with project and card context when
+available; it does not move a card, replace the primary workflow error, stop polling, or prevent
+other enabled handling. A successful refinement still receives its Trello summary comment when email
+is disabled or fails. Known non-delivery can be retried through the durable outbox. Confirmed
+delivery is deduplicated; uncertain SMTP acceptance remains recorded rather than blindly resent.
 Without provider delivery evidence, exactly-once receipt cannot be guaranteed.
 
 ## Shutdown and fatal errors
 
-`SIGINT` and `SIGTERM` request an idempotent coordinated shutdown. The service stops
-claiming new cards and cancels/drains owned child-process trees, including Git,
-GitHub CLI, OpenCode and shell commands, using the shared process runtime. External
-effects may already have been accepted; persisted intents are reconciled after
-restart instead of assumed undone. Ambiguous process termination retains a durable
-ownership fence; inability to persist that fence keeps the service alive with its
-leases held and an operator-required diagnostic. Allow time for safe draining rather
-than using forced termination as normal deployment. Orderly signal shutdown exits
-successfully and is not reported as a task failure.
+`SIGINT` and `SIGTERM` request an idempotent coordinated shutdown. The service stops claiming new
+cards and cancels/drains owned child-process trees, including Git, GitHub CLI, OpenCode and shell
+commands, using the shared process runtime. External effects may already have been accepted;
+persisted intents are reconciled after restart instead of assumed undone. Ambiguous process
+termination retains a durable ownership fence; inability to persist that fence keeps the service
+alive with its leases held and an operator-required diagnostic. Allow time for safe draining rather
+than using forced termination as normal deployment. Orderly signal shutdown exits successfully and
+is not reported as a task failure.
 
-Startup failures, uncaught exceptions, and unhandled promise rejections are logged as fatal diagnostics with the original error
-details and a UTC timestamp. The first fatal event requests the same coordinated shutdown and the process exits with status
-`1`. Repeated fatal events or signals do not start duplicate cleanup or replace the original fatal diagnostic.
+Startup failures, uncaught exceptions, and unhandled promise rejections are logged as fatal
+diagnostics with the original error details and a UTC timestamp. The first fatal event requests the
+same coordinated shutdown and the process exits with status `1`. Repeated fatal events or signals do
+not start duplicate cleanup or replace the original fatal diagnostic.
 
-Shutdown does not mark cards successful, advance workflow state, delete recoverable worktrees, or discard agent changes. A
-normal failure in one project remains isolated to that project and follows normal card failure or reconciliation handling.
+Shutdown does not mark cards successful, advance workflow state, delete recoverable worktrees, or
+discard agent changes. A normal failure in one project remains isolated to that project and follows
+normal card failure or reconciliation handling.
 
 ## Logging and retention
 
-Shared `Logger` lifecycle events, warnings, and errors begin with a UTC ISO 8601 timestamp, followed by project and card
-context when available and the message. Multiline console logger messages receive the same prefix on every physical line.
-Retryable Trello and GitHub reconciliation attempts are warnings and include the affected operation and bounded attempt count;
-exhausted attempts are logged as project errors before the existing failure diagnostic and attention notification. Trello request
-errors retain operation, status, retry classification, and the underlying error as structured context without logging tokens,
-authenticated URLs, or response bodies.
-Daily files use the existing format:
+Shared `Logger` lifecycle events, warnings, and errors begin with a UTC ISO 8601 timestamp, followed
+by project and card context when available and the message. Multiline console logger messages
+receive the same prefix on every physical line. Retryable Trello and GitHub reconciliation attempts
+are warnings and include the affected operation and bounded attempt count; exhausted attempts are
+logged as project errors before the existing failure diagnostic and attention notification. Trello
+request errors retain operation, status, retry classification, and the underlying error as
+structured context without logging tokens, authenticated URLs, or response bodies. Daily files use
+the existing format:
 
 ```text
 timestamp level context message
 ```
 
-They are written under `<workflow.contextRoot>/orchestrator-logs/orchestrator-YYYY-MM-DD.log`; test runs use the `test-orchestrator-YYYY-MM-DD.log` prefix. Raw
-OpenCode and command output is written separately to per-card session/process logs,
-not copied into structured orchestrator diagnostics. Configured repository validation is captured in the relevant task process artifacts. Clean
-Human Review branch maintenance runs configured validation and coverage and offers
-independent advisory review against the prepared source. Failed, skipped or
-unavailable checks are disclosed on the same draft PR, not used as publication gates. Session logs are stored below
-`<pinned-storage-root>/history/sessions/<sanitized-project-id>/<sanitized-card-id>-<attempt-id>.log`; path components are sanitized for filesystem use. Child stdout/stderr is stored under the pinned attempt's `artifacts/<project>/<card>/<attempt>/process-executions/` tree. Validation
-failures reported by an agent are concise diagnostics with a session-log reference; the complete redacted stdout and stderr remain
-in that per-card log instead of being dumped to the service log.
+They are written under `<workflow.contextRoot>/orchestrator-logs/orchestrator-YYYY-MM-DD.log`; test
+runs use the `test-orchestrator-YYYY-MM-DD.log` prefix. Raw OpenCode and command output is written
+separately to per-card session/process logs, not copied into structured orchestrator diagnostics.
+Configured repository validation is captured in the relevant task process artifacts. Clean Human
+Review branch maintenance runs configured validation and coverage and offers independent advisory
+review against the prepared source. Failed, skipped or unavailable checks are disclosed on the same
+draft PR, not used as publication gates. Session logs are stored below
+`<pinned-storage-root>/history/sessions/<sanitized-project-id>/<sanitized-card-id>-<attempt-id>.log`;
+path components are sanitized for filesystem use. Child stdout/stderr is stored under the pinned
+attempt's `artifacts/<project>/<card>/<attempt>/process-executions/` tree. Validation failures
+reported by an agent are concise diagnostics with a session-log reference; the complete redacted
+stdout and stderr remain in that per-card log instead of being dumped to the service log.
 
-Vitest suppresses shared logger console output by default while retaining the daily test log. Temporarily enable application
-logger output for a debugging run with `TEST_LOGS=true yarn test`.
+Vitest suppresses shared logger console output by default while retaining the daily test log.
+Temporarily enable application logger output for a debugging run with `TEST_LOGS=true yarn test`.
 
-`workflow.logRetentionDays` defaults to `30`. Retention cleanup runs at startup and once per day while the service is
-running. It applies to managed daily logs, task history, and process artifacts; a file is removed only when its filesystem modification
-time is strictly older than the retention cutoff. Missing log directories are ignored. Unrelated files and directories,
-symbolic links, and active log files are preserved. Nonterminal or malformed attempt envelopes protect their evidence, including idle Human Review and restart recovery. Scan and removal failures are logged with their path and reason while
-other candidates continue to be processed.
+`workflow.logRetentionDays` defaults to `30`. Retention cleanup runs at startup and once per day
+while the service is running. It applies to managed daily logs, task history, and process artifacts;
+a file is removed only when its filesystem modification time is strictly older than the retention
+cutoff. Missing log directories are ignored. Unrelated files and directories, symbolic links, and
+active log files are preserved. Nonterminal or malformed attempt envelopes protect their evidence,
+including idle Human Review and restart recovery. Scan and removal failures are logged with their
+path and reason while other candidates continue to be processed.
 
-Session and process evidence remains after completion and is removed only by retention after the configured expiry.
+Session and process evidence remains after completion and is removed only by retention after the
+configured expiry.
 
-Fatal diagnostics redact configured and environment secret values. Operators should still remove credentials, tokens, private
-URLs, and personal data from any shared diagnostic output; see [SECURITY.md](../SECURITY.md).
+Fatal diagnostics redact configured and environment secret values. Operators should still remove
+credentials, tokens, private URLs, and personal data from any shared diagnostic output; see
+[SECURITY.md](../SECURITY.md).
 
 ## Multi-project operation
 
-Multiple projects can be configured in one `config.yaml`. Each project has its own repository, GitHub repository, Trello
-board, worktree root, and OpenCode settings. Project workers poll independently and can process independent projects
-concurrently.
+Multiple projects can be configured in one `config.yaml`. Each project has its own repository,
+GitHub repository, Trello board, worktree root, and OpenCode settings. Project workers poll
+independently and can process independent projects concurrently.
 
-The one-active-task rule applies per project, not globally. A project with an ambiguous `Working` or active `Human Review`
-state is blocked without affecting unrelated projects. A normal card or project failure is logged and reconciled within its
-own project; it does not silently advance another project's workflow.
+The one-active-task rule applies per project, not globally. A project with an ambiguous `Working` or
+active `Human Review` state is blocked without affecting unrelated projects. A normal card or
+project failure is logged and reconciled within its own project; it does not silently advance
+another project's workflow.
 
 ## Unified task-session operation
 
-Every configured project runs the same durable task-session workflow; there is no per-project mode switch or required-check-name
-list. `repository.validationCommand` and `coverageCommand` are independently optional.
-The orchestrator runs configured commands and records unconfigured commands as skipped,
-never passed. Initial publication, feedback, CI repair and maintenance all retain
-advisory quality policy; operational safety remains mandatory. CI
-expectations are discovered from branch-protection information and repository-owned pull-request workflows. See
-[Configuration](configuration.md#ci-expectation-discovery) for how unknown and dynamic CI contracts fail closed.
+Every configured project runs the same durable task-session workflow; there is no per-project mode
+switch or required-check-name list. `repository.validationCommand` and `coverageCommand` are
+independently optional. The orchestrator runs configured commands and records unconfigured commands
+as skipped, never passed. Initial publication, feedback, CI repair and maintenance all retain
+advisory quality policy; operational safety remains mandatory. CI expectations are discovered from
+branch-protection information and repository-owned pull-request workflows. See
+[Configuration](configuration.md#ci-expectation-discovery) for how unknown and dynamic CI contracts
+fail closed.
 
-Task plans, execution records, feedback ledgers, and mutation queues are stored under workflow `contextRoot`, outside the
-repository and worktrees. Preserve this runtime data across restarts and include it in operational backups. Do not hand-edit
-or remove a task record, ledger, or queue event to clear a failure. The queue persists event identity and permits only one active
-repository-mutating operation per project. A project can monitor multiple owned waiting PRs read-only; any implementation,
-refinement, CI repair, feedback remediation, or terminal PR reconciliation waits for the single project mutation owner.
-Independent projects retain their separate workers and may proceed concurrently.
+Task plans, execution records, feedback ledgers, and mutation queues are stored under workflow
+`contextRoot`, outside the repository and worktrees. Preserve this runtime data across restarts and
+include it in operational backups. Do not hand-edit or remove a task record, ledger, or queue event
+to clear a failure. The queue persists event identity and permits only one active
+repository-mutating operation per project. A project can monitor multiple owned waiting PRs
+read-only; any implementation, refinement, CI repair, feedback remediation, or terminal PR
+reconciliation waits for the single project mutation owner. Independent projects retain their
+separate workers and may proceed concurrently.
 
-Mutation events record their active worker identity. A recovery claimant does not take an event from another live worker; after a
-worker exits, it can reclaim only the task's matching persisted event after authoritative ownership and worktree checks pass.
-Repeated polling with a changed card operation identity does not reuse an old event. A failed pre-`Working` claim can resume its
-prepared owned worktree only when the original queue identity still matches.
+Mutation events record their active worker identity. A recovery claimant does not take an event from
+another live worker; after a worker exits, it can reclaim only the task's matching persisted event
+after authoritative ownership and worktree checks pass. Repeated polling with a changed card
+operation identity does not reuse an old event. A failed pre-`Working` claim can resume its prepared
+owned worktree only when the original queue identity still matches.
 
-A queued event does not mutate a repository. A failed or uncertain event retains queue ownership until the workflow verifies
-recovery; it blocks later mutations for that project rather than being discarded or automatically retried. Preserve its record,
-inspect the affected task and external state, and follow the task-session recovery guide before resuming.
+A queued event does not mutate a repository. A failed or uncertain event retains queue ownership
+until the workflow verifies recovery; it blocks later mutations for that project rather than being
+discarded or automatically retried. Preserve its record, inspect the affected task and external
+state, and follow the task-session recovery guide before resuming.
 
 ### Legacy-state upgrade blockage
 
-At startup, the current canonical attempt store imports supported v1 legacy task-execution state and preserves the original
-source bytes in a migration snapshot. A legacy queue, queue-only state without exactly one task authority, malformed or
-unsupported persisted data, or ambiguous work remains a project-level blockage; it is not interpreted as an empty queue or
-permission to claim a new task. Migration does not delete or rewrite its source evidence. Stop old writers before starting the
-lease-aware version because older workers do not participate in canonical ownership.
+At startup, the current canonical attempt store imports supported v1 legacy task-execution state and
+preserves the original source bytes in a migration snapshot. A legacy queue, queue-only state
+without exactly one task authority, malformed or unsupported persisted data, or ambiguous work
+remains a project-level blockage; it is not interpreted as an empty queue or permission to claim a
+new task. Migration does not delete or rewrite its source evidence. Stop old writers before starting
+the lease-aware version because older workers do not participate in canonical ownership.
 
-For a blocked upgrade, preserve runtime files, the source checkout, worktrees, branches and external PR state. Follow the
-supported recovery procedure and have the service operator/support owner reconcile the authoritative task and queued operation
-using existing application recovery tooling before resuming. Do not manually edit persistence files or delete a queue/blocker
-as a routine recovery step. If the persisted state cannot be unambiguously reconciled through supported procedures, keep that
-project blocked and escalate rather than creating a replacement attempt.
+For a blocked upgrade, preserve runtime files, the source checkout, worktrees, branches and external
+PR state. Follow the supported recovery procedure and have the service operator/support owner
+reconcile the authoritative task and queued operation using existing application recovery tooling
+before resuming. Do not manually edit persistence files or delete a queue/blocker as a routine
+recovery step. If the persisted state cannot be unambiguously reconciled through supported
+procedures, keep that project blocked and escalate rather than creating a replacement attempt.
 
 Validation/coverage repair honors its independently configured
-`opencode.remediation.validationMaxPasses` limit (default two); the maximum,
-attempt counter, original prompt, pre-dispatch content identity, and final quality
-evidence are persisted for restart-safe continuation. An exact-content no-op ends
-the cycle without repeating unchanged checks, and early finish is explicit. CI
-repair uses `opencode.remediation.ciMaxPasses` (default two), pinned per episode
-across own commits, reruns, target merges and restarts. Implementation review
-repair honors `opencode.remediation.maxPasses` (default one). On
-exhaustion, the last structured failed review and its source identity are
-persisted and meaningful safe initial implementation is published for Human Review
-as a draft when local validation/coverage failed, were skipped or remain uncertain,
-or material issues remain. Passing quality checks are not required for initial
-delivery. No Attention Required email is generated
-for review exhaustion alone; polling and restart reuse the persisted final
-review without consuming more attempts. Legacy exhausted records lacking final
-review evidence perform at most one read-only verification review during
-recovery, persist it, and continue without a new repair cycle. PRs with
-unresolved automated review findings are preserved and surfaced for human review. No PR is automatically merged.
+`opencode.remediation.validationMaxPasses` limit (default two); the maximum, attempt counter,
+original prompt, pre-dispatch content identity, and final quality evidence are persisted for
+restart-safe continuation. An exact-content no-op ends the cycle without repeating unchanged checks,
+and early finish is explicit. CI repair uses `opencode.remediation.ciMaxPasses` (default two),
+pinned per episode across own commits, reruns, target merges and restarts. Implementation review
+repair honors `opencode.remediation.maxPasses` (default one). On exhaustion, the last structured
+failed review and its source identity are persisted and meaningful safe initial implementation is
+published for Human Review as a draft when local validation/coverage failed, were skipped or remain
+uncertain, or material issues remain. Passing quality checks are not required for initial delivery.
+No Attention Required email is generated for review exhaustion alone; polling and restart reuse the
+persisted final review without consuming more attempts. Legacy exhausted records lacking final
+review evidence perform at most one read-only verification review during recovery, persist it, and
+continue without a new repair cycle. PRs with unresolved automated review findings are preserved and
+surfaced for human review. No PR is automatically merged.
 
-Complete CI failures are collected together; pending or uncertain expected checks
-have a persisted 30-minute observation window without consuming repair attempts.
-Expiry reports uncertainty and ends the CI phase in Human Review; later observations
-may still discover actual results. Advisory local checks and review are offered
-after corrections. `autoMerge: true` is rejected at configuration load; omitted/false settings
-preserve compatibility, and current-head CI/local evidence never authorizes a merge. Exhaustion or ambiguous state is preserved for operator attention rather than retried
-indefinitely. Replies distinguish verified, unresolved and uncertain requests using
-published-head evidence, including failed/pending CI rather than demanding a pass.
-The process does not approve reviews or resolve reviewer threads. See [Workflow](workflow.md#unified-task-lifecycle) and
-[Recovery](recovery.md#restart-and-task-ownership) for lifecycle and recovery details.
+Complete CI failures are collected together; pending or uncertain expected checks have a persisted
+30-minute observation window without consuming repair attempts. Expiry reports uncertainty and ends
+the CI phase in Human Review; later observations may still discover actual results. Advisory local
+checks and review are offered after corrections. `autoMerge: true` is rejected at configuration
+load; omitted/false settings preserve compatibility, and current-head CI/local evidence never
+authorizes a merge. Exhaustion or ambiguous state is preserved for operator attention rather than
+retried indefinitely. Replies distinguish verified, unresolved and uncertain requests using
+published-head evidence, including failed/pending CI rather than demanding a pass. The process does
+not approve reviews or resolve reviewer threads. See [Workflow](workflow.md#unified-task-lifecycle)
+and [Recovery](recovery.md#restart-and-task-ownership) for lifecycle and recovery details.
 
-The unified implementation has been verified locally with mocked Trello, GitHub, and OpenCode boundaries. This does not establish
-that a particular GitHub check, permission, Trello board, or OpenCode runtime is available. No real-world pilot, deployed-service
-test, or live API verification has been performed; those checks remain separate operator decisions.
+The unified implementation has been verified locally with mocked Trello, GitHub, and OpenCode
+boundaries. This does not establish that a particular GitHub check, permission, Trello board, or
+OpenCode runtime is available. No real-world pilot, deployed-service test, or live API verification
+has been performed; those checks remain separate operator decisions.
 
 ## Safety boundaries
 
@@ -659,5 +728,5 @@ Operators should expect the orchestrator to refuse or stop rather than guess. It
 - silently discard failed agent work; or
 - delete arbitrary or unrecognized worktrees.
 
-Use [Recovery](recovery.md) for deliberate retries and ambiguous or interrupted states, and [Workflow](workflow.md) for
-the state-transition reference.
+Use [Recovery](recovery.md) for deliberate retries and ambiguous or interrupted states, and
+[Workflow](workflow.md) for the state-transition reference.

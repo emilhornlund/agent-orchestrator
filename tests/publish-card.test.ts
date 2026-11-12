@@ -4,10 +4,7 @@ import path from "node:path";
 
 import type { ProjectConfig } from "../src/config/config.js";
 import { GitClient, type RunGit } from "../src/git/git-client.js";
-import {
-  GitHubClient,
-  type RunGitHubCommand,
-} from "../src/github/github-client.js";
+import { GitHubClient, type RunGitHubCommand } from "../src/github/github-client.js";
 import { GitHubCredentialProvider } from "../src/github/github-credential-provider.js";
 import type { EmailNotifier } from "../src/notifications/email-notifier.js";
 import type { OpenCodeClient } from "../src/opencode/opencode-client.js";
@@ -102,9 +99,7 @@ function createCard(): TrelloCard {
   };
 }
 
-function createPublicationGit(
-  overrides: Record<string, unknown> = {},
-): GitClient {
+function createPublicationGit(overrides: Record<string, unknown> = {}): GitClient {
   return {
     getCurrentBranch: vi.fn().mockResolvedValue("agent/card-1"),
     getStatus: vi.fn().mockResolvedValue(""),
@@ -129,9 +124,7 @@ describe("publishCard", () => {
     let published = false;
     const github = {
       findPullRequest: vi.fn(async () =>
-        published
-          ? { url: "https://github.com/example/repository/pull/123" }
-          : null,
+        published ? { url: "https://github.com/example/repository/pull/123" } : null,
       ),
       createPullRequest: vi.fn(async (options: { body: string }) => {
         body = options.body;
@@ -168,9 +161,7 @@ describe("publishCard", () => {
     await publishCard({
       ...options,
       qualityNeedsDraft: true,
-      verifiedDescriptionFacts: () => [
-        "Validation failed on current content (exit 1)",
-      ],
+      verifiedDescriptionFacts: () => ["Validation failed on current content (exit 1)"],
     });
     expect(github.createPullRequest).toHaveBeenCalledOnce();
     expect(github.ensurePullRequestDraft).toHaveBeenCalledOnce();
@@ -181,9 +172,7 @@ describe("publishCard", () => {
     expect(body).not.toContain("Validation passed on initial content");
     expect(options.emailNotifier.send).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        text: expect.stringContaining(
-          "Validation failed on current content (exit 1)",
-        ),
+        text: expect.stringContaining("Validation failed on current content (exit 1)"),
       }),
     );
   });
@@ -254,12 +243,10 @@ describe("publishCard", () => {
     } as unknown as TrelloClient;
     const github = {
       findPullRequest: vi.fn().mockResolvedValue(null),
-      createPullRequest: vi.fn(
-        async (options: { draft: boolean; body: string }) => {
-          publication = { draft: options.draft, body: options.body };
-          return { url: "https://github.com/example/repository/pull/123" };
-        },
-      ),
+      createPullRequest: vi.fn(async (options: { draft: boolean; body: string }) => {
+        publication = { draft: options.draft, body: options.body };
+        return { url: "https://github.com/example/repository/pull/123" };
+      }),
     } as unknown as GitHubClient;
 
     await publishCard({
@@ -274,8 +261,7 @@ describe("publishCard", () => {
       reviewResult: "Passed",
       remediationResult: "Not required",
       beforePushVerification: async () => ({
-        reviewResult:
-          "Failed (human review required; material findings unresolved)",
+        reviewResult: "Failed (human review required; material findings unresolved)",
         reviewDisclosure,
         qualityNeedsDraft: false,
       }),
@@ -297,12 +283,10 @@ describe("publishCard", () => {
     } as unknown as TrelloClient;
     const github = {
       findPullRequest: vi.fn().mockResolvedValue(null),
-      createPullRequest: vi.fn(
-        async (options: { draft: boolean; body: string }) => {
-          publication = { draft: options.draft, body: options.body };
-          return { url: "https://github.com/example/repository/pull/123" };
-        },
-      ),
+      createPullRequest: vi.fn(async (options: { draft: boolean; body: string }) => {
+        publication = { draft: options.draft, body: options.body };
+        return { url: "https://github.com/example/repository/pull/123" };
+      }),
     } as unknown as GitHubClient;
 
     await publishCard({
@@ -324,9 +308,7 @@ describe("publishCard", () => {
     });
 
     expect(publication?.draft).toBe(true);
-    expect(publication?.body).toContain(
-      "Review: Unavailable (current-source review timed out)",
-    );
+    expect(publication?.body).toContain("Review: Unavailable (current-source review timed out)");
     expect(publication?.body).not.toContain("Review: Passed");
   });
 
@@ -368,12 +350,8 @@ describe("publishCard", () => {
         events.push("email");
         emailText = message.text;
         expect(message.subject).toContain("Human Review");
-        expect(message.text).toContain(
-          "https://github.com/example/repository/pull/123",
-        );
-        expect(message.text).toContain(
-          "Elapsed workflow time: 1 hour 5 minutes",
-        );
+        expect(message.text).toContain("https://github.com/example/repository/pull/123");
+        expect(message.text).toContain("Elapsed workflow time: 1 hour 5 minutes");
       }),
     };
     const trello = {
@@ -621,12 +599,10 @@ describe("publishCard", () => {
       token: "test-token",
     });
 
-    const moveCard = vi
-      .spyOn(trello, "moveCard")
-      .mockImplementation(async () => {
-        events.push("move");
-        return createCard();
-      });
+    const moveCard = vi.spyOn(trello, "moveCard").mockImplementation(async () => {
+      events.push("move");
+      return createCard();
+    });
 
     vi.spyOn(trello, "getListTransitions").mockResolvedValue([
       {
@@ -643,16 +619,14 @@ describe("publishCard", () => {
       },
     ]);
 
-    const addComment = vi
-      .spyOn(trello, "addComment")
-      .mockImplementation(async () => {
-        events.push("comment");
-        return {
-          id: "action-1",
-          type: "commentCard",
-          date: "2026-08-22T09:00:00.000Z",
-        };
-      });
+    const addComment = vi.spyOn(trello, "addComment").mockImplementation(async () => {
+      events.push("comment");
+      return {
+        id: "action-1",
+        type: "commentCard",
+        date: "2026-08-22T09:00:00.000Z",
+      };
+    });
 
     await publishCard({
       trello,
@@ -667,14 +641,7 @@ describe("publishCard", () => {
       remediationResult: "Not required",
     });
 
-    expect(events).toEqual([
-      "fetch",
-      "push",
-      "find-pr",
-      "create-pr",
-      "move",
-      "comment",
-    ]);
+    expect(events).toEqual(["fetch", "push", "find-pr", "create-pr", "move", "comment"]);
 
     expect(runGit).toHaveBeenNthCalledWith(1, "/tmp/example-worktrees/card-1", [
       "branch",
@@ -685,9 +652,7 @@ describe("publishCard", () => {
       "origin",
       "main",
     ]);
-    expect(runGit.mock.calls.some(([, args]) => args.includes("rebase"))).toBe(
-      false,
-    );
+    expect(runGit.mock.calls.some(([, args]) => args.includes("rebase"))).toBe(false);
     expect(runGit).toHaveBeenNthCalledWith(3, "/tmp/example-worktrees/card-1", [
       "rev-parse",
       "HEAD",
@@ -700,26 +665,22 @@ describe("publishCard", () => {
       "agent/card-1",
     ]);
 
-    expect(runGitHubCommand).toHaveBeenNthCalledWith(
-      1,
-      "/tmp/example-worktrees/card-1",
-      [
-        "pr",
-        "list",
-        "--repo",
-        "example/repository",
-        "--head",
-        "agent/card-1",
-        "--state",
-        "open",
-        "--json",
-        "url",
-        "--limit",
-        "1",
-        "--jq",
-        '.[0].url // ""',
-      ],
-    );
+    expect(runGitHubCommand).toHaveBeenNthCalledWith(1, "/tmp/example-worktrees/card-1", [
+      "pr",
+      "list",
+      "--repo",
+      "example/repository",
+      "--head",
+      "agent/card-1",
+      "--state",
+      "open",
+      "--json",
+      "url",
+      "--limit",
+      "1",
+      "--jq",
+      '.[0].url // ""',
+    ]);
 
     for (const [cwd, args, environment] of runGit.mock.calls) {
       if (["fetch", "ls-remote", "push"].includes(args[0] ?? "")) {
@@ -735,24 +696,20 @@ describe("publishCard", () => {
     }
     expect(JSON.stringify(addComment.mock.calls)).not.toContain("ambient-pat");
 
-    expect(runGitHubCommand).toHaveBeenNthCalledWith(
-      2,
-      "/tmp/example-worktrees/card-1",
-      [
-        "pr",
-        "create",
-        "--repo",
-        "example/repository",
-        "--base",
-        "main",
-        "--head",
-        "agent/card-1",
-        "--title",
-        "Example task",
-        "--body",
-        expect.stringContaining("## Outstanding issues"),
-      ],
-    );
+    expect(runGitHubCommand).toHaveBeenNthCalledWith(2, "/tmp/example-worktrees/card-1", [
+      "pr",
+      "create",
+      "--repo",
+      "example/repository",
+      "--base",
+      "main",
+      "--head",
+      "agent/card-1",
+      "--title",
+      "Example task",
+      "--body",
+      expect.stringContaining("## Outstanding issues"),
+    ]);
 
     expect(moveCard).toHaveBeenCalledWith("card-1", "review-list");
 
@@ -806,12 +763,7 @@ describe("publishCard", () => {
       emailNotifier: { send },
     });
 
-    expect(git.fetch).toHaveBeenCalledWith(
-      "/worktree",
-      "origin",
-      "main",
-      createProject(),
-    );
+    expect(git.fetch).toHaveBeenCalledWith("/worktree", "origin", "main", createProject());
     expect(git.rebase).not.toHaveBeenCalled();
     expect(git.getRemoteBranchSha).toHaveBeenCalledWith(
       "/worktree",
@@ -819,17 +771,8 @@ describe("publishCard", () => {
       "agent/card-1",
       createProject(),
     );
-    expect(git.isAncestor).toHaveBeenCalledWith(
-      "/worktree",
-      "published-commit",
-      postRebaseSha,
-    );
-    expect(push).toHaveBeenCalledWith(
-      "/worktree",
-      "origin",
-      "agent/card-1",
-      createProject(),
-    );
+    expect(git.isAncestor).toHaveBeenCalledWith("/worktree", "published-commit", postRebaseSha);
+    expect(push).toHaveBeenCalledWith("/worktree", "origin", "agent/card-1", createProject());
     expect(send).toHaveBeenCalledWith(
       expect.objectContaining({
         text: expect.stringContaining(`Commit: ${postRebaseSha}`),
@@ -905,9 +848,7 @@ describe("publishCard", () => {
       expect.objectContaining({
         model: "commit-model",
         variant: "commit-variant",
-        prompt: expect.stringContaining(
-          "Resulting commit SHA: post-rebase-sha",
-        ),
+        prompt: expect.stringContaining("Resulting commit SHA: post-rebase-sha"),
       }),
     );
     expect(runDescription).toHaveBeenCalledWith(
@@ -917,9 +858,7 @@ describe("publishCard", () => {
     );
     expect(runDescription).toHaveBeenCalledWith(
       expect.objectContaining({
-        prompt: expect.stringContaining(
-          "Commit message:\ndescribe implementation",
-        ),
+        prompt: expect.stringContaining("Commit message:\ndescribe implementation"),
       }),
     );
     expect(runDescription).toHaveBeenCalledWith(
@@ -929,14 +868,10 @@ describe("publishCard", () => {
     );
     expect(runDescription).toHaveBeenCalledWith(
       expect.objectContaining({
-        prompt: expect.stringContaining(
-          "Automated remediation result: Not required.",
-        ),
+        prompt: expect.stringContaining("Automated remediation result: Not required."),
       }),
     );
-    expect(runDescription).toHaveBeenCalledWith(
-      expect.objectContaining({ readOnly: true }),
-    );
+    expect(runDescription).toHaveBeenCalledWith(expect.objectContaining({ readOnly: true }));
     expect(createPullRequest).toHaveBeenCalledWith(
       expect.objectContaining({
         body: [
@@ -1002,9 +937,7 @@ describe("publishCard", () => {
 
     expect(createPullRequest).toHaveBeenCalledWith(
       expect.objectContaining({
-        body: expect.stringContaining(
-          "No verified validation or test results are available.",
-        ),
+        body: expect.stringContaining("No verified validation or test results are available."),
       }),
     );
     expect(createPullRequest).toHaveBeenCalledWith(
@@ -1061,14 +994,11 @@ describe("publishCard", () => {
       card: createCard(),
       worktreePath: "/worktree",
       branch: "agent/card-1",
-      expectedExistingPullRequestUrl:
-        "https://github.com/example/repository/pull/142",
+      expectedExistingPullRequestUrl: "https://github.com/example/repository/pull/142",
       commitSha: "abc123",
       reviewResult: "Passed",
       remediationResult: "Not required",
-      verifiedDescriptionFacts: () => [
-        "yarn validate passed with exit code 0.",
-      ],
+      verifiedDescriptionFacts: () => ["yarn validate passed with exit code 0."],
     });
 
     expect(github.createPullRequest).not.toHaveBeenCalled();
@@ -1082,10 +1012,7 @@ describe("publishCard", () => {
 
   it("rejects generated text when read-only source verification detects a mutation", async () => {
     const git = createPublicationGit({
-      getStatus: vi
-        .fn()
-        .mockResolvedValueOnce("")
-        .mockResolvedValueOnce(" M src/task.ts"),
+      getStatus: vi.fn().mockResolvedValueOnce("").mockResolvedValueOnce(" M src/task.ts"),
       getChangedFiles: vi.fn().mockResolvedValue("src/task.ts"),
       getCommitMessage: vi.fn().mockResolvedValue("fix(task): complete task"),
     });
@@ -1196,24 +1123,18 @@ describe("publishCard", () => {
       expect.stringContaining("The previous response was invalid."),
     );
     expect(runDescription.mock.calls[1]?.[0].prompt).toEqual(
-      expect.stringContaining(
-        "only one valid JSON object matching exactly the required schema",
-      ),
+      expect.stringContaining("only one valid JSON object matching exactly the required schema"),
     );
     expect(createPullRequest).toHaveBeenCalledWith(
       expect.objectContaining({
-        body: expect.stringContaining(
-          "Described the published implementation.",
-        ),
+        body: expect.stringContaining("Described the published implementation."),
       }),
     );
   });
 
   it("does not forward unknown JSON field names from child output into logs", async () => {
     const marker = "RAW_PR_JSON_FIELD_MARKER_82fd";
-    const warnings = vi
-      .spyOn(Logger.prototype, "warn")
-      .mockImplementation(() => {});
+    const warnings = vi.spyOn(Logger.prototype, "warn").mockImplementation(() => {});
     const invalid = JSON.stringify({
       summary: "description",
       changes: [],
@@ -1475,9 +1396,7 @@ describe("publishCard", () => {
 
   it("uses the deterministic body for a non-successful description result", async () => {
     const marker = "RAW_OPENCODE_STDERR_MARKER_7fd9";
-    const warn = vi
-      .spyOn(Logger.prototype, "warn")
-      .mockImplementation(() => {});
+    const warn = vi.spyOn(Logger.prototype, "warn").mockImplementation(() => {});
     const git = createPublicationGit({
       getChangedFiles: vi.fn().mockResolvedValue("src/example.ts"),
       getCommitMessage: vi.fn().mockResolvedValue("implement example"),
@@ -1591,8 +1510,7 @@ describe("publishCard", () => {
         worktreePath: "/worktree",
         branch: "agent/card-1",
         commitSha: "new-commit",
-        expectedExistingPullRequestUrl:
-          "https://github.com/example/repository/pull/123",
+        expectedExistingPullRequestUrl: "https://github.com/example/repository/pull/123",
         reviewResult: "Passed",
         remediationResult: "Feedback remediation",
       }),
@@ -1611,9 +1529,7 @@ describe("publishCard", () => {
     });
     const github = {
       findPullRequest: vi.fn().mockResolvedValue({ url }),
-      findPullRequestState: vi
-        .fn()
-        .mockResolvedValue({ url, state: "OPEN", mergedAt: null }),
+      findPullRequestState: vi.fn().mockResolvedValue({ url, state: "OPEN", mergedAt: null }),
       createPullRequest: vi.fn(),
     } as unknown as GitHubClient;
     const trello = {
@@ -1639,17 +1555,8 @@ describe("publishCard", () => {
 
     expect(git.fetch).not.toHaveBeenCalled();
     expect(git.rebase).not.toHaveBeenCalled();
-    expect(git.isAncestor).toHaveBeenCalledWith(
-      "/worktree",
-      "published-head",
-      "new-commit",
-    );
-    expect(git.push).toHaveBeenCalledWith(
-      "/worktree",
-      "origin",
-      "agent/card-1",
-      createProject(),
-    );
+    expect(git.isAncestor).toHaveBeenCalledWith("/worktree", "published-head", "new-commit");
+    expect(git.push).toHaveBeenCalledWith("/worktree", "origin", "agent/card-1", createProject());
     expect(github.createPullRequest).not.toHaveBeenCalled();
   });
 
@@ -1717,9 +1624,7 @@ describe("publishCard", () => {
         reviewResult: "Passed",
         remediationResult: "Not required",
       }),
-    ).rejects.toThrow(
-      "Failed to fetch origin/main before publishing agent/card-1",
-    );
+    ).rejects.toThrow("Failed to fetch origin/main before publishing agent/card-1");
 
     expect(git.rebase).not.toHaveBeenCalled();
     expect(git.push).not.toHaveBeenCalled();
@@ -1761,11 +1666,9 @@ describe("publishCard", () => {
     expect(push).not.toHaveBeenCalled();
     expect(github.findPullRequest).not.toHaveBeenCalled();
     expect(trello.moveCard).not.toHaveBeenCalled();
-    expect(
-      push.mock.calls
-        .flat()
-        .some((argument) => String(argument).includes("force")),
-    ).toBe(false);
+    expect(push.mock.calls.flat().some((argument) => String(argument).includes("force"))).toBe(
+      false,
+    );
   });
 
   it("reuses an existing pull request instead of creating another one", async () => {
@@ -1816,17 +1719,15 @@ describe("publishCard", () => {
 
     vi.spyOn(trello, "getListTransitions").mockResolvedValue([]);
 
-    const addComment = vi
-      .spyOn(trello, "addComment")
-      .mockImplementation(async () => {
-        events.push("comment");
+    const addComment = vi.spyOn(trello, "addComment").mockImplementation(async () => {
+      events.push("comment");
 
-        return {
-          id: "action-1",
-          type: "commentCard",
-          date: "2026-08-22T09:00:00.000Z",
-        };
-      });
+      return {
+        id: "action-1",
+        type: "commentCard",
+        date: "2026-08-22T09:00:00.000Z",
+      };
+    });
 
     await publishCard({
       trello,
@@ -2297,9 +2198,7 @@ describe("publishCard", () => {
       return "";
     });
     const lookupError = new Error("PR lookup failed");
-    const runGitHubCommand = vi
-      .fn<RunGitHubCommand>()
-      .mockRejectedValue(lookupError);
+    const runGitHubCommand = vi.fn<RunGitHubCommand>().mockRejectedValue(lookupError);
 
     const trello = new TrelloClient({
       apiKey: "test-key",
@@ -2417,9 +2316,7 @@ describe("publishCard", () => {
 
     vi.spyOn(trello, "getListTransitions").mockResolvedValue([]);
 
-    vi.spyOn(trello, "addComment").mockRejectedValue(
-      new Error("comment failed"),
-    );
+    vi.spyOn(trello, "addComment").mockRejectedValue(new Error("comment failed"));
 
     await expect(
       publishCard({
@@ -2464,9 +2361,7 @@ describe("publishCard", () => {
       apiKey: "test-key",
       token: "test-token",
     });
-    const moveCard = vi
-      .spyOn(trello, "moveCard")
-      .mockRejectedValue(reviewError);
+    const moveCard = vi.spyOn(trello, "moveCard").mockRejectedValue(reviewError);
 
     await expect(
       publishCard({
@@ -2481,9 +2376,7 @@ describe("publishCard", () => {
         reviewResult: "Passed",
         remediationResult: "Not required",
       }),
-    ).rejects.toThrow(
-      "was published, but the Trello card could not be moved to Human Review",
-    );
+    ).rejects.toThrow("was published, but the Trello card could not be moved to Human Review");
 
     expect(runGitHubCommand).toHaveBeenCalledTimes(2);
     expect(moveCard).toHaveBeenCalledWith("card-1", "review-list");

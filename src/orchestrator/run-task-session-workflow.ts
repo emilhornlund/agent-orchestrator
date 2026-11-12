@@ -1,9 +1,6 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
-import {
-  taskResources,
-  runTaskResources,
-} from "../task-session/task-resources.js";
+import { taskResources, runTaskResources } from "../task-session/task-resources.js";
 import path from "node:path";
 import type { ProjectConfig } from "../config/config.js";
 import {
@@ -33,10 +30,7 @@ import {
 import type { OpenCodeClient } from "../opencode/opencode-client.js";
 import { runBoundedCiReview } from "../task-session/run-bounded-ci-review.js";
 import { extractOpenCodeTextOutput } from "../opencode/opencode-client.js";
-import {
-  captureRepositorySnapshot,
-  repositorySnapshotsEqual,
-} from "../opencode/commit-result.js";
+import { captureRepositorySnapshot, repositorySnapshotsEqual } from "../opencode/commit-result.js";
 import {
   CommitMessageAdviceUnavailableError,
   CommitMessageRecoveryBlockedError,
@@ -124,10 +118,7 @@ import {
 } from "../task-session/verified-publication-decision.js";
 import { TaskExecutionStore } from "../task-session/task-execution-store.js";
 import { TaskPlanStore } from "../task-session/task-plan-store.js";
-import {
-  TaskMutationQueue,
-  type TaskMutationEvent,
-} from "../task-session/task-mutation-queue.js";
+import { TaskMutationQueue, type TaskMutationEvent } from "../task-session/task-mutation-queue.js";
 import {
   reconcileTaskSession,
   expectedTaskTrelloList,
@@ -190,16 +181,10 @@ import {
   recoverPendingTaskCommit,
 } from "./trusted-commit-state.js";
 import { logger } from "../logging/logger.js";
-import {
-  readTerminalPrFence,
-  recordTerminalPrFence,
-} from "../task-session/terminal-pr-fence.js";
+import { readTerminalPrFence, recordTerminalPrFence } from "../task-session/terminal-pr-fence.js";
 import { prepareTerminalTaskSession } from "./prepare-terminal-task-session.js";
 import { PrMaintenanceStore } from "../task-session/pr-maintenance-store.js";
-import {
-  maintainOutdatedPr,
-  reconcileInterruptedPrMaintenance,
-} from "./maintain-outdated-pr.js";
+import { maintainOutdatedPr, reconcileInterruptedPrMaintenance } from "./maintain-outdated-pr.js";
 import { reconcileUnobservedTerminalPrEvents } from "./reconcile-unobserved-terminal-pr.js";
 import { verifyMergedTaskPrHeadContinuity } from "./verify-merged-task-pr-head-continuity.js";
 import { TaskMutationBlockStore } from "./task-mutation-block-store.js";
@@ -222,10 +207,7 @@ import {
   isVerifiedSuccessfulExecution,
 } from "../process/process-runtime.js";
 import type { RunRecord } from "../task-session/run-record.js";
-import {
-  resumeInitialPublication,
-  PublicationWaitingError,
-} from "./initial-publication.js";
+import { resumeInitialPublication, PublicationWaitingError } from "./initial-publication.js";
 
 const lastLoggedCiState = new Map<string, string>();
 const reportedMissingMaintenancePlans = new Set<string>();
@@ -242,9 +224,7 @@ export interface RunTaskSessionWorkflowOptions {
   signal: AbortSignal;
   retryIntervalMs?: number;
   emailNotifier?: EmailNotifier;
-  prepareAttachmentContext: (
-    card: TrelloCard,
-  ) => Promise<CardAttachmentPromptContext | undefined>;
+  prepareAttachmentContext: (card: TrelloCard) => Promise<CardAttachmentPromptContext | undefined>;
   processRefinement?: (
     card: TrelloCard,
     worktree: { path: string; branch: string },
@@ -254,9 +234,7 @@ export interface RunTaskSessionWorkflowOptions {
 }
 
 function timestamp(record: TaskExecutionRecord): string {
-  return new Date(
-    Math.max(Date.now(), Date.parse(record.updatedAt) + 1),
-  ).toISOString();
+  return new Date(Math.max(Date.now(), Date.parse(record.updatedAt) + 1)).toISOString();
 }
 
 function recoverableRefinementMutation(
@@ -297,16 +275,10 @@ async function completeRefinementAuthority(
     refinementMutationSnapshotKey,
     refinementMutationSnapshotSchema.parse,
   );
-  const completion = authority.read(
-    refinementCompletionKey,
-    refinementCompletionSchema.parse,
-  );
+  const completion = authority.read(refinementCompletionKey, refinementCompletionSchema.parse);
   if (
     !snapshot?.reconciliation ||
-    !sameRefinementFields(
-      snapshot.reconciliation.verified,
-      snapshot.intended,
-    ) ||
+    !sameRefinementFields(snapshot.reconciliation.verified, snapshot.intended) ||
     !completion?.verified ||
     !hasVerifiedWorkflowMove(authority, project.trello.backlogListId)
   )
@@ -318,14 +290,9 @@ async function completeRefinementAuthority(
   const completedCard = backlog.find((card) => card.id === cardId);
   if (
     !completedCard ||
-    !sameRefinementFields(
-      refinementCardFields(completedCard),
-      snapshot.intended,
-    )
+    !sameRefinementFields(refinementCardFields(completedCard), snapshot.intended)
   )
-    throw new Error(
-      `Refinement completion is not verified: ${cardId} was not observed in Backlog`,
-    );
+    throw new Error(`Refinement completion is not verified: ${cardId} was not observed in Backlog`);
   await guardRefinementFields(trello, authority, "verify");
   await authority.completeRefinement({
     observationId: `refinement:${cardId}:${observedAt}`,
@@ -346,17 +313,11 @@ async function finalizeRefinementSetupFailure(options: {
   signal: AbortSignal;
   emailNotifier?: EmailNotifier;
 }): Promise<void> {
-  const { authority, queue, queueEventId, trello, project, card, signal } =
-    options;
+  const { authority, queue, queueEventId, trello, project, card, signal } = options;
   const current = authority.store.assertCurrentLease(authority.ownerGeneration);
   if (current.taskKind !== "refinement" || current.cardId !== card.id)
-    throw new Error(
-      "Setup failure does not match the canonical refinement attempt",
-    );
-  if (
-    current.lifecycle === "failed" &&
-    current.terminalEvidence?.prOutcome === "no-pr-failure"
-  ) {
+    throw new Error("Setup failure does not match the canonical refinement attempt");
+  if (current.lifecycle === "failed" && current.terminalEvidence?.prOutcome === "no-pr-failure") {
     const failed = await getCardsForDiscovery(
       trello,
       project.id,
@@ -366,29 +327,21 @@ async function finalizeRefinementSetupFailure(options: {
     );
     if (!failed.some((candidate) => candidate.id === card.id))
       throw new Error("Canonical failed refinement is absent from Failed");
-    if (queue.getActive()?.eventId === queueEventId)
-      queue.complete(queueEventId);
+    if (queue.getActive()?.eventId === queueEventId) queue.complete(queueEventId);
     await authority.releaseVerifiedTerminal();
     return;
   }
   if (
     current.lifecycle !== "refinement" ||
-    (!hasExhaustedRefinementSetup(authority, card.id) &&
-      !refinementAnalysisFailure(authority))
+    (!hasExhaustedRefinementSetup(authority, card.id) && !refinementAnalysisFailure(authority))
   )
     throw new Error("Refinement setup failure is not durably exhausted");
   const analysisFailure = refinementAnalysisFailure(authority);
   const verifyOriginalFields = async () => {
     if (!analysisFailure) return;
-    const input = authority.read(
-      refinementInputKey,
-      refinementInputSchema.parse,
-    );
+    const input = authority.read(refinementInputKey, refinementInputSchema.parse);
     const actual = await trello.getCard(card.id);
-    if (
-      !input ||
-      !sameRefinementFields(input.original, refinementCardFields(actual))
-    )
+    if (!input || !sameRefinementFields(input.original, refinementCardFields(actual)))
       throw new RefinementSetupAmbiguousError(
         "Refinement failure has conflicting current fields; preserve human values and retain ownership",
       );
@@ -418,10 +371,7 @@ async function finalizeRefinementSetupFailure(options: {
     category: analysisFailure ? "Refinement" : "Setup",
     reason: analysisFailure ?? options.reason,
   };
-  if (
-    options.emailNotifier &&
-    (options.emailNotifier.isEventEnabled?.("failed") ?? true)
-  )
+  if (options.emailNotifier && (options.emailNotifier.isEventEnabled?.("failed") ?? true))
     enqueueNotification(
       options.emailNotifier,
       project.id,
@@ -443,9 +393,7 @@ async function finalizeRefinementSetupFailure(options: {
       signal,
     );
     if (!working.some((candidate) => candidate.id === card.id))
-      throw new Error(
-        "Refinement setup failure card is in neither Working nor Failed",
-      );
+      throw new Error("Refinement setup failure card is in neither Working nor Failed");
     await trello.moveCard(card.id, project.trello.failedListId);
   }
   const confirmed = await getCardsForDiscovery(
@@ -456,9 +404,7 @@ async function finalizeRefinementSetupFailure(options: {
     signal,
   );
   if (!confirmed.some((candidate) => candidate.id === card.id))
-    throw new Error(
-      "Trello did not confirm refinement setup failure in Failed",
-    );
+    throw new Error("Trello did not confirm refinement setup failure in Failed");
   const observedAt = new Date().toISOString();
   await verifyOriginalFields();
   await authority.failRefinement({
@@ -489,9 +435,7 @@ function updateRecord(
   });
 }
 
-export function isPlanningOutageSafeToSkip(
-  operation: PrimaryOperationEntry | undefined,
-): boolean {
+export function isPlanningOutageSafeToSkip(operation: PrimaryOperationEntry | undefined): boolean {
   return (
     operation?.status === "failed" &&
     operation.retrySafe === true &&
@@ -501,10 +445,7 @@ export function isPlanningOutageSafeToSkip(
   );
 }
 
-function event(
-  record: TaskExecutionRecord,
-  type: TaskExecutionEvent["type"],
-): TaskExecutionEvent {
+function event(record: TaskExecutionRecord, type: TaskExecutionEvent["type"]): TaskExecutionEvent {
   return {
     type,
     eventId: `${record.operationKey}:${type}`,
@@ -532,8 +473,7 @@ async function completeMergedTaskSession(options: {
   onMutationReleased?: () => void;
   preserveLegacyMaintenanceArtifacts?: boolean;
 }): Promise<"completed" | "deferred"> {
-  const { queue, taskStore, trello, git, project, card, pullRequest, signal } =
-    options;
+  const { queue, taskStore, trello, git, project, card, pullRequest, signal } = options;
   const headSha = pullRequest.headRefOid;
   if (headSha === undefined) {
     throw new Error(`Merged pull request has no head identity for ${card.id}`);
@@ -541,9 +481,7 @@ async function completeMergedTaskSession(options: {
   const terminalEventId = `terminal-pr:${card.id}:MERGED:${headSha}`;
   const record = taskStore.read(card.id);
   if (record === null || record.pullRequest?.url !== pullRequest.url) {
-    throw new Error(
-      `Merged pull request has no matching task record for ${card.id}`,
-    );
+    throw new Error(`Merged pull request has no matching task record for ${card.id}`);
   }
   const [owner, repository] = project.repository.github.split("/");
   if (
@@ -551,10 +489,8 @@ async function completeMergedTaskSession(options: {
     pullRequest.mergedAt === null ||
     pullRequest.baseRefName !== project.repository.defaultBranch ||
     pullRequest.headRefName !== taskResources(project, card.id).branch ||
-    pullRequest.headRepository?.name.toLowerCase() !==
-      repository?.toLowerCase() ||
-    pullRequest.headRepositoryOwner?.login.toLowerCase() !==
-      owner?.toLowerCase()
+    pullRequest.headRepository?.name.toLowerCase() !== repository?.toLowerCase() ||
+    pullRequest.headRepositoryOwner?.login.toLowerCase() !== owner?.toLowerCase()
   ) {
     throw new Error(`Merged pull request identity is ambiguous for ${card.id}`);
   }
@@ -689,9 +625,7 @@ async function completeMergedTaskSession(options: {
       ...(options.completionComment === undefined
         ? {}
         : { completionComment: options.completionComment }),
-      ...(options.emailNotifier === undefined
-        ? {}
-        : { emailNotifier: options.emailNotifier }),
+      ...(options.emailNotifier === undefined ? {} : { emailNotifier: options.emailNotifier }),
       signal,
       ...(terminalPreparation.preserveArtifacts ||
       options.preserveLegacyMaintenanceArtifacts ||
@@ -705,16 +639,11 @@ async function completeMergedTaskSession(options: {
     }
     const latest = taskStore.read(card.id);
     if (latest === null || latest.pullRequest?.url !== pullRequest.url) {
-      throw new Error(
-        `Merged task record changed during cleanup for ${card.id}`,
-      );
+      throw new Error(`Merged task record changed during cleanup for ${card.id}`);
     }
     let terminalProjection: TaskExecutionRecord;
     if (latest.phase !== "done") {
-      if (
-        latest.phase === "attention-required" ||
-        latest.pullRequest?.url !== pullRequest.url
-      ) {
+      if (latest.phase === "attention-required" || latest.pullRequest?.url !== pullRequest.url) {
         throw new Error(
           `Cannot complete merged task ${card.id} without its active persisted PR identity`,
         );
@@ -747,12 +676,10 @@ async function completeMergedTaskSession(options: {
       outcome: "merged",
     });
     if (ProjectRunAuthority.current(project.id))
-      await taskStore.compareAndSwap(
-        card.id,
-        latest.revision,
-        terminalProjection,
-        { event: "merged", evidence },
-      );
+      await taskStore.compareAndSwap(card.id, latest.revision, terminalProjection, {
+        event: "merged",
+        evidence,
+      });
     else taskStore.compareAndSwap(card.id, latest.revision, terminalProjection);
     queue.complete(terminalEventId);
     return "completed";
@@ -762,20 +689,14 @@ async function completeMergedTaskSession(options: {
   }
 }
 
-function hasExhaustedPublishedFeedbackCorrection(
-  record: TaskExecutionRecord,
-): boolean {
+function hasExhaustedPublishedFeedbackCorrection(record: TaskExecutionRecord): boolean {
   const operationId = record.feedbackRemediation?.operationId;
-  const operation =
-    operationId === undefined
-      ? undefined
-      : record.primaryOperations?.[operationId];
+  const operation = operationId === undefined ? undefined : record.primaryOperations?.[operationId];
   return (
     record.pullRequest !== undefined &&
     operation?.activity === "feedback-remediation" &&
     operation.status === "exhausted" &&
-    (operation.failureExecutions ?? operation.executions) >=
-      OPERATION_RECOVERY_MAX_EXECUTIONS
+    (operation.failureExecutions ?? operation.executions) >= OPERATION_RECOVERY_MAX_EXECUTIONS
   );
 }
 
@@ -815,8 +736,7 @@ async function persistClosedRunTerminal(
   record: TaskExecutionRecord,
   observedHeadSha: string,
 ): Promise<void> {
-  if (!ProjectRunAuthority.current(project.id) || !record.pullRequest?.headSha)
-    return;
+  if (!ProjectRunAuthority.current(project.id) || !record.pullRequest?.headSha) return;
   const evidence = await readRunTerminalEvidence({
     trello,
     project,
@@ -885,9 +805,7 @@ function persistQualityEvidence(
         ? {}
         : { maxAttempts: record.validationRepair.maxAttempts }),
       status:
-        validation.status === "skipped" && coverage?.status === "skipped"
-          ? "skipped"
-          : "passed",
+        validation.status === "skipped" && coverage?.status === "skipped" ? "skipped" : "passed",
       evidence: {
         command: validation.command,
         startedAt: validation.startedAt,
@@ -914,19 +832,13 @@ type PersistedQualityEvidence = NonNullable<
   TaskExecutionRecord["publicationQuality"]
 >["validation"];
 
-function isLegacySuccessfulQualityEvidence(
-  evidence: PersistedQualityEvidence,
-): boolean {
+function isLegacySuccessfulQualityEvidence(evidence: PersistedQualityEvidence): boolean {
   return (
-    evidence.status === undefined &&
-    evidence.exitCode === 0 &&
-    evidence.command.trim().length > 0
+    evidence.status === undefined && evidence.exitCode === 0 && evidence.command.trim().length > 0
   );
 }
 
-function toPersistedQualityEvidence(
-  result: TaskSessionValidationResult,
-): PersistedQualityEvidence {
+function toPersistedQualityEvidence(result: TaskSessionValidationResult): PersistedQualityEvidence {
   return {
     command: result.command,
     startedAt: result.startedAt,
@@ -951,22 +863,17 @@ function buildUnavailableReviewResult(
     );
     for (const finding of priorReview.blockingFindings.slice(0, 20)) {
       const id = finding.id ?? "unassigned finding";
-      priorDetails.push(
-        `Prior finding ${id}: ${finding.summary}. ${finding.detail}`,
-      );
+      priorDetails.push(`Prior finding ${id}: ${finding.summary}. ${finding.detail}`);
       const disposition = findings.get(id)?.primaryDisposition;
       if (
         finding.id !== undefined &&
-        disposition?.reviewedContentIdentity ===
-          priorReview.reviewedContentIdentity
+        disposition?.reviewedContentIdentity === priorReview.reviewedContentIdentity
       )
         priorDetails.push(
           `Primary disposition for prior source ${priorReview.reviewedContentIdentity}: ${disposition.status}; ${disposition.rationale}`,
         );
       else
-        priorDetails.push(
-          `No matching primary disposition is recorded for prior finding ${id}.`,
-        );
+        priorDetails.push(`No matching primary disposition is recorded for prior finding ${id}.`);
     }
     const requirementDispositions = new Map(
       (reviewRepair?.requirementDispositions ?? []).map((disposition) => [
@@ -981,10 +888,7 @@ function buildUnavailableReviewResult(
         `Prior requirement ${assessment.requirementId} was assessed as unsatisfied: ${assessment.details}. Evidence: ${assessment.evidence.join(", ") || "none reported"}.`,
       );
       const disposition = requirementDispositions.get(assessment.requirementId);
-      if (
-        disposition?.reviewedContentIdentity ===
-        priorReview.reviewedContentIdentity
-      )
+      if (disposition?.reviewedContentIdentity === priorReview.reviewedContentIdentity)
         priorDetails.push(
           `Primary disposition for prior requirement ${assessment.requirementId} on source ${priorReview.reviewedContentIdentity}: ${disposition.status}; ${disposition.rationale}`,
         );
@@ -1021,9 +925,7 @@ function previousFindingIdsFromReview(value: unknown): string[] {
   );
 }
 
-function qualityEvidenceWasSuccessful(
-  evidence: PersistedQualityEvidence,
-): boolean {
+function qualityEvidenceWasSuccessful(evidence: PersistedQualityEvidence): boolean {
   return (
     (evidence.status === "passed" && evidence.exitCode === 0) ||
     isLegacySuccessfulQualityEvidence(evidence)
@@ -1040,8 +942,7 @@ async function readTaskSessionRecoverySnapshot(options: {
   commands: CommandRunner;
   signal: AbortSignal;
 }): Promise<TaskSessionRecoverySnapshot> {
-  const { project, card, record, worktreePath, git, github, commands, signal } =
-    options;
+  const { project, card, record, worktreePath, git, github, commands, signal } = options;
   const pullRequestLookup = {
     cwd: project.repository.path,
     repository: project.repository.github,
@@ -1057,9 +958,7 @@ async function readTaskSessionRecoverySnapshot(options: {
     earlyPullRequest !== null &&
     (earlyPullRequest.state === "MERGED" || earlyPullRequest.state === "CLOSED")
   ) {
-    const number = Number(
-      new URL(earlyPullRequest.url).pathname.split("/").at(-1),
-    );
+    const number = Number(new URL(earlyPullRequest.url).pathname.split("/").at(-1));
     return {
       primarySessionAccessible: null,
       worktreeExists: false,
@@ -1072,8 +971,7 @@ async function readTaskSessionRecoverySnapshot(options: {
       pullRequest: {
         number,
         url: earlyPullRequest.url,
-        headSha:
-          earlyPullRequest.headRefOid ?? record.pullRequest?.headSha ?? "",
+        headSha: earlyPullRequest.headRefOid ?? record.pullRequest?.headSha ?? "",
         state: earlyPullRequest.state,
       },
       ciEvaluation: null,
@@ -1085,12 +983,8 @@ async function readTaskSessionRecoverySnapshot(options: {
   const stat = fs.lstatSync(worktreePath, { throwIfNoEntry: false });
   const worktreeExists = stat !== undefined;
   const isDirectory = stat?.isDirectory() === true && !stat.isSymbolicLink();
-  const worktreeBranch = isDirectory
-    ? await git.getCurrentBranch(worktreePath)
-    : null;
-  const worktreeHeadSha = isDirectory
-    ? await git.getHeadSha(worktreePath)
-    : null;
+  const worktreeBranch = isDirectory ? await git.getCurrentBranch(worktreePath) : null;
+  const worktreeHeadSha = isDirectory ? await git.getHeadSha(worktreePath) : null;
   const worktreeRebaseActive = isDirectory
     ? (await git.getRebaseState(worktreePath)) !== null
     : false;
@@ -1101,22 +995,18 @@ async function readTaskSessionRecoverySnapshot(options: {
     record.phase === "publication" &&
     (await git.getStatus(worktreePath)).trim().length > 0 &&
     !(
-      (record.validationRepair?.status === "exhausted" ||
-        record.reviewUnavailable !== undefined) &&
+      (record.validationRepair?.status === "exhausted" || record.reviewUnavailable !== undefined) &&
       record.reviewRepair?.finalReview === undefined &&
       readTrustedCommitState(project, card.id) === null
     )
   )
-    throw new Error(
-      "Publication worktree contains changes not represented by the trusted commit",
-    );
+    throw new Error("Publication worktree contains changes not represented by the trusted commit");
 
   const headSha = record.pullRequest?.headSha;
   let trusted = readTrustedCommitState(project, card.id);
   const trustedExhaustedPublication =
     record.phase === "publication" &&
-    (record.reviewRepair?.status === "exhausted" ||
-      record.reviewUnavailable !== undefined) &&
+    (record.reviewRepair?.status === "exhausted" || record.reviewUnavailable !== undefined) &&
     trusted !== null &&
     worktreeHeadSha === trusted.commitSha &&
     isDirectory &&
@@ -1169,16 +1059,13 @@ async function readTaskSessionRecoverySnapshot(options: {
 
   const authoritativeHead = pullRequest?.headSha ?? headSha;
   const ciObservation =
-    (record.phase === "ci" || record.phase === "human-feedback") &&
-    authoritativeHead !== undefined
+    (record.phase === "ci" || record.phase === "human-feedback") && authoritativeHead !== undefined
       ? await github.getCiObservations({
           cwd: project.repository.path,
           repository: project.repository.github,
           defaultBranch: project.repository.defaultBranch,
           headSha: authoritativeHead,
-          ...(pullRequest === null
-            ? {}
-            : { pullRequestNumber: pullRequest.number }),
+          ...(pullRequest === null ? {} : { pullRequestNumber: pullRequest.number }),
           project,
         })
       : null;
@@ -1188,9 +1075,7 @@ async function readTaskSessionRecoverySnapshot(options: {
       : evaluateCiChecks({
           expectedHeadSha: authoritativeHead,
           observedHeadSha: ciObservation.headSha,
-          expectations: establishCiCheckExpectations(
-            ciObservation.expectationSources,
-          ),
+          expectations: establishCiCheckExpectations(ciObservation.expectationSources),
           checks: ciObservation.checks,
         });
   const remoteBranchHeadSha =
@@ -1220,8 +1105,7 @@ async function readTaskSessionRecoverySnapshot(options: {
     if (
       trusted !== null &&
       worktreeHeadSha === trusted.commitSha &&
-      (record.validationRepair?.status === "exhausted" ||
-        record.reviewUnavailable !== undefined) &&
+      (record.validationRepair?.status === "exhausted" || record.reviewUnavailable !== undefined) &&
       record.reviewRepair?.finalReview === undefined
     )
       primarySessionAccessible = true;
@@ -1229,8 +1113,7 @@ async function readTaskSessionRecoverySnapshot(options: {
 
   const verifiedUncommittedPublication =
     record.phase === "publication" &&
-    (record.validationRepair?.status === "exhausted" ||
-      record.reviewUnavailable !== undefined) &&
+    (record.validationRepair?.status === "exhausted" || record.reviewUnavailable !== undefined) &&
     record.reviewRepair?.finalReview === undefined &&
     trusted === null &&
     pullRequest === null &&
@@ -1257,9 +1140,7 @@ async function readTaskSessionRecoverySnapshot(options: {
     pullRequest,
     ciEvaluation,
     feedbackHeadSha:
-      record.phase === "human-feedback"
-        ? (record.reviewObservation?.headSha ?? null)
-        : null,
+      record.phase === "human-feedback" ? (record.reviewObservation?.headSha ?? null) : null,
     uncertainReplyIds: [],
     reconciledReplyIds: [],
   };
@@ -1296,9 +1177,7 @@ async function collectCiFailureDiagnostics(
   failures: readonly CiCheckObservation[],
 ): Promise<FailedCheckDiagnostic[]> {
   const checkRunFailures = failures.filter(
-    (
-      failure,
-    ): failure is Extract<CiCheckObservation, { source: "check-run" }> =>
+    (failure): failure is Extract<CiCheckObservation, { source: "check-run" }> =>
       failure.source === "check-run",
   );
   const checkRunDiagnostics =
@@ -1313,9 +1192,7 @@ async function collectCiFailureDiagnostics(
         });
   const statusDiagnostics: FailedCheckDiagnostic[] = failures
     .filter(
-      (
-        failure,
-      ): failure is Extract<CiCheckObservation, { source: "commit-status" }> =>
+      (failure): failure is Extract<CiCheckObservation, { source: "commit-status" }> =>
         failure.source === "commit-status",
     )
     .map((failure) => ({
@@ -1334,16 +1211,7 @@ async function collectCiFailureDiagnostics(
 export async function runTaskSessionWorkflow(
   options: RunTaskSessionWorkflowOptions,
 ): Promise<void> {
-  const {
-    project,
-    trello,
-    git,
-    github,
-    openCode,
-    commands,
-    signal,
-    emailNotifier,
-  } = options;
+  const { project, trello, git, github, openCode, commands, signal, emailNotifier } = options;
   // Publication resumes before general session recovery/list discovery. A lost
   // move acknowledgment can leave the card in Review while its task checkpoint
   // is still publication; neither absence from Working nor an outage may claim
@@ -1364,13 +1232,9 @@ export async function runTaskSessionWorkflow(
   const validationCommand = project.repository.validationCommand ?? "";
   const root = project.contextRoot;
   if (root === undefined)
-    throw new Error(
-      "Task-session workflow requires a configured external context root",
-    );
+    throw new Error("Task-session workflow requires a configured external context root");
   const taskStore = new TaskExecutionStore(root, project);
-  const correctionPublicationLocation = (
-    source: TaskExecutionRecord | null,
-  ) => {
+  const correctionPublicationLocation = (source: TaskExecutionRecord | null) => {
     if (!source?.pullRequest || !source.feedbackRemediation) return {};
     const location = {
       project,
@@ -1386,8 +1250,7 @@ export async function runTaskSessionWorkflow(
           project.trello.reviewListId,
           `${source.feedbackRemediation!.operationId}:review`,
         ),
-      afterHumanReviewTransition: () =>
-        reconcilePendingFeedbackCardMove(location),
+      afterHumanReviewTransition: () => reconcilePendingFeedbackCardMove(location),
     };
   };
   const planStore = new TaskPlanStore(root, project);
@@ -1449,17 +1312,11 @@ export async function runTaskSessionWorkflow(
     sourceRecord: TaskExecutionRecord,
     sourceWorktree: string,
   ): Promise<TaskExecutionRecord | null> => {
-    const storedPlan = planStore.read(
-      sourceCard.id,
-      undefined,
-      sourceRecord.operationKey,
-    );
+    const storedPlan = planStore.read(sourceCard.id, undefined, sourceRecord.operationKey);
     const expectedBranch = sourceRecord.expectedBranch;
     const persistRecoveryBlock = (
       reason: string,
-      status:
-        | "reconstruction-blocked"
-        | "reconstruction-process-failed" = "reconstruction-blocked",
+      status: "reconstruction-blocked" | "reconstruction-process-failed" = "reconstruction-blocked",
     ): never => {
       const current = taskStore.read(sourceCard.id);
       if (current !== null)
@@ -1483,9 +1340,7 @@ export async function runTaskSessionWorkflow(
     const persistContextWait = (reason: string): null => {
       const current = taskStore.read(sourceCard.id);
       if (current === null)
-        throw new Error(
-          "Task record disappeared while waiting for recovery context",
-        );
+        throw new Error("Task record disappeared while waiting for recovery context");
       if (options.retryIntervalMs !== undefined) {
         persistTaskSessionContextWait(
           taskStore,
@@ -1503,9 +1358,7 @@ export async function runTaskSessionWorkflow(
             signal,
             retryIntervalMs: options.retryIntervalMs,
             readAuthoritativeSnapshot: async () => {
-              throw new Error(
-                "Context wait persistence does not read a snapshot",
-              );
+              throw new Error("Context wait persistence does not read a snapshot");
             },
           },
           reason,
@@ -1577,10 +1430,7 @@ export async function runTaskSessionWorkflow(
       git.getHeadSha(sourceWorktree),
       git.getCurrentBranch(sourceWorktree),
       git.getRefSha(sourceWorktree, `refs/heads/${expectedBranch}`),
-      git.getRefSha(
-        sourceWorktree,
-        `refs/remotes/origin/${project.repository.defaultBranch}`,
-      ),
+      git.getRefSha(sourceWorktree, `refs/remotes/origin/${project.repository.defaultBranch}`),
       git.getRefsIdentity(sourceWorktree),
     ]).catch((error: unknown) =>
       persistRecoveryBlock(
@@ -1592,11 +1442,7 @@ export async function runTaskSessionWorkflow(
       head: beforeHead,
       branch: beforeBranch,
       branchRef: beforeBranchRef,
-      refsIdentity: JSON.stringify([
-        beforeBranchRef,
-        beforeDefaultRef,
-        beforeRefsIdentity,
-      ]),
+      refsIdentity: JSON.stringify([beforeBranchRef, beforeDefaultRef, beforeRefsIdentity]),
     };
     const authority = ProjectRunAuthority.current(project.id);
     if (authority === undefined)
@@ -1618,9 +1464,7 @@ export async function runTaskSessionWorkflow(
       ...(feedbackLedgerStore.read(sourceCard.id) === null
         ? {}
         : {
-            feedbackContent: JSON.stringify(
-              feedbackLedgerStore.read(sourceCard.id),
-            ),
+            feedbackContent: JSON.stringify(feedbackLedgerStore.read(sourceCard.id)),
           }),
       ...(attachments === undefined ? {} : { attachments }),
     }).catch((error: unknown) =>
@@ -1658,26 +1502,15 @@ export async function runTaskSessionWorkflow(
               timeoutMilliseconds: 30_000,
             }),
           context,
-          contextDirectory: path.join(
-            root,
-            "primary-session-context",
-            project.id,
-            sourceCard.id,
-          ),
-          forbiddenPaths: [
-            project.repository.path,
-            project.repository.worktreeRoot,
-          ],
+          contextDirectory: path.join(root, "primary-session-context", project.id, sourceCard.id),
+          forbiddenPaths: [project.repository.path, project.repository.worktreeRoot],
           persistArtifact: (content) => {
             const authority = ProjectRunAuthority.current(project.id);
             if (authority === undefined)
               throw new Error(
                 "Cannot persist reconstruction context without canonical run authority",
               );
-            const artifact = authority.store.writeArtifact(
-              content,
-              "application/json",
-            );
+            const artifact = authority.store.writeArtifact(content, "application/json");
             return { reference: artifact.id, path: artifact.path };
           },
           attemptId: authority.store.attemptId,
@@ -1688,29 +1521,19 @@ export async function runTaskSessionWorkflow(
           operationId: `${sourceRecord.operationKey}:reconstruction-ack:${sourceRecord.primarySessionId ?? sourceRecord.sessionRecovery?.originalSessionId ?? "session"}`,
           readOnlyAcknowledged: true,
           inspectPending: (entry) =>
-            inspectPrimaryOperationEvidence(
-              taskStore,
-              sourceCard.id,
-              entry.id,
-              {
-                trustedRoot:
-                  ProjectRunAuthority.current(project.id)?.store.storageRoot ??
-                  getProcessRuntime().artifactRoot,
-                cwd: sourceWorktree,
-              },
-            ),
+            inspectPrimaryOperationEvidence(taskStore, sourceCard.id, entry.id, {
+              trustedRoot:
+                ProjectRunAuthority.current(project.id)?.store.storageRoot ??
+                getProcessRuntime().artifactRoot,
+              cwd: sourceWorktree,
+            }),
           inspectOwningPrimary: (entry) =>
-            inspectPrimaryOperationEvidence(
-              taskStore,
-              sourceCard.id,
-              entry.id,
-              {
-                trustedRoot:
-                  ProjectRunAuthority.current(project.id)?.store.storageRoot ??
-                  getProcessRuntime().artifactRoot,
-                cwd: sourceWorktree,
-              },
-            ),
+            inspectPrimaryOperationEvidence(taskStore, sourceCard.id, entry.id, {
+              trustedRoot:
+                ProjectRunAuthority.current(project.id)?.store.storageRoot ??
+                getProcessRuntime().artifactRoot,
+              cwd: sourceWorktree,
+            }),
         },
       );
     } catch (error) {
@@ -1735,12 +1558,9 @@ export async function runTaskSessionWorkflow(
     if (
       bound?.primarySessionId === undefined ||
       bound.sessionCreationStatus !== "bound" ||
-      (result.sessionId !== undefined &&
-        bound.primarySessionId !== result.sessionId)
+      (result.sessionId !== undefined && bound.primarySessionId !== result.sessionId)
     )
-      return persistRecoveryBlock(
-        "Reconstructed primary session binding was not durably verified",
-      );
+      return persistRecoveryBlock("Reconstructed primary session binding was not durably verified");
     if (result.exitCode !== 0)
       persistRecoveryBlock(
         `Primary session reconstruction exited with code ${result.exitCode}; normal task resume is blocked`,
@@ -1758,10 +1578,7 @@ export async function runTaskSessionWorkflow(
       git.getHeadSha(sourceWorktree),
       git.getCurrentBranch(sourceWorktree),
       git.getRefSha(sourceWorktree, `refs/heads/${expectedBranch}`),
-      git.getRefSha(
-        sourceWorktree,
-        `refs/remotes/origin/${project.repository.defaultBranch}`,
-      ),
+      git.getRefSha(sourceWorktree, `refs/remotes/origin/${project.repository.defaultBranch}`),
       git.getRefsIdentity(sourceWorktree),
     ]);
     try {
@@ -1774,11 +1591,7 @@ export async function runTaskSessionWorkflow(
           head: afterHead,
           branch: afterBranch,
           branchRef: afterBranchRef,
-          refsIdentity: JSON.stringify([
-            afterBranchRef,
-            afterDefaultRef,
-            afterRefsIdentity,
-          ]),
+          refsIdentity: JSON.stringify([afterBranchRef, afterDefaultRef, afterRefsIdentity]),
         },
       );
     } catch {
@@ -1800,9 +1613,7 @@ export async function runTaskSessionWorkflow(
         contextAvailabilityReason: undefined,
       },
       revision: verified.revision + 1,
-      updatedAt: new Date(
-        Math.max(Date.now(), Date.parse(verified.updatedAt) + 1),
-      ).toISOString(),
+      updatedAt: new Date(Math.max(Date.now(), Date.parse(verified.updatedAt) + 1)).toISOString(),
     });
     return bound;
   };
@@ -1840,11 +1651,7 @@ export async function runTaskSessionWorkflow(
       });
     let recovery = await reconcile(record);
     if (recovery.status === "reconstruction-required") {
-      const bound = await reconstructPrimarySession(
-        card,
-        recovery.record,
-        worktreePath,
-      );
+      const bound = await reconstructPrimarySession(card, recovery.record, worktreePath);
       if (bound === null) return null;
       recovery = await reconcile(bound);
     }
@@ -1854,19 +1661,17 @@ export async function runTaskSessionWorkflow(
   const mutationBlockStore = new TaskMutationBlockStore(root, project.id);
   const maintenanceStore = new PrMaintenanceStore(root, project);
   const feedbackLedgerStore = new FeedbackLedgerStore(root, project);
-  const unresolvedLegacyMaintenance = maintenanceStore
-    .inspect()
-    .filter((operation) => {
-      if (operation.strategy === "merge") return false;
-      if (!["completed", "cancelled"].includes(operation.status)) return true;
-      if (operation.publication?.status === "push-intended") return true;
-      const locallyPreparedHead = operation.localPreparation?.resultingHead;
-      return (
-        locallyPreparedHead !== undefined &&
-        (operation.publication?.status !== "verified" ||
-          operation.publication.resultingHead !== locallyPreparedHead)
-      );
-    });
+  const unresolvedLegacyMaintenance = maintenanceStore.inspect().filter((operation) => {
+    if (operation.strategy === "merge") return false;
+    if (!["completed", "cancelled"].includes(operation.status)) return true;
+    if (operation.publication?.status === "push-intended") return true;
+    const locallyPreparedHead = operation.localPreparation?.resultingHead;
+    return (
+      locallyPreparedHead !== undefined &&
+      (operation.publication?.status !== "verified" ||
+        operation.publication.resultingHead !== locallyPreparedHead)
+    );
+  });
   const hasUnresolvedLegacyMaintenance = unresolvedLegacyMaintenance.length > 0;
   await reconcileInterruptedPrMaintenance({
     project,
@@ -1875,17 +1680,12 @@ export async function runTaskSessionWorkflow(
     mutationQueue: queue,
     github,
   });
-  const shouldPreserveTerminalMaintenanceArtifacts = (
-    cardId: string,
-  ): boolean =>
+  const shouldPreserveTerminalMaintenanceArtifacts = (cardId: string): boolean =>
     hasUnresolvedLegacyMaintenance ||
     maintenanceStore.inspect().some((operation) => operation.cardId === cardId);
   if (unresolvedLegacyMaintenance.length > 0) {
     const details = unresolvedLegacyMaintenance
-      .map(
-        (operation) =>
-          `${operation.cardId}/${operation.operationId} (${operation.status})`,
-      )
+      .map((operation) => `${operation.cardId}/${operation.operationId} (${operation.status})`)
       .join(", ");
     logger
       .child({ projectId: project.id })
@@ -1911,9 +1711,7 @@ export async function runTaskSessionWorkflow(
     signal,
   );
   const preflightReadyIds = new Set(preflightReadyCards.map((card) => card.id));
-  const preflightWorkingIds = new Set(
-    preflightWorkingCards.map((card) => card.id),
-  );
+  const preflightWorkingIds = new Set(preflightWorkingCards.map((card) => card.id));
   let orphanRecoveryBlocked = false;
   const ownedRefinementAuthority = ProjectRunAuthority.current(project.id);
   const ownedRefinementRun = ownedRefinementAuthority?.store.read();
@@ -1929,14 +1727,8 @@ export async function runTaskSessionWorkflow(
       ownedRefinementRun?.taskKind === "refinement" &&
       ownedRefinementRun.cardId === queued.cardId &&
       ownedRefinementRun.lifecycle === "refinement" &&
-      (ownedRefinementAuthority!.read(
-        refinementInputKey,
-        refinementInputSchema.parse,
-      ) !== null ||
-        hasVerifiedWorkflowMove(
-          ownedRefinementAuthority!,
-          project.trello.workingListId,
-        ))
+      (ownedRefinementAuthority!.read(refinementInputKey, refinementInputSchema.parse) !== null ||
+        hasVerifiedWorkflowMove(ownedRefinementAuthority!, project.trello.workingListId))
     ) {
       // A started refinement intentionally has no implementation projection.
       // Its Backlog/Failed obligations and unexpected moves retain this owner.
@@ -1944,11 +1736,7 @@ export async function runTaskSessionWorkflow(
       continue;
     }
     if (queued.status === "completed") {
-      if (
-        preflightReadyIds.has(queued.cardId) &&
-        taskStore.read(queued.cardId) === null
-      )
-        continue;
+      if (preflightReadyIds.has(queued.cardId) && taskStore.read(queued.cardId) === null) continue;
       mutationBlockStore.resolve(orphanScope);
       continue;
     }
@@ -1992,9 +1780,7 @@ export async function runTaskSessionWorkflow(
           diagnostic,
         )
       ) {
-        logger
-          .child({ projectId: project.id, cardId: queued.cardId })
-          .error(diagnostic);
+        logger.child({ projectId: project.id, cardId: queued.cardId }).error(diagnostic);
         await notifyAttentionRequired(
           emailNotifier,
           {
@@ -2024,9 +1810,7 @@ export async function runTaskSessionWorkflow(
           diagnostic,
         )
       ) {
-        logger
-          .child({ projectId: project.id, cardId: queued.cardId })
-          .error(diagnostic);
+        logger.child({ projectId: project.id, cardId: queued.cardId }).error(diagnostic);
         await notifyAttentionRequired(
           emailNotifier,
           {
@@ -2058,9 +1842,7 @@ export async function runTaskSessionWorkflow(
           diagnostic,
         )
       )
-        logger
-          .child({ projectId: project.id, cardId: queued.cardId })
-          .error(diagnostic);
+        logger.child({ projectId: project.id, cardId: queued.cardId }).error(diagnostic);
     }
   }
   if (orphanRecoveryBlocked) return;
@@ -2072,9 +1854,7 @@ export async function runTaskSessionWorkflow(
     signal,
   );
   const canonicalCardId = ProjectRunAuthority.current(project.id)?.cardId;
-  const canonicalTask = canonicalCardId
-    ? taskStore.read(canonicalCardId)
-    : null;
+  const canonicalTask = canonicalCardId ? taskStore.read(canonicalCardId) : null;
   let executionRecoveryCard: TrelloCard | undefined;
   if (
     canonicalCardId &&
@@ -2130,9 +1910,7 @@ export async function runTaskSessionWorkflow(
       throw new Error("Persisted terminal PR mutation has an invalid identity");
     }
     const cardId = pendingTerminalMutation.cardId;
-    const destinationListId = isMerged
-      ? project.trello.doneListId
-      : project.trello.backlogListId;
+    const destinationListId = isMerged ? project.trello.doneListId : project.trello.backlogListId;
     const terminalCards = await getCardsForDiscovery(
       trello,
       project.id,
@@ -2164,8 +1942,7 @@ export async function runTaskSessionWorkflow(
       authoritative &&
       authoritative.state !== "OPEN" &&
       authoritative.url === record.pullRequest.url &&
-      (authoritative.state !== expectedState ||
-        pendingTerminalMutation.eventId !== expectedEventId)
+      (authoritative.state !== expectedState || pendingTerminalMutation.eventId !== expectedEventId)
     ) {
       const outcome = await prepareTerminalTaskSession({
         project,
@@ -2178,9 +1955,7 @@ export async function runTaskSessionWorkflow(
       if (outcome.ready)
         logger
           .child({ projectId: project.id, cardId })
-          .info(
-            "A newer human PR outcome superseded the old terminal descriptor",
-          );
+          .info("A newer human PR outcome superseded the old terminal descriptor");
       return;
     }
     if (
@@ -2200,8 +1975,7 @@ export async function runTaskSessionWorkflow(
     if (
       isMerged &&
       authoritative.headRefOid === record.pullRequest.headSha &&
-      !readTerminalPrFence(ProjectRunAuthority.current(project.id))
-        ?.preserveArtifacts
+      !readTerminalPrFence(ProjectRunAuthority.current(project.id))?.preserveArtifacts
     ) {
       await verifyMergedTaskPrHeadContinuity({
         github,
@@ -2237,8 +2011,7 @@ export async function runTaskSessionWorkflow(
             project,
             card,
             pullRequest: authoritative,
-            preserveLegacyMaintenanceArtifacts:
-              shouldPreserveTerminalMaintenanceArtifacts(cardId),
+            preserveLegacyMaintenanceArtifacts: shouldPreserveTerminalMaintenanceArtifacts(cardId),
             ...(emailNotifier === undefined ? {} : { emailNotifier }),
             signal,
           });
@@ -2290,8 +2063,7 @@ export async function runTaskSessionWorkflow(
         project,
         card,
         pullRequest: authoritative,
-        preserveLegacyMaintenanceArtifacts:
-          shouldPreserveTerminalMaintenanceArtifacts(cardId),
+        preserveLegacyMaintenanceArtifacts: shouldPreserveTerminalMaintenanceArtifacts(cardId),
         ...(emailNotifier === undefined ? {} : { emailNotifier }),
         signal,
       });
@@ -2303,19 +2075,13 @@ export async function runTaskSessionWorkflow(
   for (const observation of observations) {
     if (observation.state !== "OPEN") {
       const record = taskStore.read(observation.cardId);
-      const card = humanReviewCards.find(
-        (candidate) => candidate.id === observation.cardId,
-      );
+      const card = humanReviewCards.find((candidate) => candidate.id === observation.cardId);
       if (record === null || card === undefined) {
-        throw new Error(
-          `Terminal PR observation lost task ownership for ${observation.cardId}`,
-        );
+        throw new Error(`Terminal PR observation lost task ownership for ${observation.cardId}`);
       }
       const headIdentity = observation.headSha ?? record.pullRequest?.headSha;
       if (headIdentity === undefined) {
-        throw new Error(
-          `Terminal PR has no stable head identity for ${observation.cardId}`,
-        );
+        throw new Error(`Terminal PR has no stable head identity for ${observation.cardId}`);
       }
       const terminalEventId = `terminal-pr:${observation.cardId}:${observation.state}:${headIdentity}`;
       queue.enqueue({
@@ -2337,8 +2103,9 @@ export async function runTaskSessionWorkflow(
           project,
           card,
           pullRequest: observation.pullRequest,
-          preserveLegacyMaintenanceArtifacts:
-            shouldPreserveTerminalMaintenanceArtifacts(observation.cardId),
+          preserveLegacyMaintenanceArtifacts: shouldPreserveTerminalMaintenanceArtifacts(
+            observation.cardId,
+          ),
           ...(emailNotifier === undefined ? {} : { emailNotifier }),
           signal,
         });
@@ -2357,8 +2124,7 @@ export async function runTaskSessionWorkflow(
         pullRequest: observation.pullRequest,
       });
       if (!terminalPreparation.ready) return;
-      const terminalMutation =
-        queue.claimTerminalForReconciliation(terminalEventId);
+      const terminalMutation = queue.claimTerminalForReconciliation(terminalEventId);
       if (terminalMutation === null) continue;
       try {
         await returnClosedTaskSessionPullRequestToBacklog({
@@ -2403,14 +2169,10 @@ export async function runTaskSessionWorkflow(
         github,
       });
       const currentCard = await trello.getCard(observation.cardId);
-      const index = humanReviewCards.findIndex(
-        (candidate) => candidate.id === currentCard.id,
-      );
+      const index = humanReviewCards.findIndex((candidate) => candidate.id === currentCard.id);
       if (index >= 0) humanReviewCards[index] = currentCard;
     }
-    const executionCard = humanReviewCards.find(
-      (candidate) => candidate.id === observation.cardId,
-    );
+    const executionCard = humanReviewCards.find((candidate) => candidate.id === observation.cardId);
     const recoveryRecord = taskStore.read(observation.cardId);
     const isCanonicalActiveTask =
       ProjectRunAuthority.current(project.id)?.cardId === observation.cardId;
@@ -2422,10 +2184,7 @@ export async function runTaskSessionWorkflow(
         recoveryRecord.recoveryWait !== undefined ||
         executionCard.idList !== project.trello.reviewListId)
     ) {
-      const recoveryPath = path.join(
-        project.repository.worktreeRoot,
-        observation.cardId,
-      );
+      const recoveryPath = path.join(project.repository.worktreeRoot, observation.cardId);
       const recovery = await reconcileOwnedTaskForResume(
         executionCard,
         recoveryRecord,
@@ -2445,9 +2204,7 @@ export async function runTaskSessionWorkflow(
       record.ciRepair?.activePrimaryOperation === undefined &&
       (queue.getActive() === null || queue.getActive()?.kind === "ci-repair")
     ) {
-      const card = humanReviewCards.find(
-        (candidate) => candidate.id === observation.cardId,
-      )!;
+      const card = humanReviewCards.find((candidate) => candidate.id === observation.cardId)!;
       await refreshTaskSessionCiOutcome({
         project,
         card,
@@ -2487,9 +2244,7 @@ export async function runTaskSessionWorkflow(
       !hasUnresolvedLegacyMaintenance &&
       queue.getActive()?.kind !== "feedback"
     ) {
-      const card = humanReviewCards.find(
-        (candidate) => candidate.id === observation.cardId,
-      )!;
+      const card = humanReviewCards.find((candidate) => candidate.id === observation.cardId)!;
       const worktreePath = taskResources(project, card.id).path;
       const noOpReportPending =
         record.feedbackRemediation?.status === "no-op" &&
@@ -2514,9 +2269,7 @@ export async function runTaskSessionWorkflow(
               entry.actionability === "actionable",
           ) ?? [];
       const selectedFeedbackId =
-        pending.length === 0
-          ? null
-          : feedbackOperationId(observation.headSha, pending);
+        pending.length === 0 ? null : feedbackOperationId(observation.headSha, pending);
       const currentFeedback = feedbackLedgerStore.read(card.id)?.entries ?? [];
       const repliesPending = currentFeedback.some(
         (entry) =>
@@ -2590,11 +2343,7 @@ export async function runTaskSessionWorkflow(
           kind: "feedback",
           enqueuedAt: record.createdAt,
         });
-      if (
-        selectedFeedbackId !== null ||
-        replyEventId !== null ||
-        noOpReportPending
-      ) {
+      if (selectedFeedbackId !== null || replyEventId !== null || noOpReportPending) {
         const operationId =
           replyEventId ??
           selectedFeedbackId ??
@@ -2628,8 +2377,7 @@ export async function runTaskSessionWorkflow(
             openCode,
             commands,
             worktreePath,
-            prepareAttachmentContext: () =>
-              options.prepareAttachmentContext(card),
+            prepareAttachmentContext: () => options.prepareAttachmentContext(card),
             signal,
             ...(emailNotifier === undefined ? {} : { emailNotifier }),
             ...(options.retryIntervalMs === undefined
@@ -2678,8 +2426,7 @@ export async function runTaskSessionWorkflow(
     }
     if (hasUnresolvedLegacyMaintenance) continue;
     const resumingCiReview = canResumeCiReviewRepair(record, queue.getActive());
-    if (record === null || (record.phase !== "ci" && !resumingCiReview))
-      continue;
+    if (record === null || (record.phase !== "ci" && !resumingCiReview)) continue;
     if (
       !resumingCiReview &&
       (observation.ciEvaluation.status === "waiting" ||
@@ -2692,10 +2439,7 @@ export async function runTaskSessionWorkflow(
         taskStore.compareAndSwap(
           record.cardId,
           record.revision,
-          transitionTaskExecutionRecord(
-            record,
-            event(record, "human-feedback-pending"),
-          ),
+          transitionTaskExecutionRecord(record, event(record, "human-feedback-pending")),
         );
         logger
           .child({ projectId: project.id, cardId: record.cardId })
@@ -2719,34 +2463,22 @@ export async function runTaskSessionWorkflow(
         enqueuedAt: record.updatedAt,
       });
       const activeMutation = queue.claimForRecovery(ciEventId);
-      if (activeMutation === null || activeMutation.eventId !== ciEventId)
-        continue;
-      const card = humanReviewCards.find(
-        (candidate) => candidate.id === observation.cardId,
-      );
+      if (activeMutation === null || activeMutation.eventId !== ciEventId) continue;
+      const card = humanReviewCards.find((candidate) => candidate.id === observation.cardId);
       let ciResult;
       try {
         logger
           .child({ projectId: project.id, cardId: observation.cardId })
           .event("CI repair started");
         if (card === undefined || record.primarySessionId === undefined) {
-          throw new Error(
-            "CI repair requires the owned review card and primary session",
-          );
+          throw new Error("CI repair requires the owned review card and primary session");
         }
-        const worktreePath = path.join(
-          project.repository.worktreeRoot,
-          card.id,
-        );
+        const worktreePath = path.join(project.repository.worktreeRoot, card.id);
         // Published PR correction operations are primary writers too. A lost
         // task session must be reconstructed before the CI repair reserves or
         // resumes its durable operation; otherwise the repair callback only
         // discovers the loss after dispatch has already entered the operation.
-        const recovered = await reconcileOwnedTaskForResume(
-          card,
-          record,
-          worktreePath,
-        );
+        const recovered = await reconcileOwnedTaskForResume(card, record, worktreePath);
         if (recovered === null || recovered.status !== "resume") continue;
         record = recovered.record;
         if (record === null || record.primarySessionId === undefined) continue;
@@ -2779,9 +2511,7 @@ export async function runTaskSessionWorkflow(
           buildCardAttachmentPromptLines(ciAttachments);
           return {
             card: ciCard,
-            ...(ciAttachments === undefined
-              ? {}
-              : { attachmentContext: ciAttachments }),
+            ...(ciAttachments === undefined ? {} : { attachmentContext: ciAttachments }),
           };
         };
         const validationOptions = {
@@ -2796,9 +2526,7 @@ export async function runTaskSessionWorkflow(
           signal,
           timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
         };
-        let quality:
-          | Awaited<ReturnType<typeof runTaskSessionValidationWithRepairs>>
-          | undefined;
+        let quality: Awaited<ReturnType<typeof runTaskSessionValidationWithRepairs>> | undefined;
         let latestReview: ImplementationReviewResult | null = null;
         const refreshQuality = async () => {
           quality = await runTaskSessionValidationWithRepairs({
@@ -2825,8 +2553,7 @@ export async function runTaskSessionWorkflow(
         };
         const rerunQualityAndReview = async () => {
           const reservedReview =
-            taskStore.read(card.id)?.reviewRepair?.activePrimaryOperation !==
-            undefined;
+            taskStore.read(card.id)?.reviewRepair?.activePrimaryOperation !== undefined;
           if (!reservedReview && taskStore.read(card.id)?.phase === "review") {
             const recoveryOptions = {
               ...validationOptions,
@@ -2846,15 +2573,11 @@ export async function runTaskSessionWorkflow(
           ) => {
             await refreshCiContext();
             if (quality === undefined)
-              throw new Error(
-                "CI review recovery lacks current quality evidence",
-              );
+              throw new Error("CI review recovery lacks current quality evidence");
             return runBoundedCiReview({
               project,
               card: ciCard,
-              ...(ciAttachments === undefined
-                ? {}
-                : { attachmentContext: ciAttachments }),
+              ...(ciAttachments === undefined ? {} : { attachmentContext: ciAttachments }),
               expectedBranch,
               operationKey,
               worktreePath,
@@ -2910,24 +2633,15 @@ export async function runTaskSessionWorkflow(
           ) => {
             await refreshCiContext();
             let latest = taskStore.read(card.id);
-            if (latest === null)
-              throw new Error("Task state disappeared during CI review repair");
+            if (latest === null) throw new Error("Task state disappeared during CI review repair");
             if (latest.phase === "review")
               taskStore.compareAndSwap(
                 card.id,
                 latest.revision,
-                transitionTaskExecutionRecord(
-                  latest,
-                  event(latest, "review-failed"),
-                ),
+                transitionTaskExecutionRecord(latest, event(latest, "review-failed")),
               );
-            else if (
-              latest.phase !== "implementation" &&
-              latest.phase !== "validation"
-            )
-              throw new Error(
-                "CI review repair lost its owned execution checkpoint",
-              );
+            else if (latest.phase !== "implementation" && latest.phase !== "validation")
+              throw new Error("CI review repair lost its owned execution checkpoint");
             if (
               latest.phase === "validation" &&
               latest.primaryOperations?.[operationId]?.status !== "completed"
@@ -2940,9 +2654,7 @@ export async function runTaskSessionWorkflow(
               buildTaskSessionReviewRepairPrompt({
                 projectId: project.id,
                 card: ciCard,
-                ...(ciAttachments === undefined
-                  ? {}
-                  : { attachmentContext: ciAttachments }),
+                ...(ciAttachments === undefined ? {} : { attachmentContext: ciAttachments }),
                 ...(plan === null ? {} : { approvedPlan: plan.plan }),
                 review,
                 attempt,
@@ -2967,46 +2679,31 @@ export async function runTaskSessionWorkflow(
                 operationId,
                 activity: "review-correction",
                 inspectPending: (entry) =>
-                  inspectPrimaryOperationEvidence(
-                    taskStore,
-                    card.id,
-                    entry.id,
-                    {
-                      trustedRoot:
-                        ProjectRunAuthority.current(project.id)?.store
-                          .storageRoot ?? getProcessRuntime().artifactRoot,
-                      cwd: worktreePath,
-                    },
-                  ),
+                  inspectPrimaryOperationEvidence(taskStore, card.id, entry.id, {
+                    trustedRoot:
+                      ProjectRunAuthority.current(project.id)?.store.storageRoot ??
+                      getProcessRuntime().artifactRoot,
+                    cwd: worktreePath,
+                  }),
               },
             );
             if (repaired.exitCode !== 0)
-              throw new Error(
-                "Primary-session review correction failed during CI repair",
-              );
+              throw new Error("Primary-session review correction failed during CI repair");
             latest = taskStore.read(card.id);
             if (latest === null)
-              throw new Error(
-                "Task state disappeared after CI review correction",
-              );
+              throw new Error("Task state disappeared after CI review correction");
             if (latest.phase === "implementation") {
               const validationPhase = transitionTaskExecutionRecord(
                 latest,
                 event(latest, "implementation-completed"),
               );
-              taskStore.compareAndSwap(
-                card.id,
-                latest.revision,
-                validationPhase,
-              );
+              taskStore.compareAndSwap(card.id, latest.revision, validationPhase);
             } else if (latest.phase !== "validation") {
               throw new Error("Task phase changed after CI review repair");
             }
             return parsePrimaryReviewRepairOutcome(
               repaired.output,
-              review.blockingFindings.flatMap(({ id }) =>
-                id === undefined ? [] : [id],
-              ),
+              review.blockingFindings.flatMap(({ id }) => (id === undefined ? [] : [id])),
               review.requirementAssessments
                 .filter(({ status }) => status === "unsatisfied")
                 .map(({ requirementId }) => requirementId),
@@ -3027,9 +2724,7 @@ export async function runTaskSessionWorkflow(
               return buildTaskSessionReviewRepairPrompt({
                 projectId: project.id,
                 card: ciCard,
-                ...(ciAttachments === undefined
-                  ? {}
-                  : { attachmentContext: ciAttachments }),
+                ...(ciAttachments === undefined ? {} : { attachmentContext: ciAttachments }),
                 ...(plan === null ? {} : { approvedPlan: plan.plan }),
                 review,
                 attempt,
@@ -3042,12 +2737,8 @@ export async function runTaskSessionWorkflow(
           });
           latestReview = ciReviewResult.review;
           let latest = taskStore.read(card.id);
-          if (latest === null)
-            throw new Error("Task state disappeared after CI review");
-          if (
-            latest.reviewRepair !== undefined &&
-            latest.reviewRepair.cycleId !== ciReviewCycleId
-          )
+          if (latest === null) throw new Error("Task state disappeared after CI review");
+          if (latest.reviewRepair !== undefined && latest.reviewRepair.cycleId !== ciReviewCycleId)
             latest = updateRecord(taskStore, latest, {
               reviewRepair: {
                 ...latest.reviewRepair,
@@ -3059,18 +2750,12 @@ export async function runTaskSessionWorkflow(
             latest.revision,
             transitionTaskExecutionRecord(
               latest,
-              event(
-                latest,
-                latestReview.verdict === "pass"
-                  ? "review-passed"
-                  : "review-exhausted",
-              ),
+              event(latest, latestReview.verdict === "pass" ? "review-passed" : "review-exhausted"),
             ),
           );
         };
         ciResult = await runTaskSessionCiRepairs({
-          getSourceIdentity: () =>
-            getTaskSessionSourceSnapshotIdentity(git, worktreePath),
+          getSourceIdentity: () => getTaskSessionSourceSnapshotIdentity(git, worktreePath),
           maxAttempts: project.opencode.remediation.ciMaxPasses ?? 2,
           resumeReviewRepair: resumingCiReview,
           store: taskStore,
@@ -3093,20 +2778,13 @@ export async function runTaskSessionWorkflow(
             return evaluateCiChecks({
               expectedHeadSha: headSha,
               observedHeadSha: ciObservation.headSha,
-              expectations: establishCiCheckExpectations(
-                ciObservation.expectationSources,
-              ),
+              expectations: establishCiCheckExpectations(ciObservation.expectationSources),
               checks: ciObservation.checks,
             });
           },
           collectDiagnostics: (headSha, failures) =>
             collectCiFailureDiagnostics(github, project, headSha, failures),
-          repairPrimarySession: async (
-            diagnostics,
-            attempt,
-            sessionId,
-            operationId,
-          ) => {
+          repairPrimarySession: async (diagnostics, attempt, sessionId, operationId) => {
             await updateMaintenanceStatus(
               github,
               project,
@@ -3117,15 +2795,9 @@ export async function runTaskSessionWorkflow(
               logger.child({ projectId: project.id, cardId: card.id }),
             );
             const latestOperation = taskStore.read(card.id);
-            if (
-              latestOperation?.reviewRepair?.activePrimaryOperation !==
-              undefined
-            )
-              throw new Error(
-                "CI primary correction cannot replace a reserved review writer",
-              );
-            const activePrimaryOperation =
-              latestOperation?.ciRepair?.activePrimaryOperation;
+            if (latestOperation?.reviewRepair?.activePrimaryOperation !== undefined)
+              throw new Error("CI primary correction cannot replace a reserved review writer");
+            const activePrimaryOperation = latestOperation?.ciRepair?.activePrimaryOperation;
             const failedHeadSha =
               diagnostics[0]?.headSha ??
               (activePrimaryOperation?.promptArtifact === undefined
@@ -3134,13 +2806,9 @@ export async function runTaskSessionWorkflow(
             if (
               failedHeadSha === undefined ||
               (diagnostics.length > 0 &&
-                diagnostics.some(
-                  (diagnostic) => diagnostic.headSha !== failedHeadSha,
-                ))
+                diagnostics.some((diagnostic) => diagnostic.headSha !== failedHeadSha))
             ) {
-              throw new Error(
-                "CI repair diagnostics do not share one authoritative current head",
-              );
+              throw new Error("CI repair diagnostics do not share one authoritative current head");
             }
             let latest = taskStore.read(card.id);
             if (latest === null || latest.primarySessionId !== sessionId)
@@ -3166,8 +2834,7 @@ export async function runTaskSessionWorkflow(
             let attachmentContext: CardAttachmentPromptContext | undefined;
             try {
               currentCard = await trello.getCard(card.id);
-              attachmentContext =
-                await options.prepareAttachmentContext(currentCard);
+              attachmentContext = await options.prepareAttachmentContext(currentCard);
               buildCardAttachmentPromptLines(attachmentContext);
             } catch (error) {
               throw new Error(
@@ -3175,16 +2842,14 @@ export async function runTaskSessionWorkflow(
                 { cause: error },
               );
             }
-            const sameCiReviewEpisode =
-              latest.reviewRepair?.cycleId === ciReviewCycleId;
+            const sameCiReviewEpisode = latest.reviewRepair?.cycleId === ciReviewCycleId;
             const pendingFinish = latest.reviewRepair?.finishAfterNextReview;
             const stoppedReview = latest.reviewRepair?.stopReason;
             const finishAfterNextReview =
               pendingFinish === true
                 ? ("finished-early" as const)
                 : pendingFinish ||
-                  (stoppedReview === "no-change" ||
-                  stoppedReview === "finished-early"
+                  (stoppedReview === "no-change" || stoppedReview === "finished-early"
                     ? stoppedReview
                     : undefined);
             const ciFailedTransitionInput = sameCiReviewEpisode
@@ -3203,10 +2868,7 @@ export async function runTaskSessionWorkflow(
             latest = taskStore.compareAndSwap(
               card.id,
               latest.revision,
-              transitionTaskExecutionRecord(
-                ciFailedTransitionInput,
-                event(latest, "ci-failed"),
-              ),
+              transitionTaskExecutionRecord(ciFailedTransitionInput, event(latest, "ci-failed")),
             );
             if (!sameCiReviewEpisode) {
               latest = updateRecord(taskStore, latest, {
@@ -3219,12 +2881,10 @@ export async function runTaskSessionWorkflow(
               });
             }
             let prompt: string;
-            const persistedPromptArtifact =
-              latest.ciRepair?.activePrimaryOperation?.promptArtifact;
+            const persistedPromptArtifact = latest.ciRepair?.activePrimaryOperation?.promptArtifact;
             if (persistedPromptArtifact !== undefined) {
               const persisted: unknown = taskStore.readPrimaryResultArtifact({
-                reference:
-                  persistedPromptArtifact.reference as `sha256:${string}`,
+                reference: persistedPromptArtifact.reference as `sha256:${string}`,
                 bytes: persistedPromptArtifact.bytes,
                 ...(persistedPromptArtifact.path === undefined
                   ? {}
@@ -3236,9 +2896,7 @@ export async function runTaskSessionWorkflow(
                 !("prompt" in persisted) ||
                 typeof persisted.prompt !== "string"
               )
-                throw new Error(
-                  "Persisted CI repair prompt artifact is invalid",
-                );
+                throw new Error("Persisted CI repair prompt artifact is invalid");
               prompt = persisted.prompt;
             } else {
               prompt = buildTaskSessionCiRepairPrompt({
@@ -3248,25 +2906,15 @@ export async function runTaskSessionWorkflow(
                 headSha: failedHeadSha,
                 attempt,
                 maxAttempts:
-                  latest.ciRepair?.maxAttempts ??
-                  project.opencode.remediation.ciMaxPasses ??
-                  2,
+                  latest.ciRepair?.maxAttempts ?? project.opencode.remediation.ciMaxPasses ?? 2,
                 diagnostics,
-                ...(attachmentContext === undefined
-                  ? {}
-                  : { attachmentContext }),
+                ...(attachmentContext === undefined ? {} : { attachmentContext }),
               });
-              const promptArtifact = taskStore.writePrimaryResultArtifact(
-                `${operationId}:prompt`,
-                { prompt },
-              );
-              if (
-                latest.ciRepair?.activePrimaryOperation?.operationId !==
-                operationId
-              )
-                throw new Error(
-                  "CI repair primary reservation changed before prompt persistence",
-                );
+              const promptArtifact = taskStore.writePrimaryResultArtifact(`${operationId}:prompt`, {
+                prompt,
+              });
+              if (latest.ciRepair?.activePrimaryOperation?.operationId !== operationId)
+                throw new Error("CI repair primary reservation changed before prompt persistence");
               taskStore.compareAndSwap(card.id, latest.revision, {
                 ...latest,
                 ciRepair: {
@@ -3299,37 +2947,25 @@ export async function runTaskSessionWorkflow(
                 operationId,
                 activity: "ci-correction",
                 inspectPending: (entry) =>
-                  inspectPrimaryOperationEvidence(
-                    taskStore,
-                    card.id,
-                    entry.id,
-                    {
-                      trustedRoot:
-                        ProjectRunAuthority.current(project.id)?.store
-                          .storageRoot ?? getProcessRuntime().artifactRoot,
-                      cwd: worktreePath,
-                    },
-                  ),
+                  inspectPrimaryOperationEvidence(taskStore, card.id, entry.id, {
+                    trustedRoot:
+                      ProjectRunAuthority.current(project.id)?.store.storageRoot ??
+                      getProcessRuntime().artifactRoot,
+                    cwd: worktreePath,
+                  }),
               },
             );
-            if (repaired.exitCode !== 0)
-              throw new Error("Primary-session CI repair failed");
+            if (repaired.exitCode !== 0) throw new Error("Primary-session CI repair failed");
             latest = taskStore.read(card.id);
-            if (latest === null)
-              throw new Error("Task state disappeared after primary CI repair");
+            if (latest === null) throw new Error("Task state disappeared after primary CI repair");
             taskStore.compareAndSwap(
               card.id,
               latest.revision,
-              transitionTaskExecutionRecord(
-                latest,
-                event(latest, "implementation-completed"),
-              ),
+              transitionTaskExecutionRecord(latest, event(latest, "implementation-completed")),
             );
             const validationRecord = taskStore.read(card.id);
             if (validationRecord?.reviewRepair?.cycleId !== ciReviewCycleId)
-              throw new Error(
-                "CI correction lost its durable review budget episode",
-              );
+              throw new Error("CI correction lost its durable review budget episode");
             let finishEarly = false;
             try {
               finishEarly = extractOpenCodeTextOutput(repaired.output)
@@ -3359,10 +2995,7 @@ export async function runTaskSessionWorkflow(
                 quality === undefined
               )
                 throw error;
-              const identity = await getTaskSessionSourceSnapshotIdentity(
-                git,
-                worktreePath,
-              );
+              const identity = await getTaskSessionSourceSnapshotIdentity(git, worktreePath);
               if (
                 quality.validation.contentIdentity !== identity ||
                 quality.coverage.contentIdentity !== identity
@@ -3373,8 +3006,7 @@ export async function runTaskSessionWorkflow(
                 const reserved = latest.reviewRepair.activePrimaryOperation;
                 if (
                   reserved &&
-                  latest.primaryOperations?.[reserved.operationId]?.status !==
-                    "completed"
+                  latest.primaryOperations?.[reserved.operationId]?.status !== "completed"
                 )
                   throw error;
                 latest = updateRecord(taskStore, latest, {
@@ -3392,19 +3024,13 @@ export async function runTaskSessionWorkflow(
                 latest = taskStore.compareAndSwap(
                   card.id,
                   latest.revision,
-                  transitionTaskExecutionRecord(
-                    latest,
-                    event(latest, "validation-reviewed"),
-                  ),
+                  transitionTaskExecutionRecord(latest, event(latest, "validation-reviewed")),
                 );
               if (latest.phase === "review")
                 latest = taskStore.compareAndSwap(
                   card.id,
                   latest.revision,
-                  transitionTaskExecutionRecord(
-                    latest,
-                    event(latest, "review-unavailable"),
-                  ),
+                  transitionTaskExecutionRecord(latest, event(latest, "review-unavailable")),
                 );
               updateRecord(taskStore, latest, {
                 reviewUnavailable: {
@@ -3430,10 +3056,7 @@ export async function runTaskSessionWorkflow(
             let latest = taskStore.read(card.id);
             if (latest === null || latest.phase !== "publication")
               throw new Error("CI repair did not reach publication phase");
-            const qualityIdentity = await getTaskSessionSourceSnapshotIdentity(
-              git,
-              worktreePath,
-            );
+            const qualityIdentity = await getTaskSessionSourceSnapshotIdentity(git, worktreePath);
             const validationEvidence = quality.validation;
             const gateInput: VerifiedPublicationDecisionInput = {
               currentContentIdentity: qualityIdentity,
@@ -3453,19 +3076,14 @@ export async function runTaskSessionWorkflow(
                 review: latestReview,
               },
             });
-            const existingPullRequestUrl = taskStore.read(card.id)?.pullRequest
-              ?.url;
+            const existingPullRequestUrl = taskStore.read(card.id)?.pullRequest?.url;
             if (existingPullRequestUrl === undefined) {
-              throw new Error(
-                "CI repair cannot publish without the persisted existing PR URL",
-              );
+              throw new Error("CI repair cannot publish without the persisted existing PR URL");
             }
-            const ciRepairOperationId = taskStore.read(card.id)?.ciRepair
-              ?.activePrimaryOperation?.operationId;
+            const ciRepairOperationId = taskStore.read(card.id)?.ciRepair?.activePrimaryOperation
+              ?.operationId;
             if (ciRepairOperationId === undefined)
-              throw new Error(
-                "CI repair commit message has no durable commit intent",
-              );
+              throw new Error("CI repair commit message has no durable commit intent");
             let commitMessage = "fix(ci): address observed check failures";
             try {
               commitMessage = await runTaskSessionCommitMessage({
@@ -3521,26 +3139,20 @@ export async function runTaskSessionWorkflow(
                 `Verified validation result: ${JSON.stringify(preparedGate.validation)}`,
                 ...(preparedGate.coverage === null
                   ? []
-                  : [
-                      `Verified coverage result: ${JSON.stringify(preparedGate.coverage)}`,
-                    ]),
+                  : [`Verified coverage result: ${JSON.stringify(preparedGate.coverage)}`]),
                 `Independent review result: ${JSON.stringify(preparedGate.review)}`,
               ],
               signal,
               initialEvidence: gateInput,
               verifyPreparedContent: async () => {
                 if (
-                  (await getTaskSessionSourceSnapshotIdentity(
-                    git,
-                    worktreePath,
-                  )) === gateInput.currentContentIdentity
+                  (await getTaskSessionSourceSnapshotIdentity(git, worktreePath)) ===
+                  gateInput.currentContentIdentity
                 )
                   return gateInput;
                 await refreshCiContext();
-                const validationNow =
-                  await runTaskSessionValidation(validationOptions);
-                const coverageNow =
-                  await runTaskSessionCoverage(validationOptions);
+                const validationNow = await runTaskSessionValidation(validationOptions);
+                const coverageNow = await runTaskSessionCoverage(validationOptions);
                 persistQualityEvidence(
                   taskStore,
                   taskStore.read(card.id)!,
@@ -3554,9 +3166,7 @@ export async function runTaskSessionWorkflow(
                     await runBoundedCiReview({
                       project,
                       card: ciCard,
-                      ...(ciAttachments === undefined
-                        ? {}
-                        : { attachmentContext: ciAttachments }),
+                      ...(ciAttachments === undefined ? {} : { attachmentContext: ciAttachments }),
                       expectedBranch,
                       operationKey,
                       worktreePath,
@@ -3569,17 +3179,13 @@ export async function runTaskSessionWorkflow(
                       runOptions: {
                         model: project.opencode.review.model,
                         variant: project.opencode.review.variant,
-                        timeoutMilliseconds:
-                          project.opencode.timeoutMinutes * 60_000,
+                        timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
                         signal,
                       },
                     })
                   ).review;
                 } catch (error) {
-                  if (
-                    !(error instanceof TaskSessionReviewUnavailableError) ||
-                    signal.aborted
-                  )
+                  if (!(error instanceof TaskSessionReviewUnavailableError) || signal.aborted)
                     throw error;
                   const current = taskStore.read(card.id)!;
                   updateRecord(taskStore, current, {
@@ -3589,10 +3195,7 @@ export async function runTaskSessionWorkflow(
                     },
                   });
                 }
-                const identity = await getTaskSessionSourceSnapshotIdentity(
-                  git,
-                  worktreePath,
-                );
+                const identity = await getTaskSessionSourceSnapshotIdentity(git, worktreePath);
                 preparedGate = {
                   currentContentIdentity: identity,
                   validationCommand,
@@ -3615,9 +3218,8 @@ export async function runTaskSessionWorkflow(
                     coverageEvidence: toPersistedQualityEvidence(coverageNow),
                     review: reviewNow,
                     reviewPreviousFindingIds:
-                      reviewNow?.previousFindingAssessments?.map(
-                        ({ findingId }) => findingId,
-                      ) ?? [],
+                      reviewNow?.previousFindingAssessments?.map(({ findingId }) => findingId) ??
+                      [],
                   },
                 });
                 return preparedGate;
@@ -3636,9 +3238,7 @@ export async function runTaskSessionWorkflow(
               );
             latest = taskStore.read(card.id);
             if (latest === null || latest.phase !== "publication")
-              throw new Error(
-                "Task state changed during CI correction publication",
-              );
+              throw new Error("Task state changed during CI correction publication");
             taskStore.compareAndSwap(
               card.id,
               latest.revision,
@@ -3668,12 +3268,8 @@ export async function runTaskSessionWorkflow(
             error,
             options.retryIntervalMs,
           );
-          if (
-            disposition === "waiting" ||
-            disposition === "published-blockage"
-          ) {
-            if (queue.ownsActive(ciEventId))
-              queue.releaseForRecovery(ciEventId);
+          if (disposition === "waiting" || disposition === "published-blockage") {
+            if (queue.ownsActive(ciEventId)) queue.releaseForRecovery(ciEventId);
             await updateMaintenanceStatus(
               github,
               project,
@@ -3729,8 +3325,7 @@ export async function runTaskSessionWorkflow(
                     expectedHeadSha: ciResult.headSha,
                     observedHeadSha: ciResult.headSha,
                     expectedCheckNames: observation.expectedCheckNames,
-                    diagnostic:
-                      "Published correction awaits current-revision CI results",
+                    diagnostic: "Published correction awaits current-revision CI results",
                   };
         await refreshTaskSessionCiOutcome({
           project,
@@ -3759,21 +3354,14 @@ export async function runTaskSessionWorkflow(
       }
       logger
         .child({ projectId: project.id, cardId: observation.cardId })
-        .event(
-          ciResult.status === "passed"
-            ? "CI repair succeeded"
-            : "CI repair failed",
-        );
+        .event(ciResult.status === "passed" ? "CI repair succeeded" : "CI repair failed");
       if (ciResult.status === "passed") {
         const latest = taskStore.read(card.id);
         if (latest !== null && latest.phase === "ci")
           taskStore.compareAndSwap(
             card.id,
             latest.revision,
-            transitionTaskExecutionRecord(
-              latest,
-              event(latest, "ci-passed-awaiting-human"),
-            ),
+            transitionTaskExecutionRecord(latest, event(latest, "ci-passed-awaiting-human")),
           );
       }
       continue;
@@ -3783,17 +3371,11 @@ export async function runTaskSessionWorkflow(
     taskStore.compareAndSwap(
       record.cardId,
       record.revision,
-      transitionTaskExecutionRecord(
-        record,
-        event(record, "ci-passed-awaiting-human"),
-      ),
+      transitionTaskExecutionRecord(record, event(record, "ci-passed-awaiting-human")),
     );
     // Passing CI and local quality evidence never authorizes an orchestrator merge.
   }
-  if (
-    executionRecoveryBlocked ||
-    readTerminalPrFence(ProjectRunAuthority.current(project.id))
-  )
+  if (executionRecoveryBlocked || readTerminalPrFence(ProjectRunAuthority.current(project.id)))
     return;
   if (
     executionRecoveryCard !== undefined &&
@@ -3812,13 +3394,8 @@ export async function runTaskSessionWorkflow(
     }
     const recoveryRecord = taskStore.read(executionRecoveryCard.id);
     if (recoveryRecord === null)
-      throw new Error(
-        `Canonical recovery task disappeared: ${executionRecoveryCard.id}`,
-      );
-    const recoveryPath = path.join(
-      project.repository.worktreeRoot,
-      executionRecoveryCard.id,
-    );
+      throw new Error(`Canonical recovery task disappeared: ${executionRecoveryCard.id}`);
+    const recoveryPath = path.join(project.repository.worktreeRoot, executionRecoveryCard.id);
     const recovery = await reconcileOwnedTaskForResume(
       executionRecoveryCard,
       recoveryRecord,
@@ -3844,22 +3421,16 @@ export async function runTaskSessionWorkflow(
     signal,
   );
   const latestCanonicalCardId = ProjectRunAuthority.current(project.id)?.cardId;
-  const latestCanonicalTask = latestCanonicalCardId
-    ? taskStore.read(latestCanonicalCardId)
-    : null;
+  const latestCanonicalTask = latestCanonicalCardId ? taskStore.read(latestCanonicalCardId) : null;
   if (
     latestCanonicalCardId &&
     (latestCanonicalTask?.phase === "ci" ||
       latestCanonicalTask?.phase === "human-feedback" ||
       canResumeFeedbackReviewRepair(latestCanonicalTask, queue.getActive())) &&
-    !latestHumanReviewCards.some(
-      (candidate) => candidate.id === latestCanonicalCardId,
-    )
+    !latestHumanReviewCards.some((candidate) => candidate.id === latestCanonicalCardId)
   )
     latestHumanReviewCards.push(await trello.getCard(latestCanonicalCardId));
-  options.onHumanReviewCardsObserved?.(
-    latestHumanReviewCards.map((card) => card.id),
-  );
+  options.onHumanReviewCardsObserved?.(latestHumanReviewCards.map((card) => card.id));
   const latestObservations = await observeTaskSessionReviewCards({
     project,
     cards: latestHumanReviewCards,
@@ -3879,9 +3450,7 @@ export async function runTaskSessionWorkflow(
   });
   for (const observation of latestObservations) {
     if (observation.state !== "OPEN") continue;
-    const card = latestHumanReviewCards.find(
-      (candidate) => candidate.id === observation.cardId,
-    );
+    const card = latestHumanReviewCards.find((candidate) => candidate.id === observation.cardId);
     const record = taskStore.read(observation.cardId);
     if (!card || !record) continue;
     if (
@@ -3891,15 +3460,8 @@ export async function runTaskSessionWorkflow(
       !recoveryCheckedThisPoll.has(observation.cardId)
     )
       continue;
-    const recoveryPath = path.join(
-      project.repository.worktreeRoot,
-      observation.cardId,
-    );
-    const recovery = await reconcileOwnedTaskForResume(
-      card,
-      record,
-      recoveryPath,
-    );
+    const recoveryPath = path.join(project.repository.worktreeRoot, observation.cardId);
+    const recovery = await reconcileOwnedTaskForResume(card, record, recoveryPath);
     if (recovery === null || recovery.status !== "resume") return;
   }
   if (
@@ -3908,8 +3470,7 @@ export async function runTaskSessionWorkflow(
       .inspect()
       .some(
         (operation) =>
-          operation.strategy === "merge" &&
-          !["completed", "cancelled"].includes(operation.status),
+          operation.strategy === "merge" && !["completed", "cancelled"].includes(operation.status),
       )
   ) {
     for (const observation of latestObservations) {
@@ -3928,9 +3489,7 @@ export async function runTaskSessionWorkflow(
       )
         continue;
       const task = taskStore.read(observation.cardId);
-      const card = latestHumanReviewCards.find(
-        (candidate) => candidate.id === observation.cardId,
-      );
+      const card = latestHumanReviewCards.find((candidate) => candidate.id === observation.cardId);
       const storedPlan = planStore.read(observation.cardId);
       if (task === null || card === undefined) continue;
       if (storedPlan === null) {
@@ -3965,9 +3524,7 @@ export async function runTaskSessionWorkflow(
         taskStore,
         maintenanceStore,
         signal,
-        eligible:
-          observation.baseRelation === "behind" ||
-          observation.baseRelation === "diverged",
+        eligible: observation.baseRelation === "behind" || observation.baseRelation === "diverged",
         hasRequestedChanges: pendingHuman,
         hasUnresolvedFeedback: pendingHuman,
         requirementIds: (storedPlan?.plan.requirements ?? [{ id: "TASK" }]).map(
@@ -3995,10 +3552,7 @@ export async function runTaskSessionWorkflow(
                   "Inspect the actual task implementation and available quality evidence",
               },
             ],
-            changedFiles: await git.getChangedFiles(
-              taskResources(project, card.id).path,
-              baseHead,
-            ),
+            changedFiles: await git.getChangedFiles(taskResources(project, card.id).path, baseHead),
             requirementIds,
             preparedHead,
             contentIdentity,
@@ -4018,8 +3572,7 @@ export async function runTaskSessionWorkflow(
               "PR maintenance conflict remediation requires the primary task session",
             );
           const currentCard = await trello.getCard(card.id);
-          const attachmentContext =
-            await options.prepareAttachmentContext(currentCard);
+          const attachmentContext = await options.prepareAttachmentContext(currentCard);
           const result = await runWithPrimaryTaskSession(
             taskStore,
             openCode,
@@ -4048,9 +3601,7 @@ export async function runTaskSessionWorkflow(
               ].join("\n\n"),
             },
             {
-              inspect: inspectSessionForWorktree(
-                taskResources(project, card.id).path,
-              ),
+              inspect: inspectSessionForWorktree(taskResources(project, card.id).path),
             },
             {
               role: "primary",
@@ -4059,8 +3610,8 @@ export async function runTaskSessionWorkflow(
               inspectPending: (entry) =>
                 inspectPrimaryOperationEvidence(taskStore, card.id, entry.id, {
                   trustedRoot:
-                    ProjectRunAuthority.current(project.id)?.store
-                      .storageRoot ?? getProcessRuntime().artifactRoot,
+                    ProjectRunAuthority.current(project.id)?.store.storageRoot ??
+                    getProcessRuntime().artifactRoot,
                   cwd: taskResources(project, card.id).path,
                 }),
             },
@@ -4093,14 +3644,8 @@ export async function runTaskSessionWorkflow(
     if (hasUnresolvedLegacyMaintenance) continue;
     const initialRecord = taskStore.read(observation.cardId);
     if (initialRecord === null) continue;
-    const resumableFeedbackReview = canResumeFailedFeedbackReview(
-      initialRecord,
-      queue.getActive(),
-    );
-    const resumableFeedbackRepair = canResumeFeedbackReviewRepair(
-      initialRecord,
-      queue.getActive(),
-    );
+    const resumableFeedbackReview = canResumeFailedFeedbackReview(initialRecord, queue.getActive());
+    const resumableFeedbackRepair = canResumeFeedbackReviewRepair(initialRecord, queue.getActive());
     if (
       initialRecord.phase !== "human-feedback" &&
       !resumableFeedbackReview &&
@@ -4118,13 +3663,9 @@ export async function runTaskSessionWorkflow(
       observation.feedbackIds.length === 0 &&
       observation.requestedChanges === null &&
       observation.conversationComments.length === 0;
-    const card = latestHumanReviewCards.find(
-      (candidate) => candidate.id === initialRecord.cardId,
-    );
+    const card = latestHumanReviewCards.find((candidate) => candidate.id === initialRecord.cardId);
     if (card === undefined)
-      throw new Error(
-        `Observed task-session review card disappeared: ${initialRecord.cardId}`,
-      );
+      throw new Error(`Observed task-session review card disappeared: ${initialRecord.cardId}`);
     const recovery = idleHumanReview
       ? null
       : await reconcileOwnedTaskForResume(
@@ -4132,8 +3673,7 @@ export async function runTaskSessionWorkflow(
           initialRecord,
           taskResources(project, card.id).path,
         );
-    if (!idleHumanReview && (recovery === null || recovery.status !== "resume"))
-      continue;
+    if (!idleHumanReview && (recovery === null || recovery.status !== "resume")) continue;
     const record = recovery?.record ?? initialRecord;
     if (record.primarySessionId === undefined) continue;
     if (resumableFeedbackReview) {
@@ -4178,9 +3718,7 @@ export async function runTaskSessionWorkflow(
   if (
     pendingFeedbackTask?.feedbackRemediation?.status === "changed" &&
     pendingFeedbackTask.reviewRepair !== undefined &&
-    ["implementation", "validation", "review"].includes(
-      pendingFeedbackTask.phase,
-    )
+    ["implementation", "validation", "review"].includes(pendingFeedbackTask.phase)
   ) {
     // A feedback-owned review must never fall through to initial implementation
     // recovery if its reservation, identity or owning queue cannot be resumed.
@@ -4215,30 +3753,22 @@ export async function runTaskSessionWorkflow(
     const event = queue.getActive();
     if (event?.kind === "refinement" && event.cardId === canonicalRun.cardId) {
       const owner = queue.claimForRecovery(event.eventId);
-      if (owner === null)
-        throw new Error("Could not recover terminal refinement queue event");
+      if (owner === null) throw new Error("Could not recover terminal refinement queue event");
       queue.complete(owner.eventId);
     }
     await refinementAuthority.releaseVerifiedTerminal();
     return;
   }
   const pendingRefinementFailure =
-    queue.getActive() ??
-    recoverableRefinementMutation(queue, refinementAuthority);
+    queue.getActive() ?? recoverableRefinementMutation(queue, refinementAuthority);
   if (
     refinementAuthority &&
     pendingRefinementFailure?.kind === "refinement" &&
-    (hasExhaustedRefinementSetup(
-      refinementAuthority,
-      pendingRefinementFailure.cardId,
-    ) ||
+    (hasExhaustedRefinementSetup(refinementAuthority, pendingRefinementFailure.cardId) ||
       refinementAnalysisFailure(refinementAuthority))
   ) {
     const owner = queue.claimForRecovery(pendingRefinementFailure.eventId);
-    if (owner === null)
-      throw new Error(
-        "Could not claim exhausted refinement setup for recovery",
-      );
+    if (owner === null) throw new Error("Could not claim exhausted refinement setup for recovery");
     try {
       const failureCard = await trello.getCard(owner.cardId);
       await finalizeRefinementSetupFailure({
@@ -4254,31 +3784,22 @@ export async function runTaskSessionWorkflow(
         signal,
       });
     } catch (error) {
-      if (queue.ownsActive(owner.eventId))
-        queue.releaseForRecovery(owner.eventId);
+      if (queue.ownsActive(owner.eventId)) queue.releaseForRecovery(owner.eventId);
       throw error;
     }
     return;
   }
   const strandedMutation = queue.getActive();
   const strandedTask =
-    strandedMutation?.kind === "implementation"
-      ? taskStore.read(strandedMutation.cardId)
-      : null;
-  if (
-    strandedMutation?.kind === "implementation" &&
-    strandedTask?.phase === "attention-required"
-  ) {
+    strandedMutation?.kind === "implementation" ? taskStore.read(strandedMutation.cardId) : null;
+  if (strandedMutation?.kind === "implementation" && strandedTask?.phase === "attention-required") {
     const strandedRecord = strandedTask;
     if (
       strandedRecord.projectId !== project.id ||
       strandedRecord.operationKey !== strandedMutation.operationKey ||
-      strandedRecord.expectedBranch !==
-        taskResources(project, strandedMutation.cardId).branch
+      strandedRecord.expectedBranch !== taskResources(project, strandedMutation.cardId).branch
     )
-      throw new Error(
-        "Terminal failure record and queue identity do not match",
-      );
+      throw new Error("Terminal failure record and queue identity do not match");
     const failedCards = await getCardsForDiscovery(
       trello,
       project.id,
@@ -4286,9 +3807,7 @@ export async function runTaskSessionWorkflow(
       "Could not verify Failed list before terminal recovery",
       signal,
     );
-    const alreadyFailed = failedCards.some(
-      (candidate) => candidate.id === strandedMutation.cardId,
-    );
+    const alreadyFailed = failedCards.some((candidate) => candidate.id === strandedMutation.cardId);
     if (!alreadyFailed) {
       if (
         strandedRecord.terminalFailure?.kind !== "implementation" &&
@@ -4317,16 +3836,11 @@ export async function runTaskSessionWorkflow(
         "Could not verify Working list before terminal recovery",
         signal,
       );
-      if (
-        !working.some((candidate) => candidate.id === strandedMutation.cardId)
-      )
+      if (!working.some((candidate) => candidate.id === strandedMutation.cardId))
         throw new Error(
           `Terminal failure card ${strandedMutation.cardId} is in neither its expected Working nor Failed list`,
         );
-      await trello.moveCard(
-        strandedMutation.cardId,
-        project.trello.failedListId,
-      );
+      await trello.moveCard(strandedMutation.cardId, project.trello.failedListId);
       const confirmed = await getCardsForDiscovery(
         trello,
         project.id,
@@ -4334,9 +3848,7 @@ export async function runTaskSessionWorkflow(
         "Could not confirm Failed transition during terminal recovery",
         signal,
       );
-      if (
-        !confirmed.some((candidate) => candidate.id === strandedMutation.cardId)
-      )
+      if (!confirmed.some((candidate) => candidate.id === strandedMutation.cardId))
         throw new Error(
           `Trello did not confirm terminal Failed transition for ${strandedMutation.cardId}`,
         );
@@ -4356,12 +3868,9 @@ export async function runTaskSessionWorkflow(
     if (
       currentRecord === null ||
       currentRecord.operationKey !== strandedMutation.operationKey ||
-      currentRecord.expectedBranch !==
-        taskResources(project, strandedMutation.cardId).branch
+      currentRecord.expectedBranch !== taskResources(project, strandedMutation.cardId).branch
     )
-      throw new Error(
-        "Terminal failure identity changed during reconciliation",
-      );
+      throw new Error("Terminal failure identity changed during reconciliation");
     if (
       (currentRecord.terminalFailure?.kind === "implementation" ||
         currentRecord.terminalFailure?.kind === "clarification") &&
@@ -4375,8 +3884,7 @@ export async function runTaskSessionWorkflow(
           currentRecord.terminalFailure.kind,
         );
       } catch (error) {
-        if (queue.ownsActive(owner.eventId))
-          queue.releaseForRecovery(owner.eventId);
+        if (queue.ownsActive(owner.eventId)) queue.releaseForRecovery(owner.eventId);
         throw error;
       }
     }
@@ -4396,9 +3904,7 @@ export async function runTaskSessionWorkflow(
       (latestTerminalRecord.terminalFailure?.kind !== "implementation" &&
         latestTerminalRecord.terminalFailure?.kind !== "clarification")
     )
-      throw new Error(
-        "Terminal failure disappeared before canonical projection",
-      );
+      throw new Error("Terminal failure disappeared before canonical projection");
     const confirmedFailure = {
       ...latestTerminalRecord,
       terminalFailure: {
@@ -4460,8 +3966,7 @@ export async function runTaskSessionWorkflow(
   // archived or manually moved card. Do not resume Working/refinement writers.
   if (hasUnresolvedLegacyMaintenance) return;
   const activeMutation =
-    queue.getActive() ??
-    recoverableRefinementMutation(queue, refinementAuthority);
+    queue.getActive() ?? recoverableRefinementMutation(queue, refinementAuthority);
   if (
     refinementAuthority &&
     canonicalRun?.taskKind === "refinement" &&
@@ -4471,12 +3976,7 @@ export async function runTaskSessionWorkflow(
   ) {
     const currentCard = await trello.getCard(canonicalRun.cardId);
     if (currentCard.idList === project.trello.backlogListId) {
-      if (
-        !hasVerifiedWorkflowMove(
-          refinementAuthority,
-          project.trello.backlogListId,
-        )
-      )
+      if (!hasVerifiedWorkflowMove(refinementAuthority, project.trello.backlogListId))
         throw new RefinementSetupAmbiguousError(
           "Manual Backlog movement is not verified refinement completion; preserve ownership",
         );
@@ -4492,10 +3992,7 @@ export async function runTaskSessionWorkflow(
         );
         if (
           !retained?.reconciliation ||
-          !sameRefinementFields(
-            retained.reconciliation.verified,
-            retained.intended,
-          )
+          !sameRefinementFields(retained.reconciliation.verified, retained.intended)
         )
           throw new RefinementSetupAmbiguousError(
             "Backlog refinement lacks trustworthy complete field provenance; preserve legacy state without redispatch",
@@ -4509,29 +4006,18 @@ export async function runTaskSessionWorkflow(
           opencode: openCode,
           project,
           card: currentCard,
-          worktreePath: path.join(
-            project.repository.worktreeRoot,
-            currentCard.id,
-          ),
+          worktreePath: path.join(project.repository.worktreeRoot, currentCard.id),
           signal,
           cardLog: logger.child({
             projectId: project.id,
             cardId: currentCard.id,
           }),
-          ...(options.emailNotifier
-            ? { emailNotifier: options.emailNotifier }
-            : {}),
+          ...(options.emailNotifier ? { emailNotifier: options.emailNotifier } : {}),
         });
-        await completeRefinementAuthority(
-          refinementAuthority,
-          trello,
-          project,
-          currentCard.id,
-        );
+        await completeRefinementAuthority(refinementAuthority, trello, project, currentCard.id);
         queue.complete(recovered.eventId);
       } catch (error) {
-        if (queue.ownsActive(recovered.eventId))
-          queue.releaseForRecovery(recovered.eventId);
+        if (queue.ownsActive(recovered.eventId)) queue.releaseForRecovery(recovered.eventId);
         throw error;
       }
       return;
@@ -4556,8 +4042,7 @@ export async function runTaskSessionWorkflow(
   ) {
     const ownedPath = runTaskResources(claimRun).path;
     if (
-      (await git.getCurrentBranch(ownedPath)) !==
-        runTaskResources(claimRun).branch ||
+      (await git.getCurrentBranch(ownedPath)) !== runTaskResources(claimRun).branch ||
       (await git.getCommonGitDirectory(ownedPath)) !==
         (await git.getCommonGitDirectory(claimRun.pinned.repositoryPath))
     )
@@ -4571,10 +4056,7 @@ export async function runTaskSessionWorkflow(
       operationKey: activeMutation.operationKey,
       setup: {
         command: project.repository.setupCommand ?? null,
-        status:
-          project.repository.setupCommand === undefined
-            ? "not-required"
-            : "pending",
+        status: project.repository.setupCommand === undefined ? "not-required" : "pending",
         attempts: 0,
         history: [],
       },
@@ -4605,18 +4087,13 @@ export async function runTaskSessionWorkflow(
     if (
       matchingEvents.length !== 1 ||
       taskStore.read(card.id) !== null ||
-      (await git.getCurrentBranch(worktreePath)) !==
-        taskResources(project, card.id).branch
+      (await git.getCurrentBranch(worktreePath)) !== taskResources(project, card.id).branch
     ) {
-      throw new Error(
-        `Refinement restart ownership is ambiguous for Working card ${card.id}`,
-      );
+      throw new Error(`Refinement restart ownership is ambiguous for Working card ${card.id}`);
     }
     const recovered = queue.claimForRecovery(activeMutation.eventId);
     if (recovered === null || options.processRefinement === undefined)
-      throw new Error(
-        `Could not safely resume refinement mutation for ${card.id}`,
-      );
+      throw new Error(`Could not safely resume refinement mutation for ${card.id}`);
     try {
       await options.processRefinement(card, {
         path: worktreePath,
@@ -4653,8 +4130,7 @@ export async function runTaskSessionWorkflow(
           });
           return;
         } catch (finalizationError) {
-          if (queue.ownsActive(recovered.eventId))
-            queue.releaseForRecovery(recovered.eventId);
+          if (queue.ownsActive(recovered.eventId)) queue.releaseForRecovery(recovered.eventId);
           throw finalizationError;
         }
       }
@@ -4672,9 +4148,7 @@ export async function runTaskSessionWorkflow(
   let recoveryRecord: TaskExecutionRecord | null = null;
   let recoveryWorktreePath: string | null = null;
   if (workingCards.length > 0) {
-    const unowned = workingCards.filter(
-      (card) => taskStore.read(card.id) === null,
-    );
+    const unowned = workingCards.filter((card) => taskStore.read(card.id) === null);
     if (unowned.length > 0) {
       throw new Error(
         `Refusing to process unowned Working card(s) without task-session records; operator recovery is required: ${unowned.map((card) => card.id).join(", ")}`,
@@ -4687,8 +4161,7 @@ export async function runTaskSessionWorkflow(
     }
     const card = workingCards[0]!;
     let record = taskStore.read(card.id);
-    if (record === null)
-      throw new Error(`Task execution record disappeared for ${card.id}`);
+    if (record === null) throw new Error(`Task execution record disappeared for ${card.id}`);
     // A stale-review publication failure is recoverable when its exact
     // committed implementation and final review remain durably recorded.
     // Reopening this checkpoint must never rerun implementation or repairs.
@@ -4706,10 +4179,7 @@ export async function runTaskSessionWorkflow(
         (await git.getHeadSha(ownedPath)) === trusted.commitSha &&
         (await git.getStatus(ownedPath)).trim().length === 0
       ) {
-        const identity = await getTaskSessionSourceSnapshotIdentity(
-          git,
-          ownedPath,
-        );
+        const identity = await getTaskSessionSourceSnapshotIdentity(git, ownedPath);
         if (
           (record.publicationQuality.contentIdentity === identity ||
             record.reviewRepair.status === "exhausted") &&
@@ -4725,9 +4195,7 @@ export async function runTaskSessionWorkflow(
           });
           logger
             .child({ projectId: project.id, cardId: card.id })
-            .event(
-              "Restored verified publication checkpoint from attention-required",
-            );
+            .event("Restored verified publication checkpoint from attention-required");
         }
       }
     }
@@ -4758,13 +4226,9 @@ export async function runTaskSessionWorkflow(
         signal,
       );
       if (!failedCards.some((candidate) => candidate.id === card.id)) {
-        const currentWorkingCard = workingCards.find(
-          (candidate) => candidate.id === card.id,
-        );
+        const currentWorkingCard = workingCards.find((candidate) => candidate.id === card.id);
         if (currentWorkingCard === undefined)
-          throw new Error(
-            "Terminal failure card identity changed during recovery",
-          );
+          throw new Error("Terminal failure card identity changed during recovery");
         await trello.moveCard(card.id, project.trello.failedListId);
         const confirmed = await getCardsForDiscovery(
           trello,
@@ -4774,9 +4238,7 @@ export async function runTaskSessionWorkflow(
           signal,
         );
         if (!confirmed.some((candidate) => candidate.id === card.id))
-          throw new Error(
-            `Trello did not confirm terminal Failed transition for ${card.id}`,
-          );
+          throw new Error(`Trello did not confirm terminal Failed transition for ${card.id}`);
         logger
           .child({ projectId: project.id, cardId: card.id })
           .event("Terminal failure transition to Failed confirmed");
@@ -4797,8 +4259,7 @@ export async function runTaskSessionWorkflow(
           latestFailureRecord.terminalFailure.kind,
         );
       } catch (error) {
-        if (queue.ownsActive(owner.eventId))
-          queue.releaseForRecovery(owner.eventId);
+        if (queue.ownsActive(owner.eventId)) queue.releaseForRecovery(owner.eventId);
         throw error;
       }
       const confirmedFailure = {
@@ -4815,25 +4276,16 @@ export async function runTaskSessionWorkflow(
         latestFailureRecord.pullRequest === undefined &&
         latestFailureRecord.externalRecovery === undefined
       ) {
-        taskStore.compareAndSwap(
-          card.id,
-          latestFailureRecord.revision,
-          confirmedFailure,
-          {
-            event: "failed",
-            evidence: noPullRequestFailureEvidence(
-              project,
-              card.id,
-              latestFailureRecord.operationKey,
-            ),
-          },
-        );
+        taskStore.compareAndSwap(card.id, latestFailureRecord.revision, confirmedFailure, {
+          event: "failed",
+          evidence: noPullRequestFailureEvidence(
+            project,
+            card.id,
+            latestFailureRecord.operationKey,
+          ),
+        });
       } else {
-        taskStore.compareAndSwap(
-          card.id,
-          latestFailureRecord.revision,
-          confirmedFailure,
-        );
+        taskStore.compareAndSwap(card.id, latestFailureRecord.revision, confirmedFailure);
       }
       queue.complete(owner.eventId);
       return;
@@ -4842,15 +4294,9 @@ export async function runTaskSessionWorkflow(
     const hasReservedPrimaryRepair =
       record.validationRepair?.activePrimaryOperation !== undefined ||
       record.reviewRepair?.activePrimaryOperation !== undefined;
-    if (
-      record.reviewRemediationFailure !== undefined &&
-      !hasReservedPrimaryRepair
-    ) {
+    if (record.reviewRemediationFailure !== undefined && !hasReservedPrimaryRepair) {
       const failure = record.reviewRemediationFailure;
-      const identity = await getTaskSessionSourceSnapshotIdentity(
-        git,
-        worktreePath,
-      );
+      const identity = await getTaskSessionSourceSnapshotIdentity(git, worktreePath);
       if (
         !failure.unchanged ||
         failure.after === null ||
@@ -4863,9 +4309,7 @@ export async function runTaskSessionWorkflow(
       const validation = record.validationRepair;
       if (
         signal.aborted ||
-        !["implementation", "validation", "review", "publication"].includes(
-          record.phase,
-        ) ||
+        !["implementation", "validation", "review", "publication"].includes(record.phase) ||
         record.expectedBranch !== taskResources(project, card.id).branch ||
         record.primarySessionId === undefined ||
         failure.cycleId !== record.operationKey ||
@@ -4874,8 +4318,7 @@ export async function runTaskSessionWorkflow(
         validation.evidence.command !== project.repository.validationCommand ||
         (project.repository.coverageCommand === undefined
           ? validation.coverageEvidence !== undefined
-          : validation.coverageEvidence?.command !==
-              project.repository.coverageCommand ||
+          : validation.coverageEvidence?.command !== project.repository.coverageCommand ||
             validation.coverageEvidence.contentIdentity !== identity) ||
         (await git.getCurrentBranch(worktreePath)) !== record.expectedBranch ||
         (await git.getCommitCountBetween(
@@ -4917,9 +4360,7 @@ export async function runTaskSessionWorkflow(
         }
       }
       if (restored.phase !== "publication")
-        throw new Error(
-          "Interrupted remediation has an invalid recovery phase",
-        );
+        throw new Error("Interrupted remediation has an invalid recovery phase");
       updateRecord(taskStore, restored, {
         reviewUnavailable: {
           contentIdentity: identity,
@@ -4930,18 +4371,11 @@ export async function runTaskSessionWorkflow(
       });
     }
     const priorRecoveryNotificationId = record.recoveryWait?.notificationId;
-    const recovery = await reconcileOwnedTaskForResume(
-      card,
-      record,
-      worktreePath,
-    );
+    const recovery = await reconcileOwnedTaskForResume(card, record, worktreePath);
     if (recovery === null) return;
     if (recovery.status !== "resume") {
       if (recovery.status === "waiting") {
-        if (
-          recovery.record.recoveryWait?.notificationId !==
-          priorRecoveryNotificationId
-        ) {
+        if (recovery.record.recoveryWait?.notificationId !== priorRecoveryNotificationId) {
           logger
             .child({ projectId: project.id, cardId: card.id })
             .warn(
@@ -4949,10 +4383,7 @@ export async function runTaskSessionWorkflow(
             );
         }
       }
-      if (
-        recovery.status === "attention-required" &&
-        record.phase !== "attention-required"
-      )
+      if (recovery.status === "attention-required" && record.phase !== "attention-required")
         throw new Error(
           `Task-session restart requires attention for ${card.id}: ${recovery.reason}`,
         );
@@ -5000,9 +4431,7 @@ export async function runTaskSessionWorkflow(
             occurredAt: timestamp(latest),
           }),
         );
-      throw new Error(
-        `Task-session restart has no unique mutation queue event for ${card.id}`,
-      );
+      throw new Error(`Task-session restart has no unique mutation queue event for ${card.id}`);
     }
     const recoveryEvent = matchingEvents[0]!;
     const activeEvent = queue.getActive();
@@ -5102,12 +4531,9 @@ export async function runTaskSessionWorkflow(
         .filter(
           (event) =>
             event.cardId === card.id &&
-            (event.eventId === baseEventId ||
-              event.eventId.startsWith(`${baseEventId}:attempt:`)),
+            (event.eventId === baseEventId || event.eventId.startsWith(`${baseEventId}:attempt:`)),
         );
-      const priorCompleted = priorAttempts.find(
-        (event) => event.status === "completed",
-      );
+      const priorCompleted = priorAttempts.find((event) => event.status === "completed");
       if (priorCompleted !== undefined) {
         const diagnostic = `Ready card ${card.id} has a completed implementation mutation ${priorCompleted.eventId} but no task record; its outcome is ambiguous and operator recovery is required before scheduling`;
         prepareAttentionNotification(emailNotifier, {
@@ -5123,9 +4549,7 @@ export async function runTaskSessionWorkflow(
             diagnostic,
           )
         ) {
-          logger
-            .child({ projectId: project.id, cardId: card.id })
-            .error(diagnostic);
+          logger.child({ projectId: project.id, cardId: card.id }).error(diagnostic);
           await notifyAttentionRequired(
             emailNotifier,
             {
@@ -5160,9 +4584,7 @@ export async function runTaskSessionWorkflow(
             diagnostic,
           )
         ) {
-          logger
-            .child({ projectId: project.id, cardId: card.id })
-            .error(diagnostic);
+          logger.child({ projectId: project.id, cardId: card.id }).error(diagnostic);
           await notifyAttentionRequired(
             emailNotifier,
             {
@@ -5180,9 +4602,7 @@ export async function runTaskSessionWorkflow(
       mutationBlockStore.resolve(`orphan:${baseEventId}`);
       let queuedEvent = liveAttempts[0];
       if (queuedEvent === undefined) {
-        const retiredAttempts = priorAttempts.filter(
-          (event) => event.status === "retired",
-        );
+        const retiredAttempts = priorAttempts.filter((event) => event.status === "retired");
         const attemptNumber =
           retiredAttempts.length === 0
             ? 0
@@ -5190,15 +4610,11 @@ export async function runTaskSessionWorkflow(
                 ...retiredAttempts.map((event) =>
                   event.eventId === baseEventId
                     ? 0
-                    : Number(
-                        event.eventId.match(/:attempt:([1-9][0-9]*)$/)?.[1],
-                      ),
+                    : Number(event.eventId.match(/:attempt:([1-9][0-9]*)$/)?.[1]),
                 ),
               ) + 1;
         const eventId =
-          attemptNumber === 0
-            ? baseEventId
-            : `${baseEventId}:attempt:${attemptNumber}`;
+          attemptNumber === 0 ? baseEventId : `${baseEventId}:attempt:${attemptNumber}`;
         const operationKey =
           attemptNumber === 0
             ? `task-session:${card.id}:${digest}`
@@ -5228,9 +4644,7 @@ export async function runTaskSessionWorkflow(
       if (queuedEvent.status === "completed") continue;
       if (queuedEvent.status === "active" || queuedEvent.status === "failed") {
         if (readyRecoveryEvent !== null)
-          throw new Error(
-            "Multiple interrupted task-session Ready claims require recovery",
-          );
+          throw new Error("Multiple interrupted task-session Ready claims require recovery");
         readyRecoveryEvent = queuedEvent;
       }
     }
@@ -5241,14 +4655,11 @@ export async function runTaskSessionWorkflow(
           : queue.claimForRecovery(firstEligibleEvent.eventId)
         : queue.claimForRecovery(readyRecoveryEvent.eventId);
     if (mutation === null) return;
-    selectedCard =
-      eligibleCards.find((candidate) => candidate.id === mutation!.cardId) ??
-      null;
+    selectedCard = eligibleCards.find((candidate) => candidate.id === mutation!.cardId) ?? null;
     if (selectedCard === null) {
       // Do not strand ownership when an eligible card disappears between
       // discovery and claim. The next poll will verify and retire the orphan.
-      if (queue.ownsActive(mutation.eventId))
-        queue.releaseForRecovery(mutation.eventId);
+      if (queue.ownsActive(mutation.eventId)) queue.releaseForRecovery(mutation.eventId);
       const diagnostic = `Claimed mutation ${mutation.eventId} (${mutation.kind}, ${mutation.status}) was no longer eligible because card ${mutation.cardId} disappeared from Ready for Agent; ownership was released for authoritative reconciliation on the next poll`;
       if (
         mutationBlockStore.report(
@@ -5257,9 +4668,7 @@ export async function runTaskSessionWorkflow(
           diagnostic,
         )
       )
-        logger
-          .child({ projectId: project.id, cardId: mutation.cardId })
-          .warn(diagnostic);
+        logger.child({ projectId: project.id, cardId: mutation.cardId }).warn(diagnostic);
       return;
     }
   }
@@ -5281,8 +4690,7 @@ export async function runTaskSessionWorkflow(
           signal,
         );
       } catch (error) {
-        if (queue.ownsActive(mutation.eventId))
-          queue.releaseForRecovery(mutation.eventId);
+        if (queue.ownsActive(mutation.eventId)) queue.releaseForRecovery(mutation.eventId);
         throw error;
       }
       if (!currentlyReady.some((candidate) => candidate.id === card.id)) {
@@ -5305,16 +4713,13 @@ export async function runTaskSessionWorkflow(
       card = firstEligible;
     }
     if (recoveryRecord !== null) {
-      cardLog.event(
-        `Recovering existing task in ${recoveryRecord.phase} phase`,
-      );
+      cardLog.event(`Recovering existing task in ${recoveryRecord.phase} phase`);
       if (
         mutation.kind === "feedback" &&
         recoveryRecord.pullRequest !== undefined &&
         !(
           recoveryRecord.phase === "publication" &&
-          expectedTaskTrelloList(project, recoveryRecord) ===
-            project.trello.reviewListId
+          expectedTaskTrelloList(project, recoveryRecord) === project.trello.reviewListId
         )
       ) {
         await ensureFeedbackCardLocation(
@@ -5339,9 +4744,7 @@ export async function runTaskSessionWorkflow(
     }
     if (mutation.kind === "refinement") {
       if (recoveryRecord !== null) {
-        throw new Error(
-          "Refinement recovery cannot reuse an implementation task record",
-        );
+        throw new Error("Refinement recovery cannot reuse an implementation task record");
       }
       if (options.processRefinement === undefined) {
         throw new Error("Unified scheduler has no refinement operation");
@@ -5360,10 +4763,7 @@ export async function runTaskSessionWorkflow(
         mutationBlockStore.resolve(`orphan:${mutation.eventId}`);
         return;
       }
-      const claimedCard = await trello.moveCard(
-        card.id,
-        project.trello.workingListId,
-      );
+      const claimedCard = await trello.moveCard(card.id, project.trello.workingListId);
       cardLog.event("Card claimed; transition to Working succeeded");
       try {
         await options.processRefinement(claimedCard ?? card, worktree);
@@ -5389,14 +4789,12 @@ export async function runTaskSessionWorkflow(
             });
             return;
           } catch (finalizationError) {
-            if (queue.ownsActive(mutation.eventId))
-              queue.releaseForRecovery(mutation.eventId);
+            if (queue.ownsActive(mutation.eventId)) queue.releaseForRecovery(mutation.eventId);
             throw finalizationError;
           }
         }
         if (error instanceof RefinementSetupAmbiguousError) {
-          if (queue.ownsActive(mutation.eventId))
-            queue.releaseForRecovery(mutation.eventId);
+          if (queue.ownsActive(mutation.eventId)) queue.releaseForRecovery(mutation.eventId);
           return;
         }
         throw error;
@@ -5436,10 +4834,7 @@ export async function runTaskSessionWorkflow(
         mutationBlockStore.resolve(`orphan:${mutation.eventId}`);
         return;
       }
-      const claimedCard = await trello.moveCard(
-        card.id,
-        project.trello.workingListId,
-      );
+      const claimedCard = await trello.moveCard(card.id, project.trello.workingListId);
       cardLog.event("Card claimed; transition to Working succeeded");
       activeCard = claimedCard ?? card;
       operationKey = mutation.operationKey;
@@ -5452,10 +4847,7 @@ export async function runTaskSessionWorkflow(
         operationKey,
         setup: {
           command: project.repository.setupCommand ?? null,
-          status:
-            project.repository.setupCommand === undefined
-              ? "not-required"
-              : "pending",
+          status: project.repository.setupCommand === undefined ? "not-required" : "pending",
           attempts: 0,
           history: [],
         },
@@ -5470,17 +4862,14 @@ export async function runTaskSessionWorkflow(
     if (project.repository.setupCommand !== undefined) {
       for (
         let retry = 0;
-        retry < OPERATION_RECOVERY_MAX_EXECUTIONS &&
-        recordBeforeSetup?.setup?.status === "pending";
+        retry < OPERATION_RECOVERY_MAX_EXECUTIONS && recordBeforeSetup?.setup?.status === "pending";
         retry += 1
       ) {
         const attemptRecord = recordBeforeSetup;
         const before = taskStore.writePrimaryResultArtifact(
           `setup-before-${activeCard.id}-${recordBeforeSetup.revision}`,
           JSON.parse(
-            (await captureSetupEffects(git, worktreePath, signal)).toString(
-              "utf8",
-            ),
+            (await captureSetupEffects(git, worktreePath, signal)).toString("utf8"),
           ) as unknown,
         );
         updateRecord(taskStore, attemptRecord, {
@@ -5497,12 +4886,9 @@ export async function runTaskSessionWorkflow(
             history: attemptRecord.setup?.history ?? [],
           },
         });
-        let setupResult:
-          Awaited<ReturnType<typeof runRepositorySetup>> | undefined;
+        let setupResult: Awaited<ReturnType<typeof runRepositorySetup>> | undefined;
         let setupError: unknown;
-        const setupArtifactDirectory = taskStore.processExecutionDirectory(
-          activeCard.id,
-        );
+        const setupArtifactDirectory = taskStore.processExecutionDirectory(activeCard.id);
         try {
           setupResult = await runRepositorySetup(commands, {
             cwd: worktreePath,
@@ -5520,9 +4906,7 @@ export async function runTaskSessionWorkflow(
                 runningRecord?.setup?.status !== "active" ||
                 runningRecord.setup.executionId !== undefined
               )
-                throw new Error(
-                  "Setup execution binding conflicts with persisted intent",
-                );
+                throw new Error("Setup execution binding conflicts with persisted intent");
               updateRecord(taskStore, runningRecord, {
                 setup: { ...runningRecord.setup, executionId },
               });
@@ -5538,9 +4922,7 @@ export async function runTaskSessionWorkflow(
         const after = taskStore.writePrimaryResultArtifact(
           `setup-after-${activeCard.id}-${attemptRecord.revision}`,
           JSON.parse(
-            (
-              await captureSetupEffects(git, worktreePath, signal, true)
-            ).toString("utf8"),
+            (await captureSetupEffects(git, worktreePath, signal, true)).toString("utf8"),
           ) as unknown,
         );
         const setupRecord = taskStore.read(activeCard.id);
@@ -5548,8 +4930,7 @@ export async function runTaskSessionWorkflow(
           const setupState = setupRecord.setup;
           if (!setupState || setupState.status !== "active")
             throw new Error("Setup state changed while setup was running");
-          const executionId =
-            setupResult?.executionId ?? setupState.executionId;
+          const executionId = setupResult?.executionId ?? setupState.executionId;
           const processEvidence = executionId
             ? taskStore.readProcessExecution(activeCard.id, executionId)
             : null;
@@ -5567,18 +4948,13 @@ export async function runTaskSessionWorkflow(
           const stopped =
             expectedExecution !== undefined &&
             isVerifiedStoppedExecution(processEvidence, expectedExecution);
-          if (
-            setupError === undefined &&
-            (setupResult?.exitCode !== 0 || !successfulEvidence)
-          )
+          if (setupError === undefined && (setupResult?.exitCode !== 0 || !successfulEvidence))
             setupError = new Error(
               "Setup completion lacks authoritative successful process evidence",
             );
           const attempts = setupState.attempts ?? 1;
           const mayRetry =
-            setupError !== undefined &&
-            stopped &&
-            attempts < OPERATION_RECOVERY_MAX_EXECUTIONS;
+            setupError !== undefined && stopped && attempts < OPERATION_RECOVERY_MAX_EXECUTIONS;
           const history = [
             ...(setupState.history ?? []),
             {
@@ -5610,9 +4986,7 @@ export async function runTaskSessionWorkflow(
               after: after.reference,
               history,
               ...(executionId === undefined ? {} : { executionId }),
-              ...(setupResult === undefined
-                ? {}
-                : { exitCode: setupResult.exitCode }),
+              ...(setupResult === undefined ? {} : { exitCode: setupResult.exitCode }),
               ...(setupError === undefined
                 ? {}
                 : {
@@ -5633,15 +5007,11 @@ export async function runTaskSessionWorkflow(
           throw new TaskSessionImplementationWaitingError(
             "Setup was interrupted after its effects were recorded; resume from the persisted setup checkpoint",
           );
-        if (
-          setupError !== undefined &&
-          recordBeforeSetup?.setup?.status !== "pending"
-        )
+        if (setupError !== undefined && recordBeforeSetup?.setup?.status !== "pending")
           throw setupError;
       }
     }
-    const attachmentContext =
-      await options.prepareAttachmentContext(activeCard);
+    const attachmentContext = await options.prepareAttachmentContext(activeCard);
     const sessionLogPath = getSessionLogPath(project.id, activeCard.id);
     const commonRunOptions = {
       model: project.opencode.implementation.model,
@@ -5655,10 +5025,7 @@ export async function runTaskSessionWorkflow(
     if (taskRecord === null)
       throw new Error("Task record disappeared before task-session execution");
     if (taskRecord.phase === "planning") {
-      if (
-        planStore.read(activeCard.id) === null &&
-        taskRecord.planningAdvice === undefined
-      ) {
+      if (planStore.read(activeCard.id) === null && taskRecord.planningAdvice === undefined) {
         cardLog.event("Planning started");
         try {
           await runTaskPlanningOperation({
@@ -5676,17 +5043,12 @@ export async function runTaskSessionWorkflow(
                 getProcessRuntime().artifactRoot,
               cwd: worktreePath,
               inspectPending: (entry) =>
-                inspectPrimaryOperationEvidence(
-                  taskStore,
-                  activeCard.id,
-                  entry.id,
-                  {
-                    trustedRoot:
-                      ProjectRunAuthority.current(project.id)?.store
-                        .storageRoot ?? getProcessRuntime().artifactRoot,
-                    cwd: worktreePath,
-                  },
-                ),
+                inspectPrimaryOperationEvidence(taskStore, activeCard.id, entry.id, {
+                  trustedRoot:
+                    ProjectRunAuthority.current(project.id)?.store.storageRoot ??
+                    getProcessRuntime().artifactRoot,
+                  cwd: worktreePath,
+                }),
             },
             runOptions: {
               timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
@@ -5700,16 +5062,13 @@ export async function runTaskSessionWorkflow(
         } catch (error) {
           const failedPlanningOperation =
             error instanceof PrimaryOperationWaitingError
-              ? taskStore.read(activeCard.id)?.primaryOperations?.[
-                  error.operationId
-                ]
+              ? taskStore.read(activeCard.id)?.primaryOperations?.[error.operationId]
               : undefined;
           const exhaustedPlanningOutage =
             error instanceof PrimaryOperationWaitingError &&
             isPlanningOutageSafeToSkip(failedPlanningOperation);
           if (
-            (error instanceof TaskPlanningOperationError &&
-              error.advisoryFailure) ||
+            (error instanceof TaskPlanningOperationError && error.advisoryFailure) ||
             error instanceof PrimaryOperationExhaustedError ||
             exhaustedPlanningOutage
           ) {
@@ -5731,19 +5090,13 @@ export async function runTaskSessionWorkflow(
                 diagnostic: error.message.slice(0, 2_000),
               },
             });
-            cardLog.event(
-              "Planning advice unavailable; continuing with task context",
-            );
-          } else if (!(error instanceof TaskClarificationRequiredError))
-            throw error;
+            cardLog.event("Planning advice unavailable; continuing with task context");
+          } else if (!(error instanceof TaskClarificationRequiredError)) throw error;
           if (error instanceof TaskClarificationRequiredError) {
             if (mutation === null || !queue.ownsActive(mutation.eventId))
-              throw new Error(
-                "Clarification result has no current task ownership",
-                {
-                  cause: error,
-                },
-              );
+              throw new Error("Clarification result has no current task ownership", {
+                cause: error,
+              });
             const current = taskStore.read(activeCard.id);
             if (
               current === null ||
@@ -5826,8 +5179,7 @@ export async function runTaskSessionWorkflow(
             return;
           }
         }
-        if (planStore.read(activeCard.id) !== null)
-          cardLog.event("Planning completed");
+        if (planStore.read(activeCard.id) !== null) cardLog.event("Planning completed");
       }
       const savedPlan = planStore.read(activeCard.id, undefined, operationKey);
       if (
@@ -5870,10 +5222,7 @@ export async function runTaskSessionWorkflow(
           }
           cardLog.event("Independent plan feedback recorded; continuing");
         } catch (error) {
-          if (
-            !(error instanceof PlanVerificationOperationError) ||
-            !error.advisoryFailure
-          )
+          if (!(error instanceof PlanVerificationOperationError) || !error.advisoryFailure)
             throw error;
           const current = taskStore.read(activeCard.id);
           if (
@@ -5924,8 +5273,7 @@ export async function runTaskSessionWorkflow(
       }
     }
     taskRecord = taskStore.read(activeCard.id);
-    if (taskRecord === null)
-      throw new Error("Task record disappeared before implementation");
+    if (taskRecord === null) throw new Error("Task record disappeared before implementation");
     const validationOptions = {
       project,
       cardId: activeCard.id,
@@ -5943,35 +5291,28 @@ export async function runTaskSessionWorkflow(
     // the task's initial implementation. Recover it before the generic
     // implementation or validation routes can dispatch another operation.
     if (
-      (taskRecord.phase === "implementation" ||
-        taskRecord.phase === "validation") &&
+      (taskRecord.phase === "implementation" || taskRecord.phase === "validation") &&
       taskRecord.reviewRepair?.activePrimaryOperation !== undefined
     ) {
       if (taskRecord.phase === "implementation") {
-        taskRecord = taskStore.compareAndSwap(
-          activeCard.id,
-          taskRecord.revision,
-          {
-            ...transitionTaskExecutionRecord(
-              taskRecord,
-              event(taskRecord, "implementation-completed"),
-            ),
-          },
-        );
+        taskRecord = taskStore.compareAndSwap(activeCard.id, taskRecord.revision, {
+          ...transitionTaskExecutionRecord(
+            taskRecord,
+            event(taskRecord, "implementation-completed"),
+          ),
+        });
       }
       const expectedSession = taskRecord.primarySessionId;
       if (expectedSession === undefined)
         throw new Error("Reserved review repair has no primary session");
       let recoveredQuality:
-        | Awaited<ReturnType<typeof runTaskSessionValidationWithRepairs>>
-        | undefined;
+        Awaited<ReturnType<typeof runTaskSessionValidationWithRepairs>> | undefined;
       let recoveredValidation: TaskSessionValidationResult | undefined;
       let recoveredCoverage: TaskSessionValidationResult | null = null;
       const runReservedReview = async (
         previousFindings: readonly NonNullable<
           NonNullable<TaskExecutionRecord["reviewRepair"]>["findings"]
-        >[number][] = taskStore.read(activeCard.id)?.reviewRepair?.findings ??
-          [],
+        >[number][] = taskStore.read(activeCard.id)?.reviewRepair?.findings ?? [],
       ) => {
         if (recoveredValidation === undefined)
           throw new Error("Reserved review repair quality was not restored");
@@ -6009,19 +5350,13 @@ export async function runTaskSessionWorkflow(
       ) => {
         const current = taskStore.read(activeCard.id);
         if (current === null)
-          throw new Error(
-            "Task record disappeared during review repair recovery",
-          );
+          throw new Error("Task record disappeared during review repair recovery");
         if (current.phase === "review") {
           const implementation = transitionTaskExecutionRecord(
             current,
             event(current, "review-failed"),
           );
-          taskStore.compareAndSwap(
-            activeCard.id,
-            current.revision,
-            implementation,
-          );
+          taskStore.compareAndSwap(activeCard.id, current.revision, implementation);
         }
         const plan = planStore.read(activeCard.id);
         const prompt =
@@ -6055,28 +5390,19 @@ export async function runTaskSessionWorkflow(
             operationId,
             activity: "review-correction",
             inspectPending: (entry) =>
-              inspectPrimaryOperationEvidence(
-                taskStore,
-                activeCard.id,
-                entry.id,
-                {
-                  trustedRoot:
-                    ProjectRunAuthority.current(project.id)?.store
-                      .storageRoot ?? getProcessRuntime().artifactRoot,
-                  cwd: worktreePath,
-                },
-              ),
+              inspectPrimaryOperationEvidence(taskStore, activeCard.id, entry.id, {
+                trustedRoot:
+                  ProjectRunAuthority.current(project.id)?.store.storageRoot ??
+                  getProcessRuntime().artifactRoot,
+                cwd: worktreePath,
+              }),
           },
         );
         if (repaired.exitCode !== 0)
-          throw new Error(
-            `Primary review repair exited with code ${repaired.exitCode}`,
-          );
+          throw new Error(`Primary review repair exited with code ${repaired.exitCode}`);
         const latest = taskStore.read(activeCard.id);
         if (latest === null)
-          throw new Error(
-            "Task record disappeared after review repair recovery",
-          );
+          throw new Error("Task record disappeared after review repair recovery");
         if (latest.phase === "implementation") {
           const validation = transitionTaskExecutionRecord(
             latest,
@@ -6086,9 +5412,7 @@ export async function runTaskSessionWorkflow(
         }
         return parsePrimaryReviewRepairOutcome(
           repaired.output,
-          review.blockingFindings.flatMap(({ id }) =>
-            id === undefined ? [] : [id],
-          ),
+          review.blockingFindings.flatMap(({ id }) => (id === undefined ? [] : [id])),
           review.requirementAssessments
             .filter(({ status }) => status === "unsatisfied")
             .map(({ requirementId }) => requirementId),
@@ -6109,9 +5433,7 @@ export async function runTaskSessionWorkflow(
             return buildTaskSessionReviewRepairPrompt({
               projectId: project.id,
               card: activeCard,
-              ...(advisoryPlan === null
-                ? {}
-                : { approvedPlan: advisoryPlan.plan }),
+              ...(advisoryPlan === null ? {} : { approvedPlan: advisoryPlan.plan }),
               review,
               attempt,
               maxAttempts: project.opencode.remediation.maxPasses,
@@ -6143,8 +5465,7 @@ export async function runTaskSessionWorkflow(
             recoveredValidation = recoveredQuality.validation;
             recoveredCoverage = recoveredQuality.coverage;
           },
-          getCurrentContentIdentity: () =>
-            getTaskSessionSourceSnapshotIdentity(git, worktreePath),
+          getCurrentContentIdentity: () => getTaskSessionSourceSnapshotIdentity(git, worktreePath),
         });
       } catch (error) {
         const primaryRecoveryError = findPrimaryRecoveryError(error);
@@ -6158,32 +5479,23 @@ export async function runTaskSessionWorkflow(
             Object.values(current.primaryOperations ?? {}).some(
               (operation) =>
                 operation !== undefined &&
-                (["intent", "dispatched", "ambiguous"].includes(
-                  operation.status,
-                ) ||
-                  (operation.status === "failed" &&
-                    operation.retrySafe !== true)),
+                (["intent", "dispatched", "ambiguous"].includes(operation.status) ||
+                  (operation.status === "failed" && operation.retrySafe !== true)),
             )
           )
             throw new Error(
               "Cannot skip unavailable independent review while primary execution remains unresolved",
               { cause: error },
             );
-          const contentIdentity = await getTaskSessionSourceSnapshotIdentity(
-            git,
-            worktreePath,
-          );
+          const contentIdentity = await getTaskSessionSourceSnapshotIdentity(git, worktreePath);
           if (
-            current.validationRepair?.evidence?.contentIdentity !==
-              contentIdentity ||
+            current.validationRepair?.evidence?.contentIdentity !== contentIdentity ||
             (current.validationRepair?.coverageEvidence !== undefined &&
-              current.validationRepair.coverageEvidence.contentIdentity !==
-                contentIdentity)
+              current.validationRepair.coverageEvidence.contentIdentity !== contentIdentity)
           )
-            throw new Error(
-              "Cannot skip unavailable review after the source changed",
-              { cause: error },
-            );
+            throw new Error("Cannot skip unavailable review after the source changed", {
+              cause: error,
+            });
           const unavailable = taskStore.compareAndSwap(
             activeCard.id,
             current.revision,
@@ -6221,10 +5533,7 @@ export async function runTaskSessionWorkflow(
       if (taskRecord === null)
         throw new Error("Task record disappeared after review repair recovery");
     }
-    if (
-      taskRecord.phase === "planning" ||
-      taskRecord.phase === "implementation"
-    ) {
+    if (taskRecord.phase === "planning" || taskRecord.phase === "implementation") {
       cardLog.event("Implementation started");
       await runTaskSessionImplementation({
         taskRecordStore: taskStore,
@@ -6236,15 +5545,12 @@ export async function runTaskSessionWorkflow(
         ...(ProjectRunAuthority.current(project.id) === undefined
           ? {}
           : {
-              recoveryAttemptId: ProjectRunAuthority.current(project.id)!.store
-                .attemptId,
+              recoveryAttemptId: ProjectRunAuthority.current(project.id)!.store.attemptId,
             }),
         ...(feedbackLedgerStore.read(activeCard.id) === null
           ? {}
           : {
-              feedbackContent: JSON.stringify(
-                feedbackLedgerStore.read(activeCard.id),
-              ),
+              feedbackContent: JSON.stringify(feedbackLedgerStore.read(activeCard.id)),
             }),
         openCode,
         project,
@@ -6262,11 +5568,8 @@ export async function runTaskSessionWorkflow(
       cardLog.event("Implementation completed");
     }
     const phaseRecord = taskStore.read(activeCard.id);
-    if (phaseRecord === null)
-      throw new Error("Task record disappeared before local quality gates");
-    let quality: Awaited<
-      ReturnType<typeof runTaskSessionValidationWithRepairs>
-    >;
+    if (phaseRecord === null) throw new Error("Task record disappeared before local quality gates");
+    let quality: Awaited<ReturnType<typeof runTaskSessionValidationWithRepairs>>;
     if (phaseRecord.phase === "validation") {
       cardLog.event("Validation started");
       try {
@@ -6325,19 +5628,11 @@ export async function runTaskSessionWorkflow(
           signal,
         },
       });
-    } else if (
-      phaseRecord.phase === "review" ||
-      phaseRecord.phase === "publication"
-    ) {
-      const currentIdentity = await getTaskSessionSourceSnapshotIdentity(
-        git,
-        worktreePath,
-      );
+    } else if (phaseRecord.phase === "review" || phaseRecord.phase === "publication") {
+      const currentIdentity = await getTaskSessionSourceSnapshotIdentity(git, worktreePath);
       const checkpoint = phaseRecord.publicationQuality;
       const trusted =
-        phaseRecord.phase === "publication"
-          ? readTrustedCommitState(project, activeCard.id)
-          : null;
+        phaseRecord.phase === "publication" ? readTrustedCommitState(project, activeCard.id) : null;
       const verifiedCheckpoint =
         checkpoint !== undefined &&
         trusted !== null &&
@@ -6351,8 +5646,7 @@ export async function runTaskSessionWorkflow(
       const coverageEvidence = verifiedCheckpoint
         ? checkpoint.coverageEvidence
         : phaseRecord.validationRepair?.coverageEvidence;
-      const qualityExhausted =
-        phaseRecord.validationRepair?.status === "exhausted";
+      const qualityExhausted = phaseRecord.validationRepair?.status === "exhausted";
       const trustedPreparedCheckpoint = verifiedCheckpoint;
       if (
         (phaseRecord.validationRepair?.status !== "passed" &&
@@ -6376,14 +5670,11 @@ export async function runTaskSessionWorkflow(
               !trustedPreparedCheckpoint &&
               !qualityEvidenceWasSuccessful(coverageEvidence)))
       ) {
-        throw new Error(
-          "Persisted review/publication phase has incomplete local quality evidence",
-        );
+        throw new Error("Persisted review/publication phase has incomplete local quality evidence");
       }
       const stale =
         currentIdentity !== validationEvidence.contentIdentity ||
-        (coverageEvidence !== undefined &&
-          currentIdentity !== coverageEvidence.contentIdentity);
+        (coverageEvidence !== undefined && currentIdentity !== coverageEvidence.contentIdentity);
       const trustedCommittedPublicationNeedsRefresh =
         stale &&
         phaseRecord.phase === "publication" &&
@@ -6395,20 +5686,13 @@ export async function runTaskSessionWorkflow(
         // A verified clean trusted commit may have a new source snapshot after
         // base maintenance. Refresh local checks without changing their outcome
         // into a pass, then refresh the advisory review below.
-        const freshValidation =
-          await runTaskSessionValidation(validationOptions);
+        const freshValidation = await runTaskSessionValidation(validationOptions);
         const freshCoverage = await runTaskSessionCoverage(validationOptions);
-        const afterChecksIdentity = await getTaskSessionSourceSnapshotIdentity(
-          git,
-          worktreePath,
-        );
+        const afterChecksIdentity = await getTaskSessionSourceSnapshotIdentity(git, worktreePath);
         if (afterChecksIdentity !== currentIdentity)
-          throw new Error(
-            "Prepared publication source changed while refreshing local checks",
-          );
+          throw new Error("Prepared publication source changed while refreshing local checks");
         const updated = taskStore.read(activeCard.id);
-        if (updated === null)
-          throw new Error("Task record disappeared during legacy recovery");
+        if (updated === null) throw new Error("Task record disappeared during legacy recovery");
         const refreshed = updateRecord(taskStore, updated, {
           publicationQuality: {
             contentIdentity: currentIdentity,
@@ -6425,11 +5709,8 @@ export async function runTaskSessionWorkflow(
         };
       } else {
         if (stale)
-          throw new Error(
-            "Persisted local quality evidence is stale after task-session restart",
-          );
-        const validation =
-          restorePersistedTaskSessionQualityEvidence(validationEvidence);
+          throw new Error("Persisted local quality evidence is stale after task-session restart");
+        const validation = restorePersistedTaskSessionQualityEvidence(validationEvidence);
         const coverage =
           coverageEvidence === undefined
             ? await runTaskSessionCoverage(validationOptions)
@@ -6442,9 +5723,7 @@ export async function runTaskSessionWorkflow(
         };
       }
     } else {
-      throw new Error(
-        `Cannot resume local task-session work from phase ${phaseRecord.phase}`,
-      );
+      throw new Error(`Cannot resume local task-session work from phase ${phaseRecord.phase}`);
     }
     const publicationMutationEventId = mutation.eventId;
     const publishWithoutReview = async (
@@ -6453,10 +5732,7 @@ export async function runTaskSessionWorkflow(
     ): Promise<void> => {
       // Quality exhaustion is not a successful AI review. Publish its actual
       // failed diagnostics directly, rather than inventing a review verdict.
-      const currentIdentity = await getTaskSessionSourceSnapshotIdentity(
-        git,
-        worktreePath,
-      );
+      const currentIdentity = await getTaskSessionSourceSnapshotIdentity(git, worktreePath);
       const failedEvidence: VerifiedPublicationDecisionInput = {
         currentContentIdentity: currentIdentity,
         validationCommand,
@@ -6481,15 +5757,11 @@ export async function runTaskSessionWorkflow(
             (beforePublication.reviewRepair.status !== "stopped" ||
               beforePublication.reviewRepair.finalReview !== undefined)));
       if (stopReviewRepairForAdvisoryOutcome) {
-        if (
-          beforePublication.reviewRepair?.activePrimaryOperation !== undefined
-        )
+        if (beforePublication.reviewRepair?.activePrimaryOperation !== undefined)
           throw new Error(
             "Cannot hand off validation exhaustion while a review-repair writer is reserved",
           );
-        const unresolvedWriter = Object.values(
-          beforePublication.primaryOperations ?? {},
-        ).find(
+        const unresolvedWriter = Object.values(beforePublication.primaryOperations ?? {}).find(
           (operation) =>
             operation !== undefined &&
             (["intent", "dispatched", "ambiguous"].includes(operation.status) ||
@@ -6505,9 +5777,7 @@ export async function runTaskSessionWorkflow(
           ? {
               contentIdentity: failedEvidence.currentContentIdentity,
               diagnostic: unavailableDiagnostic,
-              ...(retainedPriorReview === undefined
-                ? {}
-                : { priorReview: retainedPriorReview }),
+              ...(retainedPriorReview === undefined ? {} : { priorReview: retainedPriorReview }),
             }
           : undefined;
       const handoffRecord = {
@@ -6533,9 +5803,7 @@ export async function runTaskSessionWorkflow(
           handoffRecord,
           event(
             handoffRecord,
-            reason === "review-unavailable"
-              ? "review-unavailable"
-              : "validation-exhausted",
+            reason === "review-unavailable" ? "review-unavailable" : "validation-exhausted",
           ),
         );
         beforePublication = taskStore.compareAndSwap(
@@ -6549,31 +5817,21 @@ export async function runTaskSessionWorkflow(
           JSON.stringify(beforePublication.reviewUnavailable) !==
             JSON.stringify(reviewUnavailableMarker))
       ) {
-        beforePublication = taskStore.compareAndSwap(
-          activeCard.id,
-          beforePublication.revision,
-          {
-            ...handoffRecord,
-            revision: beforePublication.revision + 1,
-            updatedAt: timestamp(beforePublication),
-          },
-        );
+        beforePublication = taskStore.compareAndSwap(activeCard.id, beforePublication.revision, {
+          ...handoffRecord,
+          revision: beforePublication.revision + 1,
+          updatedAt: timestamp(beforePublication),
+        });
       }
       const retainedReview = beforePublication.reviewUnavailable?.priorReview;
       const retainedReviewFacts: string[] = [];
-      if (
-        reason === "review-unavailable" &&
-        retainedReview?.verdict === "fail"
-      ) {
+      if (reason === "review-unavailable" && retainedReview?.verdict === "fail") {
         const reviewedIdentity = retainedReview.reviewedContentIdentity;
         retainedReviewFacts.push(
           `A prior independent review returned a negative result for source ${reviewedIdentity}; the follow-up review for current source ${failedEvidence.currentContentIdentity} was unavailable (${unavailableDiagnostic}). The following concerns and dispositions refer only to the prior source snapshot and are not a current review result.`,
         );
         const trackedFindings = new Map(
-          (beforePublication.reviewRepair?.findings ?? []).map((finding) => [
-            finding.id,
-            finding,
-          ]),
+          (beforePublication.reviewRepair?.findings ?? []).map((finding) => [finding.id, finding]),
         );
         for (const finding of retainedReview.blockingFindings.slice(0, 20)) {
           const id = finding.id ?? "unassigned finding";
@@ -6591,9 +5849,10 @@ export async function runTaskSessionWorkflow(
             );
         }
         const requirementDispositions = new Map(
-          (beforePublication.reviewRepair?.requirementDispositions ?? []).map(
-            (disposition) => [disposition.requirementId, disposition],
-          ),
+          (beforePublication.reviewRepair?.requirementDispositions ?? []).map((disposition) => [
+            disposition.requirementId,
+            disposition,
+          ]),
         );
         for (const assessment of retainedReview.requirementAssessments
           .filter(({ status }) => status === "unsatisfied")
@@ -6601,9 +5860,7 @@ export async function runTaskSessionWorkflow(
           retainedReviewFacts.push(
             `Prior review assessed requirement ${assessment.requirementId} as unsatisfied: ${assessment.details}. Evidence: ${assessment.evidence.join(", ") || "none reported"}.`,
           );
-          const disposition = requirementDispositions.get(
-            assessment.requirementId,
-          );
+          const disposition = requirementDispositions.get(assessment.requirementId);
           if (disposition?.reviewedContentIdentity === reviewedIdentity)
             retainedReviewFacts.push(
               `Primary-session disposition for requirement ${assessment.requirementId} on prior source ${reviewedIdentity}: ${disposition.status}; ${disposition.rationale}`,
@@ -6655,35 +5912,26 @@ export async function runTaskSessionWorkflow(
         ],
         signal,
         beforePushVerification: async () => {
-          const currentIdentity = await getTaskSessionSourceSnapshotIdentity(
-            git,
-            worktreePath,
-          );
+          const currentIdentity = await getTaskSessionSourceSnapshotIdentity(git, worktreePath);
           const finalEvidenceMatchesCurrent =
             currentIdentity === failedEvidence.currentContentIdentity &&
             failedEvidence.validation !== null &&
             failedEvidence.validation.command === validationCommand &&
             failedEvidence.coverage !== null &&
-            failedEvidence.coverage.command ===
-              (project.repository.coverageCommand ?? "");
+            failedEvidence.coverage.command === (project.repository.coverageCommand ?? "");
           if (finalEvidenceMatchesCurrent) {
             preparedEvidence = failedEvidence;
           } else {
-            const validation =
-              await runTaskSessionValidation(validationOptions);
+            const validation = await runTaskSessionValidation(validationOptions);
             const coverage = await runTaskSessionCoverage(validationOptions);
             preparedEvidence = {
               ...failedEvidence,
-              currentContentIdentity:
-                await getTaskSessionSourceSnapshotIdentity(git, worktreePath),
+              currentContentIdentity: await getTaskSessionSourceSnapshotIdentity(git, worktreePath),
               validation,
               coverage,
             };
           }
-          const decision = decideHumanReviewPublication(
-            preparedEvidence,
-            undefined,
-          );
+          const decision = decideHumanReviewPublication(preparedEvidence, undefined);
           if (!decision.allowed)
             throw new Error(
               `Prepared unreviewed publication is unsafe: ${decision.reasons.join("; ")}`,
@@ -6716,18 +5964,14 @@ export async function runTaskSessionWorkflow(
           )) !== 0 ||
           (await git.getStatus(worktreePath)).trim().length === 0
         )
-          throw new Error(
-            "Interrupted unreviewed publication has ambiguous untrusted Git state",
-          );
+          throw new Error("Interrupted unreviewed publication has ambiguous untrusted Git state");
       }
       if (
         trusted !== null &&
         ((await git.getHeadSha(worktreePath)) !== trusted.commitSha ||
           (await git.getStatus(worktreePath)).trim().length > 0)
       )
-        throw new Error(
-          "Interrupted unreviewed publication does not match trusted clean commit",
-        );
+        throw new Error("Interrupted unreviewed publication does not match trusted clean commit");
       let publishedSha: string;
       if (trusted !== null) {
         await publishCard({
@@ -6760,15 +6004,12 @@ export async function runTaskSessionWorkflow(
         project,
       });
       if (pr === null || pr.state !== "OPEN" || pr.headRefOid !== publishedSha)
-        throw new Error(
-          "Exhausted-validation publication could not verify the PR head",
-        );
+        throw new Error("Exhausted-validation publication could not verify the PR head");
       const prNumber = Number(new URL(pr.url).pathname.split("/").at(-1));
       if (!Number.isSafeInteger(prNumber) || prNumber < 1)
         throw new Error("Published PR URL contains an invalid number");
       const current = taskStore.read(activeCard.id);
-      if (current === null)
-        throw new Error("Task record disappeared after publication");
+      if (current === null) throw new Error("Task record disappeared after publication");
       const ci = transitionTaskExecutionRecord(current, {
         type: "publication-completed",
         eventId: `${operationKey}:publication-completed`,
@@ -6784,14 +6025,9 @@ export async function runTaskSessionWorkflow(
       mutation = null;
       return;
     };
-    if (
-      phaseRecord.phase === "publication" &&
-      phaseRecord.reviewUnavailable !== undefined
-    ) {
+    if (phaseRecord.phase === "publication" && phaseRecord.reviewUnavailable !== undefined) {
       await publishWithoutReview(
-        phaseRecord.reviewUnavailable === undefined
-          ? "validation-exhausted"
-          : "review-unavailable",
+        phaseRecord.reviewUnavailable === undefined ? "validation-exhausted" : "review-unavailable",
         phaseRecord.reviewUnavailable?.diagnostic,
       );
       return;
@@ -6802,8 +6038,7 @@ export async function runTaskSessionWorkflow(
     const runReview = async (
       previousFindings: readonly NonNullable<
         NonNullable<TaskExecutionRecord["reviewRepair"]>["findings"]
-      >[number][] = taskStore.read(activeCard.id)?.reviewRepair?.cycleId ===
-      operationKey
+      >[number][] = taskStore.read(activeCard.id)?.reviewRepair?.cycleId === operationKey
         ? (taskStore.read(activeCard.id)?.reviewRepair?.findings ?? [])
         : [],
     ) => {
@@ -6829,9 +6064,7 @@ export async function runTaskSessionWorkflow(
           signal,
         },
       });
-      cardLog.event(
-        result.review.verdict === "pass" ? "Review passed" : "Review failed",
-      );
+      cardLog.event(result.review.verdict === "pass" ? "Review passed" : "Review failed");
       return {
         review: result.review,
         contentIdentity: result.contentIdentity,
@@ -6863,30 +6096,18 @@ export async function runTaskSessionWorkflow(
       currentValidation = quality.validation;
       currentCoverage = quality.coverage;
     };
-    let finalReview: Awaited<
-      ReturnType<typeof runTaskSessionReviewWithRepairs>
-    >;
+    let finalReview: Awaited<ReturnType<typeof runTaskSessionReviewWithRepairs>>;
     if (phaseRecord.phase === "publication") {
       let current = taskStore.read(activeCard.id);
-      if (current === null)
-        throw new Error("Task record disappeared during publication recovery");
+      if (current === null) throw new Error("Task record disappeared during publication recovery");
       const persistedReview = current.reviewRepair?.finalReview;
-      let review: Omit<
-        Awaited<ReturnType<typeof runReview>>,
-        "previousFindings"
-      > & {
-        previousFindings?: Awaited<
-          ReturnType<typeof runReview>
-        >["previousFindings"];
+      let review: Omit<Awaited<ReturnType<typeof runReview>>, "previousFindings"> & {
+        previousFindings?: Awaited<ReturnType<typeof runReview>>["previousFindings"];
       };
-      const identity = await getTaskSessionSourceSnapshotIdentity(
-        git,
-        worktreePath,
-      );
+      const identity = await getTaskSessionSourceSnapshotIdentity(git, worktreePath);
       const publicationReviewCheckpoint = current.publicationQuality;
       const reviewRequirementIds =
-        planStore.read(activeCard.id)?.plan.requirements.map(({ id }) => id) ??
-        [];
+        planStore.read(activeCard.id)?.plan.requirements.map(({ id }) => id) ?? [];
       const priorFindings = current.reviewRepair?.findings ?? [];
       const parsePersistedReview = (
         value: unknown,
@@ -6908,16 +6129,9 @@ export async function runTaskSessionWorkflow(
             ? {}
             : {
                 previousFindings: originalPreviousFindings.map(
-                  ({
+                  ({ id, sourceContentIdentity, sourceIdentities, status }) => ({
                     id,
-                    sourceContentIdentity,
-                    sourceIdentities,
-                    status,
-                  }) => ({
-                    id,
-                    ...(sourceContentIdentity === undefined
-                      ? {}
-                      : { sourceContentIdentity }),
+                    ...(sourceContentIdentity === undefined ? {} : { sourceContentIdentity }),
                     sourceIdentities,
                     status,
                   }),
@@ -6930,17 +6144,14 @@ export async function runTaskSessionWorkflow(
         publicationReviewCheckpoint.review !== null &&
         publicationReviewCheckpoint.review !== undefined
       ) {
-        const originalPreviousFindings =
-          publicationReviewCheckpoint.reviewPreviousFindings?.map(
-            ({ id, sourceContentIdentity, sourceIdentities, status }) => ({
-              id,
-              ...(sourceContentIdentity === undefined
-                ? {}
-                : { sourceContentIdentity }),
-              sourceIdentities,
-              status,
-            }),
-          );
+        const originalPreviousFindings = publicationReviewCheckpoint.reviewPreviousFindings?.map(
+          ({ id, sourceContentIdentity, sourceIdentities, status }) => ({
+            id,
+            ...(sourceContentIdentity === undefined ? {} : { sourceContentIdentity }),
+            sourceIdentities,
+            status,
+          }),
+        );
         const previousFindingIds =
           publicationReviewCheckpoint.reviewPreviousFindingIds ??
           originalPreviousFindings?.map(({ id }) => id) ??
@@ -6971,27 +6182,20 @@ export async function runTaskSessionWorkflow(
           // informs disclosure only; it does not authorize or block PR delivery.
           review = await runReview(priorFindings);
         } catch (error) {
-          if (!(error instanceof TaskSessionReviewUnavailableError))
-            throw error;
+          if (!(error instanceof TaskSessionReviewUnavailableError)) throw error;
           if (signal.aborted) throw error;
-          const currentIdentity = await getTaskSessionSourceSnapshotIdentity(
-            git,
-            worktreePath,
-          );
+          const currentIdentity = await getTaskSessionSourceSnapshotIdentity(git, worktreePath);
           if (currentIdentity !== identity)
-            throw new Error(
-              "Publication review became unavailable after the source changed",
-              { cause: error },
-            );
+            throw new Error("Publication review became unavailable after the source changed", {
+              cause: error,
+            });
           await publishWithoutReview("review-unavailable", error.message);
           return;
         }
       }
       current = taskStore.read(activeCard.id);
       if (current === null)
-        throw new Error(
-          "Task record disappeared while persisting publication review evidence",
-        );
+        throw new Error("Task record disappeared while persisting publication review evidence");
       current = updateRecord(taskStore, current, {
         publicationQuality: {
           contentIdentity: identity,
@@ -7001,24 +6205,15 @@ export async function runTaskSessionWorkflow(
           reviewPreviousFindingIds:
             review.previousFindings?.map(({ id }) => id) ??
             publicationReviewCheckpoint?.reviewPreviousFindingIds ??
-            review.review.previousFindingAssessments?.map(
-              ({ findingId }) => findingId,
-            ) ??
+            review.review.previousFindingAssessments?.map(({ findingId }) => findingId) ??
             [],
           ...(review.previousFindings === undefined
             ? {}
             : {
                 reviewPreviousFindings: review.previousFindings.map(
-                  ({
+                  ({ id, sourceContentIdentity, sourceIdentities, status }) => ({
                     id,
-                    sourceContentIdentity,
-                    sourceIdentities,
-                    status,
-                  }) => ({
-                    id,
-                    ...(sourceContentIdentity === undefined
-                      ? {}
-                      : { sourceContentIdentity }),
+                    ...(sourceContentIdentity === undefined ? {} : { sourceContentIdentity }),
                     sourceIdentities: [...sourceIdentities],
                     status,
                   }),
@@ -7046,9 +6241,7 @@ export async function runTaskSessionWorkflow(
             return buildTaskSessionReviewRepairPrompt({
               projectId: project.id,
               card: activeCard,
-              ...(advisoryPlan === null
-                ? {}
-                : { approvedPlan: advisoryPlan.plan }),
+              ...(advisoryPlan === null ? {} : { approvedPlan: advisoryPlan.plan }),
               review,
               attempt,
               maxAttempts: project.opencode.remediation.maxPasses,
@@ -7059,13 +6252,8 @@ export async function runTaskSessionWorkflow(
             cardLog.event(`Review repair attempt ${attempt} started`);
             let current = taskStore.read(activeCard.id);
             if (current === null)
-              throw new Error(
-                "Task record disappeared during review remediation",
-              );
-            const failed = transitionTaskExecutionRecord(
-              current,
-              event(current, "review-failed"),
-            );
+              throw new Error("Task record disappeared during review remediation");
+            const failed = transitionTaskExecutionRecord(current, event(current, "review-failed"));
             taskStore.compareAndSwap(activeCard.id, current.revision, failed);
             const plan = planStore.read(activeCard.id);
             const prompt =
@@ -7077,9 +6265,7 @@ export async function runTaskSessionWorkflow(
                 review,
                 attempt,
                 maxAttempts: project.opencode.remediation.maxPasses,
-                ...(attachmentContext === undefined
-                  ? {}
-                  : { attachmentContext }),
+                ...(attachmentContext === undefined ? {} : { attachmentContext }),
               });
             const repaired = await runWithPrimaryTaskSession(
               taskStore,
@@ -7101,49 +6287,34 @@ export async function runTaskSessionWorkflow(
                 operationId,
                 activity: "review-correction",
                 inspectPending: (entry) =>
-                  inspectPrimaryOperationEvidence(
-                    taskStore,
-                    activeCard.id,
-                    entry.id,
-                    {
-                      trustedRoot:
-                        ProjectRunAuthority.current(project.id)?.store
-                          .storageRoot ?? getProcessRuntime().artifactRoot,
-                      cwd: worktreePath,
-                    },
-                  ),
+                  inspectPrimaryOperationEvidence(taskStore, activeCard.id, entry.id, {
+                    trustedRoot:
+                      ProjectRunAuthority.current(project.id)?.store.storageRoot ??
+                      getProcessRuntime().artifactRoot,
+                    cwd: worktreePath,
+                  }),
               },
             );
             if (repaired.exitCode !== 0)
-              throw new Error(
-                `Primary review repair exited with code ${repaired.exitCode}`,
-              );
+              throw new Error(`Primary review repair exited with code ${repaired.exitCode}`);
             cardLog.event(`Review repair attempt ${attempt} completed`);
             current = taskStore.read(activeCard.id);
-            if (current === null)
-              throw new Error("Task record disappeared after review repair");
+            if (current === null) throw new Error("Task record disappeared after review repair");
             const implemented = transitionTaskExecutionRecord(
               current,
               event(current, "implementation-completed"),
             );
-            taskStore.compareAndSwap(
-              activeCard.id,
-              current.revision,
-              implemented,
-            );
+            taskStore.compareAndSwap(activeCard.id, current.revision, implemented);
             return parsePrimaryReviewRepairOutcome(
               repaired.output,
-              review.blockingFindings.flatMap(({ id }) =>
-                id === undefined ? [] : [id],
-              ),
+              review.blockingFindings.flatMap(({ id }) => (id === undefined ? [] : [id])),
               review.requirementAssessments
                 .filter(({ status }) => status === "unsatisfied")
                 .map(({ requirementId }) => requirementId),
             );
           },
           rerunQuality: runQualityAgain,
-          getCurrentContentIdentity: () =>
-            getTaskSessionSourceSnapshotIdentity(git, worktreePath),
+          getCurrentContentIdentity: () => getTaskSessionSourceSnapshotIdentity(git, worktreePath),
         });
       } catch (error) {
         const primaryRecoveryError = findPrimaryRecoveryError(error);
@@ -7151,10 +6322,7 @@ export async function runTaskSessionWorkflow(
         if (error instanceof TaskSessionReviewRepairError) {
           const failure = error.sourceIdentity;
           const current = taskStore.read(activeCard.id);
-          const identity = await getTaskSessionSourceSnapshotIdentity(
-            git,
-            worktreePath,
-          );
+          const identity = await getTaskSessionSourceSnapshotIdentity(git, worktreePath);
           if (
             signal.aborted ||
             current === null ||
@@ -7164,8 +6332,7 @@ export async function runTaskSessionWorkflow(
             failure?.unchanged !== true ||
             failure.after !== identity ||
             identity !== currentValidation.contentIdentity ||
-            (currentCoverage !== null &&
-              identity !== currentCoverage.contentIdentity) ||
+            (currentCoverage !== null && identity !== currentCoverage.contentIdentity) ||
             (await git.getCurrentBranch(worktreePath)) !== worktree.branch ||
             (await git.getRebaseState(worktreePath)) !== null ||
             (await git.getCommitCountBetween(
@@ -7219,30 +6386,19 @@ export async function runTaskSessionWorkflow(
         }
         if (!(error instanceof TaskSessionReviewUnavailableError)) throw error;
         if (signal.aborted) throw error;
-        const identity = await getTaskSessionSourceSnapshotIdentity(
-          git,
-          worktreePath,
-        );
+        const identity = await getTaskSessionSourceSnapshotIdentity(git, worktreePath);
         if (
           identity !== currentValidation.contentIdentity ||
-          (currentCoverage !== null &&
-            identity !== currentCoverage.contentIdentity)
+          (currentCoverage !== null && identity !== currentCoverage.contentIdentity)
         )
-          throw new Error(
-            "Refusing unavailable-review publication after source change",
-            { cause: error },
-          );
-        await publishWithoutReview(
-          "review-unavailable",
-          error.message.slice(0, 500),
-        );
+          throw new Error("Refusing unavailable-review publication after source change", {
+            cause: error,
+          });
+        await publishWithoutReview("review-unavailable", error.message.slice(0, 500));
         return;
       }
     }
-    const identity = await getTaskSessionSourceSnapshotIdentity(
-      git,
-      worktreePath,
-    );
+    const identity = await getTaskSessionSourceSnapshotIdentity(git, worktreePath);
     const initialEvidence: VerifiedPublicationDecisionInput = {
       currentContentIdentity: identity,
       validationCommand,
@@ -7291,13 +6447,9 @@ export async function runTaskSessionWorkflow(
         allowStaleExhaustedReview: allowRecoveredExhaustedReview,
       }).allowed
     )
-      throw new Error(
-        "Final local evidence does not allow task-session publication",
-      );
+      throw new Error("Final local evidence does not allow task-session publication");
     const recoveredTrustedCommit =
-      phaseRecord.phase === "publication"
-        ? readTrustedCommitState(project, activeCard.id)
-        : null;
+      phaseRecord.phase === "publication" ? readTrustedCommitState(project, activeCard.id) : null;
     if (phaseRecord.phase === "publication" && recoveredTrustedCommit === null)
       throw new Error(
         "Interrupted publication has no trusted commit; refusing to guess whether commit creation completed",
@@ -7306,9 +6458,7 @@ export async function runTaskSessionWorkflow(
       recoveredTrustedCommit !== null &&
       (await git.getHeadSha(worktreePath)) !== recoveredTrustedCommit.commitSha
     )
-      throw new Error(
-        "Trusted publication commit does not match the recovered worktree HEAD",
-      );
+      throw new Error("Trusted publication commit does not match the recovered worktree HEAD");
     let commitMessage: string | undefined;
     let setupDisposition: PersistedSetupDisposition | undefined;
     if (recoveredTrustedCommit === null) {
@@ -7328,32 +6478,14 @@ export async function runTaskSessionWorkflow(
           throw new Error(
             "Setup attribution is unavailable or uncertain; initial publication blocked",
           );
-        const beforeInventory = taskStore.readPrimaryResultArtifact(
-          setupCheckpoint.before,
-        );
-        const afterInventory = taskStore.readPrimaryResultArtifact(
-          setupCheckpoint.after,
-        );
-        assertSetupInventoryIdentity(
-          beforeInventory,
-          worktreePath,
-          worktree.branch,
-        );
-        assertSetupInventoryIdentity(
-          afterInventory,
-          worktreePath,
-          worktree.branch,
-        );
+        const beforeInventory = taskStore.readPrimaryResultArtifact(setupCheckpoint.before);
+        const afterInventory = taskStore.readPrimaryResultArtifact(setupCheckpoint.after);
+        assertSetupInventoryIdentity(beforeInventory, worktreePath, worktree.branch);
+        assertSetupInventoryIdentity(afterInventory, worktreePath, worktree.branch);
         const currentInventory = JSON.parse(
-          (await captureSetupEffects(git, worktreePath, signal)).toString(
-            "utf8",
-          ),
+          (await captureSetupEffects(git, worktreePath, signal)).toString("utf8"),
         ) as unknown;
-        assertSetupInventoryIdentity(
-          currentInventory,
-          worktreePath,
-          worktree.branch,
-        );
+        assertSetupInventoryIdentity(currentInventory, worktreePath, worktree.branch);
         const { candidates, contextDigest } = getSetupTrackedDelta(
           beforeInventory,
           afterInventory,
@@ -7389,10 +6521,7 @@ export async function runTaskSessionWorkflow(
           currentInventory as Parameters<typeof resolveSetupCommitScope>[2],
           relevanceVerdict,
         );
-        const afterJudgmentSnapshot = await captureRepositorySnapshot(
-          git,
-          worktreePath,
-        );
+        const afterJudgmentSnapshot = await captureRepositorySnapshot(git, worktreePath);
         if (!repositorySnapshotsEqual(snapshotBefore, afterJudgmentSnapshot))
           throw new Error(
             "Setup relevance judgment modified repository content; initial publication blocked",
@@ -7410,9 +6539,7 @@ export async function runTaskSessionWorkflow(
         );
         const judgmentRecord = taskStore.read(activeCard.id);
         if (!judgmentRecord?.setup)
-          throw new Error(
-            "Setup attribution state disappeared before publication",
-          );
+          throw new Error("Setup attribution state disappeared before publication");
         updateRecord(taskStore, judgmentRecord, {
           setup: {
             ...judgmentRecord.setup,
@@ -7457,23 +6584,15 @@ export async function runTaskSessionWorkflow(
         commitMessage = fallbackCommitMessage;
       }
       const latest = taskStore.read(activeCard.id);
-      if (latest === null)
-        throw new Error("Task record disappeared before publication");
+      if (latest === null) throw new Error("Task record disappeared before publication");
       if (latest.phase === "review") {
         const publication = transitionTaskExecutionRecord(
           latest,
-          event(
-            latest,
-            exhaustedReview === undefined
-              ? "review-passed"
-              : "review-exhausted",
-          ),
+          event(latest, exhaustedReview === undefined ? "review-passed" : "review-exhausted"),
         );
         taskStore.compareAndSwap(activeCard.id, latest.revision, publication);
       } else if (latest.phase !== "publication") {
-        throw new Error(
-          `Task phase changed unexpectedly before publication: ${latest.phase}`,
-        );
+        throw new Error(`Task phase changed unexpectedly before publication: ${latest.phase}`);
       }
     }
 
@@ -7481,15 +6600,10 @@ export async function runTaskSessionWorkflow(
     const verifyPreparedContent = async () => {
       const freshValidation = await runTaskSessionValidation(validationOptions);
       const freshCoverage = await runTaskSessionCoverage(validationOptions);
-      const freshIdentity = await getTaskSessionSourceSnapshotIdentity(
-        git,
-        worktreePath,
-      );
+      const freshIdentity = await getTaskSessionSourceSnapshotIdentity(git, worktreePath);
       const preparedQualityPassed =
-        (freshValidation.status === "passed" ||
-          freshValidation.status === "skipped") &&
-        (freshCoverage.status === "passed" ||
-          freshCoverage.status === "skipped");
+        (freshValidation.status === "passed" || freshValidation.status === "skipped") &&
+        (freshCoverage.status === "passed" || freshCoverage.status === "skipped");
       if (
         !preparedQualityPassed &&
         freshIdentity === preparedEvidence.currentContentIdentity &&
@@ -7499,9 +6613,7 @@ export async function runTaskSessionWorkflow(
         throw new Error("Prepared publication quality checks failed");
       let current = taskStore.read(activeCard.id);
       if (current === null)
-        throw new Error(
-          "Task record disappeared during publication preparation",
-        );
+        throw new Error("Task record disappeared during publication preparation");
       if (preparedQualityPassed)
         current = persistQualityEvidence(
           taskStore,
@@ -7517,18 +6629,14 @@ export async function runTaskSessionWorkflow(
         value: unknown,
         previousFindingIds: readonly string[],
         originalPreviousFindings?: NonNullable<
-          NonNullable<
-            TaskExecutionRecord["publicationQuality"]
-          >["reviewPreviousFindings"]
+          NonNullable<TaskExecutionRecord["publicationQuality"]>["reviewPreviousFindings"]
         >,
       ) => {
         return parseCachedImplementationReviewResult(value, {
           projectId: project.id,
           cardId: activeCard.id,
           requirementIds:
-            planStore
-              .read(activeCard.id)
-              ?.plan.requirements.map(({ id }) => id) ?? [],
+            planStore.read(activeCard.id)?.plan.requirements.map(({ id }) => id) ?? [],
           contentIdentity: freshIdentity,
           previousFindingIds,
           ...(originalPreviousFindings === undefined
@@ -7572,13 +6680,9 @@ export async function runTaskSessionWorkflow(
             previousFindingIdsFromReview(cachedReview.review),
           cachedReview.reviewPreviousFindings,
         );
-      } else if (
-        cachedReview?.contentIdentity === freshIdentity &&
-        cachedReview.review === null
-      ) {
+      } else if (cachedReview?.contentIdentity === freshIdentity && cachedReview.review === null) {
         currentReview = null;
-        unavailableDiagnostic =
-          "The current publication snapshot has no completed review result";
+        unavailableDiagnostic = "The current publication snapshot has no completed review result";
       } else {
         try {
           const reviewResult = await runReview(priorFindings);
@@ -7587,26 +6691,19 @@ export async function runTaskSessionWorkflow(
         } catch (error) {
           const primaryRecoveryError = findPrimaryRecoveryError(error);
           if (primaryRecoveryError !== undefined) throw primaryRecoveryError;
-          if (!(error instanceof TaskSessionReviewUnavailableError))
-            throw error;
+          if (!(error instanceof TaskSessionReviewUnavailableError)) throw error;
           if (signal.aborted) throw error;
-          if (
-            (await getTaskSessionSourceSnapshotIdentity(git, worktreePath)) !==
-            freshIdentity
-          )
-            throw new Error(
-              "Publication review became unavailable after the source changed",
-              { cause: error },
-            );
+          if ((await getTaskSessionSourceSnapshotIdentity(git, worktreePath)) !== freshIdentity)
+            throw new Error("Publication review became unavailable after the source changed", {
+              cause: error,
+            });
           currentReview = null;
           unavailableDiagnostic = error.message;
         }
       }
 
       if (unavailableDiagnostic !== undefined) {
-        const unresolvedWriter = Object.values(
-          current.primaryOperations ?? {},
-        ).find(
+        const unresolvedWriter = Object.values(current.primaryOperations ?? {}).find(
           (operation) =>
             operation !== undefined &&
             (["intent", "dispatched", "ambiguous"].includes(operation.status) ||
@@ -7621,9 +6718,7 @@ export async function runTaskSessionWorkflow(
           );
         const priorReview =
           current.reviewUnavailable?.priorReview ??
-          (finalReview.review.verdict === "fail"
-            ? finalReview.review
-            : undefined);
+          (finalReview.review.verdict === "fail" ? finalReview.review : undefined);
         current = updateRecord(taskStore, current, {
           reviewRepair:
             current.reviewRepair === undefined
@@ -7659,8 +6754,7 @@ export async function runTaskSessionWorkflow(
           reviewResult,
           reviewDisclosure: null,
           qualityNeedsDraft:
-            freshValidation.status !== "passed" ||
-            freshCoverage.status !== "passed",
+            freshValidation.status !== "passed" || freshCoverage.status !== "passed",
         };
       } else {
         if (currentReview === null)
@@ -7687,16 +6781,9 @@ export async function runTaskSessionWorkflow(
                 ? {}
                 : {
                     reviewPreviousFindings: currentReviewPreviousFindings.map(
-                      ({
+                      ({ id, sourceContentIdentity, sourceIdentities, status }) => ({
                         id,
-                        sourceContentIdentity,
-                        sourceIdentities,
-                        status,
-                      }) => ({
-                        id,
-                        ...(sourceContentIdentity === undefined
-                          ? {}
-                          : { sourceContentIdentity }),
+                        ...(sourceContentIdentity === undefined ? {} : { sourceContentIdentity }),
                         sourceIdentities: [...sourceIdentities],
                         status,
                       }),
@@ -7711,9 +6798,7 @@ export async function runTaskSessionWorkflow(
             current.reviewRepair?.findings ?? [],
             current.reviewRepair?.requirementDispositions ?? [],
           );
-        exhaustedReview = hasCurrentMaterialConcerns
-          ? currentReview
-          : undefined;
+        exhaustedReview = hasCurrentMaterialConcerns ? currentReview : undefined;
         reviewResult =
           currentReview.verdict === "pass"
             ? "Passed"
@@ -7724,8 +6809,7 @@ export async function runTaskSessionWorkflow(
           reviewResult,
           reviewDisclosure: exhaustedReview ?? null,
           qualityNeedsDraft:
-            freshValidation.status !== "passed" ||
-            freshCoverage.status !== "passed",
+            freshValidation.status !== "passed" || freshCoverage.status !== "passed",
         };
       }
       preparedEvidence = {
@@ -7767,9 +6851,7 @@ export async function runTaskSessionWorkflow(
           `Validation result: ${JSON.stringify(preparedEvidence.validation)}`,
           ...(preparedEvidence.coverage === null
             ? []
-            : [
-                `Coverage result: ${JSON.stringify(preparedEvidence.coverage)}`,
-              ]),
+            : [`Coverage result: ${JSON.stringify(preparedEvidence.coverage)}`]),
           `Independent review result: ${JSON.stringify(preparedEvidence.review)}`,
         ],
         signal,
@@ -7779,20 +6861,13 @@ export async function runTaskSessionWorkflow(
         ...correctionPublicationLocation(recoveryRecord),
         beforePushVerification: async () => {
           preparedEvidence = await verifyPreparedContent();
-          const reviewDisclosure =
-            preparedReviewPublication.reviewDisclosure ?? undefined;
+          const reviewDisclosure = preparedReviewPublication.reviewDisclosure ?? undefined;
           if (
             reviewDisclosure !== undefined &&
-            reviewDisclosure.reviewedContentIdentity !==
-              preparedEvidence.currentContentIdentity
+            reviewDisclosure.reviewedContentIdentity !== preparedEvidence.currentContentIdentity
           )
-            throw new Error(
-              "Prepared review disclosure belongs to an earlier source snapshot",
-            );
-          const decision = decideHumanReviewPublication(
-            preparedEvidence,
-            reviewDisclosure,
-          );
+            throw new Error("Prepared review disclosure belongs to an earlier source snapshot");
+          const decision = decideHumanReviewPublication(preparedEvidence, reviewDisclosure);
           if (!decision.allowed)
             throw new Error(
               `Prepared human-review publication evidence is invalid: ${decision.reasons.join("; ")}`,
@@ -7834,9 +6909,7 @@ export async function runTaskSessionWorkflow(
           `Verified validation result: ${JSON.stringify(preparedEvidence.validation)}`,
           ...(preparedEvidence.coverage === null
             ? []
-            : [
-                `Verified coverage result: ${JSON.stringify(preparedEvidence.coverage)}`,
-              ]),
+            : [`Verified coverage result: ${JSON.stringify(preparedEvidence.coverage)}`]),
           `Independent review result: ${JSON.stringify(preparedEvidence.review)}`,
         ],
         signal,
@@ -7855,15 +6928,12 @@ export async function runTaskSessionWorkflow(
       project,
     });
     if (pr === null || pr.headRefOid !== publishedSha || pr.state !== "OPEN")
-      throw new Error(
-        "Published PR could not be verified on its expected head",
-      );
+      throw new Error("Published PR could not be verified on its expected head");
     cardLog.event(
       `Pull request published or reused: #${Number(new URL(pr.url).pathname.split("/").at(-1))} ${pr.url}`,
     );
     const current = taskStore.read(activeCard.id);
-    if (current === null)
-      throw new Error("Task record disappeared after PR publication");
+    if (current === null) throw new Error("Task record disappeared after PR publication");
     const prNumber = Number(new URL(pr.url).pathname.split("/").at(-1));
     if (!Number.isSafeInteger(prNumber) || prNumber < 1)
       throw new Error("Published pull request URL contains an invalid number");
@@ -7889,16 +6959,14 @@ export async function runTaskSessionWorkflow(
         ?.store.read()
         ?.pendingOperations.some(
           (entry) =>
-            entry.id.startsWith("workflow:") &&
-            !["completed", "cancelled"].includes(entry.status),
+            entry.id.startsWith("workflow:") && !["completed", "cancelled"].includes(entry.status),
         )
     ) {
       if (mutation && queue.ownsActive(mutation.eventId))
         queue.releaseForRecovery(mutation.eventId);
       throw error;
     }
-    const failedRecord =
-      mutation === null ? null : taskStore.read(mutation.cardId);
+    const failedRecord = mutation === null ? null : taskStore.read(mutation.cardId);
     const recoveryCandidate =
       mutation === null
         ? recoveryRecord === null
@@ -7930,8 +6998,7 @@ export async function runTaskSessionWorkflow(
       return;
     }
     if (error instanceof PublicationWaitingError) {
-      if (mutation && queue.ownsActive(mutation.eventId))
-        queue.fail(mutation.eventId);
+      if (mutation && queue.ownsActive(mutation.eventId)) queue.fail(mutation.eventId);
       return;
     }
     if (
@@ -7972,10 +7039,9 @@ export async function runTaskSessionWorkflow(
         (latest.terminalFailure?.kind !== "implementation" &&
           latest.terminalFailure?.kind !== "clarification")
       )
-        throw new Error(
-          `Terminal failure identity changed for ${mutation.cardId}`,
-          { cause: error },
-        );
+        throw new Error(`Terminal failure identity changed for ${mutation.cardId}`, {
+          cause: error,
+        });
       try {
         await finalizePrimaryFailureEffects(
           mutation.cardId,
@@ -7984,8 +7050,7 @@ export async function runTaskSessionWorkflow(
           latest.terminalFailure.kind,
         );
       } catch (finalizationError) {
-        if (queue.ownsActive(mutation.eventId))
-          queue.releaseForRecovery(mutation.eventId);
+        if (queue.ownsActive(mutation.eventId)) queue.releaseForRecovery(mutation.eventId);
         throw finalizationError;
       }
       const confirmedFailure = {
@@ -8002,25 +7067,12 @@ export async function runTaskSessionWorkflow(
         latest.pullRequest === undefined &&
         latest.externalRecovery === undefined
       ) {
-        taskStore.compareAndSwap(
-          mutation.cardId,
-          latest.revision,
-          confirmedFailure,
-          {
-            event: "failed",
-            evidence: noPullRequestFailureEvidence(
-              project,
-              mutation.cardId,
-              latest.operationKey,
-            ),
-          },
-        );
+        taskStore.compareAndSwap(mutation.cardId, latest.revision, confirmedFailure, {
+          event: "failed",
+          evidence: noPullRequestFailureEvidence(project, mutation.cardId, latest.operationKey),
+        });
       } else {
-        taskStore.compareAndSwap(
-          mutation.cardId,
-          latest.revision,
-          confirmedFailure,
-        );
+        taskStore.compareAndSwap(mutation.cardId, latest.revision, confirmedFailure);
       }
       queue.complete(mutation.eventId);
       mutation = null;
@@ -8031,22 +7083,16 @@ export async function runTaskSessionWorkflow(
       let commitVerified = false;
       if (latest?.phase === "publication") {
         try {
-          const trusted = readTrustedCommitState(
-            project,
-            recoveryRecord.cardId,
-          );
+          const trusted = readTrustedCommitState(project, recoveryRecord.cardId);
           commitVerified =
-            trusted !== null &&
-            (await git.getHeadSha(recoveryWorktreePath!)) === trusted.commitSha;
+            trusted !== null && (await git.getHeadSha(recoveryWorktreePath!)) === trusted.commitSha;
         } catch {
           commitVerified = false;
         }
       }
       const staleReviewFailure =
         error instanceof Error &&
-        (error.message.includes(
-          "Persisted exhausted review is stale after publication",
-        ) ||
+        (error.message.includes("Persisted exhausted review is stale after publication") ||
           error.message.includes(
             "Task-session publication is blocked: Final implementation review is stale",
           ));

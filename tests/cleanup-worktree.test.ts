@@ -23,9 +23,7 @@ describe("cleanupWorktree", () => {
   });
 
   it("removes the worktree and local branch", async () => {
-    vi.mocked(fs.existsSync).mockImplementation(
-      (candidate) => candidate === "/worktrees/card-1",
-    );
+    vi.mocked(fs.existsSync).mockImplementation((candidate) => candidate === "/worktrees/card-1");
     vi.mocked(fs.lstatSync).mockReturnValue({
       isSymbolicLink: () => false,
     } as fs.Stats);
@@ -48,18 +46,13 @@ describe("cleanupWorktree", () => {
       branch: "agent/card-1",
     });
 
-    expect(git.removeWorktree).toHaveBeenCalledWith(
-      "/repo",
-      "/worktrees/card-1",
-    );
+    expect(git.removeWorktree).toHaveBeenCalledWith("/repo", "/worktrees/card-1");
     expect(git.pruneWorktrees).not.toHaveBeenCalled();
     expect(git.deleteBranch).toHaveBeenCalledWith("/repo", "agent/card-1");
   });
 
   it("refuses to remove a dirty worktree", async () => {
-    vi.mocked(fs.existsSync).mockImplementation(
-      (candidate) => candidate === "/worktrees/card-1",
-    );
+    vi.mocked(fs.existsSync).mockImplementation((candidate) => candidate === "/worktrees/card-1");
     vi.mocked(fs.lstatSync).mockReturnValue({
       isSymbolicLink: () => false,
     } as fs.Stats);
@@ -90,9 +83,7 @@ describe("cleanupWorktree", () => {
   });
 
   it("refuses to remove a worktree with an active rebase", async () => {
-    vi.mocked(fs.existsSync).mockImplementation(
-      (candidate) => candidate === "/worktrees/card-1",
-    );
+    vi.mocked(fs.existsSync).mockImplementation((candidate) => candidate === "/worktrees/card-1");
     vi.mocked(fs.lstatSync).mockReturnValue({
       isSymbolicLink: () => false,
     } as fs.Stats);
@@ -123,9 +114,7 @@ describe("cleanupWorktree", () => {
   });
 
   it("refuses to remove a worktree with unmerged paths", async () => {
-    vi.mocked(fs.existsSync).mockImplementation(
-      (candidate) => candidate === "/worktrees/card-1",
-    );
+    vi.mocked(fs.existsSync).mockImplementation((candidate) => candidate === "/worktrees/card-1");
     vi.mocked(fs.lstatSync).mockReturnValue({
       isSymbolicLink: () => false,
     } as fs.Stats);
@@ -184,9 +173,7 @@ describe("cleanupWorktree", () => {
   });
 
   it("refuses to clean a worktree on the wrong branch", async () => {
-    vi.mocked(fs.existsSync).mockImplementation(
-      (candidate) => candidate === "/worktrees/card-1",
-    );
+    vi.mocked(fs.existsSync).mockImplementation((candidate) => candidate === "/worktrees/card-1");
     vi.mocked(fs.lstatSync).mockReturnValue({
       isSymbolicLink: () => false,
     } as fs.Stats);
@@ -267,11 +254,9 @@ describe("cleanupWorktree", () => {
   });
 
   it("preserves a worktree protected by a prepared-conflict handoff", async () => {
-    const handoffPath =
-      "/worktrees/.orchestrator/prepared-conflicts/test-project/card-1.json";
+    const handoffPath = "/worktrees/.orchestrator/prepared-conflicts/test-project/card-1.json";
     vi.mocked(fs.existsSync).mockImplementation(
-      (candidate) =>
-        candidate === "/worktrees/card-1" || candidate === handoffPath,
+      (candidate) => candidate === "/worktrees/card-1" || candidate === handoffPath,
     );
     vi.mocked(fs.readFileSync).mockReturnValue(
       JSON.stringify({
@@ -322,9 +307,7 @@ describe("cleanupWorktree", () => {
   });
 
   it("refuses to clean a symbolic-link path", async () => {
-    vi.mocked(fs.existsSync).mockImplementation(
-      (candidate) => candidate === "/worktrees/card-1",
-    );
+    vi.mocked(fs.existsSync).mockImplementation((candidate) => candidate === "/worktrees/card-1");
     vi.mocked(fs.lstatSync).mockReturnValue({
       isSymbolicLink: () => true,
     } as fs.Stats);
@@ -377,9 +360,7 @@ describe("cleanupWorktree", () => {
 
   it("stops before destructive operations when shutdown occurs during inspection", async () => {
     const controller = new AbortController();
-    vi.mocked(fs.existsSync).mockImplementation(
-      (candidate) => candidate === "/worktrees/card-1",
-    );
+    vi.mocked(fs.existsSync).mockImplementation((candidate) => candidate === "/worktrees/card-1");
     vi.mocked(fs.lstatSync).mockReturnValue({
       isSymbolicLink: () => false,
     } as fs.Stats);

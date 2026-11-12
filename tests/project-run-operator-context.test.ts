@@ -99,12 +99,7 @@ function fixture(): {
   return {
     config,
     project,
-    sourceTask: path.join(
-      contextRoot,
-      "task-executions",
-      project.id,
-      "card-one.json",
-    ),
+    sourceTask: path.join(contextRoot, "task-executions", project.id, "card-one.json"),
     coordinationRoot,
   };
 }
@@ -122,9 +117,9 @@ describe("operator canonical attempt context", () => {
     const registryBytes = fs.readFileSync(registryFile);
     const originalTaskBytes = fs.readFileSync(sourceTask);
     try {
-      await expect(
-        acquireProjectRunOperatorContext(config, project),
-      ).rejects.toThrow("already held");
+      await expect(acquireProjectRunOperatorContext(config, project)).rejects.toThrow(
+        "already held",
+      );
       expect(fs.readFileSync(registryFile)).toEqual(registryBytes);
       expect(fs.readFileSync(sourceTask)).toEqual(originalTaskBytes);
     } finally {
@@ -134,10 +129,7 @@ describe("operator canonical attempt context", () => {
     const operator = await acquireProjectRunOperatorContext(config, project);
     try {
       await operator.run(() => {
-        const queue = new TaskMutationQueue(
-          config.workflow.contextRoot,
-          project,
-        );
+        const queue = new TaskMutationQueue(config.workflow.contextRoot, project);
         queue.enqueue({
           projectId: project.id,
           cardId: "card-one",
@@ -147,24 +139,15 @@ describe("operator canonical attempt context", () => {
           enqueuedAt: new Date().toISOString(),
         });
         expect(
-          operator.authority.read(
-            ProjectRunAuthority.queueKey(project.id),
-            (value) => value,
-          ),
+          operator.authority.read(ProjectRunAuthority.queueKey(project.id), (value) => value),
         ).toMatchObject({
-          events: [
-            expect.objectContaining({ eventId: "operator-recovery-event" }),
-          ],
+          events: [expect.objectContaining({ eventId: "operator-recovery-event" })],
         });
       });
       expect(fs.readFileSync(sourceTask)).toEqual(originalTaskBytes);
       expect(
         fs.existsSync(
-          path.join(
-            config.workflow.contextRoot,
-            "task-mutation-queues",
-            `${project.id}.json`,
-          ),
+          path.join(config.workflow.contextRoot, "task-mutation-queues", `${project.id}.json`),
         ),
       ).toBe(false);
     } finally {
@@ -178,9 +161,9 @@ describe("operator canonical attempt context", () => {
       ...config,
       workflow: { ...config.workflow, coordinationRoot: undefined },
     } as unknown as Config;
-    await expect(
-      acquireProjectRunOperatorContext(missingNamespace, project),
-    ).rejects.toThrow("requires the configured host coordination namespace");
+    await expect(acquireProjectRunOperatorContext(missingNamespace, project)).rejects.toThrow(
+      "requires the configured host coordination namespace",
+    );
   });
 
   it("rejects changed active Trello mappings before operator recovery can dispatch", async () => {
@@ -197,21 +180,16 @@ describe("operator canonical attempt context", () => {
       ...config,
       projects: [changedProject],
     };
-    const registryBefore = fs.readFileSync(
-      path.join(coordinationRoot, "projects.registry.json"),
+    const registryBefore = fs.readFileSync(path.join(coordinationRoot, "projects.registry.json"));
+
+    await expect(acquireProjectRunOperatorContext(changedConfig, changedProject)).rejects.toThrow(
+      "incompatible with its active host pin",
+    );
+    expect(fs.readFileSync(path.join(coordinationRoot, "projects.registry.json"))).toEqual(
+      registryBefore,
     );
 
-    await expect(
-      acquireProjectRunOperatorContext(changedConfig, changedProject),
-    ).rejects.toThrow("incompatible with its active host pin");
-    expect(
-      fs.readFileSync(path.join(coordinationRoot, "projects.registry.json")),
-    ).toEqual(registryBefore);
-
-    const originalContext = await acquireProjectRunOperatorContext(
-      config,
-      project,
-    );
+    const originalContext = await acquireProjectRunOperatorContext(config, project);
     try {
       expect(originalContext.authority.store.read()).toMatchObject({
         attemptId: before?.attemptId,
@@ -233,9 +211,7 @@ describe("operator canonical attempt context", () => {
       "operator-test",
     );
     const [hostPin] = await verifyAndPinProjects(config, [serviceLease]);
-    const legacyTask = JSON.parse(
-      fs.readFileSync(sourceTask, "utf8"),
-    ) as TaskExecutionRecord;
+    const legacyTask = JSON.parse(fs.readFileSync(sourceTask, "utf8")) as TaskExecutionRecord;
     await prepareProjectAttempt(coordinationRoot, project.id, serviceLease, {
       attemptId: legacyAttemptId(legacyTask),
       storageRoot: hostPin!.storageRoot,
@@ -249,17 +225,11 @@ describe("operator canonical attempt context", () => {
       trello: { ...project.trello, doneListId: "replacement-done" },
     };
     await expect(
-      acquireProjectRunOperatorContext(
-        { ...config, projects: [changedProject] },
-        changedProject,
-      ),
+      acquireProjectRunOperatorContext({ ...config, projects: [changedProject] }, changedProject),
     ).rejects.toThrow("incompatible with its active host pin");
     expect(fs.readFileSync(registryFile)).toEqual(registryBefore);
 
-    const originalContext = await acquireProjectRunOperatorContext(
-      config,
-      project,
-    );
+    const originalContext = await acquireProjectRunOperatorContext(config, project);
     await originalContext.release();
   });
 
@@ -272,9 +242,7 @@ describe("operator canonical attempt context", () => {
     );
     const [hostPin] = await verifyAndPinProjects(config, [serviceLease]);
     const task = {
-      ...(JSON.parse(
-        fs.readFileSync(sourceTask, "utf8"),
-      ) as TaskExecutionRecord),
+      ...(JSON.parse(fs.readFileSync(sourceTask, "utf8")) as TaskExecutionRecord),
       lastEvent: { type: "attention-required" as const },
     };
     const attempt = await ProjectRunAuthority.createPreparingAttempt({
@@ -361,10 +329,7 @@ describe("operator canonical attempt context", () => {
     expect(fs.readFileSync(attemptFile)).toEqual(attemptBefore);
     expect(fs.readFileSync(sourceTask)).toEqual(taskBefore);
 
-    const originalContext = await acquireProjectRunOperatorContext(
-      config,
-      project,
-    );
+    const originalContext = await acquireProjectRunOperatorContext(config, project);
     try {
       expect(originalContext.authority.store.read()).toMatchObject({
         attemptId: "active-attention-attempt",
@@ -406,17 +371,13 @@ describe("operator canonical attempt context", () => {
     try {
       await expect(
         operator.run(() =>
-          withGitHubOperationProject(project, () =>
-            git.stageAll(project.repository.path),
-          ),
+          withGitHubOperationProject(project, () => git.stageAll(project.repository.path)),
         ),
       ).rejects.toThrow("ownership is no longer held");
       expect(invocations).toBe(1);
       await expect(
         operator.run(() =>
-          withGitHubOperationProject(project, () =>
-            git.stageAll(project.repository.path),
-          ),
+          withGitHubOperationProject(project, () => git.stageAll(project.repository.path)),
         ),
       ).rejects.toThrow("ownership is no longer held");
       expect(invocations).toBe(1);
@@ -507,10 +468,7 @@ describe("operator canonical attempt context", () => {
 
     try {
       await operator.run(async () => {
-        const queue = new TaskMutationQueue(
-          config.workflow.contextRoot,
-          project,
-        );
+        const queue = new TaskMutationQueue(config.workflow.contextRoot, project);
         queue.enqueue({
           projectId: project.id,
           cardId: "card-one",
@@ -530,10 +488,7 @@ describe("operator canonical attempt context", () => {
           },
           github,
           git,
-          taskStore: new TaskExecutionStore(
-            config.workflow.contextRoot,
-            project,
-          ),
+          taskStore: new TaskExecutionStore(config.workflow.contextRoot, project),
           queue,
           trello,
           doneListId: project.trello.doneListId,
@@ -602,10 +557,7 @@ describe("operator canonical attempt context", () => {
         owner: { generation: 2 },
       });
       await operator.run(() => {
-        const queue = new TaskMutationQueue(
-          config.workflow.contextRoot,
-          project,
-        );
+        const queue = new TaskMutationQueue(config.workflow.contextRoot, project);
         queue.enqueue({
           projectId: project.id,
           cardId: "card-one",
@@ -616,10 +568,7 @@ describe("operator canonical attempt context", () => {
         });
       });
       expect(
-        operator.authority.read(
-          ProjectRunAuthority.queueKey(project.id),
-          (value) => value,
-        ),
+        operator.authority.read(ProjectRunAuthority.queueKey(project.id), (value) => value),
       ).toMatchObject({
         events: [expect.objectContaining({ eventId: "operator-resume-event" })],
       });
@@ -636,9 +585,7 @@ describe("operator canonical attempt context", () => {
       "operator-test",
     );
     const [pin] = await verifyAndPinProjects(config, [serviceLease]);
-    const legacyTask = JSON.parse(
-      fs.readFileSync(sourceTask, "utf8"),
-    ) as TaskExecutionRecord;
+    const legacyTask = JSON.parse(fs.readFileSync(sourceTask, "utf8")) as TaskExecutionRecord;
     const attemptId = legacyAttemptId(legacyTask);
     await prepareProjectAttempt(coordinationRoot, project.id, serviceLease, {
       attemptId,
@@ -659,10 +606,7 @@ describe("operator canonical attempt context", () => {
         },
       });
       const registryBytes = JSON.parse(
-        fs.readFileSync(
-          path.join(coordinationRoot, "projects.registry.json"),
-          "utf8",
-        ),
+        fs.readFileSync(path.join(coordinationRoot, "projects.registry.json"), "utf8"),
       ) as {
         projects: Array<{ activeAttempt: unknown; pendingAttempt: unknown }>;
       };

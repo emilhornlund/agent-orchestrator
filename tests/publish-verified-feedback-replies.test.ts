@@ -76,9 +76,7 @@ describe("publishVerifiedFeedbackReplies", () => {
     async (status) => {
       const f = fixture();
       const sendReply = vi.fn(async (_entry, body: string) => {
-        expect(body).toContain(
-          status === "uncertain" ? "remains uncertain" : "remains unresolved",
-        );
+        expect(body).toContain(status === "uncertain" ? "remains uncertain" : "remains unresolved");
         expect(body).not.toContain("Verified in published commit");
         expect(body).toContain("#discussion_r77");
         return "partial-901";
@@ -149,9 +147,9 @@ describe("publishVerifiedFeedbackReplies", () => {
       body: "A different requested action",
       status: "pending",
     });
-    expect(
-      f.store.read("card")?.replyOutcomes?.[old.replyOperationId!],
-    ).toMatchObject({ replyId: "late-901" });
+    expect(f.store.read("card")?.replyOutcomes?.[old.replyOperationId!]).toMatchObject({
+      replyId: "late-901",
+    });
   });
 
   it("keeps exact-head identity checks even when CI itself is advisory", async () => {
@@ -185,9 +183,7 @@ describe("publishVerifiedFeedbackReplies", () => {
       reconcileReply,
       sendReply,
     });
-    expect(result.publishedReplyIds).toEqual([
-      { feedbackId: "inline-comment:77", replyId: "900" },
-    ]);
+    expect(result.publishedReplyIds).toEqual([{ feedbackId: "inline-comment:77", replyId: "900" }]);
     expect(f.store.read("card")?.entries[0]).toMatchObject({
       status: "published",
       replyId: "900",
@@ -237,17 +233,13 @@ describe("publishVerifiedFeedbackReplies", () => {
     await expect(
       publishVerifiedFeedbackReplies({ ...f.base, reconcileReply, sendReply }),
     ).rejects.toThrow("outcome is uncertain");
-    expect(f.store.read("card")?.entries[0]?.replyState).toBe(
-      "outcome-unknown",
-    );
+    expect(f.store.read("card")?.entries[0]?.replyState).toBe("outcome-unknown");
     const replay = await publishVerifiedFeedbackReplies({
       ...f.base,
       reconcileReply,
       sendReply,
     });
-    expect(replay.publishedReplyIds).toEqual([
-      { feedbackId: "inline-comment:77", replyId: "901" },
-    ]);
+    expect(replay.publishedReplyIds).toEqual([{ feedbackId: "inline-comment:77", replyId: "901" }]);
     expect(sendReply).toHaveBeenCalledOnce();
   });
 
@@ -267,10 +259,7 @@ describe("publishVerifiedFeedbackReplies", () => {
         sendReply,
       }),
     ).rejects.toThrow("uncertain");
-    const ledgerStore = new FeedbackLedgerStore(
-      path.join(root, "state"),
-      f.base.project,
-    );
+    const ledgerStore = new FeedbackLedgerStore(path.join(root, "state"), f.base.project);
     await expect(
       publishVerifiedFeedbackReplies({
         ...f.base,

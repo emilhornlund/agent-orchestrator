@@ -4,10 +4,7 @@ import { WorkflowError } from "../src/orchestrator/workflow-error.js";
 
 describe("WorkflowError", () => {
   it("preserves its failure category and message", () => {
-    const error = new WorkflowError(
-      "OpenCode",
-      "OpenCode implementation exited with code 1",
-    );
+    const error = new WorkflowError("OpenCode", "OpenCode implementation exited with code 1");
 
     expect(error).toBeInstanceOf(Error);
     expect(error.name).toBe("WorkflowError");

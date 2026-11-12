@@ -18,10 +18,7 @@ export function presentExternalDiagnostic(
     return redacted;
   }
 
-  const contentLength = Math.max(
-    0,
-    maximumLength - EXTERNAL_DIAGNOSTIC_TRUNCATION_MARKER.length,
-  );
+  const contentLength = Math.max(0, maximumLength - EXTERNAL_DIAGNOSTIC_TRUNCATION_MARKER.length);
 
   return `${redacted.slice(0, contentLength)}${EXTERNAL_DIAGNOSTIC_TRUNCATION_MARKER}`.slice(
     0,

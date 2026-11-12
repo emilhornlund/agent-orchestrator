@@ -32,9 +32,7 @@ export function buildTaskSessionFeedbackRemediationPrompt(
     (input.attachmentContext.projectId !== input.projectId ||
       input.attachmentContext.cardId !== input.card.id)
   ) {
-    throw new Error(
-      "Feedback remediation attachment context does not match task ownership",
-    );
+    throw new Error("Feedback remediation attachment context does not match task ownership");
   }
   if (input.actionableFeedback.length === 0) {
     throw new Error("Feedback remediation requires actionable ledger items");
@@ -47,9 +45,7 @@ export function buildTaskSessionFeedbackRemediationPrompt(
     `Current PR head: ${input.currentHeadSha}`,
     `Task title: ${JSON.stringify(input.card.name)}`,
     "Original task description:",
-    input.card.desc.trim().length > 0
-      ? input.card.desc
-      : "No additional description was provided.",
+    input.card.desc.trim().length > 0 ? input.card.desc : "No additional description was provided.",
     ...buildCardAttachmentPromptLines(input.attachmentContext),
     "Advisory task plan:",
     input.approvedPlan === undefined

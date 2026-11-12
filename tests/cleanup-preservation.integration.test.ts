@@ -45,27 +45,16 @@ function fixture() {
   return { repo, worktree, cleanup, run };
 }
 describe("cleanup preservation", () => {
-  it.each(["ignored", "untracked", "staged", "committed"])(
-    "preserves %s output",
-    async (kind) => {
-      const f = fixture();
-      const file = path.join(
-        f.worktree,
-        kind === "ignored" ? "ignored" : "output",
-      );
-      fs.writeFileSync(file, "valuable output");
-      if (["staged", "committed"].includes(kind))
-        f.run(f.worktree, "add", "output");
-      if (kind === "committed") f.run(f.worktree, "commit", "-m", "unshipped");
-      await expect(f.cleanup()).rejects.toThrow(
-        /dirty worktree|local-only commits/,
-      );
-      expect(fs.readFileSync(file, "utf8")).toBe("valuable output");
-      expect(
-        f.run(f.repo, "show-ref", "--verify", "refs/heads/agent/card"),
-      ).toBeTruthy();
-    },
-  );
+  it.each(["ignored", "untracked", "staged", "committed"])("preserves %s output", async (kind) => {
+    const f = fixture();
+    const file = path.join(f.worktree, kind === "ignored" ? "ignored" : "output");
+    fs.writeFileSync(file, "valuable output");
+    if (["staged", "committed"].includes(kind)) f.run(f.worktree, "add", "output");
+    if (kind === "committed") f.run(f.worktree, "commit", "-m", "unshipped");
+    await expect(f.cleanup()).rejects.toThrow(/dirty worktree|local-only commits/);
+    expect(fs.readFileSync(file, "utf8")).toBe("valuable output");
+    expect(f.run(f.repo, "show-ref", "--verify", "refs/heads/agent/card")).toBeTruthy();
+  });
   it("repeats owned cleanup after both resources are absent", async () => {
     const f = fixture();
     await f.cleanup();

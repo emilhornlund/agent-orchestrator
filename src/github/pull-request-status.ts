@@ -1,7 +1,5 @@
-export const AGENT_ORCHESTRATOR_STATUS_START =
-  "<!-- agent-orchestrator-status:start -->";
-export const AGENT_ORCHESTRATOR_STATUS_END =
-  "<!-- agent-orchestrator-status:end -->";
+export const AGENT_ORCHESTRATOR_STATUS_START = "<!-- agent-orchestrator-status:start -->";
+export const AGENT_ORCHESTRATOR_STATUS_END = "<!-- agent-orchestrator-status:end -->";
 
 export type ManagedPullRequestStatus =
   | "rebasing"
@@ -37,9 +35,7 @@ function markerPositions(body: string, marker: string): number[] {
   return positions;
 }
 
-function getManagedSection(
-  body: string,
-): { start: number; end: number } | null {
+function getManagedSection(body: string): { start: number; end: number } | null {
   const starts = markerPositions(body, AGENT_ORCHESTRATOR_STATUS_START);
   const ends = markerPositions(body, AGENT_ORCHESTRATOR_STATUS_END);
 
@@ -68,10 +64,7 @@ function getManagedSection(
   };
 }
 
-function statusMessage(
-  status: ManagedPullRequestStatus,
-  defaultBranch: string,
-): string {
+function statusMessage(status: ManagedPullRequestStatus, defaultBranch: string): string {
   switch (status) {
     case "automation-recovery":
       return "Agent Orchestrator status: PR automation requires recovery. Work and ownership are preserved; do not assume the operation finished.";
@@ -103,11 +96,7 @@ function statusMessage(
 }
 
 function section(message: string): string {
-  return [
-    AGENT_ORCHESTRATOR_STATUS_START,
-    message,
-    AGENT_ORCHESTRATOR_STATUS_END,
-  ].join("\n");
+  return [AGENT_ORCHESTRATOR_STATUS_START, message, AGENT_ORCHESTRATOR_STATUS_END].join("\n");
 }
 
 /** Reconciles only the uniquely marked status section of a pull request body. */
@@ -131,7 +120,6 @@ export function reconcileManagedPullRequestStatus(
   if (managedSection === null) {
     return body.length === 0 ? replacement : `${replacement}\n\n${body}`;
   }
-  if (managedSection.start === 0)
-    return replacement + body.slice(managedSection.end);
+  if (managedSection.start === 0) return replacement + body.slice(managedSection.end);
   return `${replacement}\n\n${body.slice(0, managedSection.start)}${body.slice(managedSection.end)}`;
 }

@@ -253,10 +253,7 @@ describe("buildPrimarySessionContext", () => {
         },
       }),
     ).rejects.toThrow("identity");
-    fs.symlinkSync(
-      path.join(root, "target"),
-      path.join(worktreePath, "linked"),
-    );
+    fs.symlinkSync(path.join(root, "target"), path.join(worktreePath, "linked"));
     await expect(
       buildPrimarySessionContext({
         git: git(worktreePath, { untracked: ["linked"] }),
@@ -309,10 +306,7 @@ describe("buildPrimarySessionContext", () => {
     );
     fs.mkdirSync(path.dirname(attachmentPath), { recursive: true });
     fs.writeFileSync(attachmentPath, `safe attachment ${canaries[6]}`);
-    fs.writeFileSync(
-      path.join(worktreePath, "new.txt"),
-      `safe file ${canaries[5]}`,
-    );
+    fs.writeFileSync(path.join(worktreePath, "new.txt"), `safe file ${canaries[5]}`);
     const bundle = await buildPrimarySessionContext({
       git: git(worktreePath, {
         staged: `safe diff ${canaries[2]}`,
@@ -356,16 +350,11 @@ describe("buildPrimarySessionContext", () => {
     for (const canary of canaries) expect(serialized).not.toContain(canary);
     expect(serialized).toContain("safe");
     const untracked = JSON.parse(bundle.currentDiff).untracked[0];
-    expect(Buffer.from(untracked.contentBase64, "base64").toString()).toContain(
-      "safe file",
+    expect(Buffer.from(untracked.contentBase64, "base64").toString()).toContain("safe file");
+    expect(Buffer.from(untracked.contentBase64, "base64").toString()).not.toContain(canaries[5]);
+    expect(JSON.parse(bundle.attachmentManifest.content!).manifest[0].readableContent).toContain(
+      "safe attachment",
     );
-    expect(
-      Buffer.from(untracked.contentBase64, "base64").toString(),
-    ).not.toContain(canaries[5]);
-    expect(
-      JSON.parse(bundle.attachmentManifest.content!).manifest[0]
-        .readableContent,
-    ).toContain("safe attachment");
   });
 
   it("sanitizes quoted assignment and nested feedback-ledger values before JSON encoding", async () => {

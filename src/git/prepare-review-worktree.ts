@@ -104,12 +104,7 @@ export async function prepareReviewWorktree(
     await git.deleteBranch(repositoryPath, branch);
   }
 
-  await git.addWorktreeWithNewBranch(
-    repositoryPath,
-    worktreePath,
-    branch,
-    remoteBranch,
-  );
+  await git.addWorktreeWithNewBranch(repositoryPath, worktreePath, branch, remoteBranch);
 
   return {
     path: worktreePath,
@@ -176,12 +171,7 @@ export async function prepareReviewMaintenanceWorktree(
   if (await git.branchExists(repositoryPath, branch)) {
     await git.addWorktree(repositoryPath, worktreePath, branch);
   } else {
-    await git.addWorktreeWithNewBranch(
-      repositoryPath,
-      worktreePath,
-      branch,
-      remoteBranch,
-    );
+    await git.addWorktreeWithNewBranch(repositoryPath, worktreePath, branch, remoteBranch);
   }
 
   return { path: worktreePath, branch, created: true };

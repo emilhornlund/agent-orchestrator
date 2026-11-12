@@ -43,10 +43,7 @@ export interface ProjectOwnershipLease {
   readonly instanceId: string;
   readonly token: string;
   assertHeld(): void;
-  markProcessGroupAmbiguous(
-    pid: number | undefined,
-    artifactRefs?: readonly string[],
-  ): void;
+  markProcessGroupAmbiguous(pid: number | undefined, artifactRefs?: readonly string[]): void;
   release(): Promise<void>;
 }
 
@@ -65,21 +62,14 @@ function ambiguityPath(root: string, key: string): string {
   return path.join(root, `${key}.ambiguity.json`);
 }
 
-function publishAmbiguityMarker(
-  root: string,
-  key: string,
-  record: AmbiguityMarker,
-): void {
+function publishAmbiguityMarker(root: string, key: string, record: AmbiguityMarker): void {
   const destination = ambiguityPath(root, key);
   let fd: number;
   let created = false;
   try {
     fd = fs.openSync(
       destination,
-      fs.constants.O_CREAT |
-        fs.constants.O_EXCL |
-        fs.constants.O_WRONLY |
-        fs.constants.O_NOFOLLOW,
+      fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY | fs.constants.O_NOFOLLOW,
       0o600,
     );
     created = true;
@@ -92,26 +82,15 @@ function publishAmbiguityMarker(
   }
   try {
     const stat = fs.fstatSync(fd);
-    if (!stat.isFile())
-      throw new ProjectOwnershipError("Unsafe ambiguity marker");
+    if (!stat.isFile()) throw new ProjectOwnershipError("Unsafe ambiguity marker");
     assertProtectedFile(stat, destination);
     if (!created) {
       const pathStat = fs.lstatSync(destination);
-      if (
-        pathStat.isSymbolicLink() ||
-        pathStat.dev !== stat.dev ||
-        pathStat.ino !== stat.ino
-      )
-        throw new ProjectOwnershipError(
-          "Ambiguity marker changed during validation",
-        );
-      const value = JSON.parse(
-        fs.readFileSync(fd, "utf8"),
-      ) as Partial<AmbiguityMarker>;
+      if (pathStat.isSymbolicLink() || pathStat.dev !== stat.dev || pathStat.ino !== stat.ino)
+        throw new ProjectOwnershipError("Ambiguity marker changed during validation");
+      const value = JSON.parse(fs.readFileSync(fd, "utf8")) as Partial<AmbiguityMarker>;
       if (value.version !== 1 || value.identity !== record.identity)
-        throw new ProjectOwnershipError(
-          "Existing ambiguity marker has a different identity",
-        );
+        throw new ProjectOwnershipError("Existing ambiguity marker has a different identity");
     } else {
       fs.writeFileSync(fd, `${JSON.stringify(record)}\n`);
     }
@@ -132,12 +111,9 @@ function assertNoAmbiguity(root: string, keys: readonly string[]): void {
     const file = ambiguityPath(root, key);
     try {
       const stat = fs.lstatSync(file);
-      if (stat.isSymbolicLink() || !stat.isFile())
-        throw new Error("unsafe marker");
+      if (stat.isSymbolicLink() || !stat.isFile()) throw new Error("unsafe marker");
       assertProtectedFile(stat, file);
-      const value = JSON.parse(
-        fs.readFileSync(file, "utf8"),
-      ) as Partial<AmbiguityMarker>;
+      const value = JSON.parse(fs.readFileSync(file, "utf8")) as Partial<AmbiguityMarker>;
       if (value.version !== 1 || typeof value.identity !== "string")
         throw new Error("malformed marker");
       throw new ProjectOwnershipError(
@@ -195,11 +171,7 @@ function assertSafeDirectory(root: string): void {
           `Coordination path contains a non-directory or symbolic link: ${current}`,
         );
       }
-      if (
-        current !== normalized &&
-        (stat.mode & 0o022) !== 0 &&
-        (stat.mode & 0o1000) === 0
-      ) {
+      if (current !== normalized && (stat.mode & 0o022) !== 0 && (stat.mode & 0o1000) === 0) {
         throw new ProjectOwnershipError(
           `Coordination namespace traverses an unprotected writable parent: ${current}`,
         );
@@ -214,8 +186,7 @@ function assertSafeDirectory(root: string): void {
   }
   const rootStat = fs.statSync(normalized);
   if (
-    (typeof process.getuid === "function" &&
-      rootStat.uid !== process.getuid()) ||
+    (typeof process.getuid === "function" && rootStat.uid !== process.getuid()) ||
     (rootStat.mode & 0o022) !== 0
   ) {
     throw new ProjectOwnershipError(
@@ -289,22 +260,14 @@ export function provisionCoordinationNamespace(
 ): void {
   assertSafeDirectory(coordinationRoot);
   if (!namespaceId.trim() || /[\r\n\0]/.test(namespaceId)) {
-    throw new ProjectOwnershipError(
-      "Namespace identifier must be nonblank and single-line",
-    );
+    throw new ProjectOwnershipError("Namespace identifier must be nonblank and single-line");
   }
-  const markerPath = path.join(
-    path.resolve(coordinationRoot),
-    namespaceMarkerName,
-  );
+  const markerPath = path.join(path.resolve(coordinationRoot), namespaceMarkerName);
   let fd: number;
   try {
     fd = fs.openSync(
       markerPath,
-      fs.constants.O_CREAT |
-        fs.constants.O_EXCL |
-        fs.constants.O_WRONLY |
-        fs.constants.O_NOFOLLOW,
+      fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY | fs.constants.O_NOFOLLOW,
       0o600,
     );
   } catch (error) {
@@ -332,19 +295,16 @@ function readOwnerRecord(metadataPath: string): OwnerRecord | undefined {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     if ((error as NodeJS.ErrnoException).code === "ELOOP") {
-      throw new ProjectOwnershipError(
-        `Ownership metadata is a symbolic link: ${metadataPath}`,
-        { cause: error },
-      );
+      throw new ProjectOwnershipError(`Ownership metadata is a symbolic link: ${metadataPath}`, {
+        cause: error,
+      });
     }
     throw error;
   }
   try {
     const stat = fs.fstatSync(fd);
     if (!stat.isFile()) {
-      throw new ProjectOwnershipError(
-        `Ownership metadata is not a regular file: ${metadataPath}`,
-      );
+      throw new ProjectOwnershipError(`Ownership metadata is not a regular file: ${metadataPath}`);
     }
     assertProtectedFile(stat, metadataPath);
     text = fs.readFileSync(fd, "utf8");
@@ -355,10 +315,9 @@ function readOwnerRecord(metadataPath: string): OwnerRecord | undefined {
   try {
     value = JSON.parse(text);
   } catch (error) {
-    throw new ProjectOwnershipError(
-      `Malformed ownership metadata preserved at ${metadataPath}`,
-      { cause: error },
-    );
+    throw new ProjectOwnershipError(`Malformed ownership metadata preserved at ${metadataPath}`, {
+      cause: error,
+    });
   }
   if (
     typeof value !== "object" ||
@@ -372,9 +331,7 @@ function readOwnerRecord(metadataPath: string): OwnerRecord | undefined {
     !Number.isSafeInteger((value as Partial<OwnerRecord>).inode) ||
     typeof (value as Partial<OwnerRecord>).namespaceId !== "string"
   ) {
-    throw new ProjectOwnershipError(
-      `Incompatible ownership metadata preserved at ${metadataPath}`,
-    );
+    throw new ProjectOwnershipError(`Incompatible ownership metadata preserved at ${metadataPath}`);
   }
   return value as OwnerRecord;
 }
@@ -386,9 +343,7 @@ function persistOwner(metadataPath: string, record: OwnerRecord): void {
     try {
       const stat = fs.lstatSync(historyPath);
       if (stat.isSymbolicLink() || !stat.isFile()) {
-        throw new ProjectOwnershipError(
-          `Unsafe ownership history path: ${historyPath}`,
-        );
+        throw new ProjectOwnershipError(`Unsafe ownership history path: ${historyPath}`);
       }
       assertProtectedFile(stat, historyPath);
     } catch (error) {
@@ -427,15 +382,12 @@ function persistOwner(metadataPath: string, record: OwnerRecord): void {
 
 function resourceKeys(identity: ProjectIntegrationIdentity): string[] {
   const boardId = identity.trelloBoardId.trim();
-  if (!boardId)
-    throw new ProjectOwnershipError("Trello board identity is blank");
+  if (!boardId) throw new ProjectOwnershipError("Trello board identity is blank");
   const resources = [
     `trello:${boardId}`,
     `github:${canonicalizeGitHubRepository(identity.githubRepository)}`,
   ];
-  return resources
-    .map((resource) => createHash("sha256").update(resource).digest("hex"))
-    .sort();
+  return resources.map((resource) => createHash("sha256").update(resource).digest("hex")).sort();
 }
 
 interface KernelLock {
@@ -446,10 +398,7 @@ interface KernelLock {
   execution: ReturnType<typeof beginProcessEvidence>;
 }
 
-async function acquireKernelLock(
-  lockPath: string,
-  wait = false,
-): Promise<KernelLock> {
+async function acquireKernelLock(lockPath: string, wait = false): Promise<KernelLock> {
   const descriptor = openLockFile(lockPath);
   let execution: ReturnType<typeof beginProcessEvidence>;
   try {
@@ -466,9 +415,7 @@ async function acquireKernelLock(
   try {
     stat = fs.fstatSync(descriptor);
     if (!stat.isFile()) {
-      throw new ProjectOwnershipError(
-        `Ownership lock is not a regular file: ${lockPath}`,
-      );
+      throw new ProjectOwnershipError(`Ownership lock is not a regular file: ${lockPath}`);
     }
     assertProtectedFile(stat, lockPath);
   } catch (error) {
@@ -490,12 +437,9 @@ async function acquireKernelLock(
     execution.finish("spawn-failure", {
       error: error instanceof Error ? error.message : String(error),
     });
-    throw new ProjectOwnershipError(
-      "Could not start host kernel locking utility (flock)",
-      {
-        cause: error,
-      },
-    );
+    throw new ProjectOwnershipError("Could not start host kernel locking utility (flock)", {
+      cause: error,
+    });
   }
   const runtime = getProcessRuntime();
   try {
@@ -517,14 +461,9 @@ async function acquireKernelLock(
         }
       };
       const terminate = (): void => {
-        signalProcessGroup(child.pid, "SIGTERM", (signal) =>
-          child.kill(signal),
-        );
+        signalProcessGroup(child.pid, "SIGTERM", (signal) => child.kill(signal));
         forceKill ??= setTimeout(
-          () =>
-            signalProcessGroup(child.pid, "SIGKILL", (signal) =>
-              child.kill(signal),
-            ),
+          () => signalProcessGroup(child.pid, "SIGKILL", (signal) => child.kill(signal)),
           100,
         );
       };
@@ -548,10 +487,7 @@ async function acquireKernelLock(
           terminate();
           return;
         }
-        append(
-          stream,
-          (stream === "stdout" ? stdoutRedactor : stderrRedactor).push(chunk),
-        );
+        append(stream, (stream === "stdout" ? stdoutRedactor : stderrRedactor).push(chunk));
       };
       const cleanup = (): void => {
         if (timer !== undefined) clearTimeout(timer);
@@ -570,12 +506,8 @@ async function acquireKernelLock(
       }, runtime.operationTimeoutMilliseconds);
       runtime.signal?.addEventListener("abort", abort, { once: true });
       if (runtime.signal?.aborted) abort();
-      child.stdout
-        ?.setEncoding("utf8")
-        .on("data", (chunk: string) => capture("stdout", chunk));
-      child.stderr
-        ?.setEncoding("utf8")
-        .on("data", (chunk: string) => capture("stderr", chunk));
+      child.stdout?.setEncoding("utf8").on("data", (chunk: string) => capture("stdout", chunk));
+      child.stderr?.setEncoding("utf8").on("data", (chunk: string) => capture("stderr", chunk));
       let spawnError: Error | undefined;
       child.once("error", (error) => {
         spawnError = error;
@@ -597,21 +529,11 @@ async function acquireKernelLock(
                 ? {}
                 : { evidenceFailure: execution.failure.message }),
             });
-            reject(
-              new ProcessExecutionError(
-                "flock",
-                execution.executionId,
-                "spawn-failure",
-              ),
-            );
+            reject(new ProcessExecutionError("flock", execution.executionId, "spawn-failure"));
           } else if (code === 0) {
-            if (
-              outputFailure !== undefined ||
-              execution.failure !== undefined
-            ) {
+            if (outputFailure !== undefined || execution.failure !== undefined) {
               execution.finish("evidence-failure", {
-                evidenceFailure:
-                  outputFailure?.message ?? execution.failure?.message,
+                evidenceFailure: outputFailure?.message ?? execution.failure?.message,
               });
               reject(outputFailure ?? execution.failure);
               return;
@@ -638,21 +560,16 @@ async function acquireKernelLock(
             });
             resolve();
           } else {
-            if (
-              outputFailure !== undefined ||
-              execution.failure !== undefined
-            ) {
+            if (outputFailure !== undefined || execution.failure !== undefined) {
               execution.finish("evidence-failure", {
                 exitCode: code ?? 1,
                 ...(signal === null ? {} : { signal }),
-                evidenceFailure:
-                  outputFailure?.message ?? execution.failure?.message,
+                evidenceFailure: outputFailure?.message ?? execution.failure?.message,
               });
               reject(outputFailure ?? execution.failure);
               return;
             }
-            const status =
-              cancellation ?? (code === 1 ? "lock-contended" : "nonzero");
+            const status = cancellation ?? (code === 1 ? "lock-contended" : "nonzero");
             execution.finish(status, {
               exitCode: code ?? 1,
               ...(signal === null ? {} : { signal }),
@@ -685,11 +602,7 @@ async function acquireKernelLock(
       });
     });
     const current = fs.lstatSync(lockPath);
-    if (
-      current.isSymbolicLink() ||
-      current.dev !== stat.dev ||
-      current.ino !== stat.ino
-    ) {
+    if (current.isSymbolicLink() || current.dev !== stat.dev || current.ino !== stat.ino) {
       throw new ProjectOwnershipError(
         `Ownership lock pathname changed during acquisition: ${lockPath}`,
       );
@@ -726,10 +639,9 @@ function openLockFile(lockPath: string): number {
       0o600,
     );
   } catch (error) {
-    throw new ProjectOwnershipError(
-      `Could not safely open ownership lock path ${lockPath}`,
-      { cause: error },
-    );
+    throw new ProjectOwnershipError(`Could not safely open ownership lock path ${lockPath}`, {
+      cause: error,
+    });
   }
 }
 
@@ -744,9 +656,7 @@ export async function acquireProjectOwnership(
   expectedNamespaceId: string,
 ): Promise<ProjectOwnershipLease> {
   if (!expectedNamespaceId.trim()) {
-    throw new ProjectOwnershipError(
-      "Expected coordination namespace ID is required",
-    );
+    throw new ProjectOwnershipError("Expected coordination namespace ID is required");
   }
   assertSafeDirectory(coordinationRoot);
   const root = path.resolve(coordinationRoot);
@@ -787,9 +697,7 @@ export async function acquireProjectOwnership(
           version: 1,
           identity: JSON.stringify({
             trelloBoardId: identity.trelloBoardId.trim(),
-            githubRepository: canonicalizeGitHubRepository(
-              identity.githubRepository,
-            ),
+            githubRepository: canonicalizeGitHubRepository(identity.githubRepository),
           }),
           hostname: os.hostname(),
           pid: process.pid,
@@ -852,17 +760,13 @@ export async function acquireProjectOwnership(
         version: 1,
         identity: JSON.stringify({
           trelloBoardId: identity.trelloBoardId.trim(),
-          githubRepository: canonicalizeGitHubRepository(
-            identity.githubRepository,
-          ),
+          githubRepository: canonicalizeGitHubRepository(identity.githubRepository),
         }),
         processGroup: pid ?? null,
         hostname: os.hostname(),
         bootId: (() => {
           try {
-            return fs
-              .readFileSync("/proc/sys/kernel/random/boot_id", "utf8")
-              .trim();
+            return fs.readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
           } catch {
             return null;
           }
@@ -920,10 +824,7 @@ export async function acquireProjectOwnership(
     },
     release() {
       if (releasePromise !== undefined) return releasePromise;
-      if (
-        ambiguityObserved &&
-        keys.some((key) => !durableAmbiguityKeys.has(key))
-      )
+      if (ambiguityObserved && keys.some((key) => !durableAmbiguityKeys.has(key)))
         return Promise.reject(
           new ProjectOwnershipError(
             "Process-group ambiguity markers are not durably present for every leased resource; ownership locks are retained",
@@ -934,11 +835,9 @@ export async function acquireProjectOwnership(
         fenceRetry = undefined;
       }
       state = "releasing";
-      releasePromise = Promise.all(held.reverse().map(releaseKernelLock)).then(
-        () => {
-          state = "released";
-        },
-      );
+      releasePromise = Promise.all(held.reverse().map(releaseKernelLock)).then(() => {
+        state = "released";
+      });
       return releasePromise;
     },
   };

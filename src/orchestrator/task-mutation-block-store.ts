@@ -28,9 +28,7 @@ const stateSchema = z
       keys.add(blocker.key);
     });
   });
-export function parseTaskMutationBlock(
-  value: unknown,
-): z.infer<typeof stateSchema> {
+export function parseTaskMutationBlock(value: unknown): z.infer<typeof stateSchema> {
   const current = stateSchema.safeParse(value);
   if (current.success) return current.data;
   const legacy = legacyStateSchema.parse(value);
@@ -39,9 +37,7 @@ export function parseTaskMutationBlock(
     projectId: legacy.projectId,
     blockers: [
       {
-        key: createHash("sha256")
-          .update(`legacy:${legacy.identity}`)
-          .digest("hex"),
+        key: createHash("sha256").update(`legacy:${legacy.identity}`).digest("hex"),
         identity: legacy.identity,
         diagnostic: legacy.diagnostic,
       },
@@ -59,10 +55,7 @@ const legacyStateSchema = z.strictObject({
 function ensureDirectory(directory: string): void {
   const parsed = path.parse(directory);
   let current = parsed.root;
-  for (const component of path
-    .relative(parsed.root, directory)
-    .split(path.sep)
-    .filter(Boolean)) {
+  for (const component of path.relative(parsed.root, directory).split(path.sep).filter(Boolean)) {
     current = path.join(current, component);
     let stat = fs.lstatSync(current, { throwIfNoEntry: false });
     if (stat === undefined) {
@@ -94,8 +87,7 @@ export class TaskMutationBlockStore {
     private readonly projectId: string,
     authority?: ProjectRunAuthority,
   ) {
-    if (!path.isAbsolute(contextRoot))
-      throw new Error("Task mutation block root must be absolute");
+    if (!path.isAbsolute(contextRoot)) throw new Error("Task mutation block root must be absolute");
     if (
       projectId.trim() !== projectId ||
       projectId.length === 0 ||
@@ -115,11 +107,7 @@ export class TaskMutationBlockStore {
       throw new Error("Task mutation block authority project mismatch");
   }
 
-  report(
-    scopeInput: string,
-    identityInput: string,
-    diagnostic: string,
-  ): boolean {
+  report(scopeInput: string, identityInput: string, diagnostic: string): boolean {
     const key = this.hash(scopeInput);
     const identity = this.hash(identityInput);
     if (this.authority !== undefined)
@@ -128,11 +116,8 @@ export class TaskMutationBlockStore {
         { version: 1, projectId: this.projectId, blockers: [] },
         (value) => {
           const previous = stateSchema.parse(parseTaskMutationBlock(value));
-          const current = previous.blockers.find(
-            (blocker) => blocker.key === key,
-          );
-          if (current?.identity === identity)
-            return { value: previous, result: false };
+          const current = previous.blockers.find((blocker) => blocker.key === key);
+          if (current?.identity === identity) return { value: previous, result: false };
           const state = stateSchema.parse({
             version: 1,
             projectId: this.projectId,
@@ -180,9 +165,7 @@ export class TaskMutationBlockStore {
         { version: 1, projectId: this.projectId, blockers: [] },
         (value) => {
           const previous = stateSchema.parse(parseTaskMutationBlock(value));
-          const remaining = previous.blockers.filter(
-            (blocker) => blocker.key !== key,
-          );
+          const remaining = previous.blockers.filter((blocker) => blocker.key !== key);
           return {
             value: stateSchema.parse({ ...previous, blockers: remaining }),
             result: undefined,
@@ -194,9 +177,7 @@ export class TaskMutationBlockStore {
     }
     const previous = this.read();
     if (!previous.blockers.some((blocker) => blocker.key === key)) return;
-    const remaining = previous.blockers.filter(
-      (blocker) => blocker.key !== key,
-    );
+    const remaining = previous.blockers.filter((blocker) => blocker.key !== key);
     if (remaining.length === 0) {
       try {
         fs.unlinkSync(this.filePath);
@@ -245,13 +226,10 @@ export class TaskMutationBlockStore {
       );
     try {
       const stat = fs.lstatSync(this.filePath, { throwIfNoEntry: false });
-      if (stat === undefined)
-        return { version: 1, projectId: this.projectId, blockers: [] };
+      if (stat === undefined) return { version: 1, projectId: this.projectId, blockers: [] };
       if (stat.isSymbolicLink() || !stat.isFile())
         throw new Error("Unsafe task mutation block state file");
-      const parsed = JSON.parse(
-        fs.readFileSync(this.filePath, "utf8"),
-      ) as unknown;
+      const parsed = JSON.parse(fs.readFileSync(this.filePath, "utf8")) as unknown;
       const normalized = parseTaskMutationBlock(parsed);
       if (normalized.projectId !== this.projectId)
         throw new Error("Task mutation block project identity mismatch");

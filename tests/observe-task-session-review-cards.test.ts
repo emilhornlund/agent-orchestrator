@@ -22,10 +22,7 @@ function fixture() {
   const worktreeRoot = path.join(root, "worktrees");
   fs.mkdirSync(repositoryPath);
   fs.mkdirSync(worktreeRoot);
-  fs.writeFileSync(
-    path.join(repositoryPath, "keep.txt"),
-    "source checkout remains untouched",
-  );
+  fs.writeFileSync(path.join(repositoryPath, "keep.txt"), "source checkout remains untouched");
   const project = {
     id: "project",
     autoMerge: false,
@@ -78,22 +75,20 @@ function fixture() {
     store.create(record);
   }
   const github = {
-    findPullRequestState: vi.fn(
-      async ({ headBranch }: { headBranch: string }) => {
-        const cardId = headBranch.slice("agent/".length);
-        const number = cardId === "card-one" ? 1 : 2;
-        return {
-          url: `https://github.com/owner/repo/pull/${number}`,
-          state: "OPEN",
-          mergedAt: null,
-          headRefOid: headByCard.get(cardId),
-          baseRefName: "main",
-          headRefName: `agent/${cardId}`,
-          headRepository: { name: "repo" },
-          headRepositoryOwner: { login: "owner" },
-        };
-      },
-    ),
+    findPullRequestState: vi.fn(async ({ headBranch }: { headBranch: string }) => {
+      const cardId = headBranch.slice("agent/".length);
+      const number = cardId === "card-one" ? 1 : 2;
+      return {
+        url: `https://github.com/owner/repo/pull/${number}`,
+        state: "OPEN",
+        mergedAt: null,
+        headRefOid: headByCard.get(cardId),
+        baseRefName: "main",
+        headRefName: `agent/${cardId}`,
+        headRepository: { name: "repo" },
+        headRepositoryOwner: { login: "owner" },
+      };
+    }),
     comparePullRequestHeadToBase: vi.fn(async () => "current" as const),
     getPullRequestCommitShas: vi.fn(async () => [] as string[]),
     isAncestorCommit: vi.fn(async () => false),
@@ -117,23 +112,21 @@ function fixture() {
         },
       ],
     })),
-    findChangesRequestedPullRequest: vi.fn(
-      async ({ headBranch }: { headBranch: string }) => ({
-        headSha: headByCard.get(headBranch.slice("agent/".length))!,
-        feedback: {
-          reviews: [
-            {
-              id: 7,
-              body: "Fix it",
-              author: "reviewer",
-              submittedAt: "2026-10-24T09:00:00.000Z",
-              inlineComments: [],
-            },
-          ],
-        },
-        url: "",
-      }),
-    ),
+    findChangesRequestedPullRequest: vi.fn(async ({ headBranch }: { headBranch: string }) => ({
+      headSha: headByCard.get(headBranch.slice("agent/".length))!,
+      feedback: {
+        reviews: [
+          {
+            id: 7,
+            body: "Fix it",
+            author: "reviewer",
+            submittedAt: "2026-10-24T09:00:00.000Z",
+            inlineComments: [],
+          },
+        ],
+      },
+      url: "",
+    })),
     getPullRequestConversationComments: vi.fn(
       async ({ pullRequestUrl }: { pullRequestUrl: string }) => [
         {
@@ -195,18 +188,13 @@ describe("observeTaskSessionReviewCards", () => {
       await observe();
       expect(f.store.read("card-one")!.ciObservationWindow).toEqual(window);
       vi.setSystemTime(new Date("2026-11-01T10:30:00Z"));
-      const restarted = new TaskExecutionStore(
-        path.join(root, "state"),
-        f.project,
-      );
+      const restarted = new TaskExecutionStore(path.join(root, "state"), f.project);
       await observe(restarted);
       expect(restarted.read("card-one")!.ciObservationWindow).toEqual({
         ...window,
         timedOut: true,
       });
-      expect(
-        restarted.read("card-one")!.reviewObservation!.ciEvaluation.status,
-      ).not.toBe("passed");
+      expect(restarted.read("card-one")!.reviewObservation!.ciEvaluation.status).not.toBe("passed");
     },
   );
   it.each(["MERGED", "CLOSED"] as const)(
@@ -237,9 +225,7 @@ describe("observeTaskSessionReviewCards", () => {
         taskRecordStore: f.store,
         github: f.github,
       });
-      expect(result).toMatchObject([
-        { state, cardId: "card-one", pullRequestUrl: pr.url },
-      ]);
+      expect(result).toMatchObject([{ state, cardId: "card-one", pullRequestUrl: pr.url }]);
       expect(f.store.read("card-one")?.revision).toBe(current.revision);
       expect(f.store.read("card-one")?.reviewObservation).toBeUndefined();
     },
@@ -345,9 +331,7 @@ describe("observeTaskSessionReviewCards", () => {
               evidence: [],
             },
           ],
-          blockingFindings: [
-            { kind: "defect", summary: "Bug", detail: "Unresolved" },
-          ],
+          blockingFindings: [{ kind: "defect", summary: "Bug", detail: "Unresolved" }],
           reviewedContentIdentity: `sha256:${"a".repeat(64)}`,
         },
       },
@@ -379,10 +363,7 @@ describe("observeTaskSessionReviewCards", () => {
       taskRecordStore: f.store,
       github: f.github,
     });
-    expect(observed.map(({ cardId }) => cardId)).toEqual([
-      "card-one",
-      "card-two",
-    ]);
+    expect(observed.map(({ cardId }) => cardId)).toEqual(["card-one", "card-two"]);
     expect(observed.map(({ headSha }) => headSha)).toEqual([
       f.headByCard.get("card-one"),
       f.headByCard.get("card-two"),
@@ -393,15 +374,11 @@ describe("observeTaskSessionReviewCards", () => {
     expect(observed[1]?.state === "OPEN" && observed[1].feedbackIds).toContain(
       "conversation-comment:202",
     );
-    expect(f.store.read("card-one")?.reviewObservation?.headSha).toBe(
-      f.headByCard.get("card-one"),
+    expect(f.store.read("card-one")?.reviewObservation?.headSha).toBe(f.headByCard.get("card-one"));
+    expect(f.store.read("card-two")?.reviewObservation?.headSha).toBe(f.headByCard.get("card-two"));
+    expect(fs.readFileSync(path.join(f.repositoryPath, "keep.txt"), "utf8")).toBe(
+      "source checkout remains untouched",
     );
-    expect(f.store.read("card-two")?.reviewObservation?.headSha).toBe(
-      f.headByCard.get("card-two"),
-    );
-    expect(
-      fs.readFileSync(path.join(f.repositoryPath, "keep.txt"), "utf8"),
-    ).toBe("source checkout remains untouched");
     expect(
       (
         f.github as unknown as {
@@ -596,14 +573,12 @@ describe("observeTaskSessionReviewCards", () => {
 
   it("does not persist observations for a card whose authoritative PR head mismatches", async () => {
     const f = fixture();
-    vi.mocked(f.github.findPullRequestState).mockImplementation(
-      async ({ headBranch }) => ({
-        url: `https://github.com/owner/repo/pull/${headBranch.endsWith("one") ? 1 : 2}`,
-        state: "OPEN",
-        mergedAt: null,
-        headRefOid: "c".repeat(40),
-      }),
-    );
+    vi.mocked(f.github.findPullRequestState).mockImplementation(async ({ headBranch }) => ({
+      url: `https://github.com/owner/repo/pull/${headBranch.endsWith("one") ? 1 : 2}`,
+      state: "OPEN",
+      mergedAt: null,
+      headRefOid: "c".repeat(40),
+    }));
     await expect(
       observeTaskSessionReviewCards({
         project: f.project,
@@ -619,9 +594,7 @@ describe("observeTaskSessionReviewCards", () => {
     "reports the authoritative base relation as %s",
     async (baseRelation) => {
       const f = fixture();
-      vi.mocked(f.github.comparePullRequestHeadToBase).mockResolvedValue(
-        baseRelation,
-      );
+      vi.mocked(f.github.comparePullRequestHeadToBase).mockResolvedValue(baseRelation);
       const observed = await observeTaskSessionReviewCards({
         project: f.project,
         cards: f.cards.slice(0, 1),
@@ -634,9 +607,7 @@ describe("observeTaskSessionReviewCards", () => {
 
   it("does not emit repeated diagnostics for an unchanged outdated PR", async () => {
     const f = fixture();
-    vi.mocked(f.github.comparePullRequestHeadToBase).mockResolvedValue(
-      "behind",
-    );
+    vi.mocked(f.github.comparePullRequestHeadToBase).mockResolvedValue("behind");
     const warn = vi.fn();
     vi.spyOn(logger, "child").mockReturnValue({ warn } as never);
     try {
@@ -656,9 +627,7 @@ describe("observeTaskSessionReviewCards", () => {
 
   it("maps comparison API failures to uncertain", async () => {
     const f = fixture();
-    vi.mocked(f.github.comparePullRequestHeadToBase).mockRejectedValue(
-      new Error("API failure"),
-    );
+    vi.mocked(f.github.comparePullRequestHeadToBase).mockRejectedValue(new Error("API failure"));
     const observed = await observeTaskSessionReviewCards({
       project: f.project,
       cards: f.cards.slice(0, 1),

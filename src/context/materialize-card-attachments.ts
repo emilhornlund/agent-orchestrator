@@ -38,9 +38,7 @@ export interface MaterializeCardAttachmentsOptions {
   signal?: AbortSignal;
   maxAttachmentBytes?: number;
   maxTotalAttachmentBytes?: number;
-  onSuccessfulReconciliation?: (
-    summary: CardAttachmentReconciliationSummary,
-  ) => void;
+  onSuccessfulReconciliation?: (summary: CardAttachmentReconciliationSummary) => void;
 }
 
 export type TrelloAttachmentSource = Pick<
@@ -108,9 +106,7 @@ function assertExactKeys(
   const unexpectedKey = Object.keys(value).find((key) => !allowedKeys.has(key));
 
   if (unexpectedKey !== undefined) {
-    throw new Error(
-      `${description} contains unsupported field "${unexpectedKey}"`,
-    );
+    throw new Error(`${description} contains unsupported field "${unexpectedKey}"`);
   }
 }
 
@@ -142,9 +138,7 @@ function hasControlCharacter(value: string): boolean {
   return Array.from(value).some((character) => {
     const code = character.codePointAt(0);
 
-    return (
-      code !== undefined && (code <= 0x1f || (code >= 0x7f && code <= 0x9f))
-    );
+    return code !== undefined && (code <= 0x1f || (code >= 0x7f && code <= 0x9f));
   });
 }
 
@@ -176,10 +170,8 @@ function validateAttachmentMetadata(
     hasControlCharacter(attachment.id) ||
     hasControlCharacter(attachment.name) ||
     hasControlCharacter(attachment.url) ||
-    (typeof attachment.mimeType === "string" &&
-      hasControlCharacter(attachment.mimeType)) ||
-    (typeof attachment.bytes === "string" &&
-      hasControlCharacter(attachment.bytes))
+    (typeof attachment.mimeType === "string" && hasControlCharacter(attachment.mimeType)) ||
+    (typeof attachment.bytes === "string" && hasControlCharacter(attachment.bytes))
   ) {
     throw new Error(`${description} has invalid metadata`);
   }
@@ -192,10 +184,7 @@ function validateAttachment(
   validateAttachmentMetadata(attachment, `Trello attachment ${index}`);
 }
 
-function validateMetadata(
-  left: TrelloAttachment,
-  right: TrelloAttachment,
-): boolean {
+function validateMetadata(left: TrelloAttachment, right: TrelloAttachment): boolean {
   return (
     left.id === right.id &&
     left.name === right.name &&
@@ -246,10 +235,7 @@ function normalizeFilename(name: string): string {
   }
 
   const stem = extension.length > 0 ? leaf.slice(0, -extension.length) : leaf;
-  const availableStemLength = Math.max(
-    1,
-    maximumFilenameLength - extension.length,
-  );
+  const availableStemLength = Math.max(1, maximumFilenameLength - extension.length);
 
   return `${stem.slice(0, availableStemLength)}${extension}`;
 }
@@ -258,13 +244,8 @@ function addFilenameSuffix(filename: string, suffix: number): string {
   const suffixText = `-${suffix}`;
   const extension = path.extname(filename);
   const boundedExtension =
-    extension.length + suffixText.length < maximumFilenameLength
-      ? extension
-      : "";
-  const stem =
-    boundedExtension.length > 0
-      ? filename.slice(0, -boundedExtension.length)
-      : filename;
+    extension.length + suffixText.length < maximumFilenameLength ? extension : "";
+  const stem = boundedExtension.length > 0 ? filename.slice(0, -boundedExtension.length) : filename;
   const availableStemLength = Math.max(
     1,
     maximumFilenameLength - boundedExtension.length - suffixText.length,
@@ -277,10 +258,7 @@ function addFilenameSuffix(filename: string, suffix: number): string {
   return `${stem.slice(0, availableStemLength)}${suffixText}${boundedExtension}`;
 }
 
-function allocateFilename(
-  name: string,
-  occupiedFilenames: Set<string>,
-): string {
+function allocateFilename(name: string, occupiedFilenames: Set<string>): string {
   const baseFilename = normalizeFilename(name);
   let filename = baseFilename;
   let suffix = 2;
@@ -294,14 +272,9 @@ function allocateFilename(
   return filename;
 }
 
-function parseManifestEntry(
-  value: unknown,
-  index: number,
-): CardAttachmentManifestEntry {
+function parseManifestEntry(value: unknown, index: number): CardAttachmentManifestEntry {
   if (!isRecord(value)) {
-    throw new Error(
-      `Existing attachments manifest entry ${index} is not an object`,
-    );
+    throw new Error(`Existing attachments manifest entry ${index} is not an object`);
   }
 
   assertExactKeys(
@@ -319,17 +292,12 @@ function parseManifestEntry(
     isUpload: value.isUpload,
   };
 
-  validateAttachmentMetadata(
-    attachment,
-    `Existing attachments manifest entry ${index}`,
-  );
+  validateAttachmentMetadata(attachment, `Existing attachments manifest entry ${index}`);
 
   const localFilename = value.localFilename;
 
   if (typeof localFilename !== "string" && localFilename !== null) {
-    throw new Error(
-      `Existing attachments manifest entry ${index} has an invalid localFilename`,
-    );
+    throw new Error(`Existing attachments manifest entry ${index} has an invalid localFilename`);
   }
 
   if (attachment.isUpload && localFilename === null) {
@@ -352,9 +320,7 @@ function parseManifestEntry(
 
 function parseManifest(value: unknown): CardAttachmentManifest {
   if (!isRecord(value) || !Array.isArray(value.attachments)) {
-    throw new Error(
-      "Existing attachments manifest must contain an attachments array",
-    );
+    throw new Error("Existing attachments manifest must contain an attachments array");
   }
 
   assertExactKeys(value, ["attachments"], "Existing attachments manifest");
@@ -397,15 +363,11 @@ async function readExistingManifest(
   }
 
   if (stat.isSymbolicLink()) {
-    throw new Error(
-      `Refusing symbolic-link attachments manifest "${paths.manifestPath}"`,
-    );
+    throw new Error(`Refusing symbolic-link attachments manifest "${paths.manifestPath}"`);
   }
 
   if (!stat.isFile()) {
-    throw new Error(
-      `Refusing non-file attachments manifest "${paths.manifestPath}"`,
-    );
+    throw new Error(`Refusing non-file attachments manifest "${paths.manifestPath}"`);
   }
 
   let raw: string;
@@ -438,12 +400,7 @@ async function readExistingManifest(
     }
 
     try {
-      resolveCardAttachmentPath(
-        contextRoot,
-        projectId,
-        cardId,
-        attachment.localFilename,
-      );
+      resolveCardAttachmentPath(contextRoot, projectId, cardId, attachment.localFilename);
     } catch (error) {
       throw new Error(
         `Existing attachments manifest entry ${index} has an unsafe localFilename: ${errorMessage(error)}`,
@@ -475,12 +432,7 @@ async function existingFileIsRegular(
   cardId: string,
   filename: string,
 ): Promise<boolean> {
-  const attachmentPath = resolveCardAttachmentPath(
-    contextRoot,
-    projectId,
-    cardId,
-    filename,
-  );
+  const attachmentPath = resolveCardAttachmentPath(contextRoot, projectId, cardId, filename);
 
   try {
     const stat = await fs.promises.lstat(attachmentPath);
@@ -503,9 +455,7 @@ async function existingFileIsRegular(
   }
 }
 
-async function getOccupiedFilenames(
-  attachmentsDirectory: string,
-): Promise<Set<string>> {
+async function getOccupiedFilenames(attachmentsDirectory: string): Promise<Set<string>> {
   let filenames: string[];
 
   try {
@@ -526,10 +476,7 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
   }
 }
 
-async function openTemporaryFile(
-  targetPath: string,
-  suffix: string,
-): Promise<TemporaryFile> {
+async function openTemporaryFile(targetPath: string, suffix: string): Promise<TemporaryFile> {
   for (let index = 0; ; index += 1) {
     const temporaryPath = `${targetPath}.${suffix}.${index}`;
 
@@ -537,11 +484,7 @@ async function openTemporaryFile(
       const handle = await fs.promises.open(temporaryPath, "wx", 0o600);
       return { path: temporaryPath, handle };
     } catch (error) {
-      if (
-        error instanceof Error &&
-        "code" in error &&
-        error.code === "EEXIST"
-      ) {
+      if (error instanceof Error && "code" in error && error.code === "EEXIST") {
         continue;
       }
 
@@ -554,20 +497,13 @@ async function removeFile(filePath: string): Promise<void> {
   try {
     await fs.promises.unlink(filePath);
   } catch (error) {
-    if (!(
-      error instanceof Error &&
-      "code" in error &&
-      error.code === "ENOENT"
-    )) {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
       throw error;
     }
   }
 }
 
-async function writeChunk(
-  handle: fs.promises.FileHandle,
-  chunk: Uint8Array,
-): Promise<void> {
+async function writeChunk(handle: fs.promises.FileHandle, chunk: Uint8Array): Promise<void> {
   let offset = 0;
 
   while (offset < chunk.byteLength) {
@@ -581,10 +517,7 @@ async function writeChunk(
   }
 }
 
-async function publishDownloadedFile(
-  temporaryPath: string,
-  targetPath: string,
-): Promise<void> {
+async function publishDownloadedFile(temporaryPath: string, targetPath: string): Promise<void> {
   await fs.promises.link(temporaryPath, targetPath);
 
   try {
@@ -619,10 +552,7 @@ async function downloadAttachmentToFile(
     );
   }
 
-  if (
-    declaredBytes !== undefined &&
-    declaredBytes > maxTotalAttachmentBytes - downloadedBytes
-  ) {
+  if (declaredBytes !== undefined && declaredBytes > maxTotalAttachmentBytes - downloadedBytes) {
     throw new Error(
       `Trello attachment "${attachment.name}" (${attachment.id}) declared size ${declaredBytes} exceeds the remaining aggregate download limit of ${maxTotalAttachmentBytes - downloadedBytes} bytes`,
     );
@@ -652,9 +582,7 @@ async function downloadAttachmentToFile(
     );
   }
 
-  const contentLength = parseUsableByteCount(
-    response.headers.get("content-length"),
-  );
+  const contentLength = parseUsableByteCount(response.headers.get("content-length"));
 
   if (contentLength !== undefined && contentLength > maxAttachmentBytes) {
     throw new Error(
@@ -662,10 +590,7 @@ async function downloadAttachmentToFile(
     );
   }
 
-  if (
-    contentLength !== undefined &&
-    contentLength > maxTotalAttachmentBytes - downloadedBytes
-  ) {
+  if (contentLength !== undefined && contentLength > maxTotalAttachmentBytes - downloadedBytes) {
     throw new Error(
       `Trello attachment "${attachment.name}" (${attachment.id}) response size ${contentLength} exceeds the remaining aggregate download limit of ${maxTotalAttachmentBytes - downloadedBytes} bytes`,
     );
@@ -743,10 +668,8 @@ async function downloadAttachmentToFile(
       }
     }
 
-    const declaredSizeMismatch =
-      declaredBytes !== undefined && receivedBytes < declaredBytes;
-    const contentLengthMismatch =
-      contentLength !== undefined && receivedBytes !== contentLength;
+    const declaredSizeMismatch = declaredBytes !== undefined && receivedBytes < declaredBytes;
+    const contentLengthMismatch = contentLength !== undefined && receivedBytes !== contentLength;
 
     if (declaredSizeMismatch || contentLengthMismatch) {
       const expectedDescription = contentLengthMismatch
@@ -797,10 +720,7 @@ async function publishManifest(
   let temporaryPath: string | undefined;
 
   try {
-    const temporaryFile = await openTemporaryFile(
-      paths.manifestPath,
-      "manifest",
-    );
+    const temporaryFile = await openTemporaryFile(paths.manifestPath, "manifest");
     temporaryPath = temporaryFile.path;
 
     try {
@@ -810,24 +730,16 @@ async function publishManifest(
       await temporaryFile.handle.close();
     }
 
-    const existingManifest = await fs.promises
-      .lstat(paths.manifestPath)
-      .catch((error: unknown) => {
-        if (
-          error instanceof Error &&
-          "code" in error &&
-          error.code === "ENOENT"
-        ) {
-          return undefined;
-        }
+    const existingManifest = await fs.promises.lstat(paths.manifestPath).catch((error: unknown) => {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+        return undefined;
+      }
 
-        throw error;
-      });
+      throw error;
+    });
 
     if (existingManifest !== undefined && !existingManifest.isFile()) {
-      throw new Error(
-        `Refusing to replace unsafe attachments manifest "${paths.manifestPath}"`,
-      );
+      throw new Error(`Refusing to replace unsafe attachments manifest "${paths.manifestPath}"`);
     }
 
     await fs.promises.rename(temporaryPath, paths.manifestPath);
@@ -899,15 +811,11 @@ async function detachAttachmentsDirectory(paths: CardContextPaths): Promise<{
     const stagedStat = await fs.promises.lstat(stagedDirectory);
 
     if (stagedStat.isSymbolicLink()) {
-      throw new Error(
-        `Refusing symbolic-link staged attachments directory "${stagedDirectory}"`,
-      );
+      throw new Error(`Refusing symbolic-link staged attachments directory "${stagedDirectory}"`);
     }
 
     if (!stagedStat.isDirectory()) {
-      throw new Error(
-        `Refusing unsafe staged attachments directory "${stagedDirectory}"`,
-      );
+      throw new Error(`Refusing unsafe staged attachments directory "${stagedDirectory}"`);
     }
 
     stagedDirectoryVerified = true;
@@ -944,21 +852,12 @@ async function detachAttachmentsDirectory(paths: CardContextPaths): Promise<{
   };
 }
 
-async function restoreStaleFileBackups(
-  transaction: StaleCleanupTransaction,
-): Promise<void> {
+async function restoreStaleFileBackups(transaction: StaleCleanupTransaction): Promise<void> {
   for (const backup of transaction.backups) {
-    const originalPath = path.join(
-      transaction.stagedDirectory,
-      backup.filename,
-    );
+    const originalPath = path.join(transaction.stagedDirectory, backup.filename);
 
     try {
-      await fs.promises.copyFile(
-        backup.path,
-        originalPath,
-        fs.constants.COPYFILE_EXCL,
-      );
+      await fs.promises.copyFile(backup.path, originalPath, fs.constants.COPYFILE_EXCL);
     } catch (error) {
       if (hasErrorCode(error, "EEXIST")) {
         continue;
@@ -972,14 +871,9 @@ async function restoreStaleFileBackups(
   }
 }
 
-async function rollbackStaleCleanup(
-  transaction: StaleCleanupTransaction,
-): Promise<void> {
+async function rollbackStaleCleanup(transaction: StaleCleanupTransaction): Promise<void> {
   await restoreStaleFileBackups(transaction);
-  await fs.promises.rename(
-    transaction.stagedDirectory,
-    transaction.attachmentsDirectory,
-  );
+  await fs.promises.rename(transaction.stagedDirectory, transaction.attachmentsDirectory);
   await removeTemporaryDirectory(transaction.temporaryDirectory);
 }
 
@@ -1003,18 +897,10 @@ async function removeCreatedAttachmentFiles(
 
   try {
     for (const createdAttachmentPath of createdAttachmentPaths) {
-      await removeFile(
-        path.join(
-          detached.stagedDirectory,
-          path.basename(createdAttachmentPath),
-        ),
-      );
+      await removeFile(path.join(detached.stagedDirectory, path.basename(createdAttachmentPath)));
     }
 
-    await fs.promises.rename(
-      detached.stagedDirectory,
-      detached.attachmentsDirectory,
-    );
+    await fs.promises.rename(detached.stagedDirectory, detached.attachmentsDirectory);
     restored = true;
   } catch {
     // Preserve the staged tree when it cannot be safely restored.
@@ -1036,16 +922,12 @@ async function stageStaleManagedFiles(
 
   const finalFilenames = new Set(
     finalManifest.attachments.flatMap((attachment) =>
-      attachment.isUpload && attachment.localFilename !== null
-        ? [attachment.localFilename]
-        : [],
+      attachment.isUpload && attachment.localFilename !== null ? [attachment.localFilename] : [],
     ),
   );
   const staleFilenames = new Set(
     previousManifest.attachments.flatMap((attachment) =>
-      attachment.isUpload && attachment.localFilename !== null
-        ? [attachment.localFilename]
-        : [],
+      attachment.isUpload && attachment.localFilename !== null ? [attachment.localFilename] : [],
     ),
   );
 
@@ -1091,11 +973,7 @@ async function stageStaleManagedFiles(
       );
 
       try {
-        await fs.promises.copyFile(
-          attachmentPath,
-          backupPath,
-          fs.constants.COPYFILE_EXCL,
-        );
+        await fs.promises.copyFile(attachmentPath, backupPath, fs.constants.COPYFILE_EXCL);
       } catch (error) {
         throw new Error(
           `Unable to back up stale attachment file "${attachmentPath}": ${errorMessage(error)}`,
@@ -1107,10 +985,7 @@ async function stageStaleManagedFiles(
     }
 
     for (const backup of transaction.backups) {
-      const attachmentPath = path.join(
-        detached.stagedDirectory,
-        backup.filename,
-      );
+      const attachmentPath = path.join(detached.stagedDirectory, backup.filename);
 
       try {
         await fs.promises.unlink(attachmentPath);
@@ -1141,13 +1016,8 @@ async function stageStaleManagedFiles(
   return transaction;
 }
 
-async function commitStaleCleanup(
-  transaction: StaleCleanupTransaction,
-): Promise<void> {
-  await fs.promises.rename(
-    transaction.stagedDirectory,
-    transaction.attachmentsDirectory,
-  );
+async function commitStaleCleanup(transaction: StaleCleanupTransaction): Promise<void> {
+  await fs.promises.rename(transaction.stagedDirectory, transaction.attachmentsDirectory);
 
   // A failure here cannot affect the published attachment state. Keep the
   // private backup directory for diagnosis rather than failing the refresh.
@@ -1173,21 +1043,13 @@ export async function materializeCardAttachments(
   cardId: string,
   options: MaterializeCardAttachmentsOptions = {},
 ): Promise<CardAttachmentManifest> {
-  const maxAttachmentBytes = assertValidLimit(
-    options.maxAttachmentBytes,
-    "maxAttachmentBytes",
-  );
+  const maxAttachmentBytes = assertValidLimit(options.maxAttachmentBytes, "maxAttachmentBytes");
   const maxTotalAttachmentBytes = assertValidLimit(
     options.maxTotalAttachmentBytes,
     "maxTotalAttachmentBytes",
   );
   const paths = createCardContextDirectories(contextRoot, projectId, cardId);
-  const existingManifest = await readExistingManifest(
-    paths,
-    contextRoot,
-    projectId,
-    cardId,
-  );
+  const existingManifest = await readExistingManifest(paths, contextRoot, projectId, cardId);
 
   throwIfAborted(options.signal);
 
@@ -1229,14 +1091,9 @@ export async function materializeCardAttachments(
     attachmentIds.add(attachment.id);
   }
 
-  const occupiedFilenames = await getOccupiedFilenames(
-    paths.attachmentsDirectory,
-  );
+  const occupiedFilenames = await getOccupiedFilenames(paths.attachmentsDirectory);
   const existingById = new Map(
-    existingManifest?.attachments.map((attachment) => [
-      attachment.id,
-      attachment,
-    ]) ?? [],
+    existingManifest?.attachments.map((attachment) => [attachment.id, attachment]) ?? [],
   );
   const plannedAttachments: PlannedAttachment[] = [];
 
@@ -1259,14 +1116,7 @@ export async function materializeCardAttachments(
       previous?.localFilename !== undefined &&
       validateMetadata(previous, attachment)
     ) {
-      if (
-        await existingFileIsRegular(
-          contextRoot,
-          projectId,
-          cardId,
-          previous.localFilename,
-        )
-      ) {
+      if (await existingFileIsRegular(contextRoot, projectId, cardId, previous.localFilename)) {
         localFilename = previous.localFilename;
         reuse = true;
       } else if (!occupiedFilenames.has(previous.localFilename)) {
@@ -1319,19 +1169,13 @@ export async function materializeCardAttachments(
 
       manifestEntries.push({
         ...planned.attachment,
-        localFilename: planned.attachment.isUpload
-          ? planned.localFilename
-          : null,
+        localFilename: planned.attachment.isUpload ? planned.localFilename : null,
       });
     }
 
     throwIfAborted(options.signal);
 
-    staleCleanup = await stageStaleManagedFiles(
-      paths,
-      existingManifest,
-      manifest,
-    );
+    staleCleanup = await stageStaleManagedFiles(paths, existingManifest, manifest);
     const manifestChanged = !manifestsEqual(existingManifest, manifest);
     if (manifestChanged) {
       await publishManifest(paths, manifest);
@@ -1390,9 +1234,8 @@ export async function materializeCardAttachments(
       ).length,
       downloadedUploadedAttachments,
       removedStaleManagedAttachments,
-      externalUrlAttachments: manifest.attachments.filter(
-        (attachment) => !attachment.isUpload,
-      ).length,
+      externalUrlAttachments: manifest.attachments.filter((attachment) => !attachment.isUpload)
+        .length,
       totalCurrentAttachments: manifest.attachments.length,
     });
   }

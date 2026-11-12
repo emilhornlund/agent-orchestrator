@@ -10,17 +10,10 @@ export const refinementInputSchema = z.strictObject({
   original: refinementFieldsSchema,
   failure: z.string().optional(),
 });
-export function refinementInput(
-  authority: ProjectRunAuthority,
-  card: TrelloCard,
-) {
-  const previous = authority.read(
-    refinementInputKey,
-    refinementInputSchema.parse,
-  );
+export function refinementInput(authority: ProjectRunAuthority, card: TrelloCard) {
+  const previous = authority.read(refinementInputKey, refinementInputSchema.parse);
   if (previous) {
-    if (previous.cardId !== card.id)
-      throw new Error("Refinement input card differs from attempt");
+    if (previous.cardId !== card.id) throw new Error("Refinement input card differs from attempt");
     return previous;
   }
   const value = {
@@ -39,22 +32,15 @@ export function refinementInput(
   );
   return value;
 }
-export function refinementAnalysisFailure(
-  authority: ProjectRunAuthority,
-): string | undefined {
-  return authority.read(refinementInputKey, refinementInputSchema.parse)
-    ?.failure;
+export function refinementAnalysisFailure(authority: ProjectRunAuthority): string | undefined {
+  return authority.read(refinementInputKey, refinementInputSchema.parse)?.failure;
 }
 export function recordRefinementAnalysisFailure(
   authority: ProjectRunAuthority,
   reason: string,
 ): void {
-  const previous = authority.read(
-    refinementInputKey,
-    refinementInputSchema.parse,
-  );
-  if (!previous)
-    throw new Error("Cannot fail refinement without original card fields");
+  const previous = authority.read(refinementInputKey, refinementInputSchema.parse);
+  if (!previous) throw new Error("Cannot fail refinement without original card fields");
   const value = { ...previous, failure: sanitizeControlledText(reason) };
   authority.mutate(
     refinementInputKey,

@@ -3,10 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import {
-  CommandRunner,
-  type RunCommand,
-} from "../src/process/command-runner.js";
+import { CommandRunner, type RunCommand } from "../src/process/command-runner.js";
 import {
   MINIMUM_GIT_VERSION,
   ISOLATION_PROBE_COMMAND,
@@ -15,9 +12,7 @@ import {
   validateGitAndOpenCode,
 } from "../src/startup/validate-toolchain.js";
 
-function runner(
-  responses: Record<string, { exitCode: number; output: string } | undefined>,
-) {
+function runner(responses: Record<string, { exitCode: number; output: string } | undefined>) {
   const run = vi.fn<RunCommand>().mockImplementation(async ({ command }) => {
     const response = responses[command];
     if (!response) throw new Error("spawn ENOENT");
@@ -34,9 +29,7 @@ const supported = {
     "branch cat-file commit diff fetch ls-remote merge-base push rev-parse status worktree",
   ),
   "opencode --version": ok(MINIMUM_OPENCODE_VERSION),
-  "opencode run --help": ok(
-    "--auto --model --variant --dir --session --format",
-  ),
+  "opencode run --help": ok("--auto --model --variant --dir --session --format"),
 };
 
 describe("Git and OpenCode startup compatibility", () => {
@@ -54,16 +47,13 @@ describe("Git and OpenCode startup compatibility", () => {
     ]);
     const secondProject = runner(supported);
     await validateGitAndOpenCode(secondProject.commands, 83_000);
-    expect(
-      secondProject.run.mock.calls.map(([input]) => input.timeoutMilliseconds),
-    ).toEqual([83_000, 83_000, 83_000, 83_000, 83_000]);
+    expect(secondProject.run.mock.calls.map(([input]) => input.timeoutMilliseconds)).toEqual([
+      83_000, 83_000, 83_000, 83_000, 83_000,
+    ]);
   });
 
   it.each([
-    [
-      "missing isolation tool",
-      { ...supported, [ISOLATION_PROBE_COMMAND]: undefined },
-    ],
+    ["missing isolation tool", { ...supported, [ISOLATION_PROBE_COMMAND]: undefined }],
     [
       "denied namespaces",
       {
@@ -72,24 +62,12 @@ describe("Git and OpenCode startup compatibility", () => {
       },
     ],
     ["missing Git", { ...supported, "git --version": undefined }],
-    [
-      "incompatible Git",
-      { ...supported, "git --version": ok("git version 2.10.0") },
-    ],
+    ["incompatible Git", { ...supported, "git --version": ok("git version 2.10.0") }],
     ["malformed Git", { ...supported, "git --version": ok("git is present") }],
     ["missing OpenCode", { ...supported, "opencode --version": undefined }],
-    [
-      "incompatible OpenCode",
-      { ...supported, "opencode --version": ok("0.9.0") },
-    ],
-    [
-      "malformed OpenCode",
-      { ...supported, "opencode --version": ok("development") },
-    ],
-    [
-      "incompatible capability",
-      { ...supported, "opencode run --help": ok("--model --dir") },
-    ],
+    ["incompatible OpenCode", { ...supported, "opencode --version": ok("0.9.0") }],
+    ["malformed OpenCode", { ...supported, "opencode --version": ok("development") }],
+    ["incompatible capability", { ...supported, "opencode run --help": ok("--model --dir") }],
   ])("rejects %s", async (_label, responses) => {
     const { commands } = runner(responses);
     await expect(validateGitAndOpenCode(commands)).rejects.toBeInstanceOf(
@@ -98,9 +76,7 @@ describe("Git and OpenCode startup compatibility", () => {
   });
 
   it("probes actual executable fixtures through PATH", async () => {
-    const fixtureRoot = fs.mkdtempSync(
-      path.join(os.tmpdir(), "toolchain-fixture-"),
-    );
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "toolchain-fixture-"));
     const previousPath = process.env.PATH;
     const writeExecutable = (name: string, source: string): void => {
       const file = path.join(fixtureRoot, name);
@@ -118,9 +94,7 @@ describe("Git and OpenCode startup compatibility", () => {
       );
       writeExecutable("bwrap", "exit 0");
       process.env.PATH = fixtureRoot;
-      await expect(
-        validateGitAndOpenCode(new CommandRunner()),
-      ).resolves.toBeUndefined();
+      await expect(validateGitAndOpenCode(new CommandRunner())).resolves.toBeUndefined();
 
       writeExecutable("opencode", "printf 'malformed\\n'");
       await expect(validateGitAndOpenCode(new CommandRunner())).rejects.toThrow(

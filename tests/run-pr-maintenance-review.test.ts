@@ -35,9 +35,7 @@ function fixture(outputs: string[]) {
     project,
     card: { id: "card", name: "Test task", desc: "Test-only" } as never,
     worktreePath: "/repo/trees/card",
-    approvedRequirements: [
-      { id: "REQ-1", text: "Verify test", verification: "Check test" },
-    ],
+    approvedRequirements: [{ id: "REQ-1", text: "Verify test", verification: "Check test" }],
     changedFiles: "tests/card-start-eligibility.test.ts",
     requirementIds: ["REQ-1"],
     preparedHead: "b".repeat(40),
@@ -70,9 +68,7 @@ function review(verdict: "pass" | "fail", blockingFindings: unknown[]) {
 describe("runPrMaintenanceReview", () => {
   it("keeps process output in the card session log and supplies exact-source validation evidence", async () => {
     const f = fixture([review("pass", [])]);
-    const result: ImplementationReviewResult = await runPrMaintenanceReview(
-      f.options,
-    );
+    const result: ImplementationReviewResult = await runPrMaintenanceReview(f.options);
     expect(result.verdict).toBe("pass");
     const call = f.run.mock.calls[0]![0];
     expect(call.sessionLogPath).toBe(getSessionLogPath("project", "card"));
@@ -90,9 +86,7 @@ describe("runPrMaintenanceReview", () => {
     expect(call.prompt).toContain(
       "explain concrete evidence demonstrating why it is material and blocks",
     );
-    expect(call.prompt).toContain(
-      "Serious demonstrable defects remain blocking",
-    );
+    expect(call.prompt).toContain("Serious demonstrable defects remain blocking");
   });
 
   it("retries a malformed blockingFindings array once without silently discarding findings", async () => {
@@ -111,9 +105,7 @@ describe("runPrMaintenanceReview", () => {
     expect(result.blockingFindings).toEqual([structuredFinding]);
     expect(f.run).toHaveBeenCalledTimes(2);
     expect(f.run.mock.calls[1]![0].prompt).toContain("FORMAT-ONLY CORRECTION");
-    expect(f.run.mock.calls[1]![0].sessionLogPath).toBe(
-      getSessionLogPath("project", "card"),
-    );
+    expect(f.run.mock.calls[1]![0].sessionLogPath).toBe(getSessionLogPath("project", "card"));
   });
 
   it("rejects malformed review after one format retry, without falsely passing", async () => {

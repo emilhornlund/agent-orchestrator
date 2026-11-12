@@ -64,9 +64,7 @@ describe("closed PR terminal obligations", () => {
         "card",
         expect.stringContaining("https://github.com/owner/repo/pull/1"),
       );
-      expect(trello.moveCard).toHaveBeenCalledTimes(
-        idList === "review" ? 1 : 0,
-      );
+      expect(trello.moveCard).toHaveBeenCalledTimes(idList === "review" ? 1 : 0);
     },
   );
 });

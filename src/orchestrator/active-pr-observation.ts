@@ -9,10 +9,7 @@ import { sanitizeControlledText } from "../security/redact-secrets.js";
 import { TaskMutationQueue } from "../task-session/task-mutation-queue.js";
 import { evaluateCiChecks } from "../github/evaluate-ci-checks.js";
 import { establishCiCheckExpectations } from "../github/ci-check-expectations.js";
-import {
-  readTerminalPrFence,
-  recordTerminalPrFence,
-} from "../task-session/terminal-pr-fence.js";
+import { readTerminalPrFence, recordTerminalPrFence } from "../task-session/terminal-pr-fence.js";
 
 const arrivalSchema = z.strictObject({
   id: z.string().regex(/^[0-9a-f]{64}$/u),
@@ -30,13 +27,8 @@ const inboxSchema = z.strictObject({
 export type ActivePrArrival = z.infer<typeof arrivalSchema>;
 const inboxKey = "active-pr-observations";
 
-export function readActivePrArrivals(
-  authority: ProjectRunAuthority,
-): readonly ActivePrArrival[] {
-  return (
-    authority.read(inboxKey, (value) => inboxSchema.parse(value))?.arrivals ??
-    []
-  );
+export function readActivePrArrivals(authority: ProjectRunAuthority): readonly ActivePrArrival[] {
+  return authority.read(inboxKey, (value) => inboxSchema.parse(value))?.arrivals ?? [];
 }
 
 /** Observation has its own projection: it never advances the writer's checkpoint,
@@ -63,9 +55,7 @@ export async function observeActivePullRequest(options: {
   };
   const pr = await github.findPullRequestState(lookup);
   if (!pr || pr.url !== task.pullRequest.url || !pr.headRefOid)
-    throw new Error(
-      "Active PR observation could not verify the owned PR identity",
-    );
+    throw new Error("Active PR observation could not verify the owned PR identity");
   if (options.terminalOnly && pr.state === "OPEN") return;
   const [owner, repository] = project.repository.github.split("/");
   if (
@@ -75,9 +65,7 @@ export async function observeActivePullRequest(options: {
     pr.headRepository?.name.toLowerCase() !== repository?.toLowerCase() ||
     (pr.state === "MERGED") !== (pr.mergedAt !== null)
   )
-    throw new Error(
-      "Active PR observation has ambiguous repository or terminal identity",
-    );
+    throw new Error("Active PR observation has ambiguous repository or terminal identity");
   const current =
     pr.state === "OPEN"
       ? {
@@ -110,8 +98,7 @@ export async function observeActivePullRequest(options: {
       confirmed?.url !== pr.url ||
       confirmed.state !== pr.state ||
       confirmed.headRefOid !== pr.headRefOid ||
-      (current.feedback !== null &&
-        current.feedback.headSha !== pr.headRefOid) ||
+      (current.feedback !== null && current.feedback.headSha !== pr.headRefOid) ||
       current.ci.headSha !== pr.headRefOid
     )
       return;
@@ -121,17 +108,12 @@ export async function observeActivePullRequest(options: {
   // not the writer's completion; the next paced observation reads the new head.
   if (
     latest?.pullRequest?.url !== task.pullRequest.url ||
-    (current !== null &&
-      latest.pullRequest.headSha !== task.pullRequest.headSha)
+    (current !== null && latest.pullRequest.headSha !== task.pullRequest.headSha)
   )
     return;
   authority.assertHeld();
   if (pr.state !== "OPEN") {
-    const active = new TaskMutationQueue(
-      project.contextRoot,
-      project,
-      authority,
-    ).getActive();
+    const active = new TaskMutationQueue(project.contextRoot, project, authority).getActive();
     recordTerminalPrFence(
       authority,
       latest,
@@ -144,9 +126,7 @@ export async function observeActivePullRequest(options: {
     JSON.stringify({ pullRequest: pr, current, baseRelation }),
   );
   const id = createHash("sha256").update(content).digest("hex");
-  const existing = readActivePrArrivals(authority).find(
-    (arrival) => arrival.id === id,
-  );
+  const existing = readActivePrArrivals(authority).find((arrival) => arrival.id === id);
   const artifactId =
     existing?.artifactId ??
     authority.store.writeArtifact(Buffer.from(content), "application/json").id;
@@ -179,11 +159,7 @@ export async function observeActivePullRequest(options: {
     (value) => inboxSchema.parse(value),
   );
   if (current === null) {
-    const queue = new TaskMutationQueue(
-      project.contextRoot,
-      project,
-      authority,
-    );
+    const queue = new TaskMutationQueue(project.contextRoot, project, authority);
     const eventId = `terminal-pr:${task.cardId}:${pr.state}:${pr.headRefOid}`;
     queue.enqueue({
       projectId: project.id,
@@ -194,11 +170,7 @@ export async function observeActivePullRequest(options: {
       enqueuedAt: existing?.observedAt ?? new Date().toISOString(),
     });
   } else {
-    const queue = new TaskMutationQueue(
-      project.contextRoot,
-      project,
-      authority,
-    );
+    const queue = new TaskMutationQueue(project.contextRoot, project, authority);
     const observedAt = existing?.observedAt ?? new Date().toISOString();
     if (current.feedback !== null || current.comments.length > 0) {
       // Semantic classification is performed by the serialized scheduler, never
@@ -223,11 +195,7 @@ export async function observeActivePullRequest(options: {
     if (
       ci.status === "failed" &&
       !["exhausted", "stopped"].includes(task.ciRepair?.status ?? "") &&
-      !queue
-        .list()
-        .some(
-          (entry) => entry.eventId === ciRepairEventId(task, pr.headRefOid!),
-        )
+      !queue.list().some((entry) => entry.eventId === ciRepairEventId(task, pr.headRefOid!))
     )
       queue.enqueue({
         projectId: project.id,
@@ -272,12 +240,7 @@ export async function withActivePrObservation<T>(
   let timer: ReturnType<typeof setTimeout> | undefined;
   let pending: Promise<void> = Promise.resolve();
   const schedule = () => {
-    if (
-      stopped ||
-      options.signal.aborted ||
-      readTerminalPrFence(options.authority)
-    )
-      return;
+    if (stopped || options.signal.aborted || readTerminalPrFence(options.authority)) return;
     timer = setTimeout(
       () => {
         pending = options.authority.run(async () => {

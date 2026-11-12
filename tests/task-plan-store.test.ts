@@ -29,9 +29,7 @@ function createFixture(): {
   root: string;
   store: TaskPlanStore;
 } {
-  temporaryRoot = fs.mkdtempSync(
-    path.join(os.tmpdir(), "agent-orchestrator-plan-store-"),
-  );
+  temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agent-orchestrator-plan-store-"));
   const project = {
     id: "project-one",
     repository: {
@@ -111,13 +109,9 @@ describe("TaskPlanStore", () => {
       taskRecordRevision: 7,
       taskOperationKey: "task-operation-one",
     });
-    expect(() => store.read(plan.cardId, 12, "task-operation-two")).toThrow(
-      "belongs to operation",
-    );
+    expect(() => store.read(plan.cardId, 12, "task-operation-two")).toThrow("belongs to operation");
 
-    expect(
-      store.compareAndSwap(plan.cardId, 1, revisedPlan(plan), 13),
-    ).toMatchObject({
+    expect(store.compareAndSwap(plan.cardId, 1, revisedPlan(plan), 13)).toMatchObject({
       planRevision: 2,
       taskOperationKey: "task-operation-one",
     });
@@ -133,12 +127,10 @@ describe("TaskPlanStore", () => {
       taskRecordRevision: 8,
       plan: revisedPlan(plan),
     });
-    expect(() =>
-      store.compareAndSwap(plan.cardId, 1, revisedPlan(plan), 8),
-    ).toThrow(TaskPlanConflictError);
-    expect(() => store.read(plan.cardId, 7)).toThrow(
-      "associated with task record revision 8",
+    expect(() => store.compareAndSwap(plan.cardId, 1, revisedPlan(plan), 8)).toThrow(
+      TaskPlanConflictError,
     );
+    expect(() => store.read(plan.cardId, 7)).toThrow("associated with task record revision 8");
   });
 
   it("preserves malformed authoritative plan data", () => {
@@ -168,28 +160,20 @@ describe("TaskPlanStore", () => {
 
     expect(() => store.read(plan.cardId)).toThrow("identity does not match");
     expect(fs.readFileSync(filePath, "utf8")).toBe(contentsBeforeRead);
-    expect(() =>
-      store.create({ ...plan, projectId: "another-project" }, 7),
-    ).toThrow("project ID does not match");
+    expect(() => store.create({ ...plan, projectId: "another-project" }, 7)).toThrow(
+      "project ID does not match",
+    );
   });
 
   it("rejects unsafe card IDs and roots overlapping repository worktrees", () => {
     const { plan, project, store } = createFixture();
 
     expect(() => store.read("../card-one")).toThrow("Invalid card ID");
-    expect(() => new TaskPlanStore(project.repository.path, project)).toThrow(
-      "must not overlap",
-    );
+    expect(() => new TaskPlanStore(project.repository.path, project)).toThrow("must not overlap");
     expect(
-      () =>
-        new TaskPlanStore(
-          path.join(project.repository.worktreeRoot, "runtime-state"),
-          project,
-        ),
+      () => new TaskPlanStore(path.join(project.repository.worktreeRoot, "runtime-state"), project),
     ).toThrow("must not overlap");
-    expect(() => new TaskPlanStore("relative-root", project)).toThrow(
-      "absolute path",
-    );
+    expect(() => new TaskPlanStore("relative-root", project)).toThrow("absolute path");
     expect(store.read(plan.cardId)).toBeNull();
   });
 
@@ -210,9 +194,7 @@ describe("TaskPlanStore", () => {
       planRevision: 1,
       plan,
     });
-    expect(fs.readdirSync(path.dirname(planFilePath(root, plan)))).toEqual([
-      "card-one.json",
-    ]);
+    expect(fs.readdirSync(path.dirname(planFilePath(root, plan)))).toEqual(["card-one.json"]);
   });
 
   it("enforces the serialized plan size limit before publishing", () => {

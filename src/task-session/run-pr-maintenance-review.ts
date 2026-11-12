@@ -34,12 +34,9 @@ export async function runPrMaintenanceReview(
 ): Promise<ImplementationReviewResult> {
   if (
     options.validation.contentIdentity !== options.contentIdentity ||
-    (options.coverage !== null &&
-      options.coverage.contentIdentity !== options.contentIdentity)
+    (options.coverage !== null && options.coverage.contentIdentity !== options.contentIdentity)
   )
-    throw new Error(
-      "Independent maintenance review requires exact-source quality evidence",
-    );
+    throw new Error("Independent maintenance review requires exact-source quality evidence");
 
   const identity = {
     version: 1,
@@ -66,14 +63,12 @@ export async function runPrMaintenanceReview(
     `Example structured failure: ${JSON.stringify({
       ...identity,
       verdict: "fail",
-      requirementAssessments: options.requirementIds.map(
-        (requirementId, index) => ({
-          requirementId,
-          status: index === 0 ? "unsatisfied" : "satisfied",
-          details: index === 0 ? "Missing required behavior" : "Implemented",
-          evidence: index === 0 ? [] : ["src/example.ts"],
-        }),
-      ),
+      requirementAssessments: options.requirementIds.map((requirementId, index) => ({
+        requirementId,
+        status: index === 0 ? "unsatisfied" : "satisfied",
+        details: index === 0 ? "Missing required behavior" : "Implemented",
+        evidence: index === 0 ? [] : ["src/example.ts"],
+      })),
       blockingFindings: [
         {
           kind: "incomplete",
@@ -114,27 +109,20 @@ export async function runPrMaintenanceReview(
     if (result.exitCode !== 0)
       throw new Error(`Maintenance review exited with code ${result.exitCode}`);
     try {
-      return parseImplementationReviewResult(
-        JSON.parse(result.output) as unknown,
-        {
-          projectId: options.project.id,
-          cardId: options.card.id,
-          requirementIds: options.requirementIds,
-          contentIdentity: options.contentIdentity,
-        },
-      );
+      return parseImplementationReviewResult(JSON.parse(result.output) as unknown, {
+        projectId: options.project.id,
+        cardId: options.card.id,
+        requirementIds: options.requirementIds,
+        contentIdentity: options.contentIdentity,
+      });
     } catch (error) {
-      if (
-        attempt === 1 ||
-        !(error instanceof SyntaxError || error instanceof ZodError)
-      )
+      if (attempt === 1 || !(error instanceof SyntaxError || error instanceof ZodError))
         throw new Error(
           "Independent maintenance review returned invalid, stale, or out-of-scope evidence",
           { cause: error },
         );
       previousOutput = result.output;
-      previousError =
-        error instanceof Error ? error.message : "Invalid review format";
+      previousError = error instanceof Error ? error.message : "Invalid review format";
     }
   }
   throw new Error("PR maintenance review format correction was exhausted");

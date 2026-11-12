@@ -22,10 +22,7 @@ import {
   type PreparedReviewPublication,
 } from "./publish-card.js";
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
-import {
-  assertSetupInventoryIdentity,
-  captureSetupEffects,
-} from "../process/run-setup.js";
+import { assertSetupInventoryIdentity, captureSetupEffects } from "../process/run-setup.js";
 import { setupFileIdentity } from "../process/setup-commit-scope.js";
 import { resolveSetupCommitScope } from "../process/setup-commit-scope.js";
 import type { SetupInventory } from "../process/setup-commit-scope.js";
@@ -57,9 +54,7 @@ function assertPublicationEvidence(
     allowStaleExhaustedReview,
   });
   if (!decision.allowed) {
-    throw new Error(
-      `Task-session publication is blocked: ${decision.reasons.join("; ")}`,
-    );
+    throw new Error(`Task-session publication is blocked: ${decision.reasons.join("; ")}`);
   }
 }
 
@@ -68,18 +63,12 @@ async function assertScopedPostCommitWorktree(
 ): Promise<void> {
   if (options.setupDisposition === undefined) {
     const status = await options.git.getStatus(options.worktreePath);
-    if (status.trim())
-      throw new Error(`Task-session commit left repository changes: ${status}`);
+    if (status.trim()) throw new Error(`Task-session commit left repository changes: ${status}`);
     return;
   }
   const excluded = options.setupDisposition.exclude;
-  const actualPaths = (
-    await options.git.getUnstagedChangedPaths(options.worktreePath)
-  ).sort();
-  if (
-    JSON.stringify(actualPaths) !==
-    JSON.stringify(excluded.map((entry) => entry.path).sort())
-  )
+  const actualPaths = (await options.git.getUnstagedChangedPaths(options.worktreePath)).sort();
+  if (JSON.stringify(actualPaths) !== JSON.stringify(excluded.map((entry) => entry.path).sort()))
     throw new Error("Task publication worktree contains unexpected changes");
   if (
     (await options.git.getIndexTreeSha(options.worktreePath)) !==
@@ -87,9 +76,7 @@ async function assertScopedPostCommitWorktree(
   )
     throw new Error("Task publication index differs from committed tree");
   const inventory = JSON.parse(
-    (await captureSetupEffects(options.git, options.worktreePath)).toString(
-      "utf8",
-    ),
+    (await captureSetupEffects(options.git, options.worktreePath)).toString("utf8"),
   ) as {
     files: {
       path: string;
@@ -105,12 +92,9 @@ async function assertScopedPostCommitWorktree(
     const current = byPath.get(entry.path);
     if (
       (entry.identity === "absent" && current !== undefined) ||
-      (entry.identity !== "absent" &&
-        (!current || setupFileIdentity(current) !== entry.identity))
+      (entry.identity !== "absent" && (!current || setupFileIdentity(current) !== entry.identity))
     )
-      throw new Error(
-        `Preserved setup content changed after review: ${entry.path}`,
-      );
+      throw new Error(`Preserved setup content changed after review: ${entry.path}`);
   }
 }
 
@@ -130,14 +114,10 @@ export async function resolveExistingPrSetupDisposition(
   const authority = ProjectRunAuthority.current(options.project.id);
   const run = authority?.store.read();
   if (!run || !authority)
-    throw new Error(
-      "Historical setup scope proof is unavailable; correction publication blocked",
-    );
-  const task = new TaskExecutionStore(
-    run.pinned.storageRoot,
-    options.project,
-    authority,
-  ).read(options.card.id);
+    throw new Error("Historical setup scope proof is unavailable; correction publication blocked");
+  const task = new TaskExecutionStore(run.pinned.storageRoot, options.project, authority).read(
+    options.card.id,
+  );
   const setupWasConfigured =
     options.project.repository.setupCommand !== undefined ||
     (task?.setup?.command !== undefined && task.setup.command !== null);
@@ -152,22 +132,15 @@ export async function resolveExistingPrSetupDisposition(
     task.setup.history.length === 0 ||
     task.setup.history.length !== task.setup.attempts ||
     task.setup.history[0]?.before !== task.setup.before ||
-    task.setup.history.at(-1)?.before !==
-      (task.setup.attemptBefore ?? task.setup.before) ||
+    task.setup.history.at(-1)?.before !== (task.setup.attemptBefore ?? task.setup.before) ||
     task.setup.history.at(-1)?.after !== task.setup.after ||
     task.setup.history.at(-1)?.outcome !== "passed"
   )
     throw new Error(
       "Historical setup scope proof is missing or unverifiable; correction publication blocked",
     );
-  const store = new TaskExecutionStore(
-    run.pinned.storageRoot,
-    options.project,
-    authority,
-  );
-  const artifact = store.readPrimaryResultArtifact(
-    task.setup.relevance,
-  ) as Record<string, unknown>;
+  const store = new TaskExecutionStore(run.pinned.storageRoot, options.project, authority);
+  const artifact = store.readPrimaryResultArtifact(task.setup.relevance) as Record<string, unknown>;
   if (
     artifact.version !== 1 ||
     artifact.before !== task.setup.before ||
@@ -177,26 +150,16 @@ export async function resolveExistingPrSetupDisposition(
     typeof artifact.current !== "object" ||
     artifact.current === null
   )
-    throw new Error(
-      "Historical setup scope artifact is malformed; correction publication blocked",
-    );
+    throw new Error("Historical setup scope artifact is malformed; correction publication blocked");
   const before = store.readPrimaryResultArtifact(task.setup.before);
   const attemptBefore = store.readPrimaryResultArtifact(
     task.setup.attemptBefore ?? task.setup.before,
   );
   const after = store.readPrimaryResultArtifact(task.setup.after);
   assertSetupInventoryIdentity(before, options.worktreePath, options.branch);
-  assertSetupInventoryIdentity(
-    attemptBefore,
-    options.worktreePath,
-    options.branch,
-  );
+  assertSetupInventoryIdentity(attemptBefore, options.worktreePath, options.branch);
   assertSetupInventoryIdentity(after, options.worktreePath, options.branch);
-  assertSetupInventoryIdentity(
-    artifact.current,
-    options.worktreePath,
-    options.branch,
-  );
+  assertSetupInventoryIdentity(artifact.current, options.worktreePath, options.branch);
   const scope = resolveSetupCommitScope(
     before as SetupInventory,
     after as SetupInventory,
@@ -214,9 +177,7 @@ export async function resolveExistingPrSetupDisposition(
     );
 
   const current = JSON.parse(
-    (await captureSetupEffects(options.git, options.worktreePath)).toString(
-      "utf8",
-    ),
+    (await captureSetupEffects(options.git, options.worktreePath)).toString("utf8"),
   ) as SetupInventory;
   assertSetupInventoryIdentity(current, options.worktreePath, options.branch);
   const currentByPath = new Map(current.files.map((file) => [file.path, file]));
@@ -224,8 +185,7 @@ export async function resolveExistingPrSetupDisposition(
     const actual = currentByPath.get(entry.path);
     if (
       (entry.identity === "absent" && actual !== undefined) ||
-      (entry.identity !== "absent" &&
-        (!actual || setupFileIdentity(actual) !== entry.identity))
+      (entry.identity !== "absent" && (!actual || setupFileIdentity(actual) !== entry.identity))
     )
       throw new Error(
         `Excluded setup output changed since initial publication: ${entry.path}; correction scope judgment required`,
@@ -248,13 +208,8 @@ export async function publishTaskSessionCard(
     ...options,
     ...(setupDisposition === undefined ? {} : { setupDisposition }),
   };
-  if (
-    options.project.repository.setupCommand !== undefined &&
-    setupDisposition === undefined
-  )
-    throw new Error(
-      "Setup commit disposition is unavailable; initial task publication blocked",
-    );
+  if (options.project.repository.setupCommand !== undefined && setupDisposition === undefined)
+    throw new Error("Setup commit disposition is unavailable; initial task publication blocked");
   if (options.expectedExistingPullRequestUrl !== undefined)
     await verifyExistingPrOpen({
       project: options.project,
@@ -263,10 +218,7 @@ export async function publishTaskSessionCard(
       branch: options.branch,
       pullRequestUrl: options.expectedExistingPullRequestUrl,
     });
-  if (
-    ProjectRunAuthority.current(options.project.id) &&
-    (await resumeInitialPublication(options))
-  )
+  if (ProjectRunAuthority.current(options.project.id) && (await resumeInitialPublication(options)))
     throw new PublicationWaitingError();
   assertPublicationEvidence(options.initialEvidence, options.exhaustedReview);
   if (
@@ -274,9 +226,7 @@ export async function publishTaskSessionCard(
     ProjectRunAuthority.isProjectLeaseScoped(options.project.id) &&
     !ProjectRunAuthority.current(options.project.id)
   )
-    throw new Error(
-      "Lease-scoped initial publication requires durable attempt authority",
-    );
+    throw new Error("Lease-scoped initial publication requires durable attempt authority");
   if (
     options.expectedExistingPullRequestUrl === undefined &&
     ProjectRunAuthority.current(options.project.id)
@@ -289,8 +239,7 @@ export async function publishTaskSessionCard(
         : {
             ...options,
             ...preparedReviewPublication,
-            exhaustedReview:
-              preparedReviewPublication.reviewDisclosure ?? undefined,
+            exhaustedReview: preparedReviewPublication.reviewDisclosure ?? undefined,
           };
     assertPublicationEvidence(
       preparedEvidence,
@@ -353,9 +302,7 @@ export async function publishTaskSessionCard(
     commitSha,
   );
   if (commitCount !== 1) {
-    throw new Error(
-      `Expected exactly one task-session commit, found ${commitCount}`,
-    );
+    throw new Error(`Expected exactly one task-session commit, found ${commitCount}`);
   }
   await assertScopedPostCommitWorktree(scopedOptions);
 
@@ -379,8 +326,7 @@ export async function publishTaskSessionCard(
       const preparedEvidence = await options.verifyPreparedContent();
       const preparedHead = await options.git.getHeadSha(options.worktreePath);
       await assertScopedPostCommitWorktree(scopedOptions);
-      const preparedReviewPublication =
-        options.getPreparedReviewPublication?.();
+      const preparedReviewPublication = options.getPreparedReviewPublication?.();
       const allowStaleExhaustedReview =
         preparedReviewPublication === undefined &&
         options.exhaustedReview !== undefined &&
@@ -394,8 +340,7 @@ export async function publishTaskSessionCard(
       );
       return {
         ...preparedReviewPublication,
-        reviewResult:
-          preparedReviewPublication?.reviewResult ?? options.reviewResult,
+        reviewResult: preparedReviewPublication?.reviewResult ?? options.reviewResult,
         reviewDisclosure:
           preparedReviewPublication === undefined
             ? (options.exhaustedReview ?? null)

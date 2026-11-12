@@ -93,20 +93,14 @@ describe("parseTaskPlan", () => {
     expect(() =>
       parseTaskPlan({
         ...plan,
-        steps: [
-          { ...plan.steps[0]!, requirementIds: ["REQ-UNKNOWN"] },
-          plan.steps[1],
-        ],
+        steps: [{ ...plan.steps[0]!, requirementIds: ["REQ-UNKNOWN"] }, plan.steps[1]],
       }),
     ).toThrow("Unknown requirement reference");
 
     expect(() =>
       parseTaskPlan({
         ...plan,
-        steps: [
-          { ...plan.steps[0]!, requirementIds: ["REQ-1", "REQ-1"] },
-          plan.steps[1],
-        ],
+        steps: [{ ...plan.steps[0]!, requirementIds: ["REQ-1", "REQ-1"] }, plan.steps[1]],
       }),
     ).toThrow("Duplicate requirement reference");
   });
@@ -129,10 +123,7 @@ describe("parseTaskPlan", () => {
       "unknown requirement field",
       {
         ...plan,
-        requirements: [
-          { ...plan.requirements[0]!, optional: true },
-          plan.requirements[1],
-        ],
+        requirements: [{ ...plan.requirements[0]!, optional: true }, plan.requirements[1]],
       },
     ],
   ])("rejects an %s", (_description, candidate) => {

@@ -10,9 +10,7 @@ export const refinementHistoryActionSchema = z.object({
   type: z.enum(["updateCard", "addLabelToCard", "removeLabelFromCard"]),
   idMemberCreator: z.string().min(1),
   data: z.object({
-    old: z
-      .object({ name: z.string().optional(), desc: z.string().optional() })
-      .optional(),
+    old: z.object({ name: z.string().optional(), desc: z.string().optional() }).optional(),
     card: z.object({
       id: z.string(),
       name: z.string().optional(),
@@ -21,9 +19,7 @@ export const refinementHistoryActionSchema = z.object({
     label: z.object({ id: z.string() }).optional(),
   }),
 });
-export type RefinementHistoryAction = z.infer<
-  typeof refinementHistoryActionSchema
->;
+export type RefinementHistoryAction = z.infer<typeof refinementHistoryActionSchema>;
 
 export const refinementMutationSnapshotSchema = z.strictObject({
   cardId: z.string().min(1),
@@ -51,5 +47,4 @@ export const refinementMutationSnapshotSchema = z.strictObject({
     })
     .optional(),
 });
-export const refinementMutationSnapshotKey =
-  "refinement-mutation-foundation-v1";
+export const refinementMutationSnapshotKey = "refinement-mutation-foundation-v1";

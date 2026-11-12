@@ -27,26 +27,19 @@ describe("haveEquivalentImplementationChanges", () => {
     const rebasedOrSquashed = original
       .replace("1111111..2222222", "abcdef0..1234567")
       .replace("@@ -12,2 +12,3 @@", "@@ -104,2 +104,3 @@");
-    expect(
-      haveEquivalentImplementationChanges(original, rebasedOrSquashed),
-    ).toBe(true);
+    expect(haveEquivalentImplementationChanges(original, rebasedOrSquashed)).toBe(true);
   });
 
   it("rejects identical changed lines at different surrounding locations", () => {
     const misplaced = original
       .replace(" const anchor = true;", " const unrelatedAnchor = true;")
       .replace(" const trailing = true;", " const unrelatedTrailing = true;");
-    expect(haveEquivalentImplementationChanges(original, misplaced)).toBe(
-      false,
-    );
+    expect(haveEquivalentImplementationChanges(original, misplaced)).toBe(false);
   });
 
   it("rejects changed, absent, or ambiguous patch evidence", () => {
     expect(
-      haveEquivalentImplementationChanges(
-        original,
-        original.replace("recovered", "different"),
-      ),
+      haveEquivalentImplementationChanges(original, original.replace("recovered", "different")),
     ).toBe(false);
     expect(haveEquivalentImplementationChanges(original, "")).toBe(false);
     expect(
@@ -58,9 +51,7 @@ describe("haveEquivalentImplementationChanges", () => {
   });
 
   it("detects an unrelated earlier commit in a real multi-commit PR history", () => {
-    const repository = fs.mkdtempSync(
-      path.join(os.tmpdir(), "implementation-range-history-"),
-    );
+    const repository = fs.mkdtempSync(path.join(os.tmpdir(), "implementation-range-history-"));
     const git = (args: string[]) =>
       execFileSync("git", ["-C", repository, ...args], {
         encoding: "utf8",
@@ -98,11 +89,7 @@ describe("haveEquivalentImplementationChanges", () => {
       git(["add", "implementation.txt"]);
       git(["commit", "--quiet", "-m", "rebased implementation"]);
       const head = git(["rev-parse", "HEAD"]);
-      const completeCommitRange = git([
-        "rev-list",
-        "--reverse",
-        `${base}..${head}`,
-      ]).split("\n");
+      const completeCommitRange = git(["rev-list", "--reverse", `${base}..${head}`]).split("\n");
       const fullChangeSet = git([
         "diff",
         "--no-ext-diff",
@@ -122,22 +109,12 @@ describe("haveEquivalentImplementationChanges", () => {
         head,
       ]);
 
-      expect(
-        haveEquivalentImplementationChanges(originalChange, lastCommitOnly),
-      ).toBe(true);
-      expect(
-        haveEquivalentImplementationChanges(originalChange, fullChangeSet),
-      ).toBe(false);
-      expect(
-        isCompletePullRequestCommitRange(
-          completeCommitRange,
-          completeCommitRange,
-          head,
-        ),
-      ).toBe(true);
-      expect(
-        isCompletePullRequestCommitRange([head], completeCommitRange, head),
-      ).toBe(false);
+      expect(haveEquivalentImplementationChanges(originalChange, lastCommitOnly)).toBe(true);
+      expect(haveEquivalentImplementationChanges(originalChange, fullChangeSet)).toBe(false);
+      expect(isCompletePullRequestCommitRange(completeCommitRange, completeCommitRange, head)).toBe(
+        true,
+      );
+      expect(isCompletePullRequestCommitRange([head], completeCommitRange, head)).toBe(false);
     } finally {
       fs.rmSync(repository, { recursive: true, force: true });
     }

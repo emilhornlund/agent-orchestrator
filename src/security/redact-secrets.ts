@@ -13,9 +13,7 @@ function secretForms(secretValues: readonly (string | undefined)[]): string[] {
         escaped,
       ];
     })
-    .filter(
-      (value, index, all) => value.length > 0 && all.indexOf(value) === index,
-    )
+    .filter((value, index, all) => value.length > 0 && all.indexOf(value) === index)
     .sort((left, right) => right.length - left.length);
 }
 
@@ -61,9 +59,7 @@ export function redactSecrets(
   redacted = redacted.replace(/(\bBearer\s+)[^\s,;]+/gi, `$1${marker}`);
 
   const duplicatedMarkers = new RegExp(`(?:${marker}){2,}`, "gu");
-  return redacted
-    .replace(duplicatedMarkers, marker)
-    .replaceAll(marker, "[REDACTED]");
+  return redacted.replace(duplicatedMarkers, marker).replaceAll(marker, "[REDACTED]");
 }
 
 export interface SecretRedactor {
@@ -84,10 +80,7 @@ export function createSecretRedactor(
     })
     .filter(({ form, padding }) => form.length > 0 && padding > 0);
   const secrets = secretForms(secretValues);
-  const maxSecretLength = secrets.reduce(
-    (maximum, secret) => Math.max(maximum, secret.length),
-    0,
-  );
+  const maxSecretLength = secrets.reduce((maximum, secret) => Math.max(maximum, secret.length), 0);
   const sensitivePrefixes = [
     "bearer ",
     ...[
@@ -145,24 +138,19 @@ export function createSecretRedactor(
     }
 
     const stableInputLength = pending.length - paddingTailLength;
-    const stableInput = redactRegisteredSecrets(
-      pending.slice(0, stableInputLength),
-      secrets,
-    );
+    const stableInput = redactRegisteredSecrets(pending.slice(0, stableInputLength), secrets);
     pending = stableInput + pending.slice(stableInputLength);
     const stableRegionLength = stableInput.length;
     const safeLength = Math.max(
       0,
-      stableRegionLength -
-        boundaryOverlap(pending.slice(0, stableRegionLength)),
+      stableRegionLength - boundaryOverlap(pending.slice(0, stableRegionLength)),
     );
     if (safeLength === 0) return "";
 
     const credentialPrefixes = [
       { expression: /\bBearer\s+/gi, delimiter: /[\s,;]/u },
       {
-        expression:
-          /[?&](?:key|token|api[_-]?key|access[_-]?token|password|secret)=/gi,
+        expression: /[?&](?:key|token|api[_-]?key|access[_-]?token|password|secret)=/gi,
         delimiter: /[&#\s]/u,
       },
       {
@@ -175,8 +163,7 @@ export function createSecretRedactor(
       for (const match of pending.matchAll(expression)) {
         const valueStart = (match.index ?? 0) + match[0].length;
         const delimiterIndex = pending.slice(valueStart).search(delimiter);
-        const valueEnd =
-          delimiterIndex === -1 ? pending.length : valueStart + delimiterIndex;
+        const valueEnd = delimiterIndex === -1 ? pending.length : valueStart + delimiterIndex;
         if (valueStart < safeLength && valueEnd >= safeLength) {
           const output = `${pending.slice(0, match.index ?? 0)}${match[0]}[REDACTED]`;
           const valueAndRemainder = pending.slice(valueStart);
@@ -262,11 +249,7 @@ export function containsSecret(
       return false;
     }
 
-    return (
-      visit(candidate.message) ||
-      visit(candidate.stack) ||
-      visit(candidate.cause)
-    );
+    return visit(candidate.message) || visit(candidate.stack) || visit(candidate.cause);
   }
 
   return visit(value);

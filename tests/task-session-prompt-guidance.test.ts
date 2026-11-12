@@ -43,26 +43,18 @@ const prompts = [
 ];
 
 describe("task-session repository prompt guidance", () => {
-  it.each(prompts)(
-    "requires repository instructions and native skill discovery",
-    (prompt) => {
-      expect(prompt).toContain("repository-root AGENTS.md");
-      expect(prompt).toContain("more-specific AGENTS.md");
-      expect(prompt).toContain(".opencode/skills/");
-      expect(prompt).toContain("native skill mechanism");
-    },
-  );
+  it.each(prompts)("requires repository instructions and native skill discovery", (prompt) => {
+    expect(prompt).toContain("repository-root AGENTS.md");
+    expect(prompt).toContain("more-specific AGENTS.md");
+    expect(prompt).toContain(".opencode/skills/");
+    expect(prompt).toContain("native skill mechanism");
+  });
 
-  it.each(prompts)(
-    "has an offline fallback when no skill is available",
-    (prompt) => {
-      expect(prompt).toContain(
-        "If no relevant repository-local skill is available",
-      );
-      expect(prompt).toContain("do not download or install skills");
-      expect(prompt).toContain("or use external/global skills");
-    },
-  );
+  it.each(prompts)("has an offline fallback when no skill is available", (prompt) => {
+    expect(prompt).toContain("If no relevant repository-local skill is available");
+    expect(prompt).toContain("do not download or install skills");
+    expect(prompt).toContain("or use external/global skills");
+  });
 
   it("keeps the original task as scope while treating the plan as advisory", () => {
     const prompt = buildTaskSessionImplementationPrompt({

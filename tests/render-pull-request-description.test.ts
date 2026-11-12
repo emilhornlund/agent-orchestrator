@@ -28,9 +28,7 @@ const description: PullRequestDescription = {
 
 describe("renderPullRequestDescription", () => {
   it("renders the complete application-owned Markdown template", () => {
-    expect(
-      renderPullRequestDescription(description, task, gitIdentityName),
-    ).toBe(
+    expect(renderPullRequestDescription(description, task, gitIdentityName)).toBe(
       [
         AGENT_ORCHESTRATOR_DESCRIPTION_START,
         "## Summary",
@@ -56,18 +54,10 @@ describe("renderPullRequestDescription", () => {
   });
 
   it("is deterministic across repeated rendering and argument order", () => {
-    const first = renderPullRequestDescription(
-      description,
-      task,
-      gitIdentityName,
-    );
+    const first = renderPullRequestDescription(description, task, gitIdentityName);
 
-    expect(
-      renderPullRequestDescription(description, task, gitIdentityName),
-    ).toBe(first);
-    expect(
-      renderPullRequestDescription(task, description, gitIdentityName),
-    ).toBe(first);
+    expect(renderPullRequestDescription(description, task, gitIdentityName)).toBe(first);
+    expect(renderPullRequestDescription(task, description, gitIdentityName)).toBe(first);
   });
 
   it("keeps multiline and special generated values inside their sections", () => {
@@ -85,9 +75,7 @@ describe("renderPullRequestDescription", () => {
     expect(rendered).toContain("- First line - injected list item");
     expect(rendered).toContain("- A [generated](link)");
     expect(rendered).toContain("- Result [status start marker] forbidden");
-    expect(rendered).not.toContain(
-      `${AGENT_ORCHESTRATOR_STATUS_START}\nforbidden`,
-    );
+    expect(rendered).not.toContain(`${AGENT_ORCHESTRATOR_STATUS_START}\nforbidden`);
     expect(rendered.match(/^## /gm)).toHaveLength(4);
   });
 
@@ -120,9 +108,7 @@ describe("renderPullRequestDescription", () => {
     );
 
     expect(rendered).toContain("## Changes\nNo changes were provided.");
-    expect(rendered).toContain(
-      "## Validation\n- No validation or test results were provided.",
-    );
+    expect(rendered).toContain("## Validation\n- No validation or test results were provided.");
     expect(rendered).not.toContain("- \n");
     expect(rendered).not.toContain("passed");
   });

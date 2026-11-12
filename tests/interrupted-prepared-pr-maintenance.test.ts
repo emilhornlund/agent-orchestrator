@@ -63,11 +63,7 @@ function fixture() {
 
 function staleQueue(f: ReturnType<typeof fixture>): TaskMutationQueue {
   f.mutationQueue.claimNext();
-  const file = path.join(
-    f.state,
-    "task-mutation-queues",
-    "agent-orchestrator.json",
-  );
+  const file = path.join(f.state, "task-mutation-queues", "agent-orchestrator.json");
   const queue = JSON.parse(fs.readFileSync(file, "utf8")) as {
     events: Array<{
       ownerToken?: string;
@@ -110,8 +106,7 @@ describe("interrupted prepared PR maintenance refusal", () => {
     };
     expect(requeueInterruptedPreparedPrMaintenance(args)).toBe(false);
     expect(
-      f.maintenanceStore.inspect(f.operationId)
-        ?.failedPreparedRecoveryAttempted,
+      f.maintenanceStore.inspect(f.operationId)?.failedPreparedRecoveryAttempted,
     ).toBeUndefined();
     restartedQueue.claimForRecovery(f.eventId);
     restartedQueue.fail(f.eventId);
@@ -135,11 +130,7 @@ describe("interrupted prepared PR maintenance refusal", () => {
   it("refuses mismatched ownership", () => {
     const f = fixture();
     const restartedQueue = staleQueue(f);
-    const file = path.join(
-      f.state,
-      "task-mutation-queues",
-      "agent-orchestrator.json",
-    );
+    const file = path.join(f.state, "task-mutation-queues", "agent-orchestrator.json");
     const queue = JSON.parse(fs.readFileSync(file, "utf8")) as {
       events: Array<{ operationKey: string }>;
     };

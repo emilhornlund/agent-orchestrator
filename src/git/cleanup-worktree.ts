@@ -39,12 +39,8 @@ export async function cleanupWorktree({
     const run = authority.store.assertCurrentLease(authority.ownerGeneration);
     if (
       !preservedHeadSha ||
-      !run.resources.some(
-        (r) => r.kind === "worktree" && r.path === resolvedWorktreePath,
-      ) ||
-      !run.resources.some(
-        (r) => r.kind === "branch" && r.path === `refs/heads/${branch}`,
-      )
+      !run.resources.some((r) => r.kind === "worktree" && r.path === resolvedWorktreePath) ||
+      !run.resources.some((r) => r.kind === "branch" && r.path === `refs/heads/${branch}`)
     )
       throw new Error("Cleanup lacks attempt ownership or preserved history");
   }
@@ -53,23 +49,13 @@ export async function cleanupWorktree({
     resolvedWorktreePath === worktreeRoot ||
     !resolvedWorktreePath.startsWith(`${worktreeRoot}${path.sep}`)
   ) {
-    throw new Error(
-      `Refusing to clean worktree outside configured root: ${worktreePath}`,
-    );
+    throw new Error(`Refusing to clean worktree outside configured root: ${worktreePath}`);
   }
 
-  const relativeWorktreePath = path.relative(
-    worktreeRoot,
-    resolvedWorktreePath,
-  );
+  const relativeWorktreePath = path.relative(worktreeRoot, resolvedWorktreePath);
 
-  if (
-    relativeWorktreePath.length === 0 ||
-    relativeWorktreePath.includes(path.sep)
-  ) {
-    throw new Error(
-      `Refusing to clean worktree outside expected card path: ${worktreePath}`,
-    );
+  if (relativeWorktreePath.length === 0 || relativeWorktreePath.includes(path.sep)) {
+    throw new Error(`Refusing to clean worktree outside expected card path: ${worktreePath}`);
   }
 
   const expectedBranch = `agent/${relativeWorktreePath}`;
@@ -80,10 +66,7 @@ export async function cleanupWorktree({
     );
   }
 
-  if (
-    preserveRecoveryState &&
-    readPreparedConflict(project, relativeWorktreePath) !== null
-  ) {
+  if (preserveRecoveryState && readPreparedConflict(project, relativeWorktreePath) !== null) {
     throw new Error(
       `Refusing to remove worktree ${worktreePath} while its prepared-conflict handoff requires recovery`,
     );
@@ -93,8 +76,7 @@ export async function cleanupWorktree({
     const head = await git.getRefSha(repositoryPath, `refs/heads/${branch}`);
     if (
       !head ||
-      (head !== preservedHeadSha &&
-        !(await git.isAncestor(repositoryPath, head, preservedHeadSha)))
+      (head !== preservedHeadSha && !(await git.isAncestor(repositoryPath, head, preservedHeadSha)))
     )
       throw new Error("Cleanup would discard local-only commits");
   }
@@ -103,9 +85,7 @@ export async function cleanupWorktree({
   if (worktreeStat !== undefined) {
     if (authority) assertTaskResourceProvenance(authority.store.read()!);
     if (worktreeStat.isSymbolicLink()) {
-      throw new Error(
-        `Refusing to clean symbolic-link worktree ${worktreePath}`,
-      );
+      throw new Error(`Refusing to clean symbolic-link worktree ${worktreePath}`);
     }
 
     if (preservedHeadSha) {
@@ -114,9 +94,7 @@ export async function cleanupWorktree({
         (await git.getCommonGitDirectory(worktreePath)) !==
           (await git.getCommonGitDirectory(repositoryPath))
       )
-        throw new Error(
-          "Cleanup worktree has ambiguous canonical repository identity",
-        );
+        throw new Error("Cleanup worktree has ambiguous canonical repository identity");
     }
 
     const currentBranch = await git.getCurrentBranch(worktreePath);
@@ -139,9 +117,7 @@ export async function cleanupWorktree({
       }
 
       if (rebaseState !== null) {
-        throw new Error(
-          `Refusing to remove worktree ${worktreePath} with an active rebase`,
-        );
+        throw new Error(`Refusing to remove worktree ${worktreePath} with an active rebase`);
       }
 
       const conflictedPaths = await git.getConflictedPaths(worktreePath);
@@ -166,9 +142,7 @@ export async function cleanupWorktree({
     }
 
     if (status.length > 0) {
-      throw new Error(
-        `Refusing to remove dirty worktree ${worktreePath}:\n${status}`,
-      );
+      throw new Error(`Refusing to remove dirty worktree ${worktreePath}:\n${status}`);
     }
 
     if (signal?.aborted) {

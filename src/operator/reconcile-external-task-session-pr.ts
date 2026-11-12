@@ -61,8 +61,7 @@ function parseArguments(args: readonly string[]): {
     throw new Error(usage);
   }
   const pullRequestNumber = Number(pullRequest);
-  if (!Number.isSafeInteger(pullRequestNumber) || pullRequestNumber < 1)
-    throw new Error(usage);
+  if (!Number.isSafeInteger(pullRequestNumber) || pullRequestNumber < 1) throw new Error(usage);
   return {
     projectId,
     cardId,
@@ -78,18 +77,13 @@ export async function runExternalTaskSessionRecovery(
 ): Promise<void> {
   const association = parseArguments(args);
   const config = dependencies.config ?? loadConfig();
-  const projectConfig = config.projects.find(
-    (project) => project.id === association.projectId,
-  );
-  if (projectConfig === undefined)
-    throw new Error(`Unknown project: ${association.projectId}`);
+  const projectConfig = config.projects.find((project) => project.id === association.projectId);
+  if (projectConfig === undefined) throw new Error(`Unknown project: ${association.projectId}`);
   const project = {
     ...projectConfig,
     contextRoot: config.workflow.contextRoot,
   };
-  const environment = dependencies.trello
-    ? undefined
-    : parseEnvironment(process.env);
+  const environment = dependencies.trello ? undefined : parseEnvironment(process.env);
   const controller = new AbortController();
   const trello =
     dependencies.trello ??
@@ -100,24 +94,14 @@ export async function runExternalTaskSessionRecovery(
       timeoutMilliseconds: 30_000,
     });
   const githubCredentials = new GitHubCredentialProvider();
-  const github =
-    dependencies.github ?? new GitHubClient(undefined, githubCredentials);
+  const github = dependencies.github ?? new GitHubClient(undefined, githubCredentials);
   const git = dependencies.git ?? new GitClient(undefined, githubCredentials);
-  const operatorContext = await acquireProjectRunOperatorContext(
-    config,
-    projectConfig,
-  );
+  const operatorContext = await acquireProjectRunOperatorContext(config, projectConfig);
   try {
     await operatorContext.run(() =>
       withGitHubOperationProject(project, async () => {
-        const taskStore = new TaskExecutionStore(
-          config.workflow.contextRoot,
-          project,
-        );
-        const queue = new TaskMutationQueue(
-          config.workflow.contextRoot,
-          project,
-        );
+        const taskStore = new TaskExecutionStore(config.workflow.contextRoot, project);
+        const queue = new TaskMutationQueue(config.workflow.contextRoot, project);
         const relevantListIds = [
           project.trello.workingListId,
           project.trello.reviewListId,
@@ -141,9 +125,7 @@ export async function runExternalTaskSessionRecovery(
               })),
             );
             const locations = lists.flatMap(({ listId, cards }) =>
-              cards
-                .filter((card) => card.id === association.cardId)
-                .map(() => listId),
+              cards.filter((card) => card.id === association.cardId).map(() => listId),
             );
             if (locations.length !== 1)
               throw new Error(
@@ -159,16 +141,9 @@ export async function runExternalTaskSessionRecovery(
   }
 }
 
-if (
-  process.argv[1] !== undefined &&
-  pathToFileURL(process.argv[1]).href === import.meta.url
-) {
-  runExternalTaskSessionRecovery(process.argv.slice(2)).catch(
-    (error: unknown) => {
-      process.stderr.write(
-        `${error instanceof Error ? error.message : String(error)}\n`,
-      );
-      process.exitCode = 1;
-    },
-  );
+if (process.argv[1] !== undefined && pathToFileURL(process.argv[1]).href === import.meta.url) {
+  runExternalTaskSessionRecovery(process.argv.slice(2)).catch((error: unknown) => {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = 1;
+  });
 }

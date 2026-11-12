@@ -8,18 +8,13 @@ import { redactSecrets } from "../security/redact-secrets.js";
 let runtimeRoot: string | undefined;
 let lifecycleSignal: AbortSignal | undefined;
 const operationSignal = new AsyncLocalStorage<AbortSignal>();
-export function withProcessCancellationSignal<T>(
-  signal: AbortSignal,
-  operation: () => T,
-): T {
+export function withProcessCancellationSignal<T>(signal: AbortSignal, operation: () => T): T {
   return operationSignal.run(signal, operation);
 }
 let secretValues: readonly string[] = [];
 const registeredSecrets = new Set<string>();
 let operationTimeoutMilliseconds = 2 * 60 * 1_000;
-const ambiguityHandler = new AsyncLocalStorage<
-  (pid: number | undefined) => void
->();
+const ambiguityHandler = new AsyncLocalStorage<(pid: number | undefined) => void>();
 export interface ProcessArtifactEvent {
   type: "process-started" | "process-finished";
   executionId: string;
@@ -54,10 +49,7 @@ function processStartIdentity(pid: number | undefined): string | undefined {
 }
 
 /** `null` is uncertainty (including unsupported platforms), never proof of absence. */
-export function isSameProcessInstance(
-  pid: number,
-  expectedStartIdentity: unknown,
-): boolean | null {
+export function isSameProcessInstance(pid: number, expectedStartIdentity: unknown): boolean | null {
   if (typeof expectedStartIdentity !== "string") return null;
   const actual = processStartIdentity(pid);
   if (actual === undefined) return null;
@@ -91,8 +83,7 @@ export function isVerifiedStoppedExecution(
   return (
     (evidence.treeStopped === true &&
       ["nonzero", "timeout", "interrupted"].includes(evidence.status)) ||
-    (evidence.status === "spawn-failure" &&
-      evidence.dispatchState === "not-dispatched")
+    (evidence.status === "spawn-failure" && evidence.dispatchState === "not-dispatched")
   );
 }
 
@@ -158,8 +149,7 @@ export class ProcessOutputLimitError extends Error {
   }
 }
 
-export type ProcessFailureClassification =
-  "spawn-failure" | "nonzero" | "timeout" | "interrupted";
+export type ProcessFailureClassification = "spawn-failure" | "nonzero" | "timeout" | "interrupted";
 const processFailureDiagnostics = new WeakMap<ProcessExecutionError, string>();
 
 /** Safe public process failure; raw diagnostics remain in the execution artifact. */
@@ -176,18 +166,13 @@ export class ProcessExecutionError extends Error {
       classification === "nonzero"
         ? `exited with code ${exitCode ?? 1}${signal === undefined ? "" : ` (${signal})`}`
         : classification.replace("-", " ");
-    super(
-      `${tool} ${state}; diagnostics: process-executions/${executionId}/stderr.txt`,
-    );
+    super(`${tool} ${state}; diagnostics: process-executions/${executionId}/stderr.txt`);
     this.name = "ProcessExecutionError";
-    if (diagnostic !== undefined)
-      processFailureDiagnostics.set(this, diagnostic);
+    if (diagnostic !== undefined) processFailureDiagnostics.set(this, diagnostic);
   }
 }
 
-export function getProcessFailureDiagnostic(
-  error: ProcessExecutionError,
-): string | undefined {
+export function getProcessFailureDiagnostic(error: ProcessExecutionError): string | undefined {
   return processFailureDiagnostics.get(error);
 }
 
@@ -213,8 +198,7 @@ export function configureProcessRuntime(options: {
   runtimeRoot = path.resolve(options.runtimeRoot);
   lifecycleSignal = options.signal;
   secretValues = options.secretValues ?? [];
-  for (const value of secretValues)
-    if (value.length > 0) registeredSecrets.add(value);
+  for (const value of secretValues) if (value.length > 0) registeredSecrets.add(value);
   operationTimeoutMilliseconds =
     options.operationTimeoutMilliseconds ?? operationTimeoutMilliseconds;
 }
@@ -227,9 +211,7 @@ export function getProcessRuntime(): {
 } {
   const signal = operationSignal.getStore() ?? lifecycleSignal;
   return {
-    artifactRoot:
-      runtimeRoot ??
-      path.join(os.tmpdir(), "agent-orchestrator-process-artifacts"),
+    artifactRoot: runtimeRoot ?? path.join(os.tmpdir(), "agent-orchestrator-process-artifacts"),
     ...(signal === undefined ? {} : { signal }),
     secretValues: [...new Set([...secretValues, ...registeredSecrets])],
     operationTimeoutMilliseconds,
@@ -238,8 +220,7 @@ export function getProcessRuntime(): {
 
 /** Register credentials created at runtime (for example scoped App tokens). */
 export function registerProcessSecrets(values: readonly string[]): void {
-  for (const value of values)
-    if (value.length > 0) registeredSecrets.add(value);
+  for (const value of values) if (value.length > 0) registeredSecrets.add(value);
 }
 
 export function beginProcessEvidence(
@@ -312,9 +293,7 @@ export function beginProcessEvidence(
         status: "running",
         dispatchState: "dispatched",
         pid,
-        ...(startIdentity === undefined
-          ? {}
-          : { pidStartIdentity: startIdentity }),
+        ...(startIdentity === undefined ? {} : { pidStartIdentity: startIdentity }),
       });
     },
     get failure() {
@@ -333,10 +312,7 @@ export function beginProcessEvidence(
         fs.appendFileSync(stream === "stdout" ? stdoutPath : stderrPath, text);
         bytesWritten += bytes;
       } catch (error) {
-        failure = new ProcessEvidenceError(
-          "Could not append process evidence",
-          { cause: error },
-        );
+        failure = new ProcessEvidenceError("Could not append process evidence", { cause: error });
       }
     },
     finish(status: string, fields: Record<string, unknown> = {}) {
@@ -409,8 +385,7 @@ export function signalProcessGroup(
   try {
     process.kill(-pid, signal);
   } catch (error) {
-    if (!(error instanceof Error && "code" in error && error.code === "ESRCH"))
-      fallback?.(signal);
+    if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) fallback?.(signal);
   }
 }
 
@@ -427,9 +402,7 @@ export function processGroupExists(pid: number | undefined): boolean {
 /** The process group could not be proven safe to release after bounded cleanup. */
 export class ProcessGroupTerminationError extends Error {
   constructor(pid: number | undefined) {
-    super(
-      `Unable to verify termination of owned process group ${pid ?? "unknown"}`,
-    );
+    super(`Unable to verify termination of owned process group ${pid ?? "unknown"}`);
     this.name = "ProcessGroupTerminationError";
   }
 }
@@ -492,8 +465,7 @@ export async function drainProcessGroup(
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
   if (processGroupExists(pid)) signalProcessGroup(pid, "SIGKILL", fallback);
-  const killDeadline =
-    Date.now() + Math.max(250, Math.min(graceMilliseconds, 2_000));
+  const killDeadline = Date.now() + Math.max(250, Math.min(graceMilliseconds, 2_000));
   while (Date.now() < killDeadline) {
     const live = hasLiveGroupMember(pid);
     if (live === false) return;

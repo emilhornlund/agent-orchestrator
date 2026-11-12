@@ -29,17 +29,10 @@ function createCard(): TrelloCard {
 }
 
 function createContext(): CardAttachmentPromptContext {
-  temporaryRoot = fs.mkdtempSync(
-    path.join(os.tmpdir(), "agent-orchestrator-prompt-context-"),
-  );
+  temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agent-orchestrator-prompt-context-"));
 
   const contextRoot = path.join(temporaryRoot, "custom-context-root");
-  const attachmentsDirectory = path.join(
-    contextRoot,
-    "project-123",
-    "card-123",
-    "attachments",
-  );
+  const attachmentsDirectory = path.join(contextRoot, "project-123", "card-123", "attachments");
   const requirementsPath = path.join(attachmentsDirectory, "requirements.md");
   const binaryPath = path.join(attachmentsDirectory, "payload.bin");
 
@@ -87,10 +80,7 @@ function createContext(): CardAttachmentPromptContext {
   };
 }
 
-function buildPrompts(
-  card: TrelloCard,
-  context: CardAttachmentPromptContext,
-): string[] {
+function buildPrompts(card: TrelloCard, context: CardAttachmentPromptContext): string[] {
   const approvedPlan: TaskPlan = {
     version: 1,
     projectId: "project-123",
@@ -171,19 +161,13 @@ describe("card attachment prompt context", () => {
       expect(prompt).toContain(
         "These attachments are part of the Trello task context. Inspect them when relevant.",
       );
-      expect(prompt).toContain(
-        "- Design reference: external URL: https://example.com/design",
-      );
+      expect(prompt).toContain("- Design reference: external URL: https://example.com/design");
       expect(prompt).toContain(
         `- requirements.md (text/markdown): local file: ${requirementsPath}`,
       );
       expect(prompt).toContain(`- payload.bin: local file: ${binaryPath}`);
-      expect(prompt.indexOf("Design reference")).toBeLessThan(
-        prompt.indexOf("requirements.md"),
-      );
-      expect(prompt.indexOf("requirements.md")).toBeLessThan(
-        prompt.indexOf("payload.bin"),
-      );
+      expect(prompt.indexOf("Design reference")).toBeLessThan(prompt.indexOf("requirements.md"));
+      expect(prompt.indexOf("requirements.md")).toBeLessThan(prompt.indexOf("payload.bin"));
       expect(prompt).not.toContain("(null)");
       expect(prompt).not.toContain("SECRET_REQUIREMENTS_CONTENT");
       expect(prompt).not.toContain("SECRET_BINARY_CONTENT");
@@ -206,9 +190,9 @@ describe("card attachment prompt context", () => {
       localFilename: "missing.md",
     };
 
-    expect(() =>
-      buildTaskPlanningPrompt("project-123", createCard(), [], context),
-    ).toThrow("materialized file");
+    expect(() => buildTaskPlanningPrompt("project-123", createCard(), [], context)).toThrow(
+      "materialized file",
+    );
     expect(() =>
       buildTaskSessionImplementationPrompt({
         projectId: "project-123",
@@ -217,9 +201,7 @@ describe("card attachment prompt context", () => {
           version: 1,
           projectId: "project-123",
           cardId: "card-123",
-          requirements: [
-            { id: "REQ-1", text: "Do it", verification: "Test it" },
-          ],
+          requirements: [{ id: "REQ-1", text: "Do it", verification: "Test it" }],
           steps: [
             {
               id: "STEP-1",

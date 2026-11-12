@@ -29,12 +29,8 @@ it("preserves legacy operation identities while distinguishing substantive same-
     requestRevision: 2,
     sourceRevision: "c".repeat(64),
   };
-  expect(feedbackOperationId(head, [first])).not.toBe(
-    feedbackOperationId(head, [changed]),
+  expect(feedbackOperationId(head, [first])).not.toBe(feedbackOperationId(head, [changed]));
+  expect(feedbackOperationId(head, [{ ...first, updatedAt: "2026-11-01T00:00:00.000Z" }])).toBe(
+    feedbackOperationId(head, [first]),
   );
-  expect(
-    feedbackOperationId(head, [
-      { ...first, updatedAt: "2026-11-01T00:00:00.000Z" },
-    ]),
-  ).toBe(feedbackOperationId(head, [first]));
 });

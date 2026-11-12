@@ -24,17 +24,11 @@ function fakeChild() {
   });
 }
 
-function writeBytewise(
-  child: ReturnType<typeof fakeChild>,
-  stdout: Buffer,
-  stderr: Buffer,
-) {
+function writeBytewise(child: ReturnType<typeof fakeChild>, stdout: Buffer, stderr: Buffer) {
   const count = Math.max(stdout.length, stderr.length);
   for (let index = 0; index < count; index += 1) {
-    if (index < stdout.length)
-      child.stdout.emit("data", Buffer.from([stdout[index]!]));
-    if (index < stderr.length)
-      child.stderr.emit("data", Buffer.from([stderr[index]!]));
+    if (index < stdout.length) child.stdout.emit("data", Buffer.from([stdout[index]!]));
+    if (index < stderr.length) child.stderr.emit("data", Buffer.from([stderr[index]!]));
   }
   child.emit("close", 0, null);
 }
@@ -46,8 +40,7 @@ afterEach(() => {
     signal: new AbortController().signal,
     secretValues: [],
   });
-  for (const root of runtimeRoots.splice(0))
-    fs.rmSync(root, { recursive: true, force: true });
+  for (const root of runtimeRoots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
 describe("adapter UTF-8 decoding at deterministic chunk boundaries", () => {
@@ -65,10 +58,7 @@ describe("adapter UTF-8 decoding at deterministic chunk boundaries", () => {
 
       const url = `https://github.com/owner/repository/pull/123?q=${secret}`;
       const stdout = Buffer.concat([
-        Buffer.from(
-          family === "gh" ? url : `stdout: café:${secret}:終\n`,
-          "utf8",
-        ),
+        Buffer.from(family === "gh" ? url : `stdout: café:${secret}:終\n`, "utf8"),
         ...(family === "gh" ? [] : [Buffer.from([0xe2, 0x82])]),
       ]);
       const stderr = Buffer.concat([
@@ -103,8 +93,7 @@ describe("adapter UTF-8 decoding at deterministic chunk boundaries", () => {
         expect(result).toEqual({
           url: "https://github.com/owner/repository/pull/123?q=[REDACTED]",
         });
-      else if (family === "git")
-        expect(result).toBe(`stdout: café:[REDACTED]:終\n�`);
+      else if (family === "git") expect(result).toBe(`stdout: café:[REDACTED]:終\n�`);
       else
         expect(result).toMatchObject({
           exitCode: 0,
@@ -116,14 +105,8 @@ describe("adapter UTF-8 decoding at deterministic chunk boundaries", () => {
       const [executionId] = fs.readdirSync(executionRoot);
       expect(executionId).toMatch(/^[0-9a-f-]{36}$/iu);
       const executionDirectory = path.join(executionRoot, executionId!);
-      const capturedStdout = fs.readFileSync(
-        path.join(executionDirectory, "stdout.txt"),
-        "utf8",
-      );
-      const capturedStderr = fs.readFileSync(
-        path.join(executionDirectory, "stderr.txt"),
-        "utf8",
-      );
+      const capturedStdout = fs.readFileSync(path.join(executionDirectory, "stdout.txt"), "utf8");
+      const capturedStderr = fs.readFileSync(path.join(executionDirectory, "stderr.txt"), "utf8");
       expect(capturedStdout).toBe(
         family === "gh"
           ? "https://github.com/owner/repository/pull/123?q=[REDACTED]"
@@ -133,12 +116,7 @@ describe("adapter UTF-8 decoding at deterministic chunk boundaries", () => {
       expect(capturedStdout).not.toContain(secret);
       expect(capturedStderr).not.toContain(secret);
       expect(
-        JSON.parse(
-          fs.readFileSync(
-            path.join(executionDirectory, "execution.json"),
-            "utf8",
-          ),
-        ),
+        JSON.parse(fs.readFileSync(path.join(executionDirectory, "execution.json"), "utf8")),
       ).toMatchObject({ executionId, status: "success" });
     },
   );

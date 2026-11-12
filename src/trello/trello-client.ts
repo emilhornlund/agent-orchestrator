@@ -128,11 +128,9 @@ const trelloLabelSchema = z.object({
   color: z.string().nullable(),
 });
 
-const trelloTimestampSchema = z
-  .string()
-  .refine((value) => !Number.isNaN(Date.parse(value)), {
-    message: "Must be a valid date",
-  });
+const trelloTimestampSchema = z.string().refine((value) => !Number.isNaN(Date.parse(value)), {
+  message: "Must be a valid date",
+});
 
 const trelloCardResponseSchema = z.object({
   id: z.string(),
@@ -145,9 +143,8 @@ const trelloCardResponseSchema = z.object({
   dueComplete: z.boolean().optional(),
 });
 
-const trelloCardSchema = trelloCardResponseSchema.transform(
-  ({ start, ...card }) =>
-    start === undefined || start === null ? card : { ...card, start },
+const trelloCardSchema = trelloCardResponseSchema.transform(({ start, ...card }) =>
+  start === undefined || start === null ? card : { ...card, start },
 );
 
 const trelloAttachmentSchema = z.object({
@@ -256,10 +253,7 @@ function safeErrorMessage(error: unknown): string {
     );
 }
 
-function throwForResponse(
-  operation: TrelloRequestOperation,
-  response: Response,
-): never {
+function throwForResponse(operation: TrelloRequestOperation, response: Response): never {
   throw new TrelloRequestError(
     operation,
     `Trello request failed: ${response.status} ${response.statusText}`,
@@ -280,42 +274,26 @@ function hasTransientStatus(error: unknown): boolean {
       response?: { status?: unknown };
     };
 
-    statuses.push(
-      candidate.status,
-      candidate.statusCode,
-      candidate.response?.status,
-    );
+    statuses.push(candidate.status, candidate.statusCode, candidate.response?.status);
   }
 
-  return statuses.some(
-    (status) => typeof status === "number" && transientHttpStatuses.has(status),
-  );
+  return statuses.some((status) => typeof status === "number" && transientHttpStatuses.has(status));
 }
 
 /** Returns true only for failures that can reasonably succeed later. */
 export function isRetryableTrelloError(error: unknown): boolean {
-  if (
-    errorChain(error).some(
-      (entry) => entry instanceof TrelloRequestAbortedError,
-    )
-  ) {
+  if (errorChain(error).some((entry) => entry instanceof TrelloRequestAbortedError)) {
     return false;
   }
 
   const errors = errorChain(error);
 
-  if (
-    errors.some((entry) =>
-      /github|opencode|commandrunner|smtp/i.test(entry.name),
-    )
-  ) {
+  if (errors.some((entry) => /github|opencode|commandrunner|smtp/i.test(entry.name))) {
     return false;
   }
 
   if (errors.some((entry) => entry instanceof TrelloRequestError)) {
-    return errors.some(
-      (entry) => entry instanceof TrelloRequestError && entry.retryable,
-    );
+    return errors.some((entry) => entry instanceof TrelloRequestError && entry.retryable);
   }
 
   const messages = errors.map((entry) => entry.message.toLowerCase());
@@ -358,9 +336,7 @@ export function isRetryableTrelloError(error: unknown): boolean {
   );
 }
 
-export function getTrelloRequestOperation(
-  error: unknown,
-): TrelloRequestOperation | undefined {
+export function getTrelloRequestOperation(error: unknown): TrelloRequestOperation | undefined {
   return errorChain(error).find(
     (entry): entry is TrelloRequestError => entry instanceof TrelloRequestError,
   )?.operation;
@@ -375,9 +351,7 @@ export class TrelloClient {
     return this.getRequestSignalFor();
   }
 
-  private getRequestSignalFor(
-    additionalSignal?: AbortSignal,
-  ): AbortSignal | undefined {
+  private getRequestSignalFor(additionalSignal?: AbortSignal): AbortSignal | undefined {
     const { signal, timeoutMilliseconds } = this.options;
     const signals = [signal, additionalSignal].filter(
       (candidate): candidate is AbortSignal => candidate !== undefined,
@@ -406,8 +380,7 @@ export class TrelloClient {
     init?: RequestInit,
   ): Promise<Response> {
     const dispatch = async (): Promise<Response> => {
-      if (init?.method && !["GET", "HEAD"].includes(init.method))
-        assertJournaledTransport();
+      if (init?.method && !["GET", "HEAD"].includes(init.method)) assertJournaledTransport();
       try {
         return await fetch(url, init);
       } catch (error) {
@@ -430,55 +403,30 @@ export class TrelloClient {
       }
     };
     const projectId = ProjectRunAuthority.currentProjectId();
-    return projectId === undefined
-      ? dispatch()
-      : ProjectRunAuthority.dispatch(projectId, dispatch);
+    return projectId === undefined ? dispatch() : ProjectRunAuthority.dispatch(projectId, dispatch);
   }
 
   getBoard(boardId: string): Promise<TrelloBoard> {
-    return this.get(
-      `/boards/${boardId}`,
-      trelloBoardSchema,
-      {},
-      "board lookup",
-    );
+    return this.get(`/boards/${boardId}`, trelloBoardSchema, {}, "board lookup");
   }
 
   getLists(boardId: string): Promise<TrelloList[]> {
-    return this.get(
-      `/boards/${boardId}/lists`,
-      z.array(trelloListSchema),
-      {},
-      "list lookup",
-    );
+    return this.get(`/boards/${boardId}/lists`, z.array(trelloListSchema), {}, "list lookup");
   }
 
   getLabels(boardId: string): Promise<TrelloLabel[]> {
-    return this.get(
-      `/boards/${boardId}/labels`,
-      z.array(trelloLabelSchema),
-      {},
-      "label lookup",
-    );
+    return this.get(`/boards/${boardId}/labels`, z.array(trelloLabelSchema), {}, "label lookup");
   }
 
   getCards(listId: string): Promise<TrelloCard[]> {
-    return this.get(
-      `/lists/${listId}/cards`,
-      z.array(trelloCardSchema),
-      {},
-      "card lookup",
-    );
+    return this.get(`/lists/${listId}/cards`, z.array(trelloCardSchema), {}, "card lookup");
   }
 
   getCard(cardId: string): Promise<TrelloCard> {
     return this.get(`/cards/${cardId}`, trelloCardSchema, {}, "card lookup");
   }
 
-  getCardAttachments(
-    cardId: string,
-    signal?: AbortSignal,
-  ): Promise<TrelloAttachment[]> {
+  getCardAttachments(cardId: string, signal?: AbortSignal): Promise<TrelloAttachment[]> {
     return this.get(
       `/cards/${cardId}/attachments`,
       z.array(trelloAttachmentSchema),
@@ -493,9 +441,7 @@ export class TrelloClient {
     signal?: AbortSignal,
   ): Promise<Response> {
     if (!attachment.isUpload) {
-      throw new Error(
-        `Refusing to download non-upload Trello attachment "${attachment.id}"`,
-      );
+      throw new Error(`Refusing to download non-upload Trello attachment "${attachment.id}"`);
     }
 
     let url: URL;
@@ -563,9 +509,7 @@ export class TrelloClient {
     return response;
   }
 
-  async getListTransitions(
-    cardId: string,
-  ): Promise<TrelloListTransition[] | null> {
+  async getListTransitions(cardId: string): Promise<TrelloListTransition[] | null> {
     const actions = await this.getCardActions(cardId, "transition history");
     let hasIncompleteListTransition = false;
     const transitions = actions.flatMap((action) => {
@@ -606,8 +550,7 @@ export class TrelloClient {
     return (
       [...(transitions ?? [])]
         .sort((left, right) => Date.parse(right.date) - Date.parse(left.date))
-        .find((transition) => transition.listAfterId === destinationListId) ??
-      null
+        .find((transition) => transition.listAfterId === destinationListId) ?? null
     );
   }
 
@@ -635,9 +578,7 @@ export class TrelloClient {
       ),
       { filter: "commentCard", limit: "1000" },
       "card action lookup",
-    ).then((actions) =>
-      actions.map((action) => ({ id: action.id, text: action.data.text })),
-    );
+    ).then((actions) => actions.map((action) => ({ id: action.id, text: action.data.text })));
   }
 
   moveCard(
@@ -657,15 +598,10 @@ export class TrelloClient {
       authority
     ) {
       const run = authority.store.read()!;
-      if (
-        cardId !== run.cardId ||
-        !Object.values(run.pinned.lists).includes(listId)
-      )
+      if (cardId !== run.cardId || !Object.values(run.pinned.lists).includes(listId))
         throw new Error("Trello move differs from pinned attempt destination");
       if (listId === run.pinned.lists.ready)
-        throw new Error(
-          "Automatic requeue is not an allowed workflow transition",
-        );
+        throw new Error("Automatic requeue is not an allowed workflow transition");
       if (listId === run.pinned.lists.failed && run.publicationState !== "none")
         throw new Error("An active or uncertain PR cannot be moved to Failed");
       return workflowMutation({
@@ -682,23 +618,16 @@ export class TrelloClient {
                 ? [run.pinned.lists.ready, run.pinned.lists.working]
                 : [run.pinned.lists.review, run.pinned.lists.working]
               : listId === run.pinned.lists.failed
-                ? [
-                    run.pinned.lists.ready,
-                    run.pinned.lists.working,
-                    run.pinned.lists.failed,
-                  ]
+                ? [run.pinned.lists.ready, run.pinned.lists.working, run.pinned.lists.failed]
                 : [run.pinned.lists.working, run.pinned.lists.review, listId];
           if (!allowedSources.includes(current.idList))
-            throw new Error(
-              "Unexpected manual Trello destination; preserving pending move",
-            );
+            throw new Error("Unexpected manual Trello destination; preserving pending move");
         },
         send: () => this.moveCard(cardId, listId, options),
         observe: async () => {
           const card = await this.observeMutationCard(authority);
           return card.idList === listId &&
-            (options.dueComplete === undefined ||
-              card.dueComplete === options.dueComplete)
+            (options.dueComplete === undefined || card.dueComplete === options.dueComplete)
             ? { id: card.id, fields: card, result: card }
             : null;
         },
@@ -713,19 +642,10 @@ export class TrelloClient {
       parameters.dueComplete = options.dueComplete;
     }
 
-    return this.put(
-      `/cards/${cardId}`,
-      parameters,
-      trelloCardSchema,
-      "card move",
-    );
+    return this.put(`/cards/${cardId}`, parameters, trelloCardSchema, "card move");
   }
 
-  updateCardContent(
-    cardId: string,
-    title: string,
-    description: string,
-  ): Promise<TrelloCard> {
+  updateCardContent(cardId: string, title: string, description: string): Promise<TrelloCard> {
     const authority = mutationAuthority(undefined);
     if (
       !consumeJournaledDispatch(authority, {
@@ -772,14 +692,11 @@ export class TrelloClient {
                 current.desc === snapshot.reconciliation.verified.description)
             )
           )
-            throw new Error(
-              "Refinement fields conflict with original/intended snapshot",
-            );
+            throw new Error("Refinement fields conflict with original/intended snapshot");
         },
         send: () => this.updateCardContent(cardId, title, description),
         observe: async () => {
-          if (!(await guardRefinementFields(this, authority, "after")))
-            return null;
+          if (!(await guardRefinementFields(this, authority, "after"))) return null;
           const card = await this.observeMutationCard(authority);
           return card.name === title && card.desc === description
             ? { id: card.id, fields: card, result: card }
@@ -863,20 +780,13 @@ export class TrelloClient {
     );
   }
 
-  private assertRefinementMutation(
-    authority: ProjectRunAuthority,
-    cardId: string,
-  ): void {
+  private assertRefinementMutation(authority: ProjectRunAuthority, cardId: string): void {
     const run = authority.store.read()!;
     if (run.cardId !== cardId || run.taskKind !== "refinement")
-      throw new Error(
-        "Only the owned refinement card may change content or labels",
-      );
+      throw new Error("Only the owned refinement card may change content or labels");
   }
 
-  private async observeMutationCard(
-    authority: ProjectRunAuthority,
-  ): Promise<TrelloCard> {
+  private async observeMutationCard(authority: ProjectRunAuthority): Promise<TrelloCard> {
     const run = authority.store.read()!;
     const actual = await this.get(
       `/cards/${run.cardId}`,
@@ -887,11 +797,7 @@ export class TrelloClient {
     return trelloCardSchema.parse(actual);
   }
 
-  private async journalLabel(
-    cardId: string,
-    labelId: string,
-    present: boolean,
-  ): Promise<boolean> {
+  private async journalLabel(cardId: string, labelId: string, present: boolean): Promise<boolean> {
     const authority = mutationAuthority(undefined);
     if (
       consumeJournaledDispatch(authority, {
@@ -928,17 +834,11 @@ export class TrelloClient {
             (label) => label.id === labelId,
           )
         )
-          throw new Error(
-            "Refinement label is not a verified intended board field",
-          );
+          throw new Error("Refinement label is not a verified intended board field");
       },
-      send: () =>
-        present
-          ? this.addLabel(cardId, labelId)
-          : this.removeLabel(cardId, labelId),
+      send: () => (present ? this.addLabel(cardId, labelId) : this.removeLabel(cardId, labelId)),
       observe: async () => {
-        if (!(await guardRefinementFields(this, authority, "after")))
-          return null;
+        if (!(await guardRefinementFields(this, authority, "after"))) return null;
         const card = await this.observeMutationCard(authority);
         return card.idLabels.includes(labelId) === present
           ? { id: card.id, fields: card, result: true }
@@ -949,16 +849,12 @@ export class TrelloClient {
   }
 
   async getRefinementHistory(cardId: string) {
-    const actor = await this.get(
-      "/members/me",
-      z.object({ id: z.string().min(1) }),
-    );
+    const actor = await this.get("/members/me", z.object({ id: z.string().min(1) }));
     const actions = await this.get(
       `/cards/${cardId}/actions`,
       z.array(refinementHistoryActionSchema),
       {
-        filter:
-          "updateCard:name,updateCard:desc,addLabelToCard,removeLabelFromCard",
+        filter: "updateCard:name,updateCard:desc,addLabelToCard,removeLabelFromCard",
         limit: "1000",
       },
       "card action lookup",
@@ -985,11 +881,7 @@ export class TrelloClient {
     }
 
     const signal = this.getRequestSignalFor(additionalSignal);
-    const response = await this.request(
-      url,
-      operation,
-      signal ? { signal } : undefined,
-    );
+    const response = await this.request(url, operation, signal ? { signal } : undefined);
 
     if (!response.ok) {
       throwForResponse(operation, response);
@@ -1050,10 +942,7 @@ export class TrelloClient {
     url.searchParams.set("token", this.options.token);
 
     for (const [name, value] of Object.entries(queryParameters)) {
-      url.searchParams.set(
-        name,
-        name === "text" ? sanitizeControlledText(value) : value,
-      );
+      url.searchParams.set(name, name === "text" ? sanitizeControlledText(value) : value);
     }
 
     const signal = this.getRequestSignal();
@@ -1081,10 +970,7 @@ export class TrelloClient {
     url.searchParams.set("token", this.options.token);
 
     for (const [name, value] of Object.entries(queryParameters)) {
-      url.searchParams.set(
-        name,
-        name === "text" ? sanitizeControlledText(value) : value,
-      );
+      url.searchParams.set(name, name === "text" ? sanitizeControlledText(value) : value);
     }
 
     const signal = this.getRequestSignal();
@@ -1100,10 +986,7 @@ export class TrelloClient {
     return schema.parse(await response.json());
   }
 
-  private async delete(
-    path: string,
-    operation: TrelloRequestOperation,
-  ): Promise<void> {
+  private async delete(path: string, operation: TrelloRequestOperation): Promise<void> {
     this.throwIfAborted();
 
     const url = new URL(`${this.baseUrl}${path}`);

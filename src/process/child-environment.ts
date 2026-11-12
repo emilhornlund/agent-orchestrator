@@ -2,8 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 /** Minimal inherited environment contract for each child-process family. */
-export type ChildProcessFamily =
-  "command" | "git" | "github" | "opencode" | "flock";
+export type ChildProcessFamily = "command" | "git" | "github" | "opencode" | "flock";
 
 const platformKeys = [
   "PATH",
@@ -41,32 +40,26 @@ const gitKeys = [
   "GIT_SSL_CAPATH",
 ];
 
-const openCodeProviderCredentials: Readonly<Record<string, readonly string[]>> =
-  {
-    openai: ["OPENAI_API_KEY", "OPENAI_ORG_ID", "OPENAI_PROJECT_ID"],
-    anthropic: ["ANTHROPIC_API_KEY"],
-    google: ["GOOGLE_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY"],
-    "google-vertex": [
-      "GOOGLE_APPLICATION_CREDENTIALS",
-      "GOOGLE_CLOUD_PROJECT",
-      "GOOGLE_CLOUD_LOCATION",
-      "GOOGLE_VERTEX_PROJECT",
-    ],
-    gemini: ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
-    mistral: ["MISTRAL_API_KEY"],
-    groq: ["GROQ_API_KEY"],
-    xai: ["XAI_API_KEY"],
-    openrouter: ["OPENROUTER_API_KEY"],
-    deepseek: ["DEEPSEEK_API_KEY"],
-    "azure-openai": ["AZURE_OPENAI_API_KEY", "AZURE_OPENAI_ENDPOINT"],
-    cohere: ["COHERE_API_KEY"],
-    bedrock: [
-      "AWS_ACCESS_KEY_ID",
-      "AWS_SECRET_ACCESS_KEY",
-      "AWS_SESSION_TOKEN",
-      "AWS_REGION",
-    ],
-  };
+const openCodeProviderCredentials: Readonly<Record<string, readonly string[]>> = {
+  openai: ["OPENAI_API_KEY", "OPENAI_ORG_ID", "OPENAI_PROJECT_ID"],
+  anthropic: ["ANTHROPIC_API_KEY"],
+  google: ["GOOGLE_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY"],
+  "google-vertex": [
+    "GOOGLE_APPLICATION_CREDENTIALS",
+    "GOOGLE_CLOUD_PROJECT",
+    "GOOGLE_CLOUD_LOCATION",
+    "GOOGLE_VERTEX_PROJECT",
+  ],
+  gemini: ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+  mistral: ["MISTRAL_API_KEY"],
+  groq: ["GROQ_API_KEY"],
+  xai: ["XAI_API_KEY"],
+  openrouter: ["OPENROUTER_API_KEY"],
+  deepseek: ["DEEPSEEK_API_KEY"],
+  "azure-openai": ["AZURE_OPENAI_API_KEY", "AZURE_OPENAI_ENDPOINT"],
+  cohere: ["COHERE_API_KEY"],
+  bedrock: ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_REGION"],
+};
 
 export function hasOpenCodeProviderCredentials(
   supplied: Readonly<Record<string, string | undefined>> = {},
@@ -77,9 +70,7 @@ export function hasOpenCodeProviderCredentials(
     .some((key) => supplied[key] !== undefined || parent[key] !== undefined);
 }
 
-export function providerFromModel(
-  model: string | undefined,
-): string | undefined {
+export function providerFromModel(model: string | undefined): string | undefined {
   if (model === undefined) return undefined;
   const separator = model.indexOf("/");
   return separator <= 0 ? undefined : model.slice(0, separator).toLowerCase();
@@ -107,10 +98,7 @@ function stripJsonComments(input: string): string {
       output += "\n";
     } else if (character === "/" && next === "*") {
       index += 2;
-      while (
-        index < input.length &&
-        !(input[index] === "*" && input[index + 1] === "/")
-      ) {
+      while (index < input.length && !(input[index] === "*" && input[index + 1] === "/")) {
         output += input[index] === "\n" ? "\n" : " ";
         index += 1;
       }
@@ -120,8 +108,7 @@ function stripJsonComments(input: string): string {
       while (lookahead < input.length) {
         while (/\s/u.test(input[lookahead] ?? "")) lookahead += 1;
         if (input[lookahead] === "/" && input[lookahead + 1] === "/") {
-          while (lookahead < input.length && input[lookahead] !== "\n")
-            lookahead += 1;
+          while (lookahead < input.length && input[lookahead] !== "\n") lookahead += 1;
           continue;
         }
         if (input[lookahead] === "/" && input[lookahead + 1] === "*") {
@@ -136,8 +123,7 @@ function stripJsonComments(input: string): string {
         }
         break;
       }
-      if (input[lookahead] !== "}" && input[lookahead] !== "]")
-        output += character;
+      if (input[lookahead] !== "}" && input[lookahead] !== "]") output += character;
     } else {
       output += character;
     }
@@ -165,15 +151,10 @@ function modelFromConfig(configPath: string): string | undefined {
   try {
     const stat = fs.statSync(configPath);
     if (!stat.isFile() || stat.size > 1_048_576) return undefined;
-    const parsed: unknown = JSON.parse(
-      stripJsonComments(fs.readFileSync(configPath, "utf8")),
-    );
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
-      return undefined;
+    const parsed: unknown = JSON.parse(stripJsonComments(fs.readFileSync(configPath, "utf8")));
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return undefined;
     const model = Reflect.get(parsed, "model");
-    return typeof model === "string" && model.trim().length > 0
-      ? model
-      : undefined;
+    return typeof model === "string" && model.trim().length > 0 ? model : undefined;
   } catch {
     return undefined;
   }
@@ -187,15 +168,11 @@ export function providerForOpenCodeDefault(
   const customFile = environment.OPENCODE_CONFIG;
   const configDirectory = environment.OPENCODE_CONFIG_DIR;
   const xdgDirectory = environment.XDG_CONFIG_HOME;
-  const userDirectory =
-    home === undefined ? undefined : path.join(home, ".config");
+  const userDirectory = home === undefined ? undefined : path.join(home, ".config");
   const roots = [
     ...(customFile === undefined ? [] : [customFile]),
     ...(configDirectory !== undefined
-      ? [
-          path.join(configDirectory, "opencode.json"),
-          path.join(configDirectory, "opencode.jsonc"),
-        ]
+      ? [path.join(configDirectory, "opencode.json"), path.join(configDirectory, "opencode.jsonc")]
       : xdgDirectory !== undefined
         ? [
             path.join(xdgDirectory, "opencode", "opencode.json"),
@@ -230,12 +207,10 @@ export function buildChildEnvironment(
     keys.add("GITHUB_TOKEN");
   }
   if (family === "github") {
-    for (const key of [...gitKeys, "GH_TOKEN", "GITHUB_TOKEN", "GH_HOST"])
-      keys.add(key);
+    for (const key of [...gitKeys, "GH_TOKEN", "GITHUB_TOKEN", "GH_HOST"]) keys.add(key);
   }
   if (family === "opencode") {
-    for (const key of openCodeProviderCredentials[selectedProvider ?? ""] ?? [])
-      keys.add(key);
+    for (const key of openCodeProviderCredentials[selectedProvider ?? ""] ?? []) keys.add(key);
     keys.add("XDG_CONFIG_HOME");
     keys.add("OPENCODE_CONFIG");
     keys.add("OPENCODE_CONFIG_DIR");

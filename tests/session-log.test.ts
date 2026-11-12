@@ -26,9 +26,7 @@ afterEach(() => {
 });
 
 function useTemporaryWorkingDirectory(): void {
-  temporaryDirectory = mkdtempSync(
-    path.join(os.tmpdir(), "orchestrator-test-"),
-  );
+  temporaryDirectory = mkdtempSync(path.join(os.tmpdir(), "orchestrator-test-"));
   process.chdir(temporaryDirectory);
 }
 

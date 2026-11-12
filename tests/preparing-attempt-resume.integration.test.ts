@@ -26,19 +26,13 @@ import { TaskExecutionStore } from "../src/task-session/task-execution-store.js"
 import type { OpenCodeClient } from "../src/opencode/opencode-client.js";
 import { getRefinementResultPath } from "../src/refinement/refinement-result.js";
 import { CommandRunner } from "../src/process/command-runner.js";
-import {
-  getSetupTrackedDelta,
-  type SetupInventory,
-} from "../src/process/setup-commit-scope.js";
+import { getSetupTrackedDelta, type SetupInventory } from "../src/process/setup-commit-scope.js";
 import { captureSetupEffects } from "../src/process/run-setup.js";
 import { runOrchestrator } from "../src/orchestrator/run-orchestrator.js";
 import { pollProject } from "../src/orchestrator/poll-project.js";
 import { TrelloClient, type TrelloCard } from "../src/trello/trello-client.js";
 import type { RefinementHistoryAction } from "../src/refinement/refinement-mutation-snapshot.js";
-import {
-  runStartup,
-  type StartupOperations,
-} from "../src/startup/run-startup.js";
+import { runStartup, type StartupOperations } from "../src/startup/run-startup.js";
 
 let root: string;
 const leases: ProjectOwnershipLease[] = [];
@@ -218,8 +212,7 @@ describe("resuming canonical preparing attempts", () => {
           idList: cardList,
           idLabels: [...labels],
         });
-        if (parts[2] === "members")
-          return Response.json({ id: "orchestrator" });
+        if (parts[2] === "members") return Response.json({ id: "orchestrator" });
         if (parts[2] === "boards")
           return Response.json(
             [
@@ -293,12 +286,9 @@ describe("resuming canonical preparing attempts", () => {
         return Response.json(current());
       });
       const trello = {
-        getRefinementHistory:
-          actualTrello.getRefinementHistory.bind(actualTrello),
+        getRefinementHistory: actualTrello.getRefinementHistory.bind(actualTrello),
         getCards: async (listId: string) =>
-          cardList === listId
-            ? [{ ...card, idList: listId, idLabels: [...labels] }]
-            : [],
+          cardList === listId ? [{ ...card, idList: listId, idLabels: [...labels] }] : [],
         getCard: async () => ({
           ...card,
           idList: cardList,
@@ -325,18 +315,13 @@ describe("resuming canonical preparing attempts", () => {
           effectStates.push(authority.store.read()!.lifecycle);
           fs.mkdirSync(worktree, { recursive: true });
           if (interruptSetup)
-            fs.writeFileSync(
-              path.join(worktree, "unrelated-tracked.txt"),
-              "original\n",
-            );
+            fs.writeFileSync(path.join(worktree, "unrelated-tracked.txt"), "original\n");
         },
         getStatus: async () => "",
         getCurrentBranch: async () => `agent/${cardId}`,
         getHeadSha: async () => "a".repeat(40),
-        getHeadTrackedFiles: async () =>
-          interruptSetup ? ["unrelated-tracked.txt"] : [],
-        getCommittableChangedPaths: async () =>
-          interruptSetup ? ["unrelated-tracked.txt"] : [],
+        getHeadTrackedFiles: async () => (interruptSetup ? ["unrelated-tracked.txt"] : []),
+        getCommittableChangedPaths: async () => (interruptSetup ? ["unrelated-tracked.txt"] : []),
         getUntrackedFiles: async () => [],
         getIgnoredFiles: async () => [],
         getRebaseState: async () => null,
@@ -366,10 +351,7 @@ describe("resuming canonical preparing attempts", () => {
         effectStates.push(authority.store.read()!.lifecycle);
         setupRuns += 1;
         const result = await actualCommands.run(commandOptions);
-        if (
-          !interruptSetup ||
-          (interruptSetup && (setupRuns === 2 || result.exitCode !== 0))
-        )
+        if (!interruptSetup || (interruptSetup && (setupRuns === 2 || result.exitCode !== 0)))
           controller.abort();
         return result;
       });
@@ -393,21 +375,14 @@ describe("resuming canonical preparing attempts", () => {
         controller.signal,
         undefined,
         undefined,
-        new Map([
-          [
-            project.id,
-            { authority, projectLease: lease, pinned, coordinationRoot },
-          ],
-        ]),
+        new Map([[project.id, { authority, projectLease: lease, pinned, coordinationRoot }]]),
       );
       clearTimeout(safetyStop);
 
       if (interruptSetup) {
         expect(setupRuns).toBe(1);
         expect(agentRuns).toBe(0);
-        expect(
-          new TaskExecutionStore(storageRoot, project, authority).read(cardId),
-        ).toMatchObject({
+        expect(new TaskExecutionStore(storageRoot, project, authority).read(cardId)).toMatchObject({
           setup: {
             status: "pending",
             attempts: 1,
@@ -453,9 +428,7 @@ describe("resuming canonical preparing attempts", () => {
           : { attemptId, lifecycle: "planning" },
       );
       expect(cardList).toBe(
-        taskKind === "refinement"
-          ? project.trello.backlogListId
-          : project.trello.workingListId,
+        taskKind === "refinement" ? project.trello.backlogListId : project.trello.workingListId,
       );
       expect(effectStates.length).toBeGreaterThan(0);
       expect(effectStates.every((state) => state !== "preparing")).toBe(true);
@@ -474,12 +447,8 @@ describe("resuming canonical preparing attempts", () => {
         .trim()
         .split("\n")
         .map((line) => JSON.parse(line) as Record<string, unknown>);
-      const processEvents = timeline.filter((event) =>
-        String(event.type).startsWith("process-"),
-      );
-      const stateEvents = timeline.filter(
-        (event) => event.type === "attempt-state",
-      );
+      const processEvents = timeline.filter((event) => String(event.type).startsWith("process-"));
+      const stateEvents = timeline.filter((event) => event.type === "attempt-state");
       expect(stateEvents.length).toBeGreaterThan(2);
       expect(
         stateEvents.every(
@@ -495,37 +464,26 @@ describe("resuming canonical preparing attempts", () => {
         stateEvents.some(
           (event) =>
             event.transition ===
-            (taskKind === "refinement"
-              ? "refinement-claimed"
-              : "implementation-claimed"),
+            (taskKind === "refinement" ? "refinement-claimed" : "implementation-claimed"),
         ),
       ).toBe(true);
       expect(processEvents.length).toBeGreaterThanOrEqual(4);
       expect(
         processEvents.every(
           (event, index) =>
-            event.type ===
-            (index % 2 === 0 ? "process-started" : "process-finished"),
+            event.type === (index % 2 === 0 ? "process-started" : "process-finished"),
         ),
       ).toBe(true);
-      expect(processEvents.some((event) => event.status === "success")).toBe(
-        true,
-      );
-      expect(processEvents.some((event) => event.status === "nonzero")).toBe(
-        true,
-      );
+      expect(processEvents.some((event) => event.status === "success")).toBe(true);
+      expect(processEvents.some((event) => event.status === "nonzero")).toBe(true);
       expect(JSON.stringify(processEvents)).not.toContain("CHILD_MARKER");
       const referencedStreams = processEvents
         .filter((event) => event.type === "process-finished")
         .flatMap((event) => [event.stdoutArtifact, event.stderrArtifact])
         .filter((artifact): artifact is string => typeof artifact === "string")
         .map((artifact) => fs.readFileSync(artifact, "utf8"));
-      expect(referencedStreams.join("\n")).toContain(
-        "BEFORE_RESTART_CHILD_MARKER",
-      );
-      expect(referencedStreams.join("\n")).toContain(
-        "AFTER_RESTART_CHILD_MARKER",
-      );
+      expect(referencedStreams.join("\n")).toContain("BEFORE_RESTART_CHILD_MARKER");
+      expect(referencedStreams.join("\n")).toContain("AFTER_RESTART_CHILD_MARKER");
       expect(
         timeline.some(
           (event) =>
@@ -533,17 +491,12 @@ describe("resuming canonical preparing attempts", () => {
             event.after !== null &&
             typeof event.after === "object" &&
             "lifecycle" in event.after &&
-            event.after.lifecycle ===
-              (taskKind === "refinement" ? "refined" : "planning"),
+            event.after.lifecycle === (taskKind === "refinement" ? "refined" : "planning"),
         ),
       ).toBe(true);
       if (taskKind === "implementation") {
         expect(setupRuns).toBe(interruptSetup ? 2 : 1);
-        const setupStore = new TaskExecutionStore(
-          storageRoot,
-          project,
-          authority,
-        );
+        const setupStore = new TaskExecutionStore(storageRoot, project, authority);
         const setupRecord = setupStore.read(cardId);
         expect(setupRecord).toMatchObject({
           phase: "planning",
@@ -569,23 +522,13 @@ describe("resuming canonical preparing attempts", () => {
             setupRecord!.setup!.after!,
           ) as Parameters<typeof getSetupTrackedDelta>[1];
           const current = JSON.parse(
-            (
-              await captureSetupEffects(git, path.join(worktreeRoot, cardId))
-            ).toString("utf8"),
+            (await captureSetupEffects(git, path.join(worktreeRoot, cardId))).toString("utf8"),
           ) as Parameters<typeof getSetupTrackedDelta>[2];
           const delta = getSetupTrackedDelta(original, latest, current);
-          expect(delta.candidates.map(({ path }) => path)).toContain(
-            "unrelated-tracked.txt",
-          );
-          expect(setupRecord!.setup!.history![0]!.before).toBe(
-            setupRecord!.setup!.before,
-          );
-          expect(setupRecord!.setup!.history![1]!.before).not.toBe(
-            setupRecord!.setup!.before,
-          );
-          expect(setupRecord!.setup!.attemptBefore).toBe(
-            setupRecord!.setup!.history![1]!.before,
-          );
+          expect(delta.candidates.map(({ path }) => path)).toContain("unrelated-tracked.txt");
+          expect(setupRecord!.setup!.history![0]!.before).toBe(setupRecord!.setup!.before);
+          expect(setupRecord!.setup!.history![1]!.before).not.toBe(setupRecord!.setup!.before);
+          expect(setupRecord!.setup!.attemptBefore).toBe(setupRecord!.setup!.history![1]!.before);
         }
       }
     },
@@ -595,9 +538,7 @@ describe("resuming canonical preparing attempts", () => {
   it.each([false, true])(
     "runs the pending fresh attempt after legacy migration and terminal recovery (integration reconfigured: %s)",
     async (reconfigureIntegration) => {
-      root = fs.mkdtempSync(
-        path.join(os.tmpdir(), "preparing-legacy-handoff-"),
-      );
+      root = fs.mkdtempSync(path.join(os.tmpdir(), "preparing-legacy-handoff-"));
       const repositoryPath = path.join(root, "repo");
       const worktreeRoot = path.join(root, "worktrees");
       const storageRoot = path.join(root, "runtime");
@@ -653,10 +594,7 @@ describe("resuming canonical preparing attempts", () => {
           contextRetentionDays: 30,
         },
       } as Config;
-      const setupStartup = (
-        config: Config,
-        orchestrator: StartupOperations["runOrchestrator"],
-      ) => {
+      const setupStartup = (config: Config, orchestrator: StartupOperations["runOrchestrator"]) => {
         const runGit: RunGit = async (_cwd, args) =>
           args[0] === "remote"
             ? `https://github.com/${config.projects[0]!.repository.github}.git`
@@ -707,10 +645,7 @@ describe("resuming canonical preparing attempts", () => {
       const importedId = legacyAttemptId(legacyTask);
       await setupStartup(initialConfig, async () => undefined);
       const importedRecord = JSON.parse(
-        fs.readFileSync(
-          path.join(storageRoot, "attempts", `${importedId}.json`),
-          "utf8",
-        ),
+        fs.readFileSync(path.join(storageRoot, "attempts", `${importedId}.json`), "utf8"),
       ) as RunRecord;
       expect(importedRecord).toMatchObject({
         attemptId: importedId,
@@ -728,23 +663,14 @@ describe("resuming canonical preparing attempts", () => {
       );
       let terminalBytes: Buffer;
       try {
-        const store = new RunStore(
-          storageRoot,
-          importedId,
-          importedRecord.pinned,
-          {
-            integrationId: importedRecord.pinned.integrationId,
-            instanceId: terminalLease.instanceId,
-            token: terminalLease.token,
-            assertHeld: () => terminalLease.assertHeld(),
-          },
-        );
+        const store = new RunStore(storageRoot, importedId, importedRecord.pinned, {
+          integrationId: importedRecord.pinned.integrationId,
+          instanceId: terminalLease.instanceId,
+          token: terminalLease.token,
+          assertHeld: () => terminalLease.assertHeld(),
+        });
         let record = store.read()!;
-        record = store.takeOwnership(
-          record.revision,
-          record.owner.generation,
-          terminalLease.token,
-        );
+        record = store.takeOwnership(record.revision, record.owner.generation, terminalLease.token);
         record = store.transition(
           record.revision,
           record.owner.generation,
@@ -763,15 +689,8 @@ describe("resuming canonical preparing attempts", () => {
           },
         );
         expect(record.terminalSync).toBe("verified");
-        await updateProjectActiveAttempt(
-          coordinationRoot,
-          initialProject.id,
-          terminalLease,
-          null,
-        );
-        terminalBytes = fs.readFileSync(
-          path.join(storageRoot, "attempts", `${importedId}.json`),
-        );
+        await updateProjectActiveAttempt(coordinationRoot, initialProject.id, terminalLease, null);
+        terminalBytes = fs.readFileSync(path.join(storageRoot, "attempts", `${importedId}.json`));
       } finally {
         await terminalLease.release();
       }
@@ -799,9 +718,7 @@ describe("resuming canonical preparing attempts", () => {
       const freshAttemptId = randomUUID();
       let pinned: RunRecord["pinned"];
       try {
-        const pin = (
-          await readProjectPinCandidates(coordinationRoot, activeProject.id)
-        ).find(
+        const pin = (await readProjectPinCandidates(coordinationRoot, activeProject.id)).find(
           (candidate) =>
             candidate.integrationId ===
             JSON.stringify({
@@ -827,24 +744,17 @@ describe("resuming canonical preparing attempts", () => {
           worktreeRoot: pin.repository.worktreeRoot,
           storageRoot: pin.storageRoot,
         };
-        await prepareProjectAttempt(
-          coordinationRoot,
-          activeProject.id,
-          handoffLease,
-          { attemptId: freshAttemptId, storageRoot },
-        );
+        await prepareProjectAttempt(coordinationRoot, activeProject.id, handoffLease, {
+          attemptId: freshAttemptId,
+          storageRoot,
+        });
         const leaseIdentity = {
           integrationId: pin.integrationId,
           instanceId: handoffLease.instanceId,
           token: handoffLease.token,
           assertHeld: () => handoffLease.assertHeld(),
         };
-        const candidateStore = new RunStore(
-          storageRoot,
-          freshAttemptId,
-          pinned,
-          leaseIdentity,
-        );
+        const candidateStore = new RunStore(storageRoot, freshAttemptId, pinned, leaseIdentity);
         candidateStore.create({
           version: 1,
           revision: 1,
@@ -876,11 +786,7 @@ describe("resuming canonical preparing attempts", () => {
           compatibility: {},
           updatedAt: new Date().toISOString(),
         });
-        const registry = new RunRegistry(
-          storageRoot,
-          pin.integrationId,
-          leaseIdentity,
-        );
+        const registry = new RunRegistry(storageRoot, pin.integrationId, leaseIdentity);
         const previousPointer = registry.read();
         registry.handoff(
           candidateStore,
@@ -898,11 +804,9 @@ describe("resuming canonical preparing attempts", () => {
         await handoffLease.release();
       }
       expect(fs.readFileSync(legacyPath)).toEqual(originalLegacyBytes);
-      expect(
-        fs.readFileSync(
-          path.join(storageRoot, "attempts", `${importedId}.json`),
-        ),
-      ).toEqual(terminalBytes!);
+      expect(fs.readFileSync(path.join(storageRoot, "attempts", `${importedId}.json`))).toEqual(
+        terminalBytes!,
+      );
 
       const freshCard: TrelloCard = {
         id: "fresh-card-after-legacy-import",
@@ -918,8 +822,7 @@ describe("resuming canonical preparing attempts", () => {
       let activeLease: ProjectOwnershipLease | undefined;
       let resumedAuthority: ProjectRunAuthority | undefined;
       const trello = {
-        getCards: async (list: string) =>
-          listId === list ? [{ ...freshCard, idList: list }] : [],
+        getCards: async (list: string) => (listId === list ? [{ ...freshCard, idList: list }] : []),
         getCard: async () => ({ ...freshCard, idList: listId }),
         getCardAttachments: async () => [],
         moveCard: async (_id: string, list: string) => {
@@ -1003,16 +906,12 @@ describe("resuming canonical preparing attempts", () => {
             activeProject,
             resumedAuthority!,
           ).read(freshCard.id);
-          resumedState.pointer = new RunRegistry(
-            storageRoot,
-            pinned.integrationId,
-            {
-              integrationId: pinned.integrationId,
-              instanceId: resumedLease!.instanceId,
-              token: resumedLease!.token,
-              assertHeld: () => resumedLease!.assertHeld(),
-            },
-          ).read();
+          resumedState.pointer = new RunRegistry(storageRoot, pinned.integrationId, {
+            integrationId: pinned.integrationId,
+            instanceId: resumedLease!.instanceId,
+            token: resumedLease!.token,
+            assertHeld: () => resumedLease!.assertHeld(),
+          }).read();
         },
       };
       await runStartup(
@@ -1040,15 +939,9 @@ describe("resuming canonical preparing attempts", () => {
       });
       expect(setupRuns).toBe(1);
       expect(effects.length).toBeGreaterThan(0);
-      expect(effects.every((effect) => effect.includes(freshAttemptId))).toBe(
-        true,
-      );
-      expect(effects.every((effect) => !effect.includes(":preparing:"))).toBe(
-        true,
-      );
-      expect(effects.every((effect) => effect.includes(":planning:"))).toBe(
-        true,
-      );
+      expect(effects.every((effect) => effect.includes(freshAttemptId))).toBe(true);
+      expect(effects.every((effect) => !effect.includes(":preparing:"))).toBe(true);
+      expect(effects.every((effect) => effect.includes(":planning:"))).toBe(true);
       expect(listId).toBe(activeProject.trello.workingListId);
       expect(resumedState.task).toMatchObject({
         phase: "planning",
@@ -1062,11 +955,9 @@ describe("resuming canonical preparing attempts", () => {
         },
       });
       expect(fs.readFileSync(legacyPath)).toEqual(originalLegacyBytes);
-      expect(
-        fs.readFileSync(
-          path.join(storageRoot, "attempts", `${importedId}.json`),
-        ),
-      ).toEqual(terminalBytes!);
+      expect(fs.readFileSync(path.join(storageRoot, "attempts", `${importedId}.json`))).toEqual(
+        terminalBytes!,
+      );
     },
     20_000,
   );

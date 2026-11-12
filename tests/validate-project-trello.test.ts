@@ -49,9 +49,7 @@ describe("validateProjectTrello", () => {
       getLabels: vi.fn().mockResolvedValue(labels),
     } as unknown as TrelloClient;
 
-    await expect(
-      validateProjectTrello(trello, project),
-    ).resolves.toBeUndefined();
+    await expect(validateProjectTrello(trello, project)).resolves.toBeUndefined();
   });
 
   it("rejects a configured list that is closed", async () => {
@@ -64,16 +62,12 @@ describe("validateProjectTrello", () => {
       getLists: vi
         .fn()
         .mockResolvedValue(
-          lists.map((list) =>
-            list.id === "ready" ? { ...list, closed: true } : list,
-          ),
+          lists.map((list) => (list.id === "ready" ? { ...list, closed: true } : list)),
         ),
       getLabels: vi.fn().mockResolvedValue(labels),
     } as unknown as TrelloClient;
 
-    await expect(validateProjectTrello(trello, project)).rejects.toThrow(
-      "readyListId",
-    );
+    await expect(validateProjectTrello(trello, project)).rejects.toThrow("readyListId");
   });
 
   it("rejects a configured list that is missing", async () => {
@@ -83,15 +77,11 @@ describe("validateProjectTrello", () => {
         name: "Workflow",
         url: "https://trello.com/b/board-1/workflow",
       }),
-      getLists: vi
-        .fn()
-        .mockResolvedValue(lists.filter((list) => list.id !== "done")),
+      getLists: vi.fn().mockResolvedValue(lists.filter((list) => list.id !== "done")),
       getLabels: vi.fn().mockResolvedValue(labels),
     } as unknown as TrelloClient;
 
-    await expect(validateProjectTrello(trello, project)).rejects.toThrow(
-      "doneListId",
-    );
+    await expect(validateProjectTrello(trello, project)).rejects.toThrow("doneListId");
   });
 
   it("rejects a missing configured backlog list", async () => {
@@ -101,15 +91,11 @@ describe("validateProjectTrello", () => {
         name: "Workflow",
         url: "https://trello.com/b/board-1/workflow",
       }),
-      getLists: vi
-        .fn()
-        .mockResolvedValue(lists.filter((list) => list.id !== "backlog")),
+      getLists: vi.fn().mockResolvedValue(lists.filter((list) => list.id !== "backlog")),
       getLabels: vi.fn().mockResolvedValue(labels),
     } as unknown as TrelloClient;
 
-    await expect(validateProjectTrello(trello, project)).rejects.toThrow(
-      "backlogListId",
-    );
+    await expect(validateProjectTrello(trello, project)).rejects.toThrow("backlogListId");
   });
 
   it("rejects a configured label that is missing", async () => {
@@ -122,13 +108,9 @@ describe("validateProjectTrello", () => {
       getLists: vi.fn().mockResolvedValue(lists),
       getLabels: vi
         .fn()
-        .mockResolvedValue(
-          labels.filter((label) => label.id !== "improvement-label"),
-        ),
+        .mockResolvedValue(labels.filter((label) => label.id !== "improvement-label")),
     } as unknown as TrelloClient;
 
-    await expect(validateProjectTrello(trello, project)).rejects.toThrow(
-      "improvementLabelId",
-    );
+    await expect(validateProjectTrello(trello, project)).rejects.toThrow("improvementLabelId");
   });
 });

@@ -1,14 +1,8 @@
 import type { TrelloCard } from "../trello/trello-client.js";
 
-import {
-  commitResultRelativePath,
-  MAX_COMMIT_MESSAGE_LENGTH,
-} from "./commit-result.js";
+import { commitResultRelativePath, MAX_COMMIT_MESSAGE_LENGTH } from "./commit-result.js";
 
-export function buildCommitPrompt(
-  card: TrelloCard,
-  resultPath = commitResultRelativePath,
-): string {
+export function buildCommitPrompt(card: TrelloCard, resultPath = commitResultRelativePath): string {
   return [
     "Generate the commit message for the final reviewed changes for this task.",
     "",

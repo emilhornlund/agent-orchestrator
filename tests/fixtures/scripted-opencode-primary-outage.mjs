@@ -13,10 +13,7 @@ if (args[0] === "session" && args[1] === "list") {
 const callsFile = path.join(cwd, "primary-cli-calls.jsonl");
 fs.appendFileSync(callsFile, `${JSON.stringify(args)}\n`);
 const counterFile = path.join(cwd, "primary-cli-count");
-const count =
-  Number(
-    fs.existsSync(counterFile) ? fs.readFileSync(counterFile, "utf8") : "0",
-  ) + 1;
+const count = Number(fs.existsSync(counterFile) ? fs.readFileSync(counterFile, "utf8") : "0") + 1;
 fs.writeFileSync(counterFile, String(count));
 
 if (fs.readFileSync(path.join(cwd, "primary-mode"), "utf8") === "crash") {
@@ -30,8 +27,7 @@ if (fs.readFileSync(path.join(cwd, "primary-mode"), "utf8") === "crash") {
 const mode = fs.readFileSync(path.join(cwd, "primary-mode"), "utf8");
 if (
   (mode === "outage-once" && count === 1) ||
-  (mode !== "outage-once" &&
-    count <= Number(process.env.PRIMARY_OUTAGE_WINDOWS ?? "5"))
+  (mode !== "outage-once" && count <= Number(process.env.PRIMARY_OUTAGE_WINDOWS ?? "5"))
 ) {
   process.stdout.write(
     `${JSON.stringify({ type: "error", error: { name: "APIError", data: { statusCode: 503 } } })}\n`,

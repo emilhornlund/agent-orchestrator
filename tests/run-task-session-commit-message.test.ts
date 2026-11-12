@@ -74,10 +74,7 @@ function createFixture() {
   };
   const git = {
     getStatus: vi.fn(async () =>
-      [
-        " M src.ts",
-        ...untrackedCommitResults().map((filePath) => `?? ${filePath}`),
-      ].join("\n"),
+      [" M src.ts", ...untrackedCommitResults().map((filePath) => `?? ${filePath}`)].join("\n"),
     ),
     getDiff: vi.fn(async (_cwd: string, staged = false) =>
       staged ? "" : fs.readFileSync(path.join(worktreePath, "src.ts"), "utf8"),
@@ -85,11 +82,8 @@ function createFixture() {
     getUntrackedFiles: vi.fn(async () => untrackedCommitResults()),
   } as unknown as GitClient;
   const runner = vi.fn<RunOpenCode>(async (options: OpenCodeRunOptions) => {
-    const resultPath = options.prompt.match(
-      /Write exactly one JSON object to ([^\n]+)\./u,
-    )?.[1];
-    if (resultPath === undefined)
-      throw new Error("Commit prompt omitted its result path");
+    const resultPath = options.prompt.match(/Write exactly one JSON object to ([^\n]+)\./u)?.[1];
+    if (resultPath === undefined) throw new Error("Commit prompt omitted its result path");
     const absolutePath = path.join(options.cwd, resultPath);
     fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
     fs.writeFileSync(absolutePath, JSON.stringify({ message }), "utf8");
@@ -120,9 +114,7 @@ describe("task-session commit-message recovery", () => {
 
     expect(first).toBe(message);
     expect(
-      fixture.store.read(card.id)?.primaryOperations?.[
-        fixture.options.operationId
-      ],
+      fixture.store.read(card.id)?.primaryOperations?.[fixture.options.operationId],
     ).toMatchObject({
       role: "advisory",
       status: "completed",
@@ -131,14 +123,9 @@ describe("task-session commit-message recovery", () => {
         intentIdentity: expect.stringMatching(/^sha256:[a-f0-9]{64}$/u),
       },
     });
-    expect(
-      fs.readdirSync(path.join(fixture.worktreePath, ".agent-orchestrator")),
-    ).toEqual([]);
+    expect(fs.readdirSync(path.join(fixture.worktreePath, ".agent-orchestrator"))).toEqual([]);
 
-    const restartedStore = new TaskExecutionStore(
-      path.join(root!, "state"),
-      fixture.project,
-    );
+    const restartedStore = new TaskExecutionStore(path.join(root!, "state"), fixture.project);
     const second = await runTaskSessionCommitMessage({
       ...fixture.options,
       taskRecordStore: restartedStore,
@@ -152,10 +139,7 @@ describe("task-session commit-message recovery", () => {
     expect(second).toBe(message);
     expect(fixture.runner).toHaveBeenCalledOnce();
 
-    fs.writeFileSync(
-      path.join(fixture.worktreePath, "src.ts"),
-      "CI correction\n",
-    );
+    fs.writeFileSync(path.join(fixture.worktreePath, "src.ts"), "CI correction\n");
     const ciIntent = {
       ...fixture.options,
       commitIntentId: "ci-repair-pass-one",
@@ -165,9 +149,7 @@ describe("task-session commit-message recovery", () => {
     };
     await runTaskSessionCommitMessage(ciIntent);
     expect(fixture.runner).toHaveBeenCalledTimes(2);
-    expect(
-      restartedStore.read(card.id)?.primaryOperations?.[ciIntent.operationId],
-    ).toMatchObject({
+    expect(restartedStore.read(card.id)?.primaryOperations?.[ciIntent.operationId]).toMatchObject({
       status: "completed",
       commitMessageResult: { message },
     });
@@ -190,16 +172,14 @@ describe("task-session commit-message recovery", () => {
       .spyOn(fixture.store, "compareAndSwap")
       .mockImplementation((cardId, revision, nextRecord) => {
         if (
-          nextRecord.primaryOperations?.[fixture.options.operationId]
-            ?.commitMessageResult !== undefined
+          nextRecord.primaryOperations?.[fixture.options.operationId]?.commitMessageResult !==
+          undefined
         )
           throw interruption;
         return compareAndSwap(cardId, revision, nextRecord);
       });
 
-    await expect(runTaskSessionCommitMessage(fixture.options)).rejects.toBe(
-      interruption,
-    );
+    await expect(runTaskSessionCommitMessage(fixture.options)).rejects.toBe(interruption);
     saveAssociation.mockRestore();
     expect(fixture.store.read(card.id)?.primaryOperations).toMatchObject({
       [fixture.options.operationId]: {
@@ -208,15 +188,11 @@ describe("task-session commit-message recovery", () => {
       },
     });
     expect(
-      fixture.store.read(card.id)?.primaryOperations?.[
-        fixture.options.operationId
-      ]?.commitMessageResult,
+      fixture.store.read(card.id)?.primaryOperations?.[fixture.options.operationId]
+        ?.commitMessageResult,
     ).toBeUndefined();
 
-    const restartedStore = new TaskExecutionStore(
-      path.join(root!, "state"),
-      fixture.project,
-    );
+    const restartedStore = new TaskExecutionStore(path.join(root!, "state"), fixture.project);
     const recovered = await runTaskSessionCommitMessage({
       ...fixture.options,
       taskRecordStore: restartedStore,
@@ -230,40 +206,31 @@ describe("task-session commit-message recovery", () => {
     expect(recovered).toBe(message);
     expect(fixture.runner).toHaveBeenCalledOnce();
     expect(
-      restartedStore.read(card.id)?.primaryOperations?.[
-        fixture.options.operationId
-      ]?.commitMessageResult,
+      restartedStore.read(card.id)?.primaryOperations?.[fixture.options.operationId]
+        ?.commitMessageResult,
     ).toMatchObject({ message });
-    expect(
-      fs.readdirSync(path.join(fixture.worktreePath, ".agent-orchestrator")),
-    ).toEqual([]);
+    expect(fs.readdirSync(path.join(fixture.worktreePath, ".agent-orchestrator"))).toEqual([]);
   });
 
   it("removes only its malformed result before reporting safe advisory unavailability", async () => {
     const fixture = createFixture();
     fixture.runner.mockImplementation(async (options) => {
-      const resultPath = options.prompt.match(
-        /Write exactly one JSON object to ([^\n]+)\./u,
-      )?.[1];
-      if (resultPath === undefined)
-        throw new Error("Commit prompt omitted its result path");
+      const resultPath = options.prompt.match(/Write exactly one JSON object to ([^\n]+)\./u)?.[1];
+      if (resultPath === undefined) throw new Error("Commit prompt omitted its result path");
       const absolutePath = path.join(options.cwd, resultPath);
       fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
       fs.writeFileSync(absolutePath, "{ malformed", "utf8");
       return { exitCode: 0, output: "result written", errorOutput: "" };
     });
 
-    await expect(
-      runTaskSessionCommitMessage(fixture.options),
-    ).rejects.toBeInstanceOf(CommitMessageAdviceUnavailableError);
+    await expect(runTaskSessionCommitMessage(fixture.options)).rejects.toBeInstanceOf(
+      CommitMessageAdviceUnavailableError,
+    );
 
+    expect(fs.readdirSync(path.join(fixture.worktreePath, ".agent-orchestrator"))).toEqual([]);
     expect(
-      fs.readdirSync(path.join(fixture.worktreePath, ".agent-orchestrator")),
-    ).toEqual([]);
-    expect(
-      fixture.store.read(card.id)?.primaryOperations?.[
-        fixture.options.operationId
-      ]?.commitMessageResult,
+      fixture.store.read(card.id)?.primaryOperations?.[fixture.options.operationId]
+        ?.commitMessageResult,
     ).toBeUndefined();
   });
 
@@ -274,8 +241,7 @@ describe("task-session commit-message recovery", () => {
       const relativePath = options.prompt.match(
         /Write exactly one JSON object to ([^\n]+)\./u,
       )?.[1];
-      if (relativePath === undefined)
-        throw new Error("Commit prompt omitted its result path");
+      if (relativePath === undefined) throw new Error("Commit prompt omitted its result path");
       resultPath = path.join(options.cwd, relativePath);
       fs.mkdirSync(path.dirname(resultPath), { recursive: true });
       fs.writeFileSync(resultPath, JSON.stringify({ message }), "utf8");
@@ -285,17 +251,13 @@ describe("task-session commit-message recovery", () => {
       code: "EIO",
     });
     const readFileSync = fs.readFileSync.bind(fs);
-    const read = vi
-      .spyOn(fs, "readFileSync")
-      .mockImplementation((filePath, options) => {
-        if (filePath === resultPath) throw readFailure;
-        return readFileSync(filePath, options);
-      });
+    const read = vi.spyOn(fs, "readFileSync").mockImplementation((filePath, options) => {
+      if (filePath === resultPath) throw readFailure;
+      return readFileSync(filePath, options);
+    });
 
     try {
-      await expect(runTaskSessionCommitMessage(fixture.options)).rejects.toBe(
-        readFailure,
-      );
+      await expect(runTaskSessionCommitMessage(fixture.options)).rejects.toBe(readFailure);
     } finally {
       read.mockRestore();
     }
@@ -304,28 +266,22 @@ describe("task-session commit-message recovery", () => {
     expect(fs.existsSync(resultPath!)).toBe(true);
     expect(fixture.runner).toHaveBeenCalledOnce();
     expect(
-      fixture.store.read(card.id)?.primaryOperations?.[
-        fixture.options.operationId
-      ]?.commitMessageResult,
+      fixture.store.read(card.id)?.primaryOperations?.[fixture.options.operationId]
+        ?.commitMessageResult,
     ).toBeUndefined();
   });
 
   it("includes unrelated existing hashed artifacts in its source snapshot", async () => {
     const fixture = createFixture();
     const unrelatedRelativePath = getCommitResultRelativePath("c".repeat(64));
-    const unrelatedPath = path.join(
-      fixture.worktreePath,
-      unrelatedRelativePath,
-    );
+    const unrelatedPath = path.join(fixture.worktreePath, unrelatedRelativePath);
     fs.mkdirSync(path.dirname(unrelatedPath), { recursive: true });
     fs.writeFileSync(unrelatedPath, "unrelated pre-existing artifact");
 
     const result = await runTaskSessionCommitMessage(fixture.options);
 
     expect(result).toBe(message);
-    expect(fs.readFileSync(unrelatedPath, "utf8")).toBe(
-      "unrelated pre-existing artifact",
-    );
+    expect(fs.readFileSync(unrelatedPath, "utf8")).toBe("unrelated pre-existing artifact");
     expect(fixture.runner).toHaveBeenCalledOnce();
   });
 
@@ -355,14 +311,11 @@ describe("task-session commit-message recovery", () => {
     );
 
     const foreignPath = path.join(fixture.worktreePath, foreignRelativePath);
-    expect(fs.readFileSync(foreignPath, "utf8")).toBe(
-      "unauthorized sibling artifact",
-    );
+    expect(fs.readFileSync(foreignPath, "utf8")).toBe("unauthorized sibling artifact");
     expect(fs.existsSync(foreignPath)).toBe(true);
     expect(
-      fixture.store.read(card.id)?.primaryOperations?.[
-        fixture.options.operationId
-      ]?.commitMessageResult,
+      fixture.store.read(card.id)?.primaryOperations?.[fixture.options.operationId]
+        ?.commitMessageResult,
     ).toBeUndefined();
     expect(fixture.runner).toHaveBeenCalledOnce();
   });

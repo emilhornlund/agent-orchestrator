@@ -94,9 +94,9 @@ function fixture() {
 it("reconciles a verified Working move after acknowledgment loss without repeating it or inferring location from phase", async () => {
   const f = fixture();
   f.loseAck();
-  await expect(
-    ensureFeedbackCardLocation(f, "working", "correction:working"),
-  ).rejects.toThrow("lost acknowledgment");
+  await expect(ensureFeedbackCardLocation(f, "working", "correction:working")).rejects.toThrow(
+    "lost acknowledgment",
+  );
   expect(f.taskStore.read("card")?.feedbackCardMove).toMatchObject({
     fromListId: "review",
     toListId: "working",
@@ -115,11 +115,7 @@ it("reconciles a verified Working move after acknowledgment loss without repeati
     occurredAt: new Date(Date.parse(working.updatedAt) + 1).toISOString(),
   });
   expect(expectedTaskTrelloList(f.project, implementation)).toBe("working");
-  await ensureFeedbackCardLocation(
-    { ...f, taskStore: restarted },
-    "review",
-    "correction:review",
-  );
+  await ensureFeedbackCardLocation({ ...f, taskStore: restarted }, "review", "correction:review");
   expect(restarted.read("card")?.expectedTrelloListId).toBe("review");
 });
 
@@ -127,9 +123,7 @@ it("preserves an unexpected manual move instead of treating it as the pending tr
   const f = fixture();
   await prepareFeedbackCardMove(f, "working", "correction:working");
   f.move("backlog");
-  await expect(reconcilePendingFeedbackCardMove(f)).rejects.toThrow(
-    "unexpectedly",
-  );
+  await expect(reconcilePendingFeedbackCardMove(f)).rejects.toThrow("unexpectedly");
   expect(f.trello.moveCard).not.toHaveBeenCalled();
   expect(f.taskStore.read("card")?.expectedTrelloListId).toBe("review");
   f.move("review");
@@ -164,9 +158,9 @@ it("refuses a mismatched external card identity before recording or dispatching 
     idLabels: [],
     url: "https://trello.test/other",
   });
-  await expect(
-    ensureFeedbackCardLocation(f, "working", "correction:working"),
-  ).rejects.toThrow("identity");
+  await expect(ensureFeedbackCardLocation(f, "working", "correction:working")).rejects.toThrow(
+    "identity",
+  );
   expect(f.trello.moveCard).not.toHaveBeenCalled();
   expect(f.taskStore.read("card")?.feedbackCardMove).toBeUndefined();
 });

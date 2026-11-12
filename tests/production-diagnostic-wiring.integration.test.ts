@@ -42,15 +42,10 @@ const { pollProject } = await import("../src/orchestrator/poll-project.js");
 const roots: string[] = [];
 
 afterEach(() => {
-  for (const root of roots.splice(0))
-    fs.rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
-function projectConfig(
-  id: string,
-  repositoryPath: string,
-  worktreeRoot: string,
-): ProjectConfig {
+function projectConfig(id: string, repositoryPath: string, worktreeRoot: string): ProjectConfig {
   return {
     id,
     autoMerge: false,
@@ -94,20 +89,10 @@ describe("production typed diagnostic evidence", () => {
     const repositoryPath = path.join(root, "repository");
     const worktreeRoot = path.join(root, "worktrees");
     const binRoot = path.join(root, "bin");
-    for (const directory of [
-      coordinationRoot,
-      storageRoot,
-      repositoryPath,
-      worktreeRoot,
-      binRoot,
-    ])
+    for (const directory of [coordinationRoot, storageRoot, repositoryPath, worktreeRoot, binRoot])
       fs.mkdirSync(directory, { recursive: true });
 
-    const project = projectConfig(
-      "diagnostic-project",
-      repositoryPath,
-      worktreeRoot,
-    );
+    const project = projectConfig("diagnostic-project", repositoryPath, worktreeRoot);
     provisionCoordinationNamespace(coordinationRoot, "diagnostic-test");
     const config = {
       workflow: {
@@ -181,9 +166,7 @@ describe("production typed diagnostic evidence", () => {
           consoleOutput.push(values.join(" "));
           if (
             method === "error" &&
-            values
-              .join(" ")
-              .includes("Could not reconcile the pull request state")
+            values.join(" ").includes("Could not reconcile the pull request state")
           )
             controller.abort();
         });
@@ -309,9 +292,7 @@ describe("production typed diagnostic evidence", () => {
             },
         )
         .filter(
-          (event) =>
-            event.type === "workflow-diagnostic" &&
-            typeof event.summary.code === "string",
+          (event) => event.type === "workflow-diagnostic" && typeof event.summary.code === "string",
         );
       expect(diagnosticEvents).toHaveLength(1);
       expect(diagnosticEvents[0]?.summary).toEqual({
@@ -321,9 +302,7 @@ describe("production typed diagnostic evidence", () => {
         artifactReferences: [observedFailure!.stdoutArtifactReference],
       });
       const artifactReference = observedFailure!.stdoutArtifactReference!;
-      expect(artifactReference).toMatch(
-        /^process-executions\/[0-9a-f-]+\/stdout\.txt$/,
-      );
+      expect(artifactReference).toMatch(/^process-executions\/[0-9a-f-]+\/stdout\.txt$/);
       const executionDirectory = path.join(
         storageRoot,
         "artifacts",
@@ -335,10 +314,7 @@ describe("production typed diagnostic evidence", () => {
       const stdoutArtifact = fs.readFileSync(executionDirectory, "utf8");
       expect(stdoutArtifact).toContain(rawMarker);
       expect(
-        fs.readFileSync(
-          path.join(path.dirname(executionDirectory), "stderr.txt"),
-          "utf8",
-        ),
+        fs.readFileSync(path.join(path.dirname(executionDirectory), "stderr.txt"), "utf8"),
       ).toContain("safe-stderr-marker");
       expect(history).not.toContain(rawMarker);
 
@@ -349,9 +325,7 @@ describe("production typed diagnostic evidence", () => {
       );
       const dailyContents = fs.readFileSync(dailyLog, "utf8");
       expect(dailyContents).not.toContain("Retryable GitHub reconciliation");
-      expect(dailyContents).toContain(
-        "Could not reconcile the pull request state",
-      );
+      expect(dailyContents).toContain("Could not reconcile the pull request state");
       expect(dailyContents).not.toContain(rawMarker);
       expect(consoleOutput.join(" ")).not.toContain(rawMarker);
       const oldDailyDate = new Date("2020-01-01T00:00:00.000Z");
@@ -366,9 +340,7 @@ describe("production typed diagnostic evidence", () => {
         trelloVerifiedAt: new Date().toISOString(),
       });
       const terminalRecord = authority.store.read()!;
-      cleanupLogRetention(1, new Date("2026-03-01T00:00:00.000Z"), [
-        storageRoot,
-      ]);
+      cleanupLogRetention(1, new Date("2026-03-01T00:00:00.000Z"), [storageRoot]);
       expect(fs.existsSync(dailyLog)).toBe(false);
       expect(fs.existsSync(eventPath)).toBe(true);
 
@@ -407,12 +379,8 @@ describe("production typed diagnostic evidence", () => {
         ),
       ) as { lifecycle: string; decisions: Array<Record<string, unknown>> };
       expect(restarted.lifecycle).toBe(terminalRecord.lifecycle);
-      expect(restarted.decisions).toEqual(
-        diagnosticEvents.map((event) => event.summary),
-      );
-      expect(restarted.decisions).toEqual(
-        diagnosticEvents.map((event) => event.summary),
-      );
+      expect(restarted.decisions).toEqual(diagnosticEvents.map((event) => event.summary));
+      expect(restarted.decisions).toEqual(diagnosticEvents.map((event) => event.summary));
     } finally {
       vi.restoreAllMocks();
       process.env.PATH = priorPath;
@@ -423,29 +391,17 @@ describe("production typed diagnostic evidence", () => {
   }, 30_000);
 
   it("persists bounded retries for a transient gh HTTP 503 without leaking stderr", async () => {
-    const root = fs.mkdtempSync(
-      path.join(os.tmpdir(), "worker-retry-diagnostics-"),
-    );
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "worker-retry-diagnostics-"));
     roots.push(root);
     const coordinationRoot = path.join(root, "coordination");
     const storageRoot = path.join(root, "storage");
     const repositoryPath = path.join(root, "repository");
     const worktreeRoot = path.join(root, "worktrees");
     const binRoot = path.join(root, "bin");
-    for (const directory of [
-      coordinationRoot,
-      storageRoot,
-      repositoryPath,
-      worktreeRoot,
-      binRoot,
-    ])
+    for (const directory of [coordinationRoot, storageRoot, repositoryPath, worktreeRoot, binRoot])
       fs.mkdirSync(directory, { recursive: true });
 
-    const project = projectConfig(
-      "retry-diagnostic-project",
-      repositoryPath,
-      worktreeRoot,
-    );
+    const project = projectConfig("retry-diagnostic-project", repositoryPath, worktreeRoot);
     provisionCoordinationNamespace(coordinationRoot, "retry-diagnostic-test");
     const config = {
       workflow: {
@@ -545,8 +501,7 @@ describe("production typed diagnostic evidence", () => {
       const processFailures: Error[] = [];
       const trello = {
         getCards: vi.fn(async () => {
-          if (invocations >= MAX_GITHUB_RECONCILIATION_ATTEMPTS)
-            controller.abort();
+          if (invocations >= MAX_GITHUB_RECONCILIATION_ATTEMPTS) controller.abort();
           return [];
         }),
       } as unknown as TrelloClient;
@@ -582,13 +537,10 @@ describe("production typed diagnostic evidence", () => {
           "Could not reconcile the pull request state",
           { reconciliationListId: project.trello.reviewListId },
         );
-        expect(reconciliationFailure).toBeInstanceOf(
-          RetryableGitHubReconciliationError,
-        );
+        expect(reconciliationFailure).toBeInstanceOf(RetryableGitHubReconciliationError);
         expect(reconciliationFailure.cause).toBe(processFailure);
         processFailures.push(processFailure as Error);
-        if (invocations >= MAX_GITHUB_RECONCILIATION_ATTEMPTS)
-          controller.abort();
+        if (invocations >= MAX_GITHUB_RECONCILIATION_ATTEMPTS) controller.abort();
         throw reconciliationFailure;
       });
 
@@ -635,8 +587,7 @@ describe("production typed diagnostic evidence", () => {
         );
       const retryDecisions = allDiagnostics.filter(
         (event) =>
-          event.type === "workflow-diagnostic" &&
-          event.summary.code === "recovery-deferred",
+          event.type === "workflow-diagnostic" && event.summary.code === "recovery-deferred",
       );
       expect(retryDecisions.map((event) => event.summary)).toEqual([
         {
@@ -670,9 +621,7 @@ describe("production typed diagnostic evidence", () => {
         const stderrArtifactReference = failure.message.match(
           /process-executions\/[0-9a-f-]+\/stderr\.txt/,
         )?.[0];
-        expect(stderrArtifactReference).toMatch(
-          /^process-executions\/[0-9a-f-]+\/stderr\.txt$/,
-        );
+        expect(stderrArtifactReference).toMatch(/^process-executions\/[0-9a-f-]+\/stderr\.txt$/);
         const stderrPath = path.join(
           storageRoot,
           "artifacts",
@@ -685,9 +634,7 @@ describe("production typed diagnostic evidence", () => {
         expect(stderr).toContain(`${safeServiceError} ${rawMarker}`);
         return stderrArtifactReference!;
       });
-      expect(new Set(stderrArtifactReferences).size).toBe(
-        MAX_GITHUB_RECONCILIATION_ATTEMPTS,
-      );
+      expect(new Set(stderrArtifactReferences).size).toBe(MAX_GITHUB_RECONCILIATION_ATTEMPTS);
       const persistedArtifactReferences = allDiagnostics.flatMap((event) =>
         Array.isArray(event.summary?.artifactReferences)
           ? (event.summary.artifactReferences as string[])
@@ -702,12 +649,8 @@ describe("production typed diagnostic evidence", () => {
         `orchestrator-${new Date().toISOString().slice(0, 10)}.log`,
       );
       const dailyContents = fs.readFileSync(dailyLog, "utf8");
-      expect(dailyContents).toContain(
-        "Retryable GitHub reconciliation attempt 1/3",
-      );
-      expect(dailyContents).toContain(
-        "Retryable GitHub reconciliation attempt 3/3",
-      );
+      expect(dailyContents).toContain("Retryable GitHub reconciliation attempt 1/3");
+      expect(dailyContents).toContain("Retryable GitHub reconciliation attempt 3/3");
       expect(dailyContents).not.toContain(rawMarker);
       expect(consoleOutput.join(" ")).not.toContain(rawMarker);
       expect(history).not.toContain(rawMarker);
@@ -721,9 +664,7 @@ describe("production typed diagnostic evidence", () => {
         trelloVerifiedAt: new Date().toISOString(),
       });
       const terminalRecord = authority.store.read()!;
-      cleanupLogRetention(1, new Date("2026-03-01T00:00:00.000Z"), [
-        storageRoot,
-      ]);
+      cleanupLogRetention(1, new Date("2026-03-01T00:00:00.000Z"), [storageRoot]);
       expect(fs.existsSync(dailyLog)).toBe(false);
       expect(fs.existsSync(eventPath)).toBe(true);
 
@@ -761,9 +702,7 @@ describe("production typed diagnostic evidence", () => {
         ),
       ) as { lifecycle: string; decisions: Array<Record<string, unknown>> };
       expect(restarted.lifecycle).toBe(terminalRecord.lifecycle);
-      expect(restarted.decisions).toEqual(
-        retryDecisions.map((event) => event.summary),
-      );
+      expect(restarted.decisions).toEqual(retryDecisions.map((event) => event.summary));
     } finally {
       vi.restoreAllMocks();
       process.env.PATH = priorPath;

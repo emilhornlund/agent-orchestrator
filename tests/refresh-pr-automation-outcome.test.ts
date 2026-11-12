@@ -10,15 +10,8 @@ function fixture() {
     ensurePullRequestDraft: vi.fn(async () => undefined),
     getPullRequestDescription: vi.fn(async () => body),
     editPullRequestDescription: vi.fn(
-      async ({
-        body: next,
-        expectedBody,
-      }: {
-        body: string;
-        expectedBody?: string | undefined;
-      }) => {
-        if (body !== expectedBody)
-          throw new Error("Concurrent human edit detected");
+      async ({ body: next, expectedBody }: { body: string; expectedBody?: string | undefined }) => {
+        if (body !== expectedBody) throw new Error("Concurrent human edit detected");
         body = next;
       },
     ),
@@ -97,9 +90,7 @@ describe("current PR automation outcomes", () => {
     });
     expect(f.getBody()).toContain("deadline expired");
     expect(f.getBody()).toContain("Build did not register");
-    expect(f.getBody()).toContain(
-      "no new commit, validation run or fulfilled fix is claimed",
-    );
+    expect(f.getBody()).toContain("no new commit, validation run or fulfilled fix is claimed");
     expect(f.options.github.ensurePullRequestDraft).toHaveBeenCalledOnce();
   });
 
@@ -123,9 +114,7 @@ describe("current PR automation outcomes", () => {
       draft: false,
     });
     const body = f.getBody();
-    expect(body).toContain(
-      "Human introduction\n\nOriginal implementation description\n",
-    );
+    expect(body).toContain("Human introduction\n\nOriginal implementation description\n");
     expect(body).toContain("Human release instructions");
     expect(body).not.toContain("checks remain uncertain");
     expect(body.match(/## Current automation outcome/gu)).toHaveLength(1);
@@ -134,24 +123,17 @@ describe("current PR automation outcomes", () => {
       facts: ["Observed CI passed on this revision."],
       draft: false,
     });
-    expect(f.options.github.editPullRequestDescription).toHaveBeenCalledTimes(
-      2,
-    );
+    expect(f.options.github.editPullRequestDescription).toHaveBeenCalledTimes(2);
   });
 
   it("does not overwrite a detected concurrent edit and refreshes from human content on recovery", async () => {
     const f = fixture();
-    const original =
-      f.options.github.editPullRequestDescription.getMockImplementation()!;
-    f.options.github.editPullRequestDescription.mockImplementationOnce(
-      async (request) => {
-        f.edit(f.getBody() + "\nHuman concurrent edit\n");
-        await original(request);
-      },
-    );
-    await expect(refreshPrAutomationOutcome(f.options)).rejects.toThrow(
-      "Concurrent human edit",
-    );
+    const original = f.options.github.editPullRequestDescription.getMockImplementation()!;
+    f.options.github.editPullRequestDescription.mockImplementationOnce(async (request) => {
+      f.edit(f.getBody() + "\nHuman concurrent edit\n");
+      await original(request);
+    });
+    await expect(refreshPrAutomationOutcome(f.options)).rejects.toThrow("Concurrent human edit");
     expect(f.getBody()).toContain("Human concurrent edit");
     await refreshPrAutomationOutcome(f.options);
     expect(f.getBody()).toContain("Human concurrent edit");
@@ -161,9 +143,7 @@ describe("current PR automation outcomes", () => {
   it("preserves ambiguous markers rather than guessing ownership", async () => {
     const f = fixture();
     f.edit("Human text\n<!-- agent-orchestrator-outcome:end -->");
-    await expect(refreshPrAutomationOutcome(f.options)).rejects.toThrow(
-      "markers are ambiguous",
-    );
+    await expect(refreshPrAutomationOutcome(f.options)).rejects.toThrow("markers are ambiguous");
     expect(f.options.github.editPullRequestDescription).not.toHaveBeenCalled();
   });
 });

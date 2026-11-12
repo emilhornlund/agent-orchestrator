@@ -2,12 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import {
-  RunRegistry,
-  RunStore,
-  RunStoreConflictError,
-  type RunStoreLease,
-} from "./run-store.js";
+import { RunRegistry, RunStore, RunStoreConflictError, type RunStoreLease } from "./run-store.js";
 import type { RunEventType, RunRecord } from "./run-record.js";
 import {
   terminalPrFenceFromRun,
@@ -32,9 +27,7 @@ interface ProjectLeaseCapability {
   assertHeld: () => void;
   markTerminationAmbiguous: (pid: number | undefined) => void;
 }
-const projectLeaseContext = new AsyncLocalStorage<
-  ReadonlyMap<string, ProjectLeaseCapability>
->();
+const projectLeaseContext = new AsyncLocalStorage<ReadonlyMap<string, ProjectLeaseCapability>>();
 
 /** Lease-bound projection controller. A project queue must bind to a durable
  * preparing/active attempt before any external task effects are dispatched. */
@@ -53,16 +46,10 @@ export class ProjectRunAuthority {
     readonly store: RunStore,
     readonly ownerGeneration: number,
     private readonly releaseAttempt?: () => Promise<void>,
-    private readonly markTerminationAmbiguous?: (
-      pid: number | undefined,
-    ) => void,
+    private readonly markTerminationAmbiguous?: (pid: number | undefined) => void,
     readonly cardId?: string,
   ) {
-    if (
-      !projectId ||
-      !Number.isSafeInteger(ownerGeneration) ||
-      ownerGeneration < 1
-    )
+    if (!projectId || !Number.isSafeInteger(ownerGeneration) || ownerGeneration < 1)
       throw new Error("Invalid project run authority identity");
   }
 
@@ -78,25 +65,17 @@ export class ProjectRunAuthority {
       githubRepository: options.projectLease.identity.githubRepository,
     });
     if (integrationId !== options.pinned.integrationId)
-      throw new RunStoreConflictError(
-        "Attempt pins do not match canonical project lease identity",
-      );
+      throw new RunStoreConflictError("Attempt pins do not match canonical project lease identity");
     const lease: RunStoreLease = {
       integrationId,
       instanceId: options.projectLease.instanceId,
       token: options.projectLease.token,
       assertHeld: () => options.projectLease.assertHeld(),
     };
-    const registry = new RunRegistry(
-      options.pinned.storageRoot,
-      integrationId,
-      lease,
-    );
+    const registry = new RunRegistry(options.pinned.storageRoot, integrationId, lease);
     const pointer = registry.reconcile();
     if (!pointer || pointer.attemptId !== options.attemptId)
-      throw new RunStoreConflictError(
-        "Attempt is not the reconciled canonical registry owner",
-      );
+      throw new RunStoreConflictError("Attempt is not the reconciled canonical registry owner");
     const store = new RunStore(
       options.pinned.storageRoot,
       options.attemptId,
@@ -105,18 +84,9 @@ export class ProjectRunAuthority {
     );
     let record = store.read();
     if (!record || record.projectId !== options.projectId)
-      throw new RunStoreConflictError(
-        "Canonical attempt record identity mismatch",
-      );
-    if (
-      record.owner.instanceId !== lease.instanceId ||
-      record.owner.token !== lease.token
-    ) {
-      record = store.takeOwnership(
-        record.revision,
-        record.owner.generation,
-        lease.token,
-      );
+      throw new RunStoreConflictError("Canonical attempt record identity mismatch");
+    if (record.owner.instanceId !== lease.instanceId || record.owner.token !== lease.token) {
+      record = store.takeOwnership(record.revision, record.owner.generation, lease.token);
     }
     await updateProjectActiveAttempt(
       options.coordinationRoot,
@@ -163,21 +133,14 @@ export class ProjectRunAuthority {
       githubRepository: options.projectLease.identity.githubRepository,
     });
     if (integrationId !== options.pinned.integrationId)
-      throw new RunStoreConflictError(
-        "Attempt pins do not match canonical project lease identity",
-      );
+      throw new RunStoreConflictError("Attempt pins do not match canonical project lease identity");
     const lease: RunStoreLease = {
       integrationId,
       instanceId: options.projectLease.instanceId,
       token: options.projectLease.token,
       assertHeld: () => options.projectLease.assertHeld(),
     };
-    const store = new RunStore(
-      options.pinned.storageRoot,
-      attemptId,
-      options.pinned,
-      lease,
-    );
+    const store = new RunStore(options.pinned.storageRoot, attemptId, options.pinned, lease);
     const registry = new RunRegistry(
       options.pinned.storageRoot,
       options.pinned.integrationId,
@@ -190,14 +153,11 @@ export class ProjectRunAuthority {
         prior.attemptId,
         lease,
       );
-      if (!previousStore)
-        throw new RunStoreConflictError("Prior registry attempt is missing");
+      if (!previousStore) throw new RunStoreConflictError("Prior registry attempt is missing");
       const previous = previousStore.read();
       if (
         !previous ||
-        !["done", "refined", "failed", "cancelled"].includes(
-          previous.lifecycle,
-        ) ||
+        !["done", "refined", "failed", "cancelled"].includes(previous.lifecycle) ||
         previous.terminalSync !== "verified" ||
         !previous.pendingOperations.every(isConclusiveOperationResolution)
       )
@@ -205,19 +165,12 @@ export class ProjectRunAuthority {
           "A project attempt is still occupying the canonical registry",
         );
     }
-    await prepareProjectAttempt(
-      options.coordinationRoot,
-      options.projectId,
-      options.projectLease,
-      {
-        attemptId,
-        storageRoot: options.pinned.storageRoot,
-        creation: "preparing",
-      },
-    );
-    const resourceName = prior
-      ? `${options.cardId}--${attemptId}`
-      : options.cardId;
+    await prepareProjectAttempt(options.coordinationRoot, options.projectId, options.projectLease, {
+      attemptId,
+      storageRoot: options.pinned.storageRoot,
+      creation: "preparing",
+    });
+    const resourceName = prior ? `${options.cardId}--${attemptId}` : options.cardId;
     const worktreePath = `${options.pinned.worktreeRoot}/${resourceName}`;
     const record: RunRecord = {
       version: 1,
@@ -292,15 +245,10 @@ export class ProjectRunAuthority {
   claim(): RunRecord {
     const current = this.store.read();
     if (!current || current.lifecycle !== "preparing")
-      throw new RunStoreConflictError(
-        "Only a preparing attempt can be claimed",
-      );
+      throw new RunStoreConflictError("Only a preparing attempt can be claimed");
     const event =
-      current.taskKind === "refinement"
-        ? "refinement-claimed"
-        : "implementation-claimed";
-    const lifecycle =
-      current.taskKind === "refinement" ? "refinement" : "planning";
+      current.taskKind === "refinement" ? "refinement-claimed" : "implementation-claimed";
+    const lifecycle = current.taskKind === "refinement" ? "refinement" : "planning";
     const completed = this.store.transition(
       current.revision,
       this.ownerGeneration,
@@ -320,14 +268,8 @@ export class ProjectRunAuthority {
     trelloVerifiedAt: string;
   }): Promise<RunRecord> {
     const current = this.store.read();
-    if (
-      !current ||
-      current.taskKind !== "refinement" ||
-      current.lifecycle !== "refinement"
-    )
-      throw new RunStoreConflictError(
-        "Only an active refinement attempt can complete as refined",
-      );
+    if (!current || current.taskKind !== "refinement" || current.lifecycle !== "refinement")
+      throw new RunStoreConflictError("Only an active refinement attempt can complete as refined");
     const completed = this.store.transition(
       current.revision,
       this.ownerGeneration,
@@ -387,13 +329,8 @@ export class ProjectRunAuthority {
   async releaseVerifiedTerminal(): Promise<void> {
     const current = this.store.assertCurrentLease(this.ownerGeneration);
     const fence = terminalPrFenceFromRun(current);
-    if (
-      fence &&
-      (!terminalStopProofValid(this) || otherTaskWriterIsActive(this))
-    )
-      throw new RunStoreConflictError(
-        "Terminal PR release requires verified stopped task writers",
-      );
+    if (fence && (!terminalStopProofValid(this) || otherTaskWriterIsActive(this)))
+      throw new RunStoreConflictError("Terminal PR release requires verified stopped task writers");
     if (
       !current ||
       !["done", "refined", "failed", "cancelled"].includes(current.lifecycle) ||
@@ -401,9 +338,7 @@ export class ProjectRunAuthority {
       current.terminalEvidence === null ||
       !current.pendingOperations.every(isConclusiveOperationResolution)
     )
-      throw new RunStoreConflictError(
-        "Attempt release requires verified terminal synchronization",
-      );
+      throw new RunStoreConflictError("Attempt release requires verified terminal synchronization");
     await this.releaseAttempt?.();
   }
 
@@ -414,16 +349,11 @@ export class ProjectRunAuthority {
         "Project has no preparing attempt envelope; no legacy fallback is allowed",
       );
     if (envelope.projectId !== this.projectId)
-      throw new RunStoreConflictError(
-        "Project authority is bound to another project",
-      );
+      throw new RunStoreConflictError("Project authority is bound to another project");
     return this.store.readCompatibility(this.ownerGeneration, key, validate);
   }
 
-  list<T>(
-    prefix: string,
-    validate: (value: unknown) => T,
-  ): readonly { key: string; value: T }[] {
+  list<T>(prefix: string, validate: (value: unknown) => T): readonly { key: string; value: T }[] {
     return this.store.listCompatibility(this.ownerGeneration, prefix, validate);
   }
 
@@ -434,14 +364,8 @@ export class ProjectRunAuthority {
         "Project has no preparing attempt envelope; no legacy fallback is allowed",
       );
     if (envelope.projectId !== this.projectId)
-      throw new RunStoreConflictError(
-        "Project authority is bound to another project",
-      );
-    return this.store.removeCompatibility(
-      envelope.revision,
-      this.ownerGeneration,
-      key,
-    );
+      throw new RunStoreConflictError("Project authority is bound to another project");
+    return this.store.removeCompatibility(envelope.revision, this.ownerGeneration, key);
   }
 
   run<T>(operation: () => T): T {
@@ -491,10 +415,7 @@ export class ProjectRunAuthority {
     return result;
   }
 
-  static dispatch<T>(
-    projectId: string,
-    operation: () => Promise<T>,
-  ): Promise<T> {
+  static dispatch<T>(projectId: string, operation: () => Promise<T>): Promise<T> {
     const authority = ProjectRunAuthority.current(projectId);
     if (authority) return authority.dispatch(operation);
     const leases = projectLeaseContext.getStore();
@@ -503,16 +424,13 @@ export class ProjectRunAuthority {
     // startup/task work must always enter through one of the scoped lease APIs.
     if (!leases) return operation();
     const capability = leases.get(projectId);
-    if (!capability)
-      throw new RunStoreConflictError("Scoped project lease mismatch");
+    if (!capability) throw new RunStoreConflictError("Scoped project lease mismatch");
     capability.assertHeld();
-    return withProcessGroupAmbiguityHandler(
-      capability.markTerminationAmbiguous,
-      () =>
-        operation().then((result) => {
-          capability.assertHeld();
-          return result;
-        }),
+    return withProcessGroupAmbiguityHandler(capability.markTerminationAmbiguous, () =>
+      operation().then((result) => {
+        capability.assertHeld();
+        return result;
+      }),
     );
   }
 
@@ -536,9 +454,7 @@ export class ProjectRunAuthority {
     }[],
     operation: () => T,
   ): T {
-    const capabilities = new Map(
-      leases.map((capability) => [capability.projectId, capability]),
-    );
+    const capabilities = new Map(leases.map((capability) => [capability.projectId, capability]));
     return projectLeaseContext.run(capabilities, operation);
   }
 
@@ -583,9 +499,7 @@ export class ProjectRunAuthority {
         "Project has no preparing attempt envelope; no legacy fallback is allowed",
       );
     if (envelope.projectId !== this.projectId)
-      throw new RunStoreConflictError(
-        "Project authority is bound to another project",
-      );
+      throw new RunStoreConflictError("Project authority is bound to another project");
     return this.store.mutateCompatibility({
       expectedRevision: envelope.revision,
       expectedOwnerGeneration: this.ownerGeneration,
@@ -607,9 +521,7 @@ export class ProjectRunAuthority {
   }): T {
     const envelope = this.store.read();
     if (!envelope || envelope.projectId !== this.projectId)
-      throw new RunStoreConflictError(
-        "Task projection has no matching attempt authority",
-      );
+      throw new RunStoreConflictError("Task projection has no matching attempt authority");
     const lifecycleForPhase = (
       phase: TaskExecutionRecord["phase"],
     ): RunRecord["lifecycle"] | undefined => {
@@ -635,10 +547,7 @@ export class ProjectRunAuthority {
       }
     };
     const eventForTaskTransition: Partial<
-      Record<
-        TaskExecutionEvent["type"],
-        { event: RunEventType; to: RunRecord["lifecycle"] }
-      >
+      Record<TaskExecutionEvent["type"], { event: RunEventType; to: RunRecord["lifecycle"] }>
     > = {
       "plan-approved": { event: "plan-approved", to: "implementation" },
       "implementation-completed": {
@@ -685,10 +594,7 @@ export class ProjectRunAuthority {
           throw new RunStoreConflictError(
             "Merged terminal projection requires a completed task record with PR identity",
           );
-        if (
-          options.terminal?.event === "closed-unmerged" &&
-          validated.pullRequest === undefined
-        )
+        if (options.terminal?.event === "closed-unmerged" && validated.pullRequest === undefined)
           throw new RunStoreConflictError(
             "Closed terminal projection requires the observed task PR identity",
           );
@@ -706,9 +612,7 @@ export class ProjectRunAuthority {
         if (
           options.terminal &&
           options.terminal.event !== "failed" &&
-          !options.terminal.evidence.prObservationId.includes(
-            String(validated.pullRequest?.number),
-          )
+          !options.terminal.evidence.prObservationId.includes(String(validated.pullRequest?.number))
         )
           throw new RunStoreConflictError(
             "Terminal evidence does not identify the task projection PR",
@@ -718,18 +622,12 @@ export class ProjectRunAuthority {
       validate: options.validate,
       deriveRunState: (current, rawProjection) => {
         const projection = options.validate(rawProjection);
-        if (
-          projection.recoveryWait &&
-          projection.phase === "attention-required"
-        )
+        if (projection.recoveryWait && projection.phase === "attention-required")
           throw new RunStoreConflictError(
             "Attention-required task state cannot retain a recoverable wait authorization",
           );
-        const target = projection.recoveryWait
-          ? "waiting"
-          : lifecycleForPhase(projection.phase);
-        let lifecycleTransition:
-          { event: RunEventType; to: RunRecord["lifecycle"] } | undefined;
+        const target = projection.recoveryWait ? "waiting" : lifecycleForPhase(projection.phase);
+        let lifecycleTransition: { event: RunEventType; to: RunRecord["lifecycle"] } | undefined;
         if (target !== undefined && target !== current.lifecycle) {
           if (current.lifecycle === "waiting" && target !== "waiting") {
             lifecycleTransition = { event: "wait-resumed", to: target };
@@ -737,9 +635,7 @@ export class ProjectRunAuthority {
             const mapped = projection.recoveryWait
               ? { event: "wait-entered" as const, to: "waiting" as const }
               : projection.lastEvent
-                ? eventForTaskTransition[
-                    projection.lastEvent.type as TaskExecutionEvent["type"]
-                  ]
+                ? eventForTaskTransition[projection.lastEvent.type as TaskExecutionEvent["type"]]
                 : undefined;
             if (mapped === undefined || mapped.to !== target)
               throw new RunStoreConflictError(
@@ -750,26 +646,19 @@ export class ProjectRunAuthority {
         }
         const projectedBudgets = Object.fromEntries(
           Object.entries(current.budgets).map(([name, budget]) => {
-            const counterName =
-              name === "human-feedback" ? "humanFeedback" : name;
+            const counterName = name === "human-feedback" ? "humanFeedback" : name;
             const used =
-              projection.retryCounters[
-                counterName as keyof TaskExecutionRecord["retryCounters"]
-              ];
+              projection.retryCounters[counterName as keyof TaskExecutionRecord["retryCounters"]];
             if (name === "review" && projection.reviewRepair !== undefined) {
               // Select the review cycle's durable bound in the same fenced
               // mutation that publishes reviewRepair. The task-session
               // bound counts repairs; the canonical budget also includes
               // its initial read-only review pass.
               const maxAttempts =
-                projection.reviewRepair.maxAttempts ??
-                projection.retryCounters.review;
+                projection.reviewRepair.maxAttempts ?? projection.retryCounters.review;
               const limit = maxAttempts + 1;
-              const sameCycle =
-                budget.episodeId === projection.reviewRepair.cycleId;
-              const nextUsed = sameCycle
-                ? Math.max(budget.used, used ?? 0)
-                : (used ?? budget.used);
+              const sameCycle = budget.episodeId === projection.reviewRepair.cycleId;
+              const nextUsed = sameCycle ? Math.max(budget.used, used ?? 0) : (used ?? budget.used);
               return [
                 name,
                 {
@@ -790,8 +679,7 @@ export class ProjectRunAuthority {
           const previous = current.budgets.validation;
           const firstLegacyEpisode = `${projection.cardId}:initial-validation`;
           const sameCycle = previous?.episodeId === validationRepair.cycleId;
-          const importingLegacyBudget =
-            previous?.episodeId === firstLegacyEpisode;
+          const importingLegacyBudget = previous?.episodeId === firstLegacyEpisode;
           const used =
             previous === undefined
               ? projection.retryCounters.validation
@@ -819,16 +707,10 @@ export class ProjectRunAuthority {
               "CI task projection would discard an authoritative episode charge",
             );
           projectedBudgets.ci = {
-            limit: Math.max(
-              ciRepair.maxAttempts ?? 2,
-              projection.retryCounters.ci,
-            ),
+            limit: Math.max(ciRepair.maxAttempts ?? 2, projection.retryCounters.ci),
             used: projection.retryCounters.ci,
             episodeId: ciRepair.cycleId,
-            trigger:
-              ciRepair.initiatingEventId ??
-              previous?.trigger ??
-              "initial-publication",
+            trigger: ciRepair.initiatingEventId ?? previous?.trigger ?? "initial-publication",
           };
         }
         return {
@@ -867,8 +749,7 @@ export class ProjectRunAuthority {
               (projection.feedbackRemediation !== undefined ||
                 projection.ciRepair?.activePrimaryOperation !== undefined)
                 ? current.pinned.lists.review
-                : projection.phase === "ci" ||
-                    projection.phase === "human-feedback"
+                : projection.phase === "ci" || projection.phase === "human-feedback"
                   ? current.pinned.lists.review
                   : projection.phase === "done"
                     ? current.pinned.lists.done
@@ -878,9 +759,7 @@ export class ProjectRunAuthority {
                   wait: {
                     reason: projection.recoveryWait.reason,
                     dependency:
-                      projection.recoveryWait.notificationId
-                        .split("/")
-                        .at(-1) ?? "task-session",
+                      projection.recoveryWait.notificationId.split("/").at(-1) ?? "task-session",
                     since: projection.recoveryWait.since,
                     retryAt: projection.recoveryWait.retryAt,
                   },
@@ -936,10 +815,7 @@ export class ProjectRunAuthority {
   ): string {
     return `${kind}-${cardId}`;
   }
-  static taskKey(
-    kind: "task-plan" | "feedback-ledger" | "maintenance",
-    cardId: string,
-  ): string {
+  static taskKey(kind: "task-plan" | "feedback-ledger" | "maintenance", cardId: string): string {
     return `${kind}-${cardId}`;
   }
 }

@@ -9,15 +9,12 @@ import { GitClient, type RunGit } from "../src/git/git-client.js";
 let temporaryRoot: string | undefined;
 
 afterEach(() => {
-  if (temporaryRoot !== undefined)
-    fs.rmSync(temporaryRoot, { recursive: true, force: true });
+  if (temporaryRoot !== undefined) fs.rmSync(temporaryRoot, { recursive: true, force: true });
   temporaryRoot = undefined;
 });
 
 function makeRepository() {
-  temporaryRoot = fs.mkdtempSync(
-    path.join(os.tmpdir(), "git-client-implementation-equivalence-"),
-  );
+  temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "git-client-implementation-equivalence-"));
   const repositoryPath = path.join(temporaryRoot, "remote");
   fs.mkdirSync(repositoryPath);
   const git = (args: string[]) =>
@@ -49,15 +46,11 @@ function makeRepository() {
   } as ProjectConfig;
   const runGit: RunGit = async (cwd, args, environment) => {
     const safeArgs = [...args];
-    if (safeArgs[0] === "remote" && safeArgs[1] === "add")
-      safeArgs[3] = repositoryPath;
+    if (safeArgs[0] === "remote" && safeArgs[1] === "add") safeArgs[3] = repositoryPath;
     return execFileSync("git", safeArgs, {
       cwd,
       encoding: "utf8",
-      env:
-        environment === undefined
-          ? process.env
-          : { ...process.env, ...environment },
+      env: environment === undefined ? process.env : { ...process.env, ...environment },
     }).trim();
   };
   return {
@@ -76,9 +69,7 @@ async function verifyHistory(
   baseSha: string,
   headSha: string,
 ): Promise<boolean> {
-  const commitShas = fixture
-    .git(["rev-list", "--reverse", `${baseSha}..${headSha}`])
-    .split("\n");
+  const commitShas = fixture.git(["rev-list", "--reverse", `${baseSha}..${headSha}`]).split("\n");
   fixture.git(["update-ref", `refs/pull/${pullRequestNumber}/head`, headSha]);
   return fixture.client.hasEquivalentImplementationCommit({
     project: fixture.project,
@@ -93,87 +84,45 @@ describe("GitClient implementation change equivalence", () => {
   it("accepts a rebased implementation after the target branch advances", async () => {
     const fixture = makeRepository();
     fixture.git(["checkout", "--quiet", "-b", "recovery", fixture.baseSha]);
-    fs.writeFileSync(
-      path.join(fixture.repositoryPath, "upstream.txt"),
-      "upstream\n",
-    );
+    fs.writeFileSync(path.join(fixture.repositoryPath, "upstream.txt"), "upstream\n");
     fixture.git(["add", "upstream.txt"]);
     fixture.git(["commit", "--quiet", "-m", "target branch update"]);
     const advancedBase = fixture.git(["rev-parse", "HEAD"]);
-    fs.writeFileSync(
-      path.join(fixture.repositoryPath, "implementation.ts"),
-      "after\n",
-    );
-    fs.writeFileSync(
-      path.join(fixture.repositoryPath, "feature.ts"),
-      "export {};\n",
-    );
+    fs.writeFileSync(path.join(fixture.repositoryPath, "implementation.ts"), "after\n");
+    fs.writeFileSync(path.join(fixture.repositoryPath, "feature.ts"), "export {};\n");
     fixture.git(["add", "."]);
     fixture.git(["commit", "--quiet", "-m", "rebased implementation"]);
     const rebasedHead = fixture.git(["rev-parse", "HEAD"]);
     expect(rebasedHead).not.toBe(fixture.implementationCommit);
 
-    await expect(
-      verifyHistory(fixture, 71, advancedBase, rebasedHead),
-    ).resolves.toBe(true);
+    await expect(verifyHistory(fixture, 71, advancedBase, rebasedHead)).resolves.toBe(true);
   });
 
   it("accepts a squash-shaped commit with the original aggregate patch", async () => {
     const fixture = makeRepository();
-    fixture.git([
-      "checkout",
-      "--quiet",
-      "-b",
-      "squash-recovery",
-      fixture.baseSha,
-    ]);
-    fs.writeFileSync(
-      path.join(fixture.repositoryPath, "implementation.ts"),
-      "after\n",
-    );
-    fs.writeFileSync(
-      path.join(fixture.repositoryPath, "feature.ts"),
-      "export {};\n",
-    );
+    fixture.git(["checkout", "--quiet", "-b", "squash-recovery", fixture.baseSha]);
+    fs.writeFileSync(path.join(fixture.repositoryPath, "implementation.ts"), "after\n");
+    fs.writeFileSync(path.join(fixture.repositoryPath, "feature.ts"), "export {};\n");
     fixture.git(["add", "."]);
     fixture.git(["commit", "--quiet", "-m", "squash: task implementation"]);
     const squashedHead = fixture.git(["rev-parse", "HEAD"]);
     expect(squashedHead).not.toBe(fixture.implementationCommit);
 
-    await expect(
-      verifyHistory(fixture, 72, fixture.baseSha, squashedHead),
-    ).resolves.toBe(true);
+    await expect(verifyHistory(fixture, 72, fixture.baseSha, squashedHead)).resolves.toBe(true);
   });
 
   it("rejects a PR with an unrelated commit before the matching implementation", async () => {
     const fixture = makeRepository();
-    fixture.git([
-      "checkout",
-      "--quiet",
-      "-b",
-      "recovery-with-extra",
-      fixture.baseSha,
-    ]);
-    fs.writeFileSync(
-      path.join(fixture.repositoryPath, "unrelated.ts"),
-      "export {};\n",
-    );
+    fixture.git(["checkout", "--quiet", "-b", "recovery-with-extra", fixture.baseSha]);
+    fs.writeFileSync(path.join(fixture.repositoryPath, "unrelated.ts"), "export {};\n");
     fixture.git(["add", "unrelated.ts"]);
     fixture.git(["commit", "--quiet", "-m", "unrelated earlier change"]);
-    fs.writeFileSync(
-      path.join(fixture.repositoryPath, "implementation.ts"),
-      "after\n",
-    );
-    fs.writeFileSync(
-      path.join(fixture.repositoryPath, "feature.ts"),
-      "export {};\n",
-    );
+    fs.writeFileSync(path.join(fixture.repositoryPath, "implementation.ts"), "after\n");
+    fs.writeFileSync(path.join(fixture.repositoryPath, "feature.ts"), "export {};\n");
     fixture.git(["add", "."]);
     fixture.git(["commit", "--quiet", "-m", "matching implementation"]);
     const headSha = fixture.git(["rev-parse", "HEAD"]);
 
-    await expect(
-      verifyHistory(fixture, 73, fixture.baseSha, headSha),
-    ).resolves.toBe(false);
+    await expect(verifyHistory(fixture, 73, fixture.baseSha, headSha)).resolves.toBe(false);
   });
 });

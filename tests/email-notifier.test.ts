@@ -137,8 +137,7 @@ describe("email notifications", () => {
         publicationContext: "Created a new pull request.",
       }),
     ).toEqual({
-      subject:
-        "[Agent Orchestrator] Human Review: project-one / Add email notifications",
+      subject: "[Agent Orchestrator] Human Review: project-one / Add email notifications",
       text: [
         "Event: Human Review",
         "Project: project-one",
@@ -165,8 +164,7 @@ describe("email notifications", () => {
         reason: "OpenCode implementation exited with code 1",
       }),
     ).toEqual({
-      subject:
-        "[Agent Orchestrator] Failed: project-one / Add email notifications",
+      subject: "[Agent Orchestrator] Failed: project-one / Add email notifications",
       text: [
         "Event: Failed",
         "Project: project-one",
@@ -187,10 +185,7 @@ describe("email notifications", () => {
         category: "Workflow",
         reason: "Multiple active cards are in Working: card-1, card-2",
         cardIds: ["card-1", "card-2"],
-        sessionLogPaths: [
-          "logs/sessions/project/card-1.log",
-          "logs/sessions/project/card-2.log",
-        ],
+        sessionLogPaths: ["logs/sessions/project/card-1.log", "logs/sessions/project/card-2.log"],
       }),
     ).toEqual({
       subject: "[Agent Orchestrator] Attention Required: project-one",
@@ -231,15 +226,12 @@ describe("email notifications", () => {
     expect(failed.text).toContain(
       `Failure reason: ${"failure output ".repeat(
         Math.floor(
-          (MAX_EXTERNAL_DIAGNOSTIC_LENGTH - "... [truncated]".length) /
-            "failure output ".length,
+          (MAX_EXTERNAL_DIAGNOSTIC_LENGTH - "... [truncated]".length) / "failure output ".length,
         ),
       )}`,
     );
     expect(failed.text).toContain("... [truncated]");
-    expect(failed.text).toContain(
-      "To retry deliberately, move this card to Ready for Agent.",
-    );
+    expect(failed.text).toContain("To retry deliberately, move this card to Ready for Agent.");
     expect(attention.text).toContain("Failure reason: ");
     expect(attention.text).toContain("Failure handling: ");
     expect(attention.text.match(/\.\.\. \[truncated\]/g)).toHaveLength(2);
@@ -271,15 +263,13 @@ describe("email notifications", () => {
       result: {
         title: "Add inventory support",
         type: "feature",
-        description:
-          "# Add inventory support\n\n## Description\n\nAdd inventory support.",
+        description: "# Add inventory support\n\n## Description\n\nAdd inventory support.",
       },
       elapsedWorkflowTime: "1 hour 5 minutes",
     });
 
     expect(email).toEqual({
-      subject:
-        "[Agent Orchestrator] Refinement Complete: project-one / Add email notifications",
+      subject: "[Agent Orchestrator] Refinement Complete: project-one / Add email notifications",
       text: [
         "Event: Refinement Complete",
         "Project: project-one",
@@ -328,8 +318,7 @@ describe("email notifications", () => {
         pullRequestUrl: "https://github.com/owner/repo/pull/42",
       }),
     ).toEqual({
-      subject:
-        "[Agent Orchestrator] Completed: project-one / Add email notifications",
+      subject: "[Agent Orchestrator] Completed: project-one / Add email notifications",
       text: [
         "Event: Completed",
         "Project: project-one",

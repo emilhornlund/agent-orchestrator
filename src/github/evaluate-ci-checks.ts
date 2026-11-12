@@ -55,11 +55,7 @@ function classify(check: CiCheckObservation): CheckDisposition {
       };
     }
     if (check.conclusion === "success") return { kind: "passed", check };
-    if (
-      ["failure", "timed_out", "action_required", "startup_failure"].includes(
-        check.conclusion,
-      )
-    ) {
+    if (["failure", "timed_out", "action_required", "startup_failure"].includes(check.conclusion)) {
       return { kind: "failed", check };
     }
     if (["cancelled", "skipped", "neutral"].includes(check.conclusion)) {
@@ -95,9 +91,9 @@ export function evaluateCiChecks(input: {
   expectations: CiCheckExpectationDecision;
   checks: readonly CiCheckObservation[];
 }): CiCheckEvaluation {
-  const expectedNames = [
-    ...new Set(input.expectations.expectedCheckNames),
-  ].sort((a, b) => a.localeCompare(b));
+  const expectedNames = [...new Set(input.expectations.expectedCheckNames)].sort((a, b) =>
+    a.localeCompare(b),
+  );
 
   if (
     !isSha(input.expectedHeadSha) ||
@@ -139,8 +135,7 @@ export function evaluateCiChecks(input: {
       expectedHeadSha: input.expectedHeadSha,
       observedHeadSha: input.observedHeadSha,
       expectedCheckNames: expectedNames,
-      diagnostic:
-        "A check or commit status observation belongs to a stale PR head",
+      diagnostic: "A check or commit status observation belongs to a stale PR head",
     };
   }
 
@@ -161,11 +156,7 @@ export function evaluateCiChecks(input: {
   for (const check of input.checks) {
     if (check.source !== "commit-status") continue;
     const createdAt = Date.parse(check.createdAt);
-    if (
-      !Number.isFinite(createdAt) ||
-      !Number.isSafeInteger(check.id) ||
-      check.id < 1
-    )
+    if (!Number.isFinite(createdAt) || !Number.isSafeInteger(check.id) || check.id < 1)
       return {
         status: "uncertain",
         expectedHeadSha: input.expectedHeadSha,
@@ -178,10 +169,7 @@ export function evaluateCiChecks(input: {
       latestStatuses.set(check.context, check);
       continue;
     }
-    if (
-      previous.id === check.id &&
-      JSON.stringify(previous) !== JSON.stringify(check)
-    )
+    if (previous.id === check.id && JSON.stringify(previous) !== JSON.stringify(check))
       return {
         status: "uncertain",
         expectedHeadSha: input.expectedHeadSha,
@@ -199,9 +187,7 @@ export function evaluateCiChecks(input: {
 
   const dispositions = input.checks
     .filter(
-      (check) =>
-        check.source !== "commit-status" ||
-        latestStatuses.get(check.context) === check,
+      (check) => check.source !== "commit-status" || latestStatuses.get(check.context) === check,
     )
     .filter(
       (check) =>
@@ -213,9 +199,7 @@ export function evaluateCiChecks(input: {
         ),
     )
     .map(classify);
-  const uncertainChecks = dispositions.filter(
-    ({ kind }) => kind === "uncertain",
-  );
+  const uncertainChecks = dispositions.filter(({ kind }) => kind === "uncertain");
   if (uncertainChecks.length > 0) {
     return {
       status: "uncertain",
@@ -232,9 +216,7 @@ export function evaluateCiChecks(input: {
   const pendingChecks: string[] = [];
   const failures: CiCheckObservation[] = [];
   for (const name of expectedNames) {
-    const matching = dispositions.filter(
-      ({ check }) => checkName(check) === name,
-    );
+    const matching = dispositions.filter(({ check }) => checkName(check) === name);
     if (matching.length === 0) {
       missingChecks.push(name);
       continue;
@@ -243,11 +225,7 @@ export function evaluateCiChecks(input: {
       pendingChecks.push(name);
       continue;
     }
-    failures.push(
-      ...matching
-        .filter(({ kind }) => kind === "failed")
-        .map(({ check }) => check),
-    );
+    failures.push(...matching.filter(({ kind }) => kind === "failed").map(({ check }) => check));
   }
 
   if (missingChecks.length > 0 || pendingChecks.length > 0) {

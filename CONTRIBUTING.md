@@ -1,8 +1,7 @@
 # Contributing
 
-Thank you for contributing to Agent Orchestrator. Keep changes focused on the
-orchestration service and preserve its safety boundaries and existing workflow
-behavior.
+Thank you for contributing to Agent Orchestrator. Keep changes focused on the orchestration service
+and preserve its safety boundaries and existing workflow behavior.
 
 ## Development setup
 
@@ -14,9 +13,9 @@ Supported tooling is:
 - GitHub CLI (`gh`) 2.40.0 or later when working with managed repositories; and
 - OpenCode when running the orchestrator locally.
 
-Service execution also requires Linux, Bubblewrap namespace isolation and `flock`.
-See [installation](docs/operations.md#local-and-container-installation) for local
-and container prerequisites; routine service-free tests do not need live credentials.
+Service execution also requires Linux, Bubblewrap namespace isolation and `flock`. See
+[installation](docs/operations.md#local-and-container-installation) for local and container
+prerequisites; routine service-free tests do not need live credentials.
 
 Install dependencies from the repository root:
 
@@ -31,14 +30,12 @@ cp config.example.yaml config.yaml
 cp .env.example .env
 ```
 
-Add the Trello credentials to `.env`, configure the project and workflow IDs
-in `config.yaml`, and choose the project's GitHub authentication mode at
-`repository.githubApp`: projects without it use an authenticated `gh` session
-or ambient GitHub authentication such as `GH_TOKEN` or `GITHUB_TOKEN`; projects
-with it use the configured App installation. A configured App does not fall
-back to ambient authentication when its credentials or token exchange fail.
-Do not commit `config.yaml`, `.env`, credentials, private keys, or other
-secrets.
+Add the Trello credentials to `.env`, configure the project and workflow IDs in `config.yaml`, and
+choose the project's GitHub authentication mode at `repository.githubApp`: projects without it use
+an authenticated `gh` session or ambient GitHub authentication such as `GH_TOKEN` or `GITHUB_TOKEN`;
+projects with it use the configured App installation. A configured App does not fall back to ambient
+authentication when its credentials or token exchange fail. Do not commit `config.yaml`, `.env`,
+credentials, private keys, or other secrets.
 
 ## Validation
 
@@ -63,91 +60,84 @@ The production build is also checked by CI and can be run locally with:
 yarn build
 ```
 
-Use `yarn lint:fix` for automatic lint fixes and `yarn format` to format the
-repository when needed.
+Use `yarn lint:fix` for automatic lint fixes and `yarn format` to format the repository when needed.
 
 ## Testing
 
-Tests use the repository's Vitest-based test suite. Run them with `yarn test`
-or as part of `yarn validate`. Unit tests must remain deterministic and must
-not require live Trello, GitHub, or OpenCode services.
+Tests use the repository's Vitest-based test suite. Run them with `yarn test` or as part of
+`yarn validate`. Unit tests must remain deterministic and must not require live Trello, GitHub, or
+OpenCode services.
 
-`yarn test` works without setting `TMPDIR` or running a separate setup command.
-Vitest creates one private system-temporary directory for the run, directs filesystem
-fixtures and child-process artifacts beneath it, and removes it at teardown even
-when assertions fail. Individual fixtures should still use `try/finally` or cleanup
-hooks to release subprocesses and remove their files promptly. Never retain fixture
-repositories, downloaded dependency trees, or process logs by default. Capture console
-output when diagnosing a failure rather than preserving entire fixture trees.
+`yarn test` works without setting `TMPDIR` or running a separate setup command. Vitest creates one
+private system-temporary directory for the run, directs filesystem fixtures and child-process
+artifacts beneath it, and removes it at teardown even when assertions fail. Individual fixtures
+should still use `try/finally` or cleanup hooks to release subprocesses and remove their files
+promptly. Never retain fixture repositories, downloaded dependency trees, or process logs by
+default. Capture console output when diagnosing a failure rather than preserving entire fixture
+trees.
 
-Name tests for product behavior. Integration tests may use real disposable Git repositories
-when Git behavior is the assertion; ordinary decision/parser tests should stay in memory.
+Name tests for product behavior. Integration tests may use real disposable Git repositories when Git
+behavior is the assertion; ordinary decision/parser tests should stay in memory.
 
 ### Workflow verification
 
-Use [stable specification IDs](docs/specification.md) to identify applicable criteria;
-do not infer compliance from a code path or aggregate test count. Important behavior
-needs production-entry-point coverage, including later writes and restart/recovery,
-not just a manually constructed desired final state. Existing lifecycle integration
-tests combine real Git repositories/processes with stateful Trello/GitHub/OpenCode
-substitutes. Cover normal/draft delivery, adverse advice, bounded CI, feedback,
-additive maintenance, refinement, terminal races and clean deliberate retries.
-State/import/process suites exercise corrupt state, partial acceptance, interrupted
-handoffs, shutdown, ownership and credential boundaries without live services.
+Use [stable specification IDs](docs/specification.md) to identify applicable criteria; do not infer
+compliance from a code path or aggregate test count. Important behavior needs production-entry-point
+coverage, including later writes and restart/recovery, not just a manually constructed desired final
+state. Existing lifecycle integration tests combine real Git repositories/processes with stateful
+Trello/GitHub/OpenCode substitutes. Cover normal/draft delivery, adverse advice, bounded CI,
+feedback, additive maintenance, refinement, terminal races and clean deliberate retries.
+State/import/process suites exercise corrupt state, partial acceptance, interrupted handoffs,
+shutdown, ownership and credential boundaries without live services.
 
-Report exactly which commands ran and whether they passed, failed, were filtered or
-were not executed. Simulated integrations demonstrate their modeled boundaries, not
-a deployed-release migration, live provider semantics or production permissions.
-Container builds and startup probes likewise do not demonstrate a complete live
-workflow. A realistic live-service baseline remains separate qualification; it has
-not been established by the routine suite. Do not fabricate an end-to-end result
-from unit-test success. Check registered secret forms and controlled channels
+Report exactly which commands ran and whether they passed, failed, were filtered or were not
+executed. Simulated integrations demonstrate their modeled boundaries, not a deployed-release
+migration, live provider semantics or production permissions. Container builds and startup probes
+likewise do not demonstrate a complete live workflow. A realistic live-service baseline remains
+separate qualification; it has not been established by the routine suite. Do not fabricate an
+end-to-end result from unit-test success. Check registered secret forms and controlled channels
 explicitly without claiming arbitrary unknown-secret detection.
 
-Useful task-judgment boundaries are qualitative, not changed-line thresholds: a
-small task-fulfilling change is meaningful; terse wording alone is not grounds to
-fail a card when repository/context evidence establishes intent. Essential unresolved
-product choices require clarification, and an already-satisfied task must not
-manufacture a commit merely to obtain a PR. Negative stylistic AI feedback alone is
-not a publication veto; material unresolved issues require truthful draft status.
+Useful task-judgment boundaries are qualitative, not changed-line thresholds: a small
+task-fulfilling change is meaningful; terse wording alone is not grounds to fail a card when
+repository/context evidence establishes intent. Essential unresolved product choices require
+clarification, and an already-satisfied task must not manufacture a commit merely to obtain a PR.
+Negative stylistic AI feedback alone is not a publication veto; material unresolved issues require
+truthful draft status.
 
 ### Trello attachments and card context
 
-`TrelloClient.getCardAttachments(cardId)` retrieves the metadata for a card's
-attachments from Trello and returns the attachments in Trello's order. Each
-`TrelloAttachment` exposes `id`, `name`, `mimeType`, `bytes`, `url`, and
-`isUpload`; `mimeType` and `bytes` remain nullable when Trello does not provide
-those values, and empty values are preserved. Trello returns `bytes` as a string
-when available.
+`TrelloClient.getCardAttachments(cardId)` retrieves the metadata for a card's attachments from
+Trello and returns the attachments in Trello's order. Each `TrelloAttachment` exposes `id`, `name`,
+`mimeType`, `bytes`, `url`, and `isUpload`; `mimeType` and `bytes` remain nullable when Trello does
+not provide those values, and empty values are preserved. Trello returns `bytes` as a string when
+available.
 
 The manifest, prompt, download, and retention contracts are documented in
 [Operations](docs/operations.md#card-context-storage); configurable limits are in
-[Configuration](docs/configuration.md#workflow). Keep those references current when
-changing context behavior instead of duplicating the operator contract here.
+[Configuration](docs/configuration.md#workflow). Keep those references current when changing context
+behavior instead of duplicating the operator contract here.
 
-Regression tests should protect ordered nullable metadata, safe single-component
-filenames, unchanged-upload reuse, bounded downloads, and preservation of the last
-successful manifest on failure. External links must remain metadata-only, and
-reconciliation must not remove unknown files. Unsafe materialized paths must fail
-before the affected OpenCode dispatch. Ordinary attachment prompts contain metadata
-and locations, not file excerpts; confirmed-loss primary-session reconstruction is
-a separate path that permits bounded supported text in a sanitized external bundle.
-Test sanitization before serialization/encoding at that persistence boundary, without
+Regression tests should protect ordered nullable metadata, safe single-component filenames,
+unchanged-upload reuse, bounded downloads, and preservation of the last successful manifest on
+failure. External links must remain metadata-only, and reconciliation must not remove unknown files.
+Unsafe materialized paths must fail before the affected OpenCode dispatch. Ordinary attachment
+prompts contain metadata and locations, not file excerpts; confirmed-loss primary-session
+reconstruction is a separate path that permits bounded supported text in a sanitized external
+bundle. Test sanitization before serialization/encoding at that persistence boundary, without
 claiming support for every attachment format.
 
 ### Trello card start dates
 
-`TrelloCard.start` exposes Trello's optional card start timestamp to workflow
-consumers. Cards with no `start` value, or with a `null` value, omit this field;
-cards with a present value must provide a timestamp accepted by `Date.parse`,
-using the same validation convention as Trello transition dates. The original
-timestamp string is preserved, including its timezone information, so consumers
-must use `Date.parse` for absolute-time comparisons rather than comparing strings
-or local-time components. During a Ready for Agent scan, cards without a start
-date or whose start instant has been reached are eligible. A future-dated card
-is skipped without being claimed or modified, does not block later eligible
-cards, and is reconsidered on a later normal poll. This rule only affects Ready
-list claiming; it does not reorder cards or change other workflow transitions.
+`TrelloCard.start` exposes Trello's optional card start timestamp to workflow consumers. Cards with
+no `start` value, or with a `null` value, omit this field; cards with a present value must provide a
+timestamp accepted by `Date.parse`, using the same validation convention as Trello transition dates.
+The original timestamp string is preserved, including its timezone information, so consumers must
+use `Date.parse` for absolute-time comparisons rather than comparing strings or local-time
+components. During a Ready for Agent scan, cards without a start date or whose start instant has
+been reached are eligible. A future-dated card is skipped without being claimed or modified, does
+not block later eligible cards, and is reconsidered on a later normal poll. This rule only affects
+Ready list claiming; it does not reorder cards or change other workflow transitions.
 
 ## Commits
 
@@ -157,8 +147,8 @@ Use the concise commit format used in the repository's recent history:
 type(scope): summary
 ```
 
-For example, `docs(readme): clarify setup`. Keep the summary short and use a
-scope that identifies the affected area when one is useful.
+For example, `docs(readme): clarify setup`. Keep the summary short and use a scope that identifies
+the affected area when one is useful.
 
 ## Pull requests
 

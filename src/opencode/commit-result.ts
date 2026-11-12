@@ -5,8 +5,7 @@ import { z } from "zod";
 
 import type { GitClient } from "../git/git-client.js";
 
-export const commitResultRelativePath =
-  ".agent-orchestrator/commit-result.json";
+export const commitResultRelativePath = ".agent-orchestrator/commit-result.json";
 
 export function getCommitResultRelativePath(intentHash?: string): string {
   if (intentHash === undefined) return commitResultRelativePath;
@@ -68,10 +67,7 @@ export interface RepositorySnapshot {
   untrackedFiles: string;
 }
 
-function captureUntrackedFiles(
-  worktreePath: string,
-  filePaths: string[],
-): string {
+function captureUntrackedFiles(worktreePath: string, filePaths: string[]): string {
   const files = filePaths
     .map((filePath) => {
       const absolutePath = path.resolve(worktreePath, filePath);
@@ -116,17 +112,11 @@ function captureUntrackedFiles(
   return JSON.stringify(files);
 }
 
-export function getCommitResultPath(
-  worktreePath: string,
-  intentHash?: string,
-): string {
+export function getCommitResultPath(worktreePath: string, intentHash?: string): string {
   return path.join(worktreePath, getCommitResultRelativePath(intentHash));
 }
 
-export function clearCommitResult(
-  worktreePath: string,
-  intentHash?: string,
-): void {
+export function clearCommitResult(worktreePath: string, intentHash?: string): void {
   fs.rmSync(getCommitResultPath(worktreePath, intentHash), { force: true });
 }
 
@@ -174,10 +164,7 @@ export function repositorySnapshotsEqual(
   );
 }
 
-export function readCommitResult(
-  worktreePath: string,
-  intentHash?: string,
-): CommitResult {
+export function readCommitResult(worktreePath: string, intentHash?: string): CommitResult {
   const resultPath = getCommitResultPath(worktreePath, intentHash);
   let stat: fs.Stats;
 
@@ -207,12 +194,9 @@ export function readCommitResult(
   try {
     parsed = JSON.parse(contents);
   } catch (error) {
-    throw new InvalidCommitResultError(
-      `Invalid commit result JSON: ${resultPath}`,
-      {
-        cause: error,
-      },
-    );
+    throw new InvalidCommitResultError(`Invalid commit result JSON: ${resultPath}`, {
+      cause: error,
+    });
   }
 
   const result = commitResultSchema.safeParse(parsed);
@@ -223,9 +207,7 @@ export function readCommitResult(
       return `${location}: ${issue.message}`;
     });
 
-    throw new InvalidCommitResultError(
-      `Invalid commit result:\n${messages.join("\n")}`,
-    );
+    throw new InvalidCommitResultError(`Invalid commit result:\n${messages.join("\n")}`);
   }
 
   return result.data;

@@ -12,12 +12,8 @@ export function enrichPullRequestDescription(
   card: TrelloCard,
   gitIdentityName: string,
 ): string | null {
-  const starts = [
-    ...currentBody.matchAll(/<!-- agent-orchestrator-description:start -->/gu),
-  ];
-  const ends = [
-    ...currentBody.matchAll(/<!-- agent-orchestrator-description:end -->/gu),
-  ];
+  const starts = [...currentBody.matchAll(/<!-- agent-orchestrator-description:start -->/gu)];
+  const ends = [...currentBody.matchAll(/<!-- agent-orchestrator-description:end -->/gu)];
 
   if (starts.length === 1 && ends.length === 1) {
     const start = starts[0]?.index;
@@ -26,12 +22,8 @@ export function enrichPullRequestDescription(
       return null;
     }
     const end = endMarker + AGENT_ORCHESTRATOR_DESCRIPTION_END.length;
-    const generatedStart = generatedBody.indexOf(
-      AGENT_ORCHESTRATOR_DESCRIPTION_START,
-    );
-    const generatedEnd = generatedBody.indexOf(
-      AGENT_ORCHESTRATOR_DESCRIPTION_END,
-    );
+    const generatedStart = generatedBody.indexOf(AGENT_ORCHESTRATOR_DESCRIPTION_START);
+    const generatedEnd = generatedBody.indexOf(AGENT_ORCHESTRATOR_DESCRIPTION_END);
     if (generatedStart < 0 || generatedEnd < generatedStart) return null;
     return `${currentBody.slice(0, start)}${generatedBody.slice(generatedStart, generatedEnd + AGENT_ORCHESTRATOR_DESCRIPTION_END.length)}${currentBody.slice(end)}`;
   }

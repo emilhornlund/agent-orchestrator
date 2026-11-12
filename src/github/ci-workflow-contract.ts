@@ -27,8 +27,7 @@ function sourceId(workflowFile: string): string {
 function branchPatternMatches(pattern: string, branch: string): boolean | null {
   if (pattern.length === 0) return null;
   const positivePattern = pattern.startsWith("!") ? pattern.slice(1) : pattern;
-  if (positivePattern.length === 0 || positivePattern.startsWith("!"))
-    return null;
+  if (positivePattern.length === 0 || positivePattern.startsWith("!")) return null;
   let expression = "^";
   for (let index = 0; index < positivePattern.length; index += 1) {
     const character = positivePattern[index]!;
@@ -65,15 +64,8 @@ function branchFilterMatches(
   const ignored = trigger["branches-ignore"];
   if (branches === undefined && ignored === undefined) return true;
   if (baseBranch === undefined || baseBranch.length === 0) return null;
-  const matchesPatterns = (
-    value: unknown,
-    allowNegation: boolean,
-  ): boolean | null => {
-    if (
-      !Array.isArray(value) ||
-      !value.every((entry) => typeof entry === "string")
-    )
-      return null;
+  const matchesPatterns = (value: unknown, allowNegation: boolean): boolean | null => {
+    if (!Array.isArray(value) || !value.every((entry) => typeof entry === "string")) return null;
     if (value.length === 0) return null;
     let matched = false;
     let hasPositivePattern = false;
@@ -116,10 +108,7 @@ export function collectCiWorkflowExpectationSources(
   if (directory === undefined) return [];
   if (directory.isSymbolicLink() || !directory.isDirectory()) {
     return [
-      uncertainWorkflow(
-        "workflow-directory",
-        "GitHub workflows path is not a regular directory",
-      ),
+      uncertainWorkflow("workflow-directory", "GitHub workflows path is not a regular directory"),
     ];
   }
 
@@ -133,8 +122,7 @@ export function collectCiWorkflowExpectationSources(
       const filepath = path.join(workflowsDirectory, filename);
       let content: string | null = null;
       try {
-        if (!fs.lstatSync(filepath).isSymbolicLink())
-          content = fs.readFileSync(filepath, "utf8");
+        if (!fs.lstatSync(filepath).isSymbolicLink()) content = fs.readFileSync(filepath, "utf8");
       } catch {
         /* Preserve unreadable discovery as uncertainty. */
       }
@@ -154,12 +142,7 @@ export function collectCiWorkflowDocumentExpectationSources(
     const id = sourceId(document.path);
     try {
       if (document.content === null) {
-        sources.push(
-          uncertainWorkflow(
-            id,
-            "workflow file is unreadable or not a regular file",
-          ),
-        );
+        sources.push(uncertainWorkflow(id, "workflow file is unreadable or not a regular file"));
         continue;
       }
       const workflow: unknown = YAML.parse(document.content);
@@ -170,9 +153,7 @@ export function collectCiWorkflowDocumentExpectationSources(
       const pullRequestWorkflow = hasPullRequestTrigger(workflow.on);
       if (pullRequestWorkflow === false) continue;
       if (pullRequestWorkflow === null) {
-        sources.push(
-          uncertainWorkflow(id, "workflow trigger contract is unsupported"),
-        );
+        sources.push(uncertainWorkflow(id, "workflow trigger contract is unsupported"));
         continue;
       }
 
@@ -196,10 +177,7 @@ export function collectCiWorkflowDocumentExpectationSources(
           );
           continue;
         }
-        if (
-          triggerDetails.paths !== undefined ||
-          triggerDetails["paths-ignore"] !== undefined
-        ) {
+        if (triggerDetails.paths !== undefined || triggerDetails["paths-ignore"] !== undefined) {
           sources.push(
             uncertainWorkflow(
               id,
@@ -257,9 +235,7 @@ export function collectCiWorkflowDocumentExpectationSources(
         });
       }
     } catch {
-      sources.push(
-        uncertainWorkflow(id, "workflow file could not be parsed safely"),
-      );
+      sources.push(uncertainWorkflow(id, "workflow file could not be parsed safely"));
     }
   }
 

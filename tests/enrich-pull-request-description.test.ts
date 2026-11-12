@@ -29,22 +29,14 @@ const generated = [
 
 describe("enrichPullRequestDescription", () => {
   it("migrates the exact recognized static fallback", () => {
-    expect(
-      enrichPullRequestDescription(
-        fallback,
-        generated,
-        card,
-        "Agent Orchestrator Bot",
-      ),
-    ).toBe(generated);
+    expect(enrichPullRequestDescription(fallback, generated, card, "Agent Orchestrator Bot")).toBe(
+      generated,
+    );
   });
 
   it("updates only marked content and preserves human edits and status markers", () => {
     const humanText = `Human note\n\n${generated}\n\nPlease keep this section.`;
-    const updatedGenerated = generated.replace(
-      "A completed change.",
-      "An updated change.",
-    );
+    const updatedGenerated = generated.replace("A completed change.", "An updated change.");
     const enriched = enrichPullRequestDescription(
       humanText,
       updatedGenerated,
@@ -58,14 +50,9 @@ describe("enrichPullRequestDescription", () => {
   });
 
   it("is idempotent and refuses unknown human-authored descriptions", () => {
-    expect(
-      enrichPullRequestDescription(
-        generated,
-        generated,
-        card,
-        "Agent Orchestrator Bot",
-      ),
-    ).toBe(generated);
+    expect(enrichPullRequestDescription(generated, generated, card, "Agent Orchestrator Bot")).toBe(
+      generated,
+    );
     expect(
       enrichPullRequestDescription(
         `${fallback}\n\nHuman edit`,

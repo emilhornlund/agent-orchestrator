@@ -25,9 +25,7 @@ function hasControlCharacter(value: string): boolean {
   return Array.from(value).some((character) => {
     const code = character.codePointAt(0);
 
-    return (
-      code !== undefined && (code <= 0x1f || (code >= 0x7f && code <= 0x9f))
-    );
+    return code !== undefined && (code <= 0x1f || (code >= 0x7f && code <= 0x9f));
   });
 }
 
@@ -50,9 +48,7 @@ function assertExactKeys(
   const unexpectedKey = Object.keys(value).find((key) => !allowedKeys.has(key));
 
   if (unexpectedKey !== undefined) {
-    throw new Error(
-      `${description} contains unsupported field "${unexpectedKey}"`,
-    );
+    throw new Error(`${description} contains unsupported field "${unexpectedKey}"`);
   }
 }
 
@@ -63,9 +59,7 @@ function validateManifestEntry(
   const description = `Cannot expose Trello attachment ${index}`;
 
   if (!isRecord(value)) {
-    throw new Error(
-      `${description}: materialized manifest entry is not an object`,
-    );
+    throw new Error(`${description}: materialized manifest entry is not an object`);
   }
 
   assertExactKeys(
@@ -88,19 +82,14 @@ function validateManifestEntry(
     hasControlCharacter(value.id) ||
     hasControlCharacter(value.name) ||
     hasControlCharacter(value.url) ||
-    (typeof value.mimeType === "string" &&
-      hasControlCharacter(value.mimeType)) ||
+    (typeof value.mimeType === "string" && hasControlCharacter(value.mimeType)) ||
     (typeof value.bytes === "string" && hasControlCharacter(value.bytes))
   ) {
-    throw new Error(
-      `${description}: materialized manifest entry has invalid metadata`,
-    );
+    throw new Error(`${description}: materialized manifest entry has invalid metadata`);
   }
 
   if (value.isUpload && value.localFilename === null) {
-    throw new Error(
-      `${description}: uploaded attachment has no local filename`,
-    );
+    throw new Error(`${description}: uploaded attachment has no local filename`);
   }
 
   if (!value.isUpload && value.localFilename !== null) {
@@ -119,11 +108,7 @@ function getManifestAttachments(
     );
   }
 
-  assertExactKeys(
-    manifest,
-    ["attachments"],
-    "Cannot expose Trello card attachments manifest",
-  );
+  assertExactKeys(manifest, ["attachments"], "Cannot expose Trello card attachments manifest");
 
   const ids = new Set<string>();
   const localFilenames = new Set<string>();
@@ -153,11 +138,7 @@ function getManifestAttachments(
   return manifest.attachments as CardAttachmentManifest["attachments"];
 }
 
-function assertMaterializedFile(
-  filePath: string,
-  attachmentName: string,
-  index: number,
-): void {
+function assertMaterializedFile(filePath: string, attachmentName: string, index: number): void {
   let stat: fs.Stats | undefined;
 
   try {
@@ -188,10 +169,7 @@ function assertMaterializedFile(
   }
 }
 
-function resolveAttachmentLocation(
-  context: CardAttachmentPromptContext,
-  index: number,
-): string {
+function resolveAttachmentLocation(context: CardAttachmentPromptContext, index: number): string {
   const attachment = context.manifest.attachments[index];
 
   if (attachment === undefined) {
@@ -259,8 +237,7 @@ export function buildCardAttachmentPromptLines(
   }
 
   const attachmentLines = attachments.map((attachment, index) => {
-    const mimeType =
-      typeof attachment.mimeType === "string" ? attachment.mimeType.trim() : "";
+    const mimeType = typeof attachment.mimeType === "string" ? attachment.mimeType.trim() : "";
     const mimeSuffix = mimeType.length > 0 ? ` (${mimeType})` : "";
 
     return `- ${attachment.name}${mimeSuffix}: ${resolveAttachmentLocation(context, index)}`;

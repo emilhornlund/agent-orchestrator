@@ -47,13 +47,9 @@ function launchHolder(root: string, identity: string): ChildProcess {
 }
 
 function launchProcess(script: string): ChildProcess {
-  const child = spawn(
-    process.execPath,
-    ["--import", "tsx", "--input-type=module", "-e", script],
-    {
-      stdio: ["pipe", "pipe", "pipe"],
-    },
-  );
+  const child = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script], {
+    stdio: ["pipe", "pipe", "pipe"],
+  });
   processes.push(child);
   return child;
 }
@@ -78,9 +74,7 @@ async function waitForOutput(
     });
     child.once("exit", (code) => {
       clearTimeout(timer);
-      reject(
-        new Error(`Child exited ${String(code)} before ${text}: ${output}`),
-      );
+      reject(new Error(`Child exited ${String(code)} before ${text}: ${output}`));
     });
   });
 }
@@ -99,11 +93,9 @@ async function expectCanAcquire(root: string): Promise<void> {
 
 afterEach(() => {
   for (const child of processes.splice(0)) {
-    if (child.exitCode === null && child.signalCode === null)
-      child.kill("SIGKILL");
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
   }
-  for (const root of temporaryRoots.splice(0))
-    fs.rmSync(root, { recursive: true, force: true });
+  for (const root of temporaryRoots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
 describe("canonical project ownership coordination", () => {
@@ -142,9 +134,7 @@ describe("canonical project ownership coordination", () => {
       signal: retryController.signal,
       operationTimeoutMilliseconds: 1_000,
     });
-    await expect(withProjectRegistryLock(root, () => "released")).resolves.toBe(
-      "released",
-    );
+    await expect(withProjectRegistryLock(root, () => "released")).resolves.toBe("released");
     configureProcessRuntime({
       runtimeRoot: os.tmpdir(),
       signal: new AbortController().signal,
@@ -152,9 +142,7 @@ describe("canonical project ownership coordination", () => {
   });
 
   it("captures and redacts split flock stdout and stderr without leaking diagnostics", async () => {
-    const runtimeRoot = fs.mkdtempSync(
-      path.join(os.tmpdir(), "flock-safe-error-"),
-    );
+    const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "flock-safe-error-"));
     temporaryRoots.push(runtimeRoot);
     const binaries = path.join(runtimeRoot, "bin");
     fs.mkdirSync(binaries);
@@ -196,14 +184,8 @@ describe("canonical project ownership coordination", () => {
       const executions = path.join(runtimeRoot, "process-executions");
       const [executionId] = fs.readdirSync(executions);
       expect(executionId).toBeDefined();
-      const stdout = fs.readFileSync(
-        path.join(executions, executionId!, "stdout.txt"),
-        "utf8",
-      );
-      const stderr = fs.readFileSync(
-        path.join(executions, executionId!, "stderr.txt"),
-        "utf8",
-      );
+      const stdout = fs.readFileSync(path.join(executions, executionId!, "stdout.txt"), "utf8");
+      const stderr = fs.readFileSync(path.join(executions, executionId!, "stderr.txt"), "utf8");
       expect(stdout).toContain("[REDACTED]");
       expect(stderr).toContain("[REDACTED]");
       for (const artifact of [stdout, stderr]) {
@@ -212,10 +194,7 @@ describe("canonical project ownership coordination", () => {
         expect(artifact).not.toContain(percent);
       }
       const metadata = JSON.parse(
-        fs.readFileSync(
-          path.join(executions, executionId!, "execution.json"),
-          "utf8",
-        ),
+        fs.readFileSync(path.join(executions, executionId!, "execution.json"), "utf8"),
       ) as { status: string };
       expect(metadata.status).toBe("nonzero");
     } finally {
@@ -259,15 +238,12 @@ describe("canonical project ownership coordination", () => {
       const executions = path.join(runtimeRoot, "process-executions");
       const [executionId] = fs.readdirSync(executions);
       const base = path.join(executions, executionId!);
-      expect(fs.readFileSync(path.join(base, "stderr.txt"), "utf8")).toContain(
-        "[REDACTED]",
-      );
-      expect(
-        fs.readFileSync(path.join(base, "stderr.txt"), "utf8"),
-      ).not.toContain(canary);
-      const evidence = JSON.parse(
-        fs.readFileSync(path.join(base, "execution.json"), "utf8"),
-      ) as { status: string; evidenceFailure?: string };
+      expect(fs.readFileSync(path.join(base, "stderr.txt"), "utf8")).toContain("[REDACTED]");
+      expect(fs.readFileSync(path.join(base, "stderr.txt"), "utf8")).not.toContain(canary);
+      const evidence = JSON.parse(fs.readFileSync(path.join(base, "execution.json"), "utf8")) as {
+        status: string;
+        evidenceFailure?: string;
+      };
       expect(evidence.status).toBe("evidence-failure");
       expect(evidence.evidenceFailure).toContain("output limit");
     } finally {
@@ -282,26 +258,14 @@ describe("canonical project ownership coordination", () => {
   it("canonicalizes equivalent GitHub transport spellings", () => {
     expect(canonicalizeGitHubRepository("Owner/Repo.git")).toBe("owner/repo");
     expect(canonicalizeGitHubRepository("Owner/Repo.GIT")).toBe("owner/repo");
-    expect(canonicalizeGitHubRepository("Owner/Repo.Git.GIT/")).toBe(
-      "owner/repo",
-    );
-    expect(canonicalizeGitHubRepository("https://github.com/OWNER/REPO/")).toBe(
-      "owner/repo",
-    );
-    expect(canonicalizeGitHubRepository("git@github.com:Owner/Repo.git")).toBe(
-      "owner/repo",
-    );
-    expect(
-      canonicalizeGitHubRepository("ssh://git@github.com/Owner/Repo.git"),
-    ).toBe("owner/repo");
-    expect(() =>
-      canonicalizeGitHubRepository("https://evil.example/owner/repo"),
-    ).toThrow();
+    expect(canonicalizeGitHubRepository("Owner/Repo.Git.GIT/")).toBe("owner/repo");
+    expect(canonicalizeGitHubRepository("https://github.com/OWNER/REPO/")).toBe("owner/repo");
+    expect(canonicalizeGitHubRepository("git@github.com:Owner/Repo.git")).toBe("owner/repo");
+    expect(canonicalizeGitHubRepository("ssh://git@github.com/Owner/Repo.git")).toBe("owner/repo");
+    expect(() => canonicalizeGitHubRepository("https://evil.example/owner/repo")).toThrow();
     expect(() => canonicalizeGitHubRepository(" owner/repo")).toThrow();
     expect(() => canonicalizeGitHubRepository("owner/repo#fragment")).toThrow();
-    expect(() =>
-      canonicalizeGitHubRepository("https://github.com/owner/repo.git/?q=1"),
-    ).toThrow();
+    expect(() => canonicalizeGitHubRepository("https://github.com/owner/repo.git/?q=1")).toThrow();
     for (const spelling of [
       "Owner/Repo.GIT",
       "Owner/Repo.git.git/",
@@ -457,15 +421,10 @@ describe("canonical project ownership coordination", () => {
             "test-host-namespace",
           ),
           new Promise<never>((_resolve, reject) => {
-            timeout = setTimeout(
-              () => reject(new Error("lock acquisition hung")),
-              1_000,
-            );
+            timeout = setTimeout(() => reject(new Error("lock acquisition hung")), 1_000);
           }),
         ]),
-      ).rejects.toThrow(
-        /flock spawn failure; diagnostics: process-executions\//,
-      );
+      ).rejects.toThrow(/flock spawn failure; diagnostics: process-executions\//);
     } finally {
       if (timeout !== undefined) clearTimeout(timeout);
       if (oldPath === undefined) delete process.env.PATH;
@@ -481,57 +440,45 @@ describe("canonical project ownership coordination", () => {
       githubRepository: "second/meta",
     };
     const keys = [
-      createHash("sha256")
-        .update(`trello:${identity.trelloBoardId}`)
-        .digest("hex"),
-      createHash("sha256")
-        .update(`github:${identity.githubRepository}`)
-        .digest("hex"),
+      createHash("sha256").update(`trello:${identity.trelloBoardId}`).digest("hex"),
+      createHash("sha256").update(`github:${identity.githubRepository}`).digest("hex"),
     ].sort();
     const malformed = path.join(root, `${keys[1]}.owner.json`);
     fs.writeFileSync(malformed, "broken metadata");
-    await expect(
-      acquireProjectOwnership(root, identity, "test-host-namespace"),
-    ).rejects.toThrow(/Malformed ownership metadata/);
+    await expect(acquireProjectOwnership(root, identity, "test-host-namespace")).rejects.toThrow(
+      /Malformed ownership metadata/,
+    );
     expect(fs.readFileSync(malformed, "utf8")).toBe("broken metadata");
     fs.unlinkSync(malformed);
-    const retry = await acquireProjectOwnership(
-      root,
-      identity,
-      "test-host-namespace",
-    );
+    const retry = await acquireProjectOwnership(root, identity, "test-host-namespace");
     await retry.release();
   });
 
   it("requires explicit namespace provisioning and rejects namespace mismatches", async () => {
-    const root = fs.mkdtempSync(
-      path.join(os.tmpdir(), "unprovisioned-coordination-"),
-    );
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "unprovisioned-coordination-"));
     temporaryRoots.push(root);
     const identity = {
       trelloBoardId: "board-1",
       githubRepository: "owner/repo",
     };
-    await expect(
-      acquireProjectOwnership(root, identity, "expected"),
-    ).rejects.toThrow(/marker is missing/);
+    await expect(acquireProjectOwnership(root, identity, "expected")).rejects.toThrow(
+      /marker is missing/,
+    );
     const missingRoot = path.join(root, "not-created");
-    await expect(
-      acquireProjectOwnership(missingRoot, identity, "expected"),
-    ).rejects.toThrow(/explicitly provisioned/);
+    await expect(acquireProjectOwnership(missingRoot, identity, "expected")).rejects.toThrow(
+      /explicitly provisioned/,
+    );
     expect(fs.existsSync(missingRoot)).toBe(false);
     provisionCoordinationNamespace(root, "actual");
-    await expect(
-      acquireProjectOwnership(root, identity, "expected"),
-    ).rejects.toThrow(/identity mismatch/);
+    await expect(acquireProjectOwnership(root, identity, "expected")).rejects.toThrow(
+      /identity mismatch/,
+    );
     const lease = await acquireProjectOwnership(root, identity, "actual");
     await lease.release();
   });
 
   it("preserves and rejects a malformed namespace marker", async () => {
-    const root = fs.mkdtempSync(
-      path.join(os.tmpdir(), "bad-coordination-marker-"),
-    );
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "bad-coordination-marker-"));
     temporaryRoots.push(root);
     const marker = path.join(root, ".agent-orchestrator-coordination.json");
     fs.writeFileSync(marker, "{broken", { mode: 0o600 });
@@ -586,14 +533,9 @@ describe("canonical project ownership coordination", () => {
   it("rolls back a partially acquired resource set before rejecting", async () => {
     const root = temporaryRoot();
     const repository = "held/repo";
-    const githubKey = createHash("sha256")
-      .update(`github:${repository}`)
-      .digest("hex");
+    const githubKey = createHash("sha256").update(`github:${repository}`).digest("hex");
     let candidateBoard = "candidate-board-0";
-    while (
-      createHash("sha256").update(`trello:${candidateBoard}`).digest("hex") >
-      githubKey
-    ) {
+    while (createHash("sha256").update(`trello:${candidateBoard}`).digest("hex") > githubKey) {
       candidateBoard = `candidate-board-${Number(candidateBoard.slice("candidate-board-".length)) + 1}`;
     }
     const shared = await acquireProjectOwnership(
@@ -638,9 +580,7 @@ describe("canonical project ownership coordination", () => {
       result.status === "fulfilled" ? [result.value] : [],
     );
     expect(acquired).toHaveLength(1);
-    expect(
-      results.filter((result) => result.status === "rejected"),
-    ).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
     await acquired[0]?.release();
   });
 
@@ -663,11 +603,7 @@ describe("canonical project ownership coordination", () => {
       trelloBoardId: "ambiguous-board",
       githubRepository: "Owner/Repo.git",
     };
-    const lease = await acquireProjectOwnership(
-      root,
-      identity,
-      "test-host-namespace",
-    );
+    const lease = await acquireProjectOwnership(root, identity, "test-host-namespace");
     lease.markProcessGroupAmbiguous(48123, ["process-executions/example"]);
     await lease.release();
 
@@ -701,47 +637,28 @@ describe("canonical project ownership coordination", () => {
         trelloBoardId: `marker-failure-${failedMarkerIndex}`,
         githubRepository: `marker/repo-${failedMarkerIndex}`,
       };
-      const lease = await acquireProjectOwnership(
-        root,
-        identity,
-        "test-host-namespace",
-      );
+      const lease = await acquireProjectOwnership(root, identity, "test-host-namespace");
       const keys = [
-        createHash("sha256")
-          .update(`trello:${identity.trelloBoardId}`)
-          .digest("hex"),
-        createHash("sha256")
-          .update(`github:${identity.githubRepository}`)
-          .digest("hex"),
+        createHash("sha256").update(`trello:${identity.trelloBoardId}`).digest("hex"),
+        createHash("sha256").update(`github:${identity.githubRepository}`).digest("hex"),
       ].sort();
-      const markerToFail = path.join(
-        root,
-        `${keys[failedMarkerIndex]}.ambiguity.json`,
-      );
+      const markerToFail = path.join(root, `${keys[failedMarkerIndex]}.ambiguity.json`);
       const originalOpenSync = fs.openSync;
-      const openSpy = vi
-        .spyOn(fs, "openSync")
-        .mockImplementation((file, flags, mode) => {
-          if (file === markerToFail) {
-            const error = new Error(
-              "injected marker persistence failure",
-            ) as NodeJS.ErrnoException;
-            error.code = "EACCES";
-            throw error;
-          }
-          return originalOpenSync(file, flags, mode);
-        });
+      const openSpy = vi.spyOn(fs, "openSync").mockImplementation((file, flags, mode) => {
+        if (file === markerToFail) {
+          const error = new Error("injected marker persistence failure") as NodeJS.ErrnoException;
+          error.code = "EACCES";
+          throw error;
+        }
+        return originalOpenSync(file, flags, mode);
+      });
       try {
-        expect(() => lease.markProcessGroupAmbiguous(48123)).toThrow(
-          /injected/,
-        );
+        expect(() => lease.markProcessGroupAmbiguous(48123)).toThrow(/injected/);
         await expect(lease.release()).rejects.toThrow(/locks are retained/);
       } finally {
         openSpy.mockRestore();
       }
-      await expect(
-        acquireProjectOwnership(root, identity, "test-host-namespace"),
-      ).rejects.toThrow(
+      await expect(acquireProjectOwnership(root, identity, "test-host-namespace")).rejects.toThrow(
         /already held|unresolved process-group termination ambiguity/,
       );
       const independent = await acquireProjectOwnership(
@@ -766,14 +683,8 @@ describe("canonical project ownership coordination", () => {
         trelloBoardId: `sync-${syncTarget}`,
         githubRepository: "sync/repo",
       };
-      const lease = await acquireProjectOwnership(
-        root,
-        identity,
-        "test-host-namespace",
-      );
-      const key = createHash("sha256")
-        .update(`github:${identity.githubRepository}`)
-        .digest("hex");
+      const lease = await acquireProjectOwnership(root, identity, "test-host-namespace");
+      const key = createHash("sha256").update(`github:${identity.githubRepository}`).digest("hex");
       const marker = path.join(root, `${key}.ambiguity.json`);
       fs.writeFileSync(
         marker,
@@ -798,8 +709,7 @@ describe("canonical project ownership coordination", () => {
         const stat = fs.fstatSync(fd);
         const isTarget =
           syncTarget === "file"
-            ? stat.ino === fs.statSync(marker).ino &&
-              stat.dev === fs.statSync(marker).dev
+            ? stat.ino === fs.statSync(marker).ino && stat.dev === fs.statSync(marker).dev
             : stat.isDirectory() && stat.ino === fs.statSync(root).ino;
         if (fail && isTarget) {
           fail = false;
@@ -810,15 +720,11 @@ describe("canonical project ownership coordination", () => {
         return originalFsync(fd);
       });
       try {
-        expect(() => lease.markProcessGroupAmbiguous(48123)).toThrow(
-          /fsync failure/,
-        );
+        expect(() => lease.markProcessGroupAmbiguous(48123)).toThrow(/fsync failure/);
         await expect(lease.release()).rejects.toThrow(/locks are retained/);
         await expect(
           acquireProjectOwnership(root, identity, "test-host-namespace"),
-        ).rejects.toThrow(
-          /already held|unresolved process-group termination ambiguity/,
-        );
+        ).rejects.toThrow(/already held|unresolved process-group termination ambiguity/);
         lease.markProcessGroupAmbiguous(48123);
         await lease.release();
       } finally {
@@ -851,18 +757,16 @@ control.unref();`;
     const child = launchProcess(script);
     await waitForOutput(child, "WAITING");
     expect(child.exitCode).toBeNull();
-    await expect(
-      acquireProjectOwnership(root, identity, "test-host-namespace"),
-    ).rejects.toThrow(
+    await expect(acquireProjectOwnership(root, identity, "test-host-namespace")).rejects.toThrow(
       /already held|unresolved process-group termination ambiguity/,
     );
     expect(child.exitCode).toBeNull();
     fs.writeFileSync(retrySignal, "retry");
     await waitForOutput(child, "FENCED");
     await waitForExit(child);
-    await expect(
-      acquireProjectOwnership(root, identity, "test-host-namespace"),
-    ).rejects.toThrow(/unresolved process-group termination ambiguity/);
+    await expect(acquireProjectOwnership(root, identity, "test-host-namespace")).rejects.toThrow(
+      /unresolved process-group termination ambiguity/,
+    );
   });
 
   it("retains ownership in the parent descriptor after the one-shot lock utility exits", async () => {
@@ -890,44 +794,30 @@ control.unref();`;
       trelloBoardId: "static-dispatch-fence",
       githubRepository: "dispatch/fence",
     };
-    const lease = await acquireProjectOwnership(
-      root,
-      identity,
-      "test-host-namespace",
-    );
-    const child = spawn(
-      process.execPath,
-      ["-e", "setInterval(() => {}, 1000)"],
-      {
-        detached: true,
-        stdio: "ignore",
-      },
-    );
+    const lease = await acquireProjectOwnership(root, identity, "test-host-namespace");
+    const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+      detached: true,
+      stdio: "ignore",
+    });
     if (child.pid === undefined) throw new Error("child has no pid");
     const childPid = child.pid;
     const originalKill = process.kill;
-    const killSpy = vi
-      .spyOn(process, "kill")
-      .mockImplementation((pid, signal) => {
-        if (typeof pid === "number" && pid === -childPid) {
-          if (signal === 0) return true;
-          return true;
-        }
-        return originalKill(pid, signal);
-      });
+    const killSpy = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
+      if (typeof pid === "number" && pid === -childPid) {
+        if (signal === 0) return true;
+        return true;
+      }
+      return originalKill(pid, signal);
+    });
     const originalReaddir = fs.readdirSync;
-    const procSpy = vi
-      .spyOn(fs, "readdirSync")
-      .mockImplementation((directory, options) => {
-        if (directory === "/proc") {
-          const error = new Error(
-            "injected procfs visibility failure",
-          ) as NodeJS.ErrnoException;
-          error.code = "EACCES";
-          throw error;
-        }
-        return originalReaddir(directory, options as never) as never;
-      });
+    const procSpy = vi.spyOn(fs, "readdirSync").mockImplementation((directory, options) => {
+      if (directory === "/proc") {
+        const error = new Error("injected procfs visibility failure") as NodeJS.ErrnoException;
+        error.code = "EACCES";
+        throw error;
+      }
+      return originalReaddir(directory, options as never) as never;
+    });
     try {
       await expect(
         ProjectRunAuthority.withProjectLease(
@@ -940,9 +830,7 @@ control.unref();`;
             ),
         ),
       ).rejects.toThrow(/Unable to verify termination/);
-      const key = createHash("sha256")
-        .update(`github:${identity.githubRepository}`)
-        .digest("hex");
+      const key = createHash("sha256").update(`github:${identity.githubRepository}`).digest("hex");
       const marker = JSON.parse(
         fs.readFileSync(path.join(root, `${key}.ambiguity.json`), "utf8"),
       ) as { processGroup: number; identity: string };
@@ -958,9 +846,9 @@ control.unref();`;
       });
       await lease.release();
     }
-    await expect(
-      acquireProjectOwnership(root, identity, "test-host-namespace"),
-    ).rejects.toThrow(/unresolved process-group termination ambiguity/);
+    await expect(acquireProjectOwnership(root, identity, "test-host-namespace")).rejects.toThrow(
+      /unresolved process-group termination ambiguity/,
+    );
   });
 
   it("stops claims on bootstrap SIGTERM and reacquires preserved attempt references", async () => {
@@ -1001,9 +889,7 @@ process.once("SIGTERM", async () => { stopping = true; clearInterval(polling); f
     const claimsBeforeShutdown = events.filter((event) => event === "claim");
     expect(claimsBeforeShutdown.length).toBeGreaterThan(0);
     const retainedEdit = fs.readFileSync(dirtyEdit, "utf8");
-    const retainedReferences = JSON.parse(
-      fs.readFileSync(references, "utf8"),
-    ) as {
+    const retainedReferences = JSON.parse(fs.readFileSync(references, "utf8")) as {
       attemptId: string;
       worktree: string;
       branch: string;
@@ -1017,48 +903,31 @@ process.once("SIGTERM", async () => { stopping = true; clearInterval(polling); f
       openCodeSessionId: "session-1",
     });
 
-    const restartedLease = await acquireProjectOwnership(
-      root,
-      identity,
-      "test-host-namespace",
-    );
+    const restartedLease = await acquireProjectOwnership(root, identity, "test-host-namespace");
     restartedLease.assertHeld();
     expect(fs.readFileSync(dirtyEdit, "utf8")).toBe(retainedEdit);
-    expect(JSON.parse(fs.readFileSync(references, "utf8"))).toEqual(
-      retainedReferences,
-    );
+    expect(JSON.parse(fs.readFileSync(references, "utf8"))).toEqual(retainedReferences);
     await restartedLease.release();
-    expect(fs.readFileSync(claimLedger, "utf8").trim().split("\n")).toEqual(
-      events,
-    );
+    expect(fs.readFileSync(claimLedger, "utf8").trim().split("\n")).toEqual(events);
   }, 10_000);
 
   it("rejects FIFO marker and owner evidence without blocking", async () => {
     const markerRoot = temporaryRoot();
-    const markerPath = path.join(
-      markerRoot,
-      ".agent-orchestrator-coordination.json",
-    );
+    const markerPath = path.join(markerRoot, ".agent-orchestrator-coordination.json");
     fs.unlinkSync(markerPath);
     execFileSync("mkfifo", [markerPath]);
     const identity = JSON.stringify({
       trelloBoardId: "board-1",
       githubRepository: "owner/repo",
     });
-    const markerReader = launchProcess(
-      acquisitionOnlyScript(markerRoot, identity),
-    );
+    const markerReader = launchProcess(acquisitionOnlyScript(markerRoot, identity));
     await waitForOutput(markerReader, "ERROR:", 2_000);
     await waitForExit(markerReader);
 
     const ownerRoot = temporaryRoot();
-    const ownerKey = createHash("sha256")
-      .update("github:owner/repo")
-      .digest("hex");
+    const ownerKey = createHash("sha256").update("github:owner/repo").digest("hex");
     execFileSync("mkfifo", [path.join(ownerRoot, `${ownerKey}.owner.json`)]);
-    const ownerReader = launchProcess(
-      acquisitionOnlyScript(ownerRoot, identity),
-    );
+    const ownerReader = launchProcess(acquisitionOnlyScript(ownerRoot, identity));
     await waitForOutput(ownerReader, "ERROR:", 2_000);
     await waitForExit(ownerReader);
   });
@@ -1100,7 +969,6 @@ process.once("SIGTERM", async () => { stopping = true; clearInterval(polling); f
 });
 
 function waitForExit(child: ChildProcess): Promise<void> {
-  if (child.exitCode !== null || child.signalCode !== null)
-    return Promise.resolve();
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
   return new Promise((resolve) => child.once("exit", () => resolve()));
 }

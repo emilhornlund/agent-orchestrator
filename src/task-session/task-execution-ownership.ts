@@ -27,10 +27,7 @@ export function loadOwnedTaskExecutionRecord(
     );
   }
 
-  if (
-    record.projectId !== requested.projectId ||
-    record.cardId !== requested.cardId
-  ) {
+  if (record.projectId !== requested.projectId || record.cardId !== requested.cardId) {
     throw new TaskExecutionOwnershipError(
       `Task execution record owner does not match ${requested.projectId}/${requested.cardId}`,
     );

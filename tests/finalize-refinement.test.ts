@@ -63,8 +63,7 @@ function createResult(type: RefinementResult["type"]): RefinementResult {
   return {
     title: "Add inventory support",
     type,
-    description:
-      "# Add inventory support\n\n## Description\n\nAdd inventory support.",
+    description: "# Add inventory support\n\n## Description\n\nAdd inventory support.",
   };
 }
 
@@ -231,39 +230,37 @@ describe("finalizeRefinement", () => {
 
   it("saves a large refined description without failing the card", async () => {
     const description = `# Refined task\n\n${"Detailed requirement. ".repeat(500)}`;
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockImplementation(async (input, init) => {
-        const url = new URL(String(input));
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = new URL(String(input));
 
-        if (url.toString().length >= 8_000) {
-          return new Response(null, {
-            status: 414,
-            statusText: "Request-URI Too Large",
-          });
-        }
+      if (url.toString().length >= 8_000) {
+        return new Response(null, {
+          status: 414,
+          statusText: "Request-URI Too Large",
+        });
+      }
 
-        if (init?.method === "DELETE" || init?.method === "POST") {
-          return new Response(null, { status: 200 });
-        }
+      if (init?.method === "DELETE" || init?.method === "POST") {
+        return new Response(null, { status: 200 });
+      }
 
-        const body = JSON.parse(String(init?.body)) as {
-          desc?: string;
-          idList?: string;
-        };
+      const body = JSON.parse(String(init?.body)) as {
+        desc?: string;
+        idList?: string;
+      };
 
-        return new Response(
-          JSON.stringify({
-            id: "card-123",
-            name: body.desc === undefined ? "Original task" : "Refined task",
-            desc: body.desc ?? "Original description",
-            idList: body.idList ?? "working",
-            idLabels: ["refinement", "feature"],
-            url: "https://trello.example/card-123",
-          }),
-          { status: 200 },
-        );
-      });
+      return new Response(
+        JSON.stringify({
+          id: "card-123",
+          name: body.desc === undefined ? "Original task" : "Refined task",
+          desc: body.desc ?? "Original description",
+          idList: body.idList ?? "working",
+          idLabels: ["refinement", "feature"],
+          url: "https://trello.example/card-123",
+        }),
+        { status: 200 },
+      );
+    });
 
     const trello = new TrelloClient({
       apiKey: "test-key",
@@ -284,8 +281,6 @@ describe("finalizeRefinement", () => {
       name: "Refined task",
       desc: description,
     });
-    expect(
-      fetchMock.mock.calls.some(([input]) => String(input).includes("failed")),
-    ).toBe(false);
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("failed"))).toBe(false);
   });
 });

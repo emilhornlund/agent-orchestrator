@@ -22,10 +22,7 @@ import {
   type OpenCodeRunResult,
 } from "../src/opencode/opencode-client.js";
 import { getRefinementResultPath } from "../src/refinement/refinement-result.js";
-import {
-  CommandRunner,
-  type RunCommand,
-} from "../src/process/command-runner.js";
+import { CommandRunner, type RunCommand } from "../src/process/command-runner.js";
 import { pollProject } from "../src/orchestrator/poll-project.js";
 import { TaskMutationQueue } from "../src/task-session/task-mutation-queue.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
@@ -140,21 +137,17 @@ describe("task-session refinement scheduling", () => {
       idLabels: [project.trello.featureLabelId],
       url: "https://trello.example/implementation-card",
     };
-    const setupFailureCards = ["read-failure-card", "move-failure-card"].map(
-      (id): TrelloCard => ({
-        id,
-        name: "Setup failure refinement",
-        desc: "Setup must fail before refinement.",
-        idList: project.trello.readyListId,
-        idLabels: [project.trello.refinementLabelId],
-        url: `https://trello.example/${id}`,
-      }),
-    );
+    const setupFailureCards = ["read-failure-card", "move-failure-card"].map((id): TrelloCard => ({
+      id,
+      name: "Setup failure refinement",
+      desc: "Setup must fail before refinement.",
+      idList: project.trello.readyListId,
+      idLabels: [project.trello.refinementLabelId],
+      url: `https://trello.example/${id}`,
+    }));
     const readyCards = [readyCard, ...setupFailureCards, implementationCard];
     const cardLists = new Map(readyCards.map((card) => [card.id, card.idList]));
-    const cardLabels = new Map(
-      readyCards.map((card) => [card.id, new Set(card.idLabels)]),
-    );
+    const cardLabels = new Map(readyCards.map((card) => [card.id, new Set(card.idLabels)]));
     let setupFailureMode: "read" | "move" | undefined;
     let failedListReadInjected = false;
     let failedListMoveInjected = false;
@@ -273,21 +266,15 @@ describe("task-session refinement scheduling", () => {
     const git = {
       fetch: vi.fn(async () => undefined),
       branchExists: vi.fn(async () => false),
-      addWorktreeWithNewBranch: vi.fn(
-        async (_repo: string, worktreePath: string) => {
-          fs.mkdirSync(worktreePath, { recursive: true });
-        },
-      ),
+      addWorktreeWithNewBranch: vi.fn(async (_repo: string, worktreePath: string) => {
+        fs.mkdirSync(worktreePath, { recursive: true });
+      }),
       getStatus: vi.fn(async (worktreePath: string) =>
-        fs.existsSync(
-          path.join(worktreePath, ".agent-orchestrator/refinement-result.json"),
-        )
+        fs.existsSync(path.join(worktreePath, ".agent-orchestrator/refinement-result.json"))
           ? "?? .agent-orchestrator/refinement-result.json"
           : "",
       ),
-      getCurrentBranch: vi.fn(
-        async (cwd: string) => `agent/${path.basename(cwd)}`,
-      ),
+      getCurrentBranch: vi.fn(async (cwd: string) => `agent/${path.basename(cwd)}`),
       getHeadSha: vi.fn(async () => "a".repeat(40)),
       getHeadTrackedFiles: vi.fn(async () => []),
       getCommittableChangedPaths: vi.fn(async () => []),
@@ -308,48 +295,43 @@ describe("task-session refinement scheduling", () => {
       setupExecutions += 1;
       return setupCommandRunner.run(options);
     });
-    const openCodeRun = vi.fn(
-      async (options: OpenCodeRunOptions): Promise<OpenCodeRunResult> => {
-        expect(
-          fs.readFileSync(path.join(options.cwd, ".setup-marker"), "utf8"),
-        ).toBe("setup-ready");
-        await runRefinementSetup({
-          commands,
-          git,
-          project,
+    const openCodeRun = vi.fn(async (options: OpenCodeRunOptions): Promise<OpenCodeRunResult> => {
+      expect(fs.readFileSync(path.join(options.cwd, ".setup-marker"), "utf8")).toBe("setup-ready");
+      await runRefinementSetup({
+        commands,
+        git,
+        project,
+        cardId: readyCard.id,
+        worktreePath: options.cwd,
+        signal: new AbortController().signal,
+        cardLog: logger.child({
+          projectId: project.id,
           cardId: readyCard.id,
-          worktreePath: options.cwd,
-          signal: new AbortController().signal,
-          cardLog: logger.child({
-            projectId: project.id,
-            cardId: readyCard.id,
-          }),
-        });
-        expect(setupExecutions).toBe(1);
-        const resultPath = getRefinementResultPath(options.cwd);
-        fs.mkdirSync(path.dirname(resultPath), { recursive: true });
-        fs.writeFileSync(
-          resultPath,
-          JSON.stringify({
-            title: "Clarified feature",
-            description: "# Clarified feature\n\nAcceptance criteria.",
-            type: "feature",
-          }),
-        );
-        return { exitCode: 0, output: "done", errorOutput: "" };
-      },
-    );
+        }),
+      });
+      expect(setupExecutions).toBe(1);
+      const resultPath = getRefinementResultPath(options.cwd);
+      fs.mkdirSync(path.dirname(resultPath), { recursive: true });
+      fs.writeFileSync(
+        resultPath,
+        JSON.stringify({
+          title: "Clarified feature",
+          description: "# Clarified feature\n\nAcceptance criteria.",
+          type: "feature",
+        }),
+      );
+      return { exitCode: 0, output: "done", errorOutput: "" };
+    });
     const openCode = new OpenCodeClient(openCodeRun);
 
-    const refinementAuthority =
-      await ProjectRunAuthority.createPreparingAttempt({
-        projectId: project.id,
-        cardId: readyCard.id,
-        taskKind: "refinement",
-        pinned,
-        projectLease: lease,
-        coordinationRoot,
-      });
+    const refinementAuthority = await ProjectRunAuthority.createPreparingAttempt({
+      projectId: project.id,
+      cardId: readyCard.id,
+      taskKind: "refinement",
+      pinned,
+      projectLease: lease,
+      coordinationRoot,
+    });
     refinementAuthority.claim();
     await refinementAuthority.run(() =>
       withGitHubOperationProject(project, () =>
@@ -373,15 +355,9 @@ describe("task-session refinement scheduling", () => {
     expect(setupExecutions).toBe(1);
     expect(git.addWorktreeWithNewBranch).toHaveBeenCalledOnce();
     expect(cardLists.get(readyCard.id)).toBe(project.trello.backlogListId);
-    expect(cardLists.get(implementationCard.id)).toBe(
-      project.trello.readyListId,
-    );
-    expect([...cardLabels.get(readyCard.id)!]).toContain(
-      project.trello.featureLabelId,
-    );
-    expect([...cardLabels.get(readyCard.id)!]).not.toContain(
-      project.trello.refinementLabelId,
-    );
+    expect(cardLists.get(implementationCard.id)).toBe(project.trello.readyListId);
+    expect([...cardLabels.get(readyCard.id)!]).toContain(project.trello.featureLabelId);
+    expect([...cardLabels.get(readyCard.id)!]).not.toContain(project.trello.refinementLabelId);
     expect(githubRun).not.toHaveBeenCalled();
     expect(refinementAuthority.store.read()).toMatchObject({
       lifecycle: "refined",
@@ -406,23 +382,20 @@ describe("task-session refinement scheduling", () => {
       },
     ]);
     for (const [index, failureCard] of setupFailureCards.entries()) {
-      const failureAuthority = await ProjectRunAuthority.createPreparingAttempt(
-        {
-          projectId: project.id,
-          cardId: failureCard.id,
-          taskKind: "refinement",
-          pinned,
-          projectLease: lease,
-          coordinationRoot,
-        },
-      );
+      const failureAuthority = await ProjectRunAuthority.createPreparingAttempt({
+        projectId: project.id,
+        cardId: failureCard.id,
+        taskKind: "refinement",
+        pinned,
+        projectLease: lease,
+        coordinationRoot,
+      });
       failureAuthority.claim();
       const failureProject = {
         ...project,
         repository: {
           ...project.repository,
-          setupCommand:
-            "printf setup-preserved > .setup-failure-marker; exit 7",
+          setupCommand: "printf setup-preserved > .setup-failure-marker; exit 7",
         },
       };
       setupFailureMode = index === 0 ? "read" : "move";
@@ -445,17 +418,13 @@ describe("task-session refinement scheduling", () => {
           ),
         );
       await expect(runFailurePoll()).rejects.toThrow(
-        index === 0
-          ? "injected Failed list read outage"
-          : "injected Failed transition outage",
+        index === 0 ? "injected Failed list read outage" : "injected Failed transition outage",
       );
       expect(failureAuthority.store.read()).toMatchObject({
         lifecycle: "refinement",
         terminalSync: "not-applicable",
       });
-      expect(
-        new TaskMutationQueue(contextRoot, project, failureAuthority).list(),
-      ).toContainEqual(
+      expect(new TaskMutationQueue(contextRoot, project, failureAuthority).list()).toContainEqual(
         expect.objectContaining({
           cardId: failureCard.id,
           kind: "refinement",
@@ -484,17 +453,9 @@ describe("task-session refinement scheduling", () => {
         ),
       ).toBe("setup-preserved");
       expect(
-        [...acceptedFailureComments].filter((entry) =>
-          entry.startsWith(`${failureCard.id}:`),
-        ),
+        [...acceptedFailureComments].filter((entry) => entry.startsWith(`${failureCard.id}:`)),
       ).toHaveLength(1);
-      expect(
-        new TaskMutationQueue(
-          contextRoot,
-          project,
-          failureAuthority,
-        ).getActive(),
-      ).toBeNull();
+      expect(new TaskMutationQueue(contextRoot, project, failureAuthority).getActive()).toBeNull();
       setupFailureMode = undefined;
     }
     const nextAuthority = await ProjectRunAuthority.createPreparingAttempt({
@@ -511,9 +472,7 @@ describe("task-session refinement scheduling", () => {
       lifecycle: "planning",
     });
     expect(
-      fs.existsSync(
-        path.join(contextRoot, "task-mutation-queues", `${project.id}.json`),
-      ),
+      fs.existsSync(path.join(contextRoot, "task-mutation-queues", `${project.id}.json`)),
     ).toBe(false);
     const implementationProject = {
       ...project,
@@ -545,35 +504,25 @@ describe("task-session refinement scheduling", () => {
         ),
       ),
     ).rejects.toThrow("repository setup exited with code 1");
-    expect(cardLists.get(implementationCard.id)).toBe(
-      project.trello.workingListId,
-    );
+    expect(cardLists.get(implementationCard.id)).toBe(project.trello.workingListId);
     expect(nextAuthority.store.read()).toMatchObject({
       cardId: implementationCard.id,
       lifecycle: "planning",
       terminalSync: "not-applicable",
     });
     expect(
-      new TaskExecutionStore(contextRoot, project, nextAuthority).read(
-        implementationCard.id,
-      )?.phase,
+      new TaskExecutionStore(contextRoot, project, nextAuthority).read(implementationCard.id)
+        ?.phase,
     ).toBe("planning");
     expect(
       new TaskMutationQueue(contextRoot, project, nextAuthority)
         .list()
         .find((event) => event.cardId === implementationCard.id)?.status,
     ).toBe("failed");
-    expect(openCodeRun.mock.calls.map(([options]) => options.model)).toEqual([
-      "refine",
-    ]);
+    expect(openCodeRun.mock.calls.map(([options]) => options.model)).toEqual(["refine"]);
     expect(
       fs.existsSync(
-        path.join(
-          contextRoot,
-          "task-executions",
-          project.id,
-          `${implementationCard.id}.json`,
-        ),
+        path.join(contextRoot, "task-executions", project.id, `${implementationCard.id}.json`),
       ),
     ).toBe(false);
   });
@@ -655,11 +604,9 @@ describe("task-session refinement scheduling", () => {
     const git = {
       fetch: vi.fn(async () => undefined),
       branchExists: vi.fn(async () => false),
-      addWorktreeWithNewBranch: vi.fn(
-        async (_repo: string, worktreePath: string) => {
-          fs.mkdirSync(worktreePath, { recursive: true });
-        },
-      ),
+      addWorktreeWithNewBranch: vi.fn(async (_repo: string, worktreePath: string) => {
+        fs.mkdirSync(worktreePath, { recursive: true });
+      }),
       getCurrentBranch: vi.fn(async () => "agent/first-implementation"),
       getHeadSha: vi.fn(async () => "a".repeat(40)),
       getStatus: vi.fn(async () => ""),
@@ -777,12 +724,8 @@ describe("task-session refinement scheduling", () => {
           return { ...card, idList: nextList, idLabels: [...labels] };
         }),
         updateCardContent: vi.fn(async () => undefined),
-        addLabel: vi.fn(async (_id: string, label: string) =>
-          labels.add(label),
-        ),
-        removeLabel: vi.fn(async (_id: string, label: string) =>
-          labels.delete(label),
-        ),
+        addLabel: vi.fn(async (_id: string, label: string) => labels.add(label)),
+        removeLabel: vi.fn(async (_id: string, label: string) => labels.delete(label)),
         addComment: vi.fn(async () => undefined),
       } as unknown as TrelloClient;
       const controller = new AbortController();
@@ -790,11 +733,9 @@ describe("task-session refinement scheduling", () => {
       const git = {
         fetch: vi.fn(async () => undefined),
         branchExists: vi.fn(async () => false),
-        addWorktreeWithNewBranch: vi.fn(
-          async (_repo: string, worktree: string) => {
-            fs.mkdirSync(worktree, { recursive: true });
-          },
-        ),
+        addWorktreeWithNewBranch: vi.fn(async (_repo: string, worktree: string) => {
+          fs.mkdirSync(worktree, { recursive: true });
+        }),
         getStatus: vi.fn(async (cwd: string) =>
           fs.existsSync(getRefinementResultPath(cwd))
             ? "?? .agent-orchestrator/refinement-result.json"
@@ -854,27 +795,20 @@ describe("task-session refinement scheduling", () => {
       }
 
       expect(githubRun).not.toHaveBeenCalled();
-      expect(openCodeRun).toHaveBeenCalledTimes(
-        mode === "malformed-result" ? 3 : 1,
-      );
+      expect(openCodeRun).toHaveBeenCalledTimes(mode === "malformed-result" ? 3 : 1);
       if (mode === "malformed-result") {
         expect(listId).toBe(project.trello.failedListId);
         expect(git.resetHard).not.toHaveBeenCalled();
         expect(git.cleanUntracked).not.toHaveBeenCalled();
-        expect(
-          fs.readFileSync(
-            path.join(worktreePath, "src", "agent-change.ts"),
-            "utf8",
-          ),
-        ).toBe("preserve refinement changes");
+        expect(fs.readFileSync(path.join(worktreePath, "src", "agent-change.ts"), "utf8")).toBe(
+          "preserve refinement changes",
+        );
       } else {
         expect(listId).toBe(project.trello.backlogListId);
         expect(git.removeWorktree).not.toHaveBeenCalled();
         expect(fs.existsSync(worktreePath)).toBe(true);
       }
-      expect(
-        new TaskMutationQueue(contextRoot, project).getActive()?.status,
-      ).toBe("failed");
+      expect(new TaskMutationQueue(contextRoot, project).getActive()?.status).toBe("failed");
     },
   );
 });

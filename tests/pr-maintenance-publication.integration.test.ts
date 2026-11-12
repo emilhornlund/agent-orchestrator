@@ -49,18 +49,12 @@ async function publishedTask(conflict = false) {
   git(source, "push", "origin", "main");
   fs.mkdirSync(path.dirname(worktree));
   git(source, "worktree", "add", "-b", "agent/card", worktree, "main");
-  fs.writeFileSync(
-    path.join(worktree, conflict ? "base.txt" : "task.txt"),
-    "published task\n",
-  );
+  fs.writeFileSync(path.join(worktree, conflict ? "base.txt" : "task.txt"), "published task\n");
   git(worktree, "add", ".");
   git(worktree, "commit", "-m", "published task");
   git(worktree, "push", "origin", "agent/card");
   const published = git(worktree, "rev-parse", "HEAD");
-  fs.writeFileSync(
-    path.join(source, conflict ? "base.txt" : "upstream.txt"),
-    "upstream change\n",
-  );
+  fs.writeFileSync(path.join(source, conflict ? "base.txt" : "upstream.txt"), "upstream change\n");
   git(source, "add", ".");
   git(source, "commit", "-m", "advance target");
   git(source, "push", "origin", "main");
@@ -114,13 +108,7 @@ async function publishedTask(conflict = false) {
     ensurePullRequestDraft: vi.fn(async () => undefined),
     getPullRequestDescription: vi.fn(async () => body),
     editPullRequestDescription: vi.fn(
-      async ({
-        body: next,
-        expectedBody,
-      }: {
-        body: string;
-        expectedBody?: string | undefined;
-      }) => {
+      async ({ body: next, expectedBody }: { body: string; expectedBody?: string | undefined }) => {
         expect(body).toBe(expectedBody);
         body = next;
       },
@@ -133,10 +121,7 @@ async function publishedTask(conflict = false) {
       reviewDecision: "APPROVED",
       headRefName: "agent/card",
       baseRefName: "main",
-      headRefOid:
-        git(source, "ls-remote", "origin", "refs/heads/agent/card").split(
-          /\s/u,
-        )[0] ?? "",
+      headRefOid: git(source, "ls-remote", "origin", "refs/heads/agent/card").split(/\s/u)[0] ?? "",
       headRepository: { name: "repo" },
       headRepositoryOwner: { login: "owner" },
     })),
@@ -171,24 +156,22 @@ async function publishedTask(conflict = false) {
     hasRequestedChanges: false,
     hasUnresolvedFeedback: false,
     requirementIds: ["REQ-1"],
-    review: vi.fn<MaintainOutdatedPrOptions["review"]>(
-      async ({ contentIdentity }) => ({
-        version: 1,
-        projectId: project.id,
-        cardId: "card",
-        reviewedContentIdentity: contentIdentity,
-        verdict: "pass",
-        blockingFindings: [],
-        requirementAssessments: [
-          {
-            requirementId: "REQ-1",
-            status: "satisfied",
-            details: "Preserved",
-            evidence: ["task.txt"],
-          },
-        ],
-      }),
-    ),
+    review: vi.fn<MaintainOutdatedPrOptions["review"]>(async ({ contentIdentity }) => ({
+      version: 1,
+      projectId: project.id,
+      cardId: "card",
+      reviewedContentIdentity: contentIdentity,
+      verdict: "pass",
+      blockingFindings: [],
+      requirementAssessments: [
+        {
+          requirementId: "REQ-1",
+          status: "satisfied",
+          details: "Preserved",
+          evidence: ["task.txt"],
+        },
+      ],
+    })),
   };
   return {
     options,
@@ -215,8 +198,7 @@ describe("additive published PR maintenance", () => {
           output: "Observed failure",
           errorOutput: "",
         }));
-      if (kind === "unconfigured")
-        delete f.options.project.repository.validationCommand;
+      if (kind === "unconfigured") delete f.options.project.repository.validationCommand;
       if (kind === "unavailable")
         f.options.review = vi.fn(async () => {
           throw new Error("Independent review unavailable");
@@ -244,21 +226,18 @@ describe("additive published PR maintenance", () => {
       expect(body).toContain("Human summary\n\nOriginal task implementation");
       expect(body).toContain("Current automation outcome");
       expect(body).toContain("CI for this revision has not yet been verified");
-      expect(
-        f.options.maintenanceStore.inspect()[0]?.qualityVerification?.status,
-      ).toBe("uncertain");
-      expect(
-        git(f.source, "ls-remote", "origin", "refs/heads/agent/card"),
-      ).toContain(git(f.worktree, "rev-parse", "HEAD"));
+      expect(f.options.maintenanceStore.inspect()[0]?.qualityVerification?.status).toBe(
+        "uncertain",
+      );
+      expect(git(f.source, "ls-remote", "origin", "refs/heads/agent/card")).toContain(
+        git(f.worktree, "rev-parse", "HEAD"),
+      );
     },
   );
 
   it("preserves staged unrelated output and refuses its inclusion in a merge commit", async () => {
     const f = await publishedTask();
-    fs.writeFileSync(
-      path.join(f.worktree, "setup.txt"),
-      "unrelated staged output\n",
-    );
+    fs.writeFileSync(path.join(f.worktree, "setup.txt"), "unrelated staged output\n");
     git(f.worktree, "add", "setup.txt");
     const index = git(f.worktree, "write-tree");
     expect(await maintainOutdatedPr(f.options)).toBe("blocked");
@@ -279,32 +258,20 @@ describe("additive published PR maintenance", () => {
     let externalHead = "";
     f.options.review = async (input) => {
       const human = path.join(path.dirname(f.source), "human");
-      git(
-        path.dirname(f.source),
-        "clone",
-        git(f.source, "remote", "get-url", "origin"),
-        human,
-      );
+      git(path.dirname(f.source), "clone", git(f.source, "remote", "get-url", "origin"), human);
       git(human, "checkout", "agent/card");
       git(human, "config", "user.name", "Human");
       git(human, "config", "user.email", "human@example.test");
-      fs.writeFileSync(
-        path.join(human, "human.txt"),
-        "independent external work\n",
-      );
+      fs.writeFileSync(path.join(human, "human.txt"), "independent external work\n");
       git(human, "add", ".");
       git(human, "commit", "-m", "human work");
       git(human, "push", "origin", "agent/card");
       externalHead = git(human, "rev-parse", "HEAD");
       return originalReview(input);
     };
-    await expect(maintainOutdatedPr(f.options)).rejects.toThrow(
-      "published head changed",
-    );
+    await expect(maintainOutdatedPr(f.options)).rejects.toThrow("published head changed");
     expect(push).not.toHaveBeenCalled();
-    expect(
-      git(f.source, "ls-remote", "origin", "refs/heads/agent/card"),
-    ).toContain(externalHead);
+    expect(git(f.source, "ls-remote", "origin", "refs/heads/agent/card")).toContain(externalHead);
   });
 
   it("merges the latest target on an approved open PR without rewriting commits or shipping dirty setup output", async () => {
@@ -323,19 +290,11 @@ describe("additive published PR maintenance", () => {
     });
     f.options.task = f.options.taskStore.read("card")!;
     const sourceHead = git(f.source, "rev-parse", "HEAD");
-    fs.writeFileSync(
-      path.join(f.worktree, "setup.txt"),
-      "excluded setup output\n",
-    );
-    fs.writeFileSync(
-      path.join(f.worktree, "scratch.txt"),
-      "unshipped scratch\n",
-    );
+    fs.writeFileSync(path.join(f.worktree, "setup.txt"), "excluded setup output\n");
+    fs.writeFileSync(path.join(f.worktree, "scratch.txt"), "unshipped scratch\n");
     expect(await maintainOutdatedPr(f.options)).toBe("completed");
     const head = git(f.worktree, "rev-parse", "HEAD");
-    expect(git(f.worktree, "show", "-s", "--format=%P", head)).toBe(
-      `${f.published} ${f.base}`,
-    );
+    expect(git(f.worktree, "show", "-s", "--format=%P", head)).toBe(`${f.published} ${f.base}`);
     expect(git(f.worktree, "show", "HEAD:task.txt")).toBe("published task");
     expect(git(f.worktree, "show", "HEAD:setup.txt")).toBe("clean setup");
     expect(fs.readFileSync(path.join(f.worktree, "setup.txt"), "utf8")).toBe(
@@ -358,24 +317,15 @@ describe("additive published PR maintenance", () => {
       publication: { status: "verified" },
     });
     expect(
-      f.github.updatePullRequestDescriptionStatus.mock.calls.map(
-        ([request]) => request.status,
-      ),
-    ).toEqual([
-      "synchronizing-target",
-      "validating-pr-changes",
-      "updating-remote",
-      null,
-    ]);
+      f.github.updatePullRequestDescriptionStatus.mock.calls.map(([request]) => request.status),
+    ).toEqual(["synchronizing-target", "validating-pr-changes", "updating-remote", null]);
   });
 
   it.each(["merge", "push"] as const)(
     "reconciles an accepted %s interrupted before its acknowledgement without repeating it",
     async (boundary) => {
       const f = await publishedTask();
-      const originalMerge = f.options.git.completeTargetMerge.bind(
-        f.options.git,
-      );
+      const originalMerge = f.options.git.completeTargetMerge.bind(f.options.git);
       const originalPush = f.options.git.push.bind(f.options.git);
       const merge = vi.spyOn(f.options.git, "completeTargetMerge"),
         push = vi.spyOn(f.options.git, "push");
@@ -384,20 +334,14 @@ describe("additive published PR maintenance", () => {
           await originalMerge(...args);
           throw new Error("merge acknowledgement lost");
         });
-        await expect(maintainOutdatedPr(f.options)).rejects.toThrow(
-          "merge acknowledgement lost",
-        );
+        await expect(maintainOutdatedPr(f.options)).rejects.toThrow("merge acknowledgement lost");
       } else {
         push.mockImplementationOnce(async (...args) => {
           await originalPush(...args);
-          f.github.findPullRequestState.mockRejectedValueOnce(
-            new Error("read outage after push"),
-          );
+          f.github.findPullRequestState.mockRejectedValueOnce(new Error("read outage after push"));
           throw new Error("push acknowledgement lost");
         });
-        await expect(maintainOutdatedPr(f.options)).rejects.toThrow(
-          "read outage after push",
-        );
+        await expect(maintainOutdatedPr(f.options)).rejects.toThrow("read outage after push");
       }
       const options = {
         ...f.options,
@@ -423,27 +367,18 @@ describe("additive published PR maintenance", () => {
     f.options.remediateConflict = async ({ conflictedPaths, operationId }) => {
       operations.push(operationId);
       expect(conflictedPaths).toEqual(["base.txt"]);
-      fs.writeFileSync(
-        path.join(f.worktree, "base.txt"),
-        "published task plus upstream change\n",
-      );
+      fs.writeFileSync(path.join(f.worktree, "base.txt"), "published task plus upstream change\n");
       if (!stopped) {
         stopped = true;
         throw new Error("primary completion interrupted");
       }
     };
-    await expect(maintainOutdatedPr(f.options)).rejects.toThrow(
-      "primary completion interrupted",
-    );
+    await expect(maintainOutdatedPr(f.options)).rejects.toThrow("primary completion interrupted");
     expect(git(f.worktree, "rev-parse", "MERGE_HEAD")).toBe(f.base);
     expect(await maintainOutdatedPr(f.options)).toBe("completed");
     expect(new Set(operations).size).toBe(1);
-    expect(
-      f.options.maintenanceStore.inspect()[0]?.conflictRemediationAttempts,
-    ).toBe(1);
-    expect(git(f.worktree, "show", "HEAD:base.txt")).toBe(
-      "published task plus upstream change",
-    );
+    expect(f.options.maintenanceStore.inspect()[0]?.conflictRemediationAttempts).toBe(1);
+    expect(git(f.worktree, "show", "HEAD:base.txt")).toBe("published task plus upstream change");
   });
 
   it("retains unresolved conflicts at the configured bound without repeated assistance", async () => {
@@ -454,9 +389,7 @@ describe("additive published PR maintenance", () => {
     expect(await maintainOutdatedPr(f.options)).toBe("blocked");
     expect(await maintainOutdatedPr(f.options)).toBe("blocked");
     expect(repair).not.toHaveBeenCalled();
-    expect(await f.github.getPullRequestDescription()).not.toContain(
-      "Agent Orchestrator status:",
-    );
+    expect(await f.github.getPullRequestDescription()).not.toContain("Agent Orchestrator status:");
     expect(git(f.worktree, "rev-parse", "HEAD")).toBe(f.published);
     expect(git(f.worktree, "rev-parse", "MERGE_HEAD")).toBe(f.base);
   });
@@ -466,16 +399,13 @@ describe("additive published PR maintenance", () => {
     f.options.project.opencode.remediation.maxPasses = 0;
     expect(await maintainOutdatedPr(f.options)).toBe("blocked");
     fs.writeFileSync(path.join(f.worktree, "base.txt"), "human resolution\n");
-    fs.writeFileSync(
-      path.join(f.worktree, "unrelated.txt"),
-      "retain unrelated work\n",
-    );
+    fs.writeFileSync(path.join(f.worktree, "unrelated.txt"), "retain unrelated work\n");
     git(f.worktree, "add", "base.txt", "unrelated.txt");
     await expect(maintainOutdatedPr(f.options)).rejects.toThrow("non-conflict");
     expect(git(f.worktree, "rev-parse", "HEAD")).toBe(f.published);
-    expect(
-      fs.readFileSync(path.join(f.worktree, "unrelated.txt"), "utf8"),
-    ).toBe("retain unrelated work\n");
+    expect(fs.readFileSync(path.join(f.worktree, "unrelated.txt"), "utf8")).toBe(
+      "retain unrelated work\n",
+    );
   });
 
   it("fences unrelated changes after an interrupted merge before its conflict checkpoint", async () => {
@@ -484,23 +414,19 @@ describe("additive published PR maintenance", () => {
       f.options.maintenanceStore,
     );
     let interrupted = false;
-    vi.spyOn(
-      f.options.maintenanceStore,
-      "recordLocalPreparation",
-    ).mockImplementation((id, identity, progress) => {
-      if (progress.status === "conflicted" && !interrupted) {
-        interrupted = true;
-        throw new Error("Interrupted before conflict checkpoint");
-      }
-      return record(id, identity, progress);
-    });
+    vi.spyOn(f.options.maintenanceStore, "recordLocalPreparation").mockImplementation(
+      (id, identity, progress) => {
+        if (progress.status === "conflicted" && !interrupted) {
+          interrupted = true;
+          throw new Error("Interrupted before conflict checkpoint");
+        }
+        return record(id, identity, progress);
+      },
+    );
     await expect(maintainOutdatedPr(f.options)).rejects.toThrow(
       "Interrupted before conflict checkpoint",
     );
-    fs.writeFileSync(
-      path.join(f.worktree, "unrelated.txt"),
-      "preserve new unrelated work\n",
-    );
+    fs.writeFileSync(path.join(f.worktree, "unrelated.txt"), "preserve new unrelated work\n");
     git(f.worktree, "add", "unrelated.txt");
     const repair = vi.fn();
     f.options.remediateConflict = repair;
@@ -518,37 +444,23 @@ describe("additive published PR maintenance", () => {
     expect(await maintainOutdatedPr(f.options)).toBe("blocked");
     expect(repair).toHaveBeenCalledOnce();
     expect(git(f.worktree, "rev-parse", "HEAD")).toBe(f.published);
-    expect(git(f.worktree, "diff", "--name-only", "--diff-filter=U")).toBe(
-      "base.txt",
-    );
+    expect(git(f.worktree, "diff", "--name-only", "--diff-filter=U")).toBe("base.txt");
   });
 
   it("does not absorb unrelated staged work after an interruption following conflict staging", async () => {
     const f = await publishedTask(true);
     f.options.remediateConflict = async () => {
-      fs.writeFileSync(
-        path.join(f.worktree, "base.txt"),
-        "combined resolution\n",
-      );
+      fs.writeFileSync(path.join(f.worktree, "base.txt"), "combined resolution\n");
     };
     const stage = f.options.git.stagePaths.bind(f.options.git);
-    vi.spyOn(f.options.git, "stagePaths").mockImplementationOnce(
-      async (...args) => {
-        await stage(...args);
-        throw new Error("stopped after staging");
-      },
-    );
-    await expect(maintainOutdatedPr(f.options)).rejects.toThrow(
-      "stopped after staging",
-    );
-    fs.writeFileSync(
-      path.join(f.worktree, "setup.txt"),
-      "unrelated later work\n",
-    );
+    vi.spyOn(f.options.git, "stagePaths").mockImplementationOnce(async (...args) => {
+      await stage(...args);
+      throw new Error("stopped after staging");
+    });
+    await expect(maintainOutdatedPr(f.options)).rejects.toThrow("stopped after staging");
+    fs.writeFileSync(path.join(f.worktree, "setup.txt"), "unrelated later work\n");
     git(f.worktree, "add", "setup.txt");
-    await expect(maintainOutdatedPr(f.options)).rejects.toThrow(
-      "non-conflict path",
-    );
+    await expect(maintainOutdatedPr(f.options)).rejects.toThrow("non-conflict path");
     expect(git(f.worktree, "rev-parse", "HEAD")).toBe(f.published);
     expect(fs.readFileSync(path.join(f.worktree, "setup.txt"), "utf8")).toBe(
       "unrelated later work\n",
@@ -563,30 +475,21 @@ describe("additive published PR maintenance", () => {
     const unshipped = git(f.worktree, "rev-parse", "HEAD");
     expect(await maintainOutdatedPr(f.options)).toBe("blocked");
     expect(git(f.worktree, "rev-parse", "HEAD")).toBe(unshipped);
-    expect(
-      git(f.source, "ls-remote", "origin", "refs/heads/agent/card"),
-    ).toContain(f.published);
+    expect(git(f.source, "ls-remote", "origin", "refs/heads/agent/card")).toContain(f.published);
   });
 
   it("honors human closure during conflict assistance without pushing or resurrecting its branch", async () => {
     const f = await publishedTask(true);
     const push = vi.spyOn(f.options.git, "push");
     f.options.remediateConflict = async () => {
-      fs.writeFileSync(
-        path.join(f.worktree, "base.txt"),
-        "unshipped resolution\n",
-      );
+      fs.writeFileSync(path.join(f.worktree, "base.txt"), "unshipped resolution\n");
       f.terminal();
       git(f.source, "push", "origin", "--delete", "agent/card");
     };
     expect(await maintainOutdatedPr(f.options)).toBe("terminal");
     expect(push).not.toHaveBeenCalled();
-    expect(await f.github.getPullRequestDescription()).not.toContain(
-      "Agent Orchestrator status:",
-    );
-    expect(git(f.source, "ls-remote", "origin", "refs/heads/agent/card")).toBe(
-      "",
-    );
+    expect(await f.github.getPullRequestDescription()).not.toContain("Agent Orchestrator status:");
+    expect(git(f.source, "ls-remote", "origin", "refs/heads/agent/card")).toBe("");
     expect(fs.readFileSync(path.join(f.worktree, "base.txt"), "utf8")).toBe(
       "unshipped resolution\n",
     );
@@ -617,9 +520,7 @@ describe("unsafe maintenance refusal (real Git remote)", () => {
         const output = git(cwd, ...args);
         if (!pushAccepted) {
           pushAccepted = true;
-          throw new Error(
-            "simulated acknowledgement loss after remote acceptance",
-          );
+          throw new Error("simulated acknowledgement loss after remote acceptance");
         }
         return output.trim();
       }
@@ -629,15 +530,11 @@ describe("unsafe maintenance refusal (real Git remote)", () => {
     await expect(client.push(repo, "origin", "agent/card-1")).rejects.toThrow(
       "simulated acknowledgement loss",
     );
-    expect(
-      await client.getRemoteBranchSha(repo, "origin", "agent/card-1"),
-    ).toBe(taskHead);
+    expect(await client.getRemoteBranchSha(repo, "origin", "agent/card-1")).toBe(taskHead);
     // An authoritative exact-head read reconciles the accepted effect; do not
     // dispatch the uncertain push a second time.
     expect(pushCalls).toHaveLength(1);
-    expect(
-      git(repo, "ls-remote", "origin", "refs/heads/agent/card-1"),
-    ).toContain(taskHead);
+    expect(git(repo, "ls-remote", "origin", "refs/heads/agent/card-1")).toContain(taskHead);
   });
 
   it("does not infer unpublished history from a deleted branch and preserves local evidence", async () => {
@@ -682,16 +579,12 @@ describe("unsafe maintenance refusal (real Git remote)", () => {
       }),
     ).rejects.toThrow("disabled to protect published history");
 
-    expect(git(repo, "ls-remote", "origin", "refs/heads/agent/card-1")).toBe(
-      "",
-    );
+    expect(git(repo, "ls-remote", "origin", "refs/heads/agent/card-1")).toBe("");
     expect(git(repo, "show-ref")).toBe(taskRefsBefore);
     expect(git(repo, "count-objects", "-v")).toBe(objectsBefore);
     expect(git(task, "rev-parse", "HEAD")).toBe(historicalHead);
     expect(git(unrelated, "rev-parse", "HEAD")).toBe(unrelatedHead);
     expect(git(task, "status", "--porcelain=v1")).toContain("dirty.txt");
-    expect(history.flat().join(" ")).not.toMatch(
-      /(?:rebase|reset|clean|--force)/,
-    );
+    expect(history.flat().join(" ")).not.toMatch(/(?:rebase|reset|clean|--force)/);
   });
 });

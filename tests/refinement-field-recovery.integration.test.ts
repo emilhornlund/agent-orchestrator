@@ -15,8 +15,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
   vi.useRealTimers();
   for (const lease of leases.splice(0)) await lease.release();
-  for (const root of roots.splice(0))
-    fs.rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 async function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "refinement-fields-"));
@@ -37,10 +36,8 @@ it("completes the actual refinement workflow with full attributed fields", async
     idLabels: [f.project.trello.featureLabelId],
   });
   expect(
-    f.authority.read(
-      refinementMutationSnapshotKey,
-      refinementMutationSnapshotSchema.parse,
-    )?.reconciliation,
+    f.authority.read(refinementMutationSnapshotKey, refinementMutationSnapshotSchema.parse)
+      ?.reconciliation,
   ).toMatchObject({
     verified: {
       title: "Refined task",
@@ -82,10 +79,7 @@ it("preserves a legacy interrupted field snapshot without inventing write/histor
     idList: f.project.trello.workingListId,
   });
   expect(
-    f.authority.read(
-      refinementMutationSnapshotKey,
-      refinementMutationSnapshotSchema.parse,
-    ),
+    f.authority.read(refinementMutationSnapshotKey, refinementMutationSnapshotSchema.parse),
   ).toEqual(legacy);
   expect(f.authority.store.read()!.lifecycle).toBe("refinement");
 });
@@ -96,11 +90,7 @@ it.each(["different-actor", "same-actor"])(
     const f = await fixture();
     let raced = false;
     vi.stubGlobal("fetch", async (url: URL, init?: RequestInit) => {
-      if (
-        !raced &&
-        init?.method === "PUT" &&
-        String(init.body).includes('"name"')
-      ) {
+      if (!raced && init?.method === "PUT" && String(init.body).includes('"name"')) {
         raced = true;
         const old = { name: f.card.name, desc: f.card.desc };
         f.card.name = "Human title";
@@ -125,16 +115,10 @@ it.each(["different-actor", "same-actor"])(
       refinementMutationSnapshotKey,
       refinementMutationSnapshotSchema.parse,
     )!;
-    expect(state.reconciliation?.conflict).toContain(
-      "Concurrent or unattributable",
-    );
-    expect(JSON.stringify(state.reconciliation?.evidence)).toContain(
-      "Human content",
-    );
+    expect(state.reconciliation?.conflict).toContain("Concurrent or unattributable");
+    expect(JSON.stringify(state.reconciliation?.evidence)).toContain("Human content");
     expect(f.authority.store.read()!.lifecycle).not.toBe("refined");
-    expect(
-      f.requests.filter((r) => r.startsWith("POST:") && r.includes("idLabels")),
-    ).toEqual([]);
+    expect(f.requests.filter((r) => r.startsWith("POST:") && r.includes("idLabels"))).toEqual([]);
   },
 );
 
@@ -153,8 +137,7 @@ it("reconciles an accepted label write after acknowledgement loss without repeat
   expect(lost).toBe(true);
   expect(f.card.idList).toBe(f.project.trello.workingListId);
   const writes = f.requests.filter(
-    (r) =>
-      r.startsWith("PUT:") || (r.startsWith("POST:") && r.includes("idLabels")),
+    (r) => r.startsWith("PUT:") || (r.startsWith("POST:") && r.includes("idLabels")),
   );
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(Date.now() + 60000);
@@ -164,16 +147,10 @@ it("reconciles an accepted label write after acknowledgement loss without repeat
   expect(f.engineer).toHaveBeenCalledOnce();
   expect(
     f.requests
-      .filter(
-        (r) =>
-          r.startsWith("PUT:") ||
-          (r.startsWith("POST:") && r.includes("idLabels")),
-      )
+      .filter((r) => r.startsWith("PUT:") || (r.startsWith("POST:") && r.includes("idLabels")))
       .filter((r) => !r.endsWith(f.card.id)),
   ).toEqual(writes.filter((r) => !r.endsWith(f.card.id)));
-  expect(
-    f.requests.filter((r) => r.startsWith("POST:") && r.includes("idLabels")),
-  ).toHaveLength(1);
+  expect(f.requests.filter((r) => r.startsWith("POST:") && r.includes("idLabels"))).toHaveLength(1);
 });
 
 it("retains human content encountered while reconciling a partial update", async () => {
@@ -203,22 +180,17 @@ it("retains human content encountered while reconciling a partial update", async
   await f.poll();
   expect(f.card.desc).toBe("Preserve human revision");
   expect(f.card.idList).toBe(f.project.trello.workingListId);
-  expect(f.requests.filter((request) => !request.startsWith("GET:"))).toEqual(
-    writes,
-  );
+  expect(f.requests.filter((request) => !request.startsWith("GET:"))).toEqual(writes);
   expect(
-    f.authority.read(
-      refinementMutationSnapshotKey,
-      refinementMutationSnapshotSchema.parse,
-    )?.reconciliation?.conflict,
+    f.authority.read(refinementMutationSnapshotKey, refinementMutationSnapshotSchema.parse)
+      ?.reconciliation?.conflict,
   ).toBeDefined();
 });
 
 it("fails exhausted invalid analysis only after verifying untouched original fields and the Failed transition", async () => {
   const f = await fixture();
   f.engineer.mockImplementation(async ({ cwd }) => {
-    const { getRefinementResultPath } =
-      await import("../src/refinement/refinement-result.js");
+    const { getRefinementResultPath } = await import("../src/refinement/refinement-result.js");
     fs.mkdirSync(path.dirname(getRefinementResultPath(cwd)), {
       recursive: true,
     });
@@ -234,16 +206,13 @@ it("fails exhausted invalid analysis only after verifying untouched original fie
     idList: f.project.trello.failedListId,
   });
   expect(f.authority.store.read()!.lifecycle).toBe("failed");
-  expect(
-    f.requests.filter((r) => r.startsWith("POST:") && r.endsWith("comments")),
-  ).toHaveLength(1);
+  expect(f.requests.filter((r) => r.startsWith("POST:") && r.endsWith("comments"))).toHaveLength(1);
 });
 
 it("does not terminally fail over human field changes discovered after invalid analysis", async () => {
   const f = await fixture();
   f.engineer.mockImplementation(async ({ cwd }) => {
-    const { getRefinementResultPath } =
-      await import("../src/refinement/refinement-result.js");
+    const { getRefinementResultPath } = await import("../src/refinement/refinement-result.js");
     fs.mkdirSync(path.dirname(getRefinementResultPath(cwd)), {
       recursive: true,
     });
@@ -261,8 +230,7 @@ it("does not terminally fail over human field changes discovered after invalid a
 it("does not deliver a failed-refinement notification for an unreconciled Failed move", async () => {
   const f = await fixture();
   f.engineer.mockImplementation(async ({ cwd }) => {
-    const { getRefinementResultPath } =
-      await import("../src/refinement/refinement-result.js");
+    const { getRefinementResultPath } = await import("../src/refinement/refinement-result.js");
     fs.mkdirSync(path.dirname(getRefinementResultPath(cwd)), {
       recursive: true,
     });
@@ -308,9 +276,7 @@ it("recovers a lost completion-comment acknowledgement in Backlog without duplic
   await f.poll();
   expect(f.authority.store.read()!.lifecycle).toBe("refined");
   expect(f.engineer).toHaveBeenCalledOnce();
-  expect(
-    f.requests.filter((r) => r.startsWith("POST:") && r.endsWith("comments")),
-  ).toHaveLength(1);
+  expect(f.requests.filter((r) => r.startsWith("POST:") && r.endsWith("comments"))).toHaveLength(1);
 });
 
 it("resumes only completion after successful cleanup and a final Backlog-read outage", async () => {
@@ -325,15 +291,11 @@ it("resumes only completion after successful cleanup and a final Backlog-read ou
     return readCards(listId);
   });
   await expect(f.poll()).rejects.toThrow("completion read outage");
-  expect(
-    fs.existsSync(path.join(f.project.repository.worktreeRoot, f.card.id)),
-  ).toBe(false);
+  expect(fs.existsSync(path.join(f.project.repository.worktreeRoot, f.card.id))).toBe(false);
   await f.poll();
   expect(f.authority.store.read()!.lifecycle).toBe("refined");
   expect(f.engineer).toHaveBeenCalledOnce();
-  expect(
-    f.requests.filter((r) => r.startsWith("POST:") && r.endsWith("comments")),
-  ).toHaveLength(1);
+  expect(f.requests.filter((r) => r.startsWith("POST:") && r.endsWith("comments"))).toHaveLength(1);
 });
 
 it("does not release completion when human fields change during final Backlog readback", async () => {
@@ -392,10 +354,8 @@ it("restores attributable title, description and classification after bounded co
   );
   expect(f.authority.store.read()!.lifecycle).toBe("failed");
   expect(
-    f.authority.read(
-      refinementMutationSnapshotKey,
-      refinementMutationSnapshotSchema.parse,
-    )?.reconciliation?.mode,
+    f.authority.read(refinementMutationSnapshotKey, refinementMutationSnapshotSchema.parse)
+      ?.reconciliation?.mode,
   ).toBe("restored");
 });
 
@@ -452,10 +412,8 @@ it("retains uncertain partial acceptance without replay or restoration based on 
   expect(f.card.name).toBe("Refined task");
   expect(f.card.idList).toBe(f.project.trello.workingListId);
   expect(
-    f.authority.read(
-      refinementMutationSnapshotKey,
-      refinementMutationSnapshotSchema.parse,
-    )?.reconciliation?.mode,
+    f.authority.read(refinementMutationSnapshotKey, refinementMutationSnapshotSchema.parse)
+      ?.reconciliation?.mode,
   ).toBeUndefined();
 });
 

@@ -1,9 +1,6 @@
 import type { ProjectConfig } from "../config/config.js";
 import type { CardAttachmentPromptContext } from "../context/card-attachment-prompt.js";
-import {
-  withActiveCardContext,
-  withActiveProjectContext,
-} from "../context/active-card-context.js";
+import { withActiveCardContext, withActiveProjectContext } from "../context/active-card-context.js";
 import {
   materializeCardAttachments,
   type CardAttachmentManifest,
@@ -26,10 +23,7 @@ import { WorkflowError } from "./workflow-error.js";
 import type { TrelloCard, TrelloClient } from "../trello/trello-client.js";
 import type { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 import { reconcileWorkflowMutations } from "./reconcile-workflow-mutations.js";
-import {
-  withActivePrObservation,
-  observeActivePullRequest,
-} from "./active-pr-observation.js";
+import { withActivePrObservation, observeActivePullRequest } from "./active-pr-observation.js";
 import {
   readTerminalPrFence,
   withTerminalWriterCancellation,
@@ -53,26 +47,20 @@ async function prepareAttachmentPromptContext(
 
   let manifest: CardAttachmentManifest | undefined;
   try {
-    manifest = await materializeCardAttachments(
-      trello,
-      project.contextRoot,
-      project.id,
-      card.id,
-      {
-        signal,
-        ...(project.maxAttachmentBytes === undefined
-          ? {}
-          : { maxAttachmentBytes: project.maxAttachmentBytes }),
-        ...(project.maxTotalAttachmentBytes === undefined
-          ? {}
-          : { maxTotalAttachmentBytes: project.maxTotalAttachmentBytes }),
-        onSuccessfulReconciliation: (summary) => {
-          cardLog.event(
-            `Trello attachment context refreshed: reused uploaded attachments: ${summary.reusedUploadedAttachments}; newly downloaded uploaded attachments: ${summary.downloadedUploadedAttachments}; removed stale managed attachments: ${summary.removedStaleManagedAttachments}; external URL attachments: ${summary.externalUrlAttachments}; total current attachments: ${summary.totalCurrentAttachments}`,
-          );
-        },
+    manifest = await materializeCardAttachments(trello, project.contextRoot, project.id, card.id, {
+      signal,
+      ...(project.maxAttachmentBytes === undefined
+        ? {}
+        : { maxAttachmentBytes: project.maxAttachmentBytes }),
+      ...(project.maxTotalAttachmentBytes === undefined
+        ? {}
+        : { maxTotalAttachmentBytes: project.maxTotalAttachmentBytes }),
+      onSuccessfulReconciliation: (summary) => {
+        cardLog.event(
+          `Trello attachment context refreshed: reused uploaded attachments: ${summary.reusedUploadedAttachments}; newly downloaded uploaded attachments: ${summary.downloadedUploadedAttachments}; removed stale managed attachments: ${summary.removedStaleManagedAttachments}; external URL attachments: ${summary.externalUrlAttachments}; total current attachments: ${summary.totalCurrentAttachments}`,
+        );
       },
-    );
+    });
   } catch (error) {
     throw new WorkflowError(
       "Workflow",
@@ -120,8 +108,7 @@ export async function pollProject(
           terminalOnly: true,
         });
       if (signal.aborted) return;
-      if (await reconcileWorkflowMutations({ project, trello, github, git }))
-        return;
+      if (await reconcileWorkflowMutations({ project, trello, github, git })) return;
       if (!notificationPreparationDue(project.id)) return;
       return runTaskSessionWorkflow({
         project,
@@ -133,24 +120,14 @@ export async function pollProject(
         signal,
         ...(retryIntervalMs === undefined ? {} : { retryIntervalMs }),
         ...(emailNotifier === undefined ? {} : { emailNotifier }),
-        ...(onHumanReviewCardsObserved === undefined
-          ? {}
-          : { onHumanReviewCardsObserved }),
-        ...(onHumanReviewCardLeft === undefined
-          ? {}
-          : { onHumanReviewCardLeft }),
+        ...(onHumanReviewCardsObserved === undefined ? {} : { onHumanReviewCardsObserved }),
+        ...(onHumanReviewCardLeft === undefined ? {} : { onHumanReviewCardLeft }),
         prepareAttachmentContext: async (card) => {
           const cardLog = logger.child({
             projectId: project.id,
             cardId: card.id,
           });
-          return prepareAttachmentPromptContext(
-            trello,
-            project,
-            card,
-            signal,
-            cardLog,
-          );
+          return prepareAttachmentPromptContext(trello, project, card, signal, cardLog);
         },
         processRefinement: async (card, worktree) =>
           withActiveCardContext(project.id, card.id, () =>
@@ -165,13 +142,7 @@ export async function pollProject(
               preparedWorktree: worktree,
               ...(emailNotifier === undefined ? {} : { emailNotifier }),
               prepareAttachmentContext: (refinementCard, cardLog) =>
-                prepareAttachmentPromptContext(
-                  trello,
-                  project,
-                  refinementCard,
-                  signal,
-                  cardLog,
-                ),
+                prepareAttachmentPromptContext(trello, project, refinementCard, signal, cardLog),
             }),
           ),
       });
@@ -226,8 +197,7 @@ export async function pollProject(
         .read()
         ?.pendingOperations.some(
           (entry) =>
-            entry.id.startsWith("workflow:") &&
-            !["completed", "cancelled"].includes(entry.status),
+            entry.id.startsWith("workflow:") && !["completed", "cancelled"].includes(entry.status),
         )
     )
       throw error;

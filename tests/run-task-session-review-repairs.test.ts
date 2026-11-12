@@ -66,10 +66,7 @@ function fixture() {
     requirementAssessments: [
       {
         requirementId: "REQ-1",
-        status:
-          verdict === "pass"
-            ? ("satisfied" as const)
-            : ("unsatisfied" as const),
+        status: verdict === "pass" ? ("satisfied" as const) : ("unsatisfied" as const),
         details: "finding",
         evidence: verdict === "pass" ? ["src/fix.ts"] : [],
       },
@@ -101,22 +98,17 @@ function fixture() {
             ...review,
             blockingFindings:
               verdict === "fail" && previousFindings.length > 0
-                ? previousFindings.map(
-                    ({ id, kind, summary, detail, location }) => ({
-                      id,
-                      kind,
-                      summary,
-                      detail,
-                      ...(location === undefined ? {} : { location }),
-                    }),
-                  )
+                ? previousFindings.map(({ id, kind, summary, detail, location }) => ({
+                    id,
+                    kind,
+                    summary,
+                    detail,
+                    ...(location === undefined ? {} : { location }),
+                  }))
                 : review.blockingFindings,
             previousFindingAssessments: previousFindings.map(({ id }) => ({
               findingId: id,
-              status:
-                verdict === "pass"
-                  ? ("resolved" as const)
-                  : ("unresolved" as const),
+              status: verdict === "pass" ? ("resolved" as const) : ("unresolved" as const),
             })),
           },
           contentIdentity: currentIdentity,
@@ -196,9 +188,7 @@ describe("runTaskSessionReviewWithRepairs", () => {
     expect(first.contentIdentity).toBe(identities[0]);
     expect(afterCorrectionOne.contentIdentity).toBe(identities[1]);
     expect(afterCorrectionTwo.contentIdentity).toBe(identities[2]);
-    expect(afterCorrectionTwo.review.reviewedContentIdentity).toBe(
-      identities[2],
-    );
+    expect(afterCorrectionTwo.review.reviewedContentIdentity).toBe(identities[2]);
     expect(readOnlyReviews).toHaveBeenCalledTimes(2);
   });
 
@@ -257,9 +247,7 @@ describe("runTaskSessionReviewWithRepairs", () => {
     });
 
     expect(result.review.verdict).toBe("pass");
-    expect(
-      result.record.reviewRepair?.findings?.[0]?.primaryDisposition,
-    ).toEqual({
+    expect(result.record.reviewRepair?.findings?.[0]?.primaryDisposition).toEqual({
       reviewedContentIdentity: firstReviewedIdentity,
       status: "dismissed",
       rationale:
@@ -274,10 +262,7 @@ describe("runTaskSessionReviewWithRepairs", () => {
           "The requirement is implemented; the assessment interpreted its expected behavior too narrowly.",
       },
     ]);
-    const restartedStore = new TaskExecutionStore(
-      path.join(root, "state"),
-      f.project,
-    );
+    const restartedStore = new TaskExecutionStore(path.join(root, "state"), f.project);
     const recovered = restartedStore.read("card")!;
     const requirementOnlyNegativeReview = {
       ...f.makeReview("fail"),
@@ -322,15 +307,13 @@ describe("runTaskSessionReviewWithRepairs", () => {
         return {
           review: {
             ...fail,
-            blockingFindings: previousFindings.map(
-              ({ id, kind, summary, detail, location }) => ({
-                id,
-                kind,
-                summary,
-                detail,
-                ...(location === undefined ? {} : { location }),
-              }),
-            ),
+            blockingFindings: previousFindings.map(({ id, kind, summary, detail, location }) => ({
+              id,
+              kind,
+              summary,
+              detail,
+              ...(location === undefined ? {} : { location }),
+            })),
             previousFindingAssessments: previousFindings.map(({ id }) => ({
               findingId: id,
               status: "unresolved" as const,
@@ -344,14 +327,11 @@ describe("runTaskSessionReviewWithRepairs", () => {
         return parsePrimaryReviewDispositionReport(
           JSON.stringify({
             version: 1,
-            findingDispositions: review.blockingFindings.map(
-              ({ id }, index) => ({
-                findingId: id,
-                status: "addressed",
-                rationale:
-                  index === 0 ? "r".repeat(4_001) : "Handled the finding.",
-              }),
-            ),
+            findingDispositions: review.blockingFindings.map(({ id }, index) => ({
+              findingId: id,
+              status: "addressed",
+              rationale: index === 0 ? "r".repeat(4_001) : "Handled the finding.",
+            })),
             requirementDispositions: review.requirementAssessments
               .filter(({ status }) => status === "unsatisfied")
               .map(({ requirementId }) => ({
@@ -360,9 +340,7 @@ describe("runTaskSessionReviewWithRepairs", () => {
                 rationale: "Implemented the requested requirement.",
               })),
           }),
-          review.blockingFindings.flatMap(({ id }) =>
-            id === undefined ? [] : [id],
-          ),
+          review.blockingFindings.flatMap(({ id }) => (id === undefined ? [] : [id])),
           review.requirementAssessments
             .filter(({ status }) => status === "unsatisfied")
             .map(({ requirementId }) => requirementId),
@@ -376,12 +354,8 @@ describe("runTaskSessionReviewWithRepairs", () => {
     expect(result.record.reviewRepair?.status).toBe("exhausted");
     expect(result.record.reviewRepair?.activePrimaryOperation).toBeUndefined();
     expect(result.record.reviewRemediationFailure).toBeUndefined();
-    expect(
-      result.record.reviewRepair?.findings?.[0]?.primaryDisposition,
-    ).toBeUndefined();
-    expect(result.record.reviewRepair?.findings?.[0]?.status).toBe(
-      "unresolved",
-    );
+    expect(result.record.reviewRepair?.findings?.[0]?.primaryDisposition).toBeUndefined();
+    expect(result.record.reviewRepair?.findings?.[0]?.status).toBe("unresolved");
     expect(result.record.reviewRepair?.requirementDispositions).toEqual([]);
   });
 
@@ -389,10 +363,10 @@ describe("runTaskSessionReviewWithRepairs", () => {
     const f = fixture();
     const prompt = "persisted exact repair prompt";
     const operationId = "operation:review:operation:pass:2";
-    const promptArtifact = f.store.writePrimaryResultArtifact(
-      `${operationId}:prompt`,
-      { prompt, review: f.makeReview("fail") },
-    );
+    const promptArtifact = f.store.writePrimaryResultArtifact(`${operationId}:prompt`, {
+      prompt,
+      review: f.makeReview("fail"),
+    });
     const record = f.store.read("card")!;
     f.store.compareAndSwap("card", record.revision, {
       ...record,
@@ -412,12 +386,7 @@ describe("runTaskSessionReviewWithRepairs", () => {
       return { review: f.makeReview("pass"), contentIdentity: f.identity };
     });
     const repair = vi.fn(
-      async (
-        review: unknown,
-        attempt: number,
-        id: string,
-        exactPrompt?: string,
-      ) => {
+      async (review: unknown, attempt: number, id: string, exactPrompt?: string) => {
         expect(review).toEqual(expect.objectContaining({ verdict: "fail" }));
         expect(attempt).toBe(2);
         expect(id).toBe(operationId);
@@ -449,9 +418,7 @@ describe("runTaskSessionReviewWithRepairs", () => {
       prompt,
     );
     expect(quality).toHaveBeenCalledOnce();
-    expect(
-      f.store.read("card")?.reviewRepair?.activePrimaryOperation,
-    ).toBeUndefined();
+    expect(f.store.read("card")?.reviewRepair?.activePrimaryOperation).toBeUndefined();
   });
 
   it("recovers a post-edit interruption from the same primary reservation before review", async () => {
@@ -495,9 +462,7 @@ describe("runTaskSessionReviewWithRepairs", () => {
     const persisted = f.store.readPrimaryResultArtifact({
       reference: active!.promptArtifact!.reference as `sha256:${string}`,
       bytes: active!.promptArtifact!.bytes,
-      ...(active!.promptArtifact!.path === undefined
-        ? {}
-        : { path: active!.promptArtifact!.path }),
+      ...(active!.promptArtifact!.path === undefined ? {} : { path: active!.promptArtifact!.path }),
     }) as { prompt: string };
     const resumedCalls: Array<{ operationId: string; prompt?: string }> = [];
     const result = await runTaskSessionReviewWithRepairs({
@@ -555,11 +520,7 @@ describe("runTaskSessionReviewWithRepairs", () => {
     const round = events
       .filter((message) => message.startsWith("review-cycle "))
       .map(
-        (message) =>
-          JSON.parse(message.slice("review-cycle ".length)) as Record<
-            string,
-            unknown
-          >,
+        (message) => JSON.parse(message.slice("review-cycle ".length)) as Record<string, unknown>,
       )
       .find((event) => event.event === "review-round");
     expect(round).toMatchObject({
@@ -571,9 +532,7 @@ describe("runTaskSessionReviewWithRepairs", () => {
         omitted: 0,
       },
     });
-    expect(
-      events.some((message) => message.includes('"event":"cycle-passed"')),
-    ).toBe(true);
+    expect(events.some((message) => message.includes('"event":"cycle-passed"'))).toBe(true);
     expect(events.join(" ")).not.toContain("Fix requirement");
   });
 
@@ -594,9 +553,7 @@ describe("runTaskSessionReviewWithRepairs", () => {
       ),
     ).toBe(true);
     await op.run();
-    expect(
-      events.some((message) => message.includes('"event":"cycle-recovered"')),
-    ).toBe(true);
+    expect(events.some((message) => message.includes('"event":"cycle-recovered"'))).toBe(true);
   });
 
   it("categorizes remediation execution and validation failures distinctly", async () => {
@@ -627,14 +584,10 @@ describe("runTaskSessionReviewWithRepairs", () => {
         rerunQuality: async () => undefined,
       }),
     ).rejects.toThrow("Review repair execution failed");
-    expect(
-      events.some((message) =>
-        message.includes('"category":"remediation-execution"'),
-      ),
-    ).toBe(true);
-    expect(events.join(" ")).not.toContain(
-      "execution details must not be logged",
+    expect(events.some((message) => message.includes('"category":"remediation-execution"'))).toBe(
+      true,
     );
+    expect(events.join(" ")).not.toContain("execution details must not be logged");
 
     fs.rmSync(root, { recursive: true, force: true });
     const validationFixture = fixture();
@@ -655,9 +608,7 @@ describe("runTaskSessionReviewWithRepairs", () => {
         },
       }),
     ).rejects.toThrow("validation or coverage failed");
-    expect(
-      events.some((message) => message.includes('"category":"validation"')),
-    ).toBe(true);
+    expect(events.some((message) => message.includes('"category":"validation"'))).toBe(true);
   });
 
   it("logs review execution and result-validation failures as review failures", async () => {
@@ -734,9 +685,7 @@ describe("runTaskSessionReviewWithRepairs", () => {
     ).rejects.toThrow("Review omitted prior finding");
     expect(
       events.some((message) =>
-        message.includes(
-          '"event":"cycle-failed","category":"review","stage":"result-validation"',
-        ),
+        message.includes('"event":"cycle-failed","category":"review","stage":"result-validation"'),
       ),
     ).toBe(true);
   });
@@ -780,15 +729,13 @@ describe("runTaskSessionReviewWithRepairs", () => {
           review: {
             ...review,
             blockingFindings: [
-              ...previousFindings.map(
-                ({ id, kind, summary, detail, location }) => ({
-                  id,
-                  kind,
-                  summary,
-                  detail,
-                  ...(location === undefined ? {} : { location }),
-                }),
-              ),
+              ...previousFindings.map(({ id, kind, summary, detail, location }) => ({
+                id,
+                kind,
+                summary,
+                detail,
+                ...(location === undefined ? {} : { location }),
+              })),
               finding,
             ],
             previousFindingAssessments: previousFindings.map(({ id }) => ({
@@ -807,13 +754,15 @@ describe("runTaskSessionReviewWithRepairs", () => {
     });
 
     expect(result.record.reviewRepair?.findings).toHaveLength(2);
-    expect(
-      result.record.reviewRepair?.findings?.map(({ summary }) => summary),
-    ).toEqual(["First defect", "Regression"]);
+    expect(result.record.reviewRepair?.findings?.map(({ summary }) => summary)).toEqual([
+      "First defect",
+      "Regression",
+    ]);
     expect(result.review.blockingFindings[0]?.id).toMatch(/^finding-/);
-    expect(result.record.reviewRepair?.findings?.[0]?.sourceIdentities).toEqual(
-      [`sha256:${"a".repeat(64)}`, f.identity],
-    );
+    expect(result.record.reviewRepair?.findings?.[0]?.sourceIdentities).toEqual([
+      `sha256:${"a".repeat(64)}`,
+      f.identity,
+    ]);
   });
 
   it("records a resolved prior finding as blocking only with new source evidence", async () => {
@@ -1002,8 +951,7 @@ describe("runTaskSessionReviewWithRepairs", () => {
               {
                 findingId: id,
                 status: "dismissed" as const,
-                rationale:
-                  "The existing implementation satisfies the task behavior.",
+                rationale: "The existing implementation satisfies the task behavior.",
               },
             ],
       ),
@@ -1125,9 +1073,7 @@ describe("runTaskSessionReviewWithRepairs", () => {
         });
         return parsePrimaryReviewRepairOutcome(
           output,
-          review.blockingFindings.flatMap(({ id }) =>
-            id === undefined ? [] : [id],
-          ),
+          review.blockingFindings.flatMap(({ id }) => (id === undefined ? [] : [id])),
           review.requirementAssessments
             .filter(({ status }) => status === "unsatisfied")
             .map(({ requirementId }) => requirementId),
@@ -1232,15 +1178,13 @@ describe("runTaskSessionReviewWithRepairs", () => {
           review: {
             ...review,
             blockingFindings: remainsNegative ? review.blockingFindings : [],
-            previousFindingAssessments: previousFindings.map(
-              ({ id, status }) => ({
-                findingId: id,
-                status:
-                  remainsNegative && status === "unresolved"
-                    ? ("unresolved" as const)
-                    : ("resolved" as const),
-              }),
-            ),
+            previousFindingAssessments: previousFindings.map(({ id, status }) => ({
+              findingId: id,
+              status:
+                remainsNegative && status === "unresolved"
+                  ? ("unresolved" as const)
+                  : ("resolved" as const),
+            })),
           },
           contentIdentity: f.identity,
         };
@@ -1260,10 +1204,7 @@ describe("runTaskSessionReviewWithRepairs", () => {
     });
 
     const current = f.store.read("card")!;
-    const retained = carryReviewRepairIntoCiCorrection(
-      current.reviewRepair,
-      cycleId,
-    );
+    const retained = carryReviewRepairIntoCiCorrection(current.reviewRepair, cycleId);
     expect(retained).toMatchObject({
       cycleId,
       maxAttempts: 2,
@@ -1362,12 +1303,9 @@ describe("runTaskSessionReviewWithRepairs", () => {
         status: "exhausted",
         maxAttempts: maxPasses,
         finalReview: { verdict: "fail" },
-        findings: [
-          { id: expect.stringMatching(/^finding-/), status: "unresolved" },
-        ],
+        findings: [{ id: expect.stringMatching(/^finding-/), status: "unresolved" }],
       });
-      const persistedFindingId =
-        f.store.read("card")?.reviewRepair?.findings?.[0]?.id;
+      const persistedFindingId = f.store.read("card")?.reviewRepair?.findings?.[0]?.id;
       const restored = new TaskExecutionStore(path.join(root, "state"), {
         id: "project",
         repository: {
@@ -1375,9 +1313,7 @@ describe("runTaskSessionReviewWithRepairs", () => {
           worktreeRoot: path.join(root, "worktrees"),
         },
       } as ProjectConfig);
-      expect(restored.read("card")?.reviewRepair?.findings?.[0]?.id).toBe(
-        persistedFindingId,
-      );
+      expect(restored.read("card")?.reviewRepair?.findings?.[0]?.id).toBe(persistedFindingId);
       const resumed = await op.run();
       expect(resumed.review.verdict).toBe("fail");
       expect(resumed.attempts).toBe(maxPasses);
@@ -1438,8 +1374,7 @@ describe("runTaskSessionReviewWithRepairs", () => {
         failure = error;
       }
       expect(failure).toBeInstanceOf(TaskSessionReviewRepairError);
-      const diagnostic = (failure as TaskSessionReviewRepairError)
-        .sourceIdentity;
+      const diagnostic = (failure as TaskSessionReviewRepairError).sourceIdentity;
       expect(diagnostic).toEqual({
         before: f.identity,
         after: currentIdentity,
@@ -1448,9 +1383,7 @@ describe("runTaskSessionReviewWithRepairs", () => {
       expect(repair).toHaveBeenCalledOnce();
       expect(f.store.read("card")?.reviewRepair?.status).toBe("active");
       expect(f.store.read("card")?.retryCounters.review).toBe(1);
-      expect(
-        f.store.read("card")?.reviewRepair?.activePrimaryOperation,
-      ).toMatchObject({
+      expect(f.store.read("card")?.reviewRepair?.activePrimaryOperation).toMatchObject({
         operationId: "operation:review:operation:pass:1",
         pass: 1,
       });
@@ -1462,9 +1395,7 @@ describe("runTaskSessionReviewWithRepairs", () => {
           worktreeRoot: path.join(root, "worktrees"),
         },
       } as ProjectConfig);
-      expect(
-        restored.read("card")?.reviewRepair?.activePrimaryOperation,
-      ).toMatchObject({
+      expect(restored.read("card")?.reviewRepair?.activePrimaryOperation).toMatchObject({
         operationId: "operation:review:operation:pass:1",
         pass: 1,
       });

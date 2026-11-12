@@ -39,9 +39,7 @@ function feedbackIdentity(entry: FeedbackLedgerEntry): string {
   });
 }
 
-function pendingActionableIds(
-  entries: readonly FeedbackLedgerEntry[],
-): Set<string> {
+function pendingActionableIds(entries: readonly FeedbackLedgerEntry[]): Set<string> {
   return new Set(
     entries
       .filter(
@@ -60,13 +58,8 @@ export function reconcileFeedbackRound(
   input: ReconcileFeedbackRoundInput,
 ): FeedbackRoundReconciliation {
   const shaPattern = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu;
-  if (
-    !shaPattern.test(input.previousHeadSha) ||
-    !shaPattern.test(input.observedHeadSha)
-  ) {
-    throw new Error(
-      "Feedback round reconciliation requires valid observed PR head SHAs",
-    );
+  if (!shaPattern.test(input.previousHeadSha) || !shaPattern.test(input.observedHeadSha)) {
+    throw new Error("Feedback round reconciliation requires valid observed PR head SHAs");
   }
   const previous = input.store.read(input.cardId);
   if (
@@ -74,16 +67,12 @@ export function reconcileFeedbackRound(
     previous.projectId !== input.projectId ||
     previous.cardId !== input.cardId
   ) {
-    throw new Error(
-      "Feedback round reconciliation requires the owning persisted ledger",
-    );
+    throw new Error("Feedback round reconciliation requires the owning persisted ledger");
   }
   const previousActionable = pendingActionableIds(previous.entries);
-  const merged = input.store.mergeIncoming(
-    input.cardId,
-    input.newlyObservedFeedback,
-    { replaceCurrent: true },
-  );
+  const merged = input.store.mergeIncoming(input.cardId, input.newlyObservedFeedback, {
+    replaceCurrent: true,
+  });
   let ledger = merged;
   const closed = merged.entries.map((entry) => {
     if (entry.isResolved !== true && entry.isOutdated !== true) return entry;
@@ -97,27 +86,19 @@ export function reconcileFeedbackRound(
     ledger = input.store.compareAndSwap(input.cardId, merged.revision, {
       ...merged,
       revision: merged.revision + 1,
-      updatedAt: new Date(
-        Math.max(Date.now(), Date.parse(merged.updatedAt) + 1),
-      ).toISOString(),
+      updatedAt: new Date(Math.max(Date.now(), Date.parse(merged.updatedAt) + 1)).toISOString(),
       entries: closed,
     });
   }
   const remaining = pendingActionableIds(ledger.entries);
-  const newActionableFeedbackIds = [...remaining].filter(
-    (id) => !previousActionable.has(id),
-  );
+  const newActionableFeedbackIds = [...remaining].filter((id) => !previousActionable.has(id));
   const feedbackChanged =
     previous.entries.length !== ledger.entries.length ||
     previous.entries.some((entry) => {
       const after = ledger.entries.find(
-        (candidate) =>
-          candidate.kind === entry.kind && candidate.id === entry.id,
+        (candidate) => candidate.kind === entry.kind && candidate.id === entry.id,
       );
-      return (
-        after === undefined ||
-        feedbackIdentity(after) !== feedbackIdentity(entry)
-      );
+      return after === undefined || feedbackIdentity(after) !== feedbackIdentity(entry);
     });
   const headChanged = input.previousHeadSha !== input.observedHeadSha;
   return {

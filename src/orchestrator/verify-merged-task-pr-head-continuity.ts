@@ -33,16 +33,12 @@ export async function verifyMergedTaskPrHeadContinuity(options: {
     commits.at(-1)?.toLowerCase() !== mergedHeadSha.toLowerCase() ||
     !commits.some((sha) => sha.toLowerCase() === recordedHeadSha.toLowerCase())
   )
-    throw new Error(
-      "Merged pull request does not contain the persisted owned head",
-    );
+    throw new Error("Merged pull request does not contain the persisted owned head");
   const isAncestor = await options.github.isAncestorCommit({
     ...evidence,
     ancestorSha: recordedHeadSha,
     descendantSha: mergedHeadSha,
   });
   if (!isAncestor)
-    throw new Error(
-      "Merged pull request head is not descended from the persisted owned head",
-    );
+    throw new Error("Merged pull request head is not descended from the persisted owned head");
 }

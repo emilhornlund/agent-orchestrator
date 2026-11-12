@@ -8,11 +8,7 @@ import {
 } from "../src/github/pull-request-status.js";
 
 const block = (message: string): string =>
-  [
-    AGENT_ORCHESTRATOR_STATUS_START,
-    message,
-    AGENT_ORCHESTRATOR_STATUS_END,
-  ].join("\n");
+  [AGENT_ORCHESTRATOR_STATUS_START, message, AGENT_ORCHESTRATOR_STATUS_END].join("\n");
 
 describe("reconcileManagedPullRequestStatus", () => {
   it("adds a managed section without replacing the existing description", () => {
@@ -30,11 +26,7 @@ describe("reconcileManagedPullRequestStatus", () => {
     const after = "\n\nFooter\n<!-- unrelated marker -->";
     const body = `${before}${block("old status")}${after}`;
 
-    const result = reconcileManagedPullRequestStatus(
-      body,
-      "resolving-conflicts",
-      "main",
-    );
+    const result = reconcileManagedPullRequestStatus(body, "resolving-conflicts", "main");
 
     expect(result).toBe(
       `${block("Agent Orchestrator status: resolving merge conflicts; human attention may be required if automatic remediation cannot complete.")}\n\n${before}${after}`,
@@ -50,21 +42,13 @@ describe("reconcileManagedPullRequestStatus", () => {
   });
 
   it("does not change an identical status update", () => {
-    const body = block(
-      "Agent Orchestrator status: updating the remote task branch.",
-    );
+    const body = block("Agent Orchestrator status: updating the remote task branch.");
 
-    expect(
-      reconcileManagedPullRequestStatus(body, "updating-remote", "main"),
-    ).toBe(body);
+    expect(reconcileManagedPullRequestStatus(body, "updating-remote", "main")).toBe(body);
   });
 
   it("writes an explicit human-attention failure status", () => {
-    const result = reconcileManagedPullRequestStatus(
-      "Description",
-      "failed",
-      "main",
-    );
+    const result = reconcileManagedPullRequestStatus("Description", "failed", "main");
 
     expect(result).toContain("branch maintenance failed");
     expect(result).toContain("Human attention is required");
@@ -77,11 +61,7 @@ describe("reconcileManagedPullRequestStatus", () => {
     ["publishing-review-changes", "publishing requested review changes"],
     ["attention-required", "requested review changes remain unresolved"],
   ] as const)("renders requested-change status %s safely", (status, text) => {
-    const result = reconcileManagedPullRequestStatus(
-      "Description",
-      status,
-      "main",
-    );
+    const result = reconcileManagedPullRequestStatus("Description", status, "main");
 
     expect(result).toContain(text);
     expect(result).toMatch(/not yet resolved|remain unresolved/);
@@ -94,13 +74,9 @@ describe("reconcileManagedPullRequestStatus", () => {
       "main",
     );
 
-    expect(
-      reconcileManagedPullRequestStatus(
-        body,
-        "addressing-review-feedback",
-        "main",
-      ),
-    ).toBe(body);
+    expect(reconcileManagedPullRequestStatus(body, "addressing-review-feedback", "main")).toBe(
+      body,
+    );
   });
 
   it.each([
@@ -109,9 +85,9 @@ describe("reconcileManagedPullRequestStatus", () => {
     `${AGENT_ORCHESTRATOR_STATUS_START}\nmissing end`,
     `missing start\n${AGENT_ORCHESTRATOR_STATUS_END}`,
   ])("fails closed for malformed marker structure", (body) => {
-    expect(() =>
-      reconcileManagedPullRequestStatus(body, "rebasing", "main"),
-    ).toThrow(MalformedManagedPullRequestStatusError);
+    expect(() => reconcileManagedPullRequestStatus(body, "rebasing", "main")).toThrow(
+      MalformedManagedPullRequestStatusError,
+    );
     expect(() => reconcileManagedPullRequestStatus(body, null, "main")).toThrow(
       MalformedManagedPullRequestStatusError,
     );

@@ -44,10 +44,7 @@ const MAX_RECORD_BYTES = 8 * 1024 * 1024;
 function assertNoSymlinkPath(directory: string): void {
   const absolute = path.resolve(directory);
   let current = path.parse(absolute).root;
-  for (const segment of absolute
-    .slice(current.length)
-    .split(path.sep)
-    .filter(Boolean)) {
+  for (const segment of absolute.slice(current.length).split(path.sep).filter(Boolean)) {
     current = path.join(current, segment);
     try {
       const stat = fs.lstatSync(current);
@@ -75,11 +72,7 @@ export class RunRegistry {
     private readonly integrationId: string,
     private readonly lease: RunStoreLease,
   ) {
-    if (
-      !path.isAbsolute(root) ||
-      !integrationId ||
-      lease.integrationId !== integrationId
-    )
+    if (!path.isAbsolute(root) || !integrationId || lease.integrationId !== integrationId)
       throw new Error("Run registry identity and lease must match");
     this.pointerPath = path.join(
       path.resolve(root),
@@ -95,14 +88,8 @@ export class RunRegistry {
   } | null {
     const value = safeRead(this.pointerPath);
     if (value === null) return null;
-    if (
-      typeof value !== "object" ||
-      !value ||
-      (value as { version?: unknown }).version !== 1
-    )
-      throw new RunStoreUnsupportedVersionError(
-        "Unsupported registry pointer; preserved",
-      );
+    if (typeof value !== "object" || !value || (value as { version?: unknown }).version !== 1)
+      throw new RunStoreUnsupportedVersionError("Unsupported registry pointer; preserved");
     const record = value as {
       version: 1;
       integrationId: string;
@@ -142,37 +129,22 @@ export class RunRegistry {
       durable.ownerInstanceId !== this.lease.instanceId ||
       durable.ownerToken !== this.lease.token
     )
-      throw new Error(
-        "Cannot publish pointer before matching durable candidate attempt",
-      );
+      throw new Error("Cannot publish pointer before matching durable candidate attempt");
     const prior = this.read();
     if (!sameRegistryPointer(prior, expectedPrior))
-      throw new RunStoreConflictError(
-        "Registry pointer compare-and-swap conflict",
-      );
+      throw new RunStoreConflictError("Registry pointer compare-and-swap conflict");
     if (prior) {
       if (generation !== prior.generation + 1)
-        throw new RunStoreConflictError(
-          "Registry pointer handoff requires exact next generation",
-        );
-      const priorPath = path.join(
-        path.resolve(this.root),
-        "attempts",
-        `${prior.attemptId}.json`,
-      );
+        throw new RunStoreConflictError("Registry pointer handoff requires exact next generation");
+      const priorPath = path.join(path.resolve(this.root), "attempts", `${prior.attemptId}.json`);
       const oldValue = safeRead(priorPath);
       if (!oldValue)
         throw new RunStoreConflictError(
           "Prior registry pointer is dangling; preserve and reconcile",
         );
       const old = parseRunRecord(oldValue);
-      if (
-        old.attemptId !== prior.attemptId ||
-        old.pinned.integrationId !== this.integrationId
-      )
-        throw new RunStoreConflictError(
-          "Prior pointer identity mismatch; preserve and reconcile",
-        );
+      if (old.attemptId !== prior.attemptId || old.pinned.integrationId !== this.integrationId)
+        throw new RunStoreConflictError("Prior pointer identity mismatch; preserve and reconcile");
       if (prior.attemptId === durable.attemptId)
         throw new RunStoreConflictError(
           "Registry already points to this attempt; ownership takeover does not require pointer replacement",
@@ -191,10 +163,7 @@ export class RunRegistry {
     } else if (generation !== 1) {
       throw new RunStoreConflictError("Initial registry generation must be 1");
     }
-    this.assertNoConflictingOrphans(
-      durable.attemptId,
-      prior?.attemptId ?? null,
-    );
+    this.assertNoConflictingOrphans(durable.attemptId, prior?.attemptId ?? null);
     atomicJson(this.pointerPath, {
       version: 1,
       integrationId: this.integrationId,
@@ -225,21 +194,14 @@ export class RunRegistry {
         );
       return null;
     }
-    const attemptPath = path.join(
-      path.resolve(this.root),
-      "attempts",
-      `${pointer.attemptId}.json`,
-    );
+    const attemptPath = path.join(path.resolve(this.root), "attempts", `${pointer.attemptId}.json`);
     const record = safeRead(attemptPath);
     if (!record)
       throw new RunStoreConflictError(
         "Registry pointer references a missing attempt; block new claims",
       );
     const run = parseRunRecord(record);
-    if (
-      run.attemptId !== pointer.attemptId ||
-      run.pinned.integrationId !== this.integrationId
-    )
+    if (run.attemptId !== pointer.attemptId || run.pinned.integrationId !== this.integrationId)
       throw new RunStoreConflictError(
         "Registry pointer candidate identity mismatch; preserve and reconcile",
       );
@@ -253,16 +215,10 @@ export class RunRegistry {
     const attemptsDirectory = path.join(path.resolve(this.root), "attempts");
     assertNoSymlinkPath(attemptsDirectory);
     if (!fs.existsSync(attemptsDirectory)) return;
-    const records = fs
-      .readdirSync(attemptsDirectory)
-      .filter((entry) => entry.endsWith(".json"));
+    const records = fs.readdirSync(attemptsDirectory).filter((entry) => entry.endsWith(".json"));
     const conflicts: string[] = [];
     for (const entry of records) {
-      if (
-        entry === `${candidateAttemptId}.json` ||
-        entry === `${pointedAttemptId}.json`
-      )
-        continue;
+      if (entry === `${candidateAttemptId}.json` || entry === `${pointedAttemptId}.json`) continue;
       const run = this.readInventoryAttempt(entry);
       if (!run) continue;
       if (run.pinned.integrationId !== this.integrationId) continue;
@@ -281,9 +237,7 @@ export class RunRegistry {
 
   private readInventoryAttempt(entry: string): RunRecord | null {
     try {
-      return parseRunRecord(
-        safeRead(path.join(path.resolve(this.root), "attempts", entry)),
-      );
+      return parseRunRecord(safeRead(path.join(path.resolve(this.root), "attempts", entry)));
     } catch (error) {
       // An unreadable envelope cannot identify its own project. A separately
       // validated canonical pointer can still attribute it to another owner.
@@ -300,8 +254,7 @@ export class RunRegistry {
           } catch {
             continue;
           }
-          if (typeof value !== "object" || !value || Array.isArray(value))
-            continue;
+          if (typeof value !== "object" || !value || Array.isArray(value)) continue;
           const pointer = value as Record<string, unknown>;
           if (
             pointer.version === 1 &&
@@ -312,8 +265,7 @@ export class RunRegistry {
             `${pointer.attemptId}.json` === entry &&
             Number.isSafeInteger(pointer.generation) &&
             (pointer.generation as number) >= 1 &&
-            name ===
-              `${createHash("sha256").update(pointer.integrationId).digest("hex")}.json`
+            name === `${createHash("sha256").update(pointer.integrationId).digest("hex")}.json`
           )
             owners.push(pointer.integrationId);
         }
@@ -343,20 +295,15 @@ export class RunStore {
     if (current.revision !== expectedRevision)
       throw new RunStoreConflictError("Stale mutation intent revision");
     if (["done", "refined", "failed", "cancelled"].includes(current.lifecycle))
-      throw new RunStoreConflictError(
-        "Cannot add workflow mutations to terminal attempt",
-      );
+      throw new RunStoreConflictError("Cannot add workflow mutations to terminal attempt");
     const intent = mutationIntentSchema.parse(rawIntent);
-    const existing = current.pendingOperations.find(
-      (entry) => entry.id === operationId,
-    );
+    const existing = current.pendingOperations.find((entry) => entry.id === operationId);
     if (existing) {
       if (
         existing.mutation?.cancellation ||
         (existing.mutation &&
           (existing.mutation.executionFence.id !== current.operation.id ||
-            existing.mutation.executionFence.generation !==
-              current.operation.generation))
+            existing.mutation.executionFence.generation !== current.operation.generation))
       )
         throw new RunStoreConflictError(
           "Cannot rebind a superseded or cancelled mutation identity; retain its history",
@@ -418,37 +365,30 @@ export class RunStore {
     now: string,
   ): RunRecord {
     const current = this.assertCurrentLease(ownerGeneration);
-    const entry = current.pendingOperations.find(
-      (operation) => operation.id === operationId,
-    );
+    const entry = current.pendingOperations.find((operation) => operation.id === operationId);
     if (
       current.revision !== expectedRevision ||
       !entry?.mutation ||
       entry.generation !== operationGeneration
     )
-      throw new RunStoreConflictError(
-        "Stale mutation revision or operation generation",
-      );
+      throw new RunStoreConflictError("Stale mutation revision or operation generation");
     const event = mutationEventSchema.parse(rawEvent);
     if (
       event.type !== "observe" &&
       event.type !== "cancel" &&
       (entry.mutation.executionFence.id !== current.operation.id ||
-        entry.mutation.executionFence.generation !==
-          current.operation.generation)
+        entry.mutation.executionFence.generation !== current.operation.generation)
     )
       throw new RunStoreConflictError(
         "Superseded execution cannot dispatch or complete a mutation; reconcile its effect",
       );
     if (event.type === "cancel") {
       const terminal =
-        ["done", "refined", "failed", "cancelled"].includes(
-          current.lifecycle,
-        ) || terminalPrFenceFromRun(current) !== null;
+        ["done", "refined", "failed", "cancelled"].includes(current.lifecycle) ||
+        terminalPrFenceFromRun(current) !== null;
       const superseded =
         entry.mutation.executionFence.id !== current.operation.id ||
-        entry.mutation.executionFence.generation !==
-          current.operation.generation;
+        entry.mutation.executionFence.generation !== current.operation.generation;
       if (
         (event.reason === "terminal-observed" && !terminal) ||
         (event.reason === "execution-superseded" && !superseded)
@@ -461,23 +401,16 @@ export class RunStore {
       event.type === "dispatch" &&
       ["done", "refined", "failed", "cancelled"].includes(current.lifecycle)
     )
-      throw new RunStoreConflictError(
-        "Terminal attempt cannot dispatch workflow effects",
-      );
+      throw new RunStoreConflictError("Terminal attempt cannot dispatch workflow effects");
     if (
       event.type !== "dispatch" &&
-      !current.artifacts.some(
-        (artifact) => artifact.id === event.evidence.artifactId,
-      )
+      !current.artifacts.some((artifact) => artifact.id === event.evidence.artifactId)
     )
       throw new Error("Mutation evidence must reference a durable artifact");
-    const mutation = applyMutationEvent(
-      entry.mutation,
-      event,
-      ownerGeneration,
-      now,
-      { id: current.operation.id, generation: current.operation.generation },
-    );
+    const mutation = applyMutationEvent(entry.mutation, event, ownerGeneration, now, {
+      id: current.operation.id,
+      generation: current.operation.generation,
+    });
     const verification = mutation.observations.find(
       (observation) => observation.outcome === "verified",
     );
@@ -501,9 +434,7 @@ export class RunStore {
               mutation,
               status,
               generation: Math.max(1, mutation.dispatches.length),
-              ...(verification
-                ? { completionEvidence: verification.evidence.observationId }
-                : {}),
+              ...(verification ? { completionEvidence: verification.evidence.observationId } : {}),
             }
           : operation,
       ),
@@ -573,10 +504,7 @@ export class RunStore {
       ...(transition === undefined ? {} : { transition }),
       timestamp: next.updatedAt,
       startedAt,
-      elapsedMilliseconds: Math.max(
-        0,
-        Date.parse(next.updatedAt) - Date.parse(startedAt),
-      ),
+      elapsedMilliseconds: Math.max(0, Date.parse(next.updatedAt) - Date.parse(startedAt)),
       projectId: next.projectId,
       cardId: next.cardId,
       attemptId: next.attemptId,
@@ -622,10 +550,7 @@ export class RunStore {
             "done",
             "attention-required",
           ];
-          if (
-            typeof projection.phase === "string" &&
-            phases.includes(projection.phase)
-          )
+          if (typeof projection.phase === "string" && phases.includes(projection.phase))
             result.phase = projection.phase;
           const lastEvent = projection.lastEvent;
           if (
@@ -643,9 +568,7 @@ export class RunStore {
             result.retryCounters = Object.fromEntries(
               Object.entries(counters).filter(
                 (entry): entry is [string, number] =>
-                  typeof entry[1] === "number" &&
-                  Number.isSafeInteger(entry[1]) &&
-                  entry[1] >= 0,
+                  typeof entry[1] === "number" && Number.isSafeInteger(entry[1]) && entry[1] >= 0,
               ),
             );
           for (const qualityKey of ["validation", "coverage", "review"]) {
@@ -690,12 +613,9 @@ export class RunStore {
       attemptId.includes("\\") ||
       Array.from(attemptId).some((character) => {
         const code = character.codePointAt(0);
-        return (
-          code !== undefined && (code <= 0x1f || (code >= 0x7f && code <= 0x9f))
-        );
+        return code !== undefined && (code <= 0x1f || (code >= 0x7f && code <= 0x9f));
       }) ||
-      lease.integrationId !==
-        (identity as { integrationId?: string })?.integrationId
+      lease.integrationId !== (identity as { integrationId?: string })?.integrationId
     )
       throw new Error("Invalid attempt path or mismatched canonical lease");
     this.identity = pinnedIdentitySchema.parse(identity);
@@ -708,10 +628,7 @@ export class RunStore {
     const worktree = path.resolve(this.identity.worktreeRoot);
     const within = (a: string, b: string) => {
       const r = path.relative(a, b);
-      return (
-        r === "" ||
-        (!r.startsWith(`..${path.sep}`) && r !== ".." && !path.isAbsolute(r))
-      );
+      return r === "" || (!r.startsWith(`..${path.sep}`) && r !== ".." && !path.isAbsolute(r));
     };
     if (
       within(repo, worktree) ||
@@ -721,9 +638,7 @@ export class RunStore {
       within(resolved, repo) ||
       within(resolved, worktree)
     )
-      throw new Error(
-        "Run storage, repository, and worktree paths must be disjoint",
-      );
+      throw new Error("Run storage, repository, and worktree paths must be disjoint");
     this.recordPath = path.join(resolved, "attempts", `${attemptId}.json`);
     this.artifactDirectory = path.join(resolved, "artifacts", attemptId);
   }
@@ -740,9 +655,7 @@ export class RunStore {
       attemptId.includes("\\")
     )
       throw new Error("Invalid predecessor attempt location");
-    const record = safeRead(
-      path.join(path.resolve(directory), "attempts", `${attemptId}.json`),
-    );
+    const record = safeRead(path.join(path.resolve(directory), "attempts", `${attemptId}.json`));
     if (record === null) return null;
     const parsed = parseRunRecord(record);
     if (
@@ -765,33 +678,26 @@ export class RunStore {
       "version" in value &&
       (value as { version: unknown }).version !== 1
     )
-      throw new RunStoreUnsupportedVersionError(
-        "Unsupported attempt version; original preserved",
-      );
+      throw new RunStoreUnsupportedVersionError("Unsupported attempt version; original preserved");
     const run = parseRunRecord(value);
     if (
       run.attemptId !== path.basename(this.recordPath, ".json") ||
       JSON.stringify(run.pinned) !== JSON.stringify(this.identity)
     )
-      throw new Error(
-        "Attempt identity/pins do not match storage location; original preserved",
-      );
+      throw new Error("Attempt identity/pins do not match storage location; original preserved");
     this.validateArtifacts(run);
     return run;
   }
   assertCurrentLease(expectedOwnerGeneration?: number): RunRecord {
     this.lease.assertHeld();
     const current = this.read();
-    if (!current)
-      throw new RunStoreConflictError("Canonical attempt is missing");
+    if (!current) throw new RunStoreConflictError("Canonical attempt is missing");
     this.assertLease(current);
     if (
       expectedOwnerGeneration !== undefined &&
       current.owner.generation !== expectedOwnerGeneration
     )
-      throw new RunStoreConflictError(
-        "Stale canonical attempt owner generation",
-      );
+      throw new RunStoreConflictError("Stale canonical attempt owner generation");
     return current;
   }
   readCompatibility<T>(
@@ -803,9 +709,7 @@ export class RunStore {
     if (!current) return null;
     this.assertLease(current);
     if (current.owner.generation !== expectedOwnerGeneration)
-      throw new RunStoreConflictError(
-        "Stale compatibility projection owner fence",
-      );
+      throw new RunStoreConflictError("Stale compatibility projection owner fence");
     const value = current.compatibility[key];
     return value === undefined ? null : validate(structuredClone(value));
   }
@@ -819,9 +723,7 @@ export class RunStore {
     if (!current) return [];
     this.assertLease(current);
     if (current.owner.generation !== expectedOwnerGeneration)
-      throw new RunStoreConflictError(
-        "Stale compatibility projection owner fence",
-      );
+      throw new RunStoreConflictError("Stale compatibility projection owner fence");
     return Object.entries(current.compatibility)
       .filter(([key]) => key.startsWith(prefix))
       .map(([key, value]) => ({
@@ -842,9 +744,7 @@ export class RunStore {
       current.revision !== expectedRevision ||
       current.owner.generation !== expectedOwnerGeneration
     )
-      throw new RunStoreConflictError(
-        "Stale compatibility projection revision or owner fence",
-      );
+      throw new RunStoreConflictError("Stale compatibility projection revision or owner fence");
     if (!(key in current.compatibility)) return false;
     const compatibility = { ...current.compatibility };
     delete compatibility[key];
@@ -912,9 +812,7 @@ export class RunStore {
     };
   }): T {
     if (!options.key || options.key.trim() !== options.key)
-      throw new Error(
-        "Compatibility projection key must be a nonblank identifier",
-      );
+      throw new Error("Compatibility projection key must be a nonblank identifier");
     this.lease.assertHeld();
     const current = this.read();
     if (
@@ -922,20 +820,15 @@ export class RunStore {
       current.revision !== options.expectedRevision ||
       current.owner.generation !== options.expectedOwnerGeneration
     )
-      throw new RunStoreConflictError(
-        "Stale compatibility projection revision or owner fence",
-      );
+      throw new RunStoreConflictError("Stale compatibility projection revision or owner fence");
     const before = structuredClone(current);
     const input = current.compatibility[options.key] ?? null;
     const output = options.current(structuredClone(input));
     if (JSON.stringify(current) !== JSON.stringify(before))
-      throw new Error(
-        "Compatibility projection callback mutated the attempt snapshot",
-      );
+      throw new Error("Compatibility projection callback mutated the attempt snapshot");
     const validated = options.validate(output.value);
     const derived = options.deriveRunState?.(current, validated) ?? {};
-    const lifecycleTransition =
-      derived.lifecycleTransition ?? options.lifecycleTransition;
+    const lifecycleTransition = derived.lifecycleTransition ?? options.lifecycleTransition;
     let lifecycle = current.lifecycle;
     const effectiveTransition = options.terminal
       ? {
@@ -988,8 +881,7 @@ export class RunStore {
         evidence.prOutcome !== expectedOutcome ||
         evidence.trelloListId !== expectedList ||
         current.taskKind !== "implementation" ||
-        (options.terminal.event === "failed" &&
-          current.publicationState !== "none") ||
+        (options.terminal.event === "failed" && current.publicationState !== "none") ||
         !current.pendingOperations.every(isConclusiveOperationResolution)
       )
         throw new RunStoreConflictError(
@@ -1050,12 +942,9 @@ export class RunStore {
       parsed.attemptId !== path.basename(this.recordPath, ".json") ||
       JSON.stringify(parsed.pinned) !== JSON.stringify(this.identity)
     )
-      throw new Error(
-        "New run attempt must match path, pinned identity and revision 1",
-      );
+      throw new Error("New run attempt must match path, pinned identity and revision 1");
     provisionDirectory(path.dirname(this.recordPath));
-    if (fs.existsSync(this.recordPath))
-      throw new RunStoreConflictError("Run already exists");
+    if (fs.existsSync(this.recordPath)) throw new RunStoreConflictError("Run already exists");
     this.validateArtifacts(parsed);
     atomicJson(this.recordPath, parsed, true);
     this.appendTimeline(null, parsed, "attempt-created");
@@ -1075,19 +964,14 @@ export class RunStore {
       JSON.stringify(parsed.pinned) !== JSON.stringify(this.identity) ||
       parsed.artifacts.length !== artifacts.length
     )
-      throw new Error(
-        "Imported run must match candidate identity and artifact count",
-      );
+      throw new Error("Imported run must match candidate identity and artifact count");
     provisionDirectory(path.dirname(this.recordPath));
-    if (fs.existsSync(this.recordPath))
-      throw new RunStoreConflictError("Run already exists");
+    if (fs.existsSync(this.recordPath)) throw new RunStoreConflictError("Run already exists");
     const refs = artifacts.map(({ content, mediaType }) =>
       this.persistArtifact(content, mediaType),
     );
     if (JSON.stringify(refs) !== JSON.stringify(parsed.artifacts))
-      throw new Error(
-        "Imported artifact references do not match validated content",
-      );
+      throw new Error("Imported artifact references do not match validated content");
     this.validateArtifacts(parsed);
     this.assertLease(parsed);
     atomicJson(this.recordPath, parsed, true);
@@ -1099,9 +983,7 @@ export class RunStore {
     artifacts: readonly { content: Uint8Array; mediaType?: string }[],
   ): RunRecord["artifacts"] {
     this.lease.assertHeld();
-    return artifacts.map(({ content, mediaType }) =>
-      this.persistArtifact(content, mediaType),
-    );
+    return artifacts.map(({ content, mediaType }) => this.persistArtifact(content, mediaType));
   }
   /** All state mutations require the event/source/destination tuple; no public raw CAS. */
   transition(
@@ -1121,18 +1003,14 @@ export class RunStore {
       current.owner.generation !== expectedOwnerGeneration ||
       current.lifecycle !== from
     )
-      throw new RunStoreConflictError(
-        "Stale completion rejected by attempt/revision/owner fence",
-      );
+      throw new RunStoreConflictError("Stale completion rejected by attempt/revision/owner fence");
     if (event === "failed" && current.publicationState !== "none")
       throw new RunStoreConflictError(
         "An open or uncertain PR cannot be terminally failed; preserve as operational blockage",
       );
     const matrixTarget = runTransitionMatrix[event]?.[from];
     if (matrixTarget === undefined)
-      throw new Error(
-        `Forbidden transition event/source pair: ${event} from ${from}`,
-      );
+      throw new Error(`Forbidden transition event/source pair: ${event} from ${from}`);
     const terminalObservation = [
       "refinement-completed",
       "merged",
@@ -1188,18 +1066,14 @@ export class RunStore {
         current.operation.generation !== expectedOperation.generation)
     )
       throw new RunStoreConflictError("Stale wait-resume operation fence");
-    const actualTarget =
-      event === "wait-resumed" ? current.checkpoint : matrixTarget;
+    const actualTarget = event === "wait-resumed" ? current.checkpoint : matrixTarget;
     const declaredTargetAllowed = Array.isArray(matrixTarget)
       ? matrixTarget.includes(to)
       : matrixTarget === to;
     const targetAllowed =
       declaredTargetAllowed &&
-      (Array.isArray(actualTarget)
-        ? actualTarget.includes(to)
-        : actualTarget === to);
-    if (!targetAllowed)
-      throw new Error(`Forbidden transition ${event}: ${from} -> ${to}`);
+      (Array.isArray(actualTarget) ? actualTarget.includes(to) : actualTarget === to);
+    if (!targetAllowed) throw new Error(`Forbidden transition ${event}: ${from} -> ${to}`);
     if (event === "failed" && current.publicationState !== "none")
       throw new RunStoreConflictError(
         "An open or uncertain PR cannot be terminally failed; preserve as operational blockage",
@@ -1234,12 +1108,8 @@ export class RunStore {
     const callbackInput = deepFreeze(structuredClone(current));
     const changed = update(callbackInput);
     if (
-      JSON.stringify(
-        changed.pendingOperations.filter((entry) => entry.mutation),
-      ) !==
-      JSON.stringify(
-        current.pendingOperations.filter((entry) => entry.mutation),
-      )
+      JSON.stringify(changed.pendingOperations.filter((entry) => entry.mutation)) !==
+      JSON.stringify(current.pendingOperations.filter((entry) => entry.mutation))
     )
       throw new RunStoreConflictError(
         "Workflow transitions cannot rewrite the durable mutation journal",
@@ -1255,13 +1125,8 @@ export class RunStore {
       changed.checkpoint !== current.checkpoint ||
       changed.revision !== current.revision
     )
-      throw new Error(
-        "Transition cannot modify pinned identity, ownership, or revision directly",
-      );
-    if (
-      terminalObservation &&
-      JSON.stringify(changed) !== JSON.stringify(current)
-    )
+      throw new Error("Transition cannot modify pinned identity, ownership, or revision directly");
+    if (terminalObservation && JSON.stringify(changed) !== JSON.stringify(current))
       throw new Error(
         "Terminal observation cannot mutate attempt effects; preserve the reconciled operation ledger",
       );
@@ -1312,8 +1177,7 @@ export class RunStore {
     });
     if (
       terminalObservation &&
-      JSON.stringify(changed.pendingOperations) !==
-        JSON.stringify(current.pendingOperations)
+      JSON.stringify(changed.pendingOperations) !== JSON.stringify(current.pendingOperations)
     )
       throw new Error(
         "Terminal observation must preserve dispatched and pending operation records",
@@ -1379,9 +1243,7 @@ export class RunStore {
       record.owner.instanceId !== this.lease.instanceId ||
       record.owner.token !== this.lease.token
     )
-      throw new RunStoreConflictError(
-        "Import lease is not the current durable attempt owner",
-      );
+      throw new RunStoreConflictError("Import lease is not the current durable attempt owner");
     return record;
   }
   /** Record authoritative discovery of an ambiguous effect without dispatching or reopening workflow state. */
@@ -1390,9 +1252,7 @@ export class RunStore {
     expectedOwnerGeneration: number,
     operationId: string,
     operationGeneration: number,
-    evidence: NonNullable<
-      RunRecord["pendingOperations"][number]["resolutionEvidence"]
-    >,
+    evidence: NonNullable<RunRecord["pendingOperations"][number]["resolutionEvidence"]>,
   ): RunRecord {
     this.lease.assertHeld();
     const current = this.read();
@@ -1401,9 +1261,7 @@ export class RunStore {
       current.revision !== expectedRevision ||
       current.owner.generation !== expectedOwnerGeneration
     )
-      throw new RunStoreConflictError(
-        "Stale operation discovery revision or owner generation",
-      );
+      throw new RunStoreConflictError("Stale operation discovery revision or owner generation");
     if (
       current.lifecycle !== "waiting" &&
       !["done", "failed", "cancelled"].includes(current.lifecycle)
@@ -1412,18 +1270,10 @@ export class RunStore {
         "Operation discovery is limited to recovery waits and terminal reconciliation",
       );
     const entry = current.pendingOperations.find(
-      (operation) =>
-        operation.id === operationId &&
-        operation.generation === operationGeneration,
+      (operation) => operation.id === operationId && operation.generation === operationGeneration,
     );
-    if (
-      !entry ||
-      entry.mutation ||
-      !["pending", "ambiguous"].includes(entry.status)
-    )
-      throw new RunStoreConflictError(
-        "Operation is not awaiting authoritative outcome discovery",
-      );
+    if (!entry || entry.mutation || !["pending", "ambiguous"].includes(entry.status))
+      throw new RunStoreConflictError("Operation is not awaiting authoritative outcome discovery");
     const resolvedStatus =
       evidence.disposition === "accepted"
         ? "completed"
@@ -1435,8 +1285,7 @@ export class RunStore {
       ...current,
       revision: current.revision + 1,
       pendingOperations: current.pendingOperations.map((operation) =>
-        operation.id === operationId &&
-        operation.generation === operationGeneration
+        operation.id === operationId && operation.generation === operationGeneration
           ? {
               ...operation,
               status: resolvedStatus,
@@ -1453,11 +1302,7 @@ export class RunStore {
     return next;
   }
   /** Takeover is only performed under the matching new canonical lease and increments durable fencing generation. */
-  takeOwnership(
-    expectedRevision: number,
-    priorGeneration: number,
-    nextToken: string,
-  ): RunRecord {
+  takeOwnership(expectedRevision: number, priorGeneration: number, nextToken: string): RunRecord {
     this.lease.assertHeld();
     const current = this.read();
     if (
@@ -1482,49 +1327,30 @@ export class RunStore {
     this.appendTimeline(current, next, "ownership-resumed");
     return next;
   }
-  writeArtifact(
-    content: Uint8Array,
-    mediaType?: string,
-  ): RunRecord["artifacts"][number] {
+  writeArtifact(content: Uint8Array, mediaType?: string): RunRecord["artifacts"][number] {
     this.lease.assertHeld();
     const run = this.read();
     if (!run) throw new Error("Attempt must exist before artifact publication");
     return this.persistArtifact(content, mediaType);
   }
   readArtifact(reference: string): Buffer {
-    if (!/^sha256:[a-f0-9]{64}$/.test(reference))
-      throw new Error("Invalid artifact reference");
+    if (!/^sha256:[a-f0-9]{64}$/.test(reference)) throw new Error("Invalid artifact reference");
     const digest = reference.slice(7);
     const expected = path.join(this.artifactDirectory, `sha256-${digest}`);
     if (
       path.resolve(expected) !==
-      path.join(
-        path.resolve(this.storageRoot),
-        "artifacts",
-        this.attemptId,
-        `sha256-${digest}`,
-      )
+      path.join(path.resolve(this.storageRoot), "artifacts", this.attemptId, `sha256-${digest}`)
     )
       throw new Error("Artifact path identity mismatch");
     assertNoSymlinkPath(this.artifactDirectory);
-    const fd = fs.openSync(
-      expected,
-      fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
-    );
+    const fd = fs.openSync(expected, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
     try {
       const stat = fs.fstatSync(fd);
-      if (!stat.isFile() || stat.size > 16 * 1024 * 1024)
-        throw new Error("Unsafe artifact file");
+      if (!stat.isFile() || stat.size > 16 * 1024 * 1024) throw new Error("Unsafe artifact file");
       const content = Buffer.alloc(stat.size);
       let offset = 0;
       while (offset < content.length) {
-        const count = fs.readSync(
-          fd,
-          content,
-          offset,
-          content.length - offset,
-          offset,
-        );
+        const count = fs.readSync(fd, content, offset, content.length - offset, offset);
         if (count === 0) throw new Error("Artifact changed while reading");
         offset += count;
       }
@@ -1535,10 +1361,7 @@ export class RunStore {
       fs.closeSync(fd);
     }
   }
-  private persistArtifact(
-    content: Uint8Array,
-    mediaType?: string,
-  ): RunRecord["artifacts"][number] {
+  private persistArtifact(content: Uint8Array, mediaType?: string): RunRecord["artifacts"][number] {
     provisionDirectory(this.artifactDirectory);
     const digest = createHash("sha256").update(content).digest("hex");
     const name = `sha256-${digest}`;
@@ -1551,10 +1374,7 @@ export class RunStore {
       if (createHash("sha256").update(existing).digest("hex") !== digest)
         throw new Error("Existing content-addressed artifact is corrupt");
     } else {
-      const temporary = path.join(
-        this.artifactDirectory,
-        `.${randomUUID()}.tmp`,
-      );
+      const temporary = path.join(this.artifactDirectory, `.${randomUUID()}.tmp`);
       const fd = fs.openSync(temporary, "wx", 0o600);
       try {
         fs.writeFileSync(fd, content);
@@ -1591,9 +1411,8 @@ export class RunStore {
         !stat.isFile() ||
         stat.isSymbolicLink() ||
         stat.size !== artifact.bytes ||
-        createHash("sha256")
-          .update(fs.readFileSync(artifact.path))
-          .digest("hex") !== artifact.id.slice(7)
+        createHash("sha256").update(fs.readFileSync(artifact.path)).digest("hex") !==
+          artifact.id.slice(7)
       )
         throw new Error("Missing or modified artifact; reference preserved");
     }
@@ -1605,9 +1424,7 @@ export class RunStore {
       this.lease.instanceId !== run.owner.instanceId ||
       this.lease.token !== run.owner.token
     )
-      throw new RunStoreConflictError(
-        "Canonical ownership lease does not match attempt owner",
-      );
+      throw new RunStoreConflictError("Canonical ownership lease does not match attempt owner");
   }
 }
 

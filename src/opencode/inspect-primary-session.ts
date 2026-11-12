@@ -16,16 +16,13 @@ export class OpenCodeSessionListError extends Error {
   ) {
     super(message);
     this.name = "OpenCodeSessionListError";
-    if (origin?.executionId !== undefined)
-      this.executionId = origin.executionId;
+    if (origin?.executionId !== undefined) this.executionId = origin.executionId;
     if (origin?.stdoutArtifactReference !== undefined)
       this.stdoutArtifactReference = origin.stdoutArtifactReference;
   }
 }
 
-export function parseOpenCodeSessionList(
-  output: string,
-): ListedOpenCodeSession[] {
+export function parseOpenCodeSessionList(output: string): ListedOpenCodeSession[] {
   let value: unknown;
   try {
     value = JSON.parse(output) as unknown;
@@ -33,8 +30,7 @@ export function parseOpenCodeSessionList(
     // Parser messages may include the untrusted session-list stdout.
     throw new Error("OpenCode session list was not valid JSON");
   }
-  if (!Array.isArray(value))
-    throw new Error("OpenCode session list was not a JSON array");
+  if (!Array.isArray(value)) throw new Error("OpenCode session list was not a JSON array");
 
   return value.map((entry, index) => {
     if (
@@ -80,9 +76,7 @@ export async function inspectPrimaryOpenCodeSession(options: {
       sessions = parseOpenCodeSessionList(result.output);
     } catch (error) {
       throw new OpenCodeSessionListError(
-        error instanceof Error
-          ? error.message
-          : "OpenCode session list was malformed",
+        error instanceof Error ? error.message : "OpenCode session list was malformed",
         result,
       );
     }
@@ -90,9 +84,7 @@ export async function inspectPrimaryOpenCodeSession(options: {
     const matching = sessions.filter(({ id }) => id === options.sessionId);
     if (matching.length > 1) return "conflict";
     if (matching.length === 0) return "confirmed-absent";
-    return matching[0]!.directory === path.resolve(options.cwd)
-      ? "reachable"
-      : "conflict";
+    return matching[0]!.directory === path.resolve(options.cwd) ? "reachable" : "conflict";
   } catch (error) {
     if (options.signal.aborted)
       // Do not retain the runner error: it may contain untrusted child output.

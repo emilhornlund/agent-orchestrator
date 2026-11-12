@@ -4,9 +4,7 @@ function requiredEnvironmentVariable(name: string) {
   return z
     .string({
       error: (issue) =>
-        issue.input === undefined
-          ? `${name} is required`
-          : `${name} must be a string`,
+        issue.input === undefined ? `${name} is required` : `${name} must be a string`,
     })
     .min(1, {
       error: `${name} is required`,

@@ -18,8 +18,7 @@ const root = () => {
 };
 afterEach(() => {
   vi.restoreAllMocks();
-  for (const value of roots.splice(0))
-    fs.rmSync(value, { recursive: true, force: true });
+  for (const value of roots.splice(0)) fs.rmSync(value, { recursive: true, force: true });
 });
 const routes: NotificationRoute[] = ["publication", "refinement", "failure"];
 describe("legacy/unowned route triggers cannot substitute for authoritative mutation proof", () => {
@@ -29,18 +28,13 @@ describe("legacy/unowned route triggers cannot substitute for authoritative muta
       const directory = root();
       const rename = fs.renameSync;
       let failWrites = false;
-      const spy = vi
-        .spyOn(fs, "renameSync")
-        .mockImplementation((source, destination) => {
-          if (
-            failWrites &&
-            String(destination).includes(`${path.sep}notifications${path.sep}`)
-          )
-            throw Object.assign(new Error("Injected storage failure"), {
-              code: "EIO",
-            });
-          rename(source, destination);
-        });
+      const spy = vi.spyOn(fs, "renameSync").mockImplementation((source, destination) => {
+        if (failWrites && String(destination).includes(`${path.sep}notifications${path.sep}`))
+          throw Object.assign(new Error("Injected storage failure"), {
+            code: "EIO",
+          });
+        rename(source, destination);
+      });
       const fixture = notificationRouteFixture(directory, route, () => {
         failWrites = true;
       });
@@ -58,10 +52,7 @@ describe("legacy/unowned route triggers cannot substitute for authoritative muta
       await restarted.open().drain(restarted.notifier, () => {});
       expect(restarted.open().records()[0]?.dispatches).toHaveLength(0);
       expect(
-        fs
-          .readFileSync(path.join(directory, "requests.jsonl"), "utf8")
-          .trim()
-          .split("\n"),
+        fs.readFileSync(path.join(directory, "requests.jsonl"), "utf8").trim().split("\n"),
       ).toHaveLength(1);
       expect(fs.existsSync(path.join(directory, "sink.jsonl"))).toBe(false);
     },
@@ -72,13 +63,7 @@ describe("legacy/unowned route triggers cannot substitute for authoritative muta
       const directory = root();
       const child = spawn(
         process.execPath,
-        [
-          "--import",
-          "tsx",
-          "tests/fixtures/notification-route-crash.ts",
-          directory,
-          route,
-        ],
+        ["--import", "tsx", "tests/fixtures/notification-route-crash.ts", directory, route],
         { stdio: ["ignore", "pipe", "pipe", "ipc"] },
       );
       try {
@@ -93,11 +78,7 @@ describe("legacy/unowned route triggers cannot substitute for authoritative muta
         await exited;
         const restarted = notificationRouteFixture(directory, route);
         expect(restarted.read().idList).toBe(
-          route === "publication"
-            ? "review"
-            : route === "refinement"
-              ? "backlog"
-              : "failed",
+          route === "publication" ? "review" : route === "refinement" ? "backlog" : "failed",
         );
         expect(restarted.open().records()[0]?.trigger).toBeDefined();
         expect(fs.existsSync(path.join(directory, "sink.jsonl"))).toBe(false);
@@ -110,10 +91,7 @@ describe("legacy/unowned route triggers cannot substitute for authoritative muta
         await restarted.open().drain(restarted.notifier, () => {});
         expect(fs.existsSync(path.join(directory, "sink.jsonl"))).toBe(false);
         expect(
-          fs
-            .readFileSync(path.join(directory, "requests.jsonl"), "utf8")
-            .trim()
-            .split("\n"),
+          fs.readFileSync(path.join(directory, "requests.jsonl"), "utf8").trim().split("\n"),
         ).toHaveLength(1);
         expect(restarted.open().records()[0]?.dispatches).toHaveLength(0);
       } finally {
@@ -125,14 +103,9 @@ describe("legacy/unowned route triggers cannot substitute for authoritative muta
     "does not catch-forget %s preparation storage failure or perform its terminal transition",
     async (route) => {
       const directory = root();
-      fs.writeFileSync(
-        path.join(directory, "notifications"),
-        "storage unavailable",
-      );
+      fs.writeFileSync(path.join(directory, "notifications"), "storage unavailable");
       const fixture = notificationRouteFixture(directory, route);
-      await expect(fixture.run()).rejects.toBeInstanceOf(
-        NotificationPreparationError,
-      );
+      await expect(fixture.run()).rejects.toBeInstanceOf(NotificationPreparationError);
       expect(fixture.read().idList).toBe("working");
       expect(fs.existsSync(path.join(directory, "requests.jsonl"))).toBe(false);
       fs.unlinkSync(path.join(directory, "notifications"));

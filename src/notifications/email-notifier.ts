@@ -8,10 +8,7 @@ import {
 } from "../refinement/refinement-mutation-snapshot.js";
 import type { TrelloCard } from "../trello/trello-client.js";
 
-import type {
-  EmailNotificationConfig,
-  ProjectConfig,
-} from "../config/config.js";
+import type { EmailNotificationConfig, ProjectConfig } from "../config/config.js";
 import type { RefinementResult } from "../refinement/refinement-result.js";
 import { presentExternalDiagnostic } from "../security/bounded-diagnostic.js";
 import { SmtpEmailNotifier } from "./smtp-email-notifier.js";
@@ -32,19 +29,13 @@ export interface EmailMessage {
 }
 
 export type EmailNotificationEvent =
-  | "humanReview"
-  | "failed"
-  | "refinementComplete"
-  | "done"
-  | "attentionRequired";
+  "humanReview" | "failed" | "refinementComplete" | "done" | "attentionRequired";
 
 export interface EmailNotifier {
   readonly deliveryTarget?: string;
   send(message: EmailMessage): Promise<void | EmailDeliveryReceipt>;
   /** Authoritative provider evidence only; absence is ambiguous, not rejection. */
-  lookupDelivery?(
-    messageId: string,
-  ): Promise<"confirmed" | "known-not-delivered" | "ambiguous">;
+  lookupDelivery?(messageId: string): Promise<"confirmed" | "known-not-delivered" | "ambiguous">;
   isEventEnabled?(event: EmailNotificationEvent): boolean;
 }
 
@@ -99,9 +90,7 @@ function subjectPart(value: string): string {
   return value.replace(/[\r\n]+/g, " ").trim();
 }
 
-export function buildHumanReviewEmail(
-  details: HumanReviewNotificationDetails,
-): EmailMessage {
+export function buildHumanReviewEmail(details: HumanReviewNotificationDetails): EmailMessage {
   return {
     subject: `[Agent Orchestrator] Human Review: ${subjectPart(details.project.id)} / ${subjectPart(details.card.name)}`,
     text: [
@@ -125,18 +114,11 @@ export function buildHumanReviewEmail(
 
 /** Only explicit successful/not-required status tokens establish no issue for
  * these routes; other outcomes must remain disclosed. */
-export function publicationNotificationIssues(
-  review: string,
-  remediation: string,
-): string[] {
-  return [review, remediation].filter(
-    (value) => !["Passed", "Not required"].includes(value),
-  );
+export function publicationNotificationIssues(review: string, remediation: string): string[] {
+  return [review, remediation].filter((value) => !["Passed", "Not required"].includes(value));
 }
 
-export function buildFailedEmail(
-  details: FailedNotificationDetails,
-): EmailMessage {
+export function buildFailedEmail(details: FailedNotificationDetails): EmailMessage {
   return {
     subject: `[Agent Orchestrator] Failed: ${subjectPart(details.project.id)} / ${subjectPart(details.card.name)}`,
     text: [
@@ -168,20 +150,15 @@ export function buildAttentionRequiredEmail(
       ...(details.cardIds ?? []).map(
         (id) => `Trello card: https://trello.com/c/${encodeURIComponent(id)}`,
       ),
-      ...(details.sessionLogPaths === undefined ||
-      details.sessionLogPaths.length === 0
+      ...(details.sessionLogPaths === undefined || details.sessionLogPaths.length === 0
         ? []
         : [
             "Session logs:",
-            ...details.sessionLogPaths.map(
-              (sessionLogPath) => `- ${sessionLogPath}`,
-            ),
+            ...details.sessionLogPaths.map((sessionLogPath) => `- ${sessionLogPath}`),
           ]),
       ...(details.handlingOutcome === undefined
         ? []
-        : [
-            `Failure handling: ${presentExternalDiagnostic(details.handlingOutcome)}`,
-          ]),
+        : [`Failure handling: ${presentExternalDiagnostic(details.handlingOutcome)}`]),
       "",
       "Project processing cannot safely continue until the failure is resolved.",
     ].join("\n"),
@@ -207,9 +184,7 @@ export function buildRefinementCompletionEmail(
   };
 }
 
-export function buildCompletionEmail(
-  details: CompletionNotificationDetails,
-): EmailMessage {
+export function buildCompletionEmail(details: CompletionNotificationDetails): EmailMessage {
   return {
     subject: `[Agent Orchestrator] Completed: ${subjectPart(details.project.id)} / ${subjectPart(details.card.name)}`,
     text: [
@@ -223,9 +198,7 @@ export function buildCompletionEmail(
 }
 
 function getErrorMessage(error: unknown): string {
-  return sanitizeControlledText(
-    error instanceof Error ? error.message : String(error),
-  );
+  return sanitizeControlledText(error instanceof Error ? error.message : String(error));
 }
 
 export function enqueueNotification(
@@ -244,28 +217,17 @@ export function enqueueNotification(
       const attempt = authority?.store.attemptId ?? "project";
       const eventKey = `${projectId}:${attempt}:${event}:${identity}`;
       if (!authority) {
-        outbox.enqueue(
-          eventKey,
-          message,
-          event,
-          notifier.deliveryTarget,
-          trigger,
-        );
+        outbox.enqueue(eventKey, message, event, notifier.deliveryTarget, trigger);
         return outbox;
       }
       if (trigger) {
-        const run = authority.store.assertCurrentLease(
-          authority.ownerGeneration,
-        );
+        const run = authority.store.assertCurrentLease(authority.ownerGeneration);
         const request = {
           route: "trello-move",
           args: {
             cardId: trigger.cardId,
             listId: trigger.listId,
-            options:
-              trigger.dueComplete === undefined
-                ? {}
-                : { dueComplete: trigger.dueComplete },
+            options: trigger.dueComplete === undefined ? {} : { dueComplete: trigger.dueComplete },
           },
         };
         const digest = (value: unknown) =>
@@ -327,9 +289,7 @@ export function enqueueNotification(
           );
       }
     } else if (ProjectRunAuthority.hasProjectLeaseScope()) {
-      throw new Error(
-        "Production notification requires pinned durable outbox scope",
-      );
+      throw new Error("Production notification requires pinned durable outbox scope");
     }
     return outbox;
   } catch (cause) {
@@ -361,21 +321,12 @@ async function deliverEvent(
   message: EmailMessage,
   log: Logger,
 ): Promise<void> {
-  const outbox = enqueueNotification(
-    notifier,
-    projectId,
-    event,
-    identity,
-    message,
-  );
+  const outbox = enqueueNotification(notifier, projectId, event, identity, message);
   if (outbox) outbox.start(notifier, (diagnostic) => log.warn(diagnostic));
   else await notifier.send(message); // Explicitly unowned utility compatibility.
 }
 
-function isEventEnabled(
-  notifier: EmailNotifier,
-  event: EmailNotificationEvent,
-): boolean {
+function isEventEnabled(notifier: EmailNotifier, event: EmailNotificationEvent): boolean {
   return notifier.isEventEnabled?.(event) ?? true;
 }
 
@@ -400,9 +351,7 @@ export async function notifyHumanReview(
     cardLog.event("Human Review email notification processed");
   } catch (error) {
     if (error instanceof NotificationPreparationError) throw error;
-    cardLog.error(
-      `Human Review email notification failed: ${getErrorMessage(error)}`,
-    );
+    cardLog.error(`Human Review email notification failed: ${getErrorMessage(error)}`);
   }
 }
 
@@ -427,9 +376,7 @@ export async function notifyFailed(
     cardLog.event("Failed email notification processed");
   } catch (error) {
     if (error instanceof NotificationPreparationError) throw error;
-    cardLog.error(
-      `Failed email notification failed: ${getErrorMessage(error)}`,
-    );
+    cardLog.error(`Failed email notification failed: ${getErrorMessage(error)}`);
   }
 }
 
@@ -438,10 +385,7 @@ export async function notifyAttentionRequired(
   details: AttentionRequiredNotificationDetails,
   projectLog: Logger,
 ): Promise<void> {
-  if (
-    notifier === undefined ||
-    !isEventEnabled(notifier, "attentionRequired")
-  ) {
+  if (notifier === undefined || !isEventEnabled(notifier, "attentionRequired")) {
     return;
   }
 
@@ -457,9 +401,7 @@ export async function notifyAttentionRequired(
     projectLog.event("Attention-required email notification processed");
   } catch (error) {
     if (error instanceof NotificationPreparationError) throw error;
-    projectLog.error(
-      `Attention-required email notification failed: ${getErrorMessage(error)}`,
-    );
+    projectLog.error(`Attention-required email notification failed: ${getErrorMessage(error)}`);
   }
 }
 
@@ -468,10 +410,7 @@ export async function notifyRefinementCompletion(
   details: RefinementCompletionNotificationDetails,
   cardLog: Logger,
 ): Promise<void> {
-  if (
-    notifier === undefined ||
-    !isEventEnabled(notifier, "refinementComplete")
-  ) {
+  if (notifier === undefined || !isEventEnabled(notifier, "refinementComplete")) {
     return;
   }
 
@@ -487,9 +426,7 @@ export async function notifyRefinementCompletion(
     cardLog.event("Refinement completion email notification processed");
   } catch (error) {
     if (error instanceof NotificationPreparationError) throw error;
-    cardLog.error(
-      `Refinement completion email notification failed: ${getErrorMessage(error)}`,
-    );
+    cardLog.error(`Refinement completion email notification failed: ${getErrorMessage(error)}`);
   }
 }
 
@@ -514,16 +451,11 @@ export async function notifyCompletion(
     cardLog.event("Completion email notification processed");
   } catch (error) {
     if (error instanceof NotificationPreparationError) throw error;
-    cardLog.error(
-      `Completion email notification failed: ${getErrorMessage(error)}`,
-    );
+    cardLog.error(`Completion email notification failed: ${getErrorMessage(error)}`);
   }
 }
 
-function requiredSecret(
-  environment: NodeJS.ProcessEnv,
-  environmentVariable: string,
-): string {
+function requiredSecret(environment: NodeJS.ProcessEnv, environmentVariable: string): string {
   const value = environment[environmentVariable];
 
   if (value === undefined || value.trim().length === 0) {

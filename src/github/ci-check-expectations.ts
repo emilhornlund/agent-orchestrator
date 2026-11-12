@@ -44,9 +44,7 @@ function uncertain(
 }
 
 /** Establishes CI expectations only from explicit, complete repository contracts. */
-export function establishCiCheckExpectations(
-  input: unknown,
-): CiCheckExpectationDecision {
+export function establishCiCheckExpectations(input: unknown): CiCheckExpectationDecision {
   if (!Array.isArray(input) || input.length === 0) {
     return uncertain(
       "No authoritative CI check expectation source is available; refusing to treat an empty check set as complete",
@@ -57,9 +55,7 @@ export function establishCiCheckExpectations(
   for (const [index, value] of input.entries()) {
     const parsed = expectationSourceSchema.safeParse(value);
     if (!parsed.success) {
-      return uncertain(
-        `CI expectation source at index ${index} is malformed or unsupported`,
-      );
+      return uncertain(`CI expectation source at index ${index} is malformed or unsupported`);
     }
     parsedSources.push(parsed.data);
   }
@@ -72,33 +68,25 @@ export function establishCiCheckExpectations(
   const expectedCheckNames = new Set<string>();
   for (const source of parsedSources) {
     if (new Set(source.checkNames).size !== source.checkNames.length) {
-      return uncertain(
-        `CI expectation source ${source.sourceId} contains duplicate check names`,
-        [...expectedCheckNames, ...source.checkNames],
-      );
+      return uncertain(`CI expectation source ${source.sourceId} contains duplicate check names`, [
+        ...expectedCheckNames,
+        ...source.checkNames,
+      ]);
     }
     for (const name of source.checkNames) expectedCheckNames.add(name);
   }
 
-  const candidates = [...expectedCheckNames].sort((left, right) =>
-    left.localeCompare(right),
-  );
+  const candidates = [...expectedCheckNames].sort((left, right) => left.localeCompare(right));
   if (candidates.length === 0) {
-    return uncertain(
-      "Authoritative CI expectation sources produced an empty check set",
-    );
+    return uncertain("Authoritative CI expectation sources produced an empty check set");
   }
 
   const incomplete = parsedSources.filter((source) => !source.complete);
   if (incomplete.length > 0) {
     const details = incomplete.map(
-      (source) =>
-        `${source.sourceId}: ${source.uncertainty ?? "expected checks are incomplete"}`,
+      (source) => `${source.sourceId}: ${source.uncertainty ?? "expected checks are incomplete"}`,
     );
-    return uncertain(
-      `Expected CI check set is incomplete (${details.join("; ")})`,
-      candidates,
-    );
+    return uncertain(`Expected CI check set is incomplete (${details.join("; ")})`, candidates);
   }
 
   return {

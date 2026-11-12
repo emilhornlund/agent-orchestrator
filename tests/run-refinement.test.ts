@@ -21,9 +21,7 @@ import type { TrelloCard } from "../src/trello/trello-client.js";
 const temporaryDirectories: string[] = [];
 
 function createWorktree(): string {
-  const worktreePath = fs.mkdtempSync(
-    path.join(os.tmpdir(), "agent-orchestrator-refinement-run-"),
-  );
+  const worktreePath = fs.mkdtempSync(path.join(os.tmpdir(), "agent-orchestrator-refinement-run-"));
 
   temporaryDirectories.push(worktreePath);
 
@@ -105,8 +103,7 @@ function writeResult(worktreePath: string): void {
     JSON.stringify({
       title: "Add inventory support",
       type: "feature",
-      description:
-        "# Add inventory support\n\n## Description\n\nAdd inventory support.",
+      description: "# Add inventory support\n\n## Description\n\nAdd inventory support.",
     }),
   );
 }
@@ -132,10 +129,7 @@ describe("runRefinement", () => {
       const resultPath = getRefinementResultPath(options.cwd);
       fs.mkdirSync(path.dirname(resultPath), { recursive: true });
       if (attempts === 1)
-        fs.writeFileSync(
-          resultPath,
-          JSON.stringify({ title: "valid title", type: "feature" }),
-        );
+        fs.writeFileSync(resultPath, JSON.stringify({ title: "valid title", type: "feature" }));
       else {
         expect(options.prompt).toContain("previous output failed");
         writeResult(options.cwd);
@@ -182,17 +176,15 @@ describe("runRefinement", () => {
   it("runs the configured refinement model and returns the validated result", async () => {
     const worktreePath = createWorktree();
 
-    const runOpenCode = vi.fn(
-      async (options: OpenCodeRunOptions): Promise<OpenCodeRunResult> => {
-        writeResult(options.cwd);
+    const runOpenCode = vi.fn(async (options: OpenCodeRunOptions): Promise<OpenCodeRunResult> => {
+      writeResult(options.cwd);
 
-        return {
-          exitCode: 0,
-          output: "done",
-          errorOutput: "",
-        };
-      },
-    );
+      return {
+        exitCode: 0,
+        output: "done",
+        errorOutput: "",
+      };
+    });
 
     const git = new GitClient(async (_cwd, args) => {
       if (args[0] === "status") {
@@ -216,8 +208,7 @@ describe("runRefinement", () => {
     expect(result).toEqual({
       title: "Add inventory support",
       type: "feature",
-      description:
-        "# Add inventory support\n\n## Description\n\nAdd inventory support.",
+      description: "# Add inventory support\n\n## Description\n\nAdd inventory support.",
     });
 
     expect(runOpenCode).toHaveBeenCalledOnce();
@@ -336,9 +327,7 @@ describe("runRefinement", () => {
 
     const git = new GitClient(async (_cwd, args) => {
       if (args[0] === "status") {
-        return [`?? ${refinementResultRelativePath}`, " M src/example.ts"].join(
-          "\n",
-        );
+        return [`?? ${refinementResultRelativePath}`, " M src/example.ts"].join("\n");
       }
 
       throw new Error(`Unexpected git command: ${args.join(" ")}`);

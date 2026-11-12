@@ -15,10 +15,7 @@ function sanitizePathPart(value: string): string {
 export function getSessionLogPath(projectId: string, cardId: string): string {
   const authority = ProjectRunAuthority.current(projectId);
   const record = authority?.store.read();
-  const root =
-    record?.cardId === cardId
-      ? record.pinned.storageRoot
-      : getLoggerRuntimeRoot();
+  const root = record?.cardId === cardId ? record.pinned.storageRoot : getLoggerRuntimeRoot();
   return path.join(
     root ? path.resolve(root) : path.join(process.cwd(), "logs"),
     "history",

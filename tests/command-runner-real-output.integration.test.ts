@@ -7,9 +7,7 @@ import { ProcessOutputLimitError } from "../src/process/process-runtime.js";
 
 describe("CommandRunner actual child output bounds", () => {
   it("rejects actual output beyond the complete-capture bound, even on zero exit after TERM", async () => {
-    const root = fs.mkdtempSync(
-      path.join(os.tmpdir(), "command-output-bound-"),
-    );
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "command-output-bound-"));
     const termMarker = path.join(root, "term-handled.txt");
     const script = [
       'const fs=require("node:fs");',
@@ -35,27 +33,24 @@ describe("CommandRunner actual child output bounds", () => {
       expect(executionId).toBeDefined();
       const executionDirectory = path.join(root, "artifacts", executionId!);
       const metadata = JSON.parse(
-        fs.readFileSync(
-          path.join(executionDirectory, "execution.json"),
-          "utf8",
-        ),
+        fs.readFileSync(path.join(executionDirectory, "execution.json"), "utf8"),
       ) as { status: string; exitCode?: number };
       expect(metadata).toMatchObject({
         status: "evidence-failure",
         exitCode: 0,
       });
-      expect(
-        fs.readFileSync(path.join(executionDirectory, "stdout.txt"), "utf8"),
-      ).toContain("TERM-STDOUT\n");
-      expect(
-        fs.readFileSync(path.join(executionDirectory, "stderr.txt"), "utf8"),
-      ).toContain("TERM-STDERR\n");
-      expect(
-        fs.readFileSync(path.join(executionDirectory, "stdout.txt"), "utf8"),
-      ).not.toContain("TERM-STDERR");
-      expect(
-        fs.readFileSync(path.join(executionDirectory, "stderr.txt"), "utf8"),
-      ).not.toContain("TERM-STDOUT");
+      expect(fs.readFileSync(path.join(executionDirectory, "stdout.txt"), "utf8")).toContain(
+        "TERM-STDOUT\n",
+      );
+      expect(fs.readFileSync(path.join(executionDirectory, "stderr.txt"), "utf8")).toContain(
+        "TERM-STDERR\n",
+      );
+      expect(fs.readFileSync(path.join(executionDirectory, "stdout.txt"), "utf8")).not.toContain(
+        "TERM-STDERR",
+      );
+      expect(fs.readFileSync(path.join(executionDirectory, "stderr.txt"), "utf8")).not.toContain(
+        "TERM-STDOUT",
+      );
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

@@ -56,9 +56,7 @@ export class GitHubCredentialResolutionError extends Error {
 }
 
 function getGitAskPassPath(): string {
-  return fileURLToPath(
-    new URL("../../scripts/github-git-askpass.mjs", import.meta.url),
-  );
+  return fileURLToPath(new URL("../../scripts/github-git-askpass.mjs", import.meta.url));
 }
 
 export interface GitHubCredentialProviderOptions {
@@ -66,10 +64,7 @@ export interface GitHubCredentialProviderOptions {
 }
 
 export class GitHubCredentialProvider {
-  private readonly authenticator: Pick<
-    GitHubAppAuthenticator,
-    "getInstallationToken"
-  >;
+  private readonly authenticator: Pick<GitHubAppAuthenticator, "getInstallationToken">;
 
   constructor(options: GitHubCredentialProviderOptions = {}) {
     this.authenticator = options.authenticator ?? new GitHubAppAuthenticator();

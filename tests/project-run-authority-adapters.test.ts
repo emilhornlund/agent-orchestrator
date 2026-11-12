@@ -35,14 +35,8 @@ import {
   writeReconciliationBlock,
 } from "../src/orchestrator/reconciliation-block-storage.js";
 import { cleanupPersistedStateTemporaryFiles } from "../src/orchestrator/persisted-state-temporary-files.js";
-import {
-  CommandRunner,
-  type RunCommand,
-} from "../src/process/command-runner.js";
-import {
-  OpenCodeClient,
-  type RunOpenCode,
-} from "../src/opencode/opencode-client.js";
+import { CommandRunner, type RunCommand } from "../src/process/command-runner.js";
+import { OpenCodeClient, type RunOpenCode } from "../src/opencode/opencode-client.js";
 
 let root: string;
 afterEach(() => {
@@ -244,9 +238,7 @@ describe("lease-backed project store projections", () => {
   });
 
   it("reconciles a legacy canonical validation limit before charging a configured higher bound", async () => {
-    root = fs.mkdtempSync(
-      path.join(os.tmpdir(), "validation-budget-authority-"),
-    );
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "validation-budget-authority-"));
     const repository = path.join(root, "repository");
     const worktrees = path.join(root, "worktrees");
     const runtime = path.join(root, "runtime");
@@ -364,10 +356,7 @@ describe("lease-backed project store projections", () => {
     let repairNumber = 0;
     const runOpenCode = vi.fn<RunOpenCode>(async () => {
       repairNumber += 1;
-      fs.writeFileSync(
-        path.join(worktree, "src.ts"),
-        `repair ${repairNumber}\n`,
-      );
+      fs.writeFileSync(path.join(worktree, "src.ts"), `repair ${repairNumber}\n`);
       return { exitCode: 0, output: "repair changed source", errorOutput: "" };
     });
     const git = {
@@ -375,8 +364,7 @@ describe("lease-backed project store projections", () => {
       getHeadSha: vi.fn(async () => "a".repeat(40)),
       getHeadTrackedFiles: vi.fn(async () => ["src.ts"]),
       getIndexEntries: vi.fn(
-        async () =>
-          "100644 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0\tsrc.ts\0",
+        async () => "100644 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0\tsrc.ts\0",
       ),
       getUntrackedFiles: vi.fn(async () => []),
     } as never;
@@ -575,9 +563,7 @@ describe("lease-backed project store projections", () => {
         version: 1,
         projectId: project.id,
         cardId: "card-one",
-        requirements: [
-          { id: "REQ-1", text: "Keep state", verification: "Test" },
-        ],
+        requirements: [{ id: "REQ-1", text: "Keep state", verification: "Test" }],
         steps: [
           {
             id: "STEP-1",
@@ -612,28 +598,18 @@ describe("lease-backed project store projections", () => {
 
     const projected = envelopeStore.read();
     expect(projected?.revision).toBe(6);
+    expect(projected?.compatibility[ProjectRunAuthority.queueKey(project.id)]).toBeDefined();
     expect(
-      projected?.compatibility[ProjectRunAuthority.queueKey(project.id)],
+      projected?.compatibility[ProjectRunAuthority.taskKey("task-plan", "card-one")],
     ).toBeDefined();
     expect(
-      projected?.compatibility[
-        ProjectRunAuthority.taskKey("task-plan", "card-one")
-      ],
+      projected?.compatibility[ProjectRunAuthority.taskKey("feedback-ledger", "card-one")],
     ).toBeDefined();
     expect(
-      projected?.compatibility[
-        ProjectRunAuthority.taskKey("feedback-ledger", "card-one")
-      ],
+      projected?.compatibility[ProjectRunAuthority.taskKey("maintenance", project.id)],
     ).toBeDefined();
     expect(
-      projected?.compatibility[
-        ProjectRunAuthority.taskKey("maintenance", project.id)
-      ],
-    ).toBeDefined();
-    expect(
-      projected?.compatibility[
-        ProjectRunAuthority.mutationBlocksKey(project.id)
-      ],
+      projected?.compatibility[ProjectRunAuthority.mutationBlocksKey(project.id)],
     ).toBeDefined();
 
     for (const legacyFile of legacyFiles) {
@@ -689,26 +665,13 @@ describe("lease-backed project store projections", () => {
       project.id,
       "card-one.json",
     );
-    const reconciliationPath = path.join(
-      runtime,
-      project.id,
-      "reconciliation-block.json",
-    );
+    const reconciliationPath = path.join(runtime, project.id, "reconciliation-block.json");
     const stateSentinel = "legacy state must remain import evidence";
-    for (const file of [
-      preparedPath,
-      trustedPath,
-      pendingPath,
-      rejectedPath,
-      reconciliationPath,
-    ]) {
+    for (const file of [preparedPath, trustedPath, pendingPath, rejectedPath, reconciliationPath]) {
       fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.writeFileSync(file, stateSentinel);
     }
-    const originalTemporary = path.join(
-      path.dirname(trustedPath),
-      "card-one.json.999999999.tmp",
-    );
+    const originalTemporary = path.join(path.dirname(trustedPath), "card-one.json.999999999.tmp");
     fs.writeFileSync(originalTemporary, stateSentinel);
 
     authority.run(() => {
@@ -768,13 +731,7 @@ describe("lease-backed project store projections", () => {
       cleanupPersistedStateTemporaryFiles([project], runtime);
       expect(fs.readFileSync(originalTemporary, "utf8")).toBe(stateSentinel);
     });
-    for (const file of [
-      preparedPath,
-      trustedPath,
-      pendingPath,
-      rejectedPath,
-      reconciliationPath,
-    ])
+    for (const file of [preparedPath, trustedPath, pendingPath, rejectedPath, reconciliationPath])
       expect(fs.readFileSync(file, "utf8")).toBe(stateSentinel);
     expect(fs.readFileSync(originalTemporary, "utf8")).toBe(stateSentinel);
 
@@ -787,8 +744,6 @@ describe("lease-backed project store projections", () => {
       current: () => ({ value: { malformed: true }, result: undefined }),
       validate: (value) => value,
     });
-    expect(() =>
-      authority.run(() => readTrustedCommitState(project, "card-one")),
-    ).toThrow();
+    expect(() => authority.run(() => readTrustedCommitState(project, "card-one"))).toThrow();
   });
 });

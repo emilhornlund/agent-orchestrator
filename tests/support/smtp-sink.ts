@@ -34,9 +34,7 @@ export async function smtpSink(root: string) {
           if (data) {
             const end = input.indexOf("\r\n.\r\n");
             if (end < 0) return;
-            const payload = input
-              .slice(0, end)
-              .replace(/(^|\r\n)\.\./gu, "$1.");
+            const payload = input.slice(0, end).replace(/(^|\r\n)\.\./gu, "$1.");
             input = input.slice(end + 5);
             data = false;
             ledger("DATA", payload);
@@ -55,12 +53,10 @@ export async function smtpSink(root: string) {
           if (end < 0) return;
           const line = input.slice(0, end);
           input = input.slice(end + 2);
-          if (line.startsWith("EHLO"))
-            socket.write("250-localhost\r\n250 AUTH PLAIN\r\n");
+          if (line.startsWith("EHLO")) socket.write("250-localhost\r\n250 AUTH PLAIN\r\n");
           else if (line.startsWith("AUTH"))
             socket.write("235 authenticated synthetic identity\r\n");
-          else if (line.startsWith("MAIL") || line.startsWith("RCPT"))
-            socket.write("250 OK\r\n");
+          else if (line.startsWith("MAIL") || line.startsWith("RCPT")) socket.write("250 OK\r\n");
           else if (line === "DATA") {
             data = true;
             socket.write("354 continue\r\n");
@@ -76,8 +72,7 @@ export async function smtpSink(root: string) {
     server.listen(0, "127.0.0.1", resolve);
   });
   const address = server.address();
-  if (!address || typeof address === "string")
-    throw new Error("Missing SMTP port");
+  if (!address || typeof address === "string") throw new Error("Missing SMTP port");
   const notifier = new SmtpEmailNotifier({
     host: "127.0.0.1",
     port: address.port,

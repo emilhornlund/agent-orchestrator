@@ -8,10 +8,7 @@ import {
 } from "../src/orchestrator/workflow-duration.js";
 import type { Logger } from "../src/logging/logger.js";
 import type { ProjectConfig } from "../src/config/config.js";
-import type {
-  TrelloClient,
-  TrelloListTransition,
-} from "../src/trello/trello-client.js";
+import type { TrelloClient, TrelloListTransition } from "../src/trello/trello-client.js";
 
 const listIds = {
   backlog: "backlog",
@@ -51,18 +48,8 @@ function selectRefinement(transitions: TrelloListTransition[]) {
 describe("selectAutomatedWorkflowPass", () => {
   it("selects the initial Ready for Agent to Human Review pass", () => {
     const result = select([
-      transition(
-        "end",
-        listIds.working,
-        listIds.review,
-        "2026-08-30T11:00:00.000Z",
-      ),
-      transition(
-        "start",
-        listIds.ready,
-        listIds.working,
-        "2026-08-30T10:00:00.000Z",
-      ),
+      transition("end", listIds.working, listIds.review, "2026-08-30T11:00:00.000Z"),
+      transition("start", listIds.ready, listIds.working, "2026-08-30T10:00:00.000Z"),
     ]);
 
     expect(result).toEqual({
@@ -76,36 +63,11 @@ describe("selectAutomatedWorkflowPass", () => {
 
   it("starts a retried pass at Failed to Ready for Agent", () => {
     const result = select([
-      transition(
-        "first-start",
-        listIds.ready,
-        listIds.working,
-        "2026-08-30T09:00:00.000Z",
-      ),
-      transition(
-        "failed",
-        listIds.working,
-        listIds.failed,
-        "2026-08-30T09:30:00.000Z",
-      ),
-      transition(
-        "retry-ready",
-        listIds.failed,
-        listIds.ready,
-        "2026-08-30T12:00:00.000Z",
-      ),
-      transition(
-        "retry-start",
-        listIds.ready,
-        listIds.working,
-        "2026-08-30T12:05:00.000Z",
-      ),
-      transition(
-        "end",
-        listIds.working,
-        listIds.review,
-        "2026-08-30T13:00:00.000Z",
-      ),
+      transition("first-start", listIds.ready, listIds.working, "2026-08-30T09:00:00.000Z"),
+      transition("failed", listIds.working, listIds.failed, "2026-08-30T09:30:00.000Z"),
+      transition("retry-ready", listIds.failed, listIds.ready, "2026-08-30T12:00:00.000Z"),
+      transition("retry-start", listIds.ready, listIds.working, "2026-08-30T12:05:00.000Z"),
+      transition("end", listIds.working, listIds.review, "2026-08-30T13:00:00.000Z"),
     ]);
 
     expect(result).toEqual({
@@ -119,30 +81,10 @@ describe("selectAutomatedWorkflowPass", () => {
 
   it("measures only the current review-feedback remediation pass", () => {
     const result = select([
-      transition(
-        "initial-start",
-        listIds.ready,
-        listIds.working,
-        "2026-08-30T09:00:00.000Z",
-      ),
-      transition(
-        "initial-end",
-        listIds.working,
-        listIds.review,
-        "2026-08-30T10:00:00.000Z",
-      ),
-      transition(
-        "feedback-start",
-        listIds.review,
-        listIds.working,
-        "2026-08-31T09:00:00.000Z",
-      ),
-      transition(
-        "feedback-end",
-        listIds.working,
-        listIds.review,
-        "2026-08-31T09:07:05.000Z",
-      ),
+      transition("initial-start", listIds.ready, listIds.working, "2026-08-30T09:00:00.000Z"),
+      transition("initial-end", listIds.working, listIds.review, "2026-08-30T10:00:00.000Z"),
+      transition("feedback-start", listIds.review, listIds.working, "2026-08-31T09:00:00.000Z"),
+      transition("feedback-end", listIds.working, listIds.review, "2026-08-31T09:07:05.000Z"),
     ]);
 
     expect(result).toEqual({
@@ -157,25 +99,13 @@ describe("selectAutomatedWorkflowPass", () => {
   it.each([
     {
       name: "missing start history",
-      transitions: [
-        transition(
-          "end",
-          listIds.working,
-          listIds.review,
-          "2026-08-30T11:00:00.000Z",
-        ),
-      ],
+      transitions: [transition("end", listIds.working, listIds.review, "2026-08-30T11:00:00.000Z")],
       reason: "no transition into working",
     },
     {
       name: "missing end history",
       transitions: [
-        transition(
-          "start",
-          listIds.ready,
-          listIds.working,
-          "2026-08-30T10:00:00.000Z",
-        ),
+        transition("start", listIds.ready, listIds.working, "2026-08-30T10:00:00.000Z"),
       ],
       reason: "no working -> review transition",
     },
@@ -183,30 +113,15 @@ describe("selectAutomatedWorkflowPass", () => {
       name: "malformed timestamp",
       transitions: [
         transition("bad", listIds.ready, listIds.working, "not-a-date"),
-        transition(
-          "end",
-          listIds.working,
-          listIds.review,
-          "2026-08-30T11:00:00.000Z",
-        ),
+        transition("end", listIds.working, listIds.review, "2026-08-30T11:00:00.000Z"),
       ],
       reason: "invalid timestamp",
     },
     {
       name: "invalid date ordering",
       transitions: [
-        transition(
-          "end",
-          listIds.working,
-          listIds.review,
-          "2026-08-30T10:00:00.000Z",
-        ),
-        transition(
-          "start",
-          listIds.ready,
-          listIds.working,
-          "2026-08-30T11:00:00.000Z",
-        ),
+        transition("end", listIds.working, listIds.review, "2026-08-30T10:00:00.000Z"),
+        transition("start", listIds.ready, listIds.working, "2026-08-30T11:00:00.000Z"),
       ],
       reason: "latest list transition",
     },
@@ -214,31 +129,14 @@ describe("selectAutomatedWorkflowPass", () => {
     const result = select(transitions);
 
     expect(result.pass).toBeNull();
-    expect(result).toEqual(
-      expect.objectContaining({ reason: expect.stringContaining(reason) }),
-    );
+    expect(result).toEqual(expect.objectContaining({ reason: expect.stringContaining(reason) }));
   });
 
   it("omits duration when transition history is ambiguous", () => {
     const result = select([
-      transition(
-        "start-one",
-        listIds.ready,
-        listIds.working,
-        "2026-08-30T10:00:00.000Z",
-      ),
-      transition(
-        "start-two",
-        listIds.review,
-        listIds.working,
-        "2026-08-30T10:00:00.000Z",
-      ),
-      transition(
-        "end",
-        listIds.working,
-        listIds.review,
-        "2026-08-30T11:00:00.000Z",
-      ),
+      transition("start-one", listIds.ready, listIds.working, "2026-08-30T10:00:00.000Z"),
+      transition("start-two", listIds.review, listIds.working, "2026-08-30T10:00:00.000Z"),
+      transition("end", listIds.working, listIds.review, "2026-08-30T11:00:00.000Z"),
     ]);
 
     expect(result).toEqual({
@@ -249,24 +147,9 @@ describe("selectAutomatedWorkflowPass", () => {
 
   it("omits a retry duration when its Failed to Ready for Agent transition is missing", () => {
     const result = select([
-      transition(
-        "failed",
-        listIds.working,
-        listIds.failed,
-        "2026-08-30T09:30:00.000Z",
-      ),
-      transition(
-        "retry-start",
-        listIds.ready,
-        listIds.working,
-        "2026-08-30T12:05:00.000Z",
-      ),
-      transition(
-        "end",
-        listIds.working,
-        listIds.review,
-        "2026-08-30T13:00:00.000Z",
-      ),
+      transition("failed", listIds.working, listIds.failed, "2026-08-30T09:30:00.000Z"),
+      transition("retry-start", listIds.ready, listIds.working, "2026-08-30T12:05:00.000Z"),
+      transition("end", listIds.working, listIds.review, "2026-08-30T13:00:00.000Z"),
     ]);
 
     expect(result.pass).toBeNull();
@@ -279,24 +162,9 @@ describe("selectAutomatedWorkflowPass", () => {
 
   it("omits a feedback duration when its Human Review to Working transition is missing", () => {
     const result = select([
-      transition(
-        "initial-start",
-        listIds.ready,
-        listIds.working,
-        "2026-08-30T09:00:00.000Z",
-      ),
-      transition(
-        "initial-end",
-        listIds.working,
-        listIds.review,
-        "2026-08-30T10:00:00.000Z",
-      ),
-      transition(
-        "feedback-end",
-        listIds.working,
-        listIds.review,
-        "2026-08-31T09:07:05.000Z",
-      ),
+      transition("initial-start", listIds.ready, listIds.working, "2026-08-30T09:00:00.000Z"),
+      transition("initial-end", listIds.working, listIds.review, "2026-08-30T10:00:00.000Z"),
+      transition("feedback-end", listIds.working, listIds.review, "2026-08-31T09:07:05.000Z"),
     ]);
 
     expect(result.pass).toBeNull();
@@ -311,18 +179,8 @@ describe("selectAutomatedWorkflowPass", () => {
 describe("selectRefinementWorkflowPass", () => {
   it("selects the initial Ready for Agent to Backlog refinement pass", () => {
     const result = selectRefinement([
-      transition(
-        "end",
-        listIds.working,
-        listIds.backlog,
-        "2026-08-30T11:01:01.000Z",
-      ),
-      transition(
-        "start",
-        listIds.ready,
-        listIds.working,
-        "2026-08-30T10:00:00.000Z",
-      ),
+      transition("end", listIds.working, listIds.backlog, "2026-08-30T11:01:01.000Z"),
+      transition("start", listIds.ready, listIds.working, "2026-08-30T10:00:00.000Z"),
     ]);
 
     expect(result).toEqual({
@@ -336,36 +194,11 @@ describe("selectRefinementWorkflowPass", () => {
 
   it("starts a retried refinement pass at Failed to Ready for Agent", () => {
     const result = selectRefinement([
-      transition(
-        "first-start",
-        listIds.ready,
-        listIds.working,
-        "2026-08-30T09:00:00.000Z",
-      ),
-      transition(
-        "failed",
-        listIds.working,
-        listIds.failed,
-        "2026-08-30T09:30:00.000Z",
-      ),
-      transition(
-        "retry-ready",
-        listIds.failed,
-        listIds.ready,
-        "2026-08-30T12:00:00.000Z",
-      ),
-      transition(
-        "retry-start",
-        listIds.ready,
-        listIds.working,
-        "2026-08-30T12:05:00.000Z",
-      ),
-      transition(
-        "end",
-        listIds.working,
-        listIds.backlog,
-        "2026-08-30T13:00:00.000Z",
-      ),
+      transition("first-start", listIds.ready, listIds.working, "2026-08-30T09:00:00.000Z"),
+      transition("failed", listIds.working, listIds.failed, "2026-08-30T09:30:00.000Z"),
+      transition("retry-ready", listIds.failed, listIds.ready, "2026-08-30T12:00:00.000Z"),
+      transition("retry-start", listIds.ready, listIds.working, "2026-08-30T12:05:00.000Z"),
+      transition("end", listIds.working, listIds.backlog, "2026-08-30T13:00:00.000Z"),
     ]);
 
     expect(result).toEqual({
@@ -393,28 +226,15 @@ describe("getElapsedRefinementWorkflowTime", () => {
       getListTransitions: vi
         .fn()
         .mockResolvedValue([
-          transition(
-            "start",
-            listIds.ready,
-            listIds.working,
-            "2026-08-30T10:00:00.000Z",
-          ),
-          transition(
-            "end",
-            listIds.working,
-            listIds.backlog,
-            "2026-08-31T11:01:01.000Z",
-          ),
+          transition("start", listIds.ready, listIds.working, "2026-08-30T10:00:00.000Z"),
+          transition("end", listIds.working, listIds.backlog, "2026-08-31T11:01:01.000Z"),
         ]),
     };
 
     await expect(
-      getElapsedRefinementWorkflowTime(
-        trello as unknown as TrelloClient,
-        project,
-        "card-1",
-        { warn: vi.fn() } as unknown as Logger,
-      ),
+      getElapsedRefinementWorkflowTime(trello as unknown as TrelloClient, project, "card-1", {
+        warn: vi.fn(),
+      } as unknown as Logger),
     ).resolves.toBe("1 day 1 hour 1 minute 1 second");
   });
 
@@ -443,65 +263,34 @@ describe("getElapsedRefinementWorkflowTime", () => {
     {
       name: "ambiguous history",
       history: [
-        transition(
-          "start-one",
-          listIds.ready,
-          listIds.working,
-          "2026-08-30T10:00:00.000Z",
-        ),
-        transition(
-          "start-two",
-          listIds.backlog,
-          listIds.working,
-          "2026-08-30T10:00:00.000Z",
-        ),
-        transition(
-          "end",
-          listIds.working,
-          listIds.backlog,
-          "2026-08-30T11:00:00.000Z",
-        ),
+        transition("start-one", listIds.ready, listIds.working, "2026-08-30T10:00:00.000Z"),
+        transition("start-two", listIds.backlog, listIds.working, "2026-08-30T10:00:00.000Z"),
+        transition("end", listIds.working, listIds.backlog, "2026-08-30T11:00:00.000Z"),
       ],
       reason: "ambiguous",
     },
     {
       name: "invalid date ordering",
       history: [
-        transition(
-          "end",
-          listIds.working,
-          listIds.backlog,
-          "2026-08-30T10:00:00.000Z",
-        ),
-        transition(
-          "start",
-          listIds.ready,
-          listIds.working,
-          "2026-08-30T11:00:00.000Z",
-        ),
+        transition("end", listIds.working, listIds.backlog, "2026-08-30T10:00:00.000Z"),
+        transition("start", listIds.ready, listIds.working, "2026-08-30T11:00:00.000Z"),
       ],
       reason: "latest list transition",
     },
-  ] as const)(
-    "omits duration for $name and logs the reason",
-    async ({ history, reason }) => {
-      const warn = vi.fn();
-      const trello = {
-        getListTransitions: vi.fn().mockResolvedValue(history),
-      };
+  ] as const)("omits duration for $name and logs the reason", async ({ history, reason }) => {
+    const warn = vi.fn();
+    const trello = {
+      getListTransitions: vi.fn().mockResolvedValue(history),
+    };
 
-      await expect(
-        getElapsedRefinementWorkflowTime(
-          trello as unknown as TrelloClient,
-          project,
-          "card-1",
-          { warn } as unknown as Logger,
-        ),
-      ).resolves.toBeUndefined();
+    await expect(
+      getElapsedRefinementWorkflowTime(trello as unknown as TrelloClient, project, "card-1", {
+        warn,
+      } as unknown as Logger),
+    ).resolves.toBeUndefined();
 
-      expect(warn).toHaveBeenCalledWith(expect.stringContaining(reason));
-    },
-  );
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining(reason));
+  });
 });
 
 describe("formatWorkflowDuration", () => {
@@ -515,8 +304,6 @@ describe("formatWorkflowDuration", () => {
   });
 
   it("rejects a negative duration", () => {
-    expect(() => formatWorkflowDuration(-1)).toThrow(
-      "finite, non-negative number",
-    );
+    expect(() => formatWorkflowDuration(-1)).toThrow("finite, non-negative number");
   });
 });

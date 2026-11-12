@@ -26,9 +26,7 @@ export function buildTaskSessionValidationRepairPrompt(
     (input.approvedPlan.projectId !== input.projectId ||
       input.approvedPlan.cardId !== input.card.id)
   ) {
-    throw new Error(
-      "Approved plan does not match the validation repair task identity",
-    );
+    throw new Error("Approved plan does not match the validation repair task identity");
   }
 
   if (
@@ -47,9 +45,7 @@ export function buildTaskSessionValidationRepairPrompt(
     `Task identity: ${JSON.stringify({ projectId: input.projectId, cardId: input.card.id })}`,
     `Task title: ${JSON.stringify(input.card.name)}`,
     "Original task description:",
-    input.card.desc.trim().length > 0
-      ? input.card.desc
-      : "No additional description was provided.",
+    input.card.desc.trim().length > 0 ? input.card.desc : "No additional description was provided.",
     ...buildCardAttachmentPromptLines(input.attachmentContext),
     "Advisory plan:",
     input.approvedPlan === undefined

@@ -24,9 +24,7 @@ export function buildTaskSessionImplementationPrompt(
     (input.approvedPlan.projectId !== input.projectId ||
       input.approvedPlan.cardId !== input.card.id)
   ) {
-    throw new Error(
-      "Approved task plan does not match the implementation task identity",
-    );
+    throw new Error("Approved task plan does not match the implementation task identity");
   }
 
   if (
@@ -46,9 +44,7 @@ export function buildTaskSessionImplementationPrompt(
     (input.attachmentContext.projectId !== input.projectId ||
       input.attachmentContext.cardId !== input.card.id)
   ) {
-    throw new Error(
-      "Implementation attachment context does not match the task project and card",
-    );
+    throw new Error("Implementation attachment context does not match the task project and card");
   }
 
   const description = input.card.desc.trim();
@@ -61,9 +57,7 @@ export function buildTaskSessionImplementationPrompt(
     `Task identity: ${JSON.stringify({ projectId: input.projectId, cardId: input.card.id })}`,
     `Task title: ${JSON.stringify(input.card.name)}`,
     "Original task description:",
-    description.length > 0
-      ? description
-      : "No additional description was provided.",
+    description.length > 0 ? description : "No additional description was provided.",
     ...buildCardAttachmentPromptLines(input.attachmentContext),
     "Task plan (advisory; may be absent):",
     input.approvedPlan === undefined

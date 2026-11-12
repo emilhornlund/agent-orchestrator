@@ -38,9 +38,7 @@ describe("buildCommitPrompt", () => {
     expect(prompt).toContain(
       "Write exactly one JSON object to .agent-orchestrator/commit-result.json.",
     );
-    expect(prompt).toContain(
-      "The artifact is the only permitted repository write.",
-    );
+    expect(prompt).toContain("The artifact is the only permitted repository write.");
     expect(prompt).toContain("Do not stage files.");
     expect(prompt).toContain("preserve real line breaks");
   });

@@ -1,8 +1,5 @@
 import fs from "node:fs";
-import {
-  taskResources,
-  assertTaskResourceProvenance,
-} from "../task-session/task-resources.js";
+import { taskResources, assertTaskResourceProvenance } from "../task-session/task-resources.js";
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 import path from "node:path";
 
@@ -70,9 +67,7 @@ function matchesPreparedRebaseProgress(
 
   return [expectedCurrentStep, actualCurrentStep]
     .filter((currentStep): currentStep is number => currentStep !== undefined)
-    .every((currentStep) =>
-      availableTotals.every((totalSteps) => currentStep <= totalSteps),
-    );
+    .every((currentStep) => availableTotals.every((totalSteps) => currentStep <= totalSteps));
 }
 
 function getWorktreePath(project: ProjectConfig, cardId: string): string {
@@ -167,8 +162,7 @@ export async function getExistingPreparedConflictWorktree(
   if (rebase !== null) {
     if (
       rebase.active !== true ||
-      (expectedRebase.headName !== expectedHeadName &&
-        expectedRebase.headName !== branch) ||
+      (expectedRebase.headName !== expectedHeadName && expectedRebase.headName !== branch) ||
       rebase.headName !== expectedHeadName ||
       rebase.backend !== expectedRebase.backend ||
       rebase.onto !== expectedRebase.onto ||
@@ -229,9 +223,7 @@ export async function prepareWorktree(
     if (status.trim().length > 0) {
       logger
         .child({ projectId: project.id })
-        .info(
-          "Existing worktree has uncommitted changes; preserving them for retry...",
-        );
+        .info("Existing worktree has uncommitted changes; preserving them for retry...");
     }
 
     return {

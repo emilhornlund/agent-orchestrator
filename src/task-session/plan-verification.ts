@@ -4,16 +4,10 @@ import type { CardAttachmentPromptContext } from "../context/card-attachment-pro
 import { buildCardAttachmentPromptLines } from "../context/card-attachment-prompt.js";
 import type { TaskPlan } from "./task-plan.js";
 
-const stableId = z
-  .string()
-  .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u, "Must be a nonempty stable ID");
+const stableId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u, "Must be a nonempty stable ID");
 
 const verificationFindingSchema = z.strictObject({
-  kind: z.enum([
-    "missing-requirement",
-    "unsupported-requirement",
-    "invented-scope",
-  ]),
+  kind: z.enum(["missing-requirement", "unsupported-requirement", "invented-scope"]),
   requirementId: stableId.optional(),
   detail: z.string().refine((value) => value.trim().length > 0, {
     message: "Finding detail must not be blank",
@@ -50,9 +44,7 @@ const planVerificationSchema = z
 export type PlanVerificationFinding = z.infer<typeof verificationFindingSchema>;
 export type PlanVerificationResult = z.infer<typeof planVerificationSchema>;
 
-export function parsePlanVerificationResult(
-  value: unknown,
-): PlanVerificationResult {
+export function parsePlanVerificationResult(value: unknown): PlanVerificationResult {
   return planVerificationSchema.parse(value);
 }
 
@@ -66,9 +58,7 @@ export interface PlanVerificationPromptInput {
   attachmentContext?: CardAttachmentPromptContext;
 }
 
-export function buildPlanVerificationPrompt(
-  input: PlanVerificationPromptInput,
-): string {
+export function buildPlanVerificationPrompt(input: PlanVerificationPromptInput): string {
   if (
     input.attachmentContext !== undefined &&
     (input.attachmentContext.projectId !== input.projectId ||

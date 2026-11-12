@@ -11,8 +11,7 @@ import { persistPrimaryOperationRecovery } from "../src/task-session/persist-pri
 
 const roots: string[] = [];
 afterEach(() => {
-  for (const root of roots.splice(0))
-    fs.rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
 function fixture(
@@ -145,9 +144,7 @@ describe("persistPrimaryOperationRecovery", () => {
       persistPrimaryOperationRecovery(
         store,
         exhausted,
-        new PrimaryOperationExhaustedError(
-          `Primary operation ${operationId} exhausted`,
-        ),
+        new PrimaryOperationExhaustedError(`Primary operation ${operationId} exhausted`),
         1_000,
       ),
     ).toBe("published-blockage");
@@ -172,9 +169,7 @@ describe("persistPrimaryOperationRecovery", () => {
     const saved = store.read("c")!;
     expect(saved.phase).toBe("ci");
     expect(saved.pullRequest).toEqual(record.pullRequest);
-    expect(saved.recoveryWait?.notificationId).toBe(
-      "attempt-key/primary/ci-op",
-    );
+    expect(saved.recoveryWait?.notificationId).toBe("attempt-key/primary/ci-op");
     expect(Date.parse(saved.recoveryWait!.retryAt)).toBeGreaterThan(Date.now());
   });
 
@@ -209,9 +204,7 @@ describe("persistPrimaryOperationRecovery", () => {
     const waiting = store.read("c")!;
     expect(waiting.terminalFailure).toBeUndefined();
     expect(waiting.phase).toBe("implementation");
-    expect(Date.parse(waiting.recoveryWait!.retryAt)).toBeGreaterThan(
-      Date.now(),
-    );
+    expect(Date.parse(waiting.recoveryWait!.retryAt)).toBeGreaterThan(Date.now());
   });
 
   it("keeps the existing PR and ownership blocked after verified post-publication exhaustion", () => {
@@ -240,9 +233,7 @@ describe("persistPrimaryOperationRecovery", () => {
       persistPrimaryOperationRecovery(
         store,
         exhausted,
-        new PrimaryOperationExhaustedError(
-          "Primary operation repair exhausted",
-        ),
+        new PrimaryOperationExhaustedError("Primary operation repair exhausted"),
         1000,
       ),
     ).toBe("published-blockage");
@@ -266,12 +257,7 @@ describe("persistPrimaryOperationRecovery", () => {
     ).toBe("unhandled");
     expect(f.store.read("c")?.terminalFailure).toBeUndefined();
     expect(
-      persistPrimaryOperationRecovery(
-        f.store,
-        f.record,
-        new Error("advisory failed"),
-        1000,
-      ),
+      persistPrimaryOperationRecovery(f.store, f.record, new Error("advisory failed"), 1000),
     ).toBe("unhandled");
   });
 
@@ -292,16 +278,11 @@ describe("persistPrimaryOperationRecovery", () => {
       revision: 2,
     });
     const wrapped = new Error("wrapper", {
-      cause: new PrimarySessionReconstructionRequiredError(
-        "details",
-        "rebuild",
-      ),
+      cause: new PrimarySessionReconstructionRequiredError("details", "rebuild"),
     });
-    expect(
-      persistPrimaryOperationRecovery(store, withOperation, wrapped, 1000),
-    ).toBe("waiting");
-    expect(() =>
-      persistPrimaryOperationRecovery(store, store.read("c")!, wrapped, 0),
-    ).toThrow(RangeError);
+    expect(persistPrimaryOperationRecovery(store, withOperation, wrapped, 1000)).toBe("waiting");
+    expect(() => persistPrimaryOperationRecovery(store, store.read("c")!, wrapped, 0)).toThrow(
+      RangeError,
+    );
   });
 });

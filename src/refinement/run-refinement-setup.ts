@@ -1,18 +1,12 @@
 import { z } from "zod";
 import fs from "node:fs";
-import {
-  taskResources,
-  runTaskResources,
-} from "../task-session/task-resources.js";
+import { taskResources, runTaskResources } from "../task-session/task-resources.js";
 import path from "node:path";
 import type { ProjectConfig } from "../config/config.js";
 import type { GitClient } from "../git/git-client.js";
 import type { Logger } from "../logging/logger.js";
 import { getSessionLogPath } from "../logging/session-log.js";
-import type {
-  CommandRunner,
-  CommandRunResult,
-} from "../process/command-runner.js";
+import type { CommandRunner, CommandRunResult } from "../process/command-runner.js";
 import {
   assertSetupInventoryIdentity,
   captureSetupEffects,
@@ -41,14 +35,7 @@ const setupAttemptSchema = z.strictObject({
 const setupStateSchema = z.strictObject({
   command: z.string().min(1).nullable(),
   worktreePath: z.string().min(1),
-  status: z.enum([
-    "pending",
-    "active",
-    "passed",
-    "failed",
-    "ambiguous",
-    "not-required",
-  ]),
+  status: z.enum(["pending", "active", "passed", "failed", "ambiguous", "not-required"]),
   baseline: z
     .string()
     .regex(/^sha256:[0-9a-f]{64}$/u)
@@ -65,8 +52,7 @@ export function hasExhaustedRefinementSetup(
   cardId: string,
 ): boolean {
   return (
-    authority.read(setupKey(cardId), (value) => setupStateSchema.parse(value))
-      ?.status === "failed"
+    authority.read(setupKey(cardId), (value) => setupStateSchema.parse(value))?.status === "failed"
   );
 }
 
@@ -109,11 +95,7 @@ export async function assertRefinementSetupBaselineUnchanged(options: {
   baseline: Buffer;
   signal: AbortSignal;
 }): Promise<void> {
-  const current = await captureSetupEffects(
-    options.git,
-    options.worktreePath,
-    options.signal,
-  );
+  const current = await captureSetupEffects(options.git, options.worktreePath, options.signal);
   if (
     JSON.stringify(JSON.parse(options.baseline.toString("utf8"))) !==
     JSON.stringify(JSON.parse(current.toString("utf8")))
@@ -133,16 +115,13 @@ export async function runRefinementSetup(options: {
   signal: AbortSignal;
   cardLog: Logger;
 }): Promise<Buffer | undefined> {
-  const { commands, git, project, cardId, worktreePath, signal, cardLog } =
-    options;
+  const { commands, git, project, cardId, worktreePath, signal, cardLog } = options;
   const command = project.repository.setupCommand ?? null;
   const authority = ProjectRunAuthority.current(project.id);
   if (command === null) {
     if (authority !== undefined) {
       const key = setupKey(cardId);
-      const previous = authority.read(key, (value) =>
-        setupStateSchema.parse(value),
-      );
+      const previous = authority.read(key, (value) => setupStateSchema.parse(value));
       if (
         previous !== null &&
         (previous.command !== null || previous.worktreePath !== worktreePath)
@@ -155,26 +134,15 @@ export async function runRefinementSetup(options: {
         attempts: [],
       };
       if (previous?.baseline) {
-        const baseline = readBaseline(
-          authority,
-          previous.baseline,
-          worktreePath,
-          cardId,
-        );
+        const baseline = readBaseline(authority, previous.baseline, worktreePath, cardId);
         return baseline;
       }
-      if (
-        previous !== null ||
-        fs.existsSync(path.join(worktreePath, refinementResultRelativePath))
-      )
+      if (previous !== null || fs.existsSync(path.join(worktreePath, refinementResultRelativePath)))
         throw new RefinementSetupAmbiguousError(
           "Interrupted refinement has no attributable post-setup baseline; preserving repository and result artifacts",
         );
       const baseline = await captureSetupEffects(git, worktreePath, signal);
-      initial.baseline = authority.store.writeArtifact(
-        baseline,
-        "application/json",
-      ).id;
+      initial.baseline = authority.store.writeArtifact(baseline, "application/json").id;
       authority.mutate(
         key,
         initial,
@@ -190,9 +158,7 @@ export async function runRefinementSetup(options: {
     return undefined;
   }
   if (authority === undefined)
-    throw new Error(
-      "Configured refinement setup requires durable project attempt authority",
-    );
+    throw new Error("Configured refinement setup requires durable project attempt authority");
   const key = setupKey(cardId);
   const taskStore = new TaskExecutionStore(
     authority.store.read()!.pinned.storageRoot,
@@ -224,39 +190,23 @@ export async function runRefinementSetup(options: {
   if (state.status === "passed") {
     const attempt = state.attempts.at(-1);
     if (!attempt?.after || !attempt.executionId)
-      throw new Error(
-        "Completed refinement setup has incomplete durable evidence",
-      );
+      throw new Error("Completed refinement setup has incomplete durable evidence");
     const expected = {
       executionId: attempt.executionId,
       command,
       cwd: worktreePath,
     };
-    const processEvidence = taskStore.readProcessExecution(
-      cardId,
-      attempt.executionId,
-    );
+    const processEvidence = taskStore.readProcessExecution(cardId, attempt.executionId);
     if (!isVerifiedSuccessfulExecution(processEvidence, expected))
-      throw new Error(
-        "Completed refinement setup process result could not be verified",
-      );
+      throw new Error("Completed refinement setup process result could not be verified");
     for (const reference of [attempt.before, attempt.after]) {
       const artifact = JSON.parse(
         authority.store.readArtifact(reference).toString("utf8"),
       ) as unknown;
-      assertSetupInventoryIdentity(
-        artifact,
-        worktreePath,
-        taskResources(project, cardId).branch,
-      );
+      assertSetupInventoryIdentity(artifact, worktreePath, taskResources(project, cardId).branch);
     }
     cardLog.event("Verified completed repository setup; skipping rerun");
-    return readBaseline(
-      authority,
-      state.baseline ?? attempt.after,
-      worktreePath,
-      cardId,
-    );
+    return readBaseline(authority, state.baseline ?? attempt.after, worktreePath, cardId);
   }
   if (state.status === "active") {
     const active = state.attempts.at(-1);
@@ -273,10 +223,7 @@ export async function runRefinementSetup(options: {
     let stopped: boolean;
     let afterRef: string;
     try {
-      const evidence = taskStore.readProcessExecution(
-        cardId,
-        active.executionId,
-      );
+      const evidence = taskStore.readProcessExecution(cardId, active.executionId);
       passed = isVerifiedSuccessfulExecution(evidence, expected);
       stopped = isVerifiedStoppedExecution(evidence, expected);
     } catch (error) {
@@ -339,10 +286,7 @@ export async function runRefinementSetup(options: {
   while (state.attempts.length < maxSetupExecutions) {
     signal.throwIfAborted();
     const before = await captureSetupEffects(git, worktreePath, signal);
-    const beforeRef = authority.store.writeArtifact(
-      before,
-      "application/json",
-    ).id;
+    const beforeRef = authority.store.writeArtifact(before, "application/json").id;
     const attempt: z.infer<typeof setupAttemptSchema> = {
       command,
       worktreePath,
@@ -371,19 +315,14 @@ export async function runRefinementSetup(options: {
           const current = state.attempts.at(-1)!;
           state = {
             ...state,
-            attempts: [
-              ...state.attempts.slice(0, -1),
-              { ...current, executionId: id },
-            ],
+            attempts: [...state.attempts.slice(0, -1), { ...current, executionId: id }],
           };
           writeState(state);
         },
       });
       executionId = result.executionId ?? executionId;
       if (result.exitCode !== 0)
-        error = new Error(
-          `Repository setup exited with code ${result.exitCode}`,
-        );
+        error = new Error(`Repository setup exited with code ${result.exitCode}`);
     } catch (caught) {
       error = caught;
     }
@@ -394,9 +333,7 @@ export async function runRefinementSetup(options: {
       const after = await captureSetupEffects(git, worktreePath, signal, true);
       afterRef = authority.store.writeArtifact(after, "application/json").id;
       const expected =
-        executionId === undefined
-          ? undefined
-          : { executionId, command, cwd: worktreePath };
+        executionId === undefined ? undefined : { executionId, command, cwd: worktreePath };
       const processEvidence = executionId
         ? taskStore.readProcessExecution(cardId, executionId)
         : null;
@@ -404,9 +341,7 @@ export async function runRefinementSetup(options: {
         error === undefined &&
         expected !== undefined &&
         isVerifiedSuccessfulExecution(processEvidence, expected);
-      stopped =
-        expected !== undefined &&
-        isVerifiedStoppedExecution(processEvidence, expected);
+      stopped = expected !== undefined && isVerifiedStoppedExecution(processEvidence, expected);
     } catch (caught) {
       throw new RefinementSetupAmbiguousError(
         "Repository setup process finished or may have finished, but its after-effects/result evidence could not be durably reconciled; preserving for recovery",

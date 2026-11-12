@@ -4,10 +4,7 @@ import path from "node:path";
 import { z } from "zod";
 import type { ProjectConfig } from "../config/config.js";
 import { ProjectRunAuthority } from "./project-run-authority.js";
-import {
-  readTerminalPrFence,
-  otherTaskWriterIsActive,
-} from "./terminal-pr-fence.js";
+import { readTerminalPrFence, otherTaskWriterIsActive } from "./terminal-pr-fence.js";
 
 const eventSchema = z.strictObject({
   eventId: z
@@ -68,8 +65,7 @@ const queueSchema = z
         ctx.addIssue({
           code: "custom",
           path: ["events", index],
-          message:
-            "Retired mutations require a durable retirement time and reason",
+          message: "Retired mutations require a durable retirement time and reason",
         });
       }
       if (ids.has(event.eventId)) {
@@ -80,26 +76,20 @@ const queueSchema = z
         });
       }
       ids.add(event.eventId);
-      if (
-        event.dispatchReady === false &&
-        ["active", "failed", "completed"].includes(event.status)
-      )
+      if (event.dispatchReady === false && ["active", "failed", "completed"].includes(event.status))
         ctx.addIssue({
           code: "custom",
           path: ["events", index, "dispatchReady"],
-          message:
-            "Unclassified observations cannot own or complete a writer operation",
+          message: "Unclassified observations cannot own or complete a writer operation",
         });
       if (
         (event.prerequisites ?? []).some((id) => id === event.eventId) ||
-        new Set(event.prerequisites ?? []).size !==
-          (event.prerequisites ?? []).length
+        new Set(event.prerequisites ?? []).size !== (event.prerequisites ?? []).length
       )
         ctx.addIssue({
           code: "custom",
           path: ["events", index, "prerequisites"],
-          message:
-            "Mutation prerequisites must be distinct and cannot include itself",
+          message: "Mutation prerequisites must be distinct and cannot include itself",
         });
       if (event.status === "active" || event.status === "failed") {
         activeIds.push(event.eventId);
@@ -116,11 +106,7 @@ const queueSchema = z
           )
         );
       };
-      if (
-        !(event.prerequisites ?? []).every((id) =>
-          visit(id, new Set([event.eventId])),
-        )
-      )
+      if (!(event.prerequisites ?? []).every((id) => visit(id, new Set([event.eventId]))))
         ctx.addIssue({
           code: "custom",
           path: ["events", event.eventId, "prerequisites"],
@@ -140,9 +126,7 @@ const queueSchema = z
       });
     }
   });
-export function parseTaskMutationQueue(
-  value: unknown,
-): ReturnType<typeof queueSchema.parse> {
+export function parseTaskMutationQueue(value: unknown): ReturnType<typeof queueSchema.parse> {
   return queueSchema.parse(value);
 }
 export type TaskMutationEvent = z.infer<typeof eventSchema>;
@@ -158,9 +142,7 @@ const mutationPriority: Record<TaskMutationEvent["kind"], number> = {
 
 function nextQueued(queue: QueueRecord): TaskMutationEvent | undefined {
   const next = [...queue.events]
-    .filter(
-      (event) => event.status === "queued" && event.dispatchReady !== false,
-    )
+    .filter((event) => event.status === "queued" && event.dispatchReady !== false)
     .sort(
       (left, right) =>
         mutationPriority[left.kind] - mutationPriority[right.kind] ||
@@ -194,12 +176,7 @@ function isProcessAlive(pid: number | undefined): boolean {
     process.kill(pid, 0);
     return true;
   } catch (error) {
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "ESRCH"
-    ) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "ESRCH") {
       return false;
     }
     return true;
@@ -230,19 +207,14 @@ function within(parent: string, child: string): boolean {
   const relative = path.relative(parent, child);
   return (
     relative === "" ||
-    (relative !== ".." &&
-      !relative.startsWith(`..${path.sep}`) &&
-      !path.isAbsolute(relative))
+    (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
   );
 }
 
 function ensureDirectory(directory: string): void {
   const parsed = path.parse(directory);
   let current = parsed.root;
-  for (const component of path
-    .relative(parsed.root, directory)
-    .split(path.sep)
-    .filter(Boolean)) {
+  for (const component of path.relative(parsed.root, directory).split(path.sep).filter(Boolean)) {
     current = path.join(current, component);
     let stat = fs.lstatSync(current, { throwIfNoEntry: false });
     if (stat === undefined) {
@@ -272,11 +244,7 @@ export class TaskMutationQueue {
   private readonly ownerToken = randomUUID();
   private readonly authority: ProjectRunAuthority | undefined;
 
-  constructor(
-    rootDirectory: string,
-    project: ProjectConfig,
-    authority?: ProjectRunAuthority,
-  ) {
+  constructor(rootDirectory: string, project: ProjectConfig, authority?: ProjectRunAuthority) {
     if (!path.isAbsolute(rootDirectory))
       throw new Error("Task mutation queue root must be absolute");
     assertComponent(project.id, "project ID");
@@ -287,30 +255,20 @@ export class TaskMutationQueue {
       within(root, path.resolve(project.repository.worktreeRoot)) ||
       within(path.resolve(project.repository.worktreeRoot), root)
     )
-      throw new Error(
-        "Task mutation queue root must not overlap source or worktree roots",
-      );
+      throw new Error("Task mutation queue root must not overlap source or worktree roots");
     this.projectId = project.id;
     this.authority = authority ?? ProjectRunAuthority.current(project.id);
     if (authority && authority.projectId !== project.id)
       throw new Error("Task mutation queue authority project mismatch");
-    this.filePath = path.join(
-      root,
-      "task-mutation-queues",
-      `${project.id}.json`,
-    );
+    this.filePath = path.join(root, "task-mutation-queues", `${project.id}.json`);
   }
 
-  enqueue(
-    input: Omit<TaskMutationEvent, "status" | "ownerToken" | "ownerPid">,
-  ): TaskMutationEvent {
+  enqueue(input: Omit<TaskMutationEvent, "status" | "ownerToken" | "ownerPid">): TaskMutationEvent {
     const event = eventSchema.parse({ ...input, status: "queued" });
     if (event.projectId !== this.projectId)
       throw new Error("Mutation event belongs to another project");
     return this.update((queue) => {
-      const existing = queue.events.find(
-        (item) => item.eventId === event.eventId,
-      );
+      const existing = queue.events.find((item) => item.eventId === event.eventId);
       if (existing !== undefined) {
         const comparable = (value: TaskMutationEvent) => ({
           ...value,
@@ -319,10 +277,7 @@ export class TaskMutationQueue {
           ownerToken: undefined,
           ownerPid: undefined,
         });
-        if (
-          JSON.stringify(comparable(existing)) !==
-          JSON.stringify(comparable(event))
-        ) {
+        if (JSON.stringify(comparable(existing)) !== JSON.stringify(comparable(event))) {
           throw new TaskMutationQueueConflictError(
             `Mutation event ID was reused: ${event.eventId}`,
           );
@@ -338,11 +293,7 @@ export class TaskMutationQueue {
   setQueuedCiEligibility(eventId: string, eligible: boolean): void {
     this.update((queue) => {
       const current = queue.events.find((event) => event.eventId === eventId);
-      if (
-        !current ||
-        current.kind !== "ci-repair" ||
-        current.status !== "queued"
-      )
+      if (!current || current.kind !== "ci-repair" || current.status !== "queued")
         throw new TaskMutationQueueConflictError(
           "Only a queued CI observation can change dispatch eligibility",
         );
@@ -368,8 +319,7 @@ export class TaskMutationQueue {
     const queue = this.readQueue();
     return queue.activeEventId === null
       ? null
-      : (queue.events.find((event) => event.eventId === queue.activeEventId) ??
-          null);
+      : (queue.events.find((event) => event.eventId === queue.activeEventId) ?? null);
   }
 
   ownsActive(eventId: string): boolean {
@@ -397,9 +347,7 @@ export class TaskMutationQueue {
         queue: {
           ...queue,
           activeEventId: next.eventId,
-          events: queue.events.map((event) =>
-            event.eventId === next.eventId ? claimed : event,
-          ),
+          events: queue.events.map((event) => (event.eventId === next.eventId ? claimed : event)),
         },
         result: claimed,
       };
@@ -414,11 +362,9 @@ export class TaskMutationQueue {
       if (queue.activeEventId !== null) {
         if (queue.activeEventId !== eventId) return { queue, result: null };
         if (target.status === "active") {
-          if (target.ownerToken === this.ownerToken)
-            return { queue, result: target };
+          if (target.ownerToken === this.ownerToken) return { queue, result: target };
           if (
-            (target.ownerToken !== undefined &&
-              liveMutationOwners.has(target.ownerToken)) ||
+            (target.ownerToken !== undefined && liveMutationOwners.has(target.ownerToken)) ||
             isProcessAlive(target.ownerPid)
           ) {
             return { queue, result: null };
@@ -432,17 +378,13 @@ export class TaskMutationQueue {
           return {
             queue: {
               ...queue,
-              events: queue.events.map((event) =>
-                event.eventId === eventId ? reclaimed : event,
-              ),
+              events: queue.events.map((event) => (event.eventId === eventId ? reclaimed : event)),
             },
             result: reclaimed,
           };
         }
         if (target.status !== "failed")
-          throw new TaskMutationQueueConflictError(
-            "Recovery event does not own the project queue",
-          );
+          throw new TaskMutationQueueConflictError("Recovery event does not own the project queue");
         const active = {
           ...target,
           status: "active" as const,
@@ -453,9 +395,7 @@ export class TaskMutationQueue {
         return {
           queue: {
             ...queue,
-            events: queue.events.map((event) =>
-              event.eventId === eventId ? active : event,
-            ),
+            events: queue.events.map((event) => (event.eventId === eventId ? active : event)),
           },
           result: active,
         };
@@ -480,9 +420,7 @@ export class TaskMutationQueue {
         queue: {
           ...queue,
           activeEventId: eventId,
-          events: queue.events.map((event) =>
-            event.eventId === eventId ? active : event,
-          ),
+          events: queue.events.map((event) => (event.eventId === eventId ? active : event)),
         },
         result: active,
       };
@@ -502,9 +440,7 @@ export class TaskMutationQueue {
         !["implementation", "refinement"].includes(current.kind) ||
         !["queued", "active"].includes(current.status)
       )
-        throw new TaskMutationQueueConflictError(
-          "Orphaned Ready event is not safely retireable",
-        );
+        throw new TaskMutationQueueConflictError("Orphaned Ready event is not safely retireable");
       if (current.status === "active") {
         if (queue.activeEventId !== eventId)
           throw new TaskMutationQueueConflictError(
@@ -512,8 +448,7 @@ export class TaskMutationQueue {
           );
         if (
           current.ownerToken !== this.ownerToken &&
-          ((current.ownerToken !== undefined &&
-            liveMutationOwners.has(current.ownerToken)) ||
+          ((current.ownerToken !== undefined && liveMutationOwners.has(current.ownerToken)) ||
             isProcessAlive(current.ownerPid))
         )
           throw new TaskMutationQueueConflictError(
@@ -524,8 +459,7 @@ export class TaskMutationQueue {
         throw new TaskMutationQueueConflictError(
           "Queued orphan unexpectedly owns the project queue",
         );
-      if (current.ownerToken !== undefined)
-        liveMutationOwners.delete(current.ownerToken);
+      if (current.ownerToken !== undefined) liveMutationOwners.delete(current.ownerToken);
       const retired = {
         ...current,
         status: "retired" as const,
@@ -537,11 +471,8 @@ export class TaskMutationQueue {
       return {
         queue: {
           ...queue,
-          activeEventId:
-            queue.activeEventId === eventId ? null : queue.activeEventId,
-          events: queue.events.map((event) =>
-            event.eventId === eventId ? retired : event,
-          ),
+          activeEventId: queue.activeEventId === eventId ? null : queue.activeEventId,
+          events: queue.events.map((event) => (event.eventId === eventId ? retired : event)),
         },
         result: retired,
       };
@@ -553,10 +484,7 @@ export class TaskMutationQueue {
    * distinguish retirement from successful execution. The caller must verify
    * task/Trello ownership and explicitly attest that execution never began.
    */
-  retireLegacyCompletedEvent(
-    eventId: string,
-    confirmedNeverStarted: boolean,
-  ): TaskMutationEvent {
+  retireLegacyCompletedEvent(eventId: string, confirmedNeverStarted: boolean): TaskMutationEvent {
     if (!confirmedNeverStarted)
       throw new TaskMutationQueueConflictError(
         "Legacy mutation recovery requires explicit never-started confirmation",
@@ -569,9 +497,7 @@ export class TaskMutationQueue {
         current.status !== "completed" ||
         queue.activeEventId !== null
       )
-        throw new TaskMutationQueueConflictError(
-          "Legacy mutation is not safely recoverable",
-        );
+        throw new TaskMutationQueueConflictError("Legacy mutation is not safely recoverable");
       const retired = {
         ...current,
         status: "retired" as const,
@@ -581,9 +507,7 @@ export class TaskMutationQueue {
       return {
         queue: {
           ...queue,
-          events: queue.events.map((event) =>
-            event.eventId === eventId ? retired : event,
-          ),
+          events: queue.events.map((event) => (event.eventId === eventId ? retired : event)),
         },
         result: retired,
       };
@@ -665,9 +589,7 @@ export class TaskMutationQueue {
           ...queue,
           events,
           activeEventId:
-            queue.activeEventId && cancelled.has(queue.activeEventId)
-              ? null
-              : queue.activeEventId,
+            queue.activeEventId && cancelled.has(queue.activeEventId) ? null : queue.activeEventId,
         },
         result: undefined,
       };
@@ -683,9 +605,7 @@ export class TaskMutationQueue {
       otherTaskWriterIsActive(this.authority)
     )
       return this.claimForRecovery(eventId);
-    if (
-      eventId !== `terminal-pr:${fence.cardId}:${fence.state}:${fence.headSha}`
-    )
+    if (eventId !== `terminal-pr:${fence.cardId}:${fence.state}:${fence.headSha}`)
       throw new TaskMutationQueueConflictError(
         "Terminal event differs from the authoritative outcome",
       );
@@ -711,9 +631,7 @@ export class TaskMutationQueue {
         queue: {
           ...queue,
           activeEventId: eventId,
-          events: queue.events.map((event) =>
-            event.eventId === eventId ? claimed : event,
-          ),
+          events: queue.events.map((event) => (event.eventId === eventId ? claimed : event)),
         },
         result: claimed,
       };
@@ -728,14 +646,9 @@ export class TaskMutationQueue {
   releaseForRecovery(eventId: string): TaskMutationEvent {
     return this.update((queue) => {
       if (queue.activeEventId !== eventId)
-        throw new TaskMutationQueueConflictError(
-          "Mutation event does not own the project queue",
-        );
+        throw new TaskMutationQueueConflictError("Mutation event does not own the project queue");
       const current = queue.events.find((event) => event.eventId === eventId);
-      if (
-        current?.status !== "active" ||
-        current.ownerToken !== this.ownerToken
-      ) {
+      if (current?.status !== "active" || current.ownerToken !== this.ownerToken) {
         throw new TaskMutationQueueConflictError(
           "Mutation event is not owned by this recovery worker",
         );
@@ -749,9 +662,7 @@ export class TaskMutationQueue {
       return {
         queue: {
           ...queue,
-          events: queue.events.map((event) =>
-            event.eventId === eventId ? released : event,
-          ),
+          events: queue.events.map((event) => (event.eventId === eventId ? released : event)),
         },
         result: released,
       };
@@ -762,34 +673,22 @@ export class TaskMutationQueue {
     return this.finish(eventId, "queued");
   }
 
-  private finish(
-    eventId: string,
-    status: "completed" | "failed" | "queued",
-  ): TaskMutationEvent {
+  private finish(eventId: string, status: "completed" | "failed" | "queued"): TaskMutationEvent {
     return this.update((queue) => {
       if (queue.activeEventId !== eventId)
-        throw new TaskMutationQueueConflictError(
-          "Mutation event does not own the project queue",
-        );
+        throw new TaskMutationQueueConflictError("Mutation event does not own the project queue");
       const current = queue.events.find((event) => event.eventId === eventId);
       if (
         current === undefined ||
-        (current.status !== "active" &&
-          !(status === "queued" && current.status === "failed"))
+        (current.status !== "active" && !(status === "queued" && current.status === "failed"))
       )
-        throw new TaskMutationQueueConflictError(
-          "Active mutation event disappeared",
-        );
-      if (
-        current.status === "active" &&
-        current.ownerToken !== this.ownerToken
-      ) {
+        throw new TaskMutationQueueConflictError("Active mutation event disappeared");
+      if (current.status === "active" && current.ownerToken !== this.ownerToken) {
         throw new TaskMutationQueueConflictError(
           "Mutation event is owned by another polling worker",
         );
       }
-      if (current.ownerToken !== undefined)
-        liveMutationOwners.delete(current.ownerToken);
+      if (current.ownerToken !== undefined) liveMutationOwners.delete(current.ownerToken);
       const next = {
         ...current,
         status,
@@ -800,9 +699,7 @@ export class TaskMutationQueue {
         queue: {
           ...queue,
           activeEventId: status === "failed" ? eventId : null,
-          events: queue.events.map((event) =>
-            event.eventId === eventId ? next : event,
-          ),
+          events: queue.events.map((event) => (event.eventId === eventId ? next : event)),
         },
         result: next,
       };
@@ -832,19 +729,13 @@ export class TaskMutationQueue {
         activeEventId: null,
         events: [],
       };
-    if (stat.isSymbolicLink() || !stat.isFile())
-      throw new Error("Unsafe task mutation queue file");
-    const queue = queueSchema.parse(
-      JSON.parse(fs.readFileSync(this.filePath, "utf8")) as unknown,
-    );
-    if (queue.projectId !== this.projectId)
-      throw new Error("Task mutation queue owner mismatch");
+    if (stat.isSymbolicLink() || !stat.isFile()) throw new Error("Unsafe task mutation queue file");
+    const queue = queueSchema.parse(JSON.parse(fs.readFileSync(this.filePath, "utf8")) as unknown);
+    if (queue.projectId !== this.projectId) throw new Error("Task mutation queue owner mismatch");
     return queue;
   }
 
-  private update<T>(
-    operation: (queue: QueueRecord) => { queue: QueueRecord; result: T },
-  ): T {
+  private update<T>(operation: (queue: QueueRecord) => { queue: QueueRecord; result: T }): T {
     if (this.authority !== undefined) {
       const initial: QueueRecord = {
         version: 1,
@@ -859,8 +750,7 @@ export class TaskMutationQueue {
         (stored) => {
           const current = parseTaskMutationQueue(stored);
           const output = operation(current);
-          if (output.queue === current)
-            return { value: current, result: output.result };
+          if (output.queue === current) return { value: current, result: output.result };
           const next = parseTaskMutationQueue({
             ...output.queue,
             revision: current.revision + 1,
@@ -912,9 +802,7 @@ export class TaskMutationQueue {
         "code" in error &&
         error.code === "EEXIST"
       ) {
-        throw new TaskMutationQueueConflictError(
-          "Another task mutation owns the project queue",
-        );
+        throw new TaskMutationQueueConflictError("Another task mutation owns the project queue");
       }
       throw error;
     }

@@ -7,8 +7,7 @@ import type { TaskPlan } from "../task-session/task-plan.js";
 import type { TrelloCard } from "../trello/trello-client.js";
 import { taskSessionRepositoryGuidance } from "./task-session-prompt-guidance.js";
 
-export const REVIEW_REPAIR_FINISHED_EARLY_MARKER =
-  "REVIEW_REPAIR_FINISHED_EARLY";
+export const REVIEW_REPAIR_FINISHED_EARLY_MARKER = "REVIEW_REPAIR_FINISHED_EARLY";
 
 export interface TaskSessionReviewRepairPromptInput {
   projectId: string;
@@ -30,9 +29,7 @@ export function buildTaskSessionReviewRepairPrompt(
     input.review.projectId !== input.projectId ||
     input.review.cardId !== input.card.id
   ) {
-    throw new Error(
-      "Review repair artifacts do not match the task project and card",
-    );
+    throw new Error("Review repair artifacts do not match the task project and card");
   }
 
   if (
@@ -40,9 +37,7 @@ export function buildTaskSessionReviewRepairPrompt(
     (input.attachmentContext.projectId !== input.projectId ||
       input.attachmentContext.cardId !== input.card.id)
   ) {
-    throw new Error(
-      "Review repair attachment context does not match the task project and card",
-    );
+    throw new Error("Review repair attachment context does not match the task project and card");
   }
 
   return [
@@ -51,9 +46,7 @@ export function buildTaskSessionReviewRepairPrompt(
     `Task identity: ${JSON.stringify({ projectId: input.projectId, cardId: input.card.id })}`,
     `Task title: ${JSON.stringify(input.card.name)}`,
     "Original task description:",
-    input.card.desc.trim().length > 0
-      ? input.card.desc
-      : "No additional description was provided.",
+    input.card.desc.trim().length > 0 ? input.card.desc : "No additional description was provided.",
     ...buildCardAttachmentPromptLines(input.attachmentContext),
     "Advisory plan and task scope:",
     input.approvedPlan === undefined

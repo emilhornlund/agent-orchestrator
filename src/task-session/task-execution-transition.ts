@@ -144,15 +144,13 @@ export function transitionTaskExecutionRecord(
   }
 
   if (record.lastEvent?.id === event.eventId) {
-    const eventPullRequest =
-      event.type === "publication-completed" ? event.pullRequest : undefined;
+    const eventPullRequest = event.type === "publication-completed" ? event.pullRequest : undefined;
 
     if (
       record.lastEvent.type === event.type &&
       record.lastEvent.operationKey === event.operationKey &&
       record.lastEvent.occurredAt === event.occurredAt &&
-      JSON.stringify(record.lastEvent.pullRequest) ===
-        JSON.stringify(eventPullRequest)
+      JSON.stringify(record.lastEvent.pullRequest) === JSON.stringify(eventPullRequest)
     ) {
       return record;
     }
@@ -170,9 +168,7 @@ export function transitionTaskExecutionRecord(
       record.externalRecovery !== undefined
     )
   ) {
-    throw new TaskExecutionTransitionError(
-      `Cannot transition from terminal phase ${record.phase}`,
-    );
+    throw new TaskExecutionTransitionError(`Cannot transition from terminal phase ${record.phase}`);
   }
 
   const transition = phaseTransitions[event.type];
@@ -183,10 +179,7 @@ export function transitionTaskExecutionRecord(
     : transition.from === null
       ? null
       : [transition.from];
-  if (
-    allowedSourcePhases !== null &&
-    !allowedSourcePhases.includes(record.phase)
-  ) {
+  if (allowedSourcePhases !== null && !allowedSourcePhases.includes(record.phase)) {
     throw new TaskExecutionTransitionError(
       `Event ${event.type} is not allowed during the ${record.phase} phase`,
     );
@@ -201,8 +194,7 @@ export function transitionTaskExecutionRecord(
   const nextRecord = parseTaskExecutionRecord({
     ...record,
     phase: destinationPhase,
-    ...(destinationPhase !== "human-feedback" &&
-    record.feedbackRemediation?.status === "active"
+    ...(destinationPhase !== "human-feedback" && record.feedbackRemediation?.status === "active"
       ? { feedbackRemediation: undefined }
       : {}),
     ...(destinationPhase === "human-feedback" ||
@@ -215,13 +207,9 @@ export function transitionTaskExecutionRecord(
       type: event.type,
       operationKey: event.operationKey,
       occurredAt: event.occurredAt,
-      ...(event.type === "publication-completed"
-        ? { pullRequest: event.pullRequest }
-        : {}),
+      ...(event.type === "publication-completed" ? { pullRequest: event.pullRequest } : {}),
     },
-    ...(event.type === "publication-completed"
-      ? { pullRequest: event.pullRequest }
-      : {}),
+    ...(event.type === "publication-completed" ? { pullRequest: event.pullRequest } : {}),
     revision: record.revision + 1,
     updatedAt: event.occurredAt,
   });

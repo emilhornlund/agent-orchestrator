@@ -120,9 +120,7 @@ it("preserves a failed attempt and starts a distinct clean attempt from current 
   const f = await fixture();
   const previous = await f.create();
   previous.claim();
-  const old = await previous.run(() =>
-    prepareWorktree(f.git, f.project, "card"),
-  );
+  const old = await previous.run(() => prepareWorktree(f.git, f.project, "card"));
   fs.writeFileSync(path.join(old.path, "unfinished"), "preserved");
   const now = new Date().toISOString();
   await previous.failRefinement({
@@ -140,9 +138,7 @@ it("preserves a failed attempt and starts a distinct clean attempt from current 
   expect(next.store.attemptId).not.toBe(previous.store.attemptId);
   expect(next.store.read()!.sessions).toEqual({});
   expect(
-    next.run(() =>
-      new TaskExecutionStore(next.store.storageRoot, f.project).read("card"),
-    ),
+    next.run(() => new TaskExecutionStore(next.store.storageRoot, f.project).read("card")),
   ).toBeNull();
   const fresh = await next.run(() => prepareWorktree(f.git, f.project, "card"));
   expect(fresh).toMatchObject({
@@ -151,13 +147,9 @@ it("preserves a failed attempt and starts a distinct clean attempt from current 
   });
   expect(fresh.path).not.toBe(old.path);
   expect(fresh.branch).not.toBe(old.branch);
-  expect(fs.readFileSync(path.join(fresh.path, "accepted"), "utf8")).toBe(
-    "latest",
-  );
+  expect(fs.readFileSync(path.join(fresh.path, "accepted"), "utf8")).toBe("latest");
   expect(fs.existsSync(path.join(fresh.path, "unfinished"))).toBe(false);
-  expect(fs.readFileSync(path.join(old.path, "unfinished"), "utf8")).toBe(
-    "preserved",
-  );
+  expect(fs.readFileSync(path.join(old.path, "unfinished"), "utf8")).toBe("preserved");
   expect(previous.store.read()!.lifecycle).toBe("failed");
   // Exercise the actual Ready dispatch on the new authority, not just a helper
   // constructing a desired worktree. Current card/attachments must be requested
@@ -192,8 +184,7 @@ it("preserves a failed attempt and starts a distinct clean attempt from current 
       runTaskSessionWorkflow({
         project: f.project,
         trello: {
-          getCards: async (id: string) =>
-            id === list ? [{ ...card, idList: list }] : [],
+          getCards: async (id: string) => (id === list ? [{ ...card, idList: list }] : []),
           getCard: async () => ({ ...card, idList: list }),
           moveCard: async (_id: string, destination: string) => {
             list = destination;
@@ -211,9 +202,8 @@ it("preserves a failed attempt and starts a distinct clean attempt from current 
   ).rejects.toBe(boundary);
   expect(attachments).toHaveBeenCalledOnce();
   expect(
-    next.run(() =>
-      new TaskExecutionStore(next.store.storageRoot, f.project).read("card"),
-    )?.expectedBranch,
+    next.run(() => new TaskExecutionStore(next.store.storageRoot, f.project).read("card"))
+      ?.expectedBranch,
   ).toBe(fresh.branch);
 });
 
@@ -237,24 +227,21 @@ it.each(["candidate", "pointer", "preparing"])(
       });
     else {
       const handoff = RunRegistry.prototype.handoff;
-      vi.spyOn(RunRegistry.prototype, "handoff").mockImplementationOnce(
-        function (this: RunRegistry, ...args) {
-          if (boundary === "pointer") handoff.apply(this, args);
-          throw new Error("interrupted");
-        },
-      );
+      vi.spyOn(RunRegistry.prototype, "handoff").mockImplementationOnce(function (
+        this: RunRegistry,
+        ...args
+      ) {
+        if (boundary === "pointer") handoff.apply(this, args);
+        throw new Error("interrupted");
+      });
     }
     await expect(f.create()).rejects.toThrow("interrupted");
     vi.restoreAllMocks();
     const pin = (
-      await readProjectPinCandidates(
-        f.config.workflow.coordinationRoot!,
-        f.project.id,
-      )
+      await readProjectPinCandidates(f.config.workflow.coordinationRoot!, f.project.id)
     )[0]!;
     const recovered = await reconcilePinnedProjectAttempt({ ...f, pin, lease });
-    if (boundary === "preparing")
-      expect(recovered!.attemptId).toBe(previous.store.attemptId);
+    if (boundary === "preparing") expect(recovered!.attemptId).toBe(previous.store.attemptId);
     else {
       expect(recovered!.lifecycle).toBe("preparing");
       await expect(f.create()).rejects.toThrow(/occupying/);
@@ -266,9 +253,7 @@ it("keeps unknown repository ownership fenced rather than declaring isolation", 
   const f = await fixture();
   const authority = await f.create("implementation");
   authority.claim();
-  const worktree = await authority.run(() =>
-    prepareWorktree(f.git, f.project, "card"),
-  );
+  const worktree = await authority.run(() => prepareWorktree(f.git, f.project, "card"));
   vi.spyOn(f.git, "getCommonGitDirectory").mockImplementation(async (cwd) =>
     cwd === worktree.path ? "/unknown/common" : "/owned/common",
   );
@@ -285,9 +270,9 @@ it("does not adopt a pre-existing matching worktree merely because its name was 
   authority.claim();
   const resource = runTaskResources(authority.store.read()!);
   f.f.git(f.source, "worktree", "add", "-b", resource.branch, resource.path);
-  await expect(
-    authority.run(() => prepareWorktree(f.git, f.project, "card")),
-  ).rejects.toThrow("creation provenance");
+  await expect(authority.run(() => prepareWorktree(f.git, f.project, "card"))).rejects.toThrow(
+    "creation provenance",
+  );
   await expect(
     authority.run(() => assertTerminalArtifactIsolation(f.project, f.git)),
   ).rejects.toThrow("creation provenance");
@@ -300,14 +285,9 @@ it.each(["ignored", "history-unavailable"])(
     const f = await fixture();
     const authority = await f.create("implementation");
     authority.claim();
-    const worktree = await authority.run(() =>
-      prepareWorktree(f.git, f.project, "card"),
-    );
+    const worktree = await authority.run(() => prepareWorktree(f.git, f.project, "card"));
     if (reason === "ignored") {
-      fs.writeFileSync(
-        path.join(worktree.path, ".gitignore"),
-        "setup-output\n",
-      );
+      fs.writeFileSync(path.join(worktree.path, ".gitignore"), "setup-output\n");
       f.f.git(worktree.path, "add", ".gitignore");
       f.f.git(worktree.path, "commit", "-m", "ignore output");
       fs.writeFileSync(path.join(worktree.path, "setup-output"), "preserve me");
@@ -348,8 +328,6 @@ it.each(["ignored", "history-unavailable"])(
     expect(remove).not.toHaveBeenCalled();
     expect(fs.existsSync(worktree.path)).toBe(true);
     if (reason === "ignored")
-      expect(
-        fs.readFileSync(path.join(worktree.path, "setup-output"), "utf8"),
-      ).toBe("preserve me");
+      expect(fs.readFileSync(path.join(worktree.path, "setup-output"), "utf8")).toBe("preserve me");
   },
 );

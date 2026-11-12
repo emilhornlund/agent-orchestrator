@@ -30,12 +30,12 @@ describe("refinement completion", () => {
           "Elapsed workflow time: 1 hour 5 minutes",
         ].join("\n"),
       );
-      expect(
-        buildRefinementCompletionComment(result, "1 hour 5 minutes"),
-      ).not.toContain("Refined task description:");
-      expect(
-        buildRefinementCompletionComment(result, "1 hour 5 minutes"),
-      ).not.toContain(result.description);
+      expect(buildRefinementCompletionComment(result, "1 hour 5 minutes")).not.toContain(
+        "Refined task description:",
+      );
+      expect(buildRefinementCompletionComment(result, "1 hour 5 minutes")).not.toContain(
+        result.description,
+      );
     },
   );
 

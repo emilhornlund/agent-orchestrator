@@ -4,8 +4,7 @@ import { annotateCardFailure, annotateFailure } from "./failure-diagnostic.js";
 import { WorkflowError } from "./workflow-error.js";
 
 import { OPERATION_RECOVERY_MAX_EXECUTIONS } from "../task-session/operation-recovery-policy.js";
-export const MAX_GITHUB_RECONCILIATION_ATTEMPTS =
-  OPERATION_RECOVERY_MAX_EXECUTIONS;
+export const MAX_GITHUB_RECONCILIATION_ATTEMPTS = OPERATION_RECOVERY_MAX_EXECUTIONS;
 
 export interface GitHubReconciliationErrorOptions {
   reconciliationListId?: string;

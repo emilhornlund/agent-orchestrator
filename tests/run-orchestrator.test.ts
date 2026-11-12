@@ -14,10 +14,7 @@ import { ProjectRunAuthority } from "../src/task-session/project-run-authority.j
 import { RunRegistry, RunStore } from "../src/task-session/run-store.js";
 import { TaskMutationQueue } from "../src/task-session/task-mutation-queue.js";
 import type { GitClient } from "../src/git/git-client.js";
-import {
-  GitHubMergeStateUnknownError,
-  type GitHubClient,
-} from "../src/github/github-client.js";
+import { GitHubMergeStateUnknownError, type GitHubClient } from "../src/github/github-client.js";
 import type { OpenCodeClient } from "../src/opencode/opencode-client.js";
 import { OpenCodeClient as RealOpenCodeClient } from "../src/opencode/opencode-client.js";
 import type { CommandRunner } from "../src/process/command-runner.js";
@@ -39,10 +36,7 @@ import * as logRetention from "../src/logging/log-retention.js";
 import type { EmailNotifier } from "../src/notifications/email-notifier.js";
 import { OpenCodeRunAbortedError } from "../src/opencode/opencode-client.js";
 import { TrelloRequestAbortedError } from "../src/trello/trello-client.js";
-import {
-  annotateFailure,
-  getFailureContext,
-} from "../src/orchestrator/failure-diagnostic.js";
+import { annotateFailure, getFailureContext } from "../src/orchestrator/failure-diagnostic.js";
 import { failCard } from "../src/orchestrator/fail-card.js";
 import {
   githubReconciliationError,
@@ -71,8 +65,7 @@ vi.mock("../src/orchestrator/poll-project.js", () => ({
   pollProject,
 }));
 
-const { runOrchestrator } =
-  await import("../src/orchestrator/run-orchestrator.js");
+const { runOrchestrator } = await import("../src/orchestrator/run-orchestrator.js");
 
 let runtimeStorageRoot: string;
 
@@ -130,10 +123,7 @@ function createProject(id: string): ProjectConfig {
   };
 }
 
-function createConfig(
-  projects: ProjectConfig[],
-  pollIntervalSeconds = 1,
-): Config {
+function createConfig(projects: ProjectConfig[], pollIntervalSeconds = 1): Config {
   return {
     workflow: {
       pollIntervalSeconds,
@@ -171,9 +161,7 @@ function prepareConflict(project: ProjectConfig): void {
 describe("runOrchestrator", () => {
   beforeEach(() => {
     pollProject.mockReset();
-    runtimeStorageRoot = fs.mkdtempSync(
-      path.join(os.tmpdir(), "agent-orchestrator-run-runtime-"),
-    );
+    runtimeStorageRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agent-orchestrator-run-runtime-"));
   });
 
   afterEach(() => {
@@ -236,8 +224,7 @@ describe("runOrchestrator", () => {
           listId === project.trello.readyListId ? [readyCard] : [],
         ),
       } as unknown as TrelloClient;
-      let workerBudgets:
-        ReturnType<ProjectRunAuthority["store"]["read"]> | undefined;
+      let workerBudgets: ReturnType<ProjectRunAuthority["store"]["read"]> | undefined;
       pollProject.mockImplementation(async (...args) => {
         const authority = args.at(-2) as ProjectRunAuthority;
         workerBudgets = authority.store.read();
@@ -254,9 +241,7 @@ describe("runOrchestrator", () => {
         controller.signal,
         undefined,
         undefined,
-        new Map([
-          [project.id, { projectLease: lease, pinned, coordinationRoot }],
-        ]),
+        new Map([[project.id, { projectLease: lease, pinned, coordinationRoot }]]),
       );
 
       expect(workerBudgets?.budgets).toMatchObject({
@@ -282,15 +267,9 @@ describe("runOrchestrator", () => {
     fs.writeFileSync(path.join(worktreePath, "src.ts"), "before\n");
     project.repository.path = repositoryPath;
     project.repository.worktreeRoot = worktreeRoot;
-    const coordinationRoot = path.join(
-      runtimeStorageRoot,
-      "repair-coordination",
-    );
+    const coordinationRoot = path.join(runtimeStorageRoot, "repair-coordination");
     fs.mkdirSync(coordinationRoot);
-    provisionCoordinationNamespace(
-      coordinationRoot,
-      "validation-repair-budget",
-    );
+    provisionCoordinationNamespace(coordinationRoot, "validation-repair-budget");
     const config = {
       ...createConfig([project], 0.001),
       workflow: {
@@ -350,10 +329,7 @@ describe("runOrchestrator", () => {
       let repairNumber = 0;
       const runOpenCode = vi.fn(async () => {
         repairNumber += 1;
-        fs.writeFileSync(
-          path.join(worktreePath, "src.ts"),
-          `repaired ${repairNumber}\n`,
-        );
+        fs.writeFileSync(path.join(worktreePath, "src.ts"), `repaired ${repairNumber}\n`);
         return { exitCode: 0, output: "repair applied", errorOutput: "" };
       });
       let dispatches = 0;
@@ -366,11 +342,7 @@ describe("runOrchestrator", () => {
         try {
           const operationKey = "validation-budget-operation";
           const sessionId = "ses_validation_budget";
-          const executionStore = new TaskExecutionStore(
-            contextRoot,
-            project,
-            authority,
-          );
+          const executionStore = new TaskExecutionStore(contextRoot, project, authority);
           const planStore = new TaskPlanStore(contextRoot, project, authority);
           executionStore.create({
             version: 1,
@@ -391,16 +363,11 @@ describe("runOrchestrator", () => {
             createdAt: "2026-10-24T09:00:00.000Z",
             updatedAt: "2026-10-24T09:00:00.000Z",
           });
-          const projectionEvents = [
-            "plan-approved",
-            "implementation-completed",
-          ] as const;
+          const projectionEvents = ["plan-approved", "implementation-completed"] as const;
           for (const [index, type] of projectionEvents.entries()) {
             const current = executionStore.read(card.id);
             if (!current) throw new Error("Expected projected task record");
-            const occurredAt = new Date(
-              Date.parse(current.updatedAt) + 1,
-            ).toISOString();
+            const occurredAt = new Date(Date.parse(current.updatedAt) + 1).toISOString();
             executionStore.compareAndSwap(
               card.id,
               current.revision,
@@ -452,8 +419,7 @@ describe("runOrchestrator", () => {
             getHeadSha: vi.fn(async () => "a".repeat(40)),
             getHeadTrackedFiles: vi.fn(async () => ["src.ts"]),
             getIndexEntries: vi.fn(
-              async () =>
-                "100644 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0\tsrc.ts\0",
+              async () => "100644 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0\tsrc.ts\0",
             ),
             getUntrackedFiles: vi.fn(async () => []),
           } as unknown as GitClient;
@@ -483,9 +449,7 @@ describe("runOrchestrator", () => {
           });
           expect(result.attempts).toBe(2);
           expect(result.record.validationRepair?.status).toBe("exhausted");
-          expect(executionStore.read(card.id)?.retryCounters.validation).toBe(
-            2,
-          );
+          expect(executionStore.read(card.id)?.retryCounters.validation).toBe(2);
           expect(authority.store.read()?.budgets.validation).toMatchObject({
             limit: 2,
             used: 2,
@@ -535,9 +499,7 @@ describe("runOrchestrator", () => {
         controller.signal,
         undefined,
         undefined,
-        new Map([
-          [project.id, { projectLease: lease, pinned, coordinationRoot }],
-        ]),
+        new Map([[project.id, { projectLease: lease, pinned, coordinationRoot }]]),
       );
       expect(dispatches).toBe(1);
       expect(workerError).toBeUndefined();
@@ -602,16 +564,14 @@ describe("runOrchestrator", () => {
         worktreeRoot: hostPin.repository.worktreeRoot,
         storageRoot: hostPin.storageRoot,
       };
-      const initialAuthority = await ProjectRunAuthority.createPreparingAttempt(
-        {
-          projectId: project.id,
-          cardId: "refinement-card",
-          taskKind: "refinement",
-          pinned,
-          projectLease: lease,
-          coordinationRoot,
-        },
-      );
+      const initialAuthority = await ProjectRunAuthority.createPreparingAttempt({
+        projectId: project.id,
+        cardId: "refinement-card",
+        taskKind: "refinement",
+        pinned,
+        projectLease: lease,
+        coordinationRoot,
+      });
       initialAuthority.claim();
       const readyCard = {
         id: "next-card",
@@ -684,13 +644,9 @@ describe("runOrchestrator", () => {
       );
       expect(pollCount).toBe(2);
       expect(readinessCount).toBeGreaterThanOrEqual(4);
+      expect(fs.existsSync(getReconciliationBlockPath(storageRoot, project.id))).toBe(false);
       expect(
-        fs.existsSync(getReconciliationBlockPath(storageRoot, project.id)),
-      ).toBe(false);
-      expect(
-        fs.existsSync(
-          path.join(storageRoot, "task-mutation-queues", `${project.id}.json`),
-        ),
+        fs.existsSync(path.join(storageRoot, "task-mutation-queues", `${project.id}.json`)),
       ).toBe(false);
       const pointer = new RunRegistry(storageRoot, pinned.integrationId, {
         integrationId: pinned.integrationId,
@@ -733,10 +689,7 @@ describe("runOrchestrator", () => {
       },
     );
 
-    const config = createConfig([
-      createProject("project-a"),
-      createProject("project-b"),
-    ]);
+    const config = createConfig([createProject("project-a"), createProject("project-b")]);
 
     await runOrchestrator(
       {} as TrelloClient,
@@ -836,10 +789,7 @@ describe("runOrchestrator", () => {
       },
     );
 
-    const config = createConfig([
-      createProject("project-a"),
-      createProject("project-b"),
-    ]);
+    const config = createConfig([createProject("project-a"), createProject("project-b")]);
 
     await runOrchestrator(
       {} as TrelloClient,
@@ -937,9 +887,7 @@ describe("runOrchestrator", () => {
       expect(git.getRebaseState).not.toHaveBeenCalled();
       expect(git.getCurrentBranch).not.toHaveBeenCalled();
       expect(notifier.send).toHaveBeenCalledOnce();
-      expect(fs.existsSync(getPreparedConflictPath(project, "card-1"))).toBe(
-        true,
-      );
+      expect(fs.existsSync(getPreparedConflictPath(project, "card-1"))).toBe(true);
     } finally {
       clearTimeout(abortTimer);
       fs.rmSync(worktreeRoot, { recursive: true, force: true });
@@ -1002,9 +950,7 @@ describe("runOrchestrator", () => {
       expect(git.getRebaseState).not.toHaveBeenCalled();
       expect(git.getConflictedPaths).not.toHaveBeenCalled();
       expect(notifier.send).toHaveBeenCalledOnce();
-      expect(fs.existsSync(getPreparedConflictPath(project, "card-1"))).toBe(
-        false,
-      );
+      expect(fs.existsSync(getPreparedConflictPath(project, "card-1"))).toBe(false);
     } finally {
       clearTimeout(abortTimer);
       fs.rmSync(worktreeRoot, { recursive: true, force: true });
@@ -1057,9 +1003,7 @@ describe("runOrchestrator", () => {
       expect(pollCalls).toBe(MAX_PREPARED_CONFLICT_REMEDIATION_ATTEMPTS);
       expect(git.getRebaseState).not.toHaveBeenCalled();
       expect(fs.existsSync(path.join(worktreeRoot, "card-1"))).toBe(true);
-      expect(fs.existsSync(getPreparedConflictPath(project, "card-1"))).toBe(
-        true,
-      );
+      expect(fs.existsSync(getPreparedConflictPath(project, "card-1"))).toBe(true);
       expect(notifier.send).toHaveBeenCalledOnce();
     } finally {
       clearTimeout(abortTimer);
@@ -1205,9 +1149,7 @@ describe("runOrchestrator", () => {
       );
 
       expect(
-        errorLog.mock.calls.filter(([message]) =>
-          message.startsWith("Task failed."),
-        ),
+        errorLog.mock.calls.filter(([message]) => message.startsWith("Task failed.")),
       ).toHaveLength(1);
       expect(notifier.send).toHaveBeenCalledOnce();
     } finally {
@@ -1258,9 +1200,7 @@ describe("runOrchestrator", () => {
       );
 
       expect(
-        errorLog.mock.calls.filter(([message]) =>
-          message.startsWith("Task failed."),
-        ),
+        errorLog.mock.calls.filter(([message]) => message.startsWith("Task failed.")),
       ).toHaveLength(2);
       expect(notifier.send).toHaveBeenCalledTimes(2);
     } finally {
@@ -1307,9 +1247,7 @@ describe("runOrchestrator", () => {
       );
 
       expect(
-        errorLog.mock.calls.filter(([message]) =>
-          message.startsWith("Task failed."),
-        ),
+        errorLog.mock.calls.filter(([message]) => message.startsWith("Task failed.")),
       ).toHaveLength(2);
       expect(notifier.send).toHaveBeenCalledTimes(2);
     } finally {
@@ -1328,9 +1266,7 @@ describe("runOrchestrator", () => {
       calls += 1;
 
       if (calls === 2) {
-        const onHumanReviewCardsObserved = args[8] as (
-          cardIds: string[],
-        ) => void;
+        const onHumanReviewCardsObserved = args[8] as (cardIds: string[]) => void;
 
         onHumanReviewCardsObserved(["card-2"]);
         throw new WorkflowError("Workflow", "unrelated poll failure");
@@ -1507,9 +1443,7 @@ describe("runOrchestrator", () => {
       await vi.advanceTimersByTimeAsync(1);
       expect(calls).toBe(2);
 
-      await vi.advanceTimersByTimeAsync(
-        RETRY_BACKOFF_BASE_MILLISECONDS * 2 - 1,
-      );
+      await vi.advanceTimersByTimeAsync(RETRY_BACKOFF_BASE_MILLISECONDS * 2 - 1);
       expect(calls).toBe(2);
 
       await vi.advanceTimersByTimeAsync(1);
@@ -1601,9 +1535,7 @@ describe("runOrchestrator", () => {
     expect(notifier.send).toHaveBeenCalledOnce();
     expect(notifier.send).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: expect.stringContaining(
-          "blocked pull request state reconciliation",
-        ),
+        text: expect.stringContaining("blocked pull request state reconciliation"),
       }),
     );
   });
@@ -1650,9 +1582,7 @@ describe("runOrchestrator", () => {
       notifier,
     );
 
-    expect(
-      fs.existsSync(getReconciliationBlockPath(runtimeStorageRoot, project.id)),
-    ).toBe(true);
+    expect(fs.existsSync(getReconciliationBlockPath(runtimeStorageRoot, project.id))).toBe(true);
     expect(calls).toBe(MAX_GITHUB_RECONCILIATION_ATTEMPTS);
 
     const secondController = new AbortController();
@@ -1679,9 +1609,7 @@ describe("runOrchestrator", () => {
     expect(getCards).toHaveBeenCalledWith(project.trello.readyListId);
     expect(card.idList).toBe(project.trello.reviewListId);
     expect(notifier.send).toHaveBeenCalledOnce();
-    expect(
-      fs.existsSync(getReconciliationBlockPath(runtimeStorageRoot, project.id)),
-    ).toBe(true);
+    expect(fs.existsSync(getReconciliationBlockPath(runtimeStorageRoot, project.id))).toBe(true);
   });
 
   it("keeps an unrelated project polling while another project is blocked", async () => {
@@ -1781,11 +1709,7 @@ describe("runOrchestrator", () => {
     expect(pollCalls).toBe(MAX_GITHUB_RECONCILIATION_ATTEMPTS + 1);
     expect(getCards).toHaveBeenCalledTimes(2);
     expect(notifier.send).toHaveBeenCalledOnce();
-    expect(
-      fs.existsSync(
-        getReconciliationBlockPath(runtimeStorageRoot, "project-a"),
-      ),
-    ).toBe(false);
+    expect(fs.existsSync(getReconciliationBlockPath(runtimeStorageRoot, "project-a"))).toBe(false);
   });
 
   it("resets transient GitHub reconciliation attempts after a successful poll", async () => {
@@ -1838,11 +1762,10 @@ describe("runOrchestrator", () => {
         "project-a",
         "card-1",
         "transition history",
-        new TrelloRequestError(
-          "transition history",
-          "Trello request failed: 503 Unavailable",
-          { status: 503, retryable: true },
-        ),
+        new TrelloRequestError("transition history", "Trello request failed: 503 Unavailable", {
+          status: 503,
+          retryable: true,
+        }),
         "Could not read Trello transition history",
       );
       let calls = 0;
@@ -1925,9 +1848,7 @@ describe("runOrchestrator", () => {
 
     expect(calls).toBe(3);
     expect(notifier.send).not.toHaveBeenCalled();
-    expect(
-      fs.existsSync(getReconciliationBlockPath(runtimeStorageRoot, project.id)),
-    ).toBe(false);
+    expect(fs.existsSync(getReconciliationBlockPath(runtimeStorageRoot, project.id))).toBe(false);
   });
 
   it("keeps non-retryable failures on the normal polling interval", async () => {
@@ -2058,11 +1979,10 @@ describe("runOrchestrator", () => {
       "project-a",
       "card-1",
       "card move",
-      new TrelloRequestError(
-        "card move",
-        "Trello request failed: 504 Gateway Timeout",
-        { status: 504, retryable: true },
-      ),
+      new TrelloRequestError("card move", "Trello request failed: 504 Gateway Timeout", {
+        status: 504,
+        retryable: true,
+      }),
       "Could not move card to Working",
     );
     let calls = 0;
@@ -2104,11 +2024,10 @@ describe("runOrchestrator", () => {
       "project-a",
       "card-1",
       "card move",
-      new TrelloRequestError(
-        "card move",
-        "Trello request failed: 504 Gateway Timeout",
-        { status: 504, retryable: true },
-      ),
+      new TrelloRequestError("card move", "Trello request failed: 504 Gateway Timeout", {
+        status: 504,
+        retryable: true,
+      }),
       "reconciliation failed",
       { reconciliationListId: "working-project-a" },
     );
@@ -2147,11 +2066,10 @@ describe("runOrchestrator", () => {
       project.id,
       "card-1",
       "card move",
-      new TrelloRequestError(
-        "card move",
-        "Trello request failed: 504 Gateway Timeout",
-        { status: 504, retryable: true },
-      ),
+      new TrelloRequestError("card move", "Trello request failed: 504 Gateway Timeout", {
+        status: 504,
+        retryable: true,
+      }),
       "reconciliation failed",
       { reconciliationListId: project.trello.workingListId },
     );
@@ -2198,9 +2116,7 @@ describe("runOrchestrator", () => {
     expect(pollProject).not.toHaveBeenCalled();
     expect(getCards).toHaveBeenCalledOnce();
     expect(notifier.send).toHaveBeenCalledOnce();
-    expect(
-      fs.existsSync(getReconciliationBlockPath(runtimeStorageRoot, project.id)),
-    ).toBe(true);
+    expect(fs.existsSync(getReconciliationBlockPath(runtimeStorageRoot, project.id))).toBe(true);
   });
 
   it("uses an explicit restart to recover a cardless Trello block", async () => {
@@ -2211,11 +2127,10 @@ describe("runOrchestrator", () => {
       project.id,
       undefined,
       "label lookup",
-      new TrelloRequestError(
-        "label lookup",
-        "Trello request failed: 503 Unavailable",
-        { status: 503, retryable: true },
-      ),
+      new TrelloRequestError("label lookup", "Trello request failed: 503 Unavailable", {
+        status: 503,
+        retryable: true,
+      }),
       "project Trello reconciliation failed",
       { reconciliationListId: project.trello.readyListId },
     );
@@ -2242,10 +2157,7 @@ describe("runOrchestrator", () => {
     );
 
     const persistedBlock = JSON.parse(
-      fs.readFileSync(
-        getReconciliationBlockPath(runtimeStorageRoot, project.id),
-        "utf8",
-      ),
+      fs.readFileSync(getReconciliationBlockPath(runtimeStorageRoot, project.id), "utf8"),
     );
 
     expect(persistedBlock).not.toHaveProperty("cardId");
@@ -2274,9 +2186,7 @@ describe("runOrchestrator", () => {
 
     expect(pollProject).toHaveBeenCalledOnce();
     expect(notifier.send).toHaveBeenCalledOnce();
-    expect(
-      fs.existsSync(getReconciliationBlockPath(runtimeStorageRoot, project.id)),
-    ).toBe(false);
+    expect(fs.existsSync(getReconciliationBlockPath(runtimeStorageRoot, project.id))).toBe(false);
   });
 
   it("fails closed on malformed persisted reconciliation state", async () => {
@@ -2595,10 +2505,7 @@ describe("runOrchestrator", () => {
 
   it("logs a failed card with its category, card context, and handling outcome", async () => {
     const controller = new AbortController();
-    const failure = new WorkflowError(
-      "Git/GitHub",
-      "push failed while publishing the task",
-    );
+    const failure = new WorkflowError("Git/GitHub", "push failed while publishing the task");
 
     annotateFailure(failure, {
       projectId: "project-a",
@@ -2630,11 +2537,7 @@ describe("runOrchestrator", () => {
     );
 
     const date = new Date().toISOString().slice(0, 10);
-    const logPath = path.join(
-      process.cwd(),
-      "logs",
-      `test-orchestrator-${date}.log`,
-    );
+    const logPath = path.join(process.cwd(), "logs", `test-orchestrator-${date}.log`);
 
     expect(fs.readFileSync(logPath, "utf8")).toContain(
       "[project-a] [card:card-123] Task failed. Category: Git/GitHub; Reason: push failed while publishing the task; Failure handling: card moved to Failed and failure comment added",
@@ -2692,9 +2595,7 @@ describe("runOrchestrator", () => {
         controller.signal,
       );
 
-      await vi.advanceTimersByTimeAsync(
-        logRetention.logRetentionIntervalMilliseconds,
-      );
+      await vi.advanceTimersByTimeAsync(logRetention.logRetentionIntervalMilliseconds);
 
       expect(cleanupLogRetention).toHaveBeenCalledWith(
         14,
@@ -2714,12 +2615,8 @@ describe("runOrchestrator", () => {
       await orchestrator;
 
       const contextCleanupCalls = cleanupCardContextRetention.mock.calls.length;
-      await vi.advanceTimersByTimeAsync(
-        logRetention.logRetentionIntervalMilliseconds,
-      );
-      expect(cleanupCardContextRetention).toHaveBeenCalledTimes(
-        contextCleanupCalls,
-      );
+      await vi.advanceTimersByTimeAsync(logRetention.logRetentionIntervalMilliseconds);
+      expect(cleanupCardContextRetention).toHaveBeenCalledTimes(contextCleanupCalls);
     } finally {
       vi.useRealTimers();
     }

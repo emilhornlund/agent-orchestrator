@@ -3,10 +3,7 @@ import type { TrelloCard } from "../trello/trello-client.js";
 
 export type WorkflowKind = "implementation" | "refinement";
 
-export function getWorkflowKind(
-  card: TrelloCard,
-  project: ProjectConfig,
-): WorkflowKind | null {
+export function getWorkflowKind(card: TrelloCard, project: ProjectConfig): WorkflowKind | null {
   if (card.idLabels.includes(project.trello.refinementLabelId)) {
     return "refinement";
   }

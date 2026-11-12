@@ -74,19 +74,12 @@ export async function ensureRepository(
         : {
             environment: credential.environment,
           }),
-      ...(credential.secretValues.length === 0
-        ? {}
-        : { secretValues: credential.secretValues }),
+      ...(credential.secretValues.length === 0 ? {} : { secretValues: credential.secretValues }),
     });
   } catch (error) {
     const safeError = redactError(error, credential?.secretValues);
-    const safeMessage = redactSecrets(
-      safeError.message,
-      credential?.secretValues,
-    );
-    const disposition = isKnownTransientGitHubFailure(safeMessage)
-      ? "unavailable"
-      : "invalid";
+    const safeMessage = redactSecrets(safeError.message, credential?.secretValues);
+    const disposition = isKnownTransientGitHubFailure(safeMessage) ? "unavailable" : "invalid";
 
     // Do not retain the caught error: an external command may have included a credential.
     throw new ProjectResourceError(
@@ -97,13 +90,8 @@ export async function ensureRepository(
   }
 
   if (cloneResult.exitCode !== 0) {
-    const detail = redactSecrets(
-      cloneResult.errorOutput ?? "",
-      credential?.secretValues,
-    );
-    const disposition = isKnownTransientGitHubFailure(detail)
-      ? "unavailable"
-      : "invalid";
+    const detail = redactSecrets(cloneResult.errorOutput ?? "", credential?.secretValues);
+    const disposition = isKnownTransientGitHubFailure(detail) ? "unavailable" : "invalid";
     throw new ProjectResourceError(
       disposition,
       `Failed to clone repository "${project.repository.github}" into "${repositoryPath}": ${disposition === "unavailable" ? "GitHub/network resource is temporarily unavailable; retrying" : "GitHub rejected the repository or credentials; verify project configuration and access"}`,

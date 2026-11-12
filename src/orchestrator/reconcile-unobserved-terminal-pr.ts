@@ -33,23 +33,18 @@ export async function reconcileUnobservedTerminalPrEvents(options: {
       reviewed.has(mutation.cardId)
     )
       continue;
-    const match =
-      /^terminal-pr:([^:]+):(CLOSED|MERGED):([0-9a-f]{40}|[0-9a-f]{64})$/.exec(
-        mutation.eventId,
-      );
+    const match = /^terminal-pr:([^:]+):(CLOSED|MERGED):([0-9a-f]{40}|[0-9a-f]{64})$/.exec(
+      mutation.eventId,
+    );
     if (match === null || match[1] !== mutation.cardId)
-      throw new Error(
-        `Orphaned terminal PR event has invalid identity: ${mutation.eventId}`,
-      );
+      throw new Error(`Orphaned terminal PR event has invalid identity: ${mutation.eventId}`);
     const state = match[2] as "CLOSED" | "MERGED";
     const head = match[3]!;
     // A terminal event can be pending after the card has already moved to
     // Done/Backlog (e.g. cleanup failed). In that case the ordinary terminal
     // reconciliation must retain ownership, not treat the card as removed.
     const terminalListId =
-      state === "MERGED"
-        ? project.trello.doneListId
-        : project.trello.backlogListId;
+      state === "MERGED" ? project.trello.doneListId : project.trello.backlogListId;
     const destinationCards = await getCardsForDiscovery(
       options.trello,
       project.id,
@@ -70,18 +65,11 @@ export async function reconcileUnobservedTerminalPrEvents(options: {
       );
     const maintenance = maintenanceStore
       .inspect()
-      .find(
-        (item) =>
-          item.cardId === mutation.cardId && item.projectId === project.id,
-      );
-    const expectedOperationKey =
-      record?.operationKey ?? originalImplementation?.operationKey;
-    const expectedUrl =
-      record?.pullRequest?.url ?? maintenance?.pullRequest.url;
-    const expectedHead =
-      record?.pullRequest?.headSha ?? maintenance?.expectedRemoteHead;
-    const expectedNumber =
-      record?.pullRequest?.number ?? maintenance?.pullRequest.number;
+      .find((item) => item.cardId === mutation.cardId && item.projectId === project.id);
+    const expectedOperationKey = record?.operationKey ?? originalImplementation?.operationKey;
+    const expectedUrl = record?.pullRequest?.url ?? maintenance?.pullRequest.url;
+    const expectedHead = record?.pullRequest?.headSha ?? maintenance?.expectedRemoteHead;
+    const expectedNumber = record?.pullRequest?.number ?? maintenance?.pullRequest.number;
     if (
       mutation.projectId !== project.id ||
       expectedOperationKey === undefined ||
@@ -89,8 +77,7 @@ export async function reconcileUnobservedTerminalPrEvents(options: {
       expectedNumber === undefined ||
       expectedHead !== head ||
       mutation.operationKey !== `${expectedOperationKey}:${state}:${head}` ||
-      (record === null &&
-        (maintenance === undefined || originalImplementation === undefined))
+      (record === null && (maintenance === undefined || originalImplementation === undefined))
     )
       throw new Error(
         `Orphaned terminal PR ${mutation.cardId} lacks verified task ownership; preserving its event`,

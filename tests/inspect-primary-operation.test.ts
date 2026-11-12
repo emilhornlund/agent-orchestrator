@@ -15,8 +15,7 @@ import { inspectPrimaryOperationEvidence } from "../src/task-session/inspect-pri
 
 const roots: string[] = [];
 afterEach(() => {
-  for (const root of roots.splice(0))
-    fs.rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 function fixture(status = "nonzero") {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "inspect-primary-"));
@@ -45,12 +44,7 @@ function fixture(status = "nonzero") {
     updatedAt: now,
   });
   const cwd = project.repository.path;
-  const artifactRoot = path.join(
-    root,
-    "artifacts",
-    "card",
-    "process-executions",
-  );
+  const artifactRoot = path.join(root, "artifacts", "card", "process-executions");
   fs.mkdirSync(path.join(artifactRoot, "exec"), { recursive: true });
   const metadataPath = path.join(artifactRoot, "exec", "execution.json");
   beginPrimaryExecution(store, "card", "op", "work", "session");
@@ -99,10 +93,7 @@ describe("inspectPrimaryOperationEvidence", () => {
       failureClassification: "dependency-outage",
     };
     const bytes = Buffer.from(JSON.stringify(result));
-    fs.writeFileSync(
-      path.join(path.dirname(f.metadataPath), "result.json"),
-      bytes,
-    );
+    fs.writeFileSync(path.join(path.dirname(f.metadataPath), "result.json"), bytes);
     fs.writeFileSync(
       f.metadataPath,
       JSON.stringify({
@@ -119,19 +110,14 @@ describe("inspectPrimaryOperationEvidence", () => {
         },
       }),
     );
-    expect(
-      await inspectPrimaryOperationEvidence(f.store, "card", "op", f.identity),
-    ).toMatchObject({
+    expect(await inspectPrimaryOperationEvidence(f.store, "card", "op", f.identity)).toMatchObject({
       status: "stopped-after-dispatch",
       failureClassification: "dependency-outage",
     });
-    fs.writeFileSync(
-      path.join(path.dirname(f.metadataPath), "result.json"),
-      "{}",
-    );
-    expect(
-      await inspectPrimaryOperationEvidence(f.store, "card", "op", f.identity),
-    ).toEqual({ status: "unknown" });
+    fs.writeFileSync(path.join(path.dirname(f.metadataPath), "result.json"), "{}");
+    expect(await inspectPrimaryOperationEvidence(f.store, "card", "op", f.identity)).toEqual({
+      status: "unknown",
+    });
   });
   it.each([
     [
@@ -143,16 +129,8 @@ describe("inspectPrimaryOperationEvidence", () => {
     ["payload exit code is not an integer", {}, { exitCode: "1" }],
     ["metadata exit code is not an integer", { exitCode: null }, {}],
     ["payload and metadata exit codes differ", { exitCode: 2 }, {}],
-    [
-      "classification omitted from metadata",
-      { omitMetadataClassification: true },
-      {},
-    ],
-    [
-      "classification omitted from payload",
-      {},
-      { omitPayloadClassification: true },
-    ],
+    ["classification omitted from metadata", { omitMetadataClassification: true }, {}],
+    ["classification omitted from payload", {}, { omitPayloadClassification: true }],
   ])(
     "rejects correctly hashed semantically mismatched outage evidence: %s",
     async (_label, metadataOverrides, payloadOverrides) => {
@@ -166,17 +144,11 @@ describe("inspectPrimaryOperationEvidence", () => {
         processExecutionId: "exec",
         sessionId: resultOptions.sessionId ?? "session",
         failureClassification: "dependency-outage",
-        ...(resultOptions.exitCode === undefined
-          ? {}
-          : { exitCode: resultOptions.exitCode }),
+        ...(resultOptions.exitCode === undefined ? {} : { exitCode: resultOptions.exitCode }),
       };
-      if (resultOptions.omitPayloadClassification === true)
-        delete result.failureClassification;
+      if (resultOptions.omitPayloadClassification === true) delete result.failureClassification;
       const bytes = Buffer.from(JSON.stringify(result));
-      fs.writeFileSync(
-        path.join(path.dirname(f.metadataPath), "result.json"),
-        bytes,
-      );
+      fs.writeFileSync(path.join(path.dirname(f.metadataPath), "result.json"), bytes);
       const metadata: Record<string, unknown> = {
         executionId: "exec",
         cwd: f.cwd,
@@ -192,26 +164,17 @@ describe("inspectPrimaryOperationEvidence", () => {
       };
       if (metaOptions.metadataSessionId !== undefined)
         metadata.sessionId = metaOptions.metadataSessionId;
-      if (metaOptions.exitCode !== undefined)
-        metadata.exitCode = metaOptions.exitCode;
-      if (metaOptions.omitMetadataClassification === true)
-        delete metadata.failureClassification;
+      if (metaOptions.exitCode !== undefined) metadata.exitCode = metaOptions.exitCode;
+      if (metaOptions.omitMetadataClassification === true) delete metadata.failureClassification;
       fs.writeFileSync(f.metadataPath, JSON.stringify(metadata));
-      expect(
-        await inspectPrimaryOperationEvidence(
-          f.store,
-          "card",
-          "op",
-          f.identity,
-        ),
-      ).toEqual({ status: "unknown" });
+      expect(await inspectPrimaryOperationEvidence(f.store, "card", "op", f.identity)).toEqual({
+        status: "unknown",
+      });
     },
   );
   it("recognizes bound finalized stopped evidence", async () => {
     const f = fixture();
-    expect(
-      await inspectPrimaryOperationEvidence(f.store, "card", "op", f.identity),
-    ).toMatchObject({
+    expect(await inspectPrimaryOperationEvidence(f.store, "card", "op", f.identity)).toMatchObject({
       status: "stopped-after-dispatch",
       operationId: "op",
       execution: 1,
@@ -220,17 +183,17 @@ describe("inspectPrimaryOperationEvidence", () => {
   });
   it("treats running, missing, corrupt, and mismatched evidence as unknown", async () => {
     const f = fixture("running");
-    expect(
-      await inspectPrimaryOperationEvidence(f.store, "card", "op", f.identity),
-    ).toEqual({ status: "unknown" });
+    expect(await inspectPrimaryOperationEvidence(f.store, "card", "op", f.identity)).toEqual({
+      status: "unknown",
+    });
     fs.unlinkSync(f.metadataPath);
-    expect(
-      await inspectPrimaryOperationEvidence(f.store, "card", "op", f.identity),
-    ).toEqual({ status: "unknown" });
+    expect(await inspectPrimaryOperationEvidence(f.store, "card", "op", f.identity)).toEqual({
+      status: "unknown",
+    });
     fs.writeFileSync(f.metadataPath, "{");
-    expect(
-      await inspectPrimaryOperationEvidence(f.store, "card", "op", f.identity),
-    ).toEqual({ status: "unknown" });
+    expect(await inspectPrimaryOperationEvidence(f.store, "card", "op", f.identity)).toEqual({
+      status: "unknown",
+    });
     fs.writeFileSync(
       f.metadataPath,
       JSON.stringify({
@@ -240,9 +203,9 @@ describe("inspectPrimaryOperationEvidence", () => {
         treeStopped: true,
       }),
     );
-    expect(
-      await inspectPrimaryOperationEvidence(f.store, "card", "op", f.identity),
-    ).toEqual({ status: "unknown" });
+    expect(await inspectPrimaryOperationEvidence(f.store, "card", "op", f.identity)).toEqual({
+      status: "unknown",
+    });
   });
   it.skipIf(process.platform !== "linux")(
     "keeps live-owner, live-process-group, and unverifiable-namespace cases unknown",
@@ -252,11 +215,10 @@ describe("inspectPrimaryOperationEvidence", () => {
         const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
         return stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19];
       };
-      const liveGroupLeader = spawn(
-        process.execPath,
-        ["-e", "setInterval(() => {}, 30000)"],
-        { detached: true, stdio: "ignore" },
-      );
+      const liveGroupLeader = spawn(process.execPath, ["-e", "setInterval(() => {}, 30000)"], {
+        detached: true,
+        stdio: "ignore",
+      });
       try {
         const leaderPid = liveGroupLeader.pid;
         if (leaderPid === undefined) throw new Error("missing process pid");
@@ -270,38 +232,24 @@ describe("inspectPrimaryOperationEvidence", () => {
           pid: leaderPid,
           pidStartIdentity: processStart(leaderPid),
           processGroupId: leaderPid,
-          hostBootId: fs
-            .readFileSync("/proc/sys/kernel/random/boot_id", "utf8")
-            .trim(),
+          hostBootId: fs.readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim(),
           pidNamespace: fs.readlinkSync("/proc/self/ns/pid"),
         };
         fs.writeFileSync(f.metadataPath, JSON.stringify(base));
-        expect(
-          await inspectPrimaryOperationEvidence(
-            f.store,
-            "card",
-            "op",
-            f.identity,
-          ),
-        ).toEqual({ status: "unknown" });
+        expect(await inspectPrimaryOperationEvidence(f.store, "card", "op", f.identity)).toEqual({
+          status: "unknown",
+        });
         fs.writeFileSync(
           f.metadataPath,
           JSON.stringify({ ...base, pidNamespace: "pid:[unverifiable]" }),
         );
-        expect(
-          await inspectPrimaryOperationEvidence(
-            f.store,
-            "card",
-            "op",
-            f.identity,
-          ),
-        ).toEqual({ status: "unknown" });
+        expect(await inspectPrimaryOperationEvidence(f.store, "card", "op", f.identity)).toEqual({
+          status: "unknown",
+        });
       } finally {
         if (liveGroupLeader.pid !== undefined) {
           liveGroupLeader.kill("SIGKILL");
-          await new Promise<void>((resolve) =>
-            liveGroupLeader.once("close", () => resolve()),
-          );
+          await new Promise<void>((resolve) => liveGroupLeader.once("close", () => resolve()));
         }
       }
     },
@@ -320,15 +268,15 @@ describe("inspectPrimaryOperationEvidence", () => {
       }),
     );
     fs.symlinkSync(outside, f.metadataPath);
-    expect(
-      await inspectPrimaryOperationEvidence(f.store, "card", "op", f.identity),
-    ).toEqual({ status: "unknown" });
+    expect(await inspectPrimaryOperationEvidence(f.store, "card", "op", f.identity)).toEqual({
+      status: "unknown",
+    });
   });
   it("requires explicit not-dispatched evidence for refund", async () => {
     const f = fixture("not-dispatched");
-    expect(
-      await inspectPrimaryOperationEvidence(f.store, "card", "op", f.identity),
-    ).toEqual({ status: "never-dispatched" });
+    expect(await inspectPrimaryOperationEvidence(f.store, "card", "op", f.identity)).toEqual({
+      status: "never-dispatched",
+    });
   });
   it("recognizes process-runtime spawn-failure proof only with no child pid", async () => {
     const f = fixture("spawn-failure");
@@ -342,9 +290,9 @@ describe("inspectPrimaryOperationEvidence", () => {
         treeStopped: true,
       }),
     );
-    expect(
-      await inspectPrimaryOperationEvidence(f.store, "card", "op", f.identity),
-    ).toEqual({ status: "never-dispatched" });
+    expect(await inspectPrimaryOperationEvidence(f.store, "card", "op", f.identity)).toEqual({
+      status: "never-dispatched",
+    });
     fs.writeFileSync(
       f.metadataPath,
       JSON.stringify({
@@ -356,9 +304,9 @@ describe("inspectPrimaryOperationEvidence", () => {
         treeStopped: true,
       }),
     );
-    expect(
-      await inspectPrimaryOperationEvidence(f.store, "card", "op", f.identity),
-    ).toEqual({ status: "unknown" });
+    expect(await inspectPrimaryOperationEvidence(f.store, "card", "op", f.identity)).toEqual({
+      status: "unknown",
+    });
   });
   it.skipIf(process.platform !== "linux")(
     "keeps orphaned running metadata ambiguous when a setsid descendant escapes the process group",
@@ -407,10 +355,7 @@ describe("inspectPrimaryOperationEvidence", () => {
       });
       await new Promise<void>((resolve, reject) => {
         const deadline = setTimeout(
-          () =>
-            reject(
-              new Error(`supervisor did not bind process evidence: ${stderr}`),
-            ),
+          () => reject(new Error(`supervisor did not bind process evidence: ${stderr}`)),
           10_000,
         );
         supervisor.stdout.on("data", () => {
@@ -423,9 +368,7 @@ describe("inspectPrimaryOperationEvidence", () => {
       });
       const spawned = JSON.parse(stdout) as { pid: number; group: number };
       supervisor.kill("SIGKILL");
-      await new Promise<void>((resolve) =>
-        supervisor.once("close", () => resolve()),
-      );
+      await new Promise<void>((resolve) => supervisor.once("close", () => resolve()));
       const attemptFile = path.join(f.root, "retry-count");
       const childScript = `
       import fs from "node:fs";
@@ -438,24 +381,20 @@ describe("inspectPrimaryOperationEvidence", () => {
       process.stdout.write(JSON.stringify({ dispatched, entry: store.read("card").primaryOperations.op }));
     `;
       const inspectFresh = () =>
-        spawnSync(
-          process.execPath,
-          ["--import", "tsx", "--input-type=module", "-e", childScript],
-          {
-            encoding: "utf8",
-            timeout: 20_000,
-            env: {
-              ...process.env,
-              FIXTURE: JSON.stringify({
-                state: path.join(f.root, "state"),
-                project: f.project,
-                cwd: f.cwd,
-                trustedRoot: path.join(f.root, "artifacts"),
-                attemptFile,
-              }),
-            },
+        spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", childScript], {
+          encoding: "utf8",
+          timeout: 20_000,
+          env: {
+            ...process.env,
+            FIXTURE: JSON.stringify({
+              state: path.join(f.root, "state"),
+              project: f.project,
+              cwd: f.cwd,
+              trustedRoot: path.join(f.root, "artifacts"),
+              attemptFile,
+            }),
           },
-        );
+        });
       await new Promise((resolve) => setTimeout(resolve, 150));
       const whileAlive = inspectFresh();
       expect(whileAlive.status, whileAlive.stderr).toBe(0);

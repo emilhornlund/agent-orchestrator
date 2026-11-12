@@ -46,10 +46,7 @@ export interface RunTaskPlanningOptions {
   card: TrelloCard;
   attachments?: readonly TrelloAttachment[];
   attachmentContext?: CardAttachmentPromptContext;
-  runOptions: Omit<
-    OpenCodeRunOptions,
-    "prompt" | "sessionId" | "captureSessionId"
-  >;
+  runOptions: Omit<OpenCodeRunOptions, "prompt" | "sessionId" | "captureSessionId">;
   /** Durable advisory operation identity and trusted evidence location. */
   primaryOperation?: {
     operationId: string;
@@ -70,9 +67,7 @@ export interface TaskPlanningOperationResult {
   runResult: OpenCodeRunResult;
 }
 
-function parsePlanArtifact(
-  output: string,
-): ReturnType<typeof parseTaskPlanningResult> {
+function parsePlanArtifact(output: string): ReturnType<typeof parseTaskPlanningResult> {
   const assistantText = extractOpenCodeTextOutput(output);
   let value: unknown;
 
@@ -111,12 +106,7 @@ export async function runTaskPlanningOperation(
     );
   }
 
-  const prompt = buildTaskPlanningPrompt(
-    projectId,
-    card,
-    attachments,
-    attachmentContext,
-  );
+  const prompt = buildTaskPlanningPrompt(projectId, card, attachments, attachmentContext);
   const runResult = await runWithPrimaryTaskSession(
     taskRecordStore,
     openCode,
@@ -192,11 +182,7 @@ export async function runTaskPlanningOperation(
     );
   }
 
-  const storedPlan = planStore.create(
-    plan,
-    taskRecord.revision,
-    taskRecord.operationKey,
-  );
+  const storedPlan = planStore.create(plan, taskRecord.revision, taskRecord.operationKey);
 
   return { plan, storedPlan, runResult };
 }

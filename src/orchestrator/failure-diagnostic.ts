@@ -5,10 +5,7 @@ import { OpenCodeTimeoutError } from "../opencode/opencode-client.js";
 import { presentExternalDiagnostic } from "../security/bounded-diagnostic.js";
 
 import { PublishedCardStateError } from "./published-card-state-error.js";
-import {
-  WorkflowError,
-  type WorkflowFailureCategory,
-} from "./workflow-error.js";
+import { WorkflowError, type WorkflowFailureCategory } from "./workflow-error.js";
 
 export type FailureCategory = WorkflowFailureCategory | "OpenCode timeout";
 
@@ -90,10 +87,7 @@ export function describeFailure(error: unknown): FailureDescription {
     };
   }
 
-  if (
-    normalizedError instanceof PublishedCardStateError &&
-    normalizedError.cause !== undefined
-  ) {
+  if (normalizedError instanceof PublishedCardStateError && normalizedError.cause !== undefined) {
     return {
       category: "Workflow",
       reason: `${normalizedError.message}; Cause: ${stringifyFailure(normalizedError.cause)}`,
@@ -117,20 +111,13 @@ export function describeFailure(error: unknown): FailureDescription {
   };
 }
 
-export function getExistingSessionLogPath(
-  projectId: string,
-  cardId: string,
-): string | undefined {
+export function getExistingSessionLogPath(projectId: string, cardId: string): string | undefined {
   const sessionLogPath = getSessionLogPath(projectId, cardId);
 
   return existsSync(sessionLogPath) ? sessionLogPath : undefined;
 }
 
-export function annotateCardFailure(
-  error: Error,
-  projectId: string,
-  cardId: string,
-): void {
+export function annotateCardFailure(error: Error, projectId: string, cardId: string): void {
   const sessionLogPath = getExistingSessionLogPath(projectId, cardId);
 
   annotateFailure(error, {
@@ -186,9 +173,7 @@ export function formatFailureDiagnostic(
   }
 
   if (options.handlingOutcome !== undefined) {
-    details.push(
-      `Failure handling: ${presentExternalDiagnostic(options.handlingOutcome)}`,
-    );
+    details.push(`Failure handling: ${presentExternalDiagnostic(options.handlingOutcome)}`);
   }
 
   return `Task failed. ${details.join("; ")}`;
