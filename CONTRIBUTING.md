@@ -120,35 +120,20 @@ attachments from Trello and returns the attachments in Trello's order. Each
 those values, and empty values are preserved. Trello returns `bytes` as a string
 when available.
 
-Card processing materializes uploaded files below the configured card context
-root and writes the ordered metadata to `attachments.json`. External URL
-attachments remain metadata-only and are never requested. The manifest uses
-`localFilename` for a safe single filename on uploaded entries and `null` for
-external entries. Unchanged regular uploads are reused. A successful
-reconciliation removes regular files claimed by the previous manifest for
-removed or replaced attachments; unrelated and unknown files are retained.
-Per-upload and aggregate new-download limits are
-documented in the card-context sections of `docs/operations.md` and
-`docs/configuration.md`. Before each applicable OpenCode session starts,
-materialized attachment metadata is refreshed and used to add a compact section
-to refinement, implementation, automatic review, automatic remediation, and
-review-feedback remediation prompts.
-The section lists each name, any non-blank MIME type, and either the absolute
-runtime path to an uploaded file or the external URL for a link. It is omitted
-when there are no attachments. Prompt paths use the configured `contextRoot` in
-the filesystem namespace visible to the running service and OpenCode process,
-not the source checkout or worktree. These ordinary attachment sections are metadata
-and locations, not file excerpts; ordinary commit prompts remain unchanged.
-Confirmed-loss primary-session reconstruction is a separate path: it may include
-bounded supported text attachment content in a sanitized, externally stored recovery
-bundle. Its builder and persistence boundary sanitize before serialization/encoding.
-Do not turn the ordinary metadata-only section into a rule preventing the required
-reconstruction context, or infer that every attachment format has been proven usable.
-Unsafe or unavailable materialized locations must fail the workflow before its
-affected OpenCode session starts rather than being omitted silently. Context is
-retained outside Git and worktree cleanup for successful processing, failures,
-resumes, and retries. Failed refreshes preserve the last successfully published
-manifest and its files, while reconciliation never removes unknown files.
+The manifest, prompt, download, and retention contracts are documented in
+[Operations](docs/operations.md#card-context-storage); configurable limits are in
+[Configuration](docs/configuration.md#workflow). Keep those references current when
+changing context behavior instead of duplicating the operator contract here.
+
+Regression tests should protect ordered nullable metadata, safe single-component
+filenames, unchanged-upload reuse, bounded downloads, and preservation of the last
+successful manifest on failure. External links must remain metadata-only, and
+reconciliation must not remove unknown files. Unsafe materialized paths must fail
+before the affected OpenCode dispatch. Ordinary attachment prompts contain metadata
+and locations, not file excerpts; confirmed-loss primary-session reconstruction is
+a separate path that permits bounded supported text in a sanitized external bundle.
+Test sanitization before serialization/encoding at that persistence boundary, without
+claiming support for every attachment format.
 
 ### Trello card start dates
 

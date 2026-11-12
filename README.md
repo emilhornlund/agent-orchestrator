@@ -49,11 +49,13 @@ cover the workflow; no live Trello/GitHub/OpenCode pilot or deployed-service tes
 | `config.yaml`, environment variables, defaults, and validation       | [Configuration](docs/configuration.md) |
 | Reconciliation, restart recovery, retries, and ambiguous state       | [Recovery](docs/recovery.md)           |
 | Worktree safety, publication, notifications, logging, and operations | [Operations](docs/operations.md)       |
+| Agreed product behavior and stable acceptance criteria              | [Requirements](docs/requirements.md) and [Specification](docs/specification.md) |
 | Development setup, testing, and pull requests                        | [CONTRIBUTING.md](CONTRIBUTING.md)     |
 | Private vulnerability reporting                                      | [SECURITY.md](SECURITY.md)             |
 
-The focused pages are the canonical references for their topics. The implementation does not change when documentation is
-reorganized; current configuration names, states, commands, and safety boundaries are described there.
+Workflow, Configuration, Recovery, and Operations describe the current implementation. Requirements defines agreed product
+behavior, and Specification provides stable acceptance IDs; neither is a claim that every criterion has been qualified against
+live services. Contributor guidance explains how to verify changes and report those limits.
 
 ## Key properties
 
