@@ -1,6 +1,45 @@
 # Rewrite progress
 
-## Current checkpoint
+## Current checkpoint — P11
+
+- Started on `refactor/p11-final-integration` at integrated P10 `7fed12d`;
+  index and worktree clean. Small local task/correction commits authorized, no
+  branch change, remote action or deployment. Prior completion records below are
+  inherited results, not checks run in this session.
+- Ordered remaining work: T1 verify supported migration/restart, project isolation,
+  ownership, credential and local/container production paths; fix concrete gaps
+  with meaningful regressions. T2 correct standalone product/operator guidance and
+  preserve useful approved upgrade/verification policy. T3 remove this temporary
+  directory and delivery references, verify combined workflows/links and run final
+  `yarn validate`. Do not recreate these files after final cleanup.
+- Applicable criteria: ENV-001, REC-005, CFG-002/003/005, SEC-001/003,
+  TST-001–003 and cross-workflow publication, feedback, CI, maintenance, terminal,
+  retry, refinement and shutdown recovery. No current-session checks claimed yet.
+  Live-service evidence and the deployed-release identity are not established.
+- T1 completed: canonical orphan inventory isolates unreadable/unsupported attempts
+  only when exactly one independently validated other integration pointer owns them.
+  Unknown, own, incorrectly named or multiply attributed records remain fenced;
+  originals are never modified. New production-startup regressions cover repeated
+  legacy/canonical corrupt/unsupported recovery beside a healthy project.
+- T1 also adds a non-root production Containerfile with required tools, explicit
+  build inputs and matching Docker/Podman context allowlists; local/container
+  installation guidance documents pinned persistent mounts and isolation prerequisites.
+  Self-review traced registry reconciliation/handoff, startup project contexts,
+  unsupported source preservation, credentials/askpass packaging, shutdown and the
+  new/untracked build inputs. The first fixture incorrectly shared a GitHub identity;
+  corrected it, then fixed the actual shared-root isolation defect it exposed.
+- Checks: eight focused startup/store/import/shutdown/ownership/environment/auth
+  suites passed 190 tests locally; typecheck and changed-file ESLint passed.
+  Production `podman build -f Containerfile -t localhost/agent-orchestrator:integration .`
+  passed, including TypeScript build. Seven equivalent container suites passed
+  96 tests and the targeted store regression passed five (89 unrelated filtered).
+  An initial eight-suite container run timed out, not a pass; read-only host bind
+  testing was denied by host permissions, so explicit non-secret inputs were copied
+  into an owned disposable container and that container was removed after testing.
+  Tool versions/help passed. Default rootless nested Bubblewrap `/proc` mount was
+  denied; no isolation bypass or live-service qualification is claimed. T2/T3 remain.
+
+## Inherited P10 checkpoint
 
 - **P10 implemented and locally validated on `refactor/p10-terminal-outcomes-and-retries`, based on
   `96292f3` (integrated P9).** Initial index/worktree clean. Small local task commits

@@ -124,6 +124,58 @@ const transitionCells = runEventTypes.flatMap((event) =>
 );
 
 describe("RunStore authoritative foundation", () => {
+  it.each(["unpointed", "wrong-hash", "own", "multiple", "other"] as const)(
+    "retains the unreadable-attempt fence unless exactly one other canonical pointer owns it (%s)",
+    (ownership) => {
+      const { root, lease, identity, store } = setup();
+      try {
+        store.create(fixture(identity));
+        const attempts = path.join(identity.storageRoot, "attempts");
+        const registryDirectory = path.join(identity.storageRoot, "registry");
+        fs.mkdirSync(registryDirectory, { recursive: true });
+        const bytes = "{unreadable-original";
+        fs.writeFileSync(path.join(attempts, "unreadable.json"), bytes);
+        const writePointer = (integrationId: string, wrongHash = false) => {
+          fs.writeFileSync(
+            path.join(
+              registryDirectory,
+              `${wrongHash ? "0".repeat(64) : createHash("sha256").update(integrationId).digest("hex")}.json`,
+            ),
+            JSON.stringify({
+              version: 1,
+              integrationId,
+              attemptId: "unreadable",
+              generation: 1,
+            }),
+          );
+        };
+        if (ownership !== "unpointed")
+          writePointer(
+            ownership === "own" ? lease.integrationId : "other-integration",
+            ownership === "wrong-hash",
+          );
+        if (ownership === "multiple") writePointer("third-integration");
+        const registry = new RunRegistry(
+          identity.storageRoot,
+          lease.integrationId,
+          lease,
+        );
+        if (ownership === "other") {
+          registry.handoff(store, null, 1);
+          expect(registry.reconcile()?.attemptId).toBe("attempt-1");
+        } else {
+          expect(() => registry.handoff(store, null, 1)).toThrow();
+          expect(() => registry.reconcile()).toThrow();
+        }
+        expect(
+          fs.readFileSync(path.join(attempts, "unreadable.json"), "utf8"),
+        ).toBe(bytes);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("projects skipped and uncertain quality statuses without relabeling them as passed", () => {
     const base = setup();
     base.store.create(fixture(base.identity));

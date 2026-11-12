@@ -1,8 +1,11 @@
-.git
-node_modules
-coverage
-dist
-logs
-.env
-.env.*
-!.env.example
+# Only build inputs enter the context; never local configuration or runtime data.
+**
+!package.json
+!yarn.lock
+!tsconfig.json
+!tsconfig.build.json
+!src
+!src/**
+!scripts
+!scripts/github-git-askpass.mjs
+!Containerfile

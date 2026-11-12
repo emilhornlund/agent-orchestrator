@@ -5,6 +5,67 @@
 This page is the canonical operator reference for execution isolation, publication boundaries, timing, notifications,
 shutdown, logging, retention, and multi-project operation.
 
+## Local and container installation
+
+Local operation uses Node.js 24+, Yarn Classic, Git 2.30+, GitHub CLI 2.40+,
+OpenCode 1.0+ with the required `run` options, Bubblewrap and `flock` (util-linux).
+Install them for the service account, provision the shared coordination namespace
+as described in [Configuration](configuration.md#provisioning-a-shared-host-coordination-namespace),
+then use `yarn dev`, or `yarn build` followed by `node dist/main.js`.
+Both commands read `config.yaml` from the working directory. No container engine
+is needed locally.
+
+The supplied `Containerfile` builds the same production entry point, installs the
+required tools and runs as the non-root `node` user. Build it with either:
+
+```sh
+podman build -f Containerfile -t agent-orchestrator .
+# Or: docker build -f Containerfile -t agent-orchestrator .
+```
+
+Tool versions can be selected with the `GH_VERSION` and `OPENCODE_VERSION` build
+arguments; startup checks their actual capabilities. The build context allowlists
+exclude local configuration, credentials, checkout metadata and runtime data. Never
+add secrets as build arguments or copy them into an image. Install project-specific
+build tools in a derived image when the task's setup/validation commands need them.
+
+Before running, configure absolute persistent repository, worktree, context and
+coordination paths. Mount those paths consistently across restarts. Active attempt
+paths cannot be relocated during an upgrade. Mount a protected `config.yaml` at
+`/app/config.yaml:ro`, provide credentials using a protected runtime environment file
+or supported secret files, and persist `/home/node` for OpenCode sessions and
+authentication. For example, after provisioning the directories and namespace:
+
+```sh
+podman run --name agent-orchestrator --userns=keep-id:uid=1000,gid=1000 \
+  --env-file /secure/agent-orchestrator.env \
+  -v /secure/config.yaml:/app/config.yaml:ro \
+  -v /srv/agent-orchestrator:/srv/agent-orchestrator:rw \
+  -v /srv/agent-home:/home/node:rw \
+  agent-orchestrator
+```
+
+This is a mount/identity example, not a universal host security policy. The configured
+paths must match the mounted paths; all local/container instances must share the
+same host coordination directory and namespace ID. Match the service UID, keep
+credentials private, and do not relabel shared mounts or source checkouts to bypass
+access errors. A read-only configuration mount does not protect credentials placed
+in other broadly accessible directories.
+
+Nested Bubblewrap isolation requires a host/container policy permitting its mount
+and PID namespace operations. Some default rootless Podman policies deny its `/proc`
+mount even when the binary is installed. Verify the startup isolation probe under
+the actual service identity and have the administrator establish an appropriate
+least-privilege policy; do not use privileged mode or disable isolation/SELinux to
+force startup. A denied probe prevents task execution. A successful image build or
+tool-version check is not proof that this runtime prerequisite or live integrations
+are available.
+
+Send `SIGTERM` and allow the service to drain before replacing the container. Keep
+volumes and original state; do not use ephemeral container storage for task state,
+sessions or worktrees. The same [upgrade and recovery rules](recovery.md) apply to
+local and container installations.
+
 ## Reconciliation block storage
 
 For legacy reconciliation records, when a retryable GitHub or Trello reconciliation reaches the existing three-attempt limit, the project worker writes its

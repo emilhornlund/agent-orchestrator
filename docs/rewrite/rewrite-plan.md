@@ -273,7 +273,7 @@ authority into a second archive. Subsequent attempts own distinct suffixed resou
 names; supported older active attempts retain their original persisted identities.
 This contribution is implemented and locally validated; [current progress](phase-status.md)
 records the integrated result. P11 final integration/temporary-guidance removal
-remains separate and has not started.
+follows as a separate bounded scope below.
 
 ### P11 — Final integration, supported migration and removal of scaffolding
 
@@ -284,6 +284,10 @@ remaining rewrite-delivery vocabulary, preserving legitimate lifecycle phases an
 runtime fields. This is
 not a return to exhaustive live qualification or evidence archives. See the
 [P11 guide](p11-execution.md).
+Current execution starts from integrated P10 `7fed12d`. Supported import and
+shutdown mechanisms are retained; final integration corrects shared-runtime-root
+isolation of attributed unreadable attempts and supplies non-root production
+container packaging before standalone documentation and temporary cleanup.
 
 ## Task sizing and scope control
 

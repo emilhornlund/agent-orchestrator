@@ -23,7 +23,10 @@ import type { RunRecord } from "../src/task-session/run-record.js";
 import { legacyAttemptId } from "../src/task-session/legacy-state-import.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
 import type { TaskExecutionRecord } from "../src/task-session/task-execution-record.js";
-import { ProjectRunAuthority } from "../src/task-session/project-run-authority.js";
+import {
+  ProjectRunAuthority,
+  type ProjectRunWorkerContext,
+} from "../src/task-session/project-run-authority.js";
 import { GitClient, type RunGit } from "../src/git/git-client.js";
 import type { GitHubClient } from "../src/github/github-client.js";
 import type { OpenCodeClient } from "../src/opencode/opencode-client.js";
@@ -127,6 +130,108 @@ function validRepositoryGit(): RunGit {
 }
 
 describe("runStartup", () => {
+  it.each(["legacy", "canonical"] as const)(
+    "isolates corrupt and unsupported %s state on repeated startup without losing originals or blocking a healthy project",
+    async (family) => {
+      const root = fs.mkdtempSync(
+        path.join(os.tmpdir(), "startup-invalid-state-"),
+      );
+      const project = createProject(path.join(root, "source"));
+      const healthy = {
+        ...createProject(path.join(root, "healthy-source")),
+        id: "healthy-project",
+        trello: { ...project.trello, boardId: "healthy-board" },
+      };
+      healthy.repository.worktreeRoot = path.join(root, "healthy-worktrees");
+      healthy.repository.github = "owner/healthy";
+      const config = createConfig(project);
+      config.projects.push(healthy);
+      config.workflow.contextRoot = path.join(root, "state");
+      const statePath = path.join(
+        config.workflow.contextRoot,
+        ...(family === "legacy"
+          ? ["task-executions", project.id, "card.json"]
+          : ["attempts", "preserved-attempt.json"]),
+      );
+      const dependencies = {
+        trello: {} as TrelloClient,
+        git: new GitClient(async (cwd, args) =>
+          args[0] === "remote"
+            ? `https://github.com/${cwd === healthy.repository.path ? healthy.repository.github : project.repository.github}.git`
+            : "true",
+        ),
+        github: {} as GitHubClient,
+        opencode: {} as OpenCodeClient,
+        commands: new CommandRunner(vi.fn<RunCommand>()),
+      };
+      const operations = {
+        validateToolchain: vi.fn().mockResolvedValue(undefined),
+        validateGitHubCli: vi.fn().mockResolvedValue(undefined),
+        validateProjectTrello: vi.fn().mockResolvedValue(undefined),
+        validateProjectGitHub: vi.fn().mockResolvedValue(undefined),
+        runOrchestrator: vi.fn<typeof runStartupWorker>(),
+      };
+      async function runStartupWorker(
+        ...args: Parameters<StartupOperations["runOrchestrator"]>
+      ): Promise<void> {
+        const context = args[9]!.get(project.id)!;
+        await ProjectRunAuthority.createPreparingAttempt({
+          projectId: project.id,
+          cardId: "card",
+          taskKind: "implementation",
+          attemptId: "preserved-attempt",
+          pinned: context.pinned!,
+          projectLease: context.projectLease!,
+          coordinationRoot: config.workflow.coordinationRoot!,
+        });
+      }
+      try {
+        fs.mkdirSync(project.repository.path);
+        fs.mkdirSync(healthy.repository.path);
+        if (family === "canonical") {
+          operations.runOrchestrator.mockImplementationOnce(runStartupWorker);
+          await runStartup(
+            config,
+            dependencies,
+            new AbortController().signal,
+            operations,
+          );
+        } else {
+          fs.mkdirSync(path.dirname(statePath), { recursive: true });
+        }
+        operations.runOrchestrator.mockReset();
+        operations.runOrchestrator.mockResolvedValue(undefined);
+        for (const original of ["{invalid-json", '{"version":999}']) {
+          fs.writeFileSync(statePath, original);
+          for (let restart = 0; restart < 2; restart++) {
+            await runStartup(
+              config,
+              dependencies,
+              new AbortController().signal,
+              operations,
+            );
+            const contexts = operations.runOrchestrator.mock
+              .lastCall![9] as Map<string, ProjectRunWorkerContext>;
+            expect(contexts.get(project.id)?.blockedReason).toBeTruthy();
+            expect(contexts.get(project.id)?.authority).toBeUndefined();
+            expect(contexts.get(healthy.id)?.blockedReason).toBeUndefined();
+            expect(contexts.get(healthy.id)?.projectLease).toBeDefined();
+            expect(fs.readFileSync(statePath, "utf8")).toBe(original);
+            expect(
+              fs.existsSync(path.join(config.workflow.contextRoot, "attempts")),
+            ).toBe(family === "canonical");
+          }
+        }
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+        fs.rmSync(config.workflow.coordinationRoot!, {
+          recursive: true,
+          force: true,
+        });
+      }
+    },
+  );
+
   it("starts projects under the unified workflow", async () => {
     const project = createProject("/tmp/task-session-repository");
     const config = createConfig(project);

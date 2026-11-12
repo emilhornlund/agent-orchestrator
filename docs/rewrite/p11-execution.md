@@ -11,6 +11,11 @@ do not claim a realistic baseline was demonstrated if it was not run.
 
 ## Implementation scope
 
+Current bounded order: supported state/restart and production container packaging
+(including shared-root corrupt-record isolation), standalone product guidance,
+then temporary-guidance cleanup and final integration validation. Container checks
+must distinguish image/tool success from host nested-isolation policy denial.
+
 1. Check cross-workflow integration using existing deterministic suites: initial
    normal/draft publication, feedback, bounded CI and additive maintenance, human
    terminal outcomes, clean retries, refinement and shutdown/restart recovery.
