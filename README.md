@@ -107,6 +107,8 @@ validation rule.
 
 ## Running
 
+First provision the required shared coordination namespace using the
+[configuration instructions](docs/configuration.md#provisioning-a-shared-host-coordination-namespace).
 Start the orchestrator with:
 
 ```bash
@@ -116,6 +118,8 @@ yarn dev
 The process continues polling until it is stopped. Shutdown, fatal errors, notifications, logging, and other operator
 guidance are covered in [Operations](docs/operations.md). If the process is interrupted, use [Recovery](docs/recovery.md)
 before changing cards, branches, or worktrees.
+For compiled local execution and the supplied non-root container image, see
+[local and container installation](docs/operations.md#local-and-container-installation).
 
 ## Development
 

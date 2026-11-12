@@ -38,6 +38,23 @@
   into an owned disposable container and that container was removed after testing.
   Tool versions/help passed. Default rootless nested Bubblewrap `/proc` mount was
   denied; no isolation bypass or live-service qualification is claimed. T2/T3 remain.
+- T1 checkpoint: `ab2469d`. T2 corrects permanent guidance for actual canonical
+  authority/import support, forward-safe upgrades, advisory publication and feedback
+  replies, bounded CI episodes, attempt-specific resources, preserved cleanup,
+  notification uncertainty and shared-process shutdown. Supported operator commands
+  replace stale pre-import JSON instructions; external-PR recovery is explicitly
+  restricted to verified already-merged salvage. Useful recovery accounting,
+  semantic judgment and honest verification policy are preserved outside this folder.
+- T2 self-review compared documentation with production polling/authority,
+  credential allowlists, external-PR/legacy operator commands, terminal release and
+  refinement callers. Fixed stale approval/green-CI reply gates, ambient-credential,
+  description-refresh and no-Git-cancellation claims. Requirement IDs/acceptance
+  criteria remain unchanged; specification prose now links existing verification
+  guidance rather than requiring a new evidence record. Four focused lifecycle,
+  external-PR recovery, configuration and child-environment suites passed 188 tests,
+  including all 32 real-Git lifecycle scenarios; typecheck passed. The first run's
+  120-second timeout is not a pass. Two documentation formatting issues were found
+  and corrected before checkpoint. T3 combined checks/cleanup/final validation remain.
 
 ## Inherited P10 checkpoint
 

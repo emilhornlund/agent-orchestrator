@@ -925,7 +925,7 @@ An unexpected manual move of an active card must not be mistaken for a successfu
 
 ## Automated verification (REQ-TST)
 
-The specification must be verifiable using automated tests of observable workflow behavior, not only isolated functions. Detailed test cases and evidence belong in a separate verification record linked to these stable requirement IDs.
+The specification must be verifiable using automated tests of observable workflow behavior, not only isolated functions. Behavior-named test scenarios may reference these stable requirement IDs; [verification guidance](../CONTRIBUTING.md#workflow-verification) explains how to distinguish demonstrated results from qualification limits.
 
 ### REQ-TST-001 — Automated coverage of critical workflows
 
@@ -961,7 +961,7 @@ Each specified requirement must remain independently assessable without assuming
 
 ## Specification coverage and traceability
 
-The table maps every behavioral section in [requirements.md](requirements.md) to its specification counterparts. This is a documentation traceability audit, **not** a claim that the application satisfies these requirements. The introductory `How we work with this document` and `Purpose` sections govern document process and intent rather than separately testable application behavior.
+The table maps every behavioral section in [requirements.md](requirements.md) to its specification counterparts. This is documentation traceability, **not** a claim that the application satisfies these requirements. The introductory `Document authority` and `Purpose` sections govern document process and intent rather than separately testable application behavior.
 
 | Source section in `requirements.md`                   | Specification IDs                    |
 | ----------------------------------------------------- | ------------------------------------ |

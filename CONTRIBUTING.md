@@ -14,6 +14,10 @@ Supported tooling is:
 - GitHub CLI (`gh`) 2.40.0 or later when working with managed repositories; and
 - OpenCode when running the orchestrator locally.
 
+Service execution also requires Linux, Bubblewrap namespace isolation and `flock`.
+See [installation](docs/operations.md#local-and-container-installation) for local
+and container prerequisites; routine service-free tests do not need live credentials.
+
 Install dependencies from the repository root:
 
 ```bash
@@ -78,6 +82,34 @@ output when diagnosing a failure rather than preserving entire fixture trees.
 
 Name tests for product behavior. Integration tests may use real disposable Git repositories
 when Git behavior is the assertion; ordinary decision/parser tests should stay in memory.
+
+### Workflow verification
+
+Use [stable specification IDs](docs/specification.md) to identify applicable criteria;
+do not infer compliance from a code path or aggregate test count. Important behavior
+needs production-entry-point coverage, including later writes and restart/recovery,
+not just a manually constructed desired final state. Existing lifecycle integration
+tests combine real Git repositories/processes with stateful Trello/GitHub/OpenCode
+substitutes. Cover normal/draft delivery, adverse advice, bounded CI, feedback,
+additive maintenance, refinement, terminal races and clean deliberate retries.
+State/import/process suites exercise corrupt state, partial acceptance, interrupted
+handoffs, shutdown, ownership and credential boundaries without live services.
+
+Report exactly which commands ran and whether they passed, failed, were filtered or
+were not executed. Simulated integrations demonstrate their modeled boundaries, not
+a deployed-release migration, live provider semantics or production permissions.
+Container builds and startup probes likewise do not demonstrate a complete live
+workflow. A realistic live-service baseline remains separate qualification; it has
+not been established by the routine suite. Do not fabricate an end-to-end result
+from unit-test success. Check registered secret forms and controlled channels
+explicitly without claiming arbitrary unknown-secret detection.
+
+Useful task-judgment boundaries are qualitative, not changed-line thresholds: a
+small task-fulfilling change is meaningful; terse wording alone is not grounds to
+fail a card when repository/context evidence establishes intent. Essential unresolved
+product choices require clarification, and an already-satisfied task must not
+manufacture a commit merely to obtain a PR. Negative stylistic AI feedback alone is
+not a publication veto; material unresolved issues require truthful draft status.
 
 ### Trello attachments and card context
 

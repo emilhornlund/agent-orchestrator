@@ -134,9 +134,10 @@ host directory mounted at the latter path. The contents must be the same mount, 
 podman run --rm --userns=keep-id -v "$COORDINATION_ROOT:/run/agent-orchestrator/coordination:rw" IMAGE
 ```
 
-The source checkout used by `tsx` must be available read-only in the container at its configured working directory, and the
-container command must execute from that directory so package resolution finds the installed `tsx` dependency. Export the
-same configuration and namespace ID in every participant. A container that cannot access the marker/owner files fails startup
+The supplied production image runs compiled JavaScript from `/app`; it does not need
+an application source mount or `tsx`. See [installation](operations.md#local-and-container-installation)
+for image building, configuration and persistent mounts. Use the same namespace ID
+in every participant. A container that cannot access the marker/owner files fails startup
 before project processing; do not work around that failure by making the namespace writable by everyone.
 
 Writable OpenCode execution additionally requires Linux Bubblewrap (`bwrap`). Install
@@ -351,9 +352,10 @@ corrections. Failed setup cannot start the affected agent.
 
 The orchestrator executes configured quality commands and binds results to exact
 content. Validation and coverage are independently optional; an absent command is
-reported as skipped, not passed. Some legacy routes still require passing checks
-or plan approval. Those are current implementation limitations, not the intended
-advisory policy defined by the [requirements](requirements.md).
+reported as skipped, not passed. Quality checks and plan/review feedback are advisory
+on initial implementation, feedback, CI repair and maintenance paths. Failed checks
+or material unresolved issues require accurate draft publication, not approval.
+Operational safety and primary-execution recovery remain mandatory.
 
 #### GitHub authentication modes
 
@@ -395,8 +397,10 @@ private key, invalid App credentials, a JWT generation failure, or an installati
 operation. None of these failures trigger a fallback to PAT or other ambient authentication. The App is configured at the
 project boundary, so its credentials are not shared with another project.
 
-When `githubApp` is omitted, the orchestrator leaves the GitHub CLI and Git environment unchanged. Ambient `GH_TOKEN` and
-`GITHUB_TOKEN` values are recognized for output redaction only; they are not replaced or copied into a child environment.
+When `githubApp` is omitted, the orchestrator retains ambient GitHub authentication
+for GitHub CLI and Git operations. Ambient `GH_TOKEN` and `GITHUB_TOKEN` are allowed
+only in those child-process families and are registered for output redaction; they
+are not forwarded to setup, validation or OpenCode processes.
 `GH_TOKEN` is therefore optional and is needed only when an operator chooses PAT-based ambient authentication. It is not
 required for projects using a GitHub App.
 
@@ -409,8 +413,8 @@ When model selection is omitted, explicit `OPENCODE_CONFIG`, `OPENCODE_CONFIG_DI
 and `XDG_CONFIG_HOME` locations must be absolute: the service and task process have
 different working directories. The selected config/XDG root does not fall back to a
 displaced home config to select credentials. This resolves credential scope only;
-the omitted model/variant flags still leave actual selection to OpenCode. Realistic
-effective-default evidence is tracked separately from scripted argument/env tests.
+the omitted model/variant flags still leave actual selection to OpenCode. Scripted
+argument/environment tests alone do not demonstrate a live provider's effective default.
 
 | Stage            | Used for                                                           |
 | ---------------- | ------------------------------------------------------------------ |
@@ -429,14 +433,17 @@ The post-commit pull-request-description session reuses the configured `commit` 
 description-model configuration. The orchestrator supplies the card title, description and URL, final changed files, commit
 information, and known validation or test results. The description result is strict JSON with `summary`, `changes`, and
 `validation` fields. Missing or invalid output, OpenCode execution failure, or Markdown rendering failure is logged as a
-non-critical description-generation failure and falls back to the deterministic body containing the Trello card URL followed by
-the configured attribution footer `Implemented automatically by <projects[].repository.gitIdentity.name>.`; it does not block branch publication, pull-request creation, reuse, or card
+non-critical description-generation failure and falls back to a deterministic body
+with task purpose, available changed files, observed quality results, outstanding
+issues, Trello URL and the configured attribution footer
+`Implemented automatically by <projects[].repository.gitIdentity.name>.`; it does not block branch publication, pull-request creation, reuse, or card
 transitions. A valid empty `validation` array is allowed and does not claim that validation or tests passed. The result is
 generated after publication preparation. A standalone deterministic renderer defines the Markdown contract: fixed `Summary`,
 `Changes`, `Validation`, and `Task` sections, an application-owned Trello card link and the same configured attribution footer, and one reserved
 status-marker pair. Publication wiring uses this renderer for newly created pull requests; configuring the `commit` model does not
-allow it to choose headings, links, footer text, or status markers. Existing open pull requests are reused without description
-updates.
+allow it to choose headings, links, footer text, or status markers. Existing open pull
+requests retain their identity; managed description/outcome sections are refreshed
+after significant updates while preserving human text outside those sections.
 
 `planning` and `planReview` use the same optional `model`/`variant` shape as other stages. The remaining configured consumers are `refinement`, `implementation`, `review`, `remediation`, and `commit`. These values are scoped to their project and activity.
 
