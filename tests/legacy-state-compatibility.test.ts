@@ -15,7 +15,7 @@ const fixture = JSON.parse(
 };
 
 describe("legacy task-state compatibility", () => {
-  it("imports exact v1 TaskExecutionStore output and keeps source bytes and references", () => {
+  it("imports prior v1 TaskExecutionStore output and keeps source bytes and references", () => {
     expect(fixture.provenance).toMatchObject({
       writerCommit: "05319ead1682b47135c67194b1743bee7068fbfd",
       artifactVersion: 1,

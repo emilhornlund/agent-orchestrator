@@ -139,7 +139,7 @@ workflow:
   contextRetentionDays: 14
   # Optional; defaults to /opt/.agent-context. Keep this outside repositories and worktree roots.
   contextRoot: "/opt/.agent-context"
-  # Required for P2 canonical ownership. Provision once as the service account;
+  # Required for canonical ownership. Provision once as the service account;
   # every host/container process must use this namespace ID and the same host
   # directory mounted read/write (not independent copies). See docs/configuration.md.
   coordinationRoot: "/var/lib/agent-orchestrator/coordination"
