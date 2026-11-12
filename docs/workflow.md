@@ -333,14 +333,20 @@ implementation crash or a successfully published correction.
 | Expected pull request unavailable or identity uncertain      | Preserve ownership and reconcile; do not assume a terminal outcome |
 
 After an owned pull request reaches either terminal state, reconciliation attempts to remove only the dedicated
-`<worktreeRoot>/<trello-card-id>` worktree and its local `agent/<trello-card-id>` branch. For a merged pull request this
+attempt's worktree and local branch. The first attempt may use `<worktreeRoot>/<trello-card-id>` and `agent/<trello-card-id>`;
+later attempts use `<trello-card-id>--<attempt-id>` in both names. Existing attempts retain their persisted names. For a merged pull request this
 attempt happens after remote branch cleanup, the successful `Done` transition, and completion notification handling. For a
-closed pull request it happens after the successful `Backlog` transition and explanatory comment attempt. This cleanup is
-best effort: a warning includes the project, card, paths, and failure, but it never undoes a terminal transition or blocks
-the next reconciliation.
+closed pull request it happens after the successful `Backlog` transition and verified explanatory comment. Removal requires
+canonical/common Git repository identity and attempt-owned resources. Closed-PR commit history must remain accessible;
+failed history reads are not proof that removal is safe. Cleanup failure never reverses a terminal Trello transition;
+unresolved obligations remain available for reconciliation.
+Safely stopped writers and conclusively reconciled mutations are required before release. Known owned artifacts that cannot
+be removed safely may remain preserved without blocking the next attempt, since later attempts use different resources.
+Unknown ownership, repository identity or execution still blocks the project; preservation is not permission to bypass those checks.
 
 The local cleanup is skipped when the path is outside the configured root, is symbolic or unexpected, is associated with a
-different branch, has unmerged paths or an active rebase, is dirty, or has a prepared-conflict handoff requiring recovery.
+different branch, has unmerged paths or an active rebase, is dirty (including ignored setup output), has local-only commits,
+or has a prepared-conflict handoff requiring recovery.
 Already-absent worktrees and branches are successful idempotent outcomes. Shutdown cancellation stops before destructive
 cleanup, and preserved worktrees, branches, and prepared-conflict handoffs remain available for diagnosis.
 

@@ -1233,7 +1233,10 @@ describe("runStartup", () => {
         coordinationRoot: context.coordinationRoot!,
       });
       expect(next.store.read()?.resources[0]?.path).toBe(
-        path.join(newWorktreeRoot, "fresh-after-relocation"),
+        path.join(
+          newWorktreeRoot,
+          `fresh-after-relocation--${next.store.attemptId}`,
+        ),
       );
     });
     await runStartup(

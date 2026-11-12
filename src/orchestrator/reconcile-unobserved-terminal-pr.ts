@@ -1,4 +1,5 @@
 import type { ProjectConfig } from "../config/config.js";
+import { taskResources } from "../task-session/task-resources.js";
 import type { GitHubClient } from "../github/github-client.js";
 import type { TrelloClient } from "../trello/trello-client.js";
 import { getCardsForDiscovery } from "./trello-list-discovery.js";
@@ -106,7 +107,7 @@ export async function reconcileUnobservedTerminalPrEvents(options: {
       pr.state !== state ||
       pr.url !== expectedUrl ||
       (pr.headRefOid !== undefined && pr.headRefOid !== head) ||
-      pr.headRefName !== `agent/${mutation.cardId}` ||
+      pr.headRefName !== taskResources(project, mutation.cardId).branch ||
       pr.baseRefName !== project.repository.defaultBranch
     )
       throw new Error(

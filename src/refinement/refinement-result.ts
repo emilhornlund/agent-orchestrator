@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { runTaskResources } from "../task-session/task-resources.js";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
@@ -59,10 +60,7 @@ export function getRefinementResultPath(worktreePath: string): string {
   const projectId = ProjectRunAuthority.currentProjectId();
   const run = projectId && ProjectRunAuthority.current(projectId)?.store.read();
   if (run) {
-    if (
-      path.resolve(worktreePath) !==
-      path.join(run.pinned.worktreeRoot, run.cardId)
-    )
+    if (path.resolve(worktreePath) !== runTaskResources(run).path)
       throw new Error("Refinement result worktree differs from owned attempt");
     return path.join(
       run.pinned.storageRoot,

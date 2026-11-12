@@ -1,4 +1,5 @@
 import type { ProjectConfig } from "../config/config.js";
+import { taskResources } from "../task-session/task-resources.js";
 import type { GitHubClient } from "../github/github-client.js";
 import type { GitClient } from "../git/git-client.js";
 import type { TaskExecutionStore } from "../task-session/task-execution-store.js";
@@ -66,7 +67,7 @@ export async function reconcileExternalTaskSessionPullRequest(options: {
     record === null ||
     record.projectId !== project.id ||
     (record.phase !== "attention-required" && record.phase !== "done") ||
-    record.expectedBranch !== `agent/${association.cardId}`
+    record.expectedBranch !== taskResources(project, association.cardId).branch
   ) {
     throw new Error(
       "External recovery does not match an attention-required task",

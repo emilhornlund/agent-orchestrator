@@ -286,7 +286,10 @@ describe("legacy PR-maintenance preservation", () => {
       } as ProjectConfig,
       card,
       git: git as never,
-      trello: { moveCard: vi.fn() } as never,
+      trello: {
+        moveCard: vi.fn(),
+        addComment: vi.fn(async () => undefined),
+      } as never,
       pullRequest: { url: prUrl, state: "CLOSED", mergedAt: null },
       preserveWorktree: true,
       signal: new AbortController().signal,

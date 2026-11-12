@@ -2,6 +2,107 @@
 
 ## Current checkpoint
 
+- **P10 implemented and locally validated on `refactor/p10-terminal-outcomes-and-retries`, based on
+  `96292f3` (integrated P9).** Initial index/worktree clean. Small local task commits
+  authorized; no remote actions, branch changes or P11 cleanup.
+- Implementation/correction checkpoints: `6ae222c`, `8a18789`, `ffc7bc3`,
+  `1598430`. Final integrated `yarn validate` passed ESLint, Prettier, TypeScript
+  and **2,237 tests across 171 files**. No known scoped defect or implementation
+  requirement remains. This completion documentation is checked on the final tree.
+  No live-service qualification is claimed. Stop before P11.
+- Original ordered work: T1 verified terminal effects/comments/release and
+  notification recovery; T2 canonical owned idempotent cleanup, preservation and
+  closed-PR history; T3 recoverable fresh-attempt handoff with isolated old artifacts,
+  new identities and latest default/card/context; T4 combined criteria/recovery
+  checking and final `yarn validate`. Existing P7–P9 mechanisms are reused, not
+  assumed absent. Inspection found swallowed closed-PR comment errors and card-only
+  resource names; these are concrete P10 integration gaps.
+- T1 requires the closed-PR explanation even when recovery finds the card already
+  in Backlog, propagates comment failure instead of silently completing, and checks
+  merged versus unmerged outcomes at the terminal effect entry points. Concrete
+  adapters retain correlation-based comment reconciliation. Self-review traced
+  terminal scheduling/readback, canonical release, failure/refinement finalization
+  and notification isolation; existing unknown-writer/pending-effect fences remain.
+  Three terminal suites passed 13 tests; three refinement/notification suites passed
+  36 tests. The initially requested nonexistent refinement-finalization filename
+  ran no suite; actual finalize-refinement/completion suites were then executed.
+  Typecheck and changed-code ESLint passed after two formatting fixes. T2–T4 remain.
+- T1 checkpoint: `6ae222c`. T2 checks attempt resources, canonical/common Git
+  identity and preserved PR history before removal; ignored setup output, staged
+  changes and clean local-only commits remain intact. Closed-PR cleanup reads its
+  retained commit history rather than assuming accessibility from an equal SHA.
+  Broad worktree pruning is removed; already-absent resources reconcile repeatedly.
+  The concrete mutation sender also checks ignored output before dispatch/recovery.
+- T2 self-review inspected cleanup callers, Git journal send/readback, local branch
+  removal and new real-Git tests. Moved the local-only commit check ahead of worktree
+  removal. Focused cleanup/terminal checks passed 23 tests; typecheck/changed-code
+  ESLint passed. Lifecycle run passed 31/32 scenarios; one fixture lacked the newly
+  required history API. Its real-object history reader was added and the affected
+  capacity/closure scenario passed (31 unrelated cases filtered). An earlier combined
+  run timed out at 120 seconds and is not a pass. T3 must make preserved resources
+  noninterfering and permit safe cleanup deferral; T4 includes final integrated checks.
+- T2 checkpoint: `8a18789`. T3 resolves persisted attempt resources throughout
+  worktree preparation, primary isolation, publication/journal dispatch, trusted
+  commits, feedback/CI/maintenance, refinement baselines and terminal recovery.
+  Existing attempts retain their original identities. Subsequent attempts get
+  distinct `<card-id>--<attempt-id>` worktrees/branches, empty sessions/projections
+  and fresh default-branch preparation. Earlier records/artifacts remain in place
+  as history; no second mutable archive or old-code inheritance is introduced.
+- Marked canonical creation interrupted before the candidate write is safely
+  retired without treating a lost/unmarked legacy record as absence. Existing
+  candidate/pointer restart reconciliation recovers the same attempt. Known owned
+  isolated resources can now defer cleanup without blocking terminal release;
+  unknown repository/branch identity and unresolved mutations remain fenced.
+- T3 self-review traced all changed production resource callers and later writes,
+  startup/registry handoff and supported old shapes, plus new real-Git tests.
+  Corrected remaining publication/maintenance hardcodes, a baseline task-identity
+  check and remote deletion accepting a changed PR branch. Remote cleanup now pins
+  its observed expected SHA through the journal; absent local/remote branches are
+  safe sender outcomes. Test fixture corrections supplied context-root/task-kind
+  setup and updated the subsequent-attempt path expectation; lint found unused
+  imports/parameter and those were fixed. Eight focused suites passed 94 tests;
+  seven authority/Git/mutation/retry suites passed 78 tests, with typecheck and
+  changed-code ESLint passing. The final interrupted-retry tests are rerun before
+  checkpoint: all 15 tests in the three retry/terminal suites passed, including
+  creation interruptions after a prior failed attempt. All 32 real-Git lifecycle
+  scenarios passed on the integrated T3 implementation. T4 combined integration/
+  specification coverage and full validation remain; no full pass or live-service
+  qualification is claimed.
+- Final T3 correction distinguishes a planned resource name from verified creation
+  provenance. Existing unknown matching worktrees cannot be adopted or removed;
+  supported imported provenance is retained. The three affected fresh/cleanup/
+  preparing suites passed 25 tests, and both no-quality/capacity lifecycle scenarios
+  passed (30 unrelated scenarios filtered). Typecheck, changed-code ESLint and
+  formatting passed after the correction. No known T3 defect remains.
+- T3 checkpoint: `ffc7bc3`. T4 combined criteria inspection reused task reviews
+  for TR-001–003, GIT-003–006, SCH-001, terminal PR-008/REF-005, deliberate retry
+  CTX-002/IMP-005, NOT-001/002 and touched REC-005. Checked canonical worker release
+  and fresh Ready discovery, failure comments/readback, refinement release, terminal
+  cancellation and pending mutations, resource isolation, latest-default preparation,
+  context refresh and retained attempt/session/log separation. No additional scoped
+  implementation gap is currently known. Final integrated `yarn validate` is next;
+  no successful full run is yet claimed. P11 guidance removal is not in scope.
+- First integrated `yarn validate` passed lint/format/typecheck, but failed 5 of
+  2,237 tests (167 files passed). T4 correction restores the refinement cleanup
+  production caller using accepted default history as preservation proof, never the
+  current potentially setup-created local commit. Missing history preserves work.
+  Fixtures now bind their actually created resources, supply the required closure
+  comment adapter, and inspect the new failure attempt's suffixed worktree path.
+- Correction self-review inspected the actual refinement cleanup/finalization,
+  shared ancestry/status checks, fixture creation order and unknown-ownership fence.
+  No guard was weakened. Three affected refinement/legacy suites passed 25 tests;
+  both initial-publication closure regressions passed (77 unrelated cases filtered).
+  Typecheck, changed-file ESLint, formatting and whitespace checks passed. Final
+  integrated validation is rerun after this correction; no full pass claimed yet.
+- T4 correction checkpoint: `1598430`. The corrected integrated tree passed full
+  `yarn validate` (lint, formatting, typecheck, all 2,237 tests in 171 files),
+  including initial publication terminal races, refinement cleanup/recovery,
+  preserved failures, distinct retry resources, mutation and notification recovery.
+  Final documentation records actual completion; no P10 work remains. P11 retains
+  final temporary-guidance removal, and is not started here.
+
+## Inherited P9 checkpoint
+
 - **P9 implemented and locally validated on `refactor/p9-recoverable-refinement`, based on `190bb3c`.**
   Initial index/worktree clean; P8 is integrated. Only small local P9 commits are
   authorized, without remote actions or P10 expansion.
@@ -617,7 +718,7 @@ requirements/specification sections and meaningful regression tests:
   corrected integrated tree then passed full `yarn validate` as recorded above.
 
 No P6–P9 implementation work remains. P9 is implemented and locally validated
-as recorded above. P10 has not started. P11 covers
+as recorded above. P10 is implemented and locally validated at the current checkpoint. P11 covers
 remaining integration/regression gaps, with broader qualification only if requested.
 
 ## Known carryovers

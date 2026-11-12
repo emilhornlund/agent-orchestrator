@@ -1,4 +1,9 @@
 import fs from "node:fs";
+import {
+  taskResources,
+  assertTaskResourceProvenance,
+} from "../task-session/task-resources.js";
+import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 import path from "node:path";
 
 import type { ProjectConfig } from "../config/config.js";
@@ -71,7 +76,7 @@ function matchesPreparedRebaseProgress(
 }
 
 function getWorktreePath(project: ProjectConfig, cardId: string): string {
-  const worktreePath = path.join(project.repository.worktreeRoot, cardId);
+  const worktreePath = taskResources(project, cardId).path;
   const resolvedWorktreeRoot = path.resolve(project.repository.worktreeRoot);
   const resolvedWorktreePath = path.resolve(worktreePath);
 
@@ -111,7 +116,7 @@ export async function getExistingWorktree(
   cardId: string,
 ): Promise<PreparedWorktree | null> {
   const worktreePath = getWorktreePath(project, cardId);
-  const branch = `agent/${cardId}`;
+  const branch = taskResources(project, cardId).branch;
 
   if (!fs.existsSync(worktreePath)) {
     return null;
@@ -140,7 +145,7 @@ export async function getExistingPreparedConflictWorktree(
   expectedRebase: GitRebaseState,
 ): Promise<PreparedConflictWorktree | null> {
   const worktreePath = getWorktreePath(project, cardId);
-  const branch = `agent/${cardId}`;
+  const branch = taskResources(project, cardId).branch;
   const expectedHeadName = `refs/heads/${branch}`;
 
   if (!fs.existsSync(worktreePath)) {
@@ -200,12 +205,14 @@ export async function prepareWorktree(
   const worktreeRoot = project.repository.worktreeRoot;
   const defaultBranch = project.repository.defaultBranch;
 
-  const branch = `agent/${cardId}`;
+  const branch = taskResources(project, cardId).branch;
   const worktreePath = getWorktreePath(project, cardId);
 
   fs.mkdirSync(worktreeRoot, { recursive: true });
 
   if (fs.existsSync(worktreePath)) {
+    const run = ProjectRunAuthority.current(project.id)?.store.read();
+    if (run) assertTaskResourceProvenance(run);
     if (fs.lstatSync(worktreePath).isSymbolicLink()) {
       throw new Error(`Refusing to use symbolic-link worktree ${worktreePath}`);
     }

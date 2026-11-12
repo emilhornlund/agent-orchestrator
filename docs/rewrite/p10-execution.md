@@ -1,5 +1,9 @@
 # P10 — terminal outcomes, safe cleanup and deliberate retries
 
+Implemented and locally validated; [current progress](phase-status.md) records
+task/correction checkpoints and integrated check results. No P10 implementation
+work remains. P11 temporary-guidance removal is separate.
+
 Temporary implementation guide. Follow [delivery workflow](phase-execution.md).
 Read REQ-TR-001–003, REQ-GIT-003–006, REQ-SCH-001, terminal REQ-PR-008/REF-005,
 retry REQ-CTX-002/IMP-005, REQ-NOT-001/002 and the touched REQ-REC-005 upgrade
@@ -25,6 +29,11 @@ fencing and P9 refinement outcomes. Never delete unknown work to obtain an idle 
 5. Archive reconciled attempts and create fresh attempt/worktree/branch/session
    identities on explicit requeue. Make pointer/registry/archive creation recoverable
    across interruption without dual writers or automatic old-code inheritance.
+   Existing attempt records are retained in place as history, not copied to a second
+   mutable archive. Later attempts use `<card-id>--<attempt-id>` resource names;
+   every production/recovery caller resolves the persisted resources. Older attempts
+   retain their original card-only names. Marked never-started creation handoffs can
+   be retired safely; unmarked legacy ambiguity remains fenced.
 6. Failed/closed retries start from latest accepted default and current task/
    attachments. Preserve previous unfinished code and logs separately. Closed PRs
    are optional context, not accepted implementation. Unchanged Failed cards do

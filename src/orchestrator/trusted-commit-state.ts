@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { taskResources } from "../task-session/task-resources.js";
 import path from "node:path";
 import { z } from "zod";
 
@@ -118,7 +119,7 @@ export function readPendingCommitState(
       state &&
       (state.projectId !== project.id ||
         state.cardId !== cardId ||
-        state.taskBranch !== `agent/${cardId}` ||
+        state.taskBranch !== taskResources(project, cardId).branch ||
         state.defaultBranch !== project.repository.defaultBranch)
     )
       throw new Error(
@@ -134,7 +135,7 @@ export function readPendingCommitState(
   if (
     state.projectId !== project.id ||
     state.cardId !== cardId ||
-    state.taskBranch !== `agent/${cardId}` ||
+    state.taskBranch !== taskResources(project, cardId).branch ||
     state.defaultBranch !== project.repository.defaultBranch
   )
     throw new Error("Pending commit intent does not match task ownership");
@@ -150,7 +151,7 @@ export function writePendingCommitState(
   if (
     state.projectId !== project.id ||
     state.cardId !== cardId ||
-    state.taskBranch !== `agent/${cardId}` ||
+    state.taskBranch !== taskResources(project, cardId).branch ||
     state.defaultBranch !== project.repository.defaultBranch
   )
     throw new Error("Cannot persist mismatched pending commit intent");
@@ -293,7 +294,7 @@ export function readTrustedCommitState(
       state &&
       (state.projectId !== project.id ||
         state.cardId !== cardId ||
-        state.taskBranch !== `agent/${cardId}` ||
+        state.taskBranch !== taskResources(project, cardId).branch ||
         state.defaultBranch !== project.repository.defaultBranch)
     )
       throw new Error(
@@ -330,7 +331,7 @@ export function readTrustedCommitState(
   if (
     result.data.projectId !== project.id ||
     result.data.cardId !== cardId ||
-    result.data.taskBranch !== `agent/${cardId}` ||
+    result.data.taskBranch !== taskResources(project, cardId).branch ||
     result.data.defaultBranch !== project.repository.defaultBranch
   ) {
     throw new Error(
@@ -355,7 +356,7 @@ export function readRejectedCommitState(
       state &&
       (state.projectId !== project.id ||
         state.cardId !== cardId ||
-        state.taskBranch !== `agent/${cardId}` ||
+        state.taskBranch !== taskResources(project, cardId).branch ||
         state.defaultBranch !== project.repository.defaultBranch)
     )
       throw new Error(
@@ -392,7 +393,7 @@ export function readRejectedCommitState(
   if (
     result.data.projectId !== project.id ||
     result.data.cardId !== cardId ||
-    result.data.taskBranch !== `agent/${cardId}` ||
+    result.data.taskBranch !== taskResources(project, cardId).branch ||
     result.data.defaultBranch !== project.repository.defaultBranch
   ) {
     throw new Error(

@@ -1,4 +1,8 @@
 import fs from "node:fs";
+import {
+  taskResources,
+  runTaskResources,
+} from "../task-session/task-resources.js";
 import { withJournaledDispatch } from "../task-session/workflow-mutation.js";
 import os from "node:os";
 import path from "node:path";
@@ -325,8 +329,8 @@ export function beginInitialPublication(
   const run = authority.store.read()!;
   if (
     run.cardId !== card.id ||
-    branch !== `agent/${card.id}` ||
-    options.worktreePath !== path.join(run.pinned.worktreeRoot, card.id) ||
+    branch !== taskResources(project, card.id).branch ||
+    options.worktreePath !== runTaskResources(run).path ||
     run.lifecycle !== "publication"
   )
     throw new Error("Initial publication ownership/checkpoint mismatch");
@@ -425,7 +429,7 @@ export async function resumeInitialPublication(options: {
   const run = authority.store.read()!;
   const finishNoOutput = async (): Promise<void> => {
     const proof = checkpoint!.noOutput!;
-    const cwd = path.join(run.pinned.worktreeRoot, checkpoint!.cardId);
+    const cwd = runTaskResources(run).path;
     assertOwnedTaskWorktreePath(project, cwd);
     if (
       (await git.getHeadSha(cwd)) !== proof.parent ||
@@ -501,7 +505,7 @@ export async function resumeInitialPublication(options: {
     )
   ) {
     const actual = await git.resolvePublicationDestinations(
-      path.join(run.pinned.worktreeRoot, checkpoint.cardId),
+      runTaskResources(run).path,
       run.pinned.repository,
     );
     if (
@@ -560,7 +564,7 @@ export async function resumeInitialPublication(options: {
   )
     throw new Error("Publication checkpoint has no matching queue owner");
   if (!publicationQueue.claimForRecovery(publicationEvent.eventId)) return true;
-  const cwd = path.join(run.pinned.worktreeRoot, checkpoint.cardId);
+  const cwd = runTaskResources(run).path;
   await validateSetupDisposition(checkpoint, run, options.project, git, cwd);
   const now = () => new Date().toISOString();
   const next = () =>

@@ -1,6 +1,7 @@
 import type { ProjectConfig } from "../config/config.js";
 import type { GitClient } from "../git/git-client.js";
 import fs from "node:fs";
+import { taskResources } from "../task-session/task-resources.js";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -196,7 +197,7 @@ async function observeOpen(
   const pr = await options.github.findPullRequestState({
     cwd: options.worktreePath,
     repository: options.project.repository.github,
-    headBranch: `agent/${options.card.id}`,
+    headBranch: taskResources(options.project, options.card.id).branch,
     baseBranch: options.project.repository.defaultBranch,
     project: options.project,
   });
@@ -218,7 +219,7 @@ async function observeOpen(
   if (
     !pr.headRefOid ||
     !allowedHeads.includes(pr.headRefOid) ||
-    pr.headRefName !== `agent/${options.card.id}` ||
+    pr.headRefName !== taskResources(options.project, options.card.id).branch ||
     pr.baseRefName !== options.project.repository.defaultBranch
   )
     throw new Error(
@@ -423,7 +424,7 @@ export async function maintainOutdatedPr(
     !expected ||
     options.task.projectId !== project.id ||
     options.task.cardId !== card.id ||
-    options.task.expectedBranch !== `agent/${card.id}`
+    options.task.expectedBranch !== taskResources(project, card.id).branch
   )
     throw new Error("Maintenance task ownership is ambiguous");
   if (
@@ -434,7 +435,8 @@ export async function maintainOutdatedPr(
       fs.realpathSync(project.repository.path) ||
     (await git.getCommonGitDirectory(worktreePath)) !==
       (await git.getCommonGitDirectory(project.repository.path)) ||
-    (await git.getCurrentBranch(worktreePath)) !== `agent/${card.id}`
+    (await git.getCurrentBranch(worktreePath)) !==
+      taskResources(project, card.id).branch
   )
     throw new Error(
       "Maintenance requires the owned isolated task worktree and branch",
@@ -769,7 +771,7 @@ export async function maintainOutdatedPr(
     const remote = await git.getRemoteBranchSha(
       worktreePath,
       "origin",
-      `agent/${card.id}`,
+      taskResources(project, card.id).branch,
       project,
     );
     if (remote !== resultingHead) {
@@ -800,7 +802,7 @@ export async function maintainOutdatedPr(
         await git.push(
           worktreePath,
           "origin",
-          `agent/${card.id}`,
+          taskResources(project, card.id).branch,
           project,
           resultingHead,
         );
@@ -816,7 +818,7 @@ export async function maintainOutdatedPr(
           (await git.getRemoteBranchSha(
             worktreePath,
             "origin",
-            `agent/${card.id}`,
+            taskResources(project, card.id).branch,
             project,
           )) !== resultingHead
         )
@@ -828,7 +830,7 @@ export async function maintainOutdatedPr(
       (await git.getRemoteBranchSha(
         worktreePath,
         "origin",
-        `agent/${card.id}`,
+        taskResources(project, card.id).branch,
         project,
       )) !== resultingHead
     )
@@ -944,7 +946,7 @@ export async function reconcileInterruptedPrMaintenance(_options: {
     const pr = await _options.github.findPullRequestState({
       cwd: _options.project.repository.path,
       repository: _options.project.repository.github,
-      headBranch: `agent/${operation.cardId}`,
+      headBranch: taskResources(_options.project, operation.cardId).branch,
       baseBranch: _options.project.repository.defaultBranch,
       project: _options.project,
     });
@@ -952,7 +954,8 @@ export async function reconcileInterruptedPrMaintenance(_options: {
       pr?.state === "OPEN" &&
       pr.url === operation.pullRequest.url &&
       pr.headRefOid === operation.publication.resultingHead &&
-      pr.headRefName === `agent/${operation.cardId}` &&
+      pr.headRefName ===
+        taskResources(_options.project, operation.cardId).branch &&
       pr.baseRefName === _options.project.repository.defaultBranch &&
       task.pullRequest.headSha === operation.expectedRemoteHead
     ) {

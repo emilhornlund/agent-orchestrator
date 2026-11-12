@@ -209,9 +209,16 @@ export class ProjectRunAuthority {
       options.coordinationRoot,
       options.projectId,
       options.projectLease,
-      { attemptId, storageRoot: options.pinned.storageRoot },
+      {
+        attemptId,
+        storageRoot: options.pinned.storageRoot,
+        creation: "preparing",
+      },
     );
-    const worktreePath = `${options.pinned.worktreeRoot}/${options.cardId}`;
+    const resourceName = prior
+      ? `${options.cardId}--${attemptId}`
+      : options.cardId;
+    const worktreePath = `${options.pinned.worktreeRoot}/${resourceName}`;
     const record: RunRecord = {
       version: 1,
       revision: 1,
@@ -240,7 +247,7 @@ export class ProjectRunAuthority {
         {
           kind: "branch",
           id: options.cardId,
-          path: `refs/heads/agent/${options.cardId}`,
+          path: `refs/heads/agent/${resourceName}`,
           provenance: "attempt-planned",
         },
         ...(options.resources ?? []),

@@ -1,5 +1,9 @@
 import { z } from "zod";
 import fs from "node:fs";
+import {
+  taskResources,
+  runTaskResources,
+} from "../task-session/task-resources.js";
 import path from "node:path";
 import type { ProjectConfig } from "../config/config.js";
 import type { GitClient } from "../git/git-client.js";
@@ -86,12 +90,14 @@ function readBaseline(
   worktreePath: string,
   cardId: string,
 ): Buffer {
+  if (authority.store.read()!.cardId !== cardId)
+    throw new Error("Refinement baseline belongs to another task");
   if (!reference) throw new Error("Post-setup repository baseline is missing");
   const contents = authority.store.readArtifact(reference);
   assertSetupInventoryIdentity(
     JSON.parse(contents.toString("utf8")) as unknown,
     worktreePath,
-    `agent/${cardId}`,
+    runTaskResources(authority.store.read()!).branch,
   );
   return contents;
 }
@@ -238,7 +244,11 @@ export async function runRefinementSetup(options: {
       const artifact = JSON.parse(
         authority.store.readArtifact(reference).toString("utf8"),
       ) as unknown;
-      assertSetupInventoryIdentity(artifact, worktreePath, `agent/${cardId}`);
+      assertSetupInventoryIdentity(
+        artifact,
+        worktreePath,
+        taskResources(project, cardId).branch,
+      );
     }
     cardLog.event("Verified completed repository setup; skipping rerun");
     return readBaseline(

@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { taskResources } from "../task-session/task-resources.js";
 import path from "node:path";
 import { z } from "zod";
 
@@ -114,10 +115,11 @@ export function readPreparedConflict(
     if (
       value.projectId !== project.id ||
       value.cardId !== cardId ||
-      value.taskBranch !== `agent/${cardId}` ||
+      value.taskBranch !== taskResources(project, cardId).branch ||
       value.defaultBranch !== project.repository.defaultBranch ||
-      (value.rebase.headName !== `agent/${cardId}` &&
-        value.rebase.headName !== `refs/heads/agent/${cardId}`) ||
+      (value.rebase.headName !== taskResources(project, cardId).branch &&
+        value.rebase.headName !==
+          `refs/heads/${taskResources(project, cardId).branch}`) ||
       value.trustedTaskCommitSha === undefined ||
       value.rebaseTargetSha === undefined ||
       value.rebase.originalHead !== value.trustedTaskCommitSha ||
@@ -170,10 +172,11 @@ export function readPreparedConflict(
     rebaseTargetSha === undefined ||
     result.data.projectId !== project.id ||
     result.data.cardId !== cardId ||
-    result.data.taskBranch !== `agent/${cardId}` ||
+    result.data.taskBranch !== taskResources(project, cardId).branch ||
     result.data.defaultBranch !== project.repository.defaultBranch ||
-    (result.data.rebase.headName !== `agent/${cardId}` &&
-      result.data.rebase.headName !== `refs/heads/agent/${cardId}`) ||
+    (result.data.rebase.headName !== taskResources(project, cardId).branch &&
+      result.data.rebase.headName !==
+        `refs/heads/${taskResources(project, cardId).branch}`) ||
     result.data.rebase.originalHead !== trustedTaskCommitSha ||
     result.data.rebase.onto !== rebaseTargetSha
   ) {
@@ -218,7 +221,7 @@ export function writePreparedConflict(
     kind: "prepared-conflict",
     projectId: project.id,
     cardId,
-    taskBranch: `agent/${cardId}`,
+    taskBranch: taskResources(project, cardId).branch,
     defaultBranch: project.repository.defaultBranch,
     origin,
     trustedTaskCommitSha,
@@ -229,8 +232,8 @@ export function writePreparedConflict(
   };
 
   if (
-    rebase.headName !== `agent/${cardId}` &&
-    rebase.headName !== `refs/heads/agent/${cardId}`
+    rebase.headName !== taskResources(project, cardId).branch &&
+    rebase.headName !== `refs/heads/${taskResources(project, cardId).branch}`
   ) {
     throw new Error(
       "Cannot record prepared conflict: rebase branch is ambiguous",

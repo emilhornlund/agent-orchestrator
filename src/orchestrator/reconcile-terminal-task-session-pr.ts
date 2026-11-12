@@ -1,4 +1,5 @@
-import path from "node:path";
+import { taskResources } from "../task-session/task-resources.js";
+import { assertTerminalArtifactIsolation } from "../git/terminal-artifact-isolation.js";
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 import { throwIfWorkflowMutationPending } from "../task-session/workflow-mutation.js";
 import { closedPrComment } from "../task-session/terminal-pr-fence.js";
@@ -72,10 +73,10 @@ async function cleanupTerminalWorktree(
   card: TrelloCard,
   cardLog: Logger,
   signal: AbortSignal,
+  preservedHeadSha: string,
 ): Promise<void> {
   if (signal.aborted) return;
-  const worktreePath = path.join(project.repository.worktreeRoot, card.id);
-  const branch = `agent/${card.id}`;
+  const { path: worktreePath, branch } = taskResources(project, card.id);
   try {
     await cleanupWorktree({
       git,
@@ -83,6 +84,7 @@ async function cleanupTerminalWorktree(
       worktreePath,
       branch,
       preserveRecoveryState: true,
+      preservedHeadSha,
       signal,
     });
     if (!signal.aborted)
@@ -93,7 +95,11 @@ async function cleanupTerminalWorktree(
     cardLog.warn(
       `Terminal task cleanup was not completed for ${worktreePath} and ${branch}: ${message(error)}`,
     );
-    throw error;
+    // A dispatched cleanup still needs its journal outcome reconciled. Otherwise
+    // preserve known resources; future attempts use distinct names, not this path.
+    if (!ProjectRunAuthority.current(project.id)) throw error;
+    throwIfWorkflowMutationPending(project.id);
+    await assertTerminalArtifactIsolation(project, git);
   }
 }
 
@@ -113,7 +119,9 @@ export async function completeMergedTaskSessionPullRequest(options: {
   const { trello, git, project, card, pullRequest, signal } = options;
   const cardLog = logger.child({ projectId: project.id, cardId: card.id });
   if (signal.aborted) return;
-  const branch = `agent/${card.id}`;
+  if (pullRequest.state !== "MERGED" || pullRequest.mergedAt === null)
+    throw new Error("Completion requires a verified merged pull request");
+  const branch = taskResources(project, card.id).branch;
   await clearTerminalActivity(
     options.github,
     project,
@@ -121,20 +129,25 @@ export async function completeMergedTaskSessionPullRequest(options: {
     cardLog,
   );
   if (!options.preserveWorktree) {
-    const remoteBranchExists = await git.remoteBranchExists(
+    const remoteHead = await git.getRemoteBranchSha(
       project.repository.path,
       "origin",
       branch,
       project,
     );
     if (signal.aborted) return;
-    if (remoteBranchExists) {
+    if (remoteHead !== null) {
+      if (remoteHead !== pullRequest.headRefOid)
+        throw new Error(
+          "Terminal remote branch differs from the verified PR head; preserving it",
+        );
       try {
         await git.deleteRemoteBranch(
           project.repository.path,
           "origin",
           branch,
           project,
+          remoteHead,
         );
       } catch (error) {
         if (!isMissingBranchDeletionError(error)) throw error;
@@ -218,7 +231,14 @@ export async function completeMergedTaskSessionPullRequest(options: {
       "Task artifacts preserved after human merge; interrupted or unshipped work remains available for recovery",
     );
   } else {
-    await cleanupTerminalWorktree(git, project, card, cardLog, signal);
+    await cleanupTerminalWorktree(
+      git,
+      project,
+      card,
+      cardLog,
+      signal,
+      pullRequest.headRefOid!,
+    );
   }
 }
 
@@ -236,6 +256,10 @@ export async function returnClosedTaskSessionPullRequestToBacklog(options: {
   const { trello, git, project, card, pullRequest, signal } = options;
   const cardLog = logger.child({ projectId: project.id, cardId: card.id });
   if (signal.aborted) return;
+  if (pullRequest.state !== "CLOSED" || pullRequest.mergedAt !== null)
+    throw new Error(
+      "Backlog closure requires a verified unmerged pull request",
+    );
   await clearTerminalActivity(
     options.github,
     project,
@@ -262,20 +286,49 @@ export async function returnClosedTaskSessionPullRequestToBacklog(options: {
       `Closed pull request returned card to Backlog: ${pullRequest.url}`,
     );
   }
-  if (!alreadyBacklog || ProjectRunAuthority.current(project.id)) {
-    try {
-      await trello.addComment(card.id, closedPrComment(pullRequest.url));
-    } catch (error) {
-      throwIfWorkflowMutationPending(project.id);
-      cardLog.error(`Could not add closed PR note: ${message(error)}`);
-    }
-  }
+  // The move and explanatory comment are separate obligations. In particular,
+  // finding the card in Backlog after restart does not prove comment delivery.
+  // The concrete adapter reconciles its durable correlation identity rather
+  // than resending a comment whose acceptance is uncertain.
+  await trello.addComment(card.id, closedPrComment(pullRequest.url));
   if (options.preserveWorktree) {
     cardLog.warn(
       "Task artifacts preserved after human PR closure; interrupted or unshipped work remains available for recovery",
     );
   } else {
-    await cleanupTerminalWorktree(git, project, card, cardLog, signal);
+    // Read the actual retained closed-PR history, even when the recorded head
+    // equals the terminal head. An unavailable API is not preservation proof.
+    if (!options.github || !pullRequest.headRefOid)
+      throw new Error("Closed PR history is unavailable; preserving artifacts");
+    let commits: string[];
+    try {
+      commits = await options.github.getPullRequestCommitShas({
+        cwd: project.repository.path,
+        repository: project.repository.github,
+        pullRequestNumber: Number(
+          new URL(pullRequest.url).pathname.split("/").at(-1),
+        ),
+        project,
+      });
+      if (commits.at(-1) !== pullRequest.headRefOid)
+        throw new Error(
+          "Closed PR history does not preserve the implementation",
+        );
+    } catch {
+      await assertTerminalArtifactIsolation(project, git);
+      cardLog.warn(
+        "Closed PR history is unavailable; isolated local implementation remains preserved",
+      );
+      return;
+    }
+    await cleanupTerminalWorktree(
+      git,
+      project,
+      card,
+      cardLog,
+      signal,
+      pullRequest.headRefOid,
+    );
   }
 }
 

@@ -435,7 +435,20 @@ export function createPublicationFixture(
     operation: { id: "operation", kind: "publication", generation: 1 },
     wait: { reason: null, dependency: null, since: null, retryAt: null },
     owner: { instanceId: lease.instanceId, token: lease.token, generation: 1 },
-    resources: [],
+    resources: [
+      {
+        kind: "worktree",
+        id: "card",
+        path: path.join(worktrees, "card"),
+        provenance: "fixture-created",
+      },
+      {
+        kind: "branch",
+        id: "card",
+        path: "refs/heads/agent/card",
+        provenance: "fixture-created",
+      },
+    ],
     pendingOperations: [],
     queue: [],
     budgets: {},
